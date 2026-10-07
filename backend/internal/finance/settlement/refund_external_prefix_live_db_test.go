@@ -1,6 +1,6 @@
 package settlement_test
 
-// LIVE-DB tests for RefundExternalByKeyPrefix (ADR-PRTBD-mobility-card-direct,
+// LIVE-DB tests for RefundExternalByKeyPrefix (ADR-PR522-mobility-card-direct,
 // "Partial refunds (car hire)"): a card-direct booking funded by ONE charge may
 // hold SEVERAL external settlements whose idempotency keys are
 // "<reference>", "<reference>:fare", "<reference>:deposit". The order_failed

@@ -256,7 +256,7 @@ type Config struct {
 	// Default OFF. Inert unless FeatureTransportPaystackCheckoutEnabled (the
 	// shared-engine master switch) AND FeatureTransportModesEnabled (parcel
 	// routes) are also on. One flag per service so each lifecycle can be
-	// rolled out / killed independently (ADR-PRTBD-mobility-card-direct).
+	// rolled out / killed independently (ADR-PR522-mobility-card-direct).
 	FeatureTransportPaystackParcelEnabled bool
 	// FeatureTransportPaystackTowingEnabled gates CARD-DIRECT towing / roadside
 	// booking (transport/paystackcheckout Engine + TowingDomain): the user pays by
@@ -265,7 +265,7 @@ type Config struct {
 	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
 	// FeatureTransportModesEnabled (towing routes) are also on. Gates ONLY new
 	// checkouts; confirm / status / refund / reconcile for money already collected
-	// stay live (ADR-PRTBD-mobility-card-direct H7).
+	// stay live (ADR-PR522-mobility-card-direct H7).
 	FeatureTransportPaystackTowingEnabled bool
 	// FeatureTransportPaystackMoversEnabled gates CARD-DIRECT mover bid acceptance
 	// (transport/paystackcheckout Engine + MoversDomain): the customer pays the
@@ -275,7 +275,7 @@ type Config struct {
 	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
 	// FeatureTransportModesEnabled (mover routes) are also on. Gates ONLY new
 	// checkouts; confirm / status / refund / reconcile for money already collected
-	// stay live (ADR-PRTBD-mobility-card-direct H7).
+	// stay live (ADR-PR522-mobility-card-direct H7).
 	FeatureTransportPaystackMoversEnabled bool
 	// FeatureTransportPaystackCarHireEnabled gates CARD-DIRECT car hire
 	// (transport/paystackcheckout Engine + CarHireDomain): ONE debit-card charge

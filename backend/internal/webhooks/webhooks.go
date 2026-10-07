@@ -367,7 +367,7 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 	// self-heals it, and the engine's reconciliation sweeper
 	// (transport/paystackcheckout.StartReconciler) re-verifies every pending /
 	// processing / refunding intent with the gateway. See
-	// docs/adr/ADR-PRTBD-mobility-card-direct.md "Resolved after ledger audit" H7.
+	// docs/adr/ADR-PR522-mobility-card-direct.md "Resolved after ledger audit" H7.
 	for _, pc := range h.prefixConfirmers {
 		if strings.HasPrefix(d.Reference, pc.prefix) {
 			_, err := pc.confirmer.OnChargeSuccess(ctx, d.Reference, d.Reference)

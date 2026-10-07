@@ -1,6 +1,6 @@
 package paystackcheckout
 
-// PARTIAL (piece) refunds — ADR-PRTBD-mobility-card-direct, "Partial refunds
+// PARTIAL (piece) refunds — ADR-PR522-mobility-card-direct, "Partial refunds
 // (car hire)".
 //
 // One card charge may fund SEVERAL settlements (car hire: "<ref>:fare" and

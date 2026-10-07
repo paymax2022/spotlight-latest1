@@ -122,7 +122,7 @@ type towingPricing struct {
 // and replayed at confirm: the route distance and the full pricing config row
 // the quote used. Pricing from THIS (not a fresh routing call / config read)
 // keeps a re-route or a config edit between charge and booking from producing
-// a spurious amount mismatch (ADR-PRTBD-mobility-card-direct H8).
+// a spurious amount mismatch (ADR-PR522-mobility-card-direct H8).
 type towingFrozenPricing struct {
 	DistanceM int           `json:"distanceM"`
 	Config    PricingConfig `json:"config"`

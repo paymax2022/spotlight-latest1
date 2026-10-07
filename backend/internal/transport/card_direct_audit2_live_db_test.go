@@ -1,7 +1,7 @@
 package transport
 
 // LIVE-DB (TEST_DATABASE_URL) tests for the SECOND ledger-audit round of the
-// Mobility card-direct work (ADR-PRTBD-mobility-card-direct, "Resolved after
+// Mobility card-direct work (ADR-PR522-mobility-card-direct, "Resolved after
 // ledger audit — round 2"). Each test was written and watched failing before
 // the fix:
 //

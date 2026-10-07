@@ -375,7 +375,7 @@ func (a *AdminService) refuseMoneyMovingPatch(ctx context.Context, table, id, ta
 		return codedErr(http.StatusConflict, CodeInvalidState,
 			"this hire is funded by a card payment that is still held in escrow; setting it to \""+target+
 				"\" would not return the customer's money. Use the customer's cancel/complete flow (which refunds the card) "+
-				"or follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+				"or follow the card-direct refund runbook (docs/adr/ADR-PR522-mobility-card-direct.md) instead")
 	}
 	q, ok := settlementColumnQueries[table]
 	if !ok || !moneyMovingPatchStatuses[target] {
@@ -394,7 +394,7 @@ func (a *AdminService) refuseMoneyMovingPatch(ctx context.Context, table, id, ta
 	return codedErr(http.StatusConflict, CodeInvalidState,
 		"this job is funded by a card payment that is still held in escrow; setting it to \""+target+
 			"\" would not return the customer's money. Use the customer's cancel flow (which refunds the card) "+
-			"or follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+			"or follow the card-direct refund runbook (docs/adr/ADR-PR522-mobility-card-direct.md) instead")
 }
 
 // guardCardCarHirePatch protects a CARD-funded car-hire booking (any of its settlements
@@ -421,7 +421,7 @@ func (a *AdminService) guardCardCarHirePatch(ctx context.Context, id, oldStatus,
 	if (oldStatus == "cancelled" || oldStatus == "completed") && target != oldStatus {
 		return codedErr(http.StatusConflict, CodeInvalidState,
 			"this hire was paid by card and is already "+oldStatus+"; its refunds/payout have run, so re-opening it is refused. "+
-				"Follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+				"Follow the card-direct refund runbook (docs/adr/ADR-PR522-mobility-card-direct.md) instead")
 	}
 	var inFlight bool
 	if err := a.svc.db.QueryRow(ctx, `

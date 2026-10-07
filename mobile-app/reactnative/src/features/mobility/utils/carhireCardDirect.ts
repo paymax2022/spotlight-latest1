@@ -1,6 +1,6 @@
 // Pure helpers for the CAR HIRE card-direct rail (pay by debit card straight
 // through Paystack — no wallet, no KYC-tier gate). Backend contract:
-// docs/adr/ADR-PRTBD-mobility-card-direct.md ("Partial refunds (car hire)"),
+// docs/adr/ADR-PR522-mobility-card-direct.md ("Partial refunds (car hire)"),
 // backend/internal/transport/paystackcheckout/carhire.go. Shared status/copy
 // helpers live in ./cardDirect.ts; this file only holds what is car-hire
 // specific. No React / RN / network imports so it runs under

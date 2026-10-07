@@ -1,6 +1,6 @@
 package transport
 
-// CARD-DIRECT CAR HIRE (ADR-PRTBD-mobility-card-direct, "Partial refunds (car
+// CARD-DIRECT CAR HIRE (ADR-PR522-mobility-card-direct, "Partial refunds (car
 // hire)"): ONE Paystack charge = fare + deposit, held as TWO external
 // settlements ("carhire:<id>" keyed "<ref>:fare", "carhire:<id>:deposit" keyed
 // "<ref>:deposit"). Live-DB proofs (TEST_DATABASE_URL) of:

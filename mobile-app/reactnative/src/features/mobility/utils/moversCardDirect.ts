@@ -1,6 +1,6 @@
 // Pure helpers for the MOVERS card-direct rail (pay by debit card straight
 // through Paystack — no wallet, no KYC-tier gate), charged at BID ACCEPTANCE.
-// Backend contract: docs/adr/ADR-PRTBD-mobility-card-direct.md, movers domain
+// Backend contract: docs/adr/ADR-PR522-mobility-card-direct.md, movers domain
 // (backend/internal/transport/paystackcheckout/movers.go). Shared status/copy
 // helpers live in ./cardDirect.ts; this file only holds what is movers
 // specific. No React / RN / network imports so it runs under

@@ -1,6 +1,6 @@
 package paystackcheckout
 
-// PARTIAL refunds (ADR-PRTBD-mobility-card-direct, "Partial refunds (car hire)").
+// PARTIAL refunds (ADR-PR522-mobility-card-direct, "Partial refunds (car hire)").
 // One card charge funds several settlements (car hire: <ref>:fare + <ref>:deposit);
 // each is refunded to the card on its own, for exactly its own total. Properties
 // proven here with fakes (SQL-level ones are in partial_refund_live_db_test.go):

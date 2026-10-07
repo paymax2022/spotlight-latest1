@@ -1,6 +1,6 @@
 // Pure helpers for the TOWING card-direct rail (pay by debit card straight
 // through Paystack — no wallet, no KYC-tier gate). Backend contract:
-// docs/adr/ADR-PRTBD-mobility-card-direct.md, towing domain
+// docs/adr/ADR-PR522-mobility-card-direct.md, towing domain
 // (backend/internal/transport/paystackcheckout/towing.go). Shared status/copy
 // helpers live in ./cardDirect.ts; this file only holds what is towing
 // specific. No React / RN / network imports so it runs under

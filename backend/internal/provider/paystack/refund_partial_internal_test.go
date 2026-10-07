@@ -1,6 +1,6 @@
 package paystack
 
-// Partial-refund adapter behaviour (ADR-PRTBD-mobility-card-direct, "Partial
+// Partial-refund adapter behaviour (ADR-PR522-mobility-card-direct, "Partial
 // refunds (car hire)"). Canned responses pin OUR request/parse shape, not
 // Paystack's contract — see the ADR's unverified list.
 

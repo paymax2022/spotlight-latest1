@@ -1,6 +1,6 @@
 package paystackcheckout
 
-// Second ledger-audit round (ADR-PRTBD-mobility-card-direct, "Resolved after
+// Second ledger-audit round (ADR-PR522-mobility-card-direct, "Resolved after
 // ledger audit — round 2"): engine-level pins. L-a (a Book that failed on a
 // deadline / cancellation proves nothing), L-d (a zero quote is a coded 4xx),
 // M2 (the reconciler drives refunds of cancelled-but-still-escrowed bookings).

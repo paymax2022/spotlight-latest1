@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Mobility card-direct — PARTIAL (piece) refunds for a charge that funds several
 -- settlements (car hire: ONE card charge = fare + deposit). See
--- docs/adr/ADR-PRTBD-mobility-card-direct.md, "Partial refunds (car hire)".
+-- docs/adr/ADR-PR522-mobility-card-direct.md, "Partial refunds (car hire)".
 --
 -- Additive-only and idempotent (every statement is IF NOT EXISTS / guarded), and
 -- safe on a database that already applied 20271008090000_transport_paystack_intents.sql

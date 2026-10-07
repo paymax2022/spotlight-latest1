@@ -1,4 +1,4 @@
-# ADR-PRTBD-mobility-card-direct: Card-direct (Paystack-funded) checkout for every Mobility service
+# ADR-PR522-mobility-card-direct: Card-direct (Paystack-funded) checkout for every Mobility service
 
 - **Status:** Accepted — foundation + parcel + towing + movers + car hire (narrow scope, see "Car hire (implemented)") implemented; bus and event transport deferred (table below)
 - **Date:** 2026-10-07

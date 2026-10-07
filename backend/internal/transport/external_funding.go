@@ -2,7 +2,7 @@ package transport
 
 // Shared foundation for CARD-DIRECT (Paystack-funded, no wallet, no KYC-tier
 // gate) bookings of every non-ride Mobility service. See
-// docs/adr/ADR-PRTBD-mobility-card-direct.md.
+// docs/adr/ADR-PR522-mobility-card-direct.md.
 //
 // Rides keep their own, older seam (SetExternalRefunder + payment_method =
 // "paystack"). Every other service uses the pieces here:
@@ -35,7 +35,7 @@ import (
 // own key starts with one could collide with — or be mistaken for — someone's
 // card-funded booking (Find, Escrow idempotency and EscrowExternal replay all
 // resolve by that key). Includes the reserved prefixes of the not-yet-built
-// services (docs/adr/ADR-PRTBD-mobility-card-direct.md).
+// services (docs/adr/ADR-PR522-mobility-card-direct.md).
 var reservedIdempotencyPrefixes = []string{
 	"parcelorder:", "rideorder:", "foodorder:", "duespay:", "feespay:",
 	"towingorder:", "moversorder:", "carhireorder:", "busorder:", "eventorder:",

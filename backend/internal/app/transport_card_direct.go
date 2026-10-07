@@ -21,7 +21,7 @@ import (
 )
 
 // wireTransportCardDirect mounts the SHARED Mobility card-direct engine and
-// every per-service domain (ADR-PRTBD-mobility-card-direct). Called from the
+// every per-service domain (ADR-PR522-mobility-card-direct). Called from the
 // existing master-flag block in finance_routes.go, i.e. only when
 // FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED is on and a Paystack client
 // exists. A new service adds ONE entry to the domains table below (plus its

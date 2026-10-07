@@ -497,7 +497,7 @@ paths:
         '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }
   # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
   # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackCarHireEnabled AND
-  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PRTBD-mobility-card-direct.md
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md
   # ("Partial refunds (car hire)"). ONE card charge = fare + deposit, held as TWO settlements.
   /mobility/car-hire/paystack/initiate:
     post:
@@ -608,7 +608,7 @@ paths:
       responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }, '401': { description: Not authenticated } }
   # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
   # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackParcelEnabled AND
-  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PRTBD-mobility-card-direct.md.
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md.
   /mobility/parcels/paystack/initiate:
     post:
       tags: [parcel]
@@ -790,7 +790,7 @@ paths:
       responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }, '401': { description: Not authenticated } }
   # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
   # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackTowingEnabled AND
-  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PRTBD-mobility-card-direct.md.
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md.
   /mobility/towing/paystack/initiate:
     post:
       tags: [towing]
@@ -948,7 +948,7 @@ paths:
       responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }, '401': { description: Not authenticated } }
   # ── Card-direct (pay the accepted bid by debit card; never the wallet KYC-tier gate) ──
   # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackMoversEnabled AND
-  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PRTBD-mobility-card-direct.md.
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md.
   /mobility/movers/paystack/initiate:
     post:
       tags: [movers]

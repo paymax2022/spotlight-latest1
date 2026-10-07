@@ -1,6 +1,6 @@
 // Pure helpers for the Mobility CARD-DIRECT rail (pay by debit card straight
 // through Paystack — no wallet, no KYC-tier gate). Backend contract:
-// docs/adr/ADR-PRTBD-mobility-card-direct.md. No React / RN / network imports
+// docs/adr/ADR-PR522-mobility-card-direct.md. No React / RN / network imports
 // here on purpose so it runs under `node --experimental-strip-types --test`.
 //
 // IRON RULE: the amount is NEVER built or sent from the client. The server

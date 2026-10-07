@@ -191,7 +191,7 @@ func ValidateCarHireBookRequest(req CarHireBookRequest) error {
 // and replayed at confirm: the pricing config row and the legs it produced.
 // Booking from THIS (not a fresh config read) keeps a config edit between
 // charge and confirm from turning a correctly-charged hire into a mismatch
-// (ADR-PRTBD-mobility-card-direct H8).
+// (ADR-PR522-mobility-card-direct H8).
 type carHireFrozenPricing struct {
 	DurationHours int           `json:"durationHours"`
 	FareKobo      int64         `json:"fareKobo"`

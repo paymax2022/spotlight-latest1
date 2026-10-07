@@ -2,7 +2,7 @@ package paystackcheckout
 
 // Engine is the SHARED card-direct mechanism for every Mobility service that
 // is not instant ride-hailing (parcel first; bus/towing/car-hire/movers/event
-// transport plug in later). See docs/adr/ADR-PRTBD-mobility-card-direct.md.
+// transport plug in later). See docs/adr/ADR-PR522-mobility-card-direct.md.
 //
 // The money contract is identical to the ride adapter in service.go:
 //

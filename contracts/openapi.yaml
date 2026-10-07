@@ -10470,7 +10470,7 @@ paths:
   /mobility/parcels/paystack/initiate:
     post:
       operationId: initiateParcelPaystack
-      summary: Start a card-direct parcel checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PRTBD-mobility-card-direct.md
+      summary: Start a card-direct parcel checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
       tags: [Mobility Parcel]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
@@ -10790,7 +10790,7 @@ paths:
   /mobility/towing/paystack/initiate:
     post:
       operationId: initiateTowingPaystack
-      summary: Start a card-direct towing checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PRTBD-mobility-card-direct.md
+      summary: Start a card-direct towing checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
       tags: [Mobility Towing]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
@@ -10853,7 +10853,7 @@ paths:
   /mobility/movers/paystack/initiate:
     post:
       operationId: initiateMoverPaystack
-      summary: Start a card-direct checkout for accepting a mover bid (server-read amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PRTBD-mobility-card-direct.md
+      summary: Start a card-direct checkout for accepting a mover bid (server-read amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
       tags: [Mobility Movers]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
@@ -10915,7 +10915,7 @@ paths:
   /mobility/car-hire/paystack/initiate:
     post:
       operationId: initiateCarHirePaystack
-      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PRTBD-mobility-card-direct.md
+      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
       tags: [Mobility CarHire]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]

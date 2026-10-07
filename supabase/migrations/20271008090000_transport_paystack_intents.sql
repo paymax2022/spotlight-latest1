@@ -1,5 +1,5 @@
 -- =============================================================================
--- Mobility card-direct (ADR-PRTBD-mobility-card-direct) — generic Paystack-funded
+-- Mobility card-direct (ADR-PR522-mobility-card-direct) — generic Paystack-funded
 -- intents shared by every non-ride Mobility service (parcel first; bus, towing,
 -- car-hire, movers, event transport plug in later with NO schema change: a new
 -- service is just a new `domain` value + reference prefix).
