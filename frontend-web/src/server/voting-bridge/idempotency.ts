@@ -45,6 +45,15 @@ export function boundClaimKey(
 const CLAIM_WAIT_ATTEMPTS = 10;
 const CLAIM_WAIT_INTERVAL_MS = 100;
 
+/**
+ * A claim row whose owner died before publishing a result stays '{}' forever —
+ * and without this, the wait-then-409 path below would refuse that key
+ * permanently (cleanupExpiredKeys has no live caller). Claims older than this
+ * are treated as dead and reclaimed by the next attempt with the same key.
+ * 5 minutes is far beyond a normal vote round-trip.
+ */
+const CLAIM_STALE_MS = 5 * 60 * 1000;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -74,7 +83,7 @@ export async function checkAndClaimIdempotencyKey(key: string) {
         for (let attempt = 0; attempt < CLAIM_WAIT_ATTEMPTS; attempt++) {
           const { data: existing } = await supabase
             .from('bridge_idempotency_keys')
-            .select('response')
+            .select('response, created_at')
             .eq('key', key)
             .single();
 
@@ -84,10 +93,25 @@ export async function checkAndClaimIdempotencyKey(key: string) {
           await sleep(CLAIM_WAIT_INTERVAL_MS);
         }
 
-        // Still nothing: the original is wedged or died before publishing. Refuse
-        // rather than proceed — proceeding is precisely the double-vote this
-        // guards. This is recoverable: a fresh submission mints a new key (see
-        // VoteModal), so only a retry reusing THIS key is refused.
+        // Still nothing. If the claim is recent the original may be wedged —
+        // refuse rather than double-vote. If it is STALE the owner is dead and
+        // the placeholder is garbage: reclaim it so the key isn't bricked
+        // forever (the atomic vote RPCs still bound any true duplicate).
+        const { data: stale } = await supabase
+          .from('bridge_idempotency_keys')
+          .select('created_at')
+          .eq('key', key)
+          .single();
+
+        if (stale?.created_at && Date.now() - new Date(stale.created_at).getTime() > CLAIM_STALE_MS) {
+          await supabase.from('bridge_idempotency_keys').delete().eq('key', key);
+          const { error: retryErr } = await supabase
+            .from('bridge_idempotency_keys')
+            .insert({ key, response: {} });
+          if (!retryErr) return null;
+          // Lost the reclaim race or insert still failing → fall through to 409.
+        }
+
         throw new ApiError(
           'This vote is already being processed. Please try again.',
           409,
