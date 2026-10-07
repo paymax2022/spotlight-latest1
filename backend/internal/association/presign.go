@@ -3,6 +3,7 @@ package association
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"path"
 	"strings"
@@ -118,6 +119,16 @@ func (h *Handler) PresignLogoUpload(c *gin.Context) {
 		return
 	}
 	if h.presigner == nil || !h.presigner.Configured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "logo uploads are not configured"})
+		return
+	}
+	// Configured() only proves the variables are non-empty. A wrong bucket, a
+	// read-only token or a mangled endpoint all sign fine and then fail at the
+	// client's PUT, where the app can only say "try again". Probe once (cached)
+	// and fail closed with the same 503 the app already explains correctly; the
+	// precise cause goes to the log, never to the client.
+	if err := h.presigner.Healthy(c.Request.Context()); err != nil {
+		log.Printf("[association] R2 write probe failed, logo uploads disabled until R2_* config is fixed: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "logo uploads are not configured"})
 		return
 	}
