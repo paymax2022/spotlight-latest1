@@ -29,7 +29,7 @@ func TestRegisterSocialPay_MountsCanonicalAndLegacyAlias(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	RegisterSocialPay(r.Group("/api/finance"), nil, pool, nil)
+	RegisterSocialPay(r.Group("/api/finance"), nil, pool, nil, nil)
 
 	got := map[string]bool{}
 	for _, rt := range r.Routes() {

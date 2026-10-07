@@ -70,6 +70,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     // second Paystack transaction for a retried/duplicate request.
     const existing = await findRegistrationPaymentIntentByIdempotencyKey(idempotencyKey);
     if (existing) {
+      // The key resolves globally — but it may belong to a DIFFERENT
+      // application (and thus a different user). Replaying it here would leak
+      // that application's payment reference and amount to this caller.
+      if (existing.applicationId !== params.id) {
+        return errorResponse('Idempotency-Key conflicts with an existing payment.', 409);
+      }
       return NextResponse.json({
         success: true,
         transactionId: existing.id,

@@ -68,6 +68,27 @@ func TestCode_RuleOrder(t *testing.T) {
 	}
 }
 
+// Predicate rules cover error classes that cannot be named as sentinels (e.g.
+// a Postgres SQLSTATE family). Rule order still applies and a nil Match is a
+// no-op rule.
+func TestCode_MatchPredicate(t *testing.T) {
+	m := httperr.New(500,
+		httperr.R(404, errNotFound),
+		httperr.Rule{Status: 400, Match: func(err error) bool {
+			return errors.Unwrap(err) == nil && err != errNotFound
+		}},
+	)
+	if got := m.Code(errNotFound); got != 404 {
+		t.Fatalf("Code(errNotFound) = %d, want 404 (sentinel wins first)", got)
+	}
+	if got := m.Code(errDB); got != 400 {
+		t.Fatalf("Code(errDB) = %d, want 400 via Match", got)
+	}
+	if got := m.Code(fmt.Errorf("wrap: %w", errDB)); got != 500 {
+		t.Fatalf("Code(wrapped errDB) = %d, want 500 (predicate refused)", got)
+	}
+}
+
 func TestWrite_Body(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

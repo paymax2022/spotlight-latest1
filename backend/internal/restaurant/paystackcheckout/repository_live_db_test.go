@@ -182,3 +182,42 @@ func TestLiveDB_MarkStatus_SetsOrderIDAndRefundReference(t *testing.T) {
 		t.Errorf("order id = %v, want %s", rec.OrderID, orderID)
 	}
 }
+
+// TestLiveDB_PutIntent_ForeignKeyIsCollisionNotReplay pins the caller-scoped
+// replay fix: an idempotency key that already belongs to a DIFFERENT customer
+// must NOT resolve to that customer's intent (reference, amount, request).
+// Keys are client-chosen — before the customer_id scope on the replay select,
+// any caller could read a stranger's checkout by guessing their key.
+func TestLiveDB_PutIntent_ForeignKeyIsCollisionNotReplay(t *testing.T) {
+	pool := repoPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	repo := NewIntentStore(pool)
+
+	idemKey := "repo-scope-" + uuid.New().String()
+	owner := sampleRecord(idemKey)
+	if _, inserted, err := repo.PutIntent(ctx, owner); err != nil || !inserted {
+		t.Fatalf("owner PutIntent: inserted=%v err=%v", inserted, err)
+	}
+
+	foreign := sampleRecord(idemKey) // different CustomerID, same key
+	existing, inserted, err := repo.PutIntent(ctx, foreign)
+	if err == nil {
+		t.Fatalf("foreign PutIntent returned no error and existing=%+v — a foreign key replayed the owner's intent", existing)
+	}
+	if inserted {
+		t.Fatal("foreign PutIntent reported a fresh insert under a taken key")
+	}
+	if existing != nil {
+		t.Fatalf("foreign PutIntent leaked the owner's intent record: %+v", existing)
+	}
+
+	// The owner's own replay still resolves to their original row.
+	replay, inserted, err := repo.PutIntent(ctx, owner)
+	if err != nil || inserted {
+		t.Fatalf("owner replay PutIntent: inserted=%v err=%v", inserted, err)
+	}
+	if replay == nil || replay.CustomerID != owner.CustomerID {
+		t.Fatalf("owner replay resolved to %+v, want their own row", replay)
+	}
+}

@@ -158,6 +158,28 @@ func (r *Repository) EntryExists(ctx context.Context, idempotencyKey string) (bo
 	return exists, nil
 }
 
+// EntryByKey returns the recorded identity of the ledger entry posted under
+// this EXACT idempotency_key (including any leg suffix such as ":debit") —
+// (account, entry type, reference, amount). This is the read half of replay
+// verification: a caller that received ErrDuplicate — or probes before
+// posting — compares the recorded identity against the journal it intended,
+// because key EXISTENCE alone never proves the caller's own posting landed
+// (a foreign or tampered claim holds the same key with a different journal).
+func (r *Repository) EntryByKey(ctx context.Context, idempotencyKey string) (*Entry, bool, error) {
+	var e Entry
+	err := r.db.QueryRow(ctx,
+		`SELECT id, account_id, type, amount_kobo, reference, idempotency_key, created_at
+		 FROM ledger_entries WHERE idempotency_key = $1`,
+		idempotencyKey).Scan(&e.ID, &e.AccountID, &e.Type, &e.AmountKobo, &e.Reference, &e.IdempotencyKey, &e.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("ledger: entry by key %s: %w", idempotencyKey, err)
+	}
+	return &e, true, nil
+}
+
 // EntryAmount returns the amount_kobo posted under this idempotency_key on the
 // given account. Used for replay verification and reversal lookups — the
 // recorded ledger amount is the source of truth, never the caller's claim.
@@ -226,9 +248,12 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	}
 
 	// Balanced pair on the SAME tx. ON CONFLICT makes a retry idempotent — but
-	// only when the replayed amount matches: a different amount under a REUSED
-	// key is a tampered retry (a key pre-claimed cheaply here could otherwise
-	// absorb a pricier replay as a no-op), so verifyReplayAmount fails closed.
+	// only when the replay is the SAME journal: amount, debit/credit account and
+	// reference must all match the row already holding the key. A reused key for
+	// a different journal is a tampered or foreign retry (a key pre-claimed
+	// cheaply here could otherwise absorb another user's or another rail's
+	// posting as a silent no-op — the phantom-paid-row bug), so the check
+	// fails closed.
 	const insertEntry = `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)
@@ -238,7 +263,7 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	if err != nil {
 		return fmt.Errorf("ledger: insert debit entry: %w", err)
 	}
-	if err := verifyReplayAmount(ctx, tx, j.IdempotencyKey+":debit", amountKobo, tag); err != nil {
+	if err := verifyReplay(ctx, tx, j.IdempotencyKey+":debit", j.DebitAccountID, j.Reference, EntryDebit, amountKobo, tag); err != nil {
 		return err
 	}
 	tag, err = tx.Exec(ctx, insertEntry,
@@ -246,30 +271,40 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	if err != nil {
 		return fmt.Errorf("ledger: insert credit entry: %w", err)
 	}
-	if err := verifyReplayAmount(ctx, tx, j.IdempotencyKey+":credit", amountKobo, tag); err != nil {
+	if err := verifyReplay(ctx, tx, j.IdempotencyKey+":credit", j.CreditAccountID, j.Reference, EntryCredit, amountKobo, tag); err != nil {
 		return err
 	}
 
 	return tx.Commit(ctx)
 }
 
-// verifyReplayAmount runs when an idempotent insert hit an existing row
-// (RowsAffected==0). A same-amount replay is a true duplicate and stays a
-// no-op; a different amount fails closed as ErrDuplicate so the caller can
-// reject rather than silently absorb a cheaper journal under a recycled key.
-func verifyReplayAmount(ctx context.Context, tx pgx.Tx, idempotencyKey string, amountKobo int64, tag pgconn.CommandTag) error {
+// verifyReplay runs when an idempotent insert hit an existing row
+// (RowsAffected==0). A replay is a true duplicate ONLY when the existing row
+// is the same journal leg: same account, same entry TYPE, same reference AND
+// same amount — a no-op. Anything else under the same key is a foreign or
+// tampered claim (cross-user/cross-rail key reuse, a key pre-claimed with a
+// cheaper amount absorbing a pricier replay, or a reversal row that happens
+// to share account/ref/amount): fail closed as ErrDuplicate so the caller
+// rejects instead of silently absorbing somebody else's posting — which is
+// how a silent no-op used to mint a paid vote/gift/payout row with no money
+// behind it.
+func verifyReplay(ctx context.Context, tx pgx.Tx, idempotencyKey, accountID, reference string, entryType EntryType, amountKobo int64, tag pgconn.CommandTag) error {
 	if tag.RowsAffected() > 0 {
 		return nil
 	}
-	var existing int64
+	var existingAccountID, existingRef, existingType string
+	var existingAmount int64
 	if err := tx.QueryRow(ctx,
-		`SELECT amount_kobo FROM ledger_entries WHERE idempotency_key=$1`,
-		idempotencyKey).Scan(&existing); err != nil {
+		`SELECT account_id::text, type, reference, amount_kobo FROM ledger_entries WHERE idempotency_key=$1`,
+		idempotencyKey).Scan(&existingAccountID, &existingType, &existingRef, &existingAmount); err != nil {
 		return fmt.Errorf("ledger: verify replay for %s: %w", idempotencyKey, err)
 	}
-	if existing != amountKobo {
-		return fmt.Errorf("%w: key %s replayed with different amount (posted %d, requested %d)",
-			ErrDuplicate, idempotencyKey, existing, amountKobo)
+	if existingAccountID != accountID || existingType != string(entryType) || existingRef != reference || existingAmount != amountKobo {
+		return fmt.Errorf("%w: key %s replayed for a different journal "+
+			"(posted account=%s type=%s ref=%q amount=%d, requested account=%s type=%s ref=%q amount=%d)",
+			ErrDuplicate, idempotencyKey,
+			existingAccountID, existingType, existingRef, existingAmount,
+			accountID, string(entryType), reference, amountKobo)
 	}
 	return nil
 }

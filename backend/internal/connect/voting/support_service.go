@@ -15,6 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ErrTicketNotFound is returned when a support ticket does not exist or is not
+// owned by the caller (owner-scoped lookups deliberately conflate the two so a
+// foreign ticket id is indistinguishable from a nonexistent one). Handlers map
+// it to 404 TICKET_NOT_FOUND — same as the sibling ticket GET.
+var ErrTicketNotFound = errors.New("ticket not found")
+
 // SupportService handles voting support ticket operations
 type SupportService struct {
 	pool *pgxpool.Pool
@@ -142,7 +148,7 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
-		return nil, errors.New("ticket not found")
+		return nil, ErrTicketNotFound
 	}
 
 	msgID := uuid.New().String()
@@ -171,7 +177,7 @@ func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketI
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
-		return nil, errors.New("ticket not found")
+		return nil, ErrTicketNotFound
 	}
 
 	query := `
@@ -374,6 +380,10 @@ func (h *Handler) AddTicketMessage(c *gin.Context) {
 
 	msg, err := h.svc.addTicketMessage(c.Request.Context(), uid, c.Param("id"), in.Message, in.Files)
 	if err != nil {
+		if errors.Is(err, ErrTicketNotFound) {
+			respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+			return
+		}
 		respondErr(c, http.StatusInternalServerError, "MESSAGE_ADD_FAILED", err.Error())
 		return
 	}
@@ -390,6 +400,10 @@ func (h *Handler) ListTicketMessages(c *gin.Context) {
 
 	messages, err := h.svc.listTicketMessages(c.Request.Context(), uid, c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrTicketNotFound) {
+			respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+			return
+		}
 		respondErr(c, http.StatusInternalServerError, "MESSAGES_LIST_FAILED", err.Error())
 		return
 	}

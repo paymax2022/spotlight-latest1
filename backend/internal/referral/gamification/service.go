@@ -77,7 +77,14 @@ func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) 
 		// Either not yet completed, or already claimed — report current state.
 		p, _ := s.repo.GetProgress(ctx, missionID, userID)
 		if p != nil && p.Status == ProgressClaimed {
-			return &ClaimResult{MissionID: missionID, Status: ProgressClaimed}, nil
+			res := &ClaimResult{MissionID: missionID, Status: ProgressClaimed}
+			// A prior claim may have committed 'claimed' before the cash accrue
+			// landed — retry the idempotent accrue so that failed grant heals on
+			// replay instead of reporting claimed-forever without the reward.
+			if err := s.accrueCashReward(ctx, m, userID, res); err != nil {
+				return nil, err
+			}
+			return res, nil
 		}
 		return nil, errors.New("gamification: mission not completed yet")
 	}
@@ -87,24 +94,33 @@ func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) 
 		PointsAwarded: m.PointsReward,
 		Status:        ProgressClaimed,
 	}
-
-	// Optional cash reward → RB0 ledger.Accrue (idempotent on the claim key).
-	if m.CashRewardKobo > 0 && s.reward != nil {
-		rewardID, err := s.reward.Accrue(ctx, referralledger.AccrueInput{
-			BeneficiaryID:  userID,
-			CampaignID:     m.CampaignID,
-			Kind:           referralledger.KindMission,
-			AmountKobo:     m.CashRewardKobo,
-			Currency:       "NGN",
-			IdempotencyKey: "mission_claim:" + missionID + ":" + userID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("gamification: accrue cash reward: %w", err)
-		}
-		res.CashRewardKobo = m.CashRewardKobo
-		res.RewardLedgerID = rewardID
+	if err := s.accrueCashReward(ctx, m, userID, res); err != nil {
+		return nil, err
 	}
 	return res, nil
+}
+
+// accrueCashReward grants the optional cash reward through the RB0 reward
+// ledger, idempotent on the deterministic claim key, so it is safe to call on
+// both the first claim and any replay.
+func (s *Service) accrueCashReward(ctx context.Context, m *Mission, userID string, res *ClaimResult) error {
+	if m.CashRewardKobo <= 0 || s.reward == nil {
+		return nil
+	}
+	rewardID, err := s.reward.Accrue(ctx, referralledger.AccrueInput{
+		BeneficiaryID:  userID,
+		CampaignID:     m.CampaignID,
+		Kind:           referralledger.KindMission,
+		AmountKobo:     m.CashRewardKobo,
+		Currency:       "NGN",
+		IdempotencyKey: "mission_claim:" + m.ID + ":" + userID,
+	})
+	if err != nil {
+		return fmt.Errorf("gamification: accrue cash reward: %w", err)
+	}
+	res.CashRewardKobo = m.CashRewardKobo
+	res.RewardLedgerID = rewardID
+	return nil
 }
 
 // ListRanks / ListBadges / Leaderboard / Contests are read-throughs.

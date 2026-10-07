@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // Handler exposes the HEALTH-BUILD §6 Laboratory API. AuthN is the finance auth
@@ -74,6 +75,12 @@ func (h *Handler) UpsertTest(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// lab_provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid);
+	// an empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(t.LabProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
+		return
+	}
 	out, err := h.svc.UpsertTest(c.Request.Context(), id, t)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
@@ -89,7 +96,14 @@ func (h *Handler) ListProviderOrders(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	rows, err := h.svc.ListProviderOrders(c.Request.Context(), id, c.Query("lab_provider_id"))
+	// lab_provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid);
+	// an empty/malformed value must be a 400, never a driver error.
+	provID := c.Query("lab_provider_id")
+	if _, err := uuid.Parse(provID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
+		return
+	}
+	rows, err := h.svc.ListProviderOrders(c.Request.Context(), id, provID)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusForbidden, err.Error())
 		return
@@ -112,6 +126,12 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// lab_provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid);
+	// an empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(req.LabProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
 		return
 	}
 	idem := strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)

@@ -165,9 +165,9 @@ export async function depositToWallet(amountKobo: number, idempotencyKey: string
   return investPost<WalletView>('/invest/wallet/deposit', { amount_kobo: amountKobo, source: 'paymax_wallet' }, idempotencyKey);
 }
 
-export async function withdrawFromWallet(amountKobo: number, idempotencyKey: string): Promise<WalletView> {
+export async function withdrawFromWallet(amountKobo: number, idempotencyKey: string, pin: string): Promise<WalletView> {
   if (INVEST_USE_MOCK) return waitMock({ ...MOCK_WALLET, available_cash_kobo: Math.max(0, MOCK_WALLET.available_cash_kobo - amountKobo) });
-  return investPost<WalletView>('/invest/wallet/withdraw', { amount_kobo: amountKobo, destination: 'paymax_wallet' }, idempotencyKey);
+  return investPost<WalletView>('/invest/wallet/withdraw', { amount_kobo: amountKobo, destination: 'paymax_wallet', pin }, idempotencyKey);
 }
 
 export async function getWatchlists(): Promise<Watchlist[]> {

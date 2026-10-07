@@ -50,6 +50,26 @@ func (r *Repository) Insert(ctx context.Context, p *Payout) (*Payout, error) {
 	return out, nil
 }
 
+// GetByIdempotencyKey fetches the payout recorded under a derived ledger key —
+// the convergence read after an Insert hits the unique idempotency_key: a retry
+// that crashed between the ledger debit commit and the row insert must be
+// returned THIS row, never re-inserted.
+func (r *Repository) GetByIdempotencyKey(ctx context.Context, idemKey string) (*Payout, error) {
+	const q = `SELECT ` + payoutColumns + ` FROM connect_payouts WHERE idempotency_key = $1`
+	var p Payout
+	err := r.db.QueryRow(ctx, q, idemKey).Scan(
+		&p.ID, &p.CreatorID, &p.AmountKobo, &p.Status, &p.DestinationRef,
+		&p.LedgerRef, &p.SettlementRef, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("payouts: get by idempotency key: %w", err)
+	}
+	return &p, nil
+}
+
 // Get fetches a single payout by id, or ErrNotFound.
 func (r *Repository) Get(ctx context.Context, id string) (*Payout, error) {
 	const q = `SELECT ` + payoutColumns + ` FROM connect_payouts WHERE id = $1`

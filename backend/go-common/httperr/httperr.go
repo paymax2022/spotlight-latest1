@@ -24,10 +24,15 @@ import (
 const errKey = "error"
 
 // Rule binds one HTTP status to a set of sentinel errors. A rule matches when
-// errors.Is reports a match against any listed sentinel.
+// errors.Is reports a match against any listed sentinel — or, for error classes
+// that cannot be named as sentinels (a Postgres SQLSTATE family, an unwrapped
+// domain message), when the optional Match predicate accepts the error.
+// Predicate and sentinel checks share the rule's status; declaration order of
+// rules still decides which status wins.
 type Rule struct {
 	Status int
 	Errs   []error
+	Match  func(error) bool
 }
 
 // R builds a Rule: `httperr.R(http.StatusNotFound, ErrNotFound)`.
@@ -57,6 +62,9 @@ func (m *Mapper) Code(err error) int {
 		return http.StatusOK
 	}
 	for _, r := range m.rules {
+		if r.Match != nil && r.Match(err) {
+			return r.Status
+		}
 		for _, e := range r.Errs {
 			if errors.Is(err, e) {
 				return r.Status

@@ -6,10 +6,11 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function POST(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const identity = await assertStemScoreAdmin(request);
+    const { id } = await context.params;
     const body = (await request.json().catch(() => null)) as StemAdminApplicationReviewInput;
     if (!body) return errorResponse('Invalid JSON body', 400);
 
@@ -17,7 +18,7 @@ export async function POST(
       return errorResponse('status is required', 400);
     }
 
-    const application = await reviewApplication(context.params.id, {
+    const application = await reviewApplication(id, {
       status: body.status,
       note: body.note,
       score: body.score,
@@ -30,7 +31,7 @@ export async function POST(
       action: 'stem_application_review',
       module: 'stem',
       entityType: 'application',
-      entityId: context.params.id,
+      entityId: id,
       reason: body.note || 'STEM application scoring/review',
       newValue: {
         status: body.status,

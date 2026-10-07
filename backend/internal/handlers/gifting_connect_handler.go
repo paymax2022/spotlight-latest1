@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -240,7 +242,19 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		return
 	}
 
-	reference := "GIFT-" + generateShortID()
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another sender) would
+	// collide on ledger_entries.idempotency_key and the debit would silently
+	// no-op — recording a gift with no money behind it. The derived key keeps
+	// a genuine retry a conflict rather than a phantom no-op.
+	ledgerKey := "connect:wallet-gift:" + userID + ":" + idemKey
+
+	// Deterministic reference derived from the ledger key — see
+	// ledgerDerivedRef: a random ref strands every post-debit crash as a
+	// permanent 409 (same key, different journal → replay refused) while the
+	// money is already moved.
+	reference := ledgerDerivedRef("GIFT-", ledgerKey)
 
 	// Resolve the recipient's wallet so the journal has a real credit side.
 	recipientWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), body.RecipientID)
@@ -251,15 +265,60 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 
 	// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
 	// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
-	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, idemKey, recipientWallet.ID, product.AmountKobo); err != nil {
-		writeMoneyError(c, err)
+	debitErr := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, recipientWallet.ID, product.AmountKobo)
+	if errors.Is(debitErr, ledger.ErrDuplicate) {
+		// The derived key embeds this sender's user id, so a claim on it can only
+		// come from this sender's own earlier attempt — e.g. a debit committed
+		// under an older reference shape before a crash. If the durable pair is
+		// provably this gift, adopt the RECORDED reference and finish the
+		// projection; a foreign or tampered claim still fails closed as 409.
+		senderWallet, werr := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), userID)
+		if werr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "wallet unavailable"})
+			return
+		}
+		recRef, ok, aerr := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, senderWallet.ID, recipientWallet.ID, product.AmountKobo)
+		if aerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "transaction could not be completed"})
+			return
+		}
+		if !ok {
+			writeMoneyError(c, debitErr)
+			return
+		}
+		reference = recRef
+		debitErr = nil
+	}
+	if debitErr != nil {
+		writeMoneyError(c, debitErr)
 		return
 	}
 
-	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, idemKey)
+	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, ledgerKey)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
-		return
+		if dbutil.IsUniqueViolation(err) {
+			// The gift row was already recorded by a first attempt that crashed
+			// AFTER the debit committed — converge on it rather than failing a
+			// true retry. The stored row must still be THIS gift (same sender +
+			// recipient + amount): anything else under the derived key is a
+			// foreign claim.
+			existing, lerr := h.store.GetGiftByIdempotencyKey(c.Request.Context(), ledgerKey)
+			if lerr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
+				return
+			}
+			if existing == nil || existing.SenderID != userID ||
+				existing.RecipientID != body.RecipientID || existing.AmountKobo != product.AmountKobo {
+				c.JSON(http.StatusConflict, gin.H{"error": "idempotency key conflict"})
+				return
+			}
+			gt = existing
+			err = nil
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
+			return
+		}
 	}
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, body.RecipientID, "send_gift", "wallet", "gift",

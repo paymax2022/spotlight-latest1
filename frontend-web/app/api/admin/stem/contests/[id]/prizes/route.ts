@@ -5,13 +5,14 @@ import type { StemPrizeCategory } from '@/src/features/stem/types';
 
 export async function POST(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     await assertStemAdmin(request);
+    const { id } = await context.params;
     const body = (await request.json().catch(() => null)) as Partial<StemPrizeCategory>;
     if (!body) return errorResponse('Invalid JSON body', 400);
-    const prizeCategory = await addPrizeCategory(context.params.id, body);
+    const prizeCategory = await addPrizeCategory(id, body);
     return successResponse({ success: true, prizeCategory }, 201);
   } catch (error) {
     return handleApiError(error, 'Failed to create STEM prize category');

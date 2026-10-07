@@ -70,7 +70,7 @@ var (
 	providerStatuses   = []string{"active", "disabled", "maintenance"}
 	catalogueStatuses  = []string{"active", "disabled"}
 	healthStatuses     = []string{"healthy", "degraded", "down", "unknown"}
-	disputeResolutions = []string{"resolved", "rejected"}
+	disputeResolutions = []string{"resolved", "rejected", "refunded"}
 	amountTypes        = []string{string(AmountTypeFixed), string(AmountTypeVariable)}
 )
 
@@ -904,6 +904,18 @@ func (s *Service) ResolveDispute(ctx context.Context, actorUserID, transactionID
 	t, err := s.repo.GetTransaction(ctx, transactionID)
 	if err != nil {
 		return nil, err
+	}
+
+	// 'refunded' is the customer-favourable outcome: the vend reported success
+	// but delivery failed, so the wallet debit is returned. Money moves through
+	// the single shared reversal path (claim + comp-key probe + reversal legs) —
+	// if it fails the dispute stays open rather than claiming a refund that
+	// never posted. Paystack-sourced rows refuse there: the money sits at
+	// Paystack, not in the ledger.
+	if status == "refunded" {
+		if _, rerr := s.ReverseTransaction(ctx, actorUserID, t.ID, "dispute refund: "+resolutionNote); rerr != nil {
+			return nil, rerr
+		}
 	}
 
 	dispute, err := s.repo.UpdateDisputeByTransaction(ctx, t.ID, status, resolutionNote)

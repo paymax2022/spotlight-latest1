@@ -247,7 +247,7 @@ func (h *Handler) PayoutPool(c *gin.Context) {
 }
 
 func (h *Handler) PoolBalance(c *gin.Context) {
-	bal, err := h.svc.PoolBalance(c.Request.Context(), c.Param("id"))
+	bal, err := h.svc.PoolBalance(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
