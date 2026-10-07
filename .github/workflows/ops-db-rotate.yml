@@ -61,8 +61,8 @@ jobs:
         run: |
           set -euo pipefail
           case "$ENVIRONMENT" in
-            production)  tok="$TOK_PRODUCTION";  ref="$PROD_PROJECT_ID" ;;
-            staging)     tok="$TOK_STAGING";     ref="$STG_PROJECT_ID" ;;
+            production)  tok="$TOK_PRODUCTION";  ref="$PROD_PROJECT_ID"; pooler="aws-0-eu-north-1.pooler.supabase.com" ;;
+            staging)     tok="$TOK_STAGING";     ref="$STG_PROJECT_ID"; pooler="aws-1-eu-west-1.pooler.supabase.com" ;;
             *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
           esac
           [ -n "$tok" ] || { echo "::error::missing RAILWAY_TOKEN for $ENVIRONMENT"; exit 1; }
@@ -79,6 +79,7 @@ jobs:
           printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
           printf 'PROJECT_REF=%s\n' "$ref" >> "$GITHUB_ENV"
           printf 'SB_ACCESS=%s\n' "$SB_ACCESS" >> "$GITHUB_ENV"
+          printf 'POOLER_HOST=%s\n' "$pooler" >> "$GITHUB_ENV"
           echo "::add-mask::$NEW_PW"
           printf 'NEW_PW=%s\n' "$NEW_PW" >> "$GITHUB_ENV"
           unset tok ref
@@ -105,7 +106,7 @@ jobs:
       - name: Wait for propagation, then verify pooler auth
         run: |
           set -euo pipefail
-          url="postgres://postgres.${PROJECT_REF}:${NEW_PW}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require"
+          url="postgres://postgres.${PROJECT_REF}:${NEW_PW}@${POOLER_HOST}:5432/postgres?sslmode=require"
           echo "::add-mask::$url"
           printf 'DATABASE_URL_VALUE=%s\n' "$url" >> "$GITHUB_ENV"
           ok=0
