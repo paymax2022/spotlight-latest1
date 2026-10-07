@@ -35,3 +35,27 @@ function isBlank(v: unknown): boolean {
 export function missingRequired(role: ProfessionalRole, details: Record<string, unknown>): string[] {
   return REQUIRED[role].filter((k) => isBlank(details[k]));
 }
+
+export type DetailKind = 'string' | 'stringList' | 'count';
+
+// Mirrors backend/internal/property/roles/validate.go key types exactly.
+const KINDS: Record<ProfessionalRole, Record<string, DetailKind>> = {
+  agent: { licenceNumber: 'string', agencyName: 'string', bio: 'string', specialisations: 'string', operatingStates: 'stringList' },
+  developer: { companyName: 'string', cacNumber: 'string', website: 'string', projectSummary: 'string' },
+  estate_manager: { organisationName: 'string', estatesManaged: 'count' },
+};
+
+export function detailKindFor(role: ProfessionalRole, key: string): DetailKind | undefined {
+  return KINDS[role][key];
+}
+
+// The only key whose edit resets verification on a verified/pending profile (service.go Update).
+const IDENTITY: Record<ProfessionalRole, string> = {
+  agent: 'licenceNumber',
+  developer: 'cacNumber',
+  estate_manager: 'organisationName',
+};
+
+export function identityKeyFor(role: ProfessionalRole): string {
+  return IDENTITY[role];
+}

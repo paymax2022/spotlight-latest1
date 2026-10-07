@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { requiredFieldsFor, optionalFieldsFor, missingRequired } from '../requirements.ts';
+import { requiredFieldsFor, optionalFieldsFor, missingRequired, detailKindFor, identityKeyFor, PROFESSIONAL_ROLES } from '../requirements.ts';
 
 test('required fields per role match the Go MissingForSubmit keys', () => {
   assert.deepEqual(requiredFieldsFor('agent'), ['licenceNumber', 'operatingStates']);
@@ -33,4 +33,31 @@ test('missingRequired accepts complete details', () => {
   assert.deepEqual(missingRequired('agent', { licenceNumber: 'L1', operatingStates: ['Lagos'] }), []);
   assert.deepEqual(missingRequired('developer', { companyName: 'A', cacNumber: 'RC1' }), []);
   assert.deepEqual(missingRequired('estate_manager', { organisationName: 'Org' }), []);
+});
+
+test('detailKindFor mirrors validate.go for every key', () => {
+  const expected = {
+    agent: { licenceNumber: 'string', agencyName: 'string', bio: 'string', specialisations: 'string', operatingStates: 'stringList' },
+    developer: { companyName: 'string', cacNumber: 'string', website: 'string', projectSummary: 'string' },
+    estate_manager: { organisationName: 'string', estatesManaged: 'count' },
+  } as const;
+  for (const [role, keys] of Object.entries(expected)) {
+    for (const [k, kind] of Object.entries(keys)) {
+      assert.equal(detailKindFor(role as never, k), kind, `${role}.${k}`);
+    }
+  }
+});
+
+test('every required/optional key has a kind', () => {
+  for (const r of PROFESSIONAL_ROLES) {
+    for (const k of [...requiredFieldsFor(r), ...optionalFieldsFor(r)]) {
+      assert.ok(detailKindFor(r, k), `${r}.${k}`);
+    }
+  }
+});
+
+test('identityKeyFor is the single verification-resetting key', () => {
+  assert.equal(identityKeyFor('agent'), 'licenceNumber');
+  assert.equal(identityKeyFor('developer'), 'cacNumber');
+  assert.equal(identityKeyFor('estate_manager'), 'organisationName');
 });

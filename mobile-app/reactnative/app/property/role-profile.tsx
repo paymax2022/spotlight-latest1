@@ -24,24 +24,25 @@ import {
   missingRequired,
   requiredFieldsFor,
   optionalFieldsFor,
+  detailKindFor,
+  identityKeyFor,
   type ProfessionalRole,
 } from '@/features/property/roles/requirements';
 import { RoleUploadsUnavailableError, RoleDocumentTypeError } from '@/features/property/roles/api';
 import type { RoleDocumentKind } from '@/features/property/roles/types';
 
-type FieldKind = 'text' | 'multiline' | 'list' | 'number';
-const FIELDS: Record<string, { label: string; kind: FieldKind; hint?: string }> = {
-  licenceNumber: { label: 'Licence number', kind: 'text' },
-  operatingStates: { label: 'Operating states', kind: 'list', hint: 'Comma-separated, e.g. Lagos, Abuja' },
-  agencyName: { label: 'Agency name', kind: 'text' },
-  bio: { label: 'Bio', kind: 'multiline' },
-  specialisations: { label: 'Specialisations', kind: 'list', hint: 'Comma-separated' },
-  companyName: { label: 'Company name', kind: 'text' },
-  cacNumber: { label: 'CAC number', kind: 'text' },
-  website: { label: 'Website', kind: 'text' },
-  projectSummary: { label: 'Project summary', kind: 'multiline' },
-  organisationName: { label: 'Organisation name', kind: 'text' },
-  estatesManaged: { label: 'Estates managed', kind: 'number', hint: 'Whole number' },
+const FIELDS: Record<string, { label: string; multiline?: boolean; hint?: string }> = {
+  licenceNumber: { label: 'Licence number' },
+  operatingStates: { label: 'Operating states', hint: 'Comma-separated, e.g. Lagos, Abuja' },
+  agencyName: { label: 'Agency name' },
+  bio: { label: 'Bio', multiline: true },
+  specialisations: { label: 'Specialisations', multiline: true, hint: 'Free text, e.g. Luxury apartments, Land' },
+  companyName: { label: 'Company name' },
+  cacNumber: { label: 'CAC number' },
+  website: { label: 'Website' },
+  projectSummary: { label: 'Project summary', multiline: true },
+  organisationName: { label: 'Organisation name' },
+  estatesManaged: { label: 'Estates managed', hint: 'Whole number' },
 };
 
 const ROLE_LABEL: Record<ProfessionalRole, string> = {
@@ -60,9 +61,6 @@ const DEFAULT_DOC_KIND: Record<ProfessionalRole, RoleDocumentKind> = {
   agent: 'agent_licence', developer: 'cac_certificate', estate_manager: 'authority_letter',
 };
 
-// Fields whose edit on a verified/pending profile resets verification server-side.
-const identityKeys = (role: ProfessionalRole) => ['displayName', ...requiredFieldsFor(role)];
-
 function toForm(details: Record<string, unknown>, keys: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of keys) {
@@ -72,18 +70,43 @@ function toForm(details: Record<string, unknown>, keys: string[]): Record<string
   return out;
 }
 
-function toDetails(form: Record<string, string>, keys: string[]): Record<string, unknown> {
+function toDetails(role: ProfessionalRole, form: Record<string, string>, keys: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of keys) {
     const raw = (form[k] ?? '').trim();
-    const kind = FIELDS[k]?.kind;
-    if (kind === 'list') out[k] = raw ? raw.split(',').map((x) => x.trim()).filter(Boolean) : [];
-    else if (kind === 'number') {
-      if (raw !== '' && /^\d+$/.test(raw)) out[k] = Number(raw);
+    const kind = detailKindFor(role, k);
+    if (kind === 'stringList') {
+      const list = raw.split(',').map((x) => x.trim()).filter(Boolean);
+      if (list.length) out[k] = list;
+    } else if (kind === 'count') {
+      if (/^\d+$/.test(raw)) out[k] = Number(raw);
     } else if (raw !== '') out[k] = raw;
   }
   return out;
 }
+
+/** Inline validation message per key (count fields must be whole numbers). */
+function fieldErrors(role: ProfessionalRole, form: Record<string, string>, keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of keys) {
+    const raw = (form[k] ?? '').trim();
+    if (detailKindFor(role, k) === 'count' && raw !== '' && !/^\d+$/.test(raw)) {
+      out[k] = 'Enter a whole number.';
+    }
+  }
+  return out;
+}
+
+function serverMessage(err: unknown, fallback: string): string {
+  const m = (err as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
+  return typeof m === 'string' && m.trim() ? m : fallback;
+}
+
+const IDENTITY_LABEL: Record<string, string> = {
+  licenceNumber: 'licence number',
+  cacNumber: 'CAC number',
+  organisationName: 'organisation name',
+};
 
 export default function RoleProfileScreen() {
   const params = useLocalSearchParams<{ role?: string }>();
@@ -112,33 +135,35 @@ export default function RoleProfileScreen() {
     }
   }, [profile, hydrated, keys]);
 
-  const details = useMemo(() => toDetails(form, keys), [form, keys]);
+  const details = useMemo(() => toDetails(role, form, keys), [form, keys]);
+  const errors = useMemo(() => fieldErrors(role, form, keys), [role, form, keys]);
+  const hasErrors = Object.keys(errors).length > 0;
   const missing = missingRequired(role, details);
   const docCount = profile?.documents.length ?? 0;
   const suspended = profile?.status === 'suspended';
   const vs = profile?.verificationStatus;
   const locked = suspended || vs === 'pending' || vs === 'verified';
-  const canSubmit = !!profile && missing.length === 0 && displayName.trim() !== '' && docCount > 0 && !locked;
+  const canSubmit = !!profile && missing.length === 0 && displayName.trim() !== '' && docCount > 0 && !locked && !hasErrors;
 
   const dirty = useMemo(() => {
     if (!profile) return false;
     if (displayName.trim() !== profile.displayName) return true;
-    return JSON.stringify(details) !== JSON.stringify(toDetails(toForm(profile.details ?? {}, keys), keys));
+    return JSON.stringify(details) !== JSON.stringify(toDetails(role, toForm(profile.details ?? {}, keys), keys));
   }, [profile, displayName, details, keys]);
 
   const identityChanged = useMemo(() => {
     if (!profile) return false;
-    const saved = toDetails(toForm(profile.details ?? {}, keys), keys);
-    if (displayName.trim() !== profile.displayName) return true;
-    return requiredFieldsFor(role).some((k) => JSON.stringify(saved[k]) !== JSON.stringify(details[k]));
-  }, [profile, displayName, details, keys, role]);
+    const saved = toDetails(role, toForm(profile.details ?? {}, keys), keys);
+    const k = identityKeyFor(role);
+    return JSON.stringify(saved[k]) !== JSON.stringify(details[k]);
+  }, [profile, details, keys, role]);
 
   const save = async (): Promise<boolean> => {
-    if (!profile || suspended) return false;
+    if (!profile || suspended || hasErrors) return false;
     if (identityChanged && (vs === 'verified' || vs === 'pending')) {
       const ok = await confirmAsync({
-        title: 'Changing identity details',
-        message: 'Editing your name or identity fields resets verification. You will need to submit again for review.',
+        title: 'Reset verification?',
+        message: `Changing your ${IDENTITY_LABEL[identityKeyFor(role)]} will reset your verification. You will need to submit again for review.`,
         confirmLabel: 'Save and reset',
         cancelLabel: 'Cancel',
         destructive: true,
@@ -148,8 +173,8 @@ export default function RoleProfileScreen() {
     try {
       await update.mutateAsync({ displayName: displayName.trim(), details });
       return true;
-    } catch {
-      await alertAsync({ title: 'Could not save', message: 'Check your details and try again.' });
+    } catch (err) {
+      await alertAsync({ title: 'Could not save', message: serverMessage(err, 'Check your details and try again.') });
       return false;
     }
   };
@@ -160,8 +185,8 @@ export default function RoleProfileScreen() {
     try {
       await submit.mutateAsync();
       await alertAsync({ title: 'Submitted', message: 'Your details are with our review team.' });
-    } catch {
-      await alertAsync({ title: 'Could not submit', message: 'Make sure required fields and a document are in place, then try again.' });
+    } catch (err) {
+      await alertAsync({ title: 'Could not submit', message: serverMessage(err, 'Make sure required fields and a document are in place, then try again.') });
     }
   };
 
@@ -182,7 +207,7 @@ export default function RoleProfileScreen() {
       } else if (err instanceof RoleDocumentTypeError) {
         await alertAsync({ title: 'Unsupported file', message: err.message });
       } else {
-        await alertAsync({ title: 'Upload failed', message: 'The document could not be uploaded. Please try again.' });
+        await alertAsync({ title: 'Upload failed', message: serverMessage(err, 'The document could not be uploaded. Please try again.') });
       }
     }
   };
@@ -213,8 +238,9 @@ export default function RoleProfileScreen() {
                     value={form[k] ?? ''}
                     onChangeText={(t) => setForm((s) => ({ ...s, [k]: t }))}
                     editable={!suspended}
-                    multiline={f.kind === 'multiline'}
-                    keyboardType={f.kind === 'number' ? 'number-pad' : 'default'}
+                    multiline={!!f.multiline}
+                    keyboardType={detailKindFor(role, k) === 'count' ? 'number-pad' : 'default'}
+                    error={errors[k]}
                     autoCapitalize={k === 'website' ? 'none' : 'sentences'}
                   />
                   {f.hint ? <Text style={styles.hint}>{f.hint}</Text> : null}
@@ -226,7 +252,7 @@ export default function RoleProfileScreen() {
               variant="secondary"
               onPress={save}
               loading={update.isPending}
-              disabled={!dirty || suspended}
+              disabled={!dirty || suspended || hasErrors}
             />
 
             <SectionHeader title="Verification documents" style={styles.section} />
@@ -293,7 +319,7 @@ function StatusBanner({ status, vs, reason }: { status: string; vs: string; reas
   } else if (vs === 'pending') {
     Icon = Clock; title = 'Pending review'; body = 'Our team is reviewing your submission.';
   } else if (vs === 'verified') {
-    Icon = CheckCircle2; title = 'Verified'; body = 'Your role is verified. Editing identity fields will reset verification.';
+    Icon = CheckCircle2; title = 'Verified'; body = 'Your role is verified. Changing your licence number, CAC number or organisation name will reset verification.';
   } else if (vs === 'rejected') {
     Icon = XCircle; title = 'Rejected';
     body = reason ? `Reason: ${reason}` : 'Your submission was rejected. Update your details and resubmit.';
