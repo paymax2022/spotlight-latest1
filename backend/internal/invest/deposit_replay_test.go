@@ -84,11 +84,11 @@ func TestLiveDB_InvestWithdrawReplayReturnsSameResult(t *testing.T) {
 	}
 
 	key := "mtl-wd-replay:" + uuid.NewString()
-	w1, err := svc.Withdraw(ctx, u, key, 4_000_000, "paymax_wallet")
+	w1, err := svc.Withdraw(ctx, u, key, 4_000_000, "paymax_wallet", "1234")
 	if err != nil {
 		t.Fatalf("withdraw: %v", err)
 	}
-	w2, err := svc.Withdraw(ctx, u, key, 4_000_000, "paymax_wallet")
+	w2, err := svc.Withdraw(ctx, u, key, 4_000_000, "paymax_wallet", "1234")
 	if err != nil {
 		t.Fatalf("withdraw replay must return the first result, got %v", err)
 	}
