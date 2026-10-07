@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminSession } from '../../../_lib/require-admin-session';
 
 let _supabase: SupabaseClient | null = null;
 function supabase(): SupabaseClient {
@@ -20,6 +21,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!(await requireAdminSession(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { id } = await params;
 
     const { data: adminVotes, error: votesError } = await supabase()
@@ -77,6 +81,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!(await requireAdminSession(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { id } = await params;
     const body = await req.json();
     const { voteCount, adminName, adminId, competitionId } = body;

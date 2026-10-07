@@ -44,6 +44,15 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
     );
   }
 
+  // The enforce opt-out exists for local dev only; in production it would let
+  // any request through this proxy unauthenticated — fail loud instead.
+  if (process.env.NODE_ENV === 'production' && !resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
+    return NextResponse.json(
+      { error: 'ADMIN_MIDDLEWARE_ENFORCE must not be disabled in production.' },
+      { status: 503 },
+    );
+  }
+
   // The HttpOnly session cookie holds the Supabase access token itself — the
   // same credential frontend-web validates. Attach it server-side; the token
   // must never be readable by browser JS.

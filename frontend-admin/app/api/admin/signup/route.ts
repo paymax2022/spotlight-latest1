@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { extractSessionToken, isSessionValid, resolveEnforce } from '../../../../middleware';
+import { extractSessionToken } from '../../../../middleware';
+import { requireAdminSession } from '../../_lib/require-admin-session';
 import {
   ADMIN_TIER_ROLE_LABELS,
   ADMIN_TIER_ROLE_SLUGS,
@@ -84,12 +85,12 @@ function clientIp(request: Request): string | null {
 }
 
 async function sessionState(request: Request): Promise<{ present: boolean; userId: string | null }> {
-  if (!resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
-    return { present: false, userId: null };
-  }
-  const token = extractSessionToken(request.headers.get('cookie'));
-  if (!(await isSessionValid(token))) return { present: false, userId: null };
-  return { present: true, userId: decodeJwtSubject(token) };
+  // A valid Supabase JWT only proves the caller is SOME user — the public
+  // anon key and every registered account satisfy isSessionValid. A session
+  // vouch must mean the backend admits this identity as a console admin
+  // (menu-counts sits behind RequireAdminConsoleRole); fail closed otherwise.
+  if (!(await requireAdminSession(request))) return { present: false, userId: null };
+  return { present: true, userId: decodeJwtSubject(extractSessionToken(request.headers.get('cookie'))) };
 }
 
 async function consoleAdminCount(sb: SupabaseClient): Promise<number | null> {
