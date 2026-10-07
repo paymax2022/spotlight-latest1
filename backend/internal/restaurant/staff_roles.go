@@ -362,18 +362,22 @@ type UserLookup struct {
 	Name   string `json:"name,omitempty"`
 }
 
-// LookupUser searches for a user by email or phone number for staff invitation.
+// LookupUser resolves a user by EXACT email or phone for staff invitation.
+// It previously ran a wildcard ILIKE over every platform_users row — any
+// authenticated user could enumerate the entire user directory's contact data.
+// Exact match only: the inviter must already know the address they are
+// looking up, and the response carries no contact fields back (the caller
+// just typed them) — only the id + display name needed to confirm the invite.
 func (s *Service) LookupUser(ctx context.Context, query string) (*UserLookup, error) {
 	const q = `
-		SELECT id, COALESCE(email, ''), COALESCE(phone, ''), COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), '')
+		SELECT id, COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), '')
 		FROM public.platform_users
-		WHERE (email ILIKE $1 OR phone LIKE $2) AND deleted_at IS NULL
+		WHERE (lower(email) = lower($1) OR phone = $2) AND deleted_at IS NULL
 		LIMIT 1`
 
-	searchPattern := "%" + query + "%"
 	var u UserLookup
-	err := s.db.QueryRow(ctx, q, searchPattern, "%"+query).Scan(
-		&u.UserID, &u.Email, &u.Phone, &u.Name,
+	err := s.db.QueryRow(ctx, q, query, query).Scan(
+		&u.UserID, &u.Name,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)

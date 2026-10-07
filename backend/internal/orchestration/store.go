@@ -54,6 +54,10 @@ type Store interface {
 	AllTransfers(ctx context.Context) ([]*Transfer, error)
 	UpdateConversionStatus(ctx context.Context, reference, status string) error
 	UpdateTransferStatus(ctx context.Context, reference, status string) error
+	// RefundTransfer compensates a provider-declared failed/reversed payout:
+	// status flip + wallet credit + balanced reversal legs in one tx. refunded=false
+	// on replay or unknown reference.
+	RefundTransfer(ctx context.Context, reference, status string) (refunded bool, err error)
 
 	// SeedBalance credits an opening balance (dev/onboarding helper).
 	SeedBalance(ctx context.Context, customerID, currency string, amountMinor int64) error
@@ -266,6 +270,28 @@ func (m *memStore) UpdateTransferStatus(_ context.Context, reference, status str
 		}
 	}
 	return nil
+}
+
+func (m *memStore) RefundTransfer(_ context.Context, reference, status string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.transfers {
+		if t.Reference != reference {
+			continue
+		}
+		if t.Status == TransferFailed || t.Status == TransferReversed {
+			return false, nil // already compensated
+		}
+		sourceTotal := t.Source.AmountMinor + feeAmount(t.Fees, FeeProvider) + feeAmount(t.Fees, FeeRail)
+		if m.balances[t.CustomerID] == nil {
+			m.balances[t.CustomerID] = map[string]int64{}
+		}
+		m.balances[t.CustomerID][t.Source.Currency] += sourceTotal
+		t.Status = TransferStatus(status)
+		t.StatusHistory = append(t.StatusHistory, StatusEvent{Status: status, At: time.Now()})
+		return true, nil
+	}
+	return false, nil
 }
 
 func (m *memStore) Transactions(_ context.Context, customer string) ([]TxView, error) {

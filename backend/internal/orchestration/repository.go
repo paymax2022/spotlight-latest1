@@ -528,6 +528,65 @@ func (s *sqlStore) UpdateTransferStatus(ctx context.Context, reference, status s
 	return err
 }
 
+// RefundTransfer marks a transfer terminal AND returns the debited source total
+// to the customer's wallet in ONE transaction — the compensating mirror of
+// ApplyTransfer's debit+legs. Previously a provider `failed`/`reversed` webhook
+// flipped the row's status while the customer stayed debited forever.
+// refunded=false means the transfer was already in a compensated state (replay).
+// The refund legs carry ":refund" idem suffixes so a retried call that already
+// committed fails the claim check BEFORE any wallet or ledger write.
+func (s *sqlStore) RefundTransfer(ctx context.Context, reference, status string) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var customerID, srcCur, priorStatus, idemKey string
+	var srcMinor int64
+	var feesB []byte
+	if err := tx.QueryRow(ctx,
+		`SELECT customer_id, source_currency, source_minor, fees, status, idempotency_key
+		 FROM orch_transfers WHERE reference=$1 FOR UPDATE`, reference).
+		Scan(&customerID, &srcCur, &srcMinor, &feesB, &priorStatus, &idemKey); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	switch TransferStatus(priorStatus) {
+	case TransferFailed, TransferReversed:
+		// Already compensated by an earlier delivery — replay-safe.
+		return false, nil
+	}
+
+	var fees []Fee
+	_ = json.Unmarshal(feesB, &fees)
+	sourceTotal := srcMinor + feeAmount(fees, FeeProvider) + feeAmount(fees, FeeRail)
+
+	if err := lockCustomerWallet(ctx, tx, customerID); err != nil {
+		return false, err
+	}
+	if err := creditCustomerWallet(ctx, tx, customerID, srcCur, sourceTotal, reference, idemKey+":refund"); err != nil {
+		return false, err
+	}
+	// Mirror ApplyTransfer's legs: return the spread to the customer too — the
+	// whole source debit is unwound, not just the clearing leg.
+	spread, clearing := splitSpread(feeAmount(fees, FeeSpread), sourceTotal)
+	legs := []entryLeg{
+		{"provider_clearing", srcCur, "DEBIT", clearing, ":refund-clearing"},
+		{"paymax_spread", srcCur, "DEBIT", spread, ":refund-spread"},
+		{"customer_balance", srcCur, "CREDIT", sourceTotal, ":refund"},
+	}
+	if err := postLedgerLegs(ctx, tx, customerID, reference, idemKey, legs); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE orch_transfers SET status=$2 WHERE reference=$1`, reference, status); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
 func (s *sqlStore) Transaction(ctx context.Context, customer, id string) (*TxView, bool, error) {
 	all, err := s.Transactions(ctx, customer)
 	if err != nil {

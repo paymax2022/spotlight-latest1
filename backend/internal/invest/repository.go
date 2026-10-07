@@ -22,6 +22,11 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 var ErrNotFound = errors.New("invest: not found")
 
+// ErrSettlementClaimed is returned by SettleOrder when the order is no longer in
+// pending_settlement — i.e. another settlement path (broker webhook or the T+N
+// worker) already claimed it. Callers should treat it as "already handled".
+var ErrSettlementClaimed = errors.New("invest: settlement already claimed")
+
 func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	const q = `SELECT id, user_id, kyc_tier, suitability_profile_id, risk_category, country,
 		residency_country, investment_enabled, stock_trading_enabled, public_offer_enabled,
@@ -582,6 +587,83 @@ func (r *Repository) AddToPosition(ctx context.Context, userID, assetID, symbol 
 	return err
 }
 
+func addToPositionTx(ctx context.Context, tx pgx.Tx, userID, assetID, symbol string, qty float64, costKobo int64) error {
+	const q = `INSERT INTO invest_positions (user_id, stock_asset_id, symbol, quantity, average_cost_kobo)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (user_id, stock_asset_id) DO UPDATE SET
+			average_cost_kobo = CASE WHEN (invest_positions.quantity + EXCLUDED.quantity) > 0 THEN
+				((invest_positions.quantity * invest_positions.average_cost_kobo) + (EXCLUDED.quantity * EXCLUDED.average_cost_kobo))
+				/ (invest_positions.quantity + EXCLUDED.quantity)
+				ELSE invest_positions.average_cost_kobo END,
+			quantity = invest_positions.quantity + EXCLUDED.quantity,
+			updated_at = now()`
+	_, err := tx.Exec(ctx, q, userID, assetID, symbol, qty, costKobo)
+	return err
+}
+
+// SettleOrder atomically claims a pending_settlement order and applies the
+// position mutation in ONE transaction. The `AND status='pending_settlement'`
+// predicate makes the UPDATE a claim — a concurrent broker webhook and the T+N
+// worker can no longer both observe pending_settlement and double-credit shares
+// (or double-reduce a sell position), which was exploitable as a sellable
+// phantom balance. Expects o.Status already set to StatusSettled.
+// The sell-side cash release (il.ReleaseSettlement) stays OUTSIDE this tx — it
+// is keyed on "release:"+o.IdempotencyKey, so a retry after a tx failure is a
+// no-op and the position/state legs then complete.
+func (r *Repository) SettleOrder(ctx context.Context, o *Order, note string) error {
+	if o.Status != StatusSettled {
+		return errors.New("invest: SettleOrder requires StatusSettled")
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	ct, err := tx.Exec(ctx,
+		`UPDATE invest_orders SET status=$1, settled_at=$2, updated_at=now()
+		 WHERE id=$3 AND status=$4`,
+		string(StatusSettled), o.SettledAt, o.ID, string(StatusPendingSettlement))
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrSettlementClaimed
+	}
+
+	if o.Side == SideBuy {
+		if err := addToPositionTx(ctx, tx, o.UserID, o.StockAssetID, o.Symbol, o.FilledQuantity, o.ExecutedPriceKobo); err != nil {
+			return err
+		}
+	} else {
+		if err := reducePositionTx(ctx, tx, o.UserID, o.StockAssetID, o.FilledQuantity, o.TotalAmountKobo); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `INSERT INTO invest_order_events (order_id, from_status, to_status, note)
+		VALUES ($1,$2,$3,$4)`, o.ID, string(StatusPendingSettlement), string(StatusSettled), note); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func reducePositionTx(ctx context.Context, tx pgx.Tx, userID, assetID string, qty float64, proceedsKobo int64) error {
+	var quantity float64
+	var avg int64
+	if err := tx.QueryRow(ctx, `SELECT quantity, average_cost_kobo FROM invest_positions
+		WHERE user_id=$1 AND stock_asset_id=$2 FOR UPDATE`, userID, assetID).Scan(&quantity, &avg); err != nil {
+		return err
+	}
+	realized := proceedsKobo - int64(qty*float64(avg))
+	const q = `UPDATE invest_positions SET quantity = GREATEST(quantity - $3,0),
+		locked_quantity = GREATEST(locked_quantity - $3,0),
+		realized_gain_kobo = realized_gain_kobo + $4, updated_at=now()
+		WHERE user_id=$1 AND stock_asset_id=$2`
+	_, err := tx.Exec(ctx, q, userID, assetID, qty, realized)
+	return err
+}
+
 // LockShares increases locked_quantity for a pending sell (fail-closed).
 func (r *Repository) LockShares(ctx context.Context, userID, assetID string, qty float64) error {
 	const q = `UPDATE invest_positions SET locked_quantity = locked_quantity + $3, updated_at=now()
@@ -610,18 +692,7 @@ func (r *Repository) ReducePosition(ctx context.Context, userID, assetID string,
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var quantity float64
-	var avg int64
-	if err := tx.QueryRow(ctx, `SELECT quantity, average_cost_kobo FROM invest_positions
-		WHERE user_id=$1 AND stock_asset_id=$2 FOR UPDATE`, userID, assetID).Scan(&quantity, &avg); err != nil {
-		return err
-	}
-	realized := proceedsKobo - int64(qty*float64(avg))
-	const q = `UPDATE invest_positions SET quantity = GREATEST(quantity - $3,0),
-		locked_quantity = GREATEST(locked_quantity - $3,0),
-		realized_gain_kobo = realized_gain_kobo + $4, updated_at=now()
-		WHERE user_id=$1 AND stock_asset_id=$2`
-	if _, err := tx.Exec(ctx, q, userID, assetID, qty, realized); err != nil {
+	if err := reducePositionTx(ctx, tx, userID, assetID, qty, proceedsKobo); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

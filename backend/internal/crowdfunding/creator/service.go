@@ -772,19 +772,24 @@ var validRewardStatus = map[string]bool{
 	"DELIVERED": true, "DELAYED": true, "CANCELLED": true,
 }
 
-// GetRewardBackers returns reward backers (fulfilment queue), optionally
-// filtered by RewardFulfilmentStatus.
-func (s *Service) GetRewardBackers(ctx context.Context, status string) ([]RewardBacker, error) {
+// GetRewardBackers returns reward backers (fulfilment queue) for campaigns the
+// CALLER owns, optionally filtered by RewardFulfilmentStatus. Previously
+// unscoped — it returned every campaign's backers (names + shipping cities) to
+// any authenticated caller.
+func (s *Service) GetRewardBackers(ctx context.Context, userID, status string) ([]RewardBacker, error) {
 	q := `
-		SELECT id::text, backer_name, reward_tier_title, amount_kobo, status,
-		       shipping_city, requires_shipping, claimed_at
-		FROM cf_reward_backers`
-	args := []any{}
+		SELECT rb.id::text, rb.backer_name, rb.reward_tier_title, rb.amount_kobo, rb.status,
+		       rb.shipping_city, rb.requires_shipping, rb.claimed_at
+		FROM cf_reward_backers rb
+		JOIN cf_reward_tiers t  ON t.id = rb.tier_id
+		JOIN campaigns c        ON c.id = t.campaign_id
+		WHERE c.creator_id = $1`
+	args := []any{userID}
 	if status != "" {
-		q += ` WHERE status = $1`
+		q += ` AND rb.status = $2`
 		args = append(args, status)
 	}
-	q += ` ORDER BY claimed_at DESC LIMIT 200`
+	q += ` ORDER BY rb.claimed_at DESC LIMIT 200`
 
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
@@ -810,13 +815,19 @@ func (s *Service) GetRewardBackers(ctx context.Context, status string) ([]Reward
 	return out, rows.Err()
 }
 
-// UpdateRewardStatus transitions a reward backer's fulfilment status.
-func (s *Service) UpdateRewardStatus(ctx context.Context, backerID, status string) error {
+// UpdateRewardStatus transitions a reward backer's fulfilment status. The
+// UPDATE is ownership-scoped through tier → campaign → creator so a caller can
+// only move backers on THEIR campaigns (previously any authenticated user could
+// transition any backer in the system).
+func (s *Service) UpdateRewardStatus(ctx context.Context, userID, backerID, status string) error {
 	if !validRewardStatus[status] {
 		return fmt.Errorf("crowdfunding/creator: invalid reward status %q", status)
 	}
 	ct, err := s.db.Exec(ctx,
-		`UPDATE cf_reward_backers SET status = $1 WHERE id = $2`, status, backerID)
+		`UPDATE cf_reward_backers rb SET status = $1
+		 FROM cf_reward_tiers t, campaigns c
+		 WHERE rb.tier_id = t.id AND t.campaign_id = c.id
+		   AND c.creator_id = $3 AND rb.id = $2`, status, backerID, userID)
 	if err != nil {
 		return err
 	}
