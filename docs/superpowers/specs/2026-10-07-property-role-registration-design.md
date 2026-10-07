@@ -97,7 +97,7 @@ Admin endpoints (new RBAC permission `property.roles.review`):
 
 Exported check for later slices: `IsVerified(ctx, userID, role) (bool, error)`. It is true only when `verification_status = 'verified'` and `status = 'active'`, and it fails closed on any error.
 
-The role-context aggregator in `property/context.go` includes active role profiles as entities of a new context type `role` (id = profile id, name = `display_name`, roles = the role slug), and `role` is added to `validContextTypes`. This only happens when `FEATURE_PROPERTY_ROLES_ENABLED` is on, so the suite keeps working before the migration is applied. The existing context switcher then shows them with no second role system. `GET /api/v1/me/capabilities` is not changed in this slice.
+The role-context aggregator in `property/context.go` includes active role profiles as entities of a new context type `role` (id = profile id, name = `display_name`, roles = the role slug), They are listed read-only: `role` is deliberately NOT added to `validContextTypes`, because `property_active_context.context_type` has a CHECK limited to estate/property/agency/org and widening it needs a DROP, which the additive-only rule forbids. Switching into a role profile is therefore not supported in this slice (`SwitchContext` refuses type `role`); a later slice can add it with its own migration. This only happens when `FEATURE_PROPERTY_ROLES_ENABLED` is on, so the suite keeps working before the migration is applied. The context list shows them with no second role system; the mobile switcher must render `role` entities as non-selectable. `GET /api/v1/me/capabilities` is not changed in this slice.
 
 No money moves in this slice. The Idempotency-Key rule applies only to money mutations and does not apply here.
 
