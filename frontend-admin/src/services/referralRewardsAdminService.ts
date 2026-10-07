@@ -3,7 +3,7 @@
 // append /admin/referrals → /api/v1/admin/referrals (proxied to the Go backend's
 // the sidebar gates the nav entries. Money is BIGINT kobo throughout.
 
-import { apiV1 } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   ProgramConfig,
@@ -23,8 +23,11 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK);
 
 function adminBase(): string {
-  // apiV1() = http://host/api/v1 → http://host/api/v1/admin/referrals
-  return `${apiV1()}/admin/referrals`;
+  // The Go backend mounts this group at /v1/admin/referrals (no /api prefix;
+  // backend/internal/app/referral_routes.go) and /api/admin-proxy forwards the
+  // path verbatim, so the /v1 spelling must be explicit. /api/v1/admin/referrals
+  // is a bare Gin 404.
+  return `${apiRoot()}/v1/admin/referrals`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
