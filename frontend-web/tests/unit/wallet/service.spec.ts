@@ -460,6 +460,7 @@ describe('createTopupIntent', () => {
     maybySingle.mockResolvedValueOnce({
       data: {
         id: 'intent-existing',
+        user_id: USER_ID,
         payment_reference: 'TOPUP_EXISTING',
         authorization_url: 'https://checkout.paystack.com/existing',
         amount_kobo: 50_000,
@@ -607,6 +608,7 @@ describe('createTopupIntent', () => {
     maybySingle.mockResolvedValueOnce({
       data: {
         id: 'intent-stranded',
+        user_id: USER_ID,
         payment_reference: 'TOPUP_STRANDED',
         authorization_url: null,
         amount_kobo: 50_000,
@@ -636,6 +638,7 @@ describe('createTopupIntent', () => {
     maybySingle.mockResolvedValueOnce({
       data: {
         id: 'intent-stranded',
+        user_id: USER_ID,
         payment_reference: 'TOPUP_STRANDED',
         authorization_url: null,
         amount_kobo: 50_000,

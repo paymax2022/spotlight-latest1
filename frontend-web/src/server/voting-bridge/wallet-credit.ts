@@ -135,7 +135,7 @@ export async function creditWalletVotes(p: WalletCreditParams): Promise<WalletCr
     // key is spent — a new purchase needs a new key.
     const { data: prior, error: priorErr } = await supabase
       .from('vote_transactions')
-      .select('id, payment_reference, total_votes_to_credit, vote_credit_status')
+      .select('id, payment_reference, total_votes_to_credit, vote_credit_status, voter_user_id')
       .eq('idempotency_key', p.idempotencyKey)
       .maybeSingle();
     if (priorErr) {
@@ -144,7 +144,12 @@ export async function creditWalletVotes(p: WalletCreditParams): Promise<WalletCr
     if (!prior) {
       throw new ApiError('Vote transaction conflict', 409);
     }
-    const tx = prior as TxRow;
+    const tx = prior as TxRow & { voter_user_id?: string };
+    // A key owned by a different voter is a collision, not a replay — the
+    // response carries their payment reference and vote totals.
+    if (tx.voter_user_id && tx.voter_user_id !== p.userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
     if (tx.vote_credit_status === 'reversed') {
       throw new ApiError('This purchase was refunded — submit again with a new idempotency key.', 409);
     }

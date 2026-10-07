@@ -894,6 +894,13 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     .maybeSingle();
   if (existing) {
     const existingRow = existing as UtilityTransactionRow;
+    // The key exists but belongs to a DIFFERENT member — returning the row
+    // would leak their transaction (electricity token, meter/phone reference,
+    // amount). Mirror the Go rail + transfers: a foreign key is a 409, never
+    // a replay.
+    if (existingRow.user_id !== userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
     // AUD-BILL-005: a non-terminal row means the original request died
     // mid-flight (or is still running — the recovery age gate leaves those
     // alone). Attempt recovery so a same-key retry converges the transaction
@@ -992,7 +999,13 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         .select('*')
         .eq('idempotency_key', input.idempotencyKey)
         .maybeSingle();
-      if (duplicate) return { alreadyProcessed: true, transaction: duplicate as UtilityTransactionRow };
+      if (duplicate) {
+        const dupRow = duplicate as UtilityTransactionRow;
+        if (dupRow.user_id !== userId) {
+          throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+        }
+        return { alreadyProcessed: true, transaction: dupRow };
+      }
     }
     console.error('[utility] failed to create utility transaction:', insertError);
     throw new ApiError('Failed to create utility transaction', 500);

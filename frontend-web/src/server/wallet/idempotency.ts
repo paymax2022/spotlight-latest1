@@ -47,12 +47,12 @@ export async function checkIdempotencyKey(idempotencyKey: string): Promise<Idemp
  */
 export async function checkTopupIdempotencyKey(
   idempotencyKey: string,
-): Promise<{ intentId: string; paymentReference: string; authorizationUrl: string; amountKobo: number } | null> {
+): Promise<{ intentId: string; userId: string; paymentReference: string; authorizationUrl: string; amountKobo: number } | null> {
   const supabase = createAdminClient();
 
   const { data: existing } = await supabase
     .from('wallet_topup_intents')
-    .select('id, payment_reference, authorization_url, amount_kobo')
+    .select('id, user_id, payment_reference, authorization_url, amount_kobo')
     .eq('idempotency_key', idempotencyKey)
     .maybeSingle();
 
@@ -60,6 +60,7 @@ export async function checkTopupIdempotencyKey(
 
   return {
     intentId: existing.id as string,
+    userId: existing.user_id as string,
     paymentReference: existing.payment_reference as string,
     authorizationUrl: existing.authorization_url as string,
     amountKobo: existing.amount_kobo as number,

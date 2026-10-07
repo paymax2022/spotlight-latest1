@@ -459,8 +459,14 @@ export async function createTopupIntent(
   // a success: returning it as-is would hand the app an empty checkout URL and
   // permanently strand that idempotency key.
   const existing = await checkTopupIdempotencyKey(input.idempotencyKey);
+  // The key resolves globally — an intent owned by another member is a
+  // collision (its reference and checkout URL are theirs), never a replay.
+  if (existing && existing.userId !== userId) {
+    throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+  }
   if (existing?.authorizationUrl) {
-    return { alreadyProcessed: true, ...existing };
+    const { userId: _owner, ...intent } = existing;
+    return { alreadyProcessed: true, ...intent };
   }
 
   if (existing) {
