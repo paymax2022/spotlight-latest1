@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,6 +60,33 @@ type fakeGW struct {
 	lookupRes   *provider.RefundResult
 	lookupErr   error
 	lookupCalls int32
+
+	// ── partial refunds ────────────────────────────────────────────────────
+	// pRefunds is the gateway's ACTUAL refund list for the transaction (the
+	// truth LookupRefunds reports). Tests pre-seed it to model a crash after the
+	// gateway accepted a refund, or an unexplained dashboard refund.
+	pRefunds []provider.RefundResult
+	pCalls   []partialCall
+	pErr     error // RefundPaymentNoted returns this
+	// pAcceptOnErr: the refund IS recorded at the gateway although the call
+	// returned pErr (a lost reply).
+	pAcceptOnErr    bool
+	pFailed         bool   // the gateway answers the request with a failed refund
+	pStatus         string // status of a newly created refund (default processed)
+	pEcho           bool   // echo the merchant note back in LookupRefunds
+	pAmountOverride int64  // reply reports a different amount than asked
+	// pFailedOnErr: when RefundPaymentNoted returns pErr the gateway ALSO lists a
+	// FAILED refund carrying the note (so a lookup proves the attempt failed).
+	pFailedOnErr bool
+	pListErr     error
+	pOnRefund    func(ref string, amt int64)
+	pListCalls   int32
+}
+
+type partialCall struct {
+	Ref  string
+	Amt  int64
+	Note string
 }
 
 func (g *fakeGW) InitializePayment(_ context.Context, r provider.InitializePaymentRequest) (*provider.InitializePaymentResponse, error) {
@@ -112,6 +140,61 @@ func (g *fakeGW) LookupRefund(_ context.Context, ref string) (*provider.RefundRe
 	return g.lookupRes, g.lookupErr
 }
 
+func (g *fakeGW) RefundPaymentNoted(_ context.Context, ref string, amt int64, note string) (*provider.RefundResult, error) {
+	g.mu.Lock()
+	hook := g.pOnRefund
+	g.pCalls = append(g.pCalls, partialCall{ref, amt, note})
+	n := len(g.pCalls)
+	g.mu.Unlock()
+	g.ev.add("gateway.refund.partial")
+	if hook != nil {
+		hook(ref, amt)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	status := g.pStatus
+	if status == "" {
+		status = "processed"
+	}
+	rec := func(st string) provider.RefundResult {
+		r := provider.RefundResult{Reference: ref, Status: st, AmountKobo: amt, ID: "gw-" + strconv.Itoa(n)}
+		if g.pEcho {
+			r.Note = note
+		}
+		return r
+	}
+	if g.pFailed {
+		g.pRefunds = append(g.pRefunds, rec("failed"))
+		return nil, provider.ErrRefundFailed
+	}
+	if g.pErr != nil {
+		if g.pAcceptOnErr {
+			g.pRefunds = append(g.pRefunds, rec(status))
+		}
+		if g.pFailedOnErr {
+			g.pRefunds = append(g.pRefunds, rec("failed"))
+		}
+		return nil, g.pErr
+	}
+	r := rec(status)
+	g.pRefunds = append(g.pRefunds, r)
+	if g.pAmountOverride != 0 {
+		r.AmountKobo = g.pAmountOverride
+	}
+	return &r, nil
+}
+
+func (g *fakeGW) LookupRefunds(_ context.Context, _ string) ([]provider.RefundResult, error) {
+	atomic.AddInt32(&g.pListCalls, 1)
+	g.ev.add("gateway.lookupAll")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pListErr != nil {
+		return nil, g.pListErr
+	}
+	return append([]provider.RefundResult(nil), g.pRefunds...), nil
+}
+
 // ── ledger / settlement ─────────────────────────────────────────────────────
 
 type fakeLedger struct {
@@ -143,7 +226,7 @@ func (l *fakeLedger) RefundExternal(_ context.Context, id, reason string) error 
 	return nil
 }
 
-func (l *fakeLedger) RefundExternalByKey(_ context.Context, key, reason string) error {
+func (l *fakeLedger) RefundExternalByKeyPrefix(_ context.Context, key, reason string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.byKey = append(l.byKey, key+"|"+reason)
@@ -186,10 +269,15 @@ type fakeStore struct {
 	// interleave a competing owner between an owner's read and its write.
 	beforeMark func(ref string, t Transition)
 	ev         *events
+
+	// partial refund rows, keyed "<reference>|<refundKey>"
+	partials map[string]*PartialRefund
+	// partialMarkErr makes MarkPartialRefunded fail (store blip after the gateway refund).
+	partialMarkErr error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{byRef: map[string]*Intent{}, now: time.Now, markErr: map[string]error{}}
+	return &fakeStore{byRef: map[string]*Intent{}, now: time.Now, markErr: map[string]error{}, partials: map[string]*PartialRefund{}}
 }
 
 func (s *fakeStore) Put(_ context.Context, in Intent) (*Intent, bool, error) {
@@ -271,6 +359,9 @@ func (s *fakeStore) BeginRefund(_ context.Context, ref string, from []string, st
 	e, ok := s.byRef[ref]
 	if !ok {
 		return nil, false, nil
+	}
+	if e.RefundReservedKobo > 0 {
+		return nil, false, nil // a whole-charge refund may never start on top of piece refunds
 	}
 	allowed := false
 	for _, f := range from {
@@ -440,4 +531,145 @@ func anyPrefix(list []string, p string) bool {
 		}
 	}
 	return false
+}
+
+// ── partial refund store (mirrors the SQL in PGStore) ───────────────────────
+
+func pkey(ref, key string) string { return ref + "|" + key }
+
+func (s *fakeStore) BeginPartialRefund(_ context.Context, ref, key, settID string, amt int64, stale time.Duration) (*PartialBegin, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	in, ok := s.byRef[ref]
+	if !ok {
+		return nil, ErrUnknownReference
+	}
+	row := s.partials[pkey(ref, key)]
+	if row != nil && row.Status == PartialRefunded {
+		return &PartialBegin{AlreadyDone: true, Row: *row, ExpectedRefundedKobo: in.RefundedKobo, Now: s.now()}, nil
+	}
+	if in.Status != StatusConfirmed {
+		return nil, ErrIntentNotRefundable
+	}
+	for _, o := range s.partials {
+		if o.Reference == ref && o.RefundKey != key && o.Status == PartialRefunding {
+			return nil, ErrPartialInFlight
+		}
+	}
+	switch {
+	case row == nil:
+		if in.RefundReservedKobo+amt > in.AmountKobo {
+			return nil, ErrPartialCapExceeded
+		}
+		in.RefundReservedKobo += amt
+		row = &PartialRefund{Reference: ref, RefundKey: key, SettlementID: settID, AmountKobo: amt, Status: PartialRefunding, ClaimGen: 1, ClaimedAt: s.now(), Attempts: 1}
+		s.partials[pkey(ref, key)] = row
+		return &PartialBegin{Fence: row.ClaimGen, Prev: "", Row: *row, ExpectedRefundedKobo: in.RefundedKobo, Now: s.now()}, nil
+	case row.AmountKobo != amt || row.SettlementID != settID:
+		return nil, errors.New("partial refund row exists for a different amount/settlement")
+	case row.Status == PartialRefunding:
+		if s.now().Sub(row.ClaimedAt) <= stale {
+			return nil, ErrPartialInFlight
+		}
+		row.ClaimGen++
+		row.ClaimedAt = s.now()
+		row.Attempts++
+		return &PartialBegin{Fence: row.ClaimGen, Prev: PartialRefunding, Row: *row, ExpectedRefundedKobo: in.RefundedKobo, Now: s.now()}, nil
+	default: // failed → reactivate
+		if in.RefundReservedKobo+amt > in.AmountKobo {
+			return nil, ErrPartialCapExceeded
+		}
+		in.RefundReservedKobo += amt
+		row.Status = PartialRefunding
+		row.ClaimGen++
+		row.ClaimedAt = s.now()
+		row.Attempts++
+		return &PartialBegin{Fence: row.ClaimGen, Prev: PartialFailed, Row: *row, ExpectedRefundedKobo: in.RefundedKobo, Now: s.now()}, nil
+	}
+}
+
+func (s *fakeStore) MarkPartialRefunded(_ context.Context, ref, key string, fence Fence, gwID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.partialMarkErr != nil {
+		return false, s.partialMarkErr
+	}
+	row := s.partials[pkey(ref, key)]
+	in := s.byRef[ref]
+	if row == nil || in == nil || row.Status != PartialRefunding || row.ClaimGen != fence {
+		return false, nil
+	}
+	row.Status = PartialRefunded
+	if gwID != "" {
+		row.GatewayRefundID = &gwID
+	}
+	in.RefundedKobo += row.AmountKobo
+	if in.RefundedKobo == in.AmountKobo && in.Status == StatusConfirmed {
+		in.Status = StatusRefunded
+	}
+	s.ev.add("store.partial:refunded")
+	return true, nil
+}
+
+func (s *fakeStore) MarkPartialFailed(_ context.Context, ref, key string, fence Fence) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.partials[pkey(ref, key)]
+	in := s.byRef[ref]
+	if row == nil || in == nil || row.Status != PartialRefunding || row.ClaimGen != fence {
+		return false, nil
+	}
+	row.Status = PartialFailed
+	row.PostAttemptedAt = nil // a DEFINITE failure: an immediate retry may POST again
+	in.RefundReservedKobo -= row.AmountKobo
+	s.ev.add("store.partial:failed")
+	return true, nil
+}
+
+func (s *fakeStore) GetPartial(_ context.Context, ref, key string) (*PartialRefund, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.partials[pkey(ref, key)]
+	if row == nil {
+		return nil, nil
+	}
+	cp := *row
+	return &cp, nil
+}
+
+func (s *fakeStore) ListPartialsForSweep(_ context.Context, olderThan time.Duration, limit int) ([]PartialRefund, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []PartialRefund
+	for _, r := range s.partials {
+		if r.Status == PartialRefunding && s.now().Sub(r.ClaimedAt) >= olderThan {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) ListPartialsAwaitingLedger(_ context.Context, olderThan time.Duration, limit int) ([]PartialRefund, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []PartialRefund
+	for _, r := range s.partials {
+		if r.Status == PartialRefunded {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeStore) MarkPartialPostAttempt(_ context.Context, ref, key string, fence Fence) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.partials[pkey(ref, key)]
+	if row == nil || row.Status != PartialRefunding || row.ClaimGen != fence {
+		return false, nil
+	}
+	now := s.now()
+	row.PostAttemptedAt = &now
+	s.ev.add("store.partial:post_attempt")
+	return true, nil
 }

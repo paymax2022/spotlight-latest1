@@ -344,8 +344,8 @@ var moneyMovingPatchStatuses = map[string]bool{
 }
 
 // settlementColumnQueries read the funding source + status of a mode row's
-// escrow (car hire is intentionally absent: it has two settlements per booking
-// and no card-direct rail yet).
+// escrow (car hire is handled separately in refuseMoneyMovingPatch: it has two
+// settlements per booking).
 var settlementColumnQueries = map[string]string{
 	"parcels":     `SELECT st.funding_source, st.status FROM parcels e JOIN settlements st ON st.id = e.settlement_id WHERE e.id=$1`,
 	"towing_jobs": `SELECT st.funding_source, st.status FROM towing_jobs e JOIN settlements st ON st.id = e.settlement_id WHERE e.id=$1`,
@@ -359,6 +359,24 @@ var settlementColumnQueries = map[string]string{
 // runbook in the ADR. Wallet-funded jobs and jobs whose settlement is already
 // refunded/settled keep the historical bare-UPDATE behaviour.
 func (a *AdminService) refuseMoneyMovingPatch(ctx context.Context, table, id, target string) error {
+	if table == "car_hire_bookings" && moneyMovingPatchStatuses[target] {
+		// Car hire has TWO settlements per booking (fare + deposit, plus wallet
+		// extensions): refuse while ANY card-funded one is still held.
+		var n int
+		if err := a.svc.db.QueryRow(ctx, `
+			SELECT count(*) FROM settlements
+			 WHERE funding_source='external' AND status IN ('escrowed','disputed')
+			   AND (reference = 'carhire:' || $1::text OR starts_with(reference, 'carhire:' || $1::text || ':'))`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
+		return codedErr(http.StatusConflict, CodeInvalidState,
+			"this hire is funded by a card payment that is still held in escrow; setting it to \""+target+
+				"\" would not return the customer's money. Use the customer's cancel/complete flow (which refunds the card) "+
+				"or follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+	}
 	q, ok := settlementColumnQueries[table]
 	if !ok || !moneyMovingPatchStatuses[target] {
 		return nil
@@ -377,6 +395,47 @@ func (a *AdminService) refuseMoneyMovingPatch(ctx context.Context, table, id, ta
 		"this job is funded by a card payment that is still held in escrow; setting it to \""+target+
 			"\" would not return the customer's money. Use the customer's cancel flow (which refunds the card) "+
 			"or follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+}
+
+// guardCardCarHirePatch protects a CARD-funded car-hire booking (any of its settlements
+// external, whatever its status) from admin patches that would corrupt the money state:
+//
+//   - a patch OUT OF cancelled/completed is refused: those statuses mean the refunds /
+//     payout already ran (or are running) — re-opening one would let the booking be
+//     activated, completed or cancelled again over money that is already gone;
+//   - ANY patch while a piece refund to the card is in flight ('refunding' row in
+//     transport_paystack_intent_refunds) is refused: the engine owns that money until
+//     the refund is recorded.
+//
+// Wallet-funded bookings keep the historical bare-patch behaviour.
+func (a *AdminService) guardCardCarHirePatch(ctx context.Context, id, oldStatus, target string) error {
+	var card bool
+	if err := a.svc.db.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM settlements WHERE funding_source='external'
+		   AND (reference = 'carhire:' || $1::text OR starts_with(reference, 'carhire:' || $1::text || ':')))`, id).Scan(&card); err != nil {
+		return err
+	}
+	if !card {
+		return nil
+	}
+	if (oldStatus == "cancelled" || oldStatus == "completed") && target != oldStatus {
+		return codedErr(http.StatusConflict, CodeInvalidState,
+			"this hire was paid by card and is already "+oldStatus+"; its refunds/payout have run, so re-opening it is refused. "+
+				"Follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+	}
+	var inFlight bool
+	if err := a.svc.db.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM public.transport_paystack_intent_refunds r
+		   JOIN settlements st ON st.id::text = r.settlement_id
+		  WHERE r.status='refunding'
+		    AND (st.reference = 'carhire:' || $1::text OR starts_with(st.reference, 'carhire:' || $1::text || ':')))`, id).Scan(&inFlight); err != nil {
+		return err
+	}
+	if inFlight {
+		return codedErr(http.StatusConflict, CodeInvalidState,
+			"a refund of this card-paid hire is in flight at the payment provider; wait for it to be recorded (or follow the card-direct refund runbook) before changing its status")
+	}
+	return nil
 }
 
 // patchModeStatus updates a row's status across any mode table, audited. Table
@@ -400,22 +459,33 @@ func (a *AdminService) patchModeStatus(ctx context.Context, adminID, table, enti
 	if err := db.QueryRow(ctx, q, id).Scan(&oldStatus); err != nil {
 		return codedErr(http.StatusNotFound, CodeNotFound, "record not found")
 	}
+	if table == "car_hire_bookings" {
+		if err := a.guardCardCarHirePatch(ctx, id, oldStatus, req.Status); err != nil {
+			return err
+		}
+	}
 	if err := a.refuseMoneyMovingPatch(ctx, table, id, req.Status); err != nil {
 		return err
 	}
 	var upd string
 	switch table {
 	case "parcels":
-		upd = `UPDATE parcels SET status=$1, updated_at=NOW() WHERE id=$2`
+		upd = `UPDATE parcels SET status=$1, updated_at=NOW() WHERE id=$2 AND status=$3`
 	case "towing_jobs":
-		upd = `UPDATE towing_jobs SET status=$1, updated_at=NOW() WHERE id=$2`
+		upd = `UPDATE towing_jobs SET status=$1, updated_at=NOW() WHERE id=$2 AND status=$3`
 	case "mover_jobs":
-		upd = `UPDATE mover_jobs SET status=$1, updated_at=NOW() WHERE id=$2`
+		upd = `UPDATE mover_jobs SET status=$1, updated_at=NOW() WHERE id=$2 AND status=$3`
 	case "car_hire_bookings":
-		upd = `UPDATE car_hire_bookings SET status=$1, updated_at=NOW() WHERE id=$2`
+		upd = `UPDATE car_hire_bookings SET status=$1, updated_at=NOW() WHERE id=$2 AND status=$3`
 	}
-	if _, err := db.Exec(ctx, upd, req.Status, id); err != nil {
+	// Compare-and-swap on the status that was READ (and guarded) above: a customer or
+	// engine action that moved the row in between must not be overwritten by the patch.
+	tag, err := db.Exec(ctx, upd, req.Status, id, oldStatus)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return codedErr(http.StatusConflict, CodeInvalidState, "the record's status changed while this patch was being applied; reload and retry")
 	}
 	return writeAudit(ctx, db, adminID, entityType+".status", entityType, id,
 		map[string]any{"status": oldStatus}, map[string]any{"status": req.Status}, req.Reason)

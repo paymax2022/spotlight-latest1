@@ -44,7 +44,15 @@ func wireTransportCardDirect(
 	webhookHandler *webhooks.PaystackHandler,
 	redisClient *platformRedis.Client,
 ) *transportpaystackcheckout.Engine {
-	engine := transportpaystackcheckout.NewEngine(paystackClient, transportpaystackcheckout.NewPGStore(pool), settlementSvc)
+	cardStore := transportpaystackcheckout.NewPGStore(pool)
+	engine := transportpaystackcheckout.NewEngine(paystackClient, cardStore, settlementSvc)
+	// Piece (partial) refunds for a charge that funds several settlements (car
+	// hire fare + deposit). Inert for parcel/towing/movers, which never produce a
+	// settlement keyed "<reference>:<suffix>"; without this such a refund fails closed.
+	engine.EnablePartialRefunds(paystackClient, cardStore)
+	// How long after a refund POST was started an EMPTY gateway lookup is still not
+	// trusted to mean "no refund exists" (Paystack's list can lag). Default 10 min.
+	engine.SetPartialLagBound(time.Duration(envInt("TRANSPORT_CARD_DIRECT_REFUND_LAG_MINUTES", 10)) * time.Minute)
 
 	// callback_url allowlist: https hosts only; empty ⇒ every client-supplied
 	// callback is dropped (Paystack then uses the dashboard default).
@@ -66,6 +74,7 @@ func wireTransportCardDirect(
 		{cfg.FeatureTransportModesEnabled && cfg.FeatureTransportPaystackParcelEnabled, transportpaystackcheckout.NewParcelDomain(transportSvc)},
 		{cfg.FeatureTransportModesEnabled && cfg.FeatureTransportPaystackTowingEnabled, transportpaystackcheckout.NewTowingDomain(transportSvc)},
 		{cfg.FeatureTransportModesEnabled && cfg.FeatureTransportPaystackMoversEnabled, transportpaystackcheckout.NewMoversDomain(transportSvc)},
+		{cfg.FeatureTransportModesEnabled && cfg.FeatureTransportPaystackCarHireEnabled, transportpaystackcheckout.NewCarHireDomain(transportSvc)},
 	}
 	for _, d := range domains {
 		engine.Register(d.domain)

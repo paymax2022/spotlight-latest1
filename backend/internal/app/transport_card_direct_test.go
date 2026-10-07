@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -50,13 +51,14 @@ const (
 	statusPath   = "/m/parcels/paystack/:reference/status"
 )
 
-var cardDirectPrefixes = []string{"parcelorder:", "towingorder:", "moversorder:"}
+var cardDirectPrefixes = []string{"parcelorder:", "towingorder:", "moversorder:", "carhireorder:"}
 
 // every card-direct service: its initiate + status routes.
 var cardDirectServices = map[string][2]string{
-	"parcel": {"/m/parcels/paystack/initiate", "/m/parcels/paystack/:reference/status"},
-	"towing": {"/m/towing/paystack/initiate", "/m/towing/paystack/:reference/status"},
-	"movers": {"/m/movers/paystack/initiate", "/m/movers/paystack/:reference/status"},
+	"parcel":  {"/m/parcels/paystack/initiate", "/m/parcels/paystack/:reference/status"},
+	"towing":  {"/m/towing/paystack/initiate", "/m/towing/paystack/:reference/status"},
+	"movers":  {"/m/movers/paystack/initiate", "/m/movers/paystack/:reference/status"},
+	"carhire": {"/m/car-hire/paystack/initiate", "/m/car-hire/paystack/:reference/status"},
 }
 
 func samePrefixes(got []string) bool {
@@ -79,9 +81,9 @@ func samePrefixes(got []string) bool {
 // mounted for ANY service, while every status route and confirmer stays live.
 func TestCardDirectWiring_AllServiceFlagsOff_NoInitiateRouteMounted(t *testing.T) {
 	for name, cfg := range map[string]config.Config{
-		"zero config":                    {},
-		"modes on, flags off":            {FeatureTransportModesEnabled: true},
-		"towing/movers on but modes off": {FeatureTransportPaystackTowingEnabled: true, FeatureTransportPaystackMoversEnabled: true, FeatureTransportPaystackParcelEnabled: true},
+		"zero config":                            {},
+		"modes on, flags off":                    {FeatureTransportModesEnabled: true},
+		"towing/movers/carhire on but modes off": {FeatureTransportPaystackTowingEnabled: true, FeatureTransportPaystackMoversEnabled: true, FeatureTransportPaystackParcelEnabled: true, FeatureTransportPaystackCarHireEnabled: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g, _, prefixes := wireCardDirectForTest(t, cfg)
@@ -103,9 +105,10 @@ func TestCardDirectWiring_AllServiceFlagsOff_NoInitiateRouteMounted(t *testing.T
 // Each service flag mounts ONLY its own initiate route.
 func TestCardDirectWiring_ServiceFlagsAreIndependent(t *testing.T) {
 	for svc, cfg := range map[string]config.Config{
-		"parcel": {FeatureTransportModesEnabled: true, FeatureTransportPaystackParcelEnabled: true},
-		"towing": {FeatureTransportModesEnabled: true, FeatureTransportPaystackTowingEnabled: true},
-		"movers": {FeatureTransportModesEnabled: true, FeatureTransportPaystackMoversEnabled: true},
+		"parcel":  {FeatureTransportModesEnabled: true, FeatureTransportPaystackParcelEnabled: true},
+		"towing":  {FeatureTransportModesEnabled: true, FeatureTransportPaystackTowingEnabled: true},
+		"movers":  {FeatureTransportModesEnabled: true, FeatureTransportPaystackMoversEnabled: true},
+		"carhire": {FeatureTransportModesEnabled: true, FeatureTransportPaystackCarHireEnabled: true},
 	} {
 		t.Run(svc, func(t *testing.T) {
 			g, _, _ := wireCardDirectForTest(t, cfg)
@@ -185,12 +188,36 @@ func TestCardDirectWiring_EveryRefundDomainTransportUsesHasARegisteredAdapterAnd
 	cancel()
 	svc := transport.NewService(nil, nil)
 	eng := wireTransportCardDirect(ctx, config.Config{}, gin.New().Group("/m"), svc, nil, nil, nil, wh, nil)
-	for _, d := range []string{transport.RefundDomainParcel, transport.RefundDomainTowing, transport.RefundDomainMovers} {
+	for _, d := range []string{transport.RefundDomainParcel, transport.RefundDomainTowing, transport.RefundDomainMovers, transport.RefundDomainCarHire} {
 		if !eng.HasDomain(d) {
 			t.Errorf("transport files %q refunds but no card-direct adapter is registered under that name", d)
 		}
 		if !svc.HasDomainExternalRefunder(d) {
 			t.Errorf("no external refunder wired for %q: a card-funded cancel would fail closed", d)
 		}
+	}
+}
+
+// H2 (third ledger audit): the gateway-list lag bound that gates a RE-POST of a piece
+// refund is operator-tunable and defaults to 10 minutes.
+func TestCardDirectWiring_RefundLagBound_DefaultAndEnvTunable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	wire := func() time.Duration {
+		wh := webhooks.NewPaystackHandler(nil, nil, nil, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		eng := wireTransportCardDirect(ctx, config.Config{}, gin.New().Group("/m"), transport.NewService(nil, nil), nil, nil, nil, wh, nil)
+		return eng.PartialLagBound()
+	}
+	if got := wire(); got != 10*time.Minute {
+		t.Errorf("default lag bound %s, want 10m", got)
+	}
+	t.Setenv("TRANSPORT_CARD_DIRECT_REFUND_LAG_MINUTES", "25")
+	if got := wire(); got != 25*time.Minute {
+		t.Errorf("env lag bound %s, want 25m", got)
+	}
+	t.Setenv("TRANSPORT_CARD_DIRECT_REFUND_LAG_MINUTES", "not-a-number")
+	if got := wire(); got != 10*time.Minute {
+		t.Errorf("garbage env must fall back to the default, got %s", got)
 	}
 }

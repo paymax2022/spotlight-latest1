@@ -122,6 +122,9 @@ const (
 	RefundDomainParcel = "parcel"
 	RefundDomainTowing = "towing"
 	RefundDomainMovers = "movers"
+	// RefundDomainCarHire: ONE charge funds TWO settlements (fare + deposit), each
+	// refunded to the card on its own by the engine's piece-refund path.
+	RefundDomainCarHire = "carhire"
 )
 
 // refund_status values reported by the cancel endpoints. The honest answer to
@@ -242,6 +245,9 @@ type CancelSweepResult struct{ Completed, Failed int }
 // resumable), so it can never double-refund. minAge keeps it clear of a cancel
 // that is still in flight. Wallet-funded bookings are never touched.
 func (s *Service) SweepCancelledCardRefunds(ctx context.Context, domain string, minAge time.Duration, limit int) (CancelSweepResult, error) {
+	if domain == RefundDomainCarHire {
+		return s.sweepCarHireCardRefunds(ctx, minAge, limit)
+	}
 	var q string
 	switch domain {
 	case RefundDomainParcel:

@@ -10912,6 +10912,22 @@ paths:
     post: { operationId: moverComplete, summary: Mark provider-complete (awaits customer confirm), tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Awaiting confirmation } } }
 
   # ── Car hire / chauffeur ──────────────────────────────────────────────────────
+  /mobility/car-hire/paystack/initiate:
+    post:
+      operationId: initiateCarHirePaystack
+      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PRTBD-mobility-card-direct.md
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '409': { description: idempotency_conflict } }
+  /mobility/car-hire/paystack/{reference}/status:
+    get:
+      operationId: getCarHirePaystackStatus
+      summary: Poll + self-heal a card-direct car-hire checkout (owner only)
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,bookingId}})' }, '404': { description: unknown_reference } }
   /mobility/car-hire:
     get: { operationId: listCarHire, summary: My car-hire bookings, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
   /mobility/car-hire/quote:
@@ -10919,7 +10935,7 @@ paths:
   /mobility/car-hire/{id}/activate:
     post: { operationId: activateCarHire, summary: Activate a confirmed hire, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Active } } }
   /mobility/car-hire/{id}/cancel:
-    post: { operationId: cancelCarHire, summary: Cancel + refund, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelCarHire, summary: 'Cancel + refund (card-funded: refunded to the card, only before activation; 409 CARD_HIRE_ACTIVE_USE_RETURN afterwards)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled ({ok,status,refund_status: none|refunded|pending|failed})' }, '409': { description: CARD_HIRE_ACTIVE_USE_RETURN } } }
   /mobility/car-hire/book:
     post:
       operationId: bookCarHire
@@ -10931,9 +10947,9 @@ paths:
   /mobility/car-hire/{id}:
     get: { operationId: getCarHire, summary: Booking detail, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Booking } } }
   /mobility/car-hire/{id}/extend:
-    post: { operationId: extendCarHire, summary: Extend (escrow delta), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended } } }
+    post: { operationId: extendCarHire, summary: 'Extend (escrow delta from the wallet; card-funded bookings refused 409 EXTENSION_NOT_AVAILABLE_FOR_CARD)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended }, '409': { description: EXTENSION_NOT_AVAILABLE_FOR_CARD } } }
   /mobility/car-hire/{id}/complete:
-    post: { operationId: completeCarHire, summary: Complete (settle + release deposit), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
+    post: { operationId: completeCarHire, summary: 'Complete (settle + release deposit; card-funded: deposit refunded to the card, re-POSTable)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Completed ({ok,status,deposit_refund_status: none|refunded|pending|failed})' }, '409': { description: CARD_HIRE_NO_DRIVER } } }
 
   # ── Business logistics ────────────────────────────────────────────────────────
   /mobility/business/accounts:

@@ -24,13 +24,15 @@ func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{db: pool} }
 const pgCols = `domain, reference, payer_id, request_json, amount_kobo, idempotency_key, status,
 	entity_id, COALESCE(authorization_url,''), COALESCE(access_code,''), refund_reference,
 	pricing_json, claim_gen, COALESCE(claimed_at, 'epoch'::timestamptz), created_at,
-	COALESCE(refund_from,''), COALESCE(refund_amount_kobo,0)`
+	COALESCE(refund_from,''), COALESCE(refund_amount_kobo,0),
+	refund_reserved_kobo, refunded_kobo`
 
 func scanPG(row pgx.Row) (*Intent, error) {
 	var r Intent
 	if err := row.Scan(&r.Domain, &r.Reference, &r.PayerID, &r.RequestJSON, &r.AmountKobo,
 		&r.IdempotencyKey, &r.Status, &r.EntityID, &r.AuthorizationURL, &r.AccessCode, &r.RefundReference,
-		&r.PricingJSON, &r.ClaimGen, &r.ClaimedAt, &r.CreatedAt, &r.RefundFrom, &r.RefundAmountKobo); err != nil {
+		&r.PricingJSON, &r.ClaimGen, &r.ClaimedAt, &r.CreatedAt, &r.RefundFrom, &r.RefundAmountKobo,
+		&r.RefundReservedKobo, &r.RefundedKobo); err != nil {
 		return nil, err
 	}
 	return &r, nil
@@ -127,6 +129,7 @@ func (s *PGStore) BeginRefund(ctx context.Context, reference string, from []stri
 		        refund_amount_kobo = COALESCE(t.refund_amount_kobo, t.amount_kobo)
 		   FROM cur
 		  WHERE t.reference=cur.reference
+		    AND t.refund_reserved_kobo = 0  -- a whole-charge refund may never start over piece refunds
 		    AND (t.status = ANY($2) OR (t.status='refunding' AND t.claimed_at < now() - make_interval(secs => $3)))
 		 RETURNING t.claim_gen, cur.prev, t.refund_from, t.refund_amount_kobo`,
 		reference, from, staleAfter.Seconds()).Scan(&gen, &prev, &rfrom, &amount)

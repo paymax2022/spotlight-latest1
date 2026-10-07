@@ -169,6 +169,11 @@ type Intent struct {
 	// 'refunding'.
 	RefundFrom       string
 	RefundAmountKobo int64
+	// RefundReservedKobo / RefundedKobo are the PIECE-refund counters (partial
+	// refunds, partial_refund.go): reserved = in-flight + done, refunded = done.
+	// The database CHECK keeps refunded <= reserved <= AmountKobo.
+	RefundReservedKobo int64
+	RefundedKobo       int64
 }
 
 // Fence is the ownership token of a claim: it is bumped by every Claim /
@@ -279,9 +284,12 @@ type cancelledRefundSweepBooker interface {
 // LedgerReverser is the slice of settlement.Service the engine needs.
 type LedgerReverser interface {
 	SettlementReverser
-	// RefundExternalByKey reverses the external settlement escrowed under
-	// idempotencyKey ledger-side; nil when none exists (idempotent).
-	RefundExternalByKey(ctx context.Context, idempotencyKey, reason string) error
+	// RefundExternalByKeyPrefix reverses EVERY external settlement the charge
+	// funded — the one keyed idempotencyKey and any "<idempotencyKey>:<suffix>"
+	// siblings (car hire: fare + deposit) — ledger-side; nil when none exists
+	// (idempotent). The single-settlement domains are unaffected: for them the
+	// match is exactly the one key.
+	RefundExternalByKeyPrefix(ctx context.Context, idempotencyKey, reason string) error
 	GetByID(ctx context.Context, settlementID string) (*settlement.Settlement, error)
 }
 
@@ -293,6 +301,12 @@ type Engine struct {
 
 	callbackHosts   []string
 	initiateEnabled map[string]bool // domain → initiate mounted/allowed (absent = true)
+
+	// Partial (piece) refunds — see partial_refund.go. Nil until
+	// EnablePartialRefunds: a domain that needs them then fails CLOSED.
+	partialGW    PartialGateway
+	partialStore PartialRefundStore
+	partialLag   time.Duration // 0 = defaultPartialLagBound
 
 	mu       sync.RWMutex
 	domains  map[string]Domain // by Name

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/provider"
@@ -50,7 +51,7 @@ func (e *Engine) refundUnbooked(ctx context.Context, rec *Intent, fence Fence, c
 		// or while — compensating. Reverse the external settlement for this
 		// reference BEFORE refunding the customer so the books balance whatever
 		// Book managed to do. Idempotent; a no-op when nothing was escrowed.
-		if err := e.settlement.RefundExternalByKey(ctx, rec.Reference, "card_direct_order_failed"); err != nil {
+		if err := e.settlement.RefundExternalByKeyPrefix(ctx, rec.Reference, "card_direct_order_failed"); err != nil {
 			log.Printf("[transport/paystackcheckout] ledger unwind failed for %s (%v) — gateway refund NOT issued; left processing for retry", rec.Reference, err)
 			return refundBlocked
 		}
@@ -176,6 +177,11 @@ func (r domainRefunder) RefundExternalSettlement(ctx context.Context, entityID, 
 	if err != nil {
 		return fmt.Errorf("paystackcheckout: load settlement %s before refunding %s %s: %w", settlementID, r.domain, entityID, err)
 	}
+	if strings.HasPrefix(sett.IdempotencyKey, rec.Reference+":") {
+		// One of several settlements a single charge funded (car hire fare /
+		// deposit): refunded as a PIECE of the charge, never the whole of it.
+		return r.refundSettlementPiece(ctx, rec, sett, reason)
+	}
 	switch {
 	case sett.FundingSource != "external":
 		return fmt.Errorf("paystackcheckout: settlement %s is %q-funded, not external — refusing a gateway refund", settlementID, sett.FundingSource)
@@ -237,5 +243,5 @@ func (r domainRefunder) RefundExternalSettlement(ctx context.Context, entityID, 
 // completeBooked is a tiny helper for the reconciler: after the gateway refund
 // of a CANCELLED booking is recorded, make sure its escrow is reversed too.
 func (e *Engine) reverseLedger(ctx context.Context, reference, reason string) error {
-	return e.settlement.RefundExternalByKey(ctx, reference, reason)
+	return e.settlement.RefundExternalByKeyPrefix(ctx, reference, reason)
 }

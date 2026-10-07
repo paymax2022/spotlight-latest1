@@ -13,6 +13,8 @@ import (
 	"errors"
 	"log"
 	"time"
+
+	"spotlight/backend/internal/finance/settlement"
 )
 
 // ReconcileStats counts what one Reconcile sweep did.
@@ -91,6 +93,43 @@ func (e *Engine) Reconcile(ctx context.Context, minAge, maxAge time.Duration) (R
 		if serr != nil {
 			st.Errors++
 			log.Printf("[transport/paystackcheckout] reconcile cancelled-refund sweep (%s): %v", d.Name(), serr)
+		}
+	}
+
+	// 3. Piece refunds (partial refunds of a multi-settlement charge) that never
+	//    completed, and 4. pieces the gateway refunded whose ledger reversal never
+	//    ran. Same fenced, lookup-first, idempotent paths as the live refund.
+	if _, pst, ok := e.partials(); ok {
+		stranded, err := pst.ListPartialsForSweep(ctx, minAge, reconcileBatch)
+		if err != nil {
+			return st, err
+		}
+		for _, row := range stranded {
+			st.Examined++
+			switch e.retryPiece(ctx, row) {
+			case refundDone:
+				st.RefundsCompleted++
+			case refundNotDone, refundUnknown, refundBlocked:
+				st.RefundsRetried++
+			default:
+				st.Skipped++
+			}
+		}
+		pending, err := pst.ListPartialsAwaitingLedger(ctx, minAge, reconcileBatch)
+		if err != nil {
+			return st, err
+		}
+		for _, row := range pending {
+			sett, gerr := e.settlement.GetByID(ctx, row.SettlementID)
+			if gerr != nil || (sett.Status != settlement.StatusEscrowed && sett.Status != settlement.StatusDisputed) {
+				continue // finished (or unreadable: next sweep)
+			}
+			st.Examined++
+			if e.finishPieceLedger(ctx, row) == refundDone {
+				st.RefundsCompleted++
+			} else {
+				st.RefundsRetried++
+			}
 		}
 	}
 	return st, nil

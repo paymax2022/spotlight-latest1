@@ -1,6 +1,6 @@
 # ADR-PRTBD-mobility-card-direct: Card-direct (Paystack-funded) checkout for every Mobility service
 
-- **Status:** Accepted — foundation + parcel + towing + movers implemented; car hire, bus and event transport deferred (table below)
+- **Status:** Accepted — foundation + parcel + towing + movers + car hire (narrow scope, see "Car hire (implemented)") implemented; bus and event transport deferred (table below)
 - **Date:** 2026-10-07
 - **Module:** transport (Mobility) / `backend/internal/transport/paystackcheckout`
 - **Supersedes the pattern of:** wallet-top-up-then-spend for Mobility cards (the "card rail" inside `usePurchasePayment`)
@@ -129,7 +129,7 @@ every later money event be expressed as "refund the exact original charge" or
 | **Parcel** | **Safe — implemented here** | Fare fixed at booking (distance × size × speed); escrow held until dropoff PIN + proof; only post-booking money event is cancel ⇒ full refund. Insurance premium is indicative/separate and never in the charge. |
 | **Towing** | **Safe** | Same shape as parcel: fare computed at booking, escrow, settle on completion, cancel ⇒ refund. |
 | **Movers (accept-bid)** | **Safe, charged at bid acceptance** | The amount only exists once a bid is accepted. Quote = the accepted bid read server-side; initiate is bound to `bid id`; if the bid is withdrawn/expired before confirm, `Book` fails ⇒ the charge is refunded. Do **not** charge at request time. |
-| **Car hire** | **Conditionally safe — phase 2b** | Fare + deposit are two settlements from one charge, so the refunder needs **partial** gateway refunds (refund = that settlement's total, not the intent total — a small engine change). Mid-rental extensions (`car_hire.go` delta escrow) and late-fee/damage deductions are *new charges after booking*: those stay wallet-only (or need their own card-direct intent). Deposit return to a card takes days — product must accept that. |
+| **Car hire** | **Safe for a NARROW scope — implemented (flag off; see "Car hire (implemented)")** | One charge = fare + deposit held as two external settlements. Book, cancel BEFORE activation (both refunded to the card) and completion (fare settled, FULL deposit refunded to the card) are expressible as "refund one settlement's exact total" via the engine's piece-refund path. **Not** card-direct (wallet-only or refused for card bookings): extensions (a second charge), late-fee/damage deductions (no settlement primitive; excess over the deposit is uncollectable from a card), cancel-after-activation with a fare refund. Deposit return to a card takes days — product must accept that. |
 | **Bus** | **Unsafe as-is — stay wallet-only** | `BookBusTicket` calls `Settle` **immediately on issue**: the money is paid out to the operator at booking, so there is nothing left in escrow to refund. (The wallet `CancelBusTicket` then calls `settlement.Refund` on a *settled* row, which returns an error that is swallowed with `_ =` — a pre-existing defect: cancel does not actually return money even for wallets.) Card-direct would turn that into a card-funded payout with no refund path. Needs a deferred-settlement (settle at boarding/departure) + a real cancel policy first. |
 | **Event transport** | **Unsafe as-is — stay wallet-only** | Same as bus: escrow then `Settle` to the organizer inside `BookEvent`. |
 | **Ride, offer mode** | **Unsafe — stay wallet/cash** | The held amount can change **after** booking (`RiderOffer`/`AcceptCounter` → `adjustEscrow`), and there is no live card session to charge the delta from. Card-direct requires a fixed price at charge time. The viable redesign is "negotiate first, pay on acceptance" (same shape as movers) — a lifecycle change, not an adapter. |
@@ -148,7 +148,7 @@ mobile screen edit.** No change to `engine.go`, `store.go`, `webhooks.go`,
 |---|---|---|---|---|---|---|
 | towing | `towing` / `towingorder:` / `/towing/paystack` / `towingJobId` | `towingFare(distance, cfg)` (needs `Dest` route) | `BookTowing` (`towing.go:109`) → `bookTowing(…, external, verified, frozen)` — **done** | `towing_jobs.idempotency_key` | `CancelTowing` — **done** | `service_type` CHECK pre-flight; roadside = no route — **done** |
 | movers | `movers` / `moversorder:` / `/movers/paystack` / `moveId` | accepted bid amount (server read; request carries the bid id) | accept-bid `movers.go:224` Escrow site — **done** (`acceptMoverBid`) | `settlements.idempotency_key` join (mover_jobs key is the creation key) | `CancelMover` — **done** (rail by `funding_source`) | re-check bid still acceptable inside `Book` — done (read + guarded commit) |
-| car hire | `carhire` / `carhireorder:` / `/car-hire/paystack` / `bookingId` | fare + deposit (two amounts, one charge) | `BookCarHire` `car_hire.go:151` (2 `EscrowExternal`s, keys `…:fare`/`…:deposit`) | `car_hire_bookings.idempotency_key` | `car_hire.go:344` (deposit release), `:390` (cancel) | **engine partial-refund support**; extensions stay wallet |
+| car hire | `carhire` / `carhireorder:` / `/car-hire/paystack` / `bookingId` | fare + deposit (ONE charge, two legs; frozen config + legs) | `bookCarHire` (`car_hire.go`) — 2 `EscrowExternal`s, keys `<ref>:fare` / `<ref>:deposit` — **done** | `car_hire_bookings.idempotency_key` + payer | `CancelCarHireWithRefund` / `CompleteCarHireWithRefund` via `refundSettlement(ctx, "carhire", …)` — **done** | engine piece refunds (WP-A) + `CancelledRefundSweeper` hook — **done**; extensions refused for card bookings |
 | bus | `bus` / `busorder:` / `/bus/paystack` / `ticketId` | schedule fare | `BookBusTicket` `bus.go:184` | `bus_tickets.idempotency_key` | `bus.go:199,306` | **blocked** until settle-on-board + real cancel policy |
 | event transport | `event` / `eventorder:` / `/events/paystack` / `bookingId` | seats × offer price | `event_transport.go:196` | booking idempotency key | `event_transport.go:205-250,358` | **blocked**, same as bus |
 
@@ -402,9 +402,245 @@ admin status patch, which moves no money — now refused for card-funded escrow,
 - Contracts: `/mobility/{towing,movers}/paystack/{initiate,{reference}/status}` are declared in
   `contracts/transport.openapi.yaml` and `contracts/openapi.yaml`.
 
+## Partial refunds (car hire)
+
+Status: **engine support implemented (WP-A); car hire itself (adapter, `bookCarHire`, cancel/complete
+wiring, mobile) is WP-B and not built here.** Scope accepted for car hire: book; cancel before
+activation; complete with the deposit returned IN FULL; extensions refused for card-funded rentals; no
+late-fee/damage deductions; no cancel-after-activation on the card rail.
+
+**Why the whole-charge refund path cannot be reused.** One card charge T = fare + deposit funds TWO
+settlements (`<ref>:fare`, `<ref>:deposit`). `RefundExternalSettlement` requires
+`settlement.idempotency_key == reference` and `total_kobo == intent amount` (H3), `BeginRefund` always refunds
+the full amount and flips the whole intent to `refunding`, and `LookupRefund` returns one "best" refund, so it
+cannot tell several partial refunds apart. `RefundExternalByKey(reference)` also finds nothing when the keys
+are `<ref>:fare`/`:deposit`, which would have made the H6 `order_failed` unwind a silent no-op.
+
+**Design (rule: one gateway refund per settlement, for exactly that settlement's total).**
+
+- *Dispatch.* A settlement whose key is `<reference>:<suffix>` (one non-empty suffix, no further `:`) is a PIECE of the
+  charge and goes through `refundSettlementPiece`; a settlement keyed exactly `<reference>` keeps the strict H3 path
+  untouched (parcel, towing, movers unchanged). The suffix is domain-agnostic: the engine binds by key prefix, payer,
+  external funding, `escrowed|disputed`, `0 < total <= charge`.
+- *Schema (additive, idempotent, in the NEW `20271009090000_transport_paystack_intent_partial_refunds.sql`; `20271008090000_transport_paystack_intents.sql` is untouched — see the third audit table):* `refund_reserved_kobo`
+  (in-flight + done pieces) and `refunded_kobo` (done pieces) on the intent with
+  `CHECK (0 <= refunded_kobo <= refund_reserved_kobo <= amount_kobo)` — "sum of refunds <= collected" is a DATABASE
+  invariant; new table `transport_paystack_intent_refunds(reference, refund_key=settlement id, settlement_id,
+  amount_kobo, status refunding|refunded|failed, gateway_refund_id, claim_gen, claimed_at, attempts, …)` with a
+  partial unique index allowing ONE `refunding` piece per intent, and a sweep index. RLS enabled, anon/authenticated
+  revoked. The intent stays `confirmed` while pieces refund and flips to `refunded` (same transaction) exactly when
+  `refunded_kobo == amount_kobo`. `BeginRefund` gained `AND refund_reserved_kobo = 0`, so a whole-charge refund can
+  never start over piece refunds.
+- *Record, then call.* `BeginPartialRefund` (one tx, intent row `FOR UPDATE`, then piece row) reserves the amount and
+  inserts/re-activates/takes over the piece under a per-row fence before any gateway call. A fresh in-flight piece
+  (same or other) ⇒ `ErrPartialInFlight`; over-cap ⇒ `ErrPartialCapExceeded`; intent not `confirmed` ⇒
+  `ErrIntentNotRefundable`; an already-refunded piece ⇒ `AlreadyDone` (skip the gateway, finish the ledger).
+- *Never refund on a guess — lookup arithmetic.* Paystack has no client idempotency key for refunds. Before every
+  POST the engine lists ALL gateway refunds and computes `inflight = Σ(accepted: pending/processing/processed) −
+  intents.refunded_kobo`. `inflight == 0` ⇒ safe to POST; `inflight == piece amount` ⇒ OUR refund already happened
+  (lost reply / crash) ⇒ record it, never POST again; anything else (a dashboard refund, a foreign note, a lookup
+  error) ⇒ the piece stays `refunding`, logged, never refunded (manual). Failed gateway refunds are ignored in the
+  sum. The merchant note `"<reference>#<settlementID>"` is only a tie-breaker (if the gateway echoes notes and none is
+  ours, a same-sized surplus is NOT adopted); correctness does not depend on the note being echoed. One-in-flight is
+  what makes the arithmetic unambiguous.
+- *After the POST:* accepted with amount `0` or `== piece` ⇒ `refunded` (any other amount ⇒ left `refunding`, manual);
+  `failed` / `ErrRefundFailed` ⇒ `failed` + reservation released (retryable); any ambiguous reply ⇒ second lookup
+  with the same rule (`ErrAlreadyReversed` with nothing visible ⇒ stays `refunding`); **an empty second lookup does NOT mark the piece failed** (the list can lag) — see H2 in the third audit table. A store failure after a
+  successful refund leaves `refunding`, never a false failure.
+- *Gateway first, ledger second.* `settlement.RefundExternal(settlementID)` (idempotent) runs after the piece is
+  recorded refunded; a failure leaves piece `refunded` + settlement `escrowed` and a retry/sweep finishes it without
+  another gateway call. A settlement already refunded ledger-side with no refunded piece is a manual case (no gateway call).
+- *Ledger unwind for failed Book.* New `settlement.RefundExternalByKeyPrefix(reference)` reverses every external
+  settlement keyed `<reference>` or `<reference>:*` (exact key OR `starts_with(key, ref||':')` — never `LIKE`, `_` is a
+  wildcard and legal in keys; a wallet-funded row under the prefix is refused after the others are processed). The
+  engine now calls it in place of `RefundExternalByKey` (`refund.go`, `reconcile.go`); identical for single-settlement
+  domains. `LedgerReverser` swapped the method; `settlement.Service` still has `RefundExternalByKey`.
+- *Reconciler.* Step 3: pieces `refunding` older than `minAge` are re-driven (settlement re-validated, takeover only past
+  the stale window, lookup-first). Step 4: pieces `refunded` whose settlement is still `escrowed|disputed` (SQL join on
+  `settlements`, so healthy old rows cannot fill the batch) get their ledger reversal. Both skipped when partial
+  refunds are not enabled; steps 1–2 untouched.
+- *Wiring.* `Engine.EnablePartialRefunds(PartialGateway, PartialRefundStore)` (called in
+  `internal/app/transport_card_direct.go` with the Paystack client and `PGStore`). Without it a piece refund fails
+  CLOSED (`ErrPartialRefundsUnsupported`: no gateway call, no ledger call). `NewEngine`, `Store`, `Domain`,
+  `EngineGateway` and `transport.ExternalRefunder` signatures are unchanged, so the existing fakes and adapters compile
+  as before. Adapter: `paystack.Client.RefundPaymentNoted` (sends `merchant_note`; `RefundPayment` delegates with an
+  empty note and sends the same body as before), `LookupRefunds` (all refunds incl. failed, `perPage=100`);
+  `provider.RefundResult` gained `ID` and `Note`.
+
+**Tests (all under `backend/internal/…`).** `finance/settlement`: `TestRefundExternalByKeyPrefix_{ReversesFareAndDeposit_NotOtherKeys,
+UnderscoreIsNotAWildcard,WalletFundedUnderPrefixIsRefused}` (live-DB). `provider/paystack`: `TestRefundPaymentNoted_*`,
+`TestLookupRefunds_*`. `transport/paystackcheckout` (pure, `partial_refund_test.go`): `TestPartial_*` (record-before-call,
+fare+deposit sum/flip, cap, reply-lost, already-done-at-gateway, pending counted, unexplained refund, failed ignored,
+foreign notes, failed status + retry, ambiguous ⇒ definite non-refund, already-reversed, lookup failure, wrong amount,
+mark failure, ledger failure + retry, settlement validation (8 cases), not-wired fails closed, concurrency, stale owner
+fence), `TestFullRefund_BlockedWhileReservedPartialsExist`, `TestReconcile_Partial*`/`RefundedRowWithEscrowedSettlement_*`.
+Live-DB (`partial_refund_live_db_test.go`, real Engine + PGStore + ledger, a two-settlement stand-in domain):
+`TestLiveDB_PGStore_PartialCapEnforcedByCheckConstraint`, `…_PartialFencedTakeover`, `…_OneInflightPartialIndex`,
+`…_ConcurrentBegins_ExactlyOneWins`, `…_WholeChargeRefundBlockedByReservedPieces`, `…_FailedPieceReleasesReservationAndReactivates`,
+`TestLiveDB_Engine_TwoSettlements_*` (cancel ⇒ two exact gateway refunds, ledger balanced, wallet untouched; deposit-only ⇒
+booking stays confirmed), `…_PieceRefund_RefusesAForeignSettlement`, `…_ConcurrentRefundOfOnePiece_OneGatewayRefund`,
+`…_OrderFailed_TwoSettlements_BothReversedBeforeGatewayRefund`, `TestLiveDB_Reconcile_{StrandedPiece,RefundedPiece}_*`.
+
+**Known limits / deliberately not built.**
+- Deposit deductions (late fee/damage) need a new settlement primitive (partial release of one settlement: DR escrow
+  to provider/platform legs for X and to clearing for D−X) and a gateway refund of D−X; a deduction above the deposit
+  is not collectable from a card (no saved authorization). Neither exists in `car_hire.go` today.
+- A piece refund always equals ONE WHOLE settlement total; a refund of part of a settlement is not representable.
+- A piece refund of a `settled` settlement is refused (fare already paid out); race protection against a concurrent
+  `Settle` is the booking-status compare-and-swap in WP-B, not the engine. If any other path can settle a settlement
+  between the validation read and the gateway call, the engine would refund the customer for money already paid out —
+  `ledger-auditor` should look at that window (option: briefly mark the settlement `disputed`, which `Settle` refuses).
+- The engine keeps no refund history beyond `transport_paystack_intent_refunds`; Paystack fees are not returned on refund
+  (platform cost, as for whole refunds).
+
+**UNVERIFIED against the live Paystack API (need ONE real test-mode run before enabling car hire).**
+1. Two SEQUENTIAL partial refunds of one transaction (fare then deposit) are accepted, and the second is not rejected
+   while the first is `pending`.
+2. `POST /refund` accepts `merchant_note`, and `GET /refund?reference=` returns it as `merchant_note` per refund
+   (the engine does not depend on it, but the foreign-note guard only has teeth if it is echoed).
+3. `GET /refund?reference=` lists every partial refund of the transaction (one row each, `amount` in kobo, `status`),
+   becomes visible immediately after the POST (the lookup-first guard assumes no lag; a lag shorter than the stale
+   window would be re-checked at takeover, but a lag longer than it could cause a second refund — measure it).
+4. The numeric refund `id` is in `data.id` of the POST reply (stored as `gateway_refund_id` when present; absent is fine).
+5. Whether a partial refund of an already partially refunded transaction reports `ErrAlreadyReversed`-style messages
+   (`isAlreadyReversedMessage` wording).
+
+## Car hire (implemented)
+
+Flag `FEATURE_TRANSPORT_PAYSTACK_CARHIRE_ENABLED` (default off; inert without the master flag and
+`FEATURE_TRANSPORT_MODES_ENABLED`; gates ONLY new checkouts). `Name()="carhire"`, prefix `carhireorder:`, routes
+`/car-hire/paystack`, entity key `bookingId`. **Do not enable until the "UNVERIFIED" Paystack behaviours in
+"Partial refunds (car hire)" were proven with one real test-mode run, and see "Product blockers" below.**
+
+**What is charged.** `QuoteCarHireBookingFrozen` = `carHireFare` (fare = `max(base + hours x hourly rate, min_fare)`,
+deposit = `base`) as integer kobo — no rounding anywhere, NGN only (engine currency check). Fare must be `> 0`, deposit
+`>= 0`, the sum must not overflow, and the pricing config must have no negative field / overflowing product
+(`carHireFareChecked`, `carHireTotals`). The intent amount is `fare + deposit`; the frozen pricing is
+`{durationHours, fareKobo, depositKobo, config}` and `Book` re-derives both legs from the frozen config for the request's
+duration and refuses a snapshot that is not self-consistent (never silently re-priced from live config). Pre-flight at
+quote time (strict): `hire_type` in the `car_hire_bookings.hire_type` CHECK set, `start_at` RFC3339 within \[-24h, +366d\]
+(a "today" pick is midnight UTC), `duration_hours` 1-720, bounded free text. At confirm only the structural check runs — a
+charged booking is never refused over its date. The wallet rail now also refuses a bad `hire_type` BEFORE the escrow (it used
+to debit the wallet and then fail the INSERT) and keys starting `carhireorder:` (400 `INVALID_IDEMPOTENCY_KEY`).
+
+**How one charge maps to two settlements.** The booking id is `uuid.NewSHA1(ns, namespacedKey)`; the fare settlement is
+reference `carhire:<id>` / key `<ref>:fare`, the deposit `carhire:<id>:deposit` / `<ref>:deposit` (the same references the wallet path
+uses, so Cancel/Complete select identically). Each replay is checked per settlement (H2: `escrowed`, same payer, `external`, exact
+amount). If the deposit leg fails after the fare escrowed, or the INSERT fails, `Find` decides: a booking owns the key ⇒ return it;
+`Find` errors ⇒ leave the escrow; none ⇒ reverse ONLY the settlements that passed the live-escrow check. The engine's `order_failed`
+unwind (`RefundExternalByKeyPrefix`) covers both legs independently.
+
+**Lifecycle (card-funded).**
+
+| Event | Behaviour |
+|---|---|
+| cancel while `confirmed` and BEFORE `start_at` | pre-flight refuses with 503 `refund_unavailable` if no refunder is wired (nothing flips); otherwise status flips, then fare then deposit are each refunded to the CARD (two exact piece refunds). `refund_status` = `refunded` \| `pending`; a failed refund is reported, not swallowed. Re-POST finishes stranded legs (a finished leg is never refunded again). |
+| cancel while `active`/`extended`, or after `start_at` | **409 `CARD_HIRE_ACTIVE_USE_RETURN`** (active/extended: complete the hire) or **409 `CARD_HIRE_STARTED`** (start time passed: contact support), nothing changes — a used car cannot be cancelled for a full refund. The wallet rail keeps allowing it (historical, flagged below). |
+| activate | **409 `CARD_HIRE_NO_DRIVER`** for a card booking with no driver (interim; wallet unchanged). |
+| complete | owner or assigned driver, **only from `active`/`extended`** (from `confirmed` it is 409 — cancel instead). **409 `CARD_HIRE_NO_DRIVER`** before anything changes if no driver is assigned. Status flips (compare-and-swap), then fare settles to the driver and the FULL deposit is refunded to the card. `deposit_refund_status`: `refunded` \| `pending`. The deposit refund never waits on the fare payout (it is the renter's money); a fare error is returned after the deposit was attempted. |
+| complete re-POST | on an already-completed card booking: settles the fare if still escrowed, refunds the deposit if still escrowed; otherwise a no-op that reports the state. (Wallet re-POST stays 409.) |
+| extend | **409 `EXTENSION_NOT_AVAILABLE_FOR_CARD`** before any wallet debit (rail read from the fare settlement; a failed read refuses). |
+| admin status patch | money-moving targets (`cancelled`, `completed`, `disputed`, `failed`, …) are refused with 409 while ANY card-funded settlement of the booking is escrowed/disputed — fare OR deposit (`refuseMoneyMovingPatch`). |
+| reconciler | `CarHireDomain` implements `CancelledRefundSweeper`: (1) cancelled card bookings with an escrowed settlement are refunded through `refundSettlement`; (2) completed card bookings with an escrowed deposit re-run the completion money steps. Wallet-funded rows are never touched. The engine's own piece sweep (WP-A steps 3/4) covers the gateway half. |
+
+`CarHireDetail` now reports `fundingRail` (`card`\|`wallet`), `depositStatus` (`none`\|`held`\|`returning`\|`returned`) and
+`refundStatus` (cancelled bookings: `none`\|`pending`\|`refunded`\|`failed`), all derived from the settlements. Mobile copy never
+says the money is back before `returned`/`refunded`, and then says "sent back to your card — your bank can take a few days".
+
+**What stays wallet-only, and why.** (a) *Extensions*: a second charge after booking — the unique `(domain, entity_id)` index forbids a
+second intent for one booking, it would need its own domain/entity/refund path and mutates the fare after confirm; refusing is the only
+option that cannot debit a Tier-0 user's wallet or mix funding. A card customer rebooks. (b) *Deductions* (late fee, damage): no
+settlement primitive for a partial release and no way to collect above the deposit from a card (no saved authorization); neither
+exists in `car_hire.go` today either. (c) *Cancel after activation with a fare refund*: refunds a consumed service and costs the
+platform the gateway fee. (d) *Admin refunds* of a card booking: still the manual runbook (risk 4).
+
+**Product blockers / known defects found while building this (not fixed here).**
+- **Nothing assigns `car_hire_bookings.driver_id`** (no code path writes it). A card booking therefore cannot be completed
+  (`CARD_HIRE_NO_DRIVER`) and cannot be cancelled once active — its money is stuck behind ops. The wallet `CompleteCarHire` has the same
+  root cause and worse: it flips to `completed`, `Settle` fails on the empty provider, and the deposit is never refunded. **Recommend
+  not enabling the flag until driver assignment exists.**
+- Wallet `CancelCarHire` allows cancelling an `active` hire with a full refund (a used car is refunded).
+- The mobile quote card reads `chauffeurKobo`, which the Go quote does not return (always 0).
+- Mobile `carhire.api` previously returned the server's `status` as-is while screens read `phase`; the live read paths now normalise
+  (`normalizeCarHireBooking`), which changes what the wallet rail's live detail screen shows (it was effectively broken live).
+
+### Resolved after the third ledger audit (engine + car hire)
+
+Each fix was test-first (failing test watched red, then the fix). Tests are Go functions under `backend/internal/…` unless noted.
+
+| # | Finding | Resolution | Tests |
+|---|---|---|---|
+| **H2** | An ambiguous refund POST followed by an EMPTY lookup marked the piece `failed`, which allowed an immediate second POST while Paystack's list lags ⇒ a double deposit refund on the complete path. | The piece stays `refunding` (reservation kept). `transport_paystack_intent_refunds.post_attempted_at` is persisted (fenced) **before every POST** and cleared only by a definite failure. A re-POST needs (a) a clean lookup AND (b) no POST ever started, or the last one older than the lag bound (`TRANSPORT_CARD_DIRECT_REFUND_LAG_MINUTES`, default 10, `Engine.SetPartialLagBound`); a stale takeover and the sweeper obey the same rule (the store's clock is used for both timestamps). Only `ErrRefundFailed`, a `failed` reply, or our own note listed as `failed` releases the reservation immediately. A late-listed refund is adopted, never repeated. | `paystackcheckout`: `TestPartial_AmbiguousError_EmptyLookup_StaysRefunding_NoImmediateSecondPost` (rewritten from `…_IsDefiniteNonRefund`), `…_InsideLagWindow_ALateListedRefund_IsAdoptedNotRepeated`, `…_PostAttemptIsRecordedBeforeThePost`, `…_DefiniteFailure_ClearsThePostAttempt_…`, `…_AmbiguousThenLookupShowsFailedWithOurNote_IsDefiniteFailure`, `…_LagBoundIsConfigurable`, `TestReconcile_PartialRefunding_InsideLagWindowNoPost_AfterLagBoundPosts`; `internal/app`: `TestCardDirectWiring_RefundLagBound_DefaultAndEnvTunable` |
+| **M1** | Any non-accepted gateway status was ignored in the lookup sum. | Only an explicit `failed` is ignorable; any other status (needs-attention, reversed, empty, …) ⇒ `gwUnknown` (stop, no POST). | `TestPartial_NonAcceptedNonFailedGatewayStatus_IsUnknown_NoPost` |
+| **M2** | The car-hire sweeper only selected completed bookings with an escrowed DEPOSIT. | Selects completed card bookings with ANY external settlement (fare or deposit) still `escrowed`; `completeCarHireCardMoney` finishes the fare payout and the deposit refund. | `TestLiveDB_SweepCarHire_CompletedWithFareStillEscrowed_FinishesTheFarePayout` |
+| **M3** | `Refund` / `RefundExternal` read the status without the row lock, so a `Settle` racing a refund could double-debit escrow. | Both take `SELECT … FOR UPDATE` in a tx held across check + ledger post + flip, and flip with `WHERE status IN ('escrowed','disputed')` checking rows affected. `completeCarHireCardMoney` refuses `Settle` on a settlement that has ANY row in `transport_paystack_intent_refunds`. | `settlement`: `TestLiveDB_RefundExternal_BlocksBehindASettleInFlight_PostsNoRefund`, `…RefundWallet_BlocksBehindASettleInFlight_…`, `TestLiveDB_SettleVersusRefundExternal_Stress_EscrowDebitedExactlyOnce` (reproduced 14000 debited for a 7000 escrow before the fix); `transport`: `TestLiveDB_CarHireCardDirect_Complete_RefusesToSettleAFareThatHasAPieceRow` |
+| **M4** | The admin status patch could re-open a settled car-hire booking and was a blind UPDATE. | Card-funded booking: any patch OUT of `cancelled`/`completed` is refused (409), as is any patch while a piece refund is `refunding`; every mode patch is now a compare-and-swap (`WHERE status=<the status read>`, 409 if 0 rows). | `TestLiveDB_AdminPatchCarHire_CardFunded_RefusesAnyPatchOutOfCancelledOrCompleted`, `…_RefusesMoneyMovingPatchWhileAPieceRefundIsInFlight`, `TestLiveDB_AdminPatch_IsACompareAndSwap_ARacingWriterIsNotOverwritten` |
+| **M5** | The partial-refund schema was an in-place edit of an already-committed migration. | `20271008090000_transport_paystack_intents.sql` is restored byte-for-byte to commit `90a8e7bcd`; the delta (columns, table, indexes, CHECK, RLS, `post_attempted_at`) lives in the NEW idempotent `20271009090000_transport_paystack_intent_partial_refunds.sql`. Verified on a throwaway DB: old file then new file (and the new file twice) upgrades cleanly; a fresh full replay works; `scripts/ci/check-migration-versions.sh` passes. | scripted (see the report); `TestLiveDB_PGStore_*` run against the upgraded DB |
+| **M6/H1** | A card hire could start without a driver (then neither complete nor cancel could free its money) and a used car could be cancelled for a full refund. | **Interim, until driver assignment exists:** `ActivateCarHire` of a card booking with no driver ⇒ 409 `CARD_HIRE_NO_DRIVER`; card complete requires `active`/`extended`; card cancel only before `start_at` (after it: 409 `CARD_HIRE_STARTED`, contact support). **The flag `FEATURE_TRANSPORT_PAYSTACK_CARHIRE_ENABLED` MUST stay OFF until driver assignment is built** (nothing writes `car_hire_bookings.driver_id`). | `TestLiveDB_CarHireCardDirect_Activate_NoDriver_Refused409_WalletUnaffected`, `…_CompleteFromConfirmed_Refused409`, `…_CancelAfterStartAt_Refused409_CardHireStarted` |
+| **L1** | No operator procedure for a wedged piece. | Runbook below. | — |
+| **L2** | `LookupRefunds` ignored `transaction_reference` and read one page. | An entry naming ANOTHER transaction is an error; all pages are read (bounded at 20 — more is an error, never a silent truncation). | `provider/paystack`: `TestLookupRefunds_ForeignTransactionReference_IsAnError`, `…_PaginatesUntilTheLastPage`, `…_PageBudgetIsBounded` |
+| **L3** | The customer cancel refunded a `disputed` fare. | Customer cancel, its re-POST and the sweeper refund only `escrowed` settlements; a `disputed` one is left for the admin paths and reported as `pending`. | `TestLiveDB_CarHireCardDirect_DisputedFare_IsNotRefundedByCustomerCancelOrSweep` |
+| **L4** | The wallet extend key was not checked against the reserved card-direct namespaces. | `ExtendCarHire` rejects `IsReservedIdempotencyKey` keys (400 `INVALID_IDEMPOTENCY_KEY`). | `TestLiveDB_ExtendCarHire_RejectsReservedPrefixKey` |
+| **L5** | Master flag off ⇒ no refunder/reconciler. | Documented below; kept as a pre-flight refusal rather than making the fare payout independent. | — |
+| audit | No audit trail for card refund legs. | One `carhire.refund_leg` event per leg attempted by cancel / complete / the sweeper, in `transport_audit_log` (the sink sibling flows use for cancel/complete events), carrying the settlement id, rail and any error. | `TestLiveDB_CarHireCardDirect_RefundLegsLeaveAnAuditTrail` |
+
+**Master flag off (L5).** The refunder, the status route, the confirmer and the reconciler are registered only under
+`FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED`. With it off, a card-funded car-hire booking that already exists cannot be refunded:
+`CancelCarHireWithRefund` and `CompleteCarHireWithRefund` fail with 503 `refund_unavailable` BEFORE changing anything (the
+pre-flight `requireRefundRail`), and nothing sweeps. Completion deliberately does NOT pay the driver out on its own in that state:
+paying the fare while the deposit cannot be refunded would leave a completed booking with the customer's deposit stranded and no
+sweeper to finish it. The fix is operational — re-enable the master flag (the per-service flag may stay off).
+
+**Idempotency-Key handling (consistency note).** The card-direct rail takes the key from the HEADER only (the body key is stripped
+by `freezeRequest`); the wallet rail accepts the header or a body `idempotency_key` and rejects keys in the card-direct namespaces
+(`carhireorder:` etc., case-insensitive) on book AND extend. Card-direct settlement keys are `<namespaced reference>:fare|:deposit`; wallet
+keys are `<raw key>:fare|:deposit` (+ `…:ext:<n>` references for extensions), so the two can never collide.
+
+**Operator runbook — adopting a gateway refund for a wedged piece (L1).** A piece stays `refunding` (never silently failed) when the
+gateway outcome is unknowable: an unexplained refund in the dashboard, an unclassifiable gateway status, a foreign note, or a refund
+inside the lag window that never got listed. Procedure: (1) in the Paystack dashboard find the transaction `<reference>` and its
+refunds; decide for THIS piece (its amount = the settlement total) whether a refund of exactly that amount with status
+`processed|pending|processing` exists. (2a) If it exists, adopt it (one transaction; replace the angle-bracket values):
+
+```sql
+BEGIN;
+SELECT 1 FROM public.transport_paystack_intents WHERE reference = '<reference>' FOR UPDATE;
+UPDATE public.transport_paystack_intent_refunds
+   SET status = 'refunded', gateway_refund_id = '<paystack refund id>', completed_at = now()
+ WHERE reference = '<reference>' AND refund_key = '<settlement id>' AND status = 'refunding';   -- must report UPDATE 1
+UPDATE public.transport_paystack_intents
+   SET refunded_kobo = refunded_kobo + <amount_kobo>,
+       status = CASE WHEN refunded_kobo + <amount_kobo> = amount_kobo AND status = 'confirmed' THEN 'refunded' ELSE status END
+ WHERE reference = '<reference>';                                                                -- the CHECK rejects an over-refund
+COMMIT;
+```
+
+then re-POST cancel/complete (or wait for the sweeper) — the settlement's ledger reversal is idempotent and finishes without a second
+gateway call. (2b) If it does NOT exist and the lag window has clearly passed, either wait for the sweeper (it re-POSTs once the
+window is over and the lookup is clean) or release the piece for an immediate retry:
+`UPDATE public.transport_paystack_intent_refunds SET status='failed', post_attempted_at=NULL WHERE reference='<reference>' AND refund_key='<settlement id>' AND status='refunding';`
+followed by `UPDATE public.transport_paystack_intents SET refund_reserved_kobo = refund_reserved_kobo - <amount_kobo> WHERE reference='<reference>';`
+in the same transaction. Never do (2b) without checking the dashboard first: it can produce a double refund.
+
+**For the `ledger-auditor` (attack surface).**
+1. The refund-vs-settle window: complete's compare-and-swap (`active -> completed`) is what keeps `Settle(fare)` and a cancel's gateway
+   refund of the same fare apart. Any other writer of `car_hire_bookings.status` (admin patch to a non-money status, then a cancel) or
+   a direct `Settle` call is outside that guard. Is a settlement-level claim (e.g. `disputed` as a lock) needed?
+2. Complete flips the status BEFORE the money steps; the re-entrant path and the sweeper are the recovery. Is there a state in which a
+   completed booking's fare is `settled`, deposit `escrowed`, and the sweeper cannot finish it (e.g. `refunder` unwired ⇒ the sweeper
+   fails closed forever)?
+3. `bookCarHire` compensation after a failed deposit leg / insert: reverses only settlements that passed the live-escrow check and only
+   when `Find` proves no booking owns the key. Verify a concurrent stale-claim double `Book` cannot reverse an escrow a winning
+   booking already owns.
+4. `refundCarHireSettlements` refunds settlements by reference prefix, `escrowed`/`disputed` only — a `disputed` fare is refunded on
+   cancel. Confirm that is intended.
+5. Mixed funding: extensions are refused for card bookings, so every settlement of a card booking is external. A wallet booking never
+   reaches the card refunder (`refundSettlement` picks the rail per settlement).
+6. The piece-refund lookup arithmetic (WP-A) against Paystack lag — see its UNVERIFIED list.
+
 ## Consequences
 
 - Tier-0 riders/senders can pay Mobility services by card; wallet rail unchanged.
 - One place (engine) to audit for the money invariants; each service is ~100 lines.
 - New table + one more webhook prefix per service; flags default off, rollout per service.
-- Known follow-ups: ride adapter onto the engine; partial refunds (car hire); dispute/chargeback webhooks; the bus/event settle-at-booking defect (independent of this ADR). (The reconciliation sweep for stranded refunds is done — H7.)
+- Known follow-ups: ride adapter onto the engine; car hire driver assignment + extension/deduction design (if card car hire must support them); dispute/chargeback webhooks; the bus/event settle-at-booking defect (independent of this ADR). (The reconciliation sweep for stranded refunds is done — H7.)

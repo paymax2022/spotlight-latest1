@@ -144,6 +144,13 @@ type RefundResult struct {
 	Reference  string
 	Status     string // processed | pending | failed
 	AmountKobo int64
+	// ID is the gateway's own id for THIS refund attempt, and Note the
+	// merchant note it was issued with (partial refunds: "<reference>#<key>").
+	// Both are empty when the gateway/adapter does not return them — callers
+	// must never REQUIRE them (they are belt-and-braces identity, see
+	// transport/paystackcheckout partial refunds).
+	ID   string
+	Note string
 }
 
 // Refund statuses a gateway may report. Accepted = the money is on its way back

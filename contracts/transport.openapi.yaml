@@ -424,9 +424,14 @@ paths:
     post:
       tags: [car-hire]
       summary: Book a car hire (escrows fare + deposit) — money mutation
-      description: Money mutation — escrows fare + deposit. Requires an Idempotency-Key.
+      description: >
+        Money mutation — escrows fare + deposit FROM THE WALLET (KYC-tier gated). Requires an Idempotency-Key;
+        keys starting `carhireorder:` are reserved for the card-direct rail (400 INVALID_IDEMPOTENCY_KEY).
+        `hire_type` must be one of hourly, daily, airport, event, executive (400 invalid_input otherwise —
+        refused BEFORE any money moves). To pay by debit card without the wallet gate use
+        POST /mobility/car-hire/paystack/initiate.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+      responses: { '200': { description: Booking }, '400': { description: 'invalid_input or INVALID_IDEMPOTENCY_KEY' }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
   /mobility/car-hire:
     get:
       tags: [car-hire]
@@ -448,26 +453,123 @@ paths:
     post:
       tags: [car-hire]
       summary: Extend a car hire (escrows delta) — money mutation
-      description: Money mutation — escrows the additional-hours delta. Requires an Idempotency-Key.
+      description: >
+        Money mutation — escrows the additional-hours delta from the WALLET. Requires an Idempotency-Key.
+        A CARD-funded booking cannot be extended (a card-direct rental has no second charge): 409
+        EXTENSION_NOT_AVAILABLE_FOR_CARD, and no wallet is debited. Rebook for a longer hire.
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '409': { description: 'EXTENSION_NOT_AVAILABLE_FOR_CARD (card-funded booking) or invalid state' } }
   /mobility/car-hire/{id}/complete:
     post:
       tags: [car-hire]
       summary: Complete a car hire (settle split, release deposit) — money mutation
-      description: Money mutation — settles the provider split and releases the deposit. Requires an Idempotency-Key.
+      description: >
+        Money mutation — settles the provider split and releases the deposit. For a CARD-funded booking the
+        deposit goes back to the CARD (a gateway refund of exactly the deposit; never the wallet) and the
+        call is re-POSTable: completing an already-completed card booking finishes a deposit refund that
+        failed after the status flip. A card booking with no driver assigned is refused (409 CARD_HIRE_NO_DRIVER)
+        BEFORE anything changes. `deposit_refund_status` is the honest answer to "is my deposit back?":
+        none | refunded (the gateway accepted the refund; the bank may take days) | pending (not yet; retried
+        by re-POSTing complete and by the reconciler) | failed (wallet refund failed; manual).
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+      responses:
+        '200': { description: Completed, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, deposit_refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }
+        '401': { description: Not authenticated }
+        '409': { description: 'CARD_HIRE_NO_DRIVER or invalid state' }
   /mobility/car-hire/{id}/cancel:
     post:
       tags: [car-hire]
       summary: Cancel a car-hire booking (refund per policy)
+      description: >
+        Refunds the fare AND the deposit. A CARD-funded booking is refunded to the card (two gateway refunds,
+        one per settlement — never the wallet) and can only be cancelled BEFORE activation: while active or
+        extended it is 409 CARD_HIRE_ACTIVE_USE_RETURN (complete the hire to get the deposit back). Re-POSTing
+        cancel on an already-cancelled card booking finishes a refund that failed after the status flip.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+      responses:
+        '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }
+        '401': { description: Not authenticated }
+        '409': { description: 'CARD_HIRE_ACTIVE_USE_RETURN (card-funded, already active) or invalid state' }
+        '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }
+  # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
+  # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackCarHireEnabled AND
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PRTBD-mobility-card-direct.md
+  # ("Partial refunds (car hire)"). ONE card charge = fare + deposit, held as TWO settlements.
+  /mobility/car-hire/paystack/initiate:
+    post:
+      tags: [car-hire]
+      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge; no wallet debit) — money mutation
+      description: >
+        Body is the SAME as POST /mobility/car-hire/book (hire_type, vehicle_class, start_at, duration_hours,
+        chauffeur, pickup_address, special_request) plus optional `email` and `callback_url` (gateway-only;
+        stripped before the request is frozen). There is NO amount field: the server prices the hire
+        (fare = base + hours x hourly rate, floored at the minimum fare; deposit = one base period), freezes the
+        quote AND the pricing config it used, and asks Paystack for fare + deposit in NGN kobo (integers, no
+        rounding). `hire_type` must be one of hourly, daily, airport, event, executive; `start_at` RFC3339 and
+        not more than a day in the past nor more than a year ahead; `duration_hours` 1-720. An invalid request is
+        a 400 BEFORE any gateway call. Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -).
+        Replays behave as for the other card-direct services. No wallet is debited, so the KYC-tier gate never runs;
+        the wallet rail (POST /mobility/car-hire/book) keeps it and refuses keys starting `carhireorder:`.
+        The deposit is refundable: it returns to the SAME CARD on completion (days, not instant) and the whole
+        charge returns to the card on cancel before activation.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201':
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, amountKobo, status]
+                    properties:
+                      reference: { type: string, description: 'carhireorder:<Idempotency-Key>' }
+                      authorizationUrl: { type: string, description: Empty when status is not pending }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64, description: 'Server-quoted fare + deposit in kobo' }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+        '400': { description: 'invalid_input, idempotency_key_required or invalid_idempotency_key' }
+        '401': { description: Not authenticated }
+        '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
+        '409': { description: 'idempotency_conflict, or authorization_unavailable' }
+        '429': { description: Per-user rate limit on checkout creation (rate_limited) }
+  /mobility/car-hire/paystack/{reference}/status:
+    get:
+      tags: [car-hire]
+      summary: Poll a card-direct car-hire checkout (also drives confirmation — self-heals a late/missing webhook)
+      description: >
+        Owner-only (another user's reference is 404). While pending/processing this verifies the charge with
+        Paystack server-side and, once successful, books the hire and escrows fare and deposit as two external
+        settlements (settlement.EscrowExternal). The booking is made exactly once however webhook and polls race.
+        A charge that cannot back a booking is refunded at the gateway in full (`refunded` = accepted by the
+        gateway; `refunding` = in flight). Cancelling a card-funded booking before activation refunds the
+        card — never the wallet.
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, status]
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      bookingId: { type: string, format: uuid, description: Present once confirmed }
+        '401': { description: Not authenticated }
+        '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # PARCEL DELIVERY   [FeatureTransportModesEnabled]

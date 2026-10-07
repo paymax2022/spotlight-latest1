@@ -161,6 +161,47 @@ func (s *Service) RefundExternalByKey(ctx context.Context, idempotencyKey, reaso
 	return s.RefundExternal(ctx, id, reason)
 }
 
+// RefundExternalByKeyPrefix reverses, ledger-side, EVERY external settlement a
+// single card charge funded: the one escrowed under idempotencyKey itself, plus
+// any multi-settlement siblings keyed "<idempotencyKey>:<suffix>" (car hire:
+// ":fare" and ":deposit"). RefundExternalByKey cannot do this — with two
+// settlements neither key equals the charge's reference, so the order_failed
+// unwind would silently find nothing and the gateway refund would leave escrow
+// drift. The match is an exact key OR a literal string prefix of key+":" (never
+// LIKE: '_' is a wildcard and legal in idempotency keys). Card-direct keys cannot
+// contain ':' (engine idempotencyKeyRE), so "<ref>:" can never be a prefix of
+// another reference's key. Idempotent; nothing under the prefix is a no-op; a
+// wallet-funded row under the prefix is refused (ErrWrongRefundMethod) after
+// the other rows were processed, so one bad row never blocks the rest.
+func (s *Service) RefundExternalByKeyPrefix(ctx context.Context, idempotencyKey, reason string) error {
+	rows, err := s.db.Query(ctx,
+		`SELECT id FROM settlements WHERE idempotency_key = $1 OR starts_with(idempotency_key, $1 || ':') ORDER BY idempotency_key`,
+		idempotencyKey)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve external settlements by key prefix: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("settlement: scan settlement by key prefix: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("settlement: iterate settlements by key prefix: %w", err)
+	}
+	var firstErr error
+	for _, id := range ids {
+		if err := s.RefundExternal(ctx, id, reason); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // Settle releases the escrowed funds, applying the split and deducting commission.
 // Called after service delivery is confirmed.
 func (s *Service) Settle(ctx context.Context, settlementID string, split Split) error {
@@ -359,10 +400,19 @@ var ErrWrongRefundMethod = errors.New("settlement: wrong refund method for this 
 // — see RefundExternal for that case, and ErrWrongRefundMethod's doc comment
 // for why this check exists.
 func (s *Service) Refund(ctx context.Context, settlementID, reason string) error {
+	// The row lock is taken BEFORE the status check and held until the status flip
+	// commits: a Settle racing this refund (Settle locks the same row FOR UPDATE)
+	// either finished first — we then see 'settled' and refuse — or waits for us.
+	// Without it both could post their legs against the one escrow (double debit).
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settlement: begin refund tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var sett Settlement
 	var fundingSource string
-	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, settlementID).Scan(
+	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1 FOR UPDATE`
+	if err := tx.QueryRow(ctx, q, settlementID).Scan(
 		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status, &fundingSource,
 	); err != nil {
 		return fmt.Errorf("settlement: fetch for refund: %w", err)
@@ -385,9 +435,21 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 	}
 	// ErrDuplicate is tolerated — a retry after a mid-flight crash finds the leg
 	// posted and proceeds to the flip (same contract as RefundExternal).
-	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
-	_, err = s.db.Exec(ctx, update, settlementID)
-	return err
+	return s.flipRefunded(ctx, tx, settlementID)
+}
+
+// flipRefunded is the conditional status flip: it must still find the row
+// escrowed/disputed (it does — the caller holds the row lock), and a row that
+// moved anyway is an error, never a silent overwrite of 'settled'.
+func (s *Service) flipRefunded(ctx context.Context, tx pgx.Tx, settlementID string) error {
+	tag, err := tx.Exec(ctx, `UPDATE settlements SET status='refunded' WHERE id=$1 AND status IN ('escrowed','disputed')`, settlementID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("settlement: %s left escrowed/disputed while it was being refunded — needs manual reconciliation", settlementID)
+	}
+	return tx.Commit(ctx)
 }
 
 // RefundExternal reverses an EscrowExternal escrow — the internal-ledger
@@ -398,11 +460,17 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 // ErrWrongRefundMethod for the Tier-0 bypass hazard. Unlike Refund, a
 // settlement outside {escrowed, disputed} is a safe no-op: callers are
 // refund-loop cleanups over batches that may race concurrent resolutions.
+// Holds the settlement row lock across check + post + flip (see Refund).
 func (s *Service) RefundExternal(ctx context.Context, settlementID, reason string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settlement: begin external refund tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var sett Settlement
 	var fundingSource string
-	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, settlementID).Scan(
+	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1 FOR UPDATE`
+	if err := tx.QueryRow(ctx, q, settlementID).Scan(
 		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status, &fundingSource,
 	); err != nil {
 		return fmt.Errorf("settlement: fetch for external refund: %w", err)
@@ -433,9 +501,7 @@ func (s *Service) RefundExternal(ctx context.Context, settlementID, reason strin
 	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return fmt.Errorf("settlement: post external refund: %w", err)
 	}
-	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
-	_, err = s.db.Exec(ctx, update, settlementID)
-	return err
+	return s.flipRefunded(ctx, tx, settlementID)
 }
 
 // Status tracks a settlement's lifecycle.
