@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { uploadProfilePhoto } from '../profile/upload';
 import { USE_MOCK, CONNECT_API_BASE } from '../constants/connect.constants';
 import { TIER_BENEFITS } from '../constants/connect.constants';
 import type {
@@ -280,17 +281,22 @@ const INTENT_TO_MODE: Record<ConnectIntent, string> = {
 
 // Finalise onboarding by materialising the client-side draft into the real Connect
 // per-mode + media calls are best-effort and never block completion.
-export async function completeOnboarding(): Promise<OnboardingDraft> {
+export async function completeOnboarding(): Promise<OnboardingDraft & { photoUploadFailures: number }> {
   if (USE_MOCK) {
     await delay(400);
     draft = { ...draft, completedAt: new Date().toISOString() };
-    return { ...draft };
+    return { ...draft, photoUploadFailures: 0 };
   }
   // Essential: create/patch the profile row (backend upserts on first PATCH).
+  // Everything the wizard collected is saved so the member's own profile can show it.
   await api.patch(`${CONNECT_API_BASE}/profile`, {
     display_name: draft.displayName,
     bio: draft.bio,
     city: draft.location,
+    gender: draft.gender,
+    headline: draft.headline,
+    interests: draft.interests,
+    preferences: draft.preferences,
   });
   // Enable the modes matching the chosen intents (always include 'dating' so the
   // default discovery stack can surface the user). Best-effort per mode.
@@ -304,16 +310,25 @@ export async function completeOnboarding(): Promise<OnboardingDraft> {
       });
     } catch { /* best-effort — profile already created */ }
   }
-  // Register uploaded photos; skip local file:// URIs the server can't fetch.
-  for (const url of draft.photos) {
-    if (/^https?:\/\//.test(url)) {
-      try {
-        await api.post(`${CONNECT_API_BASE}/profile/media`, { url, kind: 'photo' });
-      } catch { /* best-effort */ }
+  // Upload the picked photos (local file:// URIs) to storage and attach them in the
+  // order chosen; the first is the primary. A failure never blocks completion — the
+  // member can add photos from their profile — but it is counted so the UI can say so.
+  const failedPhotos: string[] = [];
+  for (const uri of draft.photos) {
+    try {
+      if (/^https?:\/\//.test(uri)) {
+        await api.post(`${CONNECT_API_BASE}/profile/media`, { url: uri, kind: 'photo' });
+      } else {
+        await uploadProfilePhoto(uri);
+      }
+    } catch (e) {
+      failedPhotos.push(uri);
+      console.warn('[connect] profile photo upload failed', (e as Error)?.message);
     }
   }
-  draft = { ...draft, completedAt: new Date().toISOString() };
-  return { ...draft };
+  // Keep only the photos that failed, so re-running this step can never upload one twice.
+  draft = { ...draft, photos: failedPhotos, completedAt: new Date().toISOString() };
+  return { ...draft, photoUploadFailures: failedPhotos.length };
 }
 
 // Me hub

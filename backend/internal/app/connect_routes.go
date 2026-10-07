@@ -45,6 +45,7 @@ import (
 	"spotlight/backend/internal/loyalty"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/otp"
+	"spotlight/backend/internal/platform/r2"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/points"
 	"spotlight/backend/internal/services"
@@ -150,7 +151,7 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	// member already has connectAuth() applied; adminCg too. Each register fn
 	// adds per-route RBAC on its admin endpoints.
-	registerConnectPhase1Routes(member, adminCg, pool, rbac)       // profiles, verification, matching, discovery, search
+	registerConnectPhase1Routes(member, adminCg, pool, rbac, cfg)  // profiles, verification, matching, discovery, search
 	registerConnectSafetyRoutes(member, adminCg, pool, rbac)       // chat, blocks, date-safety, moderation, AI trust
 	registerConnectGrowthRoutes(member, adminCg, pool, rbac)       // professional, events, creator, monetization
 	registerConnectNetworkRoutes(member, adminCg, cfg, pool, rbac) // Phase 6 networking: jobs/feed/profile/assessments/mentorship under /networking
@@ -719,7 +720,7 @@ const (
 // Tunables (daily/anti-fatigue limits, ranking weights, distance buckets, badge
 // min level) are read from the backend-owned connect_config table — never
 // hard-coded and never new env config.
-func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
 	// Verification provider (Phase 1 stub — no real SDK, no network). The pepper is
 	// the existing CONNECT_VERIFICATION_PEPPER env (read here so we neither edit
 	// config.go nor depend on it being threaded through the signature). If unset,
@@ -747,6 +748,18 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 		badgeChecker = verifSvc
 	}
 	profileSvc := connectprofile.NewService(pool, badgeChecker)
+	// Backend-owned presigned R2 uploads for profile photos. The same presigner
+	// signs stored keys back into viewable URLs (the bucket is not public).
+	// Unconfigured creds → the presign endpoint fails closed with 503.
+	profilePresigner := r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	})
+	profilePresigner.EnableHealthCheck(nil)
+	profileSvc.WithPresigner(profilePresigner)
 	profileHandler := connectprofile.NewHandler(profileSvc)
 
 	matchSvc := connectmatching.NewService(pool)
@@ -792,6 +805,10 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 	member.GET("/profile/modes", profileHandler.GetModes)
 	member.PATCH("/profile/modes/:mode", profileHandler.UpsertMode)
 	member.POST("/profile/media", profileHandler.AddMedia)
+	member.GET("/profile/me", profileHandler.GetMe)
+	member.POST("/profile/media/presign", profileHandler.PresignMedia)
+	member.PUT("/profile/media/order", profileHandler.ReorderMedia)
+	member.DELETE("/profile/media/:id", profileHandler.DeleteMedia)
 
 	if verifSvc != nil {
 		verifHandler := connectverification.NewHandler(verifSvc)
