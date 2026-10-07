@@ -8,11 +8,16 @@
 //     request/response field mapping is behind accredited-only docs,
 //     so every wire mapping is marked TODO(cac-vas) to confirm
 //     against https://vas.cac.gov.ng accredited documentation.
-//   - sandboxProvider — a deterministic stub used when credentials are absent, so
-//     dev/CI stay offline-functional. NEVER used when creds are set.
+//   - sandboxProvider — a deterministic stub used when credentials are absent AND
+//     Config.AllowSandbox is true, so dev/CI stay offline-functional. NEVER used
+//     when creds are set.
+//   - disabledProvider — fail-closed stub selected when credentials are absent and
+//     AllowSandbox is false (production). Every call returns ErrUnavailable so a
+//     misconfigured prod deployment can never fabricate "verified" CAC identities
+//     that satisfy the merchant-upgrade gate.
 //
 // New(cfg) picks the implementation: httpProvider when a base URL AND api key are
-// configured, else sandboxProvider.
+// configured; else sandboxProvider when AllowSandbox; else disabledProvider.
 
 package cac
 
@@ -24,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/strutil"
@@ -123,16 +129,30 @@ type BusinessRegistryProvider interface {
 	Name() string
 }
 
+// ErrUnavailable is returned by disabledProvider on every call — CAC credentials
+// are absent and the sandbox fallback is not allowed (production). Callers should
+// map it to 503 Service Unavailable: a missing integration is a deployment
+// misconfiguration, NOT a license to fabricate registry answers.
+var ErrUnavailable = errors.New("cac: provider not configured")
+
 // Config is the config-driven construction input (mirrors sibling provider creds).
 type Config struct {
 	BaseURL        string // CAC VAS API root, e.g. https://vas.cac.gov.ng/api
 	APIKey         string // Bearer / consumer key
 	ConsumerSecret string // HMAC signing secret (request signature)
 	Timeout        time.Duration
+	// AllowSandbox permits the deterministic sandbox fallback when BaseURL/APIKey
+	// are absent. MUST be false in production: the sandbox fabricates "verified"
+	// entities and SBX-* refs, and a fabricated verification satisfies the
+	// merchant-upgrade gate (business.Service.HasVerifiedBusiness). The zero value
+	// fails closed — a caller that forgets gets disabledProvider, not sandbox.
+	AllowSandbox bool
 }
 
-// New returns the HTTP provider when a base URL AND api key are configured,
-// otherwise the deterministic sandbox provider (offline dev/CI).
+// New returns the HTTP provider when a base URL AND api key are configured;
+// otherwise the deterministic sandbox provider when AllowSandbox is set
+// (offline dev/CI); otherwise the fail-closed disabledProvider (production with
+// missing credentials).
 func New(cfg Config) BusinessRegistryProvider {
 	if strings.TrimSpace(cfg.BaseURL) != "" && strings.TrimSpace(cfg.APIKey) != "" {
 		to := cfg.Timeout
@@ -146,7 +166,11 @@ func New(cfg Config) BusinessRegistryProvider {
 			httpClient:     &http.Client{Timeout: to},
 		}
 	}
-	return &sandboxProvider{}
+	if cfg.AllowSandbox {
+		return &sandboxProvider{}
+	}
+	log.Println("[cac] WARN: CAC_VAS_BASE_URL/CAC_VAS_API_KEY unset and sandbox fallback disallowed — provider DISABLED (fail-closed); verify/name-reserve/registration return 503 until credentials are configured")
+	return &disabledProvider{}
 }
 
 type httpProvider struct {
@@ -440,7 +464,9 @@ func normalizeState(s string) string {
 }
 
 // sandboxProvider is a deterministic, offline stub used when CAC credentials are
-// absent so dev/CI stay functional without the accredited VAS gateway. Its outputs
+// absent AND Config.AllowSandbox is set, so dev/CI stay functional without the
+// accredited VAS gateway (production passes AllowSandbox=false → disabledProvider).
+// Its outputs
 // are a pure function of the inputs — the SAME name always resolves the same way,
 // and a derived ref is stable — so tests are reproducible. It NEVER performs I/O and
 // NEVER panics. It is NOT used when real credentials are configured (see New).
@@ -517,6 +543,40 @@ func (s *sandboxProvider) VerifyEntity(ctx context.Context, rcOrBnNumber string)
 		Type:         typ,
 		RegisteredAt: "2020-01-15",
 	}, nil
+}
+
+// disabledProvider fails closed: it is selected when CAC credentials are absent
+// and the sandbox fallback is not allowed (production). Every port method returns
+// ErrUnavailable — the handler maps that to 503. The sandbox fabricates terminal
+// "verified" identities, so production must NEVER answer registry calls with
+// fabricated data; an unconfigured rail is unavailable, not imaginary.
+type disabledProvider struct{}
+
+// ProviderNameDisabled is the disabledProvider.Name() value; surfaced in startup
+// logs and persisted verification_source so a disabled write path (should one
+// ever exist) remains distinguishable.
+const ProviderNameDisabled = "cac-disabled"
+
+func (d *disabledProvider) Name() string { return ProviderNameDisabled }
+
+func (d *disabledProvider) CheckNameAvailability(ctx context.Context, proposedName, lineOfBusiness string) (Availability, error) {
+	return Availability{}, ErrUnavailable
+}
+
+func (d *disabledProvider) ReserveName(ctx context.Context, proposedName string, applicant Applicant) (Reservation, error) {
+	return Reservation{}, ErrUnavailable
+}
+
+func (d *disabledProvider) SubmitRegistration(ctx context.Context, req RegistrationRequest) (Submission, error) {
+	return Submission{}, ErrUnavailable
+}
+
+func (d *disabledProvider) GetRegistrationStatus(ctx context.Context, ref string) (RegistrationStatus, error) {
+	return RegistrationStatus{}, ErrUnavailable
+}
+
+func (d *disabledProvider) VerifyEntity(ctx context.Context, rcOrBnNumber string) (EntityVerification, error) {
+	return EntityVerification{}, ErrUnavailable
 }
 
 func hashByte(s string) byte {

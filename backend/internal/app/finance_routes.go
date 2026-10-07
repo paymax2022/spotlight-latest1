@@ -2545,8 +2545,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	// Gated by FEATURE_BUSINESS_REGISTRY_ENABLED (no flag, no registration path).
 	// The CAC provider is abstracted behind cac.BusinessRegistryProvider: the real
-	// HTTP adapter when CAC_VAS_BASE_URL + CAC_VAS_API_KEY are configured, else a
-	// deterministic sandbox (offline dev/CI). Member routes are auth'd via the finance
+	// HTTP adapter when CAC_VAS_BASE_URL + CAC_VAS_API_KEY are configured; else a
+	// deterministic sandbox in NON-production only — in production missing creds
+	// select the fail-closed disabledProvider (every call → 503), because the
+	// sandbox fabricates terminal 'verified' rows that satisfy the merchant-upgrade
+	// gate (w9 prod probe: any user could self-mint a verified CAC identity).
+	// Member routes are auth'd via the finance
 	// group's requireUserID; the CAC registration FEE is a real idempotent, tier-checked
 	// wallet debit (walletSvc.Debit) → paymax_revenue. Admin review routes are RBAC-
 	// gated (business.registry.review). The returned service exposes HasVerifiedBusiness
@@ -2557,7 +2561,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			BaseURL:        cfg.CACVASBaseURL,
 			APIKey:         cfg.CACVASApiKey,
 			ConsumerSecret: cfg.CACVASConsumerSecret,
+			AllowSandbox:   !cfg.IsProd(),
 		})
+		if cacProvider.Name() == cac.ProviderNameDisabled {
+			log.Println("[business] WARN: CAC VAS credentials absent in production — registry provider DISABLED; /api/finance/business/{verify,name/reserve,register} return 503 until CAC_VAS_BASE_URL + CAC_VAS_API_KEY are set")
+		}
 		businessAdmin := r.Group("/api/business/admin")
 		businessAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		businessAdmin.Use(requireUserID())
@@ -2568,6 +2576,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Provider: cacProvider,
 			Payment:  paymentProvider, // Paystack gateway for the fee (wallet-or-gateway choice)
 			RBAC:     rbac,
+			// Defense-in-depth: in production a row verified by the sandbox
+			// (verification_source='cac-sandbox') — e.g. one persisted before this
+			// fail-closed change — must NOT satisfy HasVerifiedBusiness.
+			AllowSandboxVerified: !cfg.IsProd(),
 		})
 		// MERCHANT-UPGRADE GATE: businessSvc.HasVerifiedBusiness(ctx, userID) reports
 		// whether a user holds a verified/registered CAC identity. Onboarding should
