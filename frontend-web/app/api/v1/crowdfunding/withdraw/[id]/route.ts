@@ -14,11 +14,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const params = await ctx.params;
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
 
-  const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();
-  if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for withdrawals.', 400);
-
   try {
     await requireRequestUser(request);
+
+    const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();
+    if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for withdrawals.', 400);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

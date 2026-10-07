@@ -6,7 +6,7 @@ import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admi
 
 export async function GET(request: Request) {
   try {
-    assertStemReadAdmin(request);
+    await assertStemReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const filter: StemApplicationFilter = {
       contestId: searchParams.get('contestId') || undefined,

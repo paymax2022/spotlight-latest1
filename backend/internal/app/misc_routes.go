@@ -376,6 +376,7 @@ func RegisterArena(
 	})
 
 	pub := r.Group("/api/arena")
+	pub.Use(arenahandler.UUIDParams())
 	pub.GET("/competitions", h.ListCompetitions)
 	pub.GET("/competitions/:id", h.GetCompetition)
 	pub.GET("/competitions/:id/leaderboard/merit", h.MeritLeaderboard)
@@ -383,6 +384,7 @@ func RegisterArena(
 	pub.GET("/credentials/:hash/verify", h.VerifyCredential)
 
 	member := r.Group("/api/arena")
+	member.Use(arenahandler.UUIDParams())
 	member.Use(authMirror())
 	member.Use(requireUserID())
 	mg := member.Group("/competitions/:id")
@@ -397,6 +399,7 @@ func RegisterArena(
 	mg.POST("/predictions", h.Prediction)
 
 	admin := r.Group("/api/arena/admin")
+	admin.Use(arenahandler.UUIDParams())
 	admin.Use(authMirror())
 	admin.Use(requireUserID())
 	perm := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }

@@ -1,8 +1,10 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { assertStemReadAdmin } from '@/src/server/stem/auth';
 import { createSchoolJoinRequest, listSchoolJoinRequests } from '@/src/server/stem/persistence';
 
 export async function GET(request: Request) {
   try {
+    await assertStemReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const schoolId = searchParams.get('schoolId') || undefined;
     const requests = await listSchoolJoinRequests(schoolId);

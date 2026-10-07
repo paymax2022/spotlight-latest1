@@ -9,7 +9,7 @@ export async function GET(
   context: { params: { id: string } }
 ) {
   try {
-    assertStemReadAdmin(request);
+    await assertStemReadAdmin(request);
     const contest = await getContestById(context.params.id);
     if (!contest) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest });
