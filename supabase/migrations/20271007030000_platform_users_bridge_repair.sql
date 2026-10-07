@@ -50,6 +50,7 @@ RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   rid uuid;
   v_phone text;
+  v_inserted int;
 BEGIN
   v_phone := COALESCE(NULLIF(NEW.raw_user_meta_data->>'phone', ''), NULLIF(NEW.phone, ''));
 
@@ -61,6 +62,15 @@ BEGIN
           COALESCE(NULLIF(regexp_replace(COALESCE(NEW.raw_user_meta_data->>'full_name',''), '^\S+\s*', ''), ''), ''),
           NEW.email, v_phone, 'registered_user', 'active', NEW.email_confirmed_at)
   ON CONFLICT DO NOTHING;
+
+  -- A skipped insert means THIS user can never log in — the exact failure this
+  -- migration heals. ON CONFLICT eats it before the exception handler, so the
+  -- skip has to be detected and shouted about explicitly.
+  GET DIAGNOSTICS v_inserted = ROW_COUNT;
+  IF v_inserted = 0 THEN
+    RAISE WARNING 'rbac_bridge_on_auth_insert: mirror skipped (conflict) for auth.users id=% email=% — account cannot log in until resolved',
+      NEW.id, NEW.email;
+  END IF;
 
   -- Role grant in its own block: a user_roles/roles failure must NOT roll the
   -- mirror insert back (plpgsql exceptions undo the whole enclosing block).
@@ -129,20 +139,40 @@ CREATE TRIGGER on_auth_user_email_confirmed_rbac
   FOR EACH ROW EXECUTE FUNCTION public.rbac_bridge_on_email_confirm();
 
 -- ── (c) Backfill orphans: every auth.users row still missing its mirror ──────
--- Untargeted ON CONFLICT so an email-collision-under-different-id skips rather
--- than aborts the whole backfill; those rows surface in the (d) orphan count.
-INSERT INTO public.platform_users (id, first_name, last_name, email, phone, user_type, status, email_verified_at)
-SELECT u.id,
-       COALESCE(NULLIF(split_part(COALESCE(u.raw_user_meta_data->>'full_name',''), ' ', 1), ''), ''),
-       COALESCE(NULLIF(regexp_replace(COALESCE(u.raw_user_meta_data->>'full_name',''), '^\S+\s*', ''), ''), ''),
-       u.email,
-       COALESCE(NULLIF(u.raw_user_meta_data->>'phone', ''), NULLIF(u.phone, '')),
-       'registered_user',
-       'active',
-       u.email_confirmed_at
-FROM auth.users u
-WHERE NOT EXISTS (SELECT 1 FROM public.platform_users p WHERE p.id = u.id)
-ON CONFLICT DO NOTHING;
+-- Per-row loop, not a set insert: if prod's drifted schema rejects one row
+-- (e.g. a residual NOT NULL email column vs a phone-only account), a set
+-- statement would abort the WHOLE migration and land none of the repair. Each
+-- row gets its own exception boundary — failures surface as warnings and the
+-- (d) orphan count, never as an abort.
+DO $$
+DECLARE
+  rec record;
+  v_bad int := 0;
+BEGIN
+  FOR rec IN
+    SELECT u.id, u.email, u.phone, u.raw_user_meta_data, u.email_confirmed_at
+    FROM auth.users u
+    WHERE NOT EXISTS (SELECT 1 FROM public.platform_users p WHERE p.id = u.id)
+  LOOP
+    BEGIN
+      INSERT INTO public.platform_users (id, first_name, last_name, email, phone, user_type, status, email_verified_at)
+      VALUES (rec.id,
+              COALESCE(NULLIF(split_part(COALESCE(rec.raw_user_meta_data->>'full_name',''), ' ', 1), ''), ''),
+              COALESCE(NULLIF(regexp_replace(COALESCE(rec.raw_user_meta_data->>'full_name',''), '^\S+\s*', ''), ''), ''),
+              rec.email,
+              COALESCE(NULLIF(rec.raw_user_meta_data->>'phone', ''), NULLIF(rec.phone, '')),
+              'registered_user', 'active', rec.email_confirmed_at)
+      ON CONFLICT DO NOTHING;
+    EXCEPTION WHEN OTHERS THEN
+      v_bad := v_bad + 1;
+      RAISE WARNING 'platform_users backfill skipped auth.users id=% email=%: % (%)',
+        rec.id, rec.email, SQLERRM, SQLSTATE;
+    END;
+  END LOOP;
+  IF v_bad > 0 THEN
+    RAISE WARNING 'platform_users backfill: % row(s) failed — see warnings above', v_bad;
+  END IF;
+END $$;
 
 -- Grant registered-user to every mirrored user still lacking it (same
 -- idempotent NOT EXISTS guard as the original bridge — user_roles' UNIQUE
