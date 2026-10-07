@@ -118,12 +118,47 @@ func (s *Service) EscrowExternal(ctx context.Context, payerID, reference, idempo
 	if _, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey); err != nil {
 		return nil, fmt.Errorf("settlement: insert external escrow row: %w", err)
 	}
+	// status / total / payer / funding source are all re-read, NOT echoed from
+	// the arguments: on a replay the existing row wins and may be refunded,
+	// held for a DIFFERENT payer, or wallet-funded. Callers MUST check the
+	// returned row before building anything on it (transport.bookParcel does).
 	if err = s.db.QueryRow(ctx,
-		`SELECT id, status, total_kobo FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
-	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo); err != nil {
+		`SELECT id, status, total_kobo, payer_id, funding_source FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
+	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo, &sett.PayerID, &sett.FundingSource); err != nil {
 		return nil, fmt.Errorf("settlement: resolve external escrow row: %w", err)
 	}
 	return sett, nil
+}
+
+// GetByID loads one settlement (incl. funding source). pgx.ErrNoRows when absent.
+func (s *Service) GetByID(ctx context.Context, settlementID string) (*Settlement, error) {
+	var st Settlement
+	err := s.db.QueryRow(ctx,
+		`SELECT id, reference, module_type, payer_id, total_kobo, status, idempotency_key, funding_source
+		   FROM settlements WHERE id=$1`, settlementID,
+	).Scan(&st.ID, &st.Reference, &st.ModuleType, &st.PayerID, &st.TotalKobo, &st.Status, &st.IdempotencyKey, &st.FundingSource)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: get %s: %w", settlementID, err)
+	}
+	return &st, nil
+}
+
+// RefundExternalByKey reverses, ledger-side, the EXTERNAL settlement escrowed
+// under idempotencyKey (the namespaced card-direct reference). Idempotent and
+// safe to call speculatively: no settlement under that key means nothing was
+// escrowed, so there is nothing to reverse (nil); an already-refunded row is a
+// no-op (RefundExternal's own contract); a wallet-funded row is refused
+// (ErrWrongRefundMethod) — never reversed into a gateway-shaped ledger leg.
+func (s *Service) RefundExternalByKey(ctx context.Context, idempotencyKey, reason string) error {
+	var id string
+	err := s.db.QueryRow(ctx, `SELECT id FROM settlements WHERE idempotency_key=$1`, idempotencyKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("settlement: resolve external settlement by key: %w", err)
+	}
+	return s.RefundExternal(ctx, id, reason)
 }
 
 // Settle releases the escrowed funds, applying the split and deducting commission.
@@ -427,6 +462,9 @@ type Settlement struct {
 	EscrowedAt     time.Time  `json:"escrowed_at"`
 	SettledAt      *time.Time `json:"settled_at,omitempty"`
 	IdempotencyKey string     `json:"idempotency_key"`
+	// FundingSource is "wallet" (Escrow) or "external" (EscrowExternal). Only
+	// populated by the readers that select it (EscrowExternal, GetByID).
+	FundingSource string `json:"funding_source,omitempty"`
 }
 
 // Split defines how a settlement is divided. Validated: TotalKobo == sum of all parts.

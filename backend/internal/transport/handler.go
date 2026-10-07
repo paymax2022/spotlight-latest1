@@ -115,7 +115,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 // CodedError carries an explicit status/code; everything else is a 500.
 func respondErr(c *gin.Context, err error) {
 	if ce, ok := errors.AsType[*CodedError](err); ok {
-		c.JSON(ce.Status, gin.H{"error": ce.Message, "code": ce.Code})
+		c.JSON(ce.Status, ce.Body())
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})

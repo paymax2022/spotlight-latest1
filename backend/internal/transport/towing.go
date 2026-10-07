@@ -2,18 +2,23 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/settlement"
 )
 
 // State machine:
@@ -99,20 +104,35 @@ func (s *Service) EstimateTowing(ctx context.Context, req TowingEstimateRequest)
 		if err != nil {
 			return nil, err
 		}
-		distanceM = route.DistanceM
+		distanceM = max(route.DistanceM, 0) // a corrupt router answer must never discount the fare (L-d)
 	}
 	fare := towingFare(distanceM, cfg)
 	return &TowingEstimate{DistanceM: distanceM, CalloutKobo: cfg.BaseFareKobo, FareKobo: fare}, nil
 }
 
-// BookTowing books + escrows a towing job and generates an operator PIN.
-func (s *Service) BookTowing(ctx context.Context, userID string, req TowingBookRequest, idempotencyKey string) (map[string]any, error) {
-	if idempotencyKey == "" {
-		idempotencyKey = req.IdempotencyKey
-	}
-	if idempotencyKey == "" {
-		return nil, codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
-	}
+// towingPricing is the server-side price of a towing booking request. The
+// escrowed/charged amount is `fare`.
+type towingPricing struct {
+	fare      int64
+	distanceM int
+	cfg       *PricingConfig
+}
+
+// towingFrozenPricing is the priced input set frozen at card-direct initiate
+// and replayed at confirm: the route distance and the full pricing config row
+// the quote used. Pricing from THIS (not a fresh routing call / config read)
+// keeps a re-route or a config edit between charge and booking from producing
+// a spurious amount mismatch (ADR-PRTBD-mobility-card-direct H8).
+type towingFrozenPricing struct {
+	DistanceM int           `json:"distanceM"`
+	Config    PricingConfig `json:"config"`
+}
+
+// priceTowing prices a request from server config + the routing adapter only —
+// no client-supplied amount can reach it. A request without a destination
+// (roadside) never routes: distance 0 ⇒ callout only. Shared by the wallet
+// path, the quotes and the card-direct booking.
+func (s *Service) priceTowing(ctx context.Context, req TowingBookRequest) (*towingPricing, error) {
 	cfg, err := s.loadPricingConfig(ctx, "default", "towing")
 	if err != nil {
 		return nil, err
@@ -126,25 +146,273 @@ func (s *Service) BookTowing(ctx context.Context, userID string, req TowingBookR
 		if err != nil {
 			return nil, err
 		}
-		distanceM = route.DistanceM
+		distanceM = max(route.DistanceM, 0) // a corrupt router answer must never discount the fare (L-d)
 	}
-	fare := towingFare(distanceM, cfg)
+	return &towingPricing{fare: towingFare(distanceM, cfg), distanceM: distanceM, cfg: cfg}, nil
+}
+
+// towingPricingFromFrozen is the pure pricing step over a frozen snapshot. The
+// config is copied, never aliased to the caller's snapshot.
+func towingPricingFromFrozen(frozen *towingFrozenPricing) *towingPricing {
+	cfg := frozen.Config
+	return &towingPricing{fare: towingFare(frozen.DistanceM, &cfg), distanceM: frozen.DistanceM, cfg: &cfg}
+}
+
+// decodeTowingFrozen parses a frozen snapshot. Empty ⇒ (nil, nil) = live
+// pricing; unreadable ⇒ error (never a silent re-price of a paid order).
+func decodeTowingFrozen(raw json.RawMessage) (*towingFrozenPricing, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var f towingFrozenPricing
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("transport: frozen towing pricing unreadable: %w", err)
+	}
+	return &f, nil
+}
+
+// towingServiceTypes mirrors the towing_jobs.service_type CHECK constraint.
+// A value outside it would pass pricing and the charge and then fail the
+// INSERT, so the card-direct paths refuse it BEFORE any money moves.
+var towingServiceTypes = map[string]bool{
+	"tow": true, "flatbed": true, "jumpstart": true, "tire_change": true,
+	"fuel": true, "battery": true, "unlock": true, "mechanic": true,
+}
+
+// towingNeedsDestination: the two tow-truck services move the vehicle, so a
+// destination is part of what is being bought. Roadside services stay put.
+var towingNeedsDestination = map[string]bool{"tow": true, "flatbed": true}
+
+func validCoord(p Place) bool {
+	return p.Lat >= -90 && p.Lat <= 90 && p.Lng >= -180 && p.Lng <= 180 && !(p.Lat == 0 && p.Lng == 0)
+}
+
+// validateTowingBookRequest is the card-direct pre-flight: nothing is priced,
+// escrowed or sent to Paystack for a request the booking cannot satisfy.
+// (The wallet path is deliberately unchanged.)
+func validateTowingBookRequest(req TowingBookRequest) error {
+	st := req.ServiceType
+	if st == "" {
+		st = "tow"
+	}
+	if !towingServiceTypes[st] {
+		return codedErr(http.StatusBadRequest, "invalid_input", "unsupported towing service_type")
+	}
+	if req.Pickup.Address == "" || !validCoord(req.Pickup) {
+		return codedErr(http.StatusBadRequest, "invalid_input", "a valid pickup location is required")
+	}
+	if req.Dest != nil && !validCoord(*req.Dest) {
+		return codedErr(http.StatusBadRequest, "invalid_input", "invalid destination")
+	}
+	if towingNeedsDestination[st] && req.Dest == nil {
+		return codedErr(http.StatusBadRequest, "invalid_input", "a tow destination is required")
+	}
+	return nil
+}
+
+// ValidateTowingBookRequest exposes the card-direct pre-flight to the
+// paystackcheckout adapter so a malformed request is refused (400) before the
+// engine prices it or freezes an intent.
+func ValidateTowingBookRequest(req TowingBookRequest) error { return validateTowingBookRequest(req) }
+
+// BookTowing books + escrows a towing job from the user's WALLET (KYC-tier
+// gated) and generates an operator PIN.
+func (s *Service) BookTowing(ctx context.Context, userID string, req TowingBookRequest, idempotencyKey string) (map[string]any, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = req.IdempotencyKey
+	}
+	if idempotencyKey == "" {
+		return nil, codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
+	}
+	if IsReservedIdempotencyKey(idempotencyKey) {
+		return nil, codedErr(http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", "this idempotency key format is reserved")
+	}
+	jobID, err := s.bookTowing(ctx, userID, req, idempotencyKey, false, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	return s.TowingDetail(ctx, jobID, userID)
+}
+
+// QuoteTowingBooking returns the EXACT amount (kobo) a card-direct towing
+// booking will be charged. Pure read; never trusted as final:
+// BookTowingPaystackFunded independently recomputes it.
+func (s *Service) QuoteTowingBooking(ctx context.Context, req TowingBookRequest) (int64, error) {
+	if err := validateTowingBookRequest(req); err != nil {
+		return 0, err
+	}
+	p, err := s.priceTowing(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	return p.fare, nil
+}
+
+// QuoteTowingBookingFrozen is QuoteTowingBooking plus the frozen priced inputs
+// (JSON) the card-direct engine stores in the intent and hands back to
+// BookTowingPaystackFundedFrozen.
+func (s *Service) QuoteTowingBookingFrozen(ctx context.Context, req TowingBookRequest) (int64, json.RawMessage, error) {
+	if err := validateTowingBookRequest(req); err != nil {
+		return 0, nil, err
+	}
+	p, err := s.priceTowing(ctx, req)
+	if err != nil {
+		return 0, nil, err
+	}
+	frozen, err := json.Marshal(towingFrozenPricing{DistanceM: p.distanceM, Config: *p.cfg})
+	if err != nil {
+		return 0, nil, fmt.Errorf("transport: freeze towing pricing: %w", err)
+	}
+	return p.fare, frozen, nil
+}
+
+// FindTowingByIdempotencyKey returns the job already booked under
+// idempotencyKey for userID, if any (card-direct replay / ambiguous-failure
+// resolution).
+func (s *Service) FindTowingByIdempotencyKey(ctx context.Context, userID, idempotencyKey string) (string, bool, error) {
+	var id string
+	err := s.db.QueryRow(ctx, `SELECT id FROM towing_jobs WHERE idempotency_key=$1 AND user_id=$2`, idempotencyKey, userID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}
+
+// BookTowingPaystackFunded books a towing job funded by an ALREADY-VERIFIED
+// external Paystack charge of exactly verifiedAmountKobo — never a wallet
+// debit, so the KYC-tier gate does not (and must not) run. See
+// BookParcelPaystackFunded for the full contract; identical here. Must only
+// ever be called from a server-initiated confirm flow.
+func (s *Service) BookTowingPaystackFunded(ctx context.Context, userID string, req TowingBookRequest, idempotencyKey string, verifiedAmountKobo int64) (string, error) {
+	return s.BookTowingPaystackFundedFrozen(ctx, userID, req, idempotencyKey, verifiedAmountKobo, nil)
+}
+
+// BookTowingPaystackFundedFrozen is BookTowingPaystackFunded priced from the
+// frozen inputs captured at quote time (nil/empty ⇒ live pricing).
+func (s *Service) BookTowingPaystackFundedFrozen(ctx context.Context, userID string, req TowingBookRequest, idempotencyKey string, verifiedAmountKobo int64, frozenPricing json.RawMessage) (string, error) {
+	if idempotencyKey == "" {
+		return "", codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
+	}
+	return s.bookTowing(ctx, userID, req, idempotencyKey, true, verifiedAmountKobo, frozenPricing)
+}
+
+// externalTowingID is the job id of a card-direct booking, derived from the
+// namespaced idempotency key so every retry of one charge targets ONE id (and
+// one settlement reference "towing:<id>").
+func externalTowingID(idempotencyKey string) string {
+	return uuid.NewSHA1(externalTowingNamespace, []byte(idempotencyKey)).String()
+}
+
+// externalTowingNamespace is the fixed UUIDv5 namespace for externalTowingID.
+// NEVER change it: it is what makes a retry after a crash land on the same id.
+var externalTowingNamespace = uuid.MustParse("b7e24c1a-58d3-5f06-8c19-3a6d90e4b2f7")
+
+// bookTowing is the shared body of BookTowing (wallet) and
+// BookTowingPaystackFunded (card-direct); `external`/`verifiedAmountKobo` are
+// never client-settable. Returns the job id.
+func (s *Service) bookTowing(ctx context.Context, userID string, req TowingBookRequest, idempotencyKey string, external bool, verifiedAmountKobo int64, frozenPricing json.RawMessage) (string, error) {
+	if idempotencyKey == "" {
+		return "", codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
+	}
+	// H-A: refuse a request the INSERT cannot satisfy BEFORE any money moves, on
+	// BOTH rails. The wallet path used to skip this, so wheel_lift / heavy_duty /
+	// roadside debited the wallet and THEN violated the towing_jobs.service_type
+	// CHECK with the escrow orphaned.
+	if err := validateTowingBookRequest(req); err != nil {
+		return "", err
+	}
+	if external {
+		if verifiedAmountKobo <= 0 {
+			return "", codedErr(http.StatusConflict, CodeAmountMismatch, "verified payment amount is not a positive charge")
+		}
+		// Replay: a repeat of an already-booked card-funded job returns it
+		// untouched — no second escrow, no second row.
+		if id, found, err := s.FindTowingByIdempotencyKey(ctx, userID, idempotencyKey); err != nil {
+			return "", err
+		} else if found {
+			return id, nil
+		}
+	}
+	var pr *towingPricing
+	if external {
+		frozen, ferr := decodeTowingFrozen(frozenPricing)
+		if ferr != nil {
+			return "", ferr
+		}
+		if frozen != nil {
+			// Price from the inputs frozen at quote time, NOT a fresh routing
+			// call: the customer was charged for exactly that number.
+			pr = towingPricingFromFrozen(frozen)
+		}
+	}
+	if pr == nil {
+		var err error
+		if pr, err = s.priceTowing(ctx, req); err != nil {
+			return "", err
+		}
+	}
+	fare := pr.fare
 	serviceType := req.ServiceType
 	if serviceType == "" {
 		serviceType = "tow"
 	}
 
-	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
-	// as RequestRide): a Tier0/over-limit user cannot move money.
-	if err := s.enforceTierLimit(ctx, userID, fare); err != nil {
-		return nil, err
+	if external {
+		// Cross-check BEFORE anything writes: pricing config can move between
+		// the quote that set the charge and this call; never trust the quote,
+		// only what was actually collected.
+		if fare != verifiedAmountKobo {
+			return "", codedErr(http.StatusConflict, CodeAmountMismatch, "verified payment amount no longer matches the towing fare")
+		}
+	} else if err := s.enforceTierLimit(ctx, userID, fare); err != nil {
+		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same
+		// contract as RequestRide): a Tier0/over-limit user cannot move money.
+		// Skipped ONLY for card-direct: no wallet debit exists there.
+		return "", err
 	}
 
 	jobID := uuid.New().String()
+	if external {
+		// Deterministic per charge: every retry escrows under ONE reference
+		// ("towing:<id>") and targets ONE job row.
+		jobID = externalTowingID(idempotencyKey)
+	}
 	ref := "towing:" + jobID
-	sett, err := s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", fare)
+	var sett *settlement.Settlement
+	var err error
+	if external {
+		sett, err = s.settlement.EscrowExternal(ctx, userID, ref, idempotencyKey, "transport", fare)
+	} else {
+		sett, err = s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", fare)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("transport: escrow towing fare: %w", err)
+		return "", fmt.Errorf("transport: escrow towing fare: %w", err)
+	}
+	if !external {
+		// Escrow also returns the EXISTING row on a replay. A row that was
+		// already reversed (an earlier attempt's INSERT failed and was refunded
+		// to the wallet) or that holds a different amount must never back a new
+		// job — the retry would otherwise book a tow for money that went back.
+		if sett.Status != settlement.StatusEscrowed || sett.TotalKobo != fare {
+			return "", fmt.Errorf("transport: escrow replay for %s is not a live escrow of this fare (status=%s total=%d fare=%d) — refusing to book; retry with a new idempotency key",
+				idempotencyKey, sett.Status, sett.TotalKobo, fare)
+		}
+	}
+	if external {
+		// EscrowExternal returns the EXISTING row on a replay. Only a live
+		// (escrowed) external escrow held for THIS user may back a new job; a
+		// refunded / settled / foreign / wallet-funded row would deliver a tow
+		// for money that already went back (or never was this charge).
+		if sett.Status != settlement.StatusEscrowed || sett.PayerID != userID || sett.FundingSource != "external" {
+			return "", fmt.Errorf("transport: external escrow replay for %s is not a live escrow of this user's charge (status=%s payer_match=%t funding=%s) — refusing to book",
+				idempotencyKey, sett.Status, sett.PayerID == userID, sett.FundingSource)
+		}
+		if sett.TotalKobo != fare {
+			return "", fmt.Errorf("transport: external escrow replay amount %d != fare %d", sett.TotalKobo, fare)
+		}
 	}
 	pin := generatePin()
 	var destAddr any
@@ -161,11 +429,39 @@ func (s *Service) BookTowing(ctx context.Context, userID string, req TowingBookR
 		req.Pickup.Address, req.Pickup.Lat, req.Pickup.Lng, destAddr,
 		fare, pin, sett.ID, idempotencyKey,
 	); err != nil {
-		return nil, fmt.Errorf("transport: insert towing job: %w", err)
+		// The booking ctx may be the very thing that failed (deadline / cancel),
+		// so the compensation runs on a detached, bounded one. BOTH rails: a
+		// failed INSERT after the escrow posted must never leave the money
+		// orphaned (H-A) — card money is reversed ledger-side for the engine's
+		// gateway refund, wallet money goes straight back to the wallet. Either
+		// way ONLY when Find proves no job owns the escrow (H5).
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		id, _, cerr := resolveExternalInsertFailure(
+			func() (string, bool, error) { return s.FindTowingByIdempotencyKey(cctx, userID, idempotencyKey) },
+			func() error {
+				if external {
+					return s.settlement.RefundExternal(cctx, sett.ID, "towing_insert_failed")
+				}
+				return s.settlement.Refund(cctx, sett.ID, "towing_insert_failed")
+			},
+		)
+		if cerr != nil {
+			log.Printf("[transport] escrow settlement=%s (external=%t) after towing insert failure (%v) — %v — needs manual reconciliation", sett.ID, external, err, cerr)
+			return "", fmt.Errorf("transport: insert towing job: %w (compensation: %v)", err, cerr)
+		}
+		if id != "" { // a concurrent booking of the same key owns the escrow
+			return id, nil
+		}
+		return "", fmt.Errorf("transport: insert towing job: %w", err)
 	}
-	s.recordModeEvent(ctx, userID, "towing.requested", "towing_job", jobID, "", "requested",
-		map[string]any{"fare_kobo": fare, "service_type": serviceType})
-	return s.TowingDetail(ctx, jobID, userID)
+	meta := map[string]any{"fare_kobo": fare, "service_type": serviceType, "settlement_id": sett.ID}
+	if external {
+		meta["funding"] = "external"
+		meta["verified_amount_kobo"] = verifiedAmountKobo
+	}
+	s.recordModeEvent(ctx, userID, "towing.requested", "towing_job", jobID, "", "requested", meta)
+	return jobID, nil
 }
 
 // TowingDetail returns a towing job; user sees the PIN, operator does not.
@@ -235,29 +531,62 @@ func (s *Service) ListTowing(ctx context.Context, userID string) ([]map[string]a
 	return out, nil
 }
 
-// CancelTowing refunds + cancels a job (user only).
+// CancelTowing refunds + cancels a job (user only). See CancelTowingWithRefund
+// for the refund_status the HTTP endpoint reports.
 func (s *Service) CancelTowing(ctx context.Context, id, userID, reason string) error {
+	_, err := s.CancelTowingWithRefund(ctx, id, userID, reason)
+	return err
+}
+
+// CancelTowingWithRefund cancels a job and reports whether the customer's money
+// is actually back (refund_status). A card-funded job whose domain has no
+// refunder wired is refused BEFORE the status flips (503 refund_unavailable).
+func (s *Service) CancelTowingWithRefund(ctx context.Context, id, userID, reason string) (*CancelResult, error) {
+	reason = capCancelReason(reason)
 	var t towingRow
 	if err := s.loadTowing(ctx, id, &t); err != nil {
-		return codedErr(http.StatusNotFound, CodeNotFound, "towing job not found")
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "towing job not found")
 	}
 	if t.UserID != userID {
-		return codedErr(http.StatusForbidden, CodeForbidden, "not your job")
+		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your job")
+	}
+	if t.Status == "cancelled" {
+		// Idempotent re-cancel. Only meaningful for a card-funded job whose
+		// first refund attempt failed after the status flip: finish the refund
+		// (escrowed OR disputed). Anything else is a plain 409.
+		if res, handled, err := s.finishCancelledRefund(ctx, RefundDomainTowing, id, t.SettlementID, "towing_cancelled_retry:"+reason); handled {
+			return res, err
+		}
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+t.Status)
 	}
 	if !canTransitionTowing(t.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+t.Status)
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+t.Status)
+	}
+	external, err := s.requireRefundRail(ctx, RefundDomainTowing, t.SettlementID)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.towingSetStatus(ctx, id, t.Status, "cancelled"); err != nil {
-		return err
+		return nil, err
 	}
+	res := &CancelResult{RefundStatus: RefundStatusNone}
 	if t.SettlementID != nil {
-		_ = s.settlement.Refund(ctx, *t.SettlementID, "towing_cancelled:"+reason)
+		// One refund choke point: card-funded (EscrowExternal) money goes back
+		// through the gateway, wallet-funded money back to the wallet — chosen
+		// from settlements.funding_source, never guessed. A failure is logged and
+		// reported as refund_status, not returned: the job IS cancelled; re-POSTing
+		// cancel (or the reconciler sweep) finishes a card refund that failed here.
+		rerr := s.refundSettlement(ctx, RefundDomainTowing, id, *t.SettlementID, "towing_cancelled:"+reason)
+		if rerr != nil {
+			log.Printf("[transport] towing %s cancelled but refund of settlement=%s failed: %v", id, *t.SettlementID, rerr)
+		}
+		res.RefundStatus = refundStatusFor(rerr, external)
 	}
 	if t.OperatorID != nil {
 		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.OperatorID)
 	}
-	s.recordModeEvent(ctx, userID, "towing.cancelled", "towing_job", id, t.Status, "cancelled", map[string]any{"reason": reason})
-	return nil
+	s.recordModeEvent(ctx, userID, "towing.cancelled", "towing_job", id, t.Status, "cancelled", map[string]any{"reason": reason, "refund_status": res.RefundStatus})
+	return res, nil
 }
 
 // towingSetStatus performs a guarded status update.
@@ -476,11 +805,12 @@ func (h *Handler) TowingCancel(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
-	if err := h.svc.CancelTowing(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+	res, err := h.svc.CancelTowingWithRefund(c.Request.Context(), c.Param("id"), userID, req.Reason)
+	if err != nil {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled", "refund_status": res.RefundStatus})
 }
 
 // TowingRequests returns open operator requests.

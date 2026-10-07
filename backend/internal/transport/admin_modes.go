@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -332,6 +333,52 @@ func (a *AdminService) PatchCarHireStatus(ctx context.Context, adminID, id strin
 	return a.patchModeStatus(ctx, adminID, "car_hire_bookings", "car_hire_booking", id, req)
 }
 
+// moneyMovingPatchStatuses are the target statuses whose NORMAL path moves the
+// customer's money (refund on cancel/failure, release on completion). A bare
+// status UPDATE to one of them does not move any — for card-funded escrow it
+// would strand the customer's charge in escrow behind a status that says the job
+// is over (M1).
+var moneyMovingPatchStatuses = map[string]bool{
+	"cancelled": true, "disputed": true, "failed": true, "completed": true,
+	"completion_confirmed": true, "delivered": true,
+}
+
+// settlementColumnQueries read the funding source + status of a mode row's
+// escrow (car hire is intentionally absent: it has two settlements per booking
+// and no card-direct rail yet).
+var settlementColumnQueries = map[string]string{
+	"parcels":     `SELECT st.funding_source, st.status FROM parcels e JOIN settlements st ON st.id = e.settlement_id WHERE e.id=$1`,
+	"towing_jobs": `SELECT st.funding_source, st.status FROM towing_jobs e JOIN settlements st ON st.id = e.settlement_id WHERE e.id=$1`,
+	"mover_jobs":  `SELECT st.funding_source, st.status FROM mover_jobs e JOIN settlements st ON st.id = e.settlement_id WHERE e.id=$1`,
+}
+
+// refuseMoneyMovingPatch rejects (409) a manual move to a money-moving status
+// while the job's CARD-funded settlement is still escrowed/disputed: there is no
+// admin path that issues the gateway refund, so the only safe routes are the
+// customer cancel flow (which refunds through the gateway) or the operator
+// runbook in the ADR. Wallet-funded jobs and jobs whose settlement is already
+// refunded/settled keep the historical bare-UPDATE behaviour.
+func (a *AdminService) refuseMoneyMovingPatch(ctx context.Context, table, id, target string) error {
+	q, ok := settlementColumnQueries[table]
+	if !ok || !moneyMovingPatchStatuses[target] {
+		return nil
+	}
+	var funding, status string
+	if err := a.svc.db.QueryRow(ctx, q, id).Scan(&funding, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) { // no settlement row: nothing is escrowed
+			return nil
+		}
+		return err
+	}
+	if funding != "external" || (status != "escrowed" && status != "disputed") {
+		return nil
+	}
+	return codedErr(http.StatusConflict, CodeInvalidState,
+		"this job is funded by a card payment that is still held in escrow; setting it to \""+target+
+			"\" would not return the customer's money. Use the customer's cancel flow (which refunds the card) "+
+			"or follow the card-direct refund runbook (docs/adr/ADR-PRTBD-mobility-card-direct.md) instead")
+}
+
 // patchModeStatus updates a row's status across any mode table, audited. Table
 // names are constant literals (never user input) so this is injection-safe.
 func (a *AdminService) patchModeStatus(ctx context.Context, adminID, table, entityType, id string, req ModeStatusPatchRequest) error {
@@ -352,6 +399,9 @@ func (a *AdminService) patchModeStatus(ctx context.Context, adminID, table, enti
 	}
 	if err := db.QueryRow(ctx, q, id).Scan(&oldStatus); err != nil {
 		return codedErr(http.StatusNotFound, CodeNotFound, "record not found")
+	}
+	if err := a.refuseMoneyMovingPatch(ctx, table, id, req.Status); err != nil {
+		return err
 	}
 	var upd string
 	switch table {

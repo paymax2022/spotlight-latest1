@@ -249,6 +249,34 @@ type Config struct {
 	// FeatureRestaurantPaystackCheckoutEnabled, ported to ride-hailing's
 	// instant-pricing flow (no offer-mode negotiation).
 	FeatureTransportPaystackCheckoutEnabled bool
+	// FeatureTransportPaystackParcelEnabled gates CARD-DIRECT parcel booking
+	// (transport/paystackcheckout Engine + ParcelDomain): the sender pays by
+	// debit card straight through Paystack, escrowed via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate.
+	// Default OFF. Inert unless FeatureTransportPaystackCheckoutEnabled (the
+	// shared-engine master switch) AND FeatureTransportModesEnabled (parcel
+	// routes) are also on. One flag per service so each lifecycle can be
+	// rolled out / killed independently (ADR-PRTBD-mobility-card-direct).
+	FeatureTransportPaystackParcelEnabled bool
+	// FeatureTransportPaystackTowingEnabled gates CARD-DIRECT towing / roadside
+	// booking (transport/paystackcheckout Engine + TowingDomain): the user pays by
+	// debit card straight through Paystack, escrowed via settlement.EscrowExternal
+	// — no wallet debit, so no KYC-tier gate. Default OFF. Inert unless
+	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
+	// FeatureTransportModesEnabled (towing routes) are also on. Gates ONLY new
+	// checkouts; confirm / status / refund / reconcile for money already collected
+	// stay live (ADR-PRTBD-mobility-card-direct H7).
+	FeatureTransportPaystackTowingEnabled bool
+	// FeatureTransportPaystackMoversEnabled gates CARD-DIRECT mover bid acceptance
+	// (transport/paystackcheckout Engine + MoversDomain): the customer pays the
+	// ACCEPTED BID by debit card straight through Paystack, escrowed via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate. Charged at bid
+	// acceptance (the amount is the bid read server-side). Default OFF. Inert unless
+	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
+	// FeatureTransportModesEnabled (mover routes) are also on. Gates ONLY new
+	// checkouts; confirm / status / refund / reconcile for money already collected
+	// stay live (ADR-PRTBD-mobility-card-direct H7).
+	FeatureTransportPaystackMoversEnabled bool
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
@@ -803,6 +831,9 @@ func Load() Config {
 		FeatureTransportEnabled:                  getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:             getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
 		FeatureTransportPaystackCheckoutEnabled:  getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureTransportPaystackParcelEnabled:    getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
+		FeatureTransportPaystackTowingEnabled:    getEnvBool("FEATURE_TRANSPORT_PAYSTACK_TOWING_ENABLED", false),
+		FeatureTransportPaystackMoversEnabled:    getEnvBool("FEATURE_TRANSPORT_PAYSTACK_MOVERS_ENABLED", false),
 		FeatureTransportSchedulingEnabled:        getEnvBool("FEATURE_TRANSPORT_SCHEDULING_ENABLED", false),
 		FeatureAICareEnabled:                     getEnvBool("FEATURE_AICARE_ENABLED", false),
 		FeatureDisputesEnabled:                   getEnvBool("FEATURE_DISPUTES_ENABLED", false),
