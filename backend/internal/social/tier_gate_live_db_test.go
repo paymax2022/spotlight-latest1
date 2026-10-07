@@ -265,7 +265,7 @@ func TestLiveDB_SocialContributePool_Tier0Refused_Tier1Succeeds(t *testing.T) {
 	if n := ledgerLegs(t, pool, key); n != 0 {
 		t.Fatalf("tier-0 refusal posted %d ledger legs", n)
 	}
-	if bal, _ := svc.PoolBalance(ctx, p.ID); bal != 0 {
+	if bal, _ := svc.PoolBalance(ctx, organiser, p.ID); bal != 0 {
 		t.Fatalf("pool balance = %d after refused contribution, want 0", bal)
 	}
 

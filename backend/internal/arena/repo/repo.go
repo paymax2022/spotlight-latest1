@@ -615,6 +615,12 @@ func (r *EngagementRepo) Record(ctx context.Context, competitionID, spectatorID,
 		ON CONFLICT (idempotency_key) DO NOTHING`,
 		competitionID, spectatorID, eventType, subjectID, points, idemKey)
 	if err != nil {
+		// A competition_id that cannot resolve to a competition — nonexistent
+		// (FK 23503) or malformed (22P02) — is a client-visible not-found, not a
+		// 500. Sibling POSTs answer 404 for the same probe.
+		if dbutil.IsForeignKeyViolation(err) || dbutil.SQLState(err) == "22P02" {
+			return 0, false, service.ErrNotFound
+		}
 		return 0, false, err
 	}
 	duplicate = tag.RowsAffected() == 0

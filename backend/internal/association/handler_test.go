@@ -8,10 +8,12 @@ package association
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestStatusFor_MapsErrorsToHTTPStatus(t *testing.T) {
@@ -31,6 +33,20 @@ func TestStatusFor_MapsErrorsToHTTPStatus(t *testing.T) {
 		{"pgx no rows", pgx.ErrNoRows, http.StatusNotFound},
 		{"wrapped forbidden", errWrap(ErrForbidden), http.StatusForbidden},
 		{"unknown/generic error", errors.New("association: something else broke"), http.StatusInternalServerError},
+		// Sweep-2 drift fixes: malformed uuid path/query ids surface from
+		// Postgres as 22P02 — a uuid-cast failure can never name a row → 404;
+		// other 22P02 (bad enum literal) and CHECK violations are bad input →
+		// 400. The module's unwrapped errors.New domain copy maps by its
+		// documented vocabulary; wrapped internal faults keep the 500 default.
+		{"malformed uuid param", &pgconn.PgError{Code: "22P02", Message: `invalid input syntax for type uuid: "nope"`}, http.StatusNotFound},
+		{"bad enum literal", &pgconn.PgError{Code: "22P02", Message: `invalid input value for enum task_status: "BOGUS"`}, http.StatusBadRequest},
+		{"check violation", &pgconn.PgError{Code: "23514", Message: `new row violates check constraint`}, http.StatusBadRequest},
+		{"wrapped check violation", fmt.Errorf("association: update org: %w", &pgconn.PgError{Code: "23514"}), http.StatusBadRequest},
+		{"plain not found", errors.New("association: organisation not found"), http.StatusNotFound},
+		{"plain required", errors.New("association: batchId is required"), http.StatusBadRequest},
+		{"plain must-be", errors.New("association: terms must be accepted"), http.StatusBadRequest},
+		{"plain capacity", errors.New("association: event is full"), http.StatusBadRequest},
+		{"wrapped internal stays 500", fmt.Errorf("association: update organisation: %w", errors.New("dial tcp: connection refused")), http.StatusInternalServerError},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
