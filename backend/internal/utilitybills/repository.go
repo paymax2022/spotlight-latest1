@@ -686,9 +686,17 @@ func (r *Repository) InsertTransaction(ctx context.Context, t *TransactionRow) (
 	}
 	if dbutil.IsUniqueViolation(err) {
 		// Same-caller concurrent insert: the winner's row is the answer
-		// (caller-scoped re-read — a foreign row is never returned here).
+		// (caller-scoped re-read — a foreign row is never returned here) —
+		// but ONLY when it records the same purchase. A key replayed against
+		// different material params is idempotency-key misuse, not a retry:
+		// adopting the stored row would report a transaction this request
+		// never made (post-merge audit D4), so divergence fails closed with
+		// the same 409 sentinel a cross-member clash gets.
 		existing, rerr := r.GetTransactionByIdempotencyKey(ctx, t.UserID, t.IdempotencyKey)
 		if rerr == nil && existing != nil {
+			if !sameTransactionParams(existing, t) {
+				return nil, false, ErrIdempotencyKeyConflict
+			}
 			return existing, true, nil
 		}
 		// The caller-scoped read missed. If the key is nonetheless taken, it is
@@ -702,6 +710,30 @@ func (r *Repository) InsertTransaction(ctx context.Context, t *TransactionRow) (
 		return nil, false, fmt.Errorf("utilitybills: insert transaction (unique violation, not the idempotency key): %w", err)
 	}
 	return nil, false, fmt.Errorf("utilitybills: insert transaction: %w", err)
+}
+
+// sameTransactionParams compares the material params a same-caller
+// idempotency-key replay must agree on for the stored row to be THIS purchase:
+// what is being bought (category + biller + product), for whom (customer
+// reference — the meter/account the value lands on), for how much (amount and
+// retail totals), and through which rail (payment source). Anything else
+// (status, provider outcome, attempts) is outcome, not request.
+func sameTransactionParams(a, b *TransactionRow) bool {
+	return a.Category == b.Category &&
+		a.BillerID == b.BillerID &&
+		sameStrPtr(a.ProductID, b.ProductID) &&
+		a.CustomerReference == b.CustomerReference &&
+		a.AmountKobo == b.AmountKobo &&
+		a.RetailAmountKobo == b.RetailAmountKobo &&
+		a.PaymentSource == b.PaymentSource
+}
+
+// sameStrPtr compares two nullable strings by value.
+func sameStrPtr(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // ErrStatusGuard is returned by UpdateTransaction when the patch carries

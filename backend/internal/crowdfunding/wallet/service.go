@@ -369,9 +369,30 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	// replay their withdrawal back to this caller — that would leak their
 	// reference/amount/bank label. A foreign key misses here and collides at
 	// the cf_withdrawals unique constraint below → 409.
-	if existing, ok, err := s.findByIdempotencyKey(ctx, creatorID, idempotencyKey); err != nil {
+	if existing, existingCampaignID, ok, err := s.findByIdempotencyKey(ctx, creatorID, idempotencyKey); err != nil {
 		return nil, err
 	} else if ok {
+		// A caller-scoped hit is a true replay ONLY when the request is the
+		// same withdrawal: same campaign, same amount, same payout
+		// destination. A key replayed against different material params is
+		// idempotency-key misuse — acking the stored row would tell the
+		// creator a different withdrawal "went through" (post-merge audit
+		// D4). Divergence on campaign or amount conflicts outright.
+		if existingCampaignID != campaignID || existing.AmountKobo != in.AmountKobo {
+			return nil, ErrIdempotencyKeyConflict
+		}
+		// The row stores the resolved bank LABEL, not the account id, so the
+		// destination check resolves this request's account the same way the
+		// write path does and compares. An unresolvable account id is a
+		// failure in its own right — the stored row is never returned to a
+		// request whose destination cannot be verified.
+		wantLabel, lerr := s.resolveBankLabel(ctx, creatorID, in.BankAccountID)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if wantLabel != existing.BankLabel {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return existing, nil
 	}
 
@@ -462,25 +483,29 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 }
 
 // findByIdempotencyKey returns the caller's own prior withdrawal under this
-// key — scoped to THIS creator. A key another member already used returns
-// (nil, false, nil) and is caught by the unique constraint on insert →
-// ErrIdempotencyKeyConflict; an unscoped lookup would replay a stranger's
-// withdrawal (leaking their reference/amount/bank label) on a guessed key.
-func (s *Service) findByIdempotencyKey(ctx context.Context, creatorID, key string) (*WithdrawalResult, bool, error) {
+// key — scoped to THIS creator — plus the campaign it was filed against
+// (WithdrawalResult carries no campaign field; the caller needs it to verify
+// the replay matches THIS request's path param). A key another member already
+// used returns (nil, "", false, nil) and is caught by the unique constraint
+// on insert → ErrIdempotencyKeyConflict; an unscoped lookup would replay a
+// stranger's withdrawal (leaking their reference/amount/bank label) on a
+// guessed key.
+func (s *Service) findByIdempotencyKey(ctx context.Context, creatorID, key string) (*WithdrawalResult, string, bool, error) {
 	const q = `
-		SELECT id, reference, amount_kobo, bank_label, status, requested_at
+		SELECT id, reference, amount_kobo, bank_label, status, requested_at, campaign_id
 		FROM cf_withdrawals WHERE idempotency_key = $1 AND creator_id = $2`
 	var r WithdrawalResult
 	var requestedAt time.Time
-	err := s.db.QueryRow(ctx, q, key, creatorID).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt)
+	var campaignID string
+	err := s.db.QueryRow(ctx, q, key, creatorID).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt, &campaignID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	r.RequestedAt = timeutil.RFC3339(requestedAt)
-	return &r, true, nil
+	return &r, campaignID, true, nil
 }
 
 func (s *Service) resolveBankLabel(ctx context.Context, userID, bankAccountID string) (string, error) {
