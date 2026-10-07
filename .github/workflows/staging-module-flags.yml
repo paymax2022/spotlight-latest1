@@ -49,7 +49,7 @@ on:
         type: boolean
         default: false
       set_web_base_url:
-        description: 'Set NEXT_PUBLIC_WEB_APP_BASE_URL on frontend-admin and REBUILD it'
+        description: 'Set NEXT_PUBLIC_WEB_APP_BASE_URL + WEB_API_BASE_URL on frontend-admin and REBUILD it'
         type: boolean
         default: false
       set_insurance_key:
@@ -547,7 +547,7 @@ jobs:
             --project "$PROJECT" --yes
 
   set-web-base-url:
-    name: set NEXT_PUBLIC_WEB_APP_BASE_URL on frontend-admin
+    name: set NEXT_PUBLIC_WEB_APP_BASE_URL + WEB_API_BASE_URL on frontend-admin
     if: ${{ inputs.confirm == 'SET' && inputs.set_web_base_url }}
     runs-on: ubuntu-latest
     environment: staging
@@ -570,7 +570,12 @@ jobs:
       - name: Set the variable
         run: |
           set -euo pipefail
+          # WEB_API_BASE_URL is the server-side /api/web-proxy target (registration,
+          # open-mic, contests consoles). It has no fallback: unset, those admin
+          # pages fail with "WEB_API_BASE_URL is not set". Runtime-read, no
+          # trailing slash and no /api/v1 suffix.
           railway variable set "NEXT_PUBLIC_WEB_APP_BASE_URL=$WEB_BASE" \
+            "WEB_API_BASE_URL=$WEB_BASE" \
             --service frontend-admin --environment "$ENVIRONMENT" \
             --project "$PROJECT" --skip-deploys
 
@@ -583,10 +588,12 @@ jobs:
             --project "$PROJECT" --json > fa.json
           node -e '
             const v = JSON.parse(require("fs").readFileSync("fa.json","utf8"));
-            const got = v.NEXT_PUBLIC_WEB_APP_BASE_URL;
-            console.log("  NEXT_PUBLIC_WEB_APP_BASE_URL =", got ?? "NOT SET");
-            if (!got) { console.error("not set"); process.exit(1); }
-            if (/localhost/.test(String(got))) { console.error("still localhost"); process.exit(1); }
+            for (const name of ["NEXT_PUBLIC_WEB_APP_BASE_URL", "WEB_API_BASE_URL"]) {
+              const got = v[name];
+              console.log("  " + name + " =", got ?? "NOT SET");
+              if (!got) { console.error(name + " not set"); process.exit(1); }
+              if (/localhost/.test(String(got))) { console.error(name + " still localhost"); process.exit(1); }
+            }
           '
 
       # NEXT_PUBLIC_* is inlined at BUILD time and the Dockerfile now declares a
