@@ -1446,12 +1446,32 @@ func (s *Service) ReviewOwnershipClaim(ctx context.Context, claimID, adminID, es
 }
 
 // CreateTenancyRequest submits a tenancy application for a property.
-func (s *Service) CreateTenancyRequest(ctx context.Context, propertyID string, req TenancyRequestBody, tenantID string) (*TenancyRequest, error) {
+// The landlord is resolved SERVER-SIDE from the property — trusting the
+// request body's landlord_id let any user file a request naming THEMSELVES
+// the landlord, then self-approve it through ReviewTenancyRequest to claim
+// the unit's tenancy and gain estate membership.
+func (s *Service) CreateTenancyRequest(ctx context.Context, estateID, propertyID string, req TenancyRequestBody, tenantID string) (*TenancyRequest, error) {
+	if tenantID == "" {
+		return nil, errors.New("estate: unauthenticated")
+	}
+	// Bind the property to the route's estate and pull its real landlord.
+	var propEstate, landlordID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT estate_id, COALESCE(landlord_id::TEXT,'') FROM estate_properties WHERE id=$1`, propertyID,
+	).Scan(&propEstate, &landlordID); err != nil {
+		return nil, errors.New("estate: property not found")
+	}
+	if propEstate != estateID {
+		return nil, errors.New("estate: property does not belong to this estate")
+	}
+	if landlordID == "" {
+		return nil, errors.New("estate: property has no landlord to review the request")
+	}
 	tr := &TenancyRequest{
 		ID:           uuid.New().String(),
 		PropertyID:   propertyID,
 		TenantID:     tenantID,
-		LandlordID:   req.LandlordID,
+		LandlordID:   landlordID,
 		LeaseStart:   req.LeaseStart,
 		LeaseEnd:     req.LeaseEnd,
 		AgreementURL: req.AgreementURL,
@@ -1470,8 +1490,21 @@ func (s *Service) CreateTenancyRequest(ctx context.Context, propertyID string, r
 	return tr, err
 }
 
-// ReviewTenancyRequest allows a landlord to approve or reject a tenancy request.
+// ReviewTenancyRequest allows the property's landlord to approve or reject a
+// tenancy request. Approval side-effects (property occupancy + resident
+// membership) commit in the SAME transaction as the status flip — previously
+// they ran as separate error-discarding Execs, so a partial approval could
+// occupy the unit without admitting the tenant (or vice versa).
 func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordID, estateID, decision string) (*TenancyRequest, error) {
+	if decision != "approved" && decision != "rejected" {
+		return nil, errors.New("estate: decision must be 'approved' or 'rejected'")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	now := time.Now()
 	tr := &TenancyRequest{}
 	const q = `
@@ -1479,7 +1512,7 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 		FROM estate_properties ep
 		WHERE tr.id=$3 AND tr.landlord_id=$4 AND ep.id=tr.property_id AND ep.estate_id=$5 AND tr.status='pending'
 		RETURNING tr.id, tr.property_id, tr.tenant_id, tr.landlord_id, tr.lease_start::TEXT, COALESCE(tr.lease_end::TEXT,''), COALESCE(tr.agreement_url,''), tr.status, tr.reviewed_at, tr.created_at`
-	if err := s.db.QueryRow(ctx, q, decision, now, requestID, landlordID, estateID).Scan(
+	if err := tx.QueryRow(ctx, q, decision, now, requestID, landlordID, estateID).Scan(
 		&tr.ID, &tr.PropertyID, &tr.TenantID, &tr.LandlordID, &tr.LeaseStart, &tr.LeaseEnd,
 		&tr.AgreementURL, &tr.Status, &tr.ReviewedAt, &tr.CreatedAt,
 	); err != nil {
@@ -1488,28 +1521,26 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 
 	// On approval: mark property occupied and upsert a resident record for the tenant.
 	if decision == "approved" {
-		_, _ = s.db.Exec(ctx,
-			`UPDATE estate_properties SET tenant_id=$1, occupancy_status='occupied' WHERE id=$2`,
-			tr.TenantID, tr.PropertyID,
-		)
-		// Resolve estate_id for the property so we can upsert a resident row.
-		var estateIDForProp string
-		_ = s.db.QueryRow(ctx,
-			`SELECT estate_id FROM estate_properties WHERE id=$1`, tr.PropertyID,
-		).Scan(&estateIDForProp)
-		if estateIDForProp != "" {
-			// estate_residents.role CHECK allows only 'resident'/'estate_admin';
-			// an approved tenant is admitted as a 'resident' (the tenant/owner
-			// distinction lives in resident_profiles.occupancy_type). 'tenant'
-			// here violated the CHECK, so the insert always failed and — the error
-			// being discarded — the approved tenant was never admitted.
-			_, _ = s.db.Exec(ctx,
-				`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
-				 VALUES ($1,$2,$3,'','resident')
-				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='resident'`,
-				uuid.New().String(), estateIDForProp, tr.TenantID,
-			)
+		if _, err := tx.Exec(ctx,
+			`UPDATE estate_properties SET tenant_id=$1, occupancy_status='occupied' WHERE id=$2 AND estate_id=$3`,
+			tr.TenantID, tr.PropertyID, estateID,
+		); err != nil {
+			return nil, fmt.Errorf("estate: mark property occupied: %w", err)
 		}
+		// estate_residents.role CHECK allows only 'resident'/'estate_admin';
+		// an approved tenant is admitted as a 'resident' (the tenant/owner
+		// distinction lives in resident_profiles.occupancy_type).
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
+			 VALUES ($1,$2,$3,'','resident')
+			 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='resident'`,
+			uuid.New().String(), estateID, tr.TenantID,
+		); err != nil {
+			return nil, fmt.Errorf("estate: admit approved tenant: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 	return tr, nil
 }

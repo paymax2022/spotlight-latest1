@@ -749,7 +749,7 @@ func (h *Handler) CreateTenancyRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	tr, err := h.svc.CreateTenancyRequest(c.Request.Context(), c.Param("pid"), req, tenantID)
+	tr, err := h.svc.CreateTenancyRequest(c.Request.Context(), c.Param("id"), c.Param("pid"), req, tenantID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return

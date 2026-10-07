@@ -235,7 +235,7 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 // 403, everything else → 400 (validation/illegal-transition). Keeps object-level authZ
 // denials distinguishable from bad requests.
 func statusCodeFor(err error) int {
-	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) {
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) || errors.Is(err, ErrPickedUpViaPickupCode) {
 		return http.StatusForbidden
 	}
 	return http.StatusBadRequest
