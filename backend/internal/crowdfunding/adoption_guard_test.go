@@ -204,9 +204,13 @@ func TestLiveDB_AdoptionGuard_DebitLegProvenance(t *testing.T) {
 	// A leg posted for a DIFFERENT amount than the settlement row claims is
 	// equally foreign — the probe compares amounts, not just presence.
 	keySkew := "cf-guard-skew-" + uuid.NewString()
+	// Balanced foreign journal — the guard probes the DEBIT leg's amount while
+	// the credit keeps global conservation clean (ledger_entries is append-only;
+	// a single-sided fixture would leak into the invariant).
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
-		VALUES ($1,'DEBIT',100000,$2,$3)`, walletAcc.ID, "escrow:skew", keySkew+":escrow:debit"); err != nil {
+		VALUES ($1,'DEBIT',100000,$2,$3), ($4,'CREDIT',100000,$2,$5)`,
+		walletAcc.ID, "escrow:skew", keySkew+":escrow:debit", clearing.ID, keySkew+":escrow:credit"); err != nil {
 		t.Fatalf("post skewed leg: %v", err)
 	}
 	skewRow := seedSettlementRow(t, ctx, pool, payer, "crowdfunding", 250_000, keySkew)
