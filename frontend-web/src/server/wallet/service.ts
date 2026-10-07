@@ -207,7 +207,7 @@ export async function creditWallet(
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
 
-  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  const hit = await checkIdempotencyKey(input.idempotencyKey, userId);
   if (hit.alreadyProcessed) {
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
@@ -258,7 +258,7 @@ export async function debitWallet(
     );
   }
 
-  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  const hit = await checkIdempotencyKey(input.idempotencyKey, userId);
   if (hit.alreadyProcessed) {
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
@@ -313,7 +313,7 @@ export async function reverseWalletDebit(
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
 
-  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  const hit = await checkIdempotencyKey(input.idempotencyKey, userId);
   if (hit.alreadyProcessed) {
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
