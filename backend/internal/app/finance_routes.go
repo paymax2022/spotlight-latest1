@@ -46,6 +46,7 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
 	"spotlight/backend/internal/integrations/rtc"
@@ -508,8 +509,28 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
 		})
+		// Embedded-cover member notifications ride the shared asynq
+		// notifications queue (same pattern as investNotifier/freNotifier
+		// below); nil-safe — no Redis ⇒ nil notifier ⇒ notifySafe no-ops.
+		var embeddedNotifier embedded.Notifier
+		if cfg.RedisURL != "" {
+			if aClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+				notifSvc := notifications.NewService(aClient)
+				embeddedNotifier = embeddedNotifierFunc(func(ctx context.Context, userID, kind, message string) {
+					_ = notifSvc.Send(ctx, notifications.Notification{
+						UserID:   userID,
+						Event:    notifications.EventOrderStatusUpdate,
+						Title:    "Insurance cover",
+						Body:     message,
+						Data:     map[string]any{"kind": kind},
+						Channels: []notifications.Channel{notifications.ChannelPush, notifications.ChannelInApp},
+					})
+				})
+			}
+		}
 		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket) // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac)                          // claims/embedded/webhooks/reconciliation
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac, cfg.LedgerServiceToken,
+			auditSink, embeddedNotifier) // claims/embedded/webhooks/reconciliation + audit/notify sinks
 	}
 
 	// Member /api/finance/stays/* (auth via finance group); ops admin
@@ -559,7 +580,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// segment itself — passing finance.Group("/savings") double-mounts the
 		// routes at /api/finance/savings/savings/*. Same for RegisterSocialPay
 		// (E2E-FIN-043).
-		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin", mapsAuth()), cfg, pool, rbac)
+		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin", mapsAuth()), cfg, pool, rbac, auditSink)
 	}
 	// AI-trading fund (Module-KYC + fund wallet). Mounted at the paths the module
 	// documents and the clients call:
@@ -587,19 +608,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// "/social" itself, so the canonical /api/finance/social/* now works.
 		// RegisterSocialPay additionally re-mounts /api/finance/social/social/*
 		// as a backward-compatible alias for already-deployed callers.
-		RegisterSocialPay(finance, adminGroupTop5(r, "/api/social/admin", mapsAuth()), pool, rbac)
+		RegisterSocialPay(finance, adminGroupTop5(r, "/api/social/admin", mapsAuth()), pool, rbac, auditSink)
 	}
 	if cfg.FeatureEventsEnabled && pool != nil {
 		// adminGroupTop5 applies authMW BEFORE requireUserID — RequireAuthContext
 		// populates ginutil.UserID(c); without it every admin route 401s.
-		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub)
+		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub, auditSink)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
-		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac)
-		RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black", mapsAuth()), pool, rbac)
+		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac, auditSink)
+		RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black", mapsAuth()), pool, rbac, auditSink)
 	}
 	if cfg.FeatureCreatorsEnabled && pool != nil {
-		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin", mapsAuth()), pool, rbac, cfg)
+		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin", mapsAuth()), pool, rbac, cfg, auditSink)
 	}
 	if cfg.FeatureP2PMarketEnabled && pool != nil {
 		RegisterP2PMarket(finance, adminGroupTop5(r, "/api/p2p/admin", mapsAuth()), pool, rbac, auditSink)
@@ -2545,8 +2566,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	// Gated by FEATURE_BUSINESS_REGISTRY_ENABLED (no flag, no registration path).
 	// The CAC provider is abstracted behind cac.BusinessRegistryProvider: the real
-	// HTTP adapter when CAC_VAS_BASE_URL + CAC_VAS_API_KEY are configured, else a
-	// deterministic sandbox (offline dev/CI). Member routes are auth'd via the finance
+	// HTTP adapter when CAC_VAS_BASE_URL + CAC_VAS_API_KEY are configured; else a
+	// deterministic sandbox in NON-production only — in production missing creds
+	// select the fail-closed disabledProvider (every call → 503), because the
+	// sandbox fabricates terminal 'verified' rows that satisfy the merchant-upgrade
+	// gate (w9 prod probe: any user could self-mint a verified CAC identity).
+	// Member routes are auth'd via the finance
 	// group's requireUserID; the CAC registration FEE is a real idempotent, tier-checked
 	// wallet debit (walletSvc.Debit) → paymax_revenue. Admin review routes are RBAC-
 	// gated (business.registry.review). The returned service exposes HasVerifiedBusiness
@@ -2557,7 +2582,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			BaseURL:        cfg.CACVASBaseURL,
 			APIKey:         cfg.CACVASApiKey,
 			ConsumerSecret: cfg.CACVASConsumerSecret,
+			AllowSandbox:   !cfg.IsProd(),
 		})
+		if cacProvider.Name() == cac.ProviderNameDisabled {
+			log.Println("[business] WARN: CAC VAS credentials absent in production — registry provider DISABLED; /api/finance/business/{verify,name/reserve,register} return 503 until CAC_VAS_BASE_URL + CAC_VAS_API_KEY are set")
+		}
 		businessAdmin := r.Group("/api/business/admin")
 		businessAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		businessAdmin.Use(requireUserID())
@@ -2568,6 +2597,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Provider: cacProvider,
 			Payment:  paymentProvider, // Paystack gateway for the fee (wallet-or-gateway choice)
 			RBAC:     rbac,
+			// Defense-in-depth: in production a row verified by the sandbox
+			// (verification_source='cac-sandbox') — e.g. one persisted before this
+			// fail-closed change — must NOT satisfy HasVerifiedBusiness.
+			AllowSandboxVerified: !cfg.IsProd(),
 		})
 		// MERCHANT-UPGRADE GATE: businessSvc.HasVerifiedBusiness(ctx, userID) reports
 		// whether a user holds a verified/registered CAC identity. Onboarding should

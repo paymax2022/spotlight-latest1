@@ -68,26 +68,37 @@ func (h *Handler) Contribute(c *gin.Context) {
 	}
 	contrib, err := h.svc.Contribute(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		switch {
-		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
-		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
-		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
-		case errors.Is(err, ErrTierGateUnwired):
-			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
-		case errors.Is(err, ErrCampaignNotFound):
-			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
-		case errors.Is(err, ErrCampaignPaused),
-			errors.Is(err, ErrCampaignNotAccepting),
-			errors.Is(err, ErrCampaignNotReviewed),
-			errors.Is(err, ErrCampaignDeadline):
-			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
-		}
+		writeContributeErr(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, contrib)
+}
+
+// writeContributeErr maps Contribute's domain errors onto HTTP statuses —
+// extracted so the mapping is unit-testable without a database. Ordering:
+// the most specific sentinels first; the catch-all 500 is last (fail closed).
+func writeContributeErr(c *gin.Context, err error) {
+	switch {
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, ErrTierGateUnwired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrCampaignNotFound):
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		// 409 + stable code for a cross-member Idempotency-Key reuse (the
+		// same contract as finance/transfers' idempotency_key_conflict).
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+	case errors.Is(err, ErrCampaignPaused),
+		errors.Is(err, ErrCampaignNotAccepting),
+		errors.Is(err, ErrCampaignNotReviewed),
+		errors.Is(err, ErrCampaignDeadline):
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+	}
 }
 
 func (h *Handler) Release(c *gin.Context) {

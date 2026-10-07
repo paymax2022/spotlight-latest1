@@ -125,14 +125,18 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 	// Move money: debit sender -> escrow standing, credit escrow -> recipient.
 	// (Escrow account is used as the neutral transit bucket; net zero, no float
 	// retained, no yield — NL-2.)
+	// Journal keys are namespaced ("social:p2p:") so a caller key can never be
+	// absorbed by a journal posted under another rail's purpose — the same
+	// convention groups.dues uses (S2).
+	journalKey := "social:p2p:" + idemKey
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, senderID, "p2p:"+idemKey, idemKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.Debit(ctx, senderID, "p2p:"+idemKey, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return nil, fmt.Errorf("social: send debit: %w", err)
 	}
-	if err := s.led.Credit(ctx, recipientID, "p2p:"+idemKey, idemKey+":cr", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.Credit(ctx, recipientID, "p2p:"+idemKey, journalKey+":cr", escrowAcc.ID, amountKobo); err != nil {
 		return nil, fmt.Errorf("social: send credit: %w", err)
 	}
 
@@ -644,6 +648,21 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	if err != nil {
 		return 0, err
 	}
+	// Key-replay BEFORE any money moves or gates: pool_contributions keys
+	// idempotency GLOBALLY (uq_pool_contributions_idem) and the insert below
+	// is ON CONFLICT DO NOTHING, so a reused key must settle here — the
+	// pool-scoped journal key would otherwise post a real debit the row
+	// insert silently drops (escrowed funds with no contribution row).
+	existing, err := s.contributionByKey(ctx, idemKey)
+	if err != nil {
+		return 0, fmt.Errorf("social: pool contribute replay lookup: %w", err)
+	}
+	if existing != nil {
+		if existing.UserID == userID && existing.PoolID == poolID && existing.AmountKobo == amountKobo {
+			return s.PoolBalance(ctx, userID, poolID)
+		}
+		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
+	}
 	if p.State != PoolOpen {
 		return 0, errors.New("social: pool not open")
 	}
@@ -659,20 +678,84 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	if err != nil {
 		return 0, err
 	}
-	if err := s.led.Debit(ctx, userID, "pool:contrib:"+poolID, idemKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	// The journal key is namespaced AND pool-scoped ("social:pool:<pool>:"):
+	// a caller key can never be absorbed by a journal another rail — or
+	// another pool — already posted under the same raw key (S2). This path is
+	// debit-only, so without the scope a same-amount collision on a different
+	// account would satisfy the ledger's replay check while posting NOTHING
+	// here — and the ON CONFLICT row insert below would swallow the lie,
+	// leaving a phantom "contributed" state.
+	journalKey := "social:pool:" + poolID + ":" + idemKey
+	if err := s.led.Debit(ctx, userID, "pool:contrib:"+poolID, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("social: pool contribute debit: %w", err)
+	}
+	// Verify the debit leg posted on THIS contributor's wallet (S2): compare
+	// account + key + amount, not merely key existence. A key colliding with
+	// another user's contribution is refused — a no-op "success" would record
+	// a contribution nobody paid for.
+	wallet, err := s.led.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("social: pool contribute wallet lookup: %w", err)
+	}
+	posted, ok, err := s.led.EntryAmount(ctx, wallet.ID, journalKey+":dr:debit")
+	if err != nil {
+		return 0, fmt.Errorf("social: pool contribute verify: %w", err)
+	}
+	if !ok || posted != amountKobo {
+		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
 	}
 	const ins = `INSERT INTO pool_contributions (id, pool_id, user_id, amount_kobo, idempotency_key)
 	             VALUES ($1,$2,$3,$4,$5) ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, uuid.New().String(), poolID, userID, amountKobo, idemKey); err != nil {
+	ct, err := s.db.Exec(ctx, ins, uuid.New().String(), poolID, userID, amountKobo, idemKey)
+	if err != nil {
 		return 0, fmt.Errorf("social: pool contribute record: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// Lost a same-key race between the replay check and this insert; the
+		// winner's row decides — identical replay returns the balance, anything
+		// else refuses so the wedged debit is LOUD, not silent.
+		winner, err := s.contributionByKey(ctx, idemKey)
+		if err != nil {
+			return 0, fmt.Errorf("social: pool contribute conflict lookup: %w", err)
+		}
+		if winner != nil && winner.UserID == userID && winner.PoolID == poolID && winner.AmountKobo == amountKobo {
+			return s.PoolBalance(ctx, userID, poolID)
+		}
+		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
 	}
 	s.log(userID, "", "social.pool.contribute", "group_pool", poolID, nil, map[string]any{"amount_kobo": amountKobo})
 	return s.PoolBalance(ctx, userID, poolID)
 }
 
+// payoutAmount reconstructs the amount a pool payout moved (or should have
+// moved): the sum of the POSITIVE contribution rows. The negative drain row
+// never inflates it, so it reads the same whether or not the drain was
+// recorded — which is what lets the PAID_OUT re-entry path recover the
+// intended payout on stale rows (S4).
+func (s *Service) payoutAmount(ctx context.Context, poolID string) (int64, error) {
+	const q = `SELECT COALESCE(SUM(amount_kobo),0) FROM pool_contributions WHERE pool_id=$1 AND amount_kobo > 0`
+	var amt int64
+	if err := s.db.QueryRow(ctx, q, poolID).Scan(&amt); err != nil {
+		return 0, fmt.Errorf("social: payout amount: %w", err)
+	}
+	return amt, nil
+}
+
 // PayoutPool drains the pool to the beneficiary (object-level: organiser only).
 // Guarded OPEN→PAID_OUT. NL-8: payout equals the derived balance; nothing added.
+//
+// Ordering (S4): the beneficiary is credited BEFORE the drain row is recorded.
+// The old order flipped the pool to PAID_OUT and wrote the drain first, so a
+// failed credit left the pool marked drained-but-unpaid — canPool blocked
+// every retry and nothing healed it. Now a failed credit reverts the claim
+// (pool stays OPEN, retriable), and a PAID_OUT re-entry converges on the
+// ledger the same way PayRequest/PayShare do.
+//
+// The ledger key is DETERMINISTIC ("pool:payout:"+poolID), not derived from
+// the caller's Idempotency-Key — the pool itself is the idempotency unit (it
+// pays out exactly once), so a retry under a NEW caller key replays onto the
+// same legs (same convention as PayShare's "split:"+shareID). The drain row's
+// idempotency_key "payout:"+poolID is likewise deterministic and upserted.
 func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey string) error {
 	p, err := s.getPool(ctx, poolID)
 	if err != nil {
@@ -681,37 +764,95 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 	if p.OrganiserID != organiserID {
 		return ErrForbidden
 	}
-	if !canPool(p.State, PoolPaidOut) {
-		return fmt.Errorf("social: cannot pay out from %s", p.State)
-	}
-	bal, err := s.PoolBalance(ctx, organiserID, poolID)
-	if err != nil {
-		return err
-	}
-	if bal <= 0 {
-		return errors.New("social: empty pool")
-	}
 	beneficiary := p.OrganiserID
 	if p.BeneficiaryID != nil {
 		beneficiary = *p.BeneficiaryID
 	}
+	key := "pool:payout:" + poolID
+	const drainIns = `INSERT INTO pool_contributions (id, pool_id, user_id, amount_kobo, idempotency_key)
+	                  VALUES ($1,$2,$3,$4,$5) ON CONFLICT (idempotency_key) DO NOTHING`
+
+	if p.State == PoolPaidOut {
+		// Re-entry convergence — the ledger decides, not the state claim:
+		//   beneficiary credit posted → genuinely paid, return nil;
+		//   credit missing            → post it under the deterministic key
+		//                               (ErrDuplicate no-ops if a concurrent
+		//                               retry beat us) and ensure the drain
+		//                               row exists. This is the heal path for
+		//                               PAID_OUT-but-unpaid residue the old
+		//                               ordering could leave behind (S4).
+		paid, err := s.payoutAmount(ctx, poolID)
+		if err != nil {
+			return err
+		}
+		if paid <= 0 {
+			return nil // nothing was ever contributed — nothing owed
+		}
+		credited, err := s.legPosted(ctx, beneficiary, key, ledger.EntryCredit, paid)
+		if err != nil {
+			return err
+		}
+		if !credited {
+			escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+			if err != nil {
+				return err
+			}
+			if err := s.led.Credit(ctx, beneficiary, key, key+":cr", escrowAcc.ID, paid); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+				return fmt.Errorf("social: pool payout credit: %w", err)
+			}
+		}
+		// Ensure the drain row — without it PoolBalance keeps reading
+		// positive on a paid-out pool (crash between credit and drain).
+		if _, err := s.db.Exec(ctx, drainIns, uuid.New().String(), poolID, beneficiary, -paid, "payout:"+poolID); err != nil {
+			return fmt.Errorf("social: pool drain record: %w", err)
+		}
+		s.log(organiserID, beneficiary, "social.pool.payout.heal", "group_pool", poolID, nil, map[string]any{"amount_kobo": paid})
+		return nil
+	}
+	if !canPool(p.State, PoolPaidOut) {
+		return fmt.Errorf("social: cannot pay out from %s", p.State)
+	}
+
+	// Claim OPEN→PAID_OUT first (single-flight): after the flip ContributePool
+	// refuses new money, so the balance read below is the frozen payout
+	// amount. A losing concurrent call errors here; its retry converges
+	// through the PAID_OUT path above.
 	const upd = `UPDATE group_pools SET state='PAID_OUT', updated_at=now() WHERE id=$1 AND state='OPEN'`
 	ct, err := s.db.Exec(ctx, upd, poolID)
 	if err != nil || ct.RowsAffected() == 0 {
 		return errors.New("social: pool payout transition failed")
 	}
-	// Record the drain as a negative contribution so balance reflects zero.
-	const drain = `INSERT INTO pool_contributions (id, pool_id, user_id, amount_kobo, idempotency_key)
-	               VALUES ($1,$2,$3,$4,$5) ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := s.db.Exec(ctx, drain, uuid.New().String(), poolID, beneficiary, -bal, "payout:"+poolID); err != nil {
-		return fmt.Errorf("social: pool drain record: %w", err)
+	unclaim := func() {
+		_, _ = s.db.Exec(ctx,
+			`UPDATE group_pools SET state='OPEN', updated_at=now() WHERE id=$1 AND state='PAID_OUT'`,
+			poolID)
+	}
+	bal, err := s.PoolBalance(ctx, organiserID, poolID)
+	if err != nil {
+		unclaim()
+		return err
+	}
+	if bal <= 0 {
+		unclaim()
+		return errors.New("social: empty pool")
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
+		unclaim()
 		return err
 	}
-	if err := s.led.Credit(ctx, beneficiary, "pool:payout:"+poolID, idemKey+":cr", escrowAcc.ID, bal); err != nil {
+	// Credit FIRST: a failed credit must leave the pool OPEN and collectible —
+	// PAID_OUT-but-unpaid was the S4 wedge. ErrDuplicate is tolerated: it can
+	// only mean a prior attempt already paid out under the deterministic key.
+	if err := s.led.Credit(ctx, beneficiary, key, key+":cr", escrowAcc.ID, bal); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		unclaim()
 		return fmt.Errorf("social: pool payout credit: %w", err)
+	}
+	// Money has moved — do NOT unclaim past this point. If the drain insert
+	// fails we leave PAID_OUT and return the error; the re-entry path records
+	// the missing drain (and re-verifies the credit) on the next call.
+	if _, err := s.db.Exec(ctx, drainIns, uuid.New().String(), poolID, beneficiary, -bal, "payout:"+poolID); err != nil {
+		return fmt.Errorf("social: pool drain record: %w", err)
 	}
 	s.log(organiserID, beneficiary, "social.pool.payout", "group_pool", poolID,
 		map[string]any{"state": "OPEN"}, map[string]any{"state": "PAID_OUT", "amount_kobo": bal})
@@ -733,6 +874,22 @@ func (s *Service) paymentByIdem(ctx context.Context, senderID, idemKey string) (
 		return nil, err
 	}
 	return &p, nil
+}
+
+// contributionByKey returns the contribution row a caller key already owns.
+// The idempotency_key is globally UNIQUE (it also keys payout drain rows), so
+// callers MUST compare user_id/pool_id/amount_kobo before treating a hit as a
+// replay — a foreign hit means the key collided, not that this op ran.
+func (s *Service) contributionByKey(ctx context.Context, idemKey string) (*PoolContribution, error) {
+	const q = `SELECT id, pool_id, user_id, amount_kobo, created_at FROM pool_contributions WHERE idempotency_key=$1`
+	var c PoolContribution
+	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&c.ID, &c.PoolID, &c.UserID, &c.AmountKobo, &c.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
 }
 
 func (s *Service) getRequest(ctx context.Context, requestID string) (*Request, error) {

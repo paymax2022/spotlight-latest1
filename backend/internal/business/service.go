@@ -29,15 +29,19 @@ const DefaultPlatformFeeKobo int64 = 200_000
 
 // Sentinel errors map to HTTP statuses in the handler.
 var (
-	ErrConflict          = errors.New("business: illegal state transition")        // 409
-	ErrDuplicate         = errors.New("business: business already exists")         // 409
-	ErrForbidden         = errors.New("business: not the owner")                   // 403
-	ErrValidation        = errors.New("business: validation failed")               // 422
-	ErrMissingIdemKey    = errors.New("business: Idempotency-Key header required") // 400
-	ErrFeeNotPaid        = errors.New("business: registration fee not paid")       // 409
-	ErrProvider          = errors.New("business: registry provider error")         // 502
-	ErrInsufficientFunds = errors.New("business: insufficient wallet balance")     // 402
-	ErrCertNotReady      = errors.New("business: certificate not available yet")   // 404
+	ErrConflict       = errors.New("business: illegal state transition")        // 409
+	ErrDuplicate      = errors.New("business: business already exists")         // 409
+	ErrForbidden      = errors.New("business: not the owner")                   // 403
+	ErrValidation     = errors.New("business: validation failed")               // 422
+	ErrMissingIdemKey = errors.New("business: Idempotency-Key header required") // 400
+	ErrFeeNotPaid     = errors.New("business: registration fee not paid")       // 409
+	ErrProvider       = errors.New("business: registry provider error")         // 502
+	// ErrProviderUnavailable means the CAC provider is DISABLED (credentials absent
+	// and sandbox disallowed — i.e. misconfigured production). 503: fail-closed,
+	// distinct from a reachable-but-erroring upstream (ErrProvider → 502).
+	ErrProviderUnavailable = errors.New("business: registry provider unavailable") // 503
+	ErrInsufficientFunds   = errors.New("business: insufficient wallet balance")   // 402
+	ErrCertNotReady        = errors.New("business: certificate not available yet") // 404
 )
 
 // Deps injects the collaborators. Ledger resolves the revenue standing account;
@@ -54,18 +58,25 @@ type Deps struct {
 	// PlatformFeeKobo is the Paymax processing charge added on top of the CAC fee.
 	// Zero falls back to DefaultPlatformFeeKobo.
 	PlatformFeeKobo int64
+	// AllowSandboxVerified lets HasVerifiedBusiness count rows whose
+	// verification_source is the deterministic sandbox provider ('cac-sandbox').
+	// MUST be false in production (zero value fails closed): a sandbox row is a
+	// FABRICATED CAC identity, and counting it would let any user self-mint the
+	// merchant-upgrade gate with a made-up RC/BN number. Dev/test pass true.
+	AllowSandboxVerified bool
 }
 
 // Service holds the business-registry domain logic. It depends on the CAC provider
 // ONLY through the cac.BusinessRegistryProvider port — no HTTP/DTO detail leaks in.
 type Service struct {
-	repo            *Repository
-	ledger          *ledger.Service
-	wallet          *wallet.Service
-	provider        cac.BusinessRegistryProvider
-	payment         provider.PaymentProvider
-	feeKobo         int64
-	platformFeeKobo int64
+	repo                 *Repository
+	ledger               *ledger.Service
+	wallet               *wallet.Service
+	provider             cac.BusinessRegistryProvider
+	payment              provider.PaymentProvider
+	feeKobo              int64
+	platformFeeKobo      int64
+	allowSandboxVerified bool
 }
 
 func NewService(d Deps) *Service {
@@ -79,7 +90,7 @@ func NewService(d Deps) *Service {
 	if platformFee <= 0 {
 		platformFee = DefaultPlatformFeeKobo
 	}
-	return &Service{repo: d.Repo, ledger: d.Ledger, wallet: d.Wallet, provider: d.Provider, payment: d.Payment, feeKobo: fee, platformFeeKobo: platformFee}
+	return &Service{repo: d.Repo, ledger: d.Ledger, wallet: d.Wallet, provider: d.Provider, payment: d.Payment, feeKobo: fee, platformFeeKobo: platformFee, allowSandboxVerified: d.AllowSandboxVerified}
 }
 
 // totalFeeKobo is the full amount charged to the user: CAC registration fee (a
@@ -620,9 +631,13 @@ func (s *Service) ListMine(ctx context.Context, userID string) ([]BusinessProfil
 
 // HasVerifiedBusiness is the merchant-upgrade gate: true when the user has a
 // verified or registered CAC business. Called by the onboarding/grant path before
-// granting a merchant role.
+// granting a merchant role. Defense-in-depth: when the service was built with
+// AllowSandboxVerified=false (production), rows whose verification_source is the
+// deterministic sandbox ('cac-sandbox') do NOT count — a fabricated verification
+// must never satisfy a privilege grant even if one was persisted before the
+// fail-closed provider shipped.
 func (s *Service) HasVerifiedBusiness(ctx context.Context, userID string) bool {
-	ok, err := s.repo.HasVerified(ctx, userID)
+	ok, err := s.repo.HasVerified(ctx, userID, s.allowSandboxVerified)
 	if err != nil {
 		return false // fail-closed
 	}
@@ -697,6 +712,11 @@ func (s *Service) ownedProfile(ctx context.Context, userID, id string) (*Busines
 func wrapProvider(err error) error {
 	if err == nil {
 		return nil
+	}
+	// Disabled provider (production, credentials absent) → 503, not 502: the rail
+	// is unconfigured, not upstream-erroring. Fail-closed either way.
+	if errors.Is(err, cac.ErrUnavailable) {
+		return errors.Join(ErrProviderUnavailable, err)
 	}
 	return errors.Join(ErrProvider, err)
 }

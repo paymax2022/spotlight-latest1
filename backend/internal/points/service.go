@@ -117,10 +117,16 @@ func (s *Service) Balance(ctx context.Context, userID string) (int64, error) {
 }
 
 // Redeem spends points against a catalog item. It debits the points ledger atomically
-// (balance check under a row guard) and returns the Redemption + the item so the
-// caller (loyalty layer) can dispatch the NON-CASH fulfilment. There is intentionally
-// no cash-out branch (NL-4).
-func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, *CatalogItem, error) {
+// (balance check serialised under a per-user advisory lock) and returns the
+// Redemption + the item so the caller (loyalty layer) can dispatch the NON-CASH
+// fulfilment. There is intentionally no cash-out branch (NL-4).
+//
+// idemKey is the OPTIONAL client Idempotency-Key (the BFF forwards the header
+// verbatim when the caller sends one). When supplied, a replay returns the
+// original redemption with no second debit; when empty, a `redeem:<uuid>` key is
+// self-minted per call — kept so live clients that never send the header keep
+// working (follow-up: require the header like every other mutation).
+func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Redemption, *CatalogItem, error) {
 	item, err := s.catalogItem(ctx, sku)
 	if err != nil {
 		return nil, nil, err
@@ -139,13 +145,44 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Recompute balance inside the tx and lock against concurrent redemptions by
-	// serialising on the user's latest ledger rows.
+	// Serialise concurrent redemptions on the same balance. Postgres forbids
+	// FOR UPDATE on an aggregate query, so the projection cannot carry its own
+	// row guard — take a per-user advisory xact lock first instead, the same
+	// convention as wallet debits (finance/ledger DebitWithBalanceCheck).
+	const lockQ = `SELECT pg_advisory_xact_lock(hashtext($1))`
+	if _, err := tx.Exec(ctx, lockQ, "points:"+userID); err != nil {
+		return nil, nil, fmt.Errorf("points: redeem lock: %w", err)
+	}
+
+	redemptionID := uuid.New().String()
+	idem := "redeem:" + redemptionID
+	if idemKey != "" {
+		// Scope the client key to the user so identical keys from two different
+		// users can never collide in the ledger's global unique index.
+		idem = "redeem:" + userID + ":" + idemKey
+		// Idempotent replay: the prior debit's `reference` holds its redemption id.
+		var priorRef string
+		err := tx.QueryRow(ctx,
+			`SELECT reference FROM points_ledger WHERE idempotency_key=$1 AND user_id=$2`,
+			idem, userID).Scan(&priorRef)
+		switch {
+		case err == nil:
+			prior, perr := redemptionByID(ctx, tx, priorRef)
+			if perr != nil {
+				return nil, nil, perr
+			}
+			return prior, item, nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return nil, nil, fmt.Errorf("points: redeem replay check: %w", err)
+		}
+	}
+
+	// Re-project the balance INSIDE the lock+tx — no FOR UPDATE (illegal on the
+	// aggregate); the advisory lock is what serialises check-and-debit.
 	const balQ = `
 		SELECT COALESCE(SUM(CASE WHEN type='EARN' THEN points ELSE -points END), 0)
 		FROM points_ledger
-		WHERE user_id=$1 AND (type<>'EARN' OR expires_at IS NULL OR expires_at > now())
-		FOR UPDATE`
+		WHERE user_id=$1 AND (type<>'EARN' OR expires_at IS NULL OR expires_at > now())`
 	var bal int64
 	if err := tx.QueryRow(ctx, balQ, userID).Scan(&bal); err != nil {
 		return nil, nil, fmt.Errorf("points: redeem balance: %w", err)
@@ -154,8 +191,6 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 		return nil, nil, ErrInsufficientPoints
 	}
 
-	redemptionID := uuid.New().String()
-	idem := "redeem:" + redemptionID
 	const debit = `
 		INSERT INTO points_ledger (id, user_id, type, points, rule_key, module, reference, idempotency_key)
 		VALUES ($1,$2,'REDEEM',$3,$4,'loyalty',$5,$6)`
@@ -175,6 +210,16 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 	r := &Redemption{ID: redemptionID, UserID: userID, SKU: sku, CostPoints: item.CostPoints, Status: "REDEEMED", CreatedAt: time.Now()}
 	s.log(userID, "points.redeem", redemptionID, map[string]any{"sku": sku, "cost": item.CostPoints, "kind": item.Kind})
 	return r, item, nil
+}
+
+// redemptionByID loads a recorded redemption inside an open tx (replay path).
+func redemptionByID(ctx context.Context, tx pgx.Tx, id string) (*Redemption, error) {
+	const q = `SELECT id, user_id, sku, cost_points, status, created_at FROM points_redemptions WHERE id=$1`
+	var r Redemption
+	if err := tx.QueryRow(ctx, q, id).Scan(&r.ID, &r.UserID, &r.SKU, &r.CostPoints, &r.Status, &r.CreatedAt); err != nil {
+		return nil, fmt.Errorf("points: load prior redemption: %w", err)
+	}
+	return &r, nil
 }
 
 // ExpireDue appends EXPIRE entries for earn rows past their expires_at that have not
@@ -408,7 +453,9 @@ func (h *Handler) Redeem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU)
+	// The Idempotency-Key is optional today (legacy clients do not send it); when
+	// present the redeem replays idempotently instead of double-debiting.
+	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, ginutil.IdempotencyKey(c))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInsufficientPoints):

@@ -190,7 +190,7 @@ type Message struct {
 
 // CreateSessionRequest opens a new support session.
 type CreateSessionRequest struct {
-	Topic string `json:"topic"`
+	Topic string `json:"topic" binding:"required,max=500"`
 }
 
 // SendMessageRequest posts a user message and returns the AI reply.
@@ -210,7 +210,10 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) CreateSession(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CreateSessionRequest
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
 	sess, err := h.svc.CreateSession(c.Request.Context(), userID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})

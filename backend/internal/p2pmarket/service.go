@@ -139,8 +139,28 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 	}
 	const ins = `INSERT INTO p2p_orders (id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, idempotency_key)
 	             VALUES ($1,$2,$3,$4,$5,$6,'CHECKOUT',$7) ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, o.ID, o.ListingID, o.BuyerID, o.SellerID, o.AmountKobo, o.EscrowID, idemKey); err != nil {
+	ct, err := s.db.Exec(ctx, ins, o.ID, o.ListingID, o.BuyerID, o.SellerID, o.AmountKobo, o.EscrowID, idemKey)
+	if err != nil {
+		// The escrow hold is already durable but owns no order — refund it
+		// best-effort (mirrors transport's refundOnFailure) rather than strand a
+		// HELD hold with no owning row. Refund is idempotent; a failed refund is
+		// still surfaced via the insert error, and a same-key client retry also
+		// self-heals (Hold replays the same hold, the insert is retried).
+		_ = s.escrow.Refund(ctx, hold.ID)
 		return nil, fmt.Errorf("p2pmarket: insert order: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// A same-key order committed between our orderByIdem check and this
+		// insert (a racing retry). The escrow hold for this key IS that order's
+		// hold (escrow.Hold replays by key), so the money is accounted for —
+		// return the persisted row, never the unpersisted `o` we built above
+		// (which would report an order id/escrow pairing nothing saved). Do NOT
+		// refund: the hold is owned by the conflicting order.
+		persisted, ferr := s.orderByIdem(ctx, idemKey)
+		if ferr != nil {
+			return nil, fmt.Errorf("p2pmarket: order insert conflicted but re-read failed: %w", ferr)
+		}
+		return persisted, nil
 	}
 	// Mark the listing sold (single-quantity model).
 	_, _ = s.db.Exec(ctx, `UPDATE p2p_listings SET state='SOLD', updated_at=now() WHERE id=$1 AND state='ACTIVE'`, listingID)
