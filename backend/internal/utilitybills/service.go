@@ -814,7 +814,17 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 	}
 	if paymentSource == paymentSourceWallet {
 		debitErr := s.wallet.Debit(ctx, userID, receipt, idempotencyKey+":debit", clearing.ID, pricing.RetailAmountKobo)
-		if debitErr != nil && !errors.Is(debitErr, ledger.ErrDuplicate) {
+		if errors.Is(debitErr, ledger.ErrDuplicate) {
+			// ErrDuplicate means the key is held by a DIFFERENT journal — verifyReplay
+			// returns nil for an identical replay, and a same-transaction retry exits
+			// at the caller-scoped replay check above before reaching the debit.
+			// Swallowing it would mark wallet_debited and run the purchase with no
+			// money moved (a cross-rail key claim could vend unpaid). Fail closed.
+			s.markFailed(ctx, transactionID, "idempotency key conflict on wallet debit")
+			s.event(ctx, transactionID, "wallet_debit_failed", "idempotency key conflict", nil)
+			return nil, ErrIdempotencyKeyConflict
+		}
+		if debitErr != nil {
 			// Money could not be taken. Nothing was sent to a provider, so there is
 			// nothing to reverse — mark the transaction failed and surface the reason
 			// (insufficient funds / tier limit) unchanged to the caller.
@@ -1270,7 +1280,19 @@ func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotenc
 	}
 	reference := "utility:reversal:" + t.ID
 	revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearingAccountID, t.RetailAmountKobo, reference, idempotencyKey+":reversal")
-	if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+	if errors.Is(revErr, ledger.ErrDuplicate) {
+		// ErrDuplicate can be a Redis-lock TTL dup or a unique-violation swallow —
+		// neither proves OUR reversal is durable. Verify the :rev_debit leg on the
+		// member's wallet in the ledger of record before claiming 'reversed'.
+		_, posted, perr := s.ledger.EntryAmount(ctx, userWallet.ID, idempotencyKey+":reversal:rev_debit")
+		if perr != nil || !posted {
+			log.Printf("[utilitybills] CRITICAL: auto-reverse duplicate but no durable reversal leg for %s (posted=%v, err=%v)", t.ID, posted, perr)
+			s.event(ctx, t.ID, "wallet_reversal_failed", "duplicate key without durable reversal leg", nil)
+			return nil
+		}
+		revErr = nil
+	}
+	if revErr != nil {
 		// The worst case. Leave the transaction in 'failed' (NOT 'reversed') so the
 		// refund queue and any human looking at it can see the money is still out.
 		log.Printf("[utilitybills] CRITICAL: auto-reverse FAILED for %s — debited, no bill, no refund: %v", t.ID, revErr)
@@ -1558,7 +1580,18 @@ func (s *Service) postStuckReversal(ctx context.Context, t *TransactionRow) bool
 	}
 	revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearing.ID, t.RetailAmountKobo,
 		"utility:reversal:"+t.ID, t.IdempotencyKey+":reversal")
-	if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+	if errors.Is(revErr, ledger.ErrDuplicate) {
+		// Same verified-adopt rule as autoReverse: a duplicate sighting is only a
+		// success if the durable :rev_debit leg exists on the member's wallet.
+		_, posted, perr := s.ledger.EntryAmount(ctx, userWallet.ID, t.IdempotencyKey+":reversal:rev_debit")
+		if perr != nil || !posted {
+			s.event(ctx, t.ID, "stuck_reversal_failed", "duplicate key without durable reversal leg", nil)
+			log.Printf("[utilitybills] CRITICAL stuck recovery reversal dup but no durable leg for %s (posted=%v, err=%v)", t.ID, posted, perr)
+			return false
+		}
+		revErr = nil
+	}
+	if revErr != nil {
 		s.event(ctx, t.ID, "stuck_reversal_failed", revErr.Error(), nil)
 		log.Printf("[utilitybills] CRITICAL stuck recovery reversal FAILED for %s — debited, no bill, no refund: %v", t.ID, revErr)
 		return false
@@ -1586,7 +1619,24 @@ func (s *Service) postPaystackRefund(ctx context.Context, t *TransactionRow) boo
 		reference = *t.ReceiptNumber
 	}
 	err := s.wallet.Credit(ctx, t.UserID, reference, "utility:"+t.ID+":PAYSTACK_REFUND", t.RetailAmountKobo)
-	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if errors.Is(err, ledger.ErrDuplicate) {
+		// Verified-adopt: a duplicate sighting (Redis-lock dup or unique-violation)
+		// only counts as refunded when the durable :credit leg exists on the
+		// member's wallet. No leg → captured money is still outstanding.
+		userWallet, werr := s.ledger.GetOrCreateUserWallet(ctx, t.UserID)
+		posted := false
+		var perr error
+		if werr == nil {
+			_, posted, perr = s.ledger.EntryAmount(ctx, userWallet.ID, "utility:"+t.ID+":PAYSTACK_REFUND:credit")
+		}
+		if werr != nil || perr != nil || !posted {
+			s.event(ctx, t.ID, "paystack_refund_failed", "duplicate key without durable refund leg", nil)
+			log.Printf("[utilitybills] CRITICAL paystack refund dup but no durable leg for %s (posted=%v, werr=%v, perr=%v)", t.ID, posted, werr, perr)
+			return false
+		}
+		err = nil
+	}
+	if err != nil {
 		s.event(ctx, t.ID, "paystack_refund_failed", err.Error(), nil)
 		log.Printf("[utilitybills] CRITICAL paystack refund FAILED for %s — captured money not returned: %v", t.ID, err)
 		return false

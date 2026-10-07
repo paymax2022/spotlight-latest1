@@ -566,3 +566,54 @@ func containsAny(haystack string, needles ...string) bool {
 	}
 	return false
 }
+
+// Foreign-claim fail-closed: another rail (or a crafted replay) holding the
+// "<key>:debit" ledger base key for a DIFFERENT journal must not let the
+// purchase proceed — swallowing ErrDuplicate there marks wallet_debited and
+// vends with no money moved. Expect a conflict, a failed transaction, and a
+// wallet that never moved.
+func TestLiveDB_UtilityPay_ForeignDebitKeyClaimFailsClosed(t *testing.T) {
+	f := newFixture(t, 2, 2_000_000, false /* purchase must be reachable */)
+	ctx := context.Background()
+
+	key := "test-util-foreign-" + uuid.New().String()
+
+	// Pre-claim the ledger base key PayUtility will debit under, with a journal
+	// that is NOT this purchase (standing→standing, different amount+ref).
+	settleAcc, err := f.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement account: %v", err)
+	}
+	revAcc, err := f.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
+	if err := f.ledger.PostJournal(ctx, ledger.JournalEntry{
+		Reference:       "foreign-claim:" + key,
+		IdempotencyKey:  key + ":debit",
+		AmountKobo:      1,
+		DebitAccountID:  settleAcc.ID,
+		CreditAccountID: revAcc.ID,
+	}); err != nil {
+		t.Fatalf("seed foreign claim: %v", err)
+	}
+	// Keep conservation: the foreign journal is a balanced pair already.
+
+	before := f.walletNet(t)
+	_, err = f.pay(t, meterFailAnomaly, 500_000, key)
+	if !errors.Is(err, utilitybills.ErrIdempotencyKeyConflict) {
+		t.Fatalf("foreign debit-key claim must surface ErrIdempotencyKeyConflict, got %v", err)
+	}
+
+	var status string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT status FROM public.utility_transactions WHERE idempotency_key = $1`, key).Scan(&status); err != nil {
+		t.Fatalf("read txn status: %v", err)
+	}
+	if status != string(utilitybills.StatusFailed) {
+		t.Fatalf("status = %s, want failed — a foreign key claim must not advance the saga", status)
+	}
+	if got := f.walletNet(t) - before; got != 0 {
+		t.Fatalf("wallet moved %d kobo on a foreign-claimed debit key, want 0", got)
+	}
+}
