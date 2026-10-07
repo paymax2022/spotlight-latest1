@@ -52,7 +52,12 @@ The version must not collide with any existing migration. It is chosen at implem
 - `storage_key text not null` (object key, uploaded through the existing presigned-URL flow)
 - `created_at`
 
-RLS is enabled with no policy and `anon`/`authenticated` grants are revoked in the same migration. Access is only through the Go backend pool.
+`property_role_events` (audit trail; the existing audit writers are module-specific, so this feature owns its own)
+- `id uuid pk`, `profile_id uuid not null references property_role_profiles(id) on delete cascade`
+- `actor_id uuid not null`, `action text not null` (`registered`, `updated`, `submitted`, `approved`, `rejected`, `suspended`, `reset_to_unverified`)
+- `from_verification text`, `to_verification text`, `reason text`, `created_at`
+
+RLS is enabled with no policy and `anon`/`authenticated` grants are revoked on all three tables in the same migration. Access is only through the Go backend pool.
 
 ### Role details (validated in Go, stored in `details`)
 
@@ -62,12 +67,12 @@ RLS is enabled with no policy and `anon`/`authenticated` grants are revoked in t
 | `developer` | company name, CAC registration number | website, past project summary |
 | `estate_manager` | organisation or management-company name | number of estates managed, authority-letter document |
 
-Drafting needs only `display_name`.
+Drafting needs only `display_name`. `details` accepts only the keys listed above for the role (unknown keys are rejected) and is capped at 8 KB.
 
 ## Lifecycle
 
 1. **Register:** `POST` creates a profile in `draft` / `unverified`. Idempotent per `(user, role)`; a second register call returns the existing row.
-2. **Edit:** the owner can update `display_name` and `details` while the profile is not `suspended`.
+2. **Edit:** the owner can update `display_name` and `details` while the profile is not `suspended`. Changing an identity-bearing field (agent licence number, developer CAC number, estate-manager organisation) on a `verified` or `pending` profile resets it to `unverified` and logs `reset_to_unverified`, so a verified badge cannot be kept after swapping the number it was verified against. Changing `display_name` or optional fields does not reset.
 3. **Submit for verification:** requires the role's required fields and at least one document. Moves `unverified` or `rejected` to `pending`. Rejected users can resubmit.
 4. **Review (admin):** an admin approves (`verified`, `status` becomes `active`, `verified_at/by` set) or rejects with a reason (`rejected`). Every transition writes an audit event.
 5. **Suspend (admin):** sets `status = suspended`. A suspended profile fails `IsVerified`.
@@ -76,12 +81,13 @@ Drafting needs only `display_name`.
 
 New Go package `backend/internal/property/roles`, wired in the same place as the property suite, behind a new flag `FEATURE_PROPERTY_ROLES_ENABLED` (default off).
 
-Member endpoints (authenticated, caller can only touch their own rows):
-- `GET /api/v1/property/roles` — my role profiles
-- `POST /api/v1/property/roles/:role` — register
-- `PATCH /api/v1/property/roles/:role` — update profile
-- `POST /api/v1/property/roles/:role/documents` — record an uploaded document
-- `POST /api/v1/property/roles/:role/submit` — submit for verification
+Member endpoints, mounted under the existing finance group next to the property suite (`/api/finance/property/...`), authenticated; the caller's id comes only from the auth context, so a caller can only touch their own rows:
+- `GET /api/finance/property/roles` — my role profiles
+- `POST /api/finance/property/roles/:role` — register
+- `PATCH /api/finance/property/roles/:role` — update profile
+- `POST /api/finance/property/roles/:role/documents/presign` — presigned PUT for a verification document; the server chooses the object key `property-roles/{userID}/{role}/{random}`
+- `POST /api/finance/property/roles/:role/documents` — record an uploaded document; the `storage_key` must start with the caller's own `property-roles/{userID}/{role}/` prefix
+- `POST /api/finance/property/roles/:role/submit` — submit for verification
 
 Admin endpoints (new RBAC permission `property.roles.review`):
 - `GET /api/property/admin/roles?status=pending`
@@ -91,7 +97,7 @@ Admin endpoints (new RBAC permission `property.roles.review`):
 
 Exported check for later slices: `IsVerified(ctx, userID, role) (bool, error)`. It is true only when `verification_status = 'verified'` and `status = 'active'`, and it fails closed on any error.
 
-The role-context aggregator in `property/context.go` includes active role profiles, so the existing context switcher shows them with no second role system. `GET /api/v1/me/capabilities` is not changed in this slice.
+The role-context aggregator in `property/context.go` includes active role profiles as entities of a new context type `role` (id = profile id, name = `display_name`, roles = the role slug), and `role` is added to `validContextTypes`. This only happens when `FEATURE_PROPERTY_ROLES_ENABLED` is on, so the suite keeps working before the migration is applied. The existing context switcher then shows them with no second role system. `GET /api/v1/me/capabilities` is not changed in this slice.
 
 No money moves in this slice. The Idempotency-Key rule applies only to money mutations and does not apply here.
 
