@@ -83,7 +83,7 @@ func TestLiveDB_SocialPayoutPool_StalePaidOut_Heals(t *testing.T) {
 		p.ID, beneficiary, "payout:"+p.ID); err != nil {
 		t.Fatalf("seed drain row: %v", err)
 	}
-	if bal, err := svc.PoolBalance(ctx, p.ID); err != nil || bal != 0 {
+	if bal, err := svc.PoolBalance(ctx, organiser, p.ID); err != nil || bal != 0 {
 		t.Fatalf("seeded balance = %d err=%v, want 0 (pool reads drained)", bal, err)
 	}
 
@@ -127,7 +127,7 @@ func TestLiveDB_SocialPayoutPool_PaidOutNoDrain_Heals(t *testing.T) {
 		t.Fatalf("seed stale state: %v", err)
 	}
 	// No drain row → balance still reads positive; credit never posted.
-	if bal, err := svc.PoolBalance(ctx, p.ID); err != nil || bal != 250_00 {
+	if bal, err := svc.PoolBalance(ctx, organiser, p.ID); err != nil || bal != 250_00 {
 		t.Fatalf("seeded balance = %d err=%v, want 25000", bal, err)
 	}
 
@@ -137,7 +137,7 @@ func TestLiveDB_SocialPayoutPool_PaidOutNoDrain_Heals(t *testing.T) {
 	if bal, _ := led.GetBalance(ctx, organiser); bal != 250_00 {
 		t.Fatalf("organiser balance = %d, want 25000", bal)
 	}
-	if bal, err := svc.PoolBalance(ctx, p.ID); err != nil || bal != 0 {
+	if bal, err := svc.PoolBalance(ctx, organiser, p.ID); err != nil || bal != 0 {
 		t.Fatalf("post-heal balance = %d err=%v, want 0 (drain recorded)", bal, err)
 	}
 }
@@ -171,7 +171,7 @@ func TestLiveDB_SocialPayoutPool_HappyPath_IdempotentReentry(t *testing.T) {
 	if bal, _ := led.GetBalance(ctx, organiser); bal != 150_00 {
 		t.Fatalf("organiser balance = %d, want 15000", bal)
 	}
-	if bal, err := svc.PoolBalance(ctx, p.ID); err != nil || bal != 0 {
+	if bal, err := svc.PoolBalance(ctx, organiser, p.ID); err != nil || bal != 0 {
 		t.Fatalf("post-payout balance = %d err=%v, want 0", bal, err)
 	}
 	got, err := svc.getPool(ctx, p.ID)

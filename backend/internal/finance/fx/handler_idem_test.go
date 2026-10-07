@@ -47,3 +47,26 @@ func TestConvert_NoIdemKey_400s(t *testing.T) {
 		t.Fatalf("expected 400 without any idempotency key, got %d %s", w.Code, w.Body.String())
 	}
 }
+
+// Sweep-2: GET /wallets/:currency must reject a non-ISO currency code with 400
+// BEFORE the wallet upsert — 'ZZZ9' previously hit the CHECK constraint → 500
+// and 'ngn' wrote a lowercase twin row. Nil service on purpose: reaching the
+// validation (which precedes any Service field access) is the signal.
+func TestGetWallet_InvalidCurrency_400s(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", "u-1")
+		c.Next()
+	})
+	r.GET("/wallets/:currency", fx.NewHandler(nil).GetWallet)
+
+	for _, bad := range []string{"ZZZ9", "n", "NGNA", "12$"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/wallets/"+bad, nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("currency %q: expected 400, got %d %s", bad, w.Code, w.Body.String())
+		}
+	}
+}

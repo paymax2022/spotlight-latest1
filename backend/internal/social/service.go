@@ -610,8 +610,27 @@ func (s *Service) CreatePool(ctx context.Context, organiserID, title string, ben
 
 // PoolBalance returns the derived pool balance in kobo (NL-8). Contributions are
 // positive rows and the payout drain is a single negative row, so SUM is the live
-// balance (zero after payout).
-func (s *Service) PoolBalance(ctx context.Context, poolID string) (int64, error) {
+// balance (zero after payout). Caller-scoped (object-level authZ): only the
+// organiser, the beneficiary, or an existing contributor may read it — the same
+// visibility rule ListPools already applies. A pool the caller has no stake in
+// answers ErrNotFound, identical to a pool that never existed, so the route
+// cannot enumerate pool ids or balances.
+func (s *Service) PoolBalance(ctx context.Context, callerID, poolID string) (int64, error) {
+	p, err := s.getPool(ctx, poolID)
+	if err != nil {
+		return 0, err
+	}
+	member := p.OrganiserID == callerID || (p.BeneficiaryID != nil && *p.BeneficiaryID == callerID)
+	if !member {
+		var n int
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM pool_contributions WHERE pool_id=$1 AND user_id=$2`, poolID, callerID).Scan(&n); err != nil {
+			return 0, err
+		}
+		member = n > 0
+	}
+	if !member {
+		return 0, ErrNotFound
+	}
 	const q = `SELECT COALESCE(SUM(amount_kobo),0) FROM pool_contributions WHERE pool_id=$1`
 	var bal int64
 	if err := s.db.QueryRow(ctx, q, poolID).Scan(&bal); err != nil {
@@ -640,7 +659,7 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	}
 	if existing != nil {
 		if existing.UserID == userID && existing.PoolID == poolID && existing.AmountKobo == amountKobo {
-			return s.PoolBalance(ctx, poolID)
+			return s.PoolBalance(ctx, userID, poolID)
 		}
 		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
 	}
@@ -700,12 +719,12 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 			return 0, fmt.Errorf("social: pool contribute conflict lookup: %w", err)
 		}
 		if winner != nil && winner.UserID == userID && winner.PoolID == poolID && winner.AmountKobo == amountKobo {
-			return s.PoolBalance(ctx, poolID)
+			return s.PoolBalance(ctx, userID, poolID)
 		}
 		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
 	}
 	s.log(userID, "", "social.pool.contribute", "group_pool", poolID, nil, map[string]any{"amount_kobo": amountKobo})
-	return s.PoolBalance(ctx, poolID)
+	return s.PoolBalance(ctx, userID, poolID)
 }
 
 // payoutAmount reconstructs the amount a pool payout moved (or should have
@@ -808,7 +827,7 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 			`UPDATE group_pools SET state='OPEN', updated_at=now() WHERE id=$1 AND state='PAID_OUT'`,
 			poolID)
 	}
-	bal, err := s.PoolBalance(ctx, poolID)
+	bal, err := s.PoolBalance(ctx, organiserID, poolID)
 	if err != nil {
 		unclaim()
 		return err
