@@ -167,7 +167,9 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		if lerr != nil {
 			return nil, lerr
 		}
-		if existing == nil || existing.CreatorID != creatorID || existing.AmountKobo != req.AmountKobo {
+		if existing == nil || existing.CreatorID != creatorID || existing.AmountKobo != req.AmountKobo ||
+			(existing.DestinationRef == nil) != (dest == nil) ||
+			(existing.DestinationRef != nil && dest != nil && *existing.DestinationRef != *dest) {
 			return nil, errors.New("connect: duplicate idempotency key held by a different payout")
 		}
 		p = existing
@@ -178,8 +180,14 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 	}
 
 	// Settlement hook (best-effort): initiate the bank transfer + stamp ref.
+	// The destination always comes from the STORED row — on a converge/replay the
+	// request's destination was verified identical above, so p is authoritative.
 	if s.settler != nil {
-		if settlementRef, serr := s.settler.Settle(ctx, p.ID, creatorID, req.DestinationRef, req.AmountKobo); serr == nil {
+		storedDest := ""
+		if p.DestinationRef != nil {
+			storedDest = *p.DestinationRef
+		}
+		if settlementRef, serr := s.settler.Settle(ctx, p.ID, creatorID, storedDest, p.AmountKobo); serr == nil {
 			_ = s.repo.MarkProcessing(ctx, p.ID, settlementRef)
 			p.Status = "processing"
 			p.SettlementRef = &settlementRef
