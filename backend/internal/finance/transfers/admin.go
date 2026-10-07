@@ -41,12 +41,7 @@ func (s *Service) AdminListTransfers(ctx context.Context, f AdminTransferFilter)
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `
-		SELECT id, user_id, amount_kobo, fee_kobo, account_number_last4, account_name, bank_code,
-		       reference, status, idempotency_key, provider, source_type,
-		       provider_recipient_code, provider_transfer_ref, failover_from,
-		       funding_reference, funding_status, created_at
-		FROM bank_transfers WHERE 1=1`
+	q := `SELECT ` + bankTransferCols + ` FROM bank_transfers WHERE 1=1`
 	args := []any{}
 	i := 1
 	if f.Status != "" {
@@ -113,6 +108,15 @@ func (s *Service) AdminGetTransfer(ctx context.Context, id string) (*AdminTransf
 // on the same reference — the loser gets ErrPayoutLegInFlight (409). The
 // status gate is ALSO re-checked under the lock on a fresh read, closing the
 // gap where a webhook settles the transfer between our read and the claim.
+//
+// RESIDUAL: a retry on funds_reserved/funded re-fires the provider call. That
+// is safe in the normal case (no payout was ever initiated — those statuses
+// are only set BEFORE the provider leg runs), but a provider call that
+// timed-out-yet-succeeded leaves the row at its hold status with no
+// provider_transfer_ref to reconcile against. Re-firing then relies on the
+// provider deduping our reference — Paystack does not — so a double payout is
+// possible. Operators should check the provider dashboard before retrying a
+// transfer whose prior attempt timed out mid-call.
 func (s *Service) AdminRetry(ctx context.Context, id, actorID string) (*BankTransfer, error) {
 	bt, err := s.getBankTransfer(ctx, id)
 	if err != nil {
@@ -130,8 +134,10 @@ func (s *Service) AdminRetry(ctx context.Context, id, actorID string) (*BankTran
 		return nil, err
 	}
 	s.audit(ctx, actorID, "transfer.admin.retry", bt.ID, string(bt.Status))
-	// Re-run the disburse leg; failover allowed (preferred="" → registry default chain).
-	if err := s.initiatePayoutLeg(ctx, bt, false, "", "", retryable); err != nil {
+	// Re-run the disburse leg; failover allowed (preferred="" → registry default
+	// chain). A provider_initiated row does NOT re-fire — the leg reconciles the
+	// already-fired payout via provider_transfer_ref instead (MED-3).
+	if err := s.initiatePayoutLeg(ctx, bt, false, "", "", requirePayoutableStatus); err != nil {
 		return nil, err
 	}
 	return s.getBankTransfer(ctx, id)
