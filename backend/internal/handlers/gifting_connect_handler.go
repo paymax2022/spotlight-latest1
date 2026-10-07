@@ -242,6 +242,15 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 
 	reference := "GIFT-" + generateShortID()
 
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another sender) would
+	// collide on ledger_entries.idempotency_key and the debit would silently
+	// no-op — recording a gift with no money behind it. The derived key keeps
+	// a genuine retry a conflict (the per-request reference differs, so the
+	// ledger's replay check refuses it) rather than a phantom no-op.
+	ledgerKey := "connect:wallet-gift:" + userID + ":" + idemKey
+
 	// Resolve the recipient's wallet so the journal has a real credit side.
 	recipientWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), body.RecipientID)
 	if err != nil {
@@ -251,12 +260,12 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 
 	// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
 	// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
-	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, idemKey, recipientWallet.ID, product.AmountKobo); err != nil {
+	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, recipientWallet.ID, product.AmountKobo); err != nil {
 		writeMoneyError(c, err)
 		return
 	}
 
-	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, idemKey)
+	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, ledgerKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
 		return
