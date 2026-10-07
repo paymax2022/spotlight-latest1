@@ -1,6 +1,6 @@
 -- ┌────────────────────────────────────────────────────────────────────────────┐
 -- │ USER-APPROVED EXCEPTION to the additive-only migration rule (CLAUDE.md).   │
--- │ ADR-PRTBD-bus-wallet-fixes. Kept in its OWN file so reviewers can drop it │
+-- │ ADR-PR559-bus-wallet-fixes. Kept in its OWN file so reviewers can drop it │
 -- │ from the PR without touching the other bus migration.                      │
 -- └────────────────────────────────────────────────────────────────────────────┘
 -- Problem: bus_tickets had UNIQUE(schedule_id, seat_number) over ALL rows, but the

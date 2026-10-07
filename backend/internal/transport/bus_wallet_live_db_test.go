@@ -1,6 +1,6 @@
 package transport
 
-// LIVE-DB regression suite for the wallet bus path (ADR-PRTBD-bus-wallet-fixes).
+// LIVE-DB regression suite for the wallet bus path (ADR-PR559-bus-wallet-fixes).
 // Skips unless TEST_DATABASE_URL is set. Fixtures: bus_wallet_fixtures_live_db_test.go.
 
 import (

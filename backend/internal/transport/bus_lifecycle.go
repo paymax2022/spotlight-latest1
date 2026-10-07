@@ -1,7 +1,7 @@
 package transport
 
 // Wallet bus path: refund truth, deferred settlement, schedule cancel and the
-// lifecycle sweeper. See ADR-PRTBD-bus-wallet-fixes.
+// lifecycle sweeper. See ADR-PR559-bus-wallet-fixes.
 //
 // The invariant this file exists to protect: a ticket is only ever marked
 // payment_status='refunded' / refund_status='refunded' AFTER settlement.Refund

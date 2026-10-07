@@ -1,4 +1,4 @@
-# ADR-PRTBD: Wallet bus path — truthful refunds, deferred settlement, idempotent booking
+# ADR-PR559: Wallet bus path — truthful refunds, deferred settlement, idempotent booking
 
 Status: proposed (rename file + references to `ADR-PR<n>-bus-wallet-fixes` once the PR number exists)
 Scope: wallet-funded bus booking only. Card-direct bus is deliberately NOT in this change.

@@ -199,7 +199,7 @@ services:
           property: connectionString
       - key: FEATURE_TRANSPORT_SCHEDULING_ENABLED
         value: "false"
-      # Wallet bus sweeper (ADR-PRTBD-bus-wallet-fixes): deferred settlement at
+      # Wallet bus sweeper (ADR-PR559-bus-wallet-fixes): deferred settlement at
       # departure+grace, refund retries, schedule/ticket lifecycle. Keep in sync
       # with the API service's FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT.
       # Bus refund retries / orphan-escrow reversal run whenever modes are on.

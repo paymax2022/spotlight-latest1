@@ -259,7 +259,7 @@ type Config struct {
 	// DEFAULT OFF): wallet bus tickets keep the fare in ESCROW (refundable) until
 	// departure + TransportBusSettleGraceMinutes instead of paying the operator at
 	// booking. Off = legacy settle-on-issue (cancel of a settled ticket is refused,
-	// never faked). See ADR-PRTBD-bus-wallet-fixes.
+	// never faked). See ADR-PR559-bus-wallet-fixes.
 	FeatureTransportBusDeferredSettlementEnabled bool
 	// FeatureTransportBusLifecycleSweeperEnabled (FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER,
 	// DEFAULT OFF): advance bus schedules/tickets to departed/completed/no_show.

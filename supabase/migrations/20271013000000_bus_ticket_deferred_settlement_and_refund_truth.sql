@@ -1,5 +1,5 @@
 -- Wallet bus path: truthful refunds + deferred settlement support.
--- ADR-PRTBD-bus-wallet-fixes.
+-- ADR-PR559-bus-wallet-fixes.
 --
 -- Background: BookBusTicket used to Settle the operator at booking, so a later
 -- cancel could not refund (settlement.Refund only works on 'escrowed') yet the
