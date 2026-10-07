@@ -33,11 +33,11 @@ export async function handleUtilityPaystackWebhook(
   const reference = event.data.reference;
   if (!reference) return { processed: false, duplicate: false, error: 'Missing reference' };
 
-  try {
-    const result = await verifyUtilityPaystackPayment(reference);
-    return { processed: !result.alreadyProcessed, duplicate: result.alreadyProcessed };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { processed: false, duplicate: false, error: message };
-  }
+  // A failure inside verifyUtilityPaystackPayment (DB flap, Paystack API
+  // timeout) MUST propagate — swallowing it here ACKs the delivery to Paystack
+  // and fulfilment then depends solely on the customer's browser poll. The
+  // route maps a rejected promise to a 500 so Paystack redelivers; the
+  // transaction-key dedupe makes redelivery safe.
+  const result = await verifyUtilityPaystackPayment(reference);
+  return { processed: !result.alreadyProcessed, duplicate: result.alreadyProcessed };
 }

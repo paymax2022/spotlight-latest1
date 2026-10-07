@@ -914,9 +914,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Monnify disbursement/collection webhooks — unauthenticated + signature
 	// verified inside the handler. Settles via the same provider-routed path
 	// (keyed by provider_transfer_ref / funding_reference).
-	if monnifyDisb, ok := xferSvc.ProviderByName("monnify"); ok {
-		monnifyWH := webhooks.NewMonnifyHandler(monnifyDisb, xferSvc)
-		r.POST("/api/webhooks/monnify/go", monnifyWH.Handle)
+	// Mounted ONLY when a real Monnify client is configured: ProviderByName
+	// falls back to a deterministic mock whose verifier accepts the literal
+	// signature "mock", which would let forged webhooks fund/settle payouts.
+	if monnifyDisb != nil {
+		if disb, ok := xferSvc.ProviderByName("monnify"); ok {
+			monnifyWH := webhooks.NewMonnifyHandler(disb, xferSvc)
+			r.POST("/api/webhooks/monnify/go", monnifyWH.Handle)
+		}
 	}
 
 	// --- Maplerad WaaS DOMAIN money path (ADR-012, NGN v1) ---

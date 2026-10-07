@@ -232,7 +232,7 @@ export async function initiateWalletToBank(
 
   const { data: existing } = await supabase
     .from('bank_transfers')
-    .select('id, reference, amount_kobo, fee_kobo, account_number_last4, bank_name, account_name, status, created_at')
+    .select('id, reference, amount_kobo, fee_kobo, account_number_last4, bank_name, account_name, status, created_at, user_id')
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle();
 
@@ -240,8 +240,14 @@ export async function initiateWalletToBank(
     const row = existing as {
       id: string; reference: string; amount_kobo: number; fee_kobo: number;
       account_number_last4: string; bank_name: string; account_name: string;
-      status: string; created_at: string;
+      status: string; created_at: string; user_id: string;
     };
+    // The key exists but belongs to a DIFFERENT user — returning that row
+    // would leak another user's transfer (account name/last4, bank, amount).
+    // Mirror the Go rail: foreign key collisions are a 409, not a replay.
+    if (row.user_id !== input.userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
     return {
       alreadyProcessed: true,
       transferId: row.id,

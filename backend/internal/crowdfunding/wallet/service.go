@@ -395,33 +395,16 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	reference := "SPL-CFWD-" + id[:8]
 	now := time.Now()
 
-	// Post the balanced double-entry (money leaves the CREATOR'S wallet) BEFORE
-	// the row exists — a deterministic key derived from the withdrawal id makes
-	// a retry-after-partial-failure safe to replay.
-	// DEBIT the creator's own user_wallet, not the shared escrow standing
-	// account: Contribute()'s instant settle already moved the creator's 90%
-	// share OUT of escrow and into their user_wallet via settlement.Settle
-	// (escrow → provider wallet). Debiting escrow here would have drained
-	// OTHER campaigns' unsettled contributions instead of this creator's own
-	// balance — ledger.Debit is also TOCTOU-safe (advisory-locked balance
-	// check), which the manual escrow posting below was not.
-	// Tier gate (fail-closed, E2E-FIN-046): the payout debits the creator's own
-	// wallet, so the same EnforceWalletDebitLimit the transfer rail applies runs
-	// BEFORE money moves — a refused attempt posts zero ledger legs and no
-	// cf_withdrawals row. Replays already returned the existing result above, so
-	// a completed key never reaches this gate.
+	// This endpoint only FILES the withdrawal request — it moves NO money.
+	// adminext.ApproveWithdrawal is the single payout leg: it debits the
+	// creator's wallet into provider_clearing under the deterministic key
+	// "cf:withdraw:payout:<withdrawal id>" and flips PENDING→COMPLETED.
+	// Debiting here (as this path previously did) parked the member's funds in
+	// clearing forever while telling them the withdrawal was "COMPLETED" — no
+	// disbursement provider is wired downstream of clearing yet.
+	// The tier gate stays as an early fail-closed check on the requested amount.
 	if err := s.enforceDebitLimit(ctx, creatorID, in.AmountKobo); err != nil {
 		return nil, err
-	}
-
-	payoutIdem := "cf:withdraw:payout:" + id
-	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
-	if err != nil {
-		return nil, fmt.Errorf("crowdfunding/wallet: resolve clearing account: %w", err)
-	}
-	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, in.AmountKobo); err != nil &&
-		!errors.Is(err, financeledger.ErrDuplicate) {
-		return nil, fmt.Errorf("crowdfunding/wallet: post withdrawal payout: %w", err)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -433,14 +416,14 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	const ins = `
 		INSERT INTO cf_withdrawals
 			(id, campaign_id, creator_id, reference, amount_kobo, bank_label, status, reason, idempotency_key, requested_at)
-		VALUES ($1,$2,$3,$4,$5,$6,'COMPLETED',$7,$8,$9)`
+		VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9)`
 	if _, err := tx.Exec(ctx, ins,
 		id, campaignID, creatorID, reference, in.AmountKobo, bankLabel, in.Reason, idempotencyKey, now,
 	); err != nil {
 		return nil, fmt.Errorf("crowdfunding/wallet: insert withdrawal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.payout',$2,'')`,
+		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.requested',$2,'')`,
 		creatorID, reference,
 	); err != nil {
 		return nil, fmt.Errorf("crowdfunding/wallet: write audit row: %w", err)
@@ -452,7 +435,7 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	return &WithdrawalResult{
 		ID:          id,
 		Reference:   reference,
-		Status:      "COMPLETED",
+		Status:      "PENDING",
 		AmountKobo:  in.AmountKobo,
 		BankLabel:   bankLabel,
 		RequestedAt: timeutil.RFC3339(now),
