@@ -64,12 +64,18 @@ jobs:
             exit 1
           fi
           printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          # Percent-encode the password — the Supabase CLI accepts it raw, but a
+          # URI cannot carry unescaped reserved bytes (@, :, /, ?, #, %, space…).
+          enc_pw="$(RAW_PW="$pw" node -e 'process.stdout.write(encodeURIComponent(process.env.RAW_PW))' 2>/dev/null || true)"
+          if [ -z "$enc_pw" ]; then
+            enc_pw="$(RAW_PW="$pw" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["RAW_PW"],safe=""))')"
+          fi
           # Compose the session-mode pooler URL the backend logs show it using
           # (postgres.<ref>@aws-0-eu-north-1.pooler.supabase.com:5432).
-          url="postgres://postgres.${ref}:${pw}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require"
+          url="postgres://postgres.${ref}:${enc_pw}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require"
           echo "::add-mask::$url"
           printf 'DATABASE_URL_VALUE=%s\n' "$url" >> "$GITHUB_ENV"
-          unset tok ref pw url
+          unset tok ref pw url enc_pw
           echo "  credentials resolved for $ENVIRONMENT (values never printed)"
 
       - name: Install Railway CLI
@@ -83,10 +89,17 @@ jobs:
           # psql is present on ubuntu-latest. A wrong password here would add to
           # the pooler circuit-breaker count, so this one-shot check is the only
           # credential probe; on failure the run stops before touching Railway.
-          if psql "$DATABASE_URL_VALUE" -c 'SELECT 1' >/dev/null 2>&1; then
+          err="$(psql "$DATABASE_URL_VALUE" -c 'SELECT 1' 2>&1 >/dev/null || true)"
+          if [ -z "$err" ]; then
             echo "  pooler auth OK — password is current"
           else
-            echo "::error::pooler auth failed with the secret-composed DSN — the stored SUPABASE_DB_PASSWORD no longer matches the project"
+            # Redact anything DSN-shaped before printing; keep the SQLSTATE/text.
+            printf '%s\n' "$err" | sed -E 's#postgres[^ ]*#<dsn-redacted>#g; s#password=[^ ]*#password=<redacted>#g' | head -5
+            if printf '%s' "$err" | grep -qi "CIRCUITBREAKER"; then
+              echo "::error::pooler circuit-breaker is tripped — password may be fine; retry after the block lifts"
+            else
+              echo "::error::pooler auth failed with the secret-composed DSN"
+            fi
             exit 1
           fi
 
