@@ -92,6 +92,52 @@ components:
       type: object
       properties:
         error: { type: string }
+    BusTicket:
+      type: object
+      description: A wallet-booked bus ticket (camelCase keys). Money fields are integer kobo.
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        scheduleId: { type: string, format: uuid }
+        seatNumber: { type: integer }
+        passengerName: { type: string }
+        passengerPhone: { type: string, nullable: true }
+        qrCode: { type: string }
+        fareKobo: { type: integer, format: int64 }
+        paymentStatus: { type: string, enum: [paid, refunded], description: "'refunded' only after the wallet credit actually posted" }
+        boardingStatus: { type: string, enum: [issued, boarded, no_show] }
+        status: { type: string, enum: [booked, issued, boarding, boarded, completed, rescheduled, cancelled, refunded] }
+        refundStatus: { type: string, enum: [none, pending, refunded, failed, manual_required] }
+        departureTime: { type: string, format: date-time }
+        cancelCutoffMinutes: { type: integer, nullable: true, description: Cutoff before departure after which self-service cancel is refused (null for immediate-settlement tickets) }
+        cancelDeadline: { type: string, format: date-time, nullable: true }
+        routeLabel: { type: string, description: 'Origin → destination label' }
+        originTerminal: { type: string }
+        destTerminal: { type: string }
+        operatorName: { type: string }
+        arriveAt: { type: string, format: date-time, nullable: true }
+        cancellable: { type: boolean, description: Server verdict - would a self-service cancel + refund be accepted right now }
+        createdAt: { type: string, format: date-time }
+    BusCancelResult:
+      type: object
+      required: [ok, status, refund_status]
+      properties:
+        ok: { type: boolean }
+        status: { type: string, example: cancelled }
+        refund_status: { type: string, enum: [none, pending, refunded, failed, manual_required] }
+        refunded_kobo: { type: integer, format: int64, description: Kobo actually credited back to the wallet (0 unless refund_status=refunded) }
+        message: { type: string }
+    BusScheduleCancelResult:
+      type: object
+      properties:
+        schedule_id: { type: string, format: uuid }
+        status: { type: string, example: cancelled }
+        tickets_total: { type: integer }
+        refunded: { type: integer }
+        pending: { type: integer, description: Cancelled, refund still to be (re)tried }
+        failed: { type: integer }
+        manual_required: { type: integer, description: Already paid out to the operator - refund must be handled by support/ops }
+        complete: { type: boolean, description: true when no ticket is left pending/failed (manual_required counts as handled-by-ops) }
     Ok:
       type: object
       description: Generic success envelope. Most handlers wrap the payload in a `data` key or a named key (trip/offers/schedules/…).
@@ -224,12 +270,29 @@ paths:
     get:
       tags: [mobility-customer]
       summary: Seat map for a bus schedule
-      description: Returns total seats plus the set of taken seat numbers so the client can render seat selection.
+      description: >-
+        Returns total seats plus the set of taken seat numbers so the client can render seat
+        selection, AND the server-owned per-seat fare (integer kobo) and departure time so the
+        client never has to guess the price. Seats freed by a cancelled/refunded ticket are
+        reported as available (and can be re-booked).
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
       responses:
         '200':
-          description: '{ schedule_id, total_seats, taken: [int], available }'
+          description: Seat map
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schedule_id, total_seats, taken, available, fare_kobo]
+                properties:
+                  schedule_id: { type: string, format: uuid }
+                  total_seats: { type: integer }
+                  taken: { type: array, items: { type: integer } }
+                  available: { type: integer }
+                  fare_kobo: { type: integer, format: int64, description: Per-seat fare in kobo }
+                  departure_time: { type: string, format: date-time }
+                  currency: { type: string, example: NGN }
         '401': { description: Not authenticated }
   /mobility/history:
     get:
@@ -555,25 +618,120 @@ paths:
   /mobility/bus/book:
     post:
       tags: [bus]
-      summary: Book a bus seat (escrow → settle operator on issue) — money mutation
-      description: Money mutation — escrows the fare and settles the operator on ticket issue. Requires an Idempotency-Key.
+      summary: Book a bus seat — money mutation
+      description: >-
+        Money mutation — escrows the fare in the wallet (tier-gated, fail-closed) and issues a QR
+        ticket. Requires an Idempotency-Key. Replaying the same key returns the SAME ticket (the
+        ticket id is derived deterministically from the key) and never double-charges or refunds
+        an issued ticket. seat_number is an INTEGER. Booking is refused unless the departure is at
+        least the minimum lead time away, the schedule is scheduled/boarding with an approved fare,
+        and (for marketplace routes) the provider is verified+active with a resolvable payout owner.
+        Settlement: with FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT off the operator is paid on issue
+        (legacy); with it on the fare stays in escrow until departure + grace, the provider/platform
+        split being FROZEN on the ticket at booking time.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: Ticket }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schedule_id, seat_number, passenger_name]
+              properties:
+                schedule_id: { type: string, format: uuid }
+                seat_number: { type: integer, minimum: 1 }
+                passenger_name: { type: string }
+                passenger_phone: { type: string }
+      responses:
+        '201': { description: Ticket (BusTicket) }
+        '401': { description: Not authenticated }
+        '402': { description: Insufficient balance }
+        '403': { description: Tier / spending limit gate }
+        '409': { description: SEAT_TAKEN (another active ticket holds the seat), INVALID_STATE (schedule closed / departure too close / provider not bookable), or IDEMPOTENCY_KEY_CONFLICT (key already used for a different booking) }
+        '422': { description: INVALID_SEAT or FARE_NOT_APPROVED }
   /mobility/bus/tickets:
     get:
       tags: [bus]
       summary: List the caller's bus tickets
-      responses: { '200': { description: Tickets }, '401': { description: Not authenticated } }
+      responses: { '200': { description: 'Tickets ({ tickets: [BusTicket] })' }, '401': { description: Not authenticated } }
+  /mobility/bus/tickets/{id}:
+    get:
+      tags: [bus]
+      summary: Get one of the caller's bus tickets (owner only)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses:
+        '200': { description: BusTicket }
+        '401': { description: Not authenticated }
+        '403': { description: Not your ticket }
+        '404': { description: Ticket not found }
   /mobility/bus/tickets/{id}/cancel:
     post:
       tags: [bus]
-      summary: Cancel a bus ticket (refund per policy)
+      summary: Cancel a bus ticket and (when possible) refund the wallet
+      description: >-
+        TRUTHFUL refund contract: the ticket is only marked payment_status=refunded after the
+        wallet credit has actually posted. The response carries refund_status: refunded (money is
+        back in the wallet), pending / failed (ticket cancelled, refund will be retried - NOT yet
+        refunded, HTTP 202), or none. A ticket whose fare was already paid out to the operator
+        (legacy immediate-settlement ticket) is NOT cancelled: 409 REFUND_REQUIRES_SUPPORT. With
+        deferred settlement, cancelling inside the per-schedule cutoff (default 120 min before
+        departure, bounded 60-1440) is refused with 409 CANCEL_WINDOW_CLOSED. Boarded tickets
+        cannot be cancelled (409 INVALID_STATE). Idempotent: repeating a cancel resumes/returns
+        the same outcome.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Ticket }, '401': { description: Not authenticated } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200':
+          description: Cancelled and refunded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusCancelResult' }
+        '202':
+          description: Cancelled; refund pending/failed and being retried (not yet returned to the wallet)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusCancelResult' }
+        '401': { description: Not authenticated }
+        '403': { description: Not your ticket }
+        '404': { description: Ticket not found }
+        '409': { description: 'CANCEL_WINDOW_CLOSED, REFUND_REQUIRES_SUPPORT or INVALID_STATE' }
+  /mobility/bus/provider/schedules/{id}/cancel:
+    post:
+      tags: [bus]
+      summary: Provider - cancel one of the caller's schedules and refund every active ticket
+      description: >-
+        Owner-gated (the schedule's route provider must be the caller's). Refused (409) once the
+        departure time has passed. Marks the schedule
+        cancelled and refunds each active ticket whose fare is still in escrow via the settlement
+        refund path. Tickets already paid out to the operator (legacy settlement) are cancelled
+        with refund_status=manual_required and are NEVER reported as refunded. Idempotent and
+        resumable: re-calling processes only tickets not yet finished.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200':
+          description: Schedule cancellation summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusScheduleCancelResult' }
+        '401': { description: Not authenticated }
+        '403': { description: Not your schedule }
+        '404': { description: Schedule not found }
+        '409': { description: Schedule already departed/completed }
   /driver/bus/validate:
     post:
       tags: [bus]
       summary: Operator — validate a bus ticket QR at boarding
+      description: >-
+        Only the route operator may validate. The scan is accepted only inside the boarding window
+        (3 h before departure until the schedule end + grace) and never for a cancelled/refunded
+        ticket or a cancelled schedule.
       responses: { '200': { description: Validation result }, '401': { description: Not authenticated } }
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -882,6 +1040,23 @@ paths:
       summary: Approve a bus schedule fare (admin)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } }
+  /admin/transport/bus/schedules/{id}/cancel:
+    post:
+      tags: [mobility-admin]
+      summary: Cancel a bus schedule and refund every active ticket (admin, audited)
+      description: >-
+        Same semantics as the provider endpoint (idempotent, resumable, never claims a refund that did not post). Requires mobility.bus.manage.
+        Refused with 409 once the departure time has passed unless the body sets force=true (audited).
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string }, force: { type: boolean } } }
+      responses:
+        '200': { description: Schedule cancellation summary (BusScheduleCancelResult) }
+        '403': { description: Missing mobility.bus.manage }
+        '404': { description: Schedule not found }
+        '409': { description: Schedule already departed/completed }
   /admin/transport/bus/manifest:
     get: { tags: [mobility-admin], summary: Bus manifest (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
   /admin/transport/towing:

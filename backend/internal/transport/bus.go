@@ -2,19 +2,25 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/internal/finance/settlement"
 )
 
 // Ticket machine: booked → issued(QR) → boarding → boarded → completed
-// Fixed, admin-approved fares. On book the fare is escrowed then immediately
-// settled to the operator (the catalog is trusted, no proof-of-completion gate).
-// QR = uuid. Seats are uniquely allocated per schedule (UNIQUE(schedule_id, seat)).
+// Fixed, admin-approved fares. On book the fare is escrowed. Legacy mode settles
+// the operator immediately; with FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT it stays
+// escrowed (refundable) until departure + grace (see bus_lifecycle.go).
+// QR = uuid. Seats are unique per schedule among ACTIVE tickets (partial unique
+// index bus_tickets_schedule_seat_active_uidx), so a cancelled seat can be re-sold.
 
 // BusBookRequest is POST /mobility/bus/book.
 type BusBookRequest struct {
@@ -49,6 +55,9 @@ type BusScheduleRequest struct {
 	TotalSeats      int    `json:"total_seats" binding:"required,min=1,max=80"`
 	FareKobo        int64  `json:"fare_kobo" binding:"required,min=0"`
 	Reason          string `json:"reason"`
+	// CancelCutoffMinutes optionally overrides the self-service cancel cutoff for
+	// deferred-settlement tickets on this schedule (60-1440; default 120).
+	CancelCutoffMinutes *int `json:"cancel_cutoff_minutes"`
 }
 
 // SearchBusRoutes returns active routes filtered by origin/dest terminals.
@@ -130,8 +139,25 @@ func (s *Service) ListBusSchedules(ctx context.Context, routeID, date string) ([
 	return out, nil
 }
 
-// BookBusTicket books a seat: escrow → settle operator → issue QR. The unique
-// (schedule_id, seat_number) constraint guarantees one passenger per seat.
+// busTicketByKey finds the ticket (if any) created for an idempotency key.
+func (s *Service) busTicketByKey(ctx context.Context, key string) (*busTicketRow, error) {
+	t, err := scanBusTicketRow(s.db.QueryRow(ctx, busTicketSelect+` WHERE t.idempotency_key=$1`, key))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return t, err
+}
+
+// BookBusTicket books a seat: validate -> escrow -> issue QR -> (immediate mode)
+// settle. The ticket id is derived from (user, idempotency key), so a retry of the
+// same booking lands on the same ticket / escrow reference and can never produce a
+// second ticket, a free ticket, or a refund of an issued ticket.
+//
+// Settlement: with FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT off the operator is
+// paid on issue (legacy; such a ticket can then NOT be cancelled-with-refund).
+// With it on the fare stays escrowed until departure + grace and cancel refunds the
+// wallet. Either way the provider/platform split and the payout recipient are
+// FROZEN on the ticket here.
 func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookRequest, idempotencyKey string) (map[string]any, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = req.IdempotencyKey
@@ -139,29 +165,33 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	if idempotencyKey == "" {
 		return nil, codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
 	}
-	// Load schedule + operator + (optional) marketplace provider, enforce approved
-	// fare and bookable status.
-	var fare int64
-	var totalSeats int
-	var approved bool
-	var status, operatorID string
-	var providerID *string
-	const sq = `
-		SELECT s.fare_kobo, s.total_seats, s.fare_approved, s.status, r.operator_id, r.provider_id
-		FROM bus_schedules s JOIN bus_routes r ON r.id = s.route_id
-		WHERE s.id=$1`
-	if err := s.db.QueryRow(ctx, sq, req.ScheduleID).Scan(&fare, &totalSeats, &approved, &status, &operatorID, &providerID); err != nil {
-		return nil, codedErr(http.StatusNotFound, CodeNotFound, "schedule not found")
+	// Idempotent replay: a ticket already exists for this key.
+	if existing, err := s.busTicketByKey(ctx, idempotencyKey); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return s.replayBusBooking(ctx, userID, req, existing)
 	}
-	// Resolve the settlement recipient: for a marketplace route the payout goes to
-	// the PROVIDER's owner user (provider_id → bus_providers.owner_user_id); for a
-	// legacy admin route it stays the route operator_id.
-	settleUserID := operatorID
-	if providerID != nil {
-		var owner string
-		if err := s.db.QueryRow(ctx, `SELECT owner_user_id FROM bus_providers WHERE id=$1`, *providerID).Scan(&owner); err == nil && owner != "" {
-			settleUserID = owner
-		}
+
+	// Load schedule + route + (optional) marketplace provider in one read.
+	var (
+		fare, totalSeats                       int64
+		approved, routeActive                  bool
+		status, routeStatus, operatorID        string
+		departure                              time.Time
+		schedCutoff                            *int
+		providerID, ownerID, verification, pst *string
+	)
+	const sq = `
+		SELECT s.fare_kobo, s.total_seats::bigint, s.fare_approved, s.status, s.departure_time, s.cancel_cutoff_minutes,
+		       r.operator_id::text, r.provider_id::text, COALESCE(r.active, TRUE), r.status,
+		       p.owner_user_id::text, p.verification_status, p.status
+		FROM bus_schedules s
+		JOIN bus_routes r ON r.id = s.route_id
+		LEFT JOIN bus_providers p ON p.id = r.provider_id
+		WHERE s.id=$1`
+	if err := s.db.QueryRow(ctx, sq, req.ScheduleID).Scan(&fare, &totalSeats, &approved, &status, &departure, &schedCutoff,
+		&operatorID, &providerID, &routeActive, &routeStatus, &ownerID, &verification, &pst); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "schedule not found")
 	}
 	if !approved {
 		return nil, codedErr(http.StatusUnprocessableEntity, "FARE_NOT_APPROVED", "schedule fare not yet approved")
@@ -169,7 +199,27 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	if status != "scheduled" && status != "boarding" {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "schedule not open for booking")
 	}
-	if req.SeatNumber > totalSeats {
+	if !departure.After(time.Now().Add(s.bus.MinBookingLead)) {
+		return nil, codedErr(http.StatusConflict, CodeBookingClosed, "this departure is too close (or already gone) to book")
+	}
+	if !routeActive || routeStatus != "active" {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "route not open for booking")
+	}
+	// Resolve the settlement recipient. A marketplace route pays the PROVIDER's
+	// owner; there is NO silent fallback to routes.operator_id - if the provider or
+	// its owner cannot be resolved the booking FAILS (money must not go to the wrong
+	// party). A legacy admin route (no provider) pays its operator_id.
+	settleUserID := operatorID
+	if providerID != nil {
+		if ownerID == nil || *ownerID == "" || verification == nil || pst == nil {
+			return nil, codedErr(http.StatusConflict, CodeProviderUnavailable, "the operator for this trip cannot be resolved; booking refused")
+		}
+		if *verification != "verified" || *pst != "active" {
+			return nil, codedErr(http.StatusConflict, CodeProviderUnavailable, "this operator is not currently accepting bookings")
+		}
+		settleUserID = *ownerID
+	}
+	if req.SeatNumber < 1 || int64(req.SeatNumber) > totalSeats {
 		return nil, codedErr(http.StatusUnprocessableEntity, "INVALID_SEAT", "seat number exceeds capacity")
 	}
 
@@ -179,146 +229,214 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 		return nil, err
 	}
 
-	ticketID := uuid.New().String()
+	// Freeze the commercial terms now. Validate the split BEFORE escrow so a bad
+	// config can never strand an escrow behind an unsettleable ticket.
+	comm, _ := s.commissionForTier(ctx, "standard")
+	split := settlementSplit(settleUserID, comm, 0)
+	if err := split.Validate(); err != nil {
+		return nil, fmt.Errorf("transport: bus commission split invalid: %w", err)
+	}
+	mode := "immediate"
+	var cutoff *int
+	if s.bus.DeferredSettlement {
+		mode = "deferred"
+		c := s.bus.CancelCutoffMin
+		if schedCutoff != nil {
+			c = ClampCutoffMinutes(*schedCutoff)
+		}
+		cutoff = &c
+	}
+
+	ticketID := busTicketIDForKey(userID, idempotencyKey)
 	ref := "bus:" + ticketID
-	sett, err := s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", fare)
+	// The settlement/ledger idempotency key is USER-SCOPED (derived from user+key via
+	// the ticket id), so two users sending the same raw key can never share an escrow.
+	escrowKey := "bus:" + ticketID
+	var payer string
+	switch err := s.db.QueryRow(ctx, `SELECT payer_id::text FROM settlements WHERE idempotency_key=$1`, escrowKey).Scan(&payer); {
+	case err == nil && payer != userID:
+		// Verified BEFORE any wallet debit: never bind to someone else's escrow.
+		return nil, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key is already bound to another payer")
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return nil, err
+	}
+	sett, err := s.settlement.Escrow(ctx, userID, ref, escrowKey, "transport", fare)
 	if err != nil {
 		return nil, fmt.Errorf("transport: escrow bus fare: %w", err)
 	}
-	qr := uuid.New().String()
-	const q = `
-		INSERT INTO bus_tickets
-			(id, user_id, schedule_id, seat_number, passenger_name, passenger_phone, qr_code,
-			 fare_kobo, payment_status, boarding_status, status, settlement_id, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'paid','issued','issued',$9,$10)`
-	if _, err := s.db.Exec(ctx, q,
-		ticketID, userID, req.ScheduleID, req.SeatNumber, req.PassengerName, dbutil.NullStr(req.PassengerPhone),
-		qr, fare, sett.ID, idempotencyKey,
-	); err != nil {
-		// Seat already taken (unique violation) → refund escrow, surface conflict.
-		_ = s.settlement.Refund(ctx, sett.ID, "seat_unavailable")
-		return nil, codedErr(http.StatusConflict, "SEAT_TAKEN", "seat already booked")
+	// Escrow replays the row for a key: it must be OUR still-escrowed fare for the
+	// SAME amount. A refunded/settled row means this key was used up by an earlier
+	// failed attempt (reusing it would mint a ticket nobody paid for); an amount
+	// mismatch means the key belongs to a different booking. Fail closed, no refund.
+	if sett.Status != settlement.StatusEscrowed || sett.TotalKobo != fare {
+		return nil, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key was already used; retry with a new key")
 	}
 
-	// Bus tickets settle immediately on issue (trusted catalog): to the marketplace
-	// provider's owner user when the route has a provider, else the legacy operator.
-	comm, _ := s.commissionForTier(ctx, "standard")
-	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(settleUserID, comm, 0)); err != nil {
-		return nil, fmt.Errorf("transport: settle bus ticket: %w", err)
+	qr := uuid.New().String()
+	issueErr := s.issueBusTicket(ctx, ticketID, userID, req, qr, fare, sett.ID, idempotencyKey,
+		mode, cutoff, comm.ProviderPct, comm.PlatformPct, settleUserID)
+	if issueErr != nil {
+		return s.handleBusIssueFailure(ctx, userID, req, idempotencyKey, sett.ID, issueErr)
 	}
-	// Record realized Spotlight profit (best-effort + idempotent; ticket id as source
-	// ref + idempotency key). gross = the full ticket fare the passenger paid. A
-	// recorder failure is logged and swallowed — it must NEVER affect the settlement
-	// above (earning-row only; no ledger re-post).
-	bookerID := userID
-	s.recordCommissionSafe(ctx, "Lifestyle", "Bus Booking", "", fare, ticketID, &bookerID)
+
+	if mode == "immediate" {
+		if _, err := s.settleBusTicket(ctx, ticketID); err != nil {
+			// The ticket exists and the fare stays escrowed: a retry with the same key
+			// resumes the settle (never a second ticket, never a refund).
+			return nil, fmt.Errorf("transport: settle bus ticket: %w", err)
+		}
+	}
 	s.recordModeEvent(ctx, userID, "bus.ticket_issued", "bus_ticket", ticketID, "", "issued",
-		map[string]any{"schedule_id": req.ScheduleID, "seat_number": req.SeatNumber, "settle_user_id": settleUserID})
+		map[string]any{"schedule_id": req.ScheduleID, "seat_number": req.SeatNumber, "settle_user_id": settleUserID, "settle_mode": mode})
 	return s.BusTicketDetail(ctx, ticketID, userID)
+}
+
+// issueBusTicket inserts the ticket under a FOR SHARE lock on its schedule so a
+// concurrent schedule cancel (which takes the row lock) cannot interleave.
+func (s *Service) issueBusTicket(ctx context.Context, ticketID, userID string, req BusBookRequest, qr string,
+	fare int64, settlementID, key, mode string, cutoff *int, provPct, platPct float64, settleUserID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var st string
+	if err := tx.QueryRow(ctx, `SELECT status FROM bus_schedules WHERE id=$1 FOR SHARE`, req.ScheduleID).Scan(&st); err != nil {
+		return err
+	}
+	if st != "scheduled" && st != "boarding" {
+		return errScheduleClosed
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO bus_tickets
+			(id, user_id, schedule_id, seat_number, passenger_name, passenger_phone, qr_code,
+			 fare_kobo, payment_status, boarding_status, status, settlement_id, idempotency_key,
+			 settle_mode, payout_state, provider_pct, platform_pct, settle_user_id, cancel_cutoff_minutes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'paid','issued','issued',$9,$10,$11,'held',$12,$13,$14,$15)`,
+		ticketID, userID, req.ScheduleID, req.SeatNumber, req.PassengerName, dbutil.NullStr(req.PassengerPhone),
+		qr, fare, settlementID, key, mode, provPct, platPct, settleUserID, cutoff); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+var errScheduleClosed = errors.New("transport: schedule closed while booking")
+
+// handleBusIssueFailure turns a failed ticket insert into the right client error
+// and - ONLY when no ticket exists for the key - reverses the escrow. It never
+// refunds when a ticket for the key exists (a concurrent/earlier success), and it
+// does not guess: if it cannot tell, the escrow is left for reconciliation.
+func (s *Service) handleBusIssueFailure(ctx context.Context, userID string, req BusBookRequest, key, settlementID string, issueErr error) (map[string]any, error) {
+	kind := classifyBusTicketInsertErr(issueErr)
+	existing, lookupErr := s.busTicketByKey(ctx, key)
+	if lookupErr != nil {
+		log.Printf("[transport] bus booking key=%s: insert failed (%v) and ticket lookup failed (%v); leaving escrow %s for reconciliation",
+			key, issueErr, lookupErr, settlementID)
+		return nil, fmt.Errorf("transport: issue bus ticket: %w", issueErr)
+	}
+	if existing != nil {
+		// A ticket for this key exists: the booking succeeded elsewhere. Replay it.
+		return s.replayBusBooking(ctx, userID, req, existing)
+	}
+	if rerr := s.settlement.Refund(ctx, settlementID, "bus_issue_failed"); rerr != nil {
+		log.Printf("[transport] bus booking key=%s: escrow reversal FAILED settlement=%s: %v", key, settlementID, rerr)
+	}
+	switch {
+	case errors.Is(issueErr, errScheduleClosed):
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "schedule not open for booking")
+	case kind == ticketInsertSeatTaken:
+		return nil, codedErr(http.StatusConflict, CodeSeatTaken, "seat already booked")
+	}
+	return nil, fmt.Errorf("transport: issue bus ticket: %w", issueErr)
+}
+
+// replayBusBooking returns the ticket already created for this idempotency key.
+// A different user, schedule or seat means the key is being reused for another
+// booking (409). If the original attempt failed AFTER issuing (settle error) the
+// settle is resumed here - never a refund, never a second ticket.
+func (s *Service) replayBusBooking(ctx context.Context, userID string, req BusBookRequest, t *busTicketRow) (map[string]any, error) {
+	if t.UserID != userID || t.ScheduleID != req.ScheduleID || t.SeatNumber != req.SeatNumber {
+		return nil, codedErr(http.StatusConflict, CodeKeyConflict, "this idempotency key was already used for a different booking")
+	}
+	if t.Status == "cancelled" || t.Status == "refunded" {
+		return nil, codedErr(http.StatusConflict, CodeKeyConflict, "this booking was cancelled; start a new booking with a new idempotency key")
+	}
+	if t.SettleMode == "immediate" && t.PayoutState != "released" && t.Status != "cancelled" && t.Status != "refunded" {
+		if _, err := s.settleBusTicket(ctx, t.ID); err != nil {
+			return nil, fmt.Errorf("transport: settle bus ticket: %w", err)
+		}
+	}
+	return s.BusTicketDetail(ctx, t.ID, userID)
 }
 
 // BusTicketDetail returns a ticket (owner only).
 func (s *Service) BusTicketDetail(ctx context.Context, id, userID string) (map[string]any, error) {
-	const q = `
-		SELECT id, user_id, schedule_id, seat_number, passenger_name, passenger_phone, qr_code,
-		       fare_kobo, payment_status, boarding_status, status, created_at
-		FROM bus_tickets WHERE id=$1`
-	var (
-		tid, uid, schedID, pname, qr, payStatus, boardStatus, status string
-		pphone                                                       *string
-		seat                                                         int
-		fare                                                         int64
-		createdAt                                                    time.Time
-	)
-	if err := s.db.QueryRow(ctx, q, id).Scan(
-		&tid, &uid, &schedID, &seat, &pname, &pphone, &qr,
-		&fare, &payStatus, &boardStatus, &status, &createdAt,
-	); err != nil {
-		return nil, codedErr(http.StatusNotFound, CodeNotFound, "ticket not found")
+	t, err := s.loadBusTicket(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	if uid != userID {
+	if t.UserID != userID {
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your ticket")
 	}
-	return map[string]any{
-		"id": tid, "userId": uid, "scheduleId": schedID, "seatNumber": seat,
-		"passengerName": pname, "passengerPhone": pphone, "qrCode": qr,
-		"fareKobo": fare, "paymentStatus": payStatus, "boardingStatus": boardStatus,
-		"status": status, "createdAt": createdAt,
-	}, nil
+	return busTicketPayload(t, time.Now()), nil
+}
+
+// busTicketPayload renders a ticket for the client (camelCase), including the
+// server's verdict on whether a self-service cancel would be accepted right now.
+func busTicketPayload(t *busTicketRow, now time.Time) map[string]any {
+	verdict, _ := decideBusCancel(t, now, true)
+	m := map[string]any{
+		"id": t.ID, "userId": t.UserID, "scheduleId": t.ScheduleID, "seatNumber": t.SeatNumber,
+		"passengerName": t.PassengerName, "passengerPhone": t.PassengerPhone, "qrCode": t.QRCode,
+		"fareKobo": t.FareKobo, "paymentStatus": t.PaymentStatus, "boardingStatus": t.BoardStatus,
+		"status": t.Status, "createdAt": t.CreatedAt,
+		"refundStatus": t.RefundStatus, "departureTime": t.Departure,
+		"cancelCutoffMinutes": t.CutoffMin, "cancellable": verdict == verdictProceed,
+		"routeLabel": t.OriginTerminal + " → " + t.DestTerminal, "originTerminal": t.OriginTerminal,
+		"destTerminal": t.DestTerminal, "operatorName": t.OperatorName, "arriveAt": t.Arrival,
+	}
+	if t.SettleMode == "deferred" && t.CutoffMin != nil {
+		m["cancelDeadline"] = t.cancelDeadline()
+	} else {
+		m["cancelDeadline"] = nil
+	}
+	return m
 }
 
 // ListBusTickets returns the user's tickets.
 func (s *Service) ListBusTickets(ctx context.Context, userID string) ([]map[string]any, error) {
-	const q = `
-		SELECT id, schedule_id, seat_number, passenger_name, qr_code, fare_kobo,
-		       payment_status, boarding_status, status, created_at
-		FROM bus_tickets WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`
-	rows, err := s.db.Query(ctx, q, userID)
+	rows, err := s.db.Query(ctx, busTicketSelect+` WHERE t.user_id=$1 ORDER BY t.created_at DESC LIMIT 100`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	now := time.Now()
+	out := []map[string]any{}
 	for rows.Next() {
-		var id, schedID, pname, qr, payStatus, boardStatus, status string
-		var seat int
-		var fare int64
-		var createdAt time.Time
-		if err := rows.Scan(&id, &schedID, &seat, &pname, &qr, &fare, &payStatus, &boardStatus, &status, &createdAt); err != nil {
+		t, err := scanBusTicketRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{
-			"id": id, "scheduleId": schedID, "seatNumber": seat, "passengerName": pname,
-			"qrCode": qr, "fareKobo": fare, "paymentStatus": payStatus,
-			"boardingStatus": boardStatus, "status": status, "createdAt": createdAt,
-		})
+		out = append(out, busTicketPayload(t, now))
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
-// CancelBusTicket refunds + cancels a ticket (owner only). Boarded tickets cannot
-// be cancelled.
-func (s *Service) CancelBusTicket(ctx context.Context, id, userID, reason string) error {
-	var uid, status, boardStatus string
-	var settID *string
-	if err := s.db.QueryRow(ctx,
-		`SELECT user_id, status, boarding_status, settlement_id FROM bus_tickets WHERE id=$1`, id).
-		Scan(&uid, &status, &boardStatus, &settID); err != nil {
-		return codedErr(http.StatusNotFound, CodeNotFound, "ticket not found")
-	}
-	if uid != userID {
-		return codedErr(http.StatusForbidden, CodeForbidden, "not your ticket")
-	}
-	if status == "cancelled" || status == "refunded" || status == "completed" || boardStatus == "boarded" {
-		return codedErr(http.StatusConflict, CodeInvalidState, "ticket cannot be cancelled")
-	}
-	tag, err := s.db.Exec(ctx,
-		`UPDATE bus_tickets SET status='cancelled', payment_status='refunded'
-		 WHERE id=$1 AND status NOT IN ('cancelled','refunded','completed') AND boarding_status<>'boarded'`, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return codedErr(http.StatusConflict, CodeInvalidState, "ticket cannot be cancelled")
-	}
-	// Settlement was already released to the operator on issue; refund reverses it.
-	if settID != nil {
-		_ = s.settlement.Refund(ctx, *settID, "bus_cancelled:"+reason)
-	}
-	s.recordModeEvent(ctx, userID, "bus.cancelled", "bus_ticket", id, status, "cancelled", map[string]any{"reason": reason})
-	return nil
-}
-
-// ValidateBusTicket: operator scans the QR → boarded. Only the route operator may.
+// ValidateBusTicket: operator scans the QR -> boarded. Only the route operator may,
+// only inside the boarding window, never for a cancelled/refunded ticket or a
+// cancelled schedule, and the status flip is a compare-and-swap so it cannot race
+// a cancel.
 func (s *Service) ValidateBusTicket(ctx context.Context, operatorUserID, qrCode string) (map[string]any, error) {
-	var ticketID, status, boardStatus, operatorID string
+	var ticketID, status, boardStatus, operatorID, schedStatus string
+	var departure time.Time
+	var arrival *time.Time
 	const q = `
-		SELECT t.id, t.status, t.boarding_status, r.operator_id
+		SELECT t.id, t.status, t.boarding_status, r.operator_id, s.departure_time, s.arrival_estimate, s.status
 		FROM bus_tickets t
 		JOIN bus_schedules s ON s.id = t.schedule_id
 		JOIN bus_routes r ON r.id = s.route_id
 		WHERE t.qr_code=$1`
-	if err := s.db.QueryRow(ctx, q, qrCode).Scan(&ticketID, &status, &boardStatus, &operatorID); err != nil {
+	if err := s.db.QueryRow(ctx, q, qrCode).Scan(&ticketID, &status, &boardStatus, &operatorID, &departure, &arrival, &schedStatus); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "ticket not found")
 	}
 	// Object-level authz: only the schedule's operator may validate.
@@ -328,12 +446,28 @@ func (s *Service) ValidateBusTicket(ctx context.Context, operatorUserID, qrCode 
 	if boardStatus == "boarded" {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "ticket already boarded")
 	}
-	if status == "cancelled" || status == "refunded" {
+	if status != "booked" && status != "issued" || boardStatus != "issued" {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "ticket not valid")
 	}
-	if _, err := s.db.Exec(ctx,
-		`UPDATE bus_tickets SET boarding_status='boarded', status='boarded' WHERE id=$1`, ticketID); err != nil {
+	if schedStatus == "cancelled" {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "this trip was cancelled")
+	}
+	open, closes := busBoardingWindow(departure, arrival)
+	now := time.Now()
+	if now.Before(open) {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "boarding has not opened for this trip yet")
+	}
+	if now.After(closes) {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "boarding is closed for this trip")
+	}
+	tag, err := s.db.Exec(ctx,
+		`UPDATE bus_tickets SET boarding_status='boarded', status='boarded'
+		 WHERE id=$1 AND status IN ('booked','issued') AND boarding_status='issued'`, ticketID)
+	if err != nil {
 		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "ticket not valid")
 	}
 	s.recordModeEvent(ctx, operatorUserID, "bus.boarded", "bus_ticket", ticketID, status, "boarded", nil)
 	return map[string]any{"ok": true, "ticketId": ticketID, "boardingStatus": "boarded"}, nil
@@ -401,11 +535,14 @@ func (a *AdminService) CreateBusSchedule(ctx context.Context, adminID string, re
 			arr = &t
 		}
 	}
+	if err := validateCancelCutoff(req.CancelCutoffMinutes); err != nil {
+		return nil, err
+	}
 	id := uuid.New().String()
 	const q = `
-		INSERT INTO bus_schedules (id, route_id, departure_time, arrival_estimate, total_seats, fare_kobo, fare_approved, status)
-		VALUES ($1,$2,$3,$4,$5,$6,FALSE,'scheduled')`
-	if _, err := a.svc.db.Exec(ctx, q, id, req.RouteID, dep, arr, req.TotalSeats, req.FareKobo); err != nil {
+		INSERT INTO bus_schedules (id, route_id, departure_time, arrival_estimate, total_seats, fare_kobo, fare_approved, status, cancel_cutoff_minutes)
+		VALUES ($1,$2,$3,$4,$5,$6,FALSE,'scheduled',$7)`
+	if _, err := a.svc.db.Exec(ctx, q, id, req.RouteID, dep, arr, req.TotalSeats, req.FareKobo, req.CancelCutoffMinutes); err != nil {
 		return nil, err
 	}
 	_ = writeAudit(ctx, a.svc.db, adminID, "bus.schedule.create", "bus_schedule", id, nil,

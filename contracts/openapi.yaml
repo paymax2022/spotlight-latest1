@@ -10530,6 +10530,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MobilityError' }
+  /mobility/bus/provider/schedules/{id}/cancel:
+    post:
+      operationId: busProviderScheduleCancel
+      summary: Cancel one of the caller's schedules and refund every active ticket
+      description: >-
+        Owner-gated. Marks the schedule cancelled and refunds each active ticket still in escrow
+        through the settlement refund path; legacy already-paid-out tickets are cancelled with
+        refund_status=manual_required (never reported as refunded). Idempotent + resumable.
+        Full schema in contracts/transport.openapi.yaml (BusScheduleCancelResult).
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Schedule cancellation summary }
+        '403': { description: Not your schedule }
+        '404': { description: Schedule not found }
+        '409': { description: Schedule already departed/completed }
+  /mobility/bus/tickets/{id}:
+    get:
+      operationId: busTicketGet
+      summary: Get one of the caller's bus tickets (owner only)
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Ticket (see contracts/transport.openapi.yaml BusTicket) }
+        '403': { description: Not your ticket }
+        '404': { description: Ticket not found }
   /mobility/bus/providers:
     get:
       operationId: busProviders

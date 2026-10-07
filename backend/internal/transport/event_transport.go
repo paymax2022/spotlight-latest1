@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -320,46 +321,183 @@ func (s *Service) ListEventBookings(ctx context.Context, userID string) ([]map[s
 	return out, nil
 }
 
-// CancelEventBooking refunds the booking and releases the reserved seats. Boarded
-// or completed bookings cannot be cancelled.
-func (s *Service) CancelEventBooking(ctx context.Context, id, userID, reason string) error {
-	var uid, offerID, status string
-	var settID *string
-	var seats int
-	if err := s.db.QueryRow(ctx,
-		`SELECT user_id, offer_id, status, settlement_id, seats FROM event_transport_bookings WHERE id=$1`, id).
-		Scan(&uid, &offerID, &status, &settID, &seats); err != nil {
-		return codedErr(http.StatusNotFound, CodeNotFound, "booking not found")
+// CancelEventBooking cancels a booking and releases its seats. The wallet is
+// refunded ONLY when the fare is still in escrow. Event bookings settle the organizer
+// on book, so a settled booking is cancelled with refund_status='manual_required'
+// plus an ops audit event (it is NEVER reported as refunded - the previous behaviour
+// flipped it to 'refunded' with no money moving). 'refunded' is written only after
+// settlement.Refund has posted.
+func (s *Service) CancelEventBooking(ctx context.Context, id, userID, reason string) (*BusCancelResult, error) {
+	var uid string
+	if err := s.db.QueryRow(ctx, `SELECT user_id::text FROM event_transport_bookings WHERE id=$1`, id).Scan(&uid); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "booking not found")
 	}
 	if uid != userID {
-		return codedErr(http.StatusForbidden, CodeForbidden, "not your booking")
+		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your booking")
 	}
-	if status == "boarded" || status == "completed" || status == "cancelled" || status == "refunded" {
-		return codedErr(http.StatusConflict, CodeInvalidState, "booking cannot be cancelled")
+	return s.cancelEventBookingCore(ctx, id, userID, reason)
+}
+
+// claimEventBooking atomically cancels an ACTIVE booking (stamping refundStatus) and
+// releases its seats; 0 rows => the booking changed state.
+func (s *Service) claimEventBooking(ctx context.Context, id, offerID string, seats int, refundStatus string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	tag, err := s.db.Exec(ctx,
-		`UPDATE event_transport_bookings SET status='refunded' WHERE id=$1 AND status IN ('booked','confirmed')`, id)
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE event_transport_bookings SET status='cancelled', refund_status=$2
+		 WHERE id=$1 AND status IN ('booked','confirmed')`, id, refundStatus)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return codedErr(http.StatusConflict, CodeInvalidState, "booking cannot be cancelled")
 	}
-	// Release the reserved seats and re-open the offer if it was full.
-	_, _ = s.db.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`UPDATE event_transport_offers
 		 SET booked_count=GREATEST(booked_count-$2,0),
 		     status=CASE WHEN status='full' THEN 'open' ELSE status END,
 		     updated_at=NOW()
-		 WHERE id=$1`,
-		offerID, seats)
-	// Settlement was released to the organizer on book; refund reverses it.
-	if settID != nil {
-		_ = s.settlement.Refund(ctx, *settID, "event_cancelled:"+reason)
+		 WHERE id=$1`, offerID, seats); err != nil {
+		return err
 	}
-	s.recordModeEvent(ctx, userID, "event.cancelled", "event_transport_booking", id, status, "refunded",
-		map[string]any{"reason": reason, "seats": seats})
-	return nil
+	return tx.Commit(ctx)
+}
+
+func (s *Service) storedEventRefundResult(ctx context.Context, id string, fare int64) *BusCancelResult {
+	var rs string
+	if err := s.db.QueryRow(ctx, `SELECT refund_status FROM event_transport_bookings WHERE id=$1`, id).Scan(&rs); err != nil || rs == RefundNone {
+		return cancelResult(RefundPending, fare)
+	}
+	return cancelResult(rs, fare)
+}
+
+// cancelEventBookingCore is the ownership-free state machine shared by the user
+// endpoint and the refund-retry sweeper.
+func (s *Service) cancelEventBookingCore(ctx context.Context, id, actorID, reason string) (*BusCancelResult, error) {
+	var offerID, status, refundStatus string
+	var settID, settStatus *string
+	var seats int
+	var fare int64
+	if err := s.db.QueryRow(ctx, `
+		SELECT b.offer_id::text, b.status, b.refund_status, b.settlement_id::text, st.status, b.seats, b.fare_kobo
+		FROM event_transport_bookings b LEFT JOIN settlements st ON st.id = b.settlement_id
+		WHERE b.id=$1`, id).
+		Scan(&offerID, &status, &refundStatus, &settID, &settStatus, &seats, &fare); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "booking not found")
+	}
+	active := status == "booked" || status == "confirmed"
+	switch status {
+	case "boarded", "completed":
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "booking cannot be cancelled")
+	case "cancelled", "refunded":
+		switch refundStatus {
+		case RefundRefunded, RefundManualRequired:
+			return cancelResult(refundStatus, fare), nil
+		case RefundPending, RefundFailed:
+		default:
+			return nil, codedErr(http.StatusConflict, CodeInvalidState,
+				"this booking was already cancelled; if you were not refunded please contact support")
+		}
+	}
+	manual := func() (*BusCancelResult, error) {
+		if active {
+			if err := s.claimEventBooking(ctx, id, offerID, seats, RefundManualRequired); err != nil {
+				return nil, err
+			}
+		} else if tag, err := s.db.Exec(ctx,
+			`UPDATE event_transport_bookings SET refund_status='manual_required'
+			 WHERE id=$1 AND refund_status IN ('pending','failed')`, id); err != nil {
+			return nil, err
+		} else if tag.RowsAffected() == 0 {
+			return s.storedEventRefundResult(ctx, id, fare), nil
+		}
+		log.Printf("[transport] ALERT event booking %s cancelled but its fare was already paid out: manual refund required", id)
+		s.recordModeEvent(ctx, actorID, "event.cancelled_manual_refund_required", "event_transport_booking", id, status, "cancelled",
+			map[string]any{"reason": reason, "seats": seats, "fare_kobo": fare, "refund_status": RefundManualRequired})
+		return cancelResult(RefundManualRequired, fare), nil
+	}
+	if settID == nil || settStatus == nil {
+		return manual()
+	}
+	switch *settStatus {
+	case "escrowed", "refunded":
+	case "settled", "releasing", "disputed":
+		return manual()
+	default:
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "booking cannot be cancelled while its payment is "+*settStatus)
+	}
+	if active { // claim first: the booking must never stay valid while we report a refund
+		if err := s.claimEventBooking(ctx, id, offerID, seats, RefundPending); err != nil {
+			return nil, err
+		}
+	}
+	if refundErr := s.settlement.Refund(ctx, *settID, "event_cancelled:"+reason); refundErr != nil {
+		switch st := s.settlementStatus(ctx, *settID); st {
+		case "refunded":
+		case "settled", "releasing", "disputed":
+			status = "cancelled"
+			active = false
+			return manual()
+		default:
+			log.Printf("[transport] event refund FAILED booking=%s settlement=%s: %v", id, *settID, refundErr)
+			if tag, err := s.db.Exec(ctx, `UPDATE event_transport_bookings SET refund_status='failed' WHERE id=$1 AND refund_status IN ('pending','failed')`, id); err == nil && tag.RowsAffected() == 0 {
+				return s.storedEventRefundResult(ctx, id, fare), nil
+			}
+			return cancelResult(RefundFailed, fare), nil
+		}
+	}
+	tag, err := s.db.Exec(ctx,
+		`UPDATE event_transport_bookings SET status='refunded', refund_status='refunded'
+		 WHERE id=$1 AND status='cancelled' AND refund_status IN ('pending','failed')`, id)
+	if err != nil {
+		log.Printf("[transport] event refund posted but finalize failed booking=%s: %v", id, err)
+		return cancelResult(RefundPending, fare), nil
+	}
+	if tag.RowsAffected() == 0 {
+		return s.storedEventRefundResult(ctx, id, fare), nil
+	}
+	s.recordModeEvent(ctx, actorID, "event.cancelled", "event_transport_booking", id, status, "refunded",
+		map[string]any{"reason": reason, "seats": seats, "refund_status": RefundRefunded})
+	return cancelResult(RefundRefunded, fare), nil
+}
+
+// RetryOpenEventRefunds resumes cancelled event bookings whose refund is
+// pending/failed (system actor).
+func (s *Service) RetryOpenEventRefunds(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT id::text FROM event_transport_bookings
+		WHERE status='cancelled' AND refund_status IN ('pending','failed') ORDER BY created_at LIMIT $1`, limit)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	n := 0
+	for _, id := range ids {
+		res, err := s.cancelEventBookingCore(ctx, id, systemActorID, "refund_retry")
+		if err != nil {
+			log.Printf("[transport] event refund retry booking=%s: %v", id, err)
+			continue
+		}
+		if res.RefundStatus == RefundRefunded {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ValidateEventBooking: organizer/driver scans the QR → boarded. Only the offer's
@@ -473,11 +611,20 @@ func (h *Handler) EventBookingCancel(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
-	if err := h.svc.CancelEventBooking(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+	res, err := h.svc.CancelEventBooking(c.Request.Context(), c.Param("id"), userID, req.Reason)
+	if err != nil {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "refunded"})
+	// "status" is "refunded" only when the wallet credit actually posted.
+	status := "cancelled"
+	if res.RefundStatus == RefundRefunded {
+		status = "refunded"
+	}
+	c.JSON(res.HTTPStatus(), gin.H{
+		"ok": true, "status": status, "refund_status": res.RefundStatus,
+		"refunded_kobo": res.RefundedKobo, "message": res.Message,
+	})
 }
 
 // EventValidate validates a QR → boarded.

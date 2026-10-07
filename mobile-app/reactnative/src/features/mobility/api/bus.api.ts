@@ -10,6 +10,7 @@ import type {
   BusSeatMap,
   BusTicket,
   BusBookRequest,
+  BusCancelResult,
 } from '../types/modes.types';
 import type {
   BusTrip,
@@ -17,6 +18,12 @@ import type {
   BusProviderListItem,
   BusProviderDetail,
 } from '../types/busProvider.types';
+import {
+  normalizeBusTicket,
+  parseSeatNumber,
+  requireFareKobo,
+  toCancelResult,
+} from '../utils/busTicket';
 import {
   mockBusRoutes,
   mockBusSchedules,
@@ -100,15 +107,20 @@ export async function getSchedules(routeId: string, date: string): Promise<BusSc
 }
 
 // Backend seat-map payload (GET /mobility/bus/schedules/:id/seats):
-// { schedule_id, total_seats, taken: number[], available: number }.
+// { schedule_id, total_seats, taken: number[], available, fare_kobo (int kobo),
+// departure_time (RFC3339), currency: "NGN" }.
 // A seat is taken if its (1-based) number appears in `taken`. We map this onto
 // the UI-facing BusSeatMap so the seat-picker screen stays declarative. The
-// fareKobo defaults to 0 and the booking screens read it from their own source.
+// fare is server-owned: a missing / non-positive fare_kobo throws (the screens
+// show their error state) rather than rendering ₦0 or charging 0.
 interface BackendSeatMap {
   schedule_id: string;
   total_seats: number;
   taken: number[];
   available: number;
+  fare_kobo?: number;
+  departure_time?: string;
+  currency?: string;
 }
 
 export async function getSeatMap(scheduleId: string): Promise<BusSeatMap> {
@@ -118,6 +130,7 @@ export async function getSeatMap(scheduleId: string): Promise<BusSeatMap> {
   }
   const res = await api.get(`${BASE}/mobility/bus/schedules/${scheduleId}/seats`);
   const raw = (res.data?.data ?? res.data) as BackendSeatMap;
+  const fareKobo = requireFareKobo(raw.fare_kobo);
   const taken = new Set(raw.taken ?? []);
   const seats: BusSeat[] = Array.from({ length: raw.total_seats ?? 0 }, (_, i) => {
     const n = i + 1;
@@ -127,7 +140,7 @@ export async function getSeatMap(scheduleId: string): Promise<BusSeatMap> {
     scheduleId: raw.schedule_id ?? scheduleId,
     columns: 4,
     seats,
-    fareKobo: 0,
+    fareKobo,
     currency: 'NGN',
   };
 }
@@ -139,18 +152,20 @@ export async function bookBus(req: BusBookRequest): Promise<BusTicket> {
     busTicketStore.tickets.unshift(ticket);
     return ticket;
   }
-  return unwrap<BusTicket>(
+  // seat_number is an integer on the wire (Go int); validate before sending.
+  const seatNumber = parseSeatNumber(req.seatNumber);
+  return normalizeBusTicket(unwrap<unknown>(
     await api.post(
       `${BASE}/mobility/bus/book`,
       {
         schedule_id: req.scheduleId,
-        seat_number: req.seatNumber,
+        seat_number: seatNumber,
         passenger_name: req.passengerName,
         passenger_phone: req.passengerPhone,
       },
       idemHeader(req.idempotencyKey),
     ),
-  );
+  )) as BusTicket;
 }
 
 export async function getTickets(): Promise<BusTicket[]> {
@@ -158,7 +173,9 @@ export async function getTickets(): Promise<BusTicket[]> {
     await delay();
     return [...busTicketStore.tickets].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<BusTicket[]>(await api.get(`${BASE}/mobility/bus/tickets`));
+  const raw = await api.get(`${BASE}/mobility/bus/tickets`);
+  const list = (raw.data?.tickets ?? raw.data?.data ?? raw.data) as unknown;
+  return (Array.isArray(list) ? list : []).map((t) => normalizeBusTicket(t) as BusTicket);
 }
 
 export async function getTicket(id: string): Promise<BusTicket> {
@@ -168,21 +185,26 @@ export async function getTicket(id: string): Promise<BusTicket> {
     if (!found) throw new Error('Ticket not found');
     return found;
   }
-  return unwrap<BusTicket>(await api.get(`${BASE}/mobility/bus/tickets/${id}`));
+  return normalizeBusTicket(unwrap<unknown>(await api.get(`${BASE}/mobility/bus/tickets/${id}`))) as BusTicket;
 }
 
-export async function cancelTicket(id: string): Promise<BusTicket> {
+// POST /bus/tickets/:id/cancel. 200 = refunded to wallet; 202 = cancelled but
+// refund still pending/failed. 409 (CANCEL_WINDOW_CLOSED / REFUND_REQUIRES_SUPPORT /
+// INVALID_STATE) rejects — callers read it with parseCancelError().
+export async function cancelTicket(id: string): Promise<BusCancelResult> {
   if (USE_MOCK) {
     await delay(500);
     const t = busTicketStore.tickets.find((x) => x.id === id);
-    if (t) {
-      t.phase = 'refunded';
-      t.paymentStatus = 'refunded';
-      t.qrCode = null;
-    }
-    return t!;
+    if (!t) throw new Error('Ticket not found');
+    t.phase = 'refunded';
+    t.paymentStatus = 'refunded';
+    t.refundStatus = 'refunded';
+    t.cancellable = false;
+    t.qrCode = null;
+    return { refundStatus: 'refunded', refundedKobo: t.fareKobo, message: 'Ticket cancelled and refunded to your wallet.' };
   }
-  return unwrap<BusTicket>(await api.post(`${BASE}/mobility/bus/tickets/${id}/cancel`, {}));
+  const res = await api.post(`${BASE}/mobility/bus/tickets/${id}/cancel`, {});
+  return toCancelResult(res.data?.data ?? res.data);
 }
 
 // POST /mobility/bus/tickets/:id/rate — a passenger rates the operator after the

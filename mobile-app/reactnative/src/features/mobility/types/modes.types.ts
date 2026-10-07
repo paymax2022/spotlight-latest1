@@ -107,7 +107,7 @@ export interface CourierParcelRequest {
 }
 
 // BUS BOOKING
-export type BusTicketPhase = 'booked' | 'issued' | 'boarding' | 'boarded' | 'completed' | 'rescheduled' | 'cancelled' | 'refunded';
+export type BusTicketPhase = 'booked' | 'issued' | 'boarding' | 'boarded' | 'completed' | 'rescheduled' | 'cancelled' | 'cancelled_pending_refund' | 'refunded';
 
 export interface BusRoute {
   id: string;
@@ -172,6 +172,20 @@ export interface BusTicket {
   qrCode: string | null;    // QR payload once issued
   paymentStatus: 'settled' | 'refunded' | 'failed';
   createdAt: string;
+  scheduleId?: string;
+  /** Server refund state for a cancelled ticket. */
+  refundStatus: 'none' | 'pending' | 'refunded' | 'failed' | 'manual_required';
+  /** After this instant self-service cancel is refused (RFC3339) or null. */
+  cancelDeadline: string | null;
+  cancelCutoffMinutes: number | null;
+  /** Server verdict: would a self-service cancel + refund be accepted right now. */
+  cancellable: boolean;
+}
+
+export interface BusCancelResult {
+  refundStatus: 'none' | 'pending' | 'refunded' | 'failed' | 'manual_required';
+  refundedKobo: number;
+  message: string;
 }
 
 // TOWING

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -289,8 +290,10 @@ func (s *Service) recomputeBusRating(ctx context.Context, providerID, ownerUserI
 // count. Mirrors the ListBusSchedules query style.
 func (s *Service) BusSeatMap(ctx context.Context, scheduleID string) (map[string]any, error) {
 	var totalSeats int
+	var fareKobo int64
+	var departure time.Time
 	if err := s.db.QueryRow(ctx,
-		`SELECT total_seats FROM bus_schedules WHERE id=$1`, scheduleID).Scan(&totalSeats); err != nil {
+		`SELECT total_seats, fare_kobo, departure_time FROM bus_schedules WHERE id=$1`, scheduleID).Scan(&totalSeats, &fareKobo, &departure); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "schedule not found")
 	}
 	rows, err := s.db.Query(ctx, `
@@ -315,6 +318,10 @@ func (s *Service) BusSeatMap(ctx context.Context, scheduleID string) (map[string
 		"total_seats": totalSeats,
 		"taken":       taken,
 		"available":   available,
+		// Server-owned per-seat fare (integer kobo) so the client never guesses a price.
+		"fare_kobo":      fareKobo,
+		"departure_time": departure,
+		"currency":       "NGN",
 	}, nil
 }
 

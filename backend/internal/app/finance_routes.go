@@ -2080,7 +2080,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// WithLedger is required for cash rides: the platform's commission on a
 		// cash-paid trip is debited straight from the driver's own wallet (no
 		// escrow exists to split for a fare the rider paid the driver in cash).
-		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc).WithLedger(ledgerSvc)
+		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc).WithLedger(ledgerSvc).
+			WithBusConfig(transport.NewBusConfig(cfg.FeatureTransportBusDeferredSettlementEnabled,
+				cfg.TransportBusSettleGraceMinutes, cfg.TransportBusCancelCutoffMinutes, cfg.TransportBusMinBookingLeadMinutes))
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {
@@ -2301,6 +2303,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			mob.GET("/bus/schedules/:id/seats", transportHandler.BusSeatMap)
 			mob.POST("/bus/book", transportHandler.BusBook)
 			mob.GET("/bus/tickets", transportHandler.BusTickets)
+			mob.GET("/bus/tickets/:id", transportHandler.BusTicketGet)  // owner-only detail
 			mob.POST("/bus/tickets/:id/rate", transportHandler.BusRate) // passenger rates operator post-trip
 			mob.POST("/bus/tickets/:id/cancel", transportHandler.BusTicketCancel)
 
@@ -2316,6 +2319,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			mob.POST("/bus/provider/routes", transportHandler.BusProviderRouteCreate)
 			mob.PATCH("/bus/provider/routes/:id", transportHandler.BusProviderRouteUpdate)
 			mob.POST("/bus/provider/routes/:id/schedules", transportHandler.BusProviderScheduleCreate)
+			// Provider cancels one of its own schedules: refunds every active ticket
+			// (owner-gated in the service; idempotent + resumable).
+			mob.POST("/bus/provider/schedules/:id/cancel", transportHandler.BusProviderScheduleCancel)
 			mob.GET("/bus/provider/bookings", transportHandler.BusProviderBookings)
 			// Recurring departure templates (ADR-020): the transport-scheduler
 			// worker materializes these into concrete bus_schedules over a horizon.
@@ -2378,6 +2384,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			adminTr.POST("/bus/routes", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateRoute)
 			adminTr.POST("/bus/schedules", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCreateSchedule)
 			adminTr.POST("/bus/schedules/:id/approve-fare", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusApproveFare)
+			adminTr.POST("/bus/schedules/:id/cancel", middleware.RequirePermission(rbac, mobilityBusManagePerm), transportAdmin.AdminBusCancelSchedule)
 			adminTr.GET("/bus/manifest", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminBusManifest)
 			// Provider verification workflow (ADR-020 go-live gate): list operators +
 			// verify/suspend. Verified-only discovery is enforced in SearchBusTrips.
