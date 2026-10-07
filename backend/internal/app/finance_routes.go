@@ -1129,6 +1129,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
 		})
+		// Verify the bucket/token can really write before handing out upload URLs
+		// (see r2.Presigner.Healthy); a misconfigured R2 then reads as "uploads
+		// unavailable" rather than a PUT failure the user can only retry.
+		assocPresigner.EnableHealthCheck(nil)
 		assocSvc.WithPresigner(assocPresigner)
 		// Live group chat: message fan-out to a thread's audience over the WS hub,
 		// the same open-source stack the food/mobility/doctor streams use.
