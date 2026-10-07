@@ -704,7 +704,9 @@ func (s *Service) ProcessRenewals(ctx context.Context, now time.Time) (*RenewalR
 			continue
 		}
 		key := "connect:monetization:renew:" + d.id + ":" + d.expires.UTC().Format(time.RFC3339)
-		ref := "connect:monetization:renew:subscription:" + d.planCode
+		// ledger_ref is a recon/reporting surface (`connect:renew:%` is queried
+		// downstream) — only the idempotency KEY changes namespace, not the ref.
+		ref := "connect:renew:subscription:" + d.planCode
 		charged := false
 		// Deploy-mid-flight convergence: a period charged under the pre-namespace
 		// "connect:renew:" key but never extended must not be charged twice.

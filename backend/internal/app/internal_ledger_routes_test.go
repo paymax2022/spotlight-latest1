@@ -272,11 +272,19 @@ func TestInternalLedgerAPI_ForeignClaimConflicts_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("user wallet: %v", err)
 	}
+	// ledger_entries is trigger-guarded append-only — the seeded debit can't be
+	// deleted and would leak into the global conservation invariant, so a contra
+	// CREDIT on a standing account (different key, never touched by the check)
+	// keeps the journal balanced while the claim stays "partial".
+	settleAcc, err := ledgerSvc.GetOrCreateStandingAccount(ctx, financeledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement account: %v", err)
+	}
 	partialKey := "il-fc-partial-" + uid
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
-		 VALUES ($1, 'DEBIT', 10_000, $2, $3)`,
-		wallet.ID, "trade:fc:"+uid, partialKey+":debit"); err != nil {
+		 VALUES ($1, 'DEBIT', 10_000, $2, $3), ($4, 'CREDIT', 10_000, $2, $5)`,
+		wallet.ID, "trade:fc:"+uid, partialKey+":debit", settleAcc.ID, partialKey+":contra"); err != nil {
 		t.Fatalf("seed partial leg: %v", err)
 	}
 	w = postJournal(t, r, testServiceToken, map[string]any{

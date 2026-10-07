@@ -225,7 +225,9 @@ func TestLiveDB_Renewal_TrueReplay_Converges(t *testing.T) {
 
 	// Simulate the crash: post the exact renewal journal directly.
 	renewKey := "connect:monetization:renew:" + entID + ":" + expires.UTC().Format(time.RFC3339)
-	renewRef := "connect:monetization:renew:subscription:" + planCodeSuffix(t, pool, entID)
+	// The idempotency KEY is namespaced; ledger_ref keeps the stable
+	// `connect:renew:` recon surface (the pre-namespace convention).
+	renewRef := "connect:renew:subscription:" + planCodeSuffix(t, pool, entID)
 	walletSvc := wallet.NewService(ledgerSvc, tiers.NewService(pool))
 	rev := mustStandingAccount(t, ledgerSvc, ledger.AccountPaymaxRevenue)
 	if err := walletSvc.Debit(ctx, userID, renewRef, renewKey, rev, price); err != nil {
