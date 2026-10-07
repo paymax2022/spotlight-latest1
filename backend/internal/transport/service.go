@@ -733,11 +733,24 @@ const shareLinkTTL = 2 * time.Hour
 // PricingConfig/app config once a public web base URL is threaded through.
 const shareBaseURL = "https://spotlight.app/track"
 
+// sosRequiresDriver is the pure authz decision for a standalone safety
+// incident: a trip-bound SOS is already gated by trip participation, but an
+// SOS with no trip has no object to authz against, so it must carry the same
+// registered-driver gate every sibling /driver/* route enforces
+// (resolveDriverID). Without it any authenticated user could flood
+// safety_incidents with fake criticals (prod probe, w9-transport).
+func sosRequiresDriver(tripID *string) bool { return tripID == nil }
+
 // CreateIncident records a safety case. SOS-type incidents from a rider/driver
 // also flag the trip's safety_status and move it to safety_hold when active.
 func (s *Service) CreateIncident(ctx context.Context, userID string, incType string, tripID *string, lat, lng *float64, description, severity string) (*SafetyIncident, error) {
 	if severity == "" {
 		severity = "high"
+	}
+	if sosRequiresDriver(tripID) {
+		if _, err := s.resolveDriverID(ctx, userID); err != nil {
+			return nil, err
+		}
 	}
 	// An SOS tied to a trip requires the caller to be a trip participant —
 	// unrestricted, it let ANY signed-in user write incidents against and
@@ -896,6 +909,12 @@ func (s *Service) AddTrustedContact(ctx context.Context, userID, name, phone str
 }
 
 func (s *Service) DeleteTrustedContact(ctx context.Context, userID, id string) error {
+	// trusted_contacts.id is uuid — a malformed id can never match a row, so
+	// answer not-found (same as a missing id) rather than letting Postgres's
+	// 22P02 syntax error surface as a 500.
+	if _, err := uuid.Parse(id); err != nil {
+		return codedErr(http.StatusNotFound, CodeNotFound, "contact not found")
+	}
 	tag, err := s.db.Exec(ctx, `DELETE FROM trusted_contacts WHERE id=$1 AND user_id=$2`, id, userID)
 	if err != nil {
 		return err
