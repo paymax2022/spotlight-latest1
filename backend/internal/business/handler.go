@@ -50,6 +50,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusUnprocessableEntity, ErrValidation),
 	httperr.R(http.StatusPaymentRequired, ErrInsufficientFunds),
 	httperr.R(http.StatusBadGateway, ErrProvider),
+	httperr.R(http.StatusServiceUnavailable, ErrProviderUnavailable),
 )
 
 func (h *Handler) fail(c *gin.Context, err error) {
@@ -64,6 +65,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		body[keyError] = "forbidden"
 	case errors.Is(err, ErrDuplicate):
 		body[keyError] = "a business with this registration number already exists"
+	case errors.Is(err, ErrProviderUnavailable):
+		body[keyError] = "business registry is not configured"
 	case errors.Is(err, ErrProvider):
 		body[keyError] = "business registry provider error"
 	}
@@ -276,6 +279,10 @@ type RouteDeps struct {
 	Payment  provider.PaymentProvider // Paystack gateway for the fee (optional)
 	RBAC     services.RBACService
 	FeeKobo  int64
+	// AllowSandboxVerified forwards to Deps.AllowSandboxVerified — pass
+	// !cfg.IsProd() so production never counts a sandbox-fabricated
+	// 'cac-sandbox' verification toward the merchant-upgrade gate.
+	AllowSandboxVerified bool
 }
 
 // Register mounts the business-registry routes. `member` is an already-authenticated
@@ -285,12 +292,13 @@ type RouteDeps struct {
 // (HasVerifiedBusiness) into the onboarding grant path.
 func Register(member, admin *gin.RouterGroup, d RouteDeps) *Service {
 	svc := NewService(Deps{
-		Repo:     NewRepository(d.Pool),
-		Ledger:   d.Ledger,
-		Wallet:   d.Wallet,
-		Provider: d.Provider,
-		Payment:  d.Payment,
-		FeeKobo:  d.FeeKobo,
+		Repo:                 NewRepository(d.Pool),
+		Ledger:               d.Ledger,
+		Wallet:               d.Wallet,
+		Provider:             d.Provider,
+		Payment:              d.Payment,
+		FeeKobo:              d.FeeKobo,
+		AllowSandboxVerified: d.AllowSandboxVerified,
 	})
 	h := NewHandler(svc)
 
