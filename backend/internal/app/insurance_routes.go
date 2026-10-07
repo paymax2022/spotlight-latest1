@@ -254,9 +254,12 @@ func (c commissionRecorder) RecordCommission(ctx context.Context, policyID, prov
 // for provider callbacks. It BUILDS ON the IB0 core (catalog/gateway/policy) —
 // importing those packages, never editing them — and REUSES the finance
 // ledger/wallet money primitives (no new money rails).
-//   - member   : claims (FNOL/list/get/evidence) + embedded-engine test routes
+//   - member   : claims (FNOL/list/get/evidence) + embedded event-catalog GET
 //   - admin    : claim search/decision + reconciliation workbench + commission view
 //   - webhooks : POST /internal/webhooks/{mycover,octamile} (signature-verified)
+//   - internal : POST /internal/insurance/embedded/events — service-token only
+//     (RequireServiceToken on serviceToken; empty ⇒ fail-closed 503). The
+//     trigger debits a member wallet, so it can never hang off a user-JWT group.
 //
 // FeatureInsuranceEnabled is enforced UPSTREAM by the parent finance group, so
 // these routes inherit the same gate (mirrors RegisterInsurance). Money paths:
@@ -269,7 +272,7 @@ func (c commissionRecorder) RecordCommission(ctx context.Context, policyID, prov
 //
 //	INSURANCE_MYCOVER_API_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
 //	INSURANCE_OCTAMILE_API_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
-func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, serviceToken string) {
 	if pool == nil {
 		log.Println("[insurance-claims] nil pool — skipping insurance claims routes")
 		return
@@ -313,6 +316,10 @@ func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, we
 		Router:     router,
 		Wallet:     walletSvc,
 		Ledger:     ledgerSvc,
+		// Outbound bind idempotency (MyCover has none) + the prefunded-float
+		// breaker — the same guards policy.Bind runs with.
+		Binds: policy.NewBindRegistry(pool),
+		Float: catalog.NewFloatService(pool),
 	})
 	embeddedHandler := embedded.NewHandler(embeddedSvc)
 
@@ -329,7 +336,18 @@ func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, we
 
 	mg := member.Group("/insurance")
 	claims.Register(mg, admin, claimsHandler, guard)
-	embedded.Register(mg, embeddedHandler)
+	// The embedded POST /events trigger debits a member wallet off a
+	// caller-chosen source_event_id, so it is a SERVICE-ONLY route — mounted on
+	// the root group behind RequireServiceToken (constant-time Bearer against
+	// the shared service token; empty token ⇒ fail-closed 503), never behind a
+	// user JWT. Members keep only the read-only GET event-catalog discovery.
+	// In-process emit points call Service.Handle directly and never need HTTP.
+	var embeddedInternal *gin.RouterGroup
+	if webhookGroup != nil {
+		embeddedInternal = webhookGroup.Group("/internal/insurance")
+		embeddedInternal.Use(middleware.RequireServiceToken(serviceToken))
+	}
+	embedded.Register(mg, embeddedInternal, embeddedHandler)
 
 	reconciliation.Register(admin, reconHandler, guard)
 

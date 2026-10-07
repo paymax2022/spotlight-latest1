@@ -508,7 +508,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Region:          cfg.R2Region,
 		})
 		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket) // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac)                          // claims/embedded/webhooks/reconciliation
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac, cfg.LedgerServiceToken)  // claims/embedded/webhooks/reconciliation
 	}
 
 	// Member /api/finance/stays/* (auth via finance group); ops admin
