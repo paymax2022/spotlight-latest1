@@ -27,6 +27,8 @@ tags:
   - { name: PropertyContext, description: Active property role / scope }
   - { name: RentPassport, description: Tenant tenancy-reliability record }
   - { name: RealtorStays, description: Short-stay booking credentials }
+  - { name: PropertyRoles, description: Self-serve registration and verification of marketplace property roles }
+  - { name: PropertyRolesAdmin, description: Admin review of marketplace property role profiles }
 
 security:
   - bearerAuth: []
@@ -141,6 +143,143 @@ components:
           type: string
           enum: [active, expired, revoked, used]
 
+    RegistrableRole:
+      type: string
+      enum: [estate_manager, developer, agent]
+      description: A marketplace property role a user can self-register for.
+
+    RoleProfileStatus:
+      type: string
+      enum: [draft, active, suspended]
+
+    RoleVerificationStatus:
+      type: string
+      enum: [unverified, pending, verified, rejected]
+
+    RoleDocument:
+      type: object
+      required: [id, kind, storageKey, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          description: Document kind (e.g. agent_licence, cac_certificate, authority_letter, id_document).
+        storageKey: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    RoleProfile:
+      type: object
+      required: [id, userId, role, status, verificationStatus, displayName, details, createdAt, updatedAt, documents]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/RegistrableRole' }
+        status: { $ref: '#/components/schemas/RoleProfileStatus' }
+        verificationStatus: { $ref: '#/components/schemas/RoleVerificationStatus' }
+        displayName: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+          description: Role-specific fields. Only the keys allowed for the role are accepted; capped at 8 KB.
+        rejectionReason: { type: [string, 'null'] }
+        verifiedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/RoleDocument' }
+
+    RoleProfileList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RoleProfile' }
+
+    RegisterRoleRequest:
+      type: object
+      required: [displayName]
+      properties:
+        displayName: { type: string }
+        details: { type: object, additionalProperties: true }
+
+    UpdateRoleRequest:
+      type: object
+      properties:
+        displayName: { type: string }
+        details: { type: object, additionalProperties: true }
+
+    PresignRoleDocumentRequest:
+      type: object
+      required: [kind, contentType]
+      properties:
+        kind: { type: string }
+        contentType: { type: string }
+
+    PresignRoleDocumentResponse:
+      type: object
+      required: [uploadUrl, storageKey, contentType, expiresIn, method]
+      properties:
+        uploadUrl: { type: string }
+        storageKey:
+          type: string
+          description: Server-chosen object key, property-roles/{userID}/{role}/{random}.
+        contentType: { type: string, description: Content-Type the PUT must send. }
+        expiresIn: { type: integer, description: Seconds until uploadUrl expires. }
+        method: { type: string, enum: [PUT] }
+
+    RecordRoleDocumentRequest:
+      type: object
+      required: [kind, storageKey]
+      properties:
+        kind: { type: string }
+        storageKey:
+          type: string
+          description: Must start with the caller's own property-roles/{userID}/{role}/ prefix.
+
+    ApproveRoleRequest:
+      type: object
+      required: [updatedAt]
+      properties:
+        updatedAt:
+          type: string
+          format: date-time
+          description: The profile's updatedAt as the reviewer loaded it. Any later change refuses with 409 (code stale).
+
+    RejectRoleRequest:
+      type: object
+      required: [reason, updatedAt]
+      properties:
+        reason: { type: string, minLength: 1 }
+        updatedAt:
+          type: string
+          format: date-time
+          description: The profile's updatedAt as the reviewer loaded it. Any later change refuses with 409 (code stale).
+
+    SuspendRoleRequest:
+      type: object
+      properties:
+        reason: { type: string, description: Optional; recorded on the suspension event. }
+
+    RoleDocumentUrl:
+      type: object
+      required: [url, expiresIn]
+      properties:
+        url: { type: string, description: Presigned GET URL for the document. }
+        expiresIn: { type: integer, description: Seconds until url expires (300). }
+
+    RoleUnprocessable:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string, enum: [incomplete, no_document] }
+        missing:
+          type: array
+          items: { type: string }
+          description: Required detail keys that are blank or absent (code incomplete).
+
     Error:
       type: object
       required: [error]
@@ -161,6 +300,33 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Request conflicts with the current state.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RoleUnprocessable:
+      description: >
+        Required details are missing (code incomplete, with the missing keys) or
+        no document is attached (code no_document).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RoleUnprocessable' }
+    RoleSuspended:
+      description: The role profile is suspended.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: Document storage is not configured or unavailable.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -276,3 +442,352 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /property/roles:
+    get:
+      tags: [PropertyRoles]
+      operationId: listMyPropertyRoles
+      summary: List the caller's role profiles.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The caller's role profiles.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfileList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /property/roles/{role}:
+    post:
+      tags: [PropertyRoles]
+      operationId: registerPropertyRole
+      summary: Register for a role (idempotent per user and role).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/RegistrableRole' }
+          description: The marketplace role slug.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRoleRequest' }
+      responses:
+        '200':
+          description: The new or existing draft profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [PropertyRoles]
+      operationId: updatePropertyRole
+      summary: Update display name and details.
+      description: >
+        Not allowed while suspended (403). Changing an identity-bearing field
+        (agent licenceNumber; developer cacNumber or companyName; estate_manager
+        organisationName) on a verified or pending profile resets it to
+        unverified. A pending or verified profile may not blank a required key
+        (422, code incomplete). A patch with no effective change writes nothing.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/RegistrableRole' }
+          description: The marketplace role slug.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRoleRequest' }
+      responses:
+        '200':
+          description: The updated profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
+        '422': { $ref: '#/components/responses/RoleUnprocessable' }
+
+  /property/roles/{role}/documents/presign:
+    post:
+      tags: [PropertyRoles]
+      operationId: presignPropertyRoleDocument
+      summary: Get a presigned PUT URL for a verification document.
+      description: >
+        Requires an existing (404 otherwise), non-suspended (403) profile for
+        the caller and role. 503 when document storage is not configured.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/RegistrableRole' }
+          description: The marketplace role slug.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresignRoleDocumentRequest' }
+      responses:
+        '200':
+          description: Presigned upload target.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PresignRoleDocumentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /property/roles/{role}/documents:
+    post:
+      tags: [PropertyRoles]
+      operationId: recordPropertyRoleDocument
+      summary: Record an uploaded verification document.
+      description: At most 10 documents per profile (409 code too_many_documents). Not allowed while suspended (403).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/RegistrableRole' }
+          description: The marketplace role slug.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordRoleDocumentRequest' }
+      responses:
+        '201':
+          description: The profile including the new document.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /property/roles/{role}/submit:
+    post:
+      tags: [PropertyRoles]
+      operationId: submitPropertyRole
+      summary: Submit the profile for verification.
+      description: >
+        Requires the role's required fields and at least one document. Moves
+        unverified or rejected to pending.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/RegistrableRole' }
+          description: The marketplace role slug.
+      responses:
+        '200':
+          description: The profile, now pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/RoleUnprocessable' }
+
+  /property/admin/roles:
+    servers:
+      - url: /api
+        description: Admin routes are mounted at /api/property/admin, outside the /api/finance base.
+    get:
+      tags: [PropertyRolesAdmin]
+      operationId: listPropertyRolesForReview
+      summary: List role profiles for review.
+      description: >
+        Requires the property.roles.review permission. Suspended profiles are
+        excluded; ordered by updatedAt ascending (oldest change first).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/RoleVerificationStatus' }
+          description: Filter by verification status (default pending).
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size (values above 200 are clamped).
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Rows to skip.
+      responses:
+        '200':
+          description: Matching role profiles.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfileList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /property/admin/roles/{id}/approve:
+    servers:
+      - url: /api
+        description: Admin routes are mounted at /api/property/admin, outside the /api/finance base.
+    post:
+      tags: [PropertyRolesAdmin]
+      operationId: approvePropertyRole
+      summary: Approve a role profile.
+      description: >
+        Requires the property.roles.review permission. 409 when the profile is
+        not pending or changed since the reviewer loaded it (code stale).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Role profile id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveRoleRequest' }
+      responses:
+        '200':
+          description: The updated profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/RoleUnprocessable' }
+
+  /property/admin/roles/{id}/reject:
+    servers:
+      - url: /api
+        description: Admin routes are mounted at /api/property/admin, outside the /api/finance base.
+    post:
+      tags: [PropertyRolesAdmin]
+      operationId: rejectPropertyRole
+      summary: Reject a role profile.
+      description: >
+        Requires the property.roles.review permission. 409 when the profile is
+        not pending or changed since the reviewer loaded it (code stale).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectRoleRequest' }
+      responses:
+        '200':
+          description: The updated profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /property/admin/roles/{id}/suspend:
+    servers:
+      - url: /api
+        description: Admin routes are mounted at /api/property/admin, outside the /api/finance base.
+    post:
+      tags: [PropertyRolesAdmin]
+      operationId: suspendPropertyRole
+      summary: Suspend a role profile.
+      description: Requires the property.roles.review permission. The body is optional.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Role profile id.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SuspendRoleRequest' }
+      responses:
+        '200':
+          description: The updated profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /property/admin/roles/{id}/documents/{docId}/url:
+    servers:
+      - url: /api
+        description: Admin routes are mounted at /api/property/admin, outside the /api/finance base.
+    get:
+      tags: [PropertyRolesAdmin]
+      operationId: getPropertyRoleDocumentUrl
+      summary: Get a short-lived URL to view a document under review.
+      description: >
+        Requires the property.roles.review permission. Returns a presigned GET
+        URL valid for 300 seconds. 404 when the document does not belong to
+        that profile; 503 when document storage is not configured.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Role profile id.
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Document id (must belong to the profile).
+      responses:
+        '200':
+          description: Presigned view URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleDocumentUrl' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }

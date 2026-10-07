@@ -35,7 +35,9 @@ func TestCanRequeryStatus_FalseForTerminalAndDisputed(t *testing.T) {
 }
 
 func TestCanReverseTransaction_AllowedForFailedPendingWalletDebited(t *testing.T) {
-	for _, s := range []Status{StatusFailed, StatusProviderPending, StatusWalletDebited} {
+	// 'disputed' joined the reversible set with the dispute-refund resolution: a
+	// dispute can only exist on a 'successful' row, so the debit is proven.
+	for _, s := range []Status{StatusFailed, StatusProviderPending, StatusWalletDebited, StatusDisputed} {
 		if !CanReverseTransaction(s) {
 			t.Errorf("CanReverseTransaction(%s) = false, want true", s)
 		}
@@ -43,7 +45,7 @@ func TestCanReverseTransaction_AllowedForFailedPendingWalletDebited(t *testing.T
 }
 
 func TestCanReverseTransaction_DeniedForSuccessfulOrReversed(t *testing.T) {
-	for _, s := range []Status{StatusSuccessful, StatusReversed, StatusInitiated, StatusDisputed} {
+	for _, s := range []Status{StatusSuccessful, StatusReversed, StatusInitiated} {
 		if CanReverseTransaction(s) {
 			t.Errorf("CanReverseTransaction(%s) = true, want false", s)
 		}
