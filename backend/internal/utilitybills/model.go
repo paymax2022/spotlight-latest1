@@ -220,7 +220,10 @@ func CanRequeryStatus(status Status) bool {
 // reversed (wallet auto-refund). Mirrors status.ts's
 // canReverseUtilityTransaction.
 func CanReverseTransaction(status Status) bool {
-	return status == StatusFailed || status == StatusProviderPending || status == StatusWalletDebited
+	// 'disputed' is reversible: the dispute gate already required 'successful'
+	// (a delivered vend with a proven debit), so the reversal is a real refund,
+	// not minted funds.
+	return status == StatusFailed || status == StatusProviderPending || status == StatusWalletDebited || status == StatusDisputed
 }
 
 // ProviderOutcome is the raw purchase outcome a BillsProvider adapter
