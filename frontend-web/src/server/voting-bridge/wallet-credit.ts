@@ -199,6 +199,25 @@ export async function markVotePurchaseReversed(idempotencyKey: string) {
     .eq('idempotency_key', idempotencyKey)
     .maybeSingle();
   if (!tx) return;
+
+  // Reverse the credited quantity out of the tally: reversed_votes subtracts
+  // from total_confirmed_votes in increment_vote_totals, so leaderboards drop
+  // the refunded purchase instead of keeping ghost votes.
+  const { data: rows } = await supabase
+    .from('votes')
+    .select('contest_id, contestant_id, vote_quantity')
+    .eq('transaction_id', tx.id);
+  const byKey = new Map<string, number>();
+  for (const r of rows ?? []) {
+    const k = `${r.contest_id}:${r.contestant_id}`;
+    byKey.set(k, (byKey.get(k) ?? 0) + Number(r.vote_quantity ?? 0));
+  }
+  for (const [k, qty] of byKey) {
+    if (qty <= 0) continue;
+    const [contestId, contestantId] = k.split(':');
+    await incrementVoteTotals(contestId, contestantId, { reversedVotes: qty }).catch(() => {});
+  }
+
   await supabase.from('votes').delete().eq('transaction_id', tx.id);
   await supabase
     .from('vote_transactions')
