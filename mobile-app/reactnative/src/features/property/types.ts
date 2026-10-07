@@ -4,6 +4,10 @@
 
 export type ContextType = 'estate' | 'property' | 'agency' | 'org';
 
+/** Context entity types the server may return. 'role' entities are read-only:
+ *  the server refuses to switch into them, so SwitchContextInput excludes it. */
+export type ContextEntityType = ContextType | 'role';
+
 export type PropertyRole =
   | 'tenant'
   | 'landlord'
@@ -16,7 +20,7 @@ export type PropertyRole =
   | 'resident';
 
 export interface PropertyContext {
-  type:  ContextType;
+  type:  ContextEntityType;
   id:    string;
   name:  string;
   roles: PropertyRole[];
