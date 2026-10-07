@@ -1571,21 +1571,47 @@ partitioning of the ~95-file worktree.
   v2 wallet votes, v1 wallet votes, utility pay/initiate, realtor invoice
   pay, registration payment initiate, admin adjustments).
 
+### Fixed in PR #503 — wave-3 follow-on (committed after agent sweep)
+
+- **AUD-SEC-0xx** — Health Rx lifecycle authorization (`backend/internal/health/rx`):
+  `WithPrescriberAuthorizer` is now wired on the human-path instance
+  (`prescriberGateAdapter` — MDCN-approved doctor check, mirrors telemedicine's
+  `assertDoctorApproved`); `WithPharmacyOwnerGate` wired to
+  `providerGateAdapter` (`health_providers` APPROVED owner check); new
+  `authorizeActor` runs inside the FOR UPDATE transition — send is
+  prescriber-or-patient only, verify/reject/dispense/fulfill require ownership
+  of the pinned pharmacy (fail-closed on unpinned Rx or lookup error);
+  `DispenseRefill` got the same owner check; `IssueChecked` binds a referenced
+  `consult_id` to its patient + provider owner. Vet/pharmacy instances keep nil
+  gates (their own upstream gates apply). Unit test `TestAuthorizeActorGate`.
+- **AUD-DB-0xx** — voting RLS: migration
+  `supabase/migrations/20271007150000_tighten_voting_rls.sql` drops the
+  `USING (true)` public-read policies on `vote_totals`,
+  `leaderboard_snapshots`, `contestant_share_links`,
+  `competition_entry_votes` (additive `DROP POLICY IF EXISTS` only; all reads
+  are service-role so API behavior is unchanged).
+- **AUD-SEC-0xx** — legacy `/api/votes/stream` (protected file) retired via a
+  308 redirect to the visibility-gated `/api/v2/votes/stream` in
+  `next.config.mjs` — no protected code touched.
+- **AUD-SEC-0xx** — `/api/open-mic/votes/stream` now re-reads contest
+  visibility per snapshot; non-public contests stream entry IDs without
+  vote counts/leaderboard scores.
+- **AUD-SEC-0xx** — `/api/v1/contests/[id]/leaderboard` honors
+  `vis.showRank`: rank/contestantRank/isTopContestant/rankChange are null or
+  false when rank display is disabled.
+- **AUD-REL-0xx** — `bridge_idempotency_keys` wedged `{}` claims: after the
+  result wait, claims older than 5 min are deleted + reclaimed; recent
+  unresolved claims still 409. Fail-open on store errors kept (atomic vote
+  ops remain the boundary).
+- `/api/v2/votes/paid/verify` POST `authError` is intentional: anonymous
+  voters legitimately verify via the callback page; crediting is bound to
+  the transaction row, not the caller. No change.
+
 ### Confirmed, deferred to next bounded PRs
 
-- **Health Rx lifecycle** (`backend/internal/health/rx`): `Issue` takes
-  client `patient_id`; `send`/`verify`/`dispense` have no actor authz;
-  `WithPrescriberAuthorizer` never wired. Forge→verify→dispense chain on
-  `health_prescriptions`. Needs wiring + actor checks + tests.
-- **Voting**: `vote_totals`/`leaderboard_snapshots`/`contestant_share_links`
-  public-read RLS defeats visibility gating (F-3, needs migration);
-  `/api/votes/stream` ungated legacy leak (protected file — needs route
-  removal/proxy-level 410); legacy `verifyAndCreditPaidVote` race — second
+- **Voting**: legacy `verifyAndCreditPaidVote` race — second
   caller's `votes` insert error swallowed while `incrementVoteTotals` still
-  runs (flag-off path only); `bridge_idempotency_keys` fail-open + no TTL
-  sweep; `/api/v2/votes/paid/verify` POST ignores authError; open-mic
-  `competition_entry_votes` RLS allows direct paid-row insert via Supabase
-  REST; `/api/v1/contests/[id]/leaderboard` leaks rank when showRank=false;
+  runs (flag-off path only); `/api/v2/votes/paid/verify` POST ignores authError;
   `markVotePurchaseReversed` never decrements vote_totals.
 - **Flag drift**: `FEATURE_ASSOCIATION_ENABLED` (web) vs
   `FEATURE_ASSOCIATIONS_ENABLED` (Go); `FEATURE_KYC_ENABLED` vs
