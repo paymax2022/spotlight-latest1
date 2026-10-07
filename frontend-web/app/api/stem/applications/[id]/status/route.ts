@@ -4,15 +4,16 @@ import { requireUser } from '@/src/lib/auth/server';
 
 export async function GET(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { user } = await requireUser(request);
-    const current = await getApplication(context.params.id);
+    const { id } = await context.params;
+    const current = await getApplication(id);
     if (!current) return errorResponse('Application not found', 404);
     if (current.applicantUserId !== user.id) return errorResponse('Forbidden', 403);
 
-    const timeline = await getApplicationTimeline(context.params.id);
+    const timeline = await getApplicationTimeline(id);
     return successResponse({ success: true, timeline });
   } catch (error) {
     return handleApiError(error, 'Failed to load STEM application timeline');

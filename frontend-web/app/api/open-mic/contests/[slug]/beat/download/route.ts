@@ -3,9 +3,10 @@ import { getContestBySlug } from '@/src/server/openmic/persistence';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { NextResponse } from 'next/server';
 
-export async function GET(request: Request, context: { params: { slug: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
-    const contest = await getContestBySlug(context.params.slug);
+    const { slug } = await context.params;
+    const contest = await getContestBySlug(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 404);
     if (!contest.beat.downloadUrl) return errorResponse('Beat download URL is not configured', 404);
@@ -23,9 +24,10 @@ export async function GET(request: Request, context: { params: { slug: string } 
   }
 }
 
-export async function POST(request: Request, context: { params: { slug: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const user = await requireRequestUser(request);
+    const { slug } = await context.params;
     const body = (await request.json().catch(() => null)) as {
       artistName?: string;
       artistEmail?: string;
@@ -36,7 +38,7 @@ export async function POST(request: Request, context: { params: { slug: string }
     if (!body.artistName?.trim()) return errorResponse('artistName is required', 400);
     if (!body.termsAccepted) return errorResponse('Beat usage terms must be accepted', 400);
 
-    const contest = await getContestBySlug(context.params.slug);
+    const contest = await getContestBySlug(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 400);
 
