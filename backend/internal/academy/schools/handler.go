@@ -121,7 +121,7 @@ func RegisterAcademySchools(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	if member != nil {
 		mg := member.Group("/schools")
 		mg.GET("/mine", h.MyInstitutions)
-		mg.GET("/:id/overview", h.MemberOverview)
+		mg.GET("/:schoolId/overview", h.MemberOverview)
 	}
 
 	if admin != nil {
@@ -165,7 +165,7 @@ func (h *Handler) MemberOverview(c *gin.Context) {
 	if _, ok := h.requireUser(c); !ok {
 		return
 	}
-	out, err := h.svc.GetInstitution(c.Request.Context(), c.Param("id"))
+	out, err := h.svc.GetInstitution(c.Request.Context(), c.Param("schoolId"))
 	if err != nil {
 		h.fail(c, err)
 		return
