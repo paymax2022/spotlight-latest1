@@ -6,7 +6,7 @@ import { ConfirmDialog } from '@/components/rbac';
 import { readCurrentAdmin } from '@/components/rbac/currentAdmin';
 import { hasPermission, type AuthUser } from '@/features/auth/rbac';
 import {
-  listRoles, approveRole, rejectRole, suspendRole, type RoleProfile,
+  listRoles, approveRole, rejectRole, suspendRole, getDocumentUrl, type RoleProfile,
 } from '@/services/propertyRolesAdminService';
 
 const PERMISSION = 'property.roles.review';
@@ -36,6 +36,7 @@ export default function PropertyRolesPage() {
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [reason, setReason] = useState('');
+  const [viewing, setViewing] = useState('');
 
   useEffect(() => {
     setUser(readCurrentAdmin());
@@ -68,17 +69,34 @@ export default function PropertyRolesPage() {
     setBusy(true);
     setActionError('');
     try {
-      if (pending.kind === 'approve') await approveRole(pending.profile.id);
-      else if (pending.kind === 'reject') await rejectRole(pending.profile.id, reason);
+      // Approve/reject send the updatedAt this page loaded; a later change is a 409.
+      if (pending.kind === 'approve') await approveRole(pending.profile.id, pending.profile.updatedAt);
+      else if (pending.kind === 'reject') await rejectRole(pending.profile.id, reason, pending.profile.updatedAt);
       else await suspendRole(pending.profile.id, reason);
       close();
       await load();
     } catch (e) {
-      // Show the server's message verbatim (e.g. the 403 for reviewing your own profile).
+      // Show the server's message verbatim (e.g. the 403 for reviewing your own
+      // profile, or the 409 "changed since you viewed it; reload"), then reload
+      // so the operator sees the current row.
       setActionError(e instanceof Error ? e.message : String(e));
       close();
+      await load();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function viewDocument(profileId: string, docId: string) {
+    setViewing(docId);
+    setActionError('');
+    try {
+      const { url } = await getDocumentUrl(profileId, docId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setViewing('');
     }
   }
 
@@ -127,7 +145,7 @@ export default function PropertyRolesPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr>
-                {['Role', 'Display name', 'User ID', 'Submitted', 'Details', 'Documents', 'Status', ''].map((h) => (
+                {['Role', 'Display name', 'User ID', 'Last updated', 'Details', 'Documents', 'Status', ''].map((h) => (
                   <th key={h} style={thCell}>{h}</th>
                 ))}
               </tr>
@@ -138,7 +156,7 @@ export default function PropertyRolesPage() {
                   <td style={tdCell}><strong>{r.role}</strong></td>
                   <td style={tdCell}>{r.displayName || '—'}</td>
                   <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11 }}>{r.userId}</td>
-                  <td style={tdCell}>{r.createdAt ? new Date(r.createdAt).toLocaleString() : '—'}</td>
+                  <td style={tdCell}>{r.updatedAt ? new Date(r.updatedAt).toLocaleString() : '—'}</td>
                   <td style={tdCell}>
                     {Object.entries(r.details ?? {}).map(([k, v]) => (
                       <div key={k} style={{ fontSize: 12 }}>
@@ -150,23 +168,39 @@ export default function PropertyRolesPage() {
                     {(r.documents ?? []).length === 0 ? '—' : (r.documents ?? []).map((d) => (
                       <div key={d.id} style={{ fontSize: 12 }}>
                         <strong>{d.kind}</strong>{' '}
-                        <span style={{ fontFamily: 'monospace', fontSize: 11, color: colors.muted }}>{d.storageKey}</span>
+                        <Button
+                          variant="outline"
+                          sm
+                          disabled={viewing === d.id}
+                          onClick={() => void viewDocument(r.id, d.id)}
+                          aria-label={`View ${d.kind} document`}
+                        >
+                          {viewing === d.id ? 'Opening…' : 'View'}
+                        </Button>
                       </div>
                     ))}
                   </td>
                   <td style={tdCell}>
                     <Badge text={r.verificationStatus} />
-                    {r.status && r.status !== r.verificationStatus ? <div style={{ fontSize: 11, color: colors.muted }}>{r.status}</div> : null}
+                    {r.status === 'suspended' ? <div><Badge text="suspended" color={colors.danger} /></div> : null}
+                    {r.status && r.status !== 'suspended' && r.status !== r.verificationStatus ? <div style={{ fontSize: 11, color: colors.muted }}>{r.status}</div> : null}
                     {r.rejectionReason ? <div style={{ fontSize: 11, color: colors.muted }}>{r.rejectionReason}</div> : null}
                   </td>
                   <td style={{ ...tdCell, whiteSpace: 'nowrap' }}>
-                    {r.verificationStatus === 'pending' ? (
+                    {/* Suspended profiles are not reviewable (the queue excludes them). */}
+                    {r.status === 'suspended' ? (
+                      <span style={{ fontSize: 12, color: colors.muted }}>No actions</span>
+                    ) : (
                       <>
-                        <Button variant="primary" sm disabled={busy} onClick={() => setPending({ kind: 'approve', profile: r })}>Approve</Button>{' '}
-                        <Button variant="danger" sm disabled={busy} onClick={() => setPending({ kind: 'reject', profile: r })}>Reject</Button>{' '}
+                        {r.verificationStatus === 'pending' ? (
+                          <>
+                            <Button variant="primary" sm disabled={busy} onClick={() => setPending({ kind: 'approve', profile: r })}>Approve</Button>{' '}
+                            <Button variant="danger" sm disabled={busy} onClick={() => setPending({ kind: 'reject', profile: r })}>Reject</Button>{' '}
+                          </>
+                        ) : null}
+                        <Button variant="outline" sm disabled={busy} onClick={() => setPending({ kind: 'suspend', profile: r })}>Suspend</Button>
                       </>
-                    ) : null}
-                    <Button variant="outline" sm disabled={busy} onClick={() => setPending({ kind: 'suspend', profile: r })}>Suspend</Button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -16,7 +16,8 @@ function stubFetch(status: number, body: unknown) {
   return { fn, calls };
 }
 
-const profile = { id: 'p1', role: 'realtor', verificationStatus: 'pending', documents: [] };
+const AT = '2026-10-07T10:00:00.123456Z';
+const profile = { id: 'p1', role: 'agent', verificationStatus: 'pending', updatedAt: AT, documents: [] };
 
 describe('propertyRolesAdminService', () => {
   beforeEach(() => {
@@ -57,8 +58,8 @@ describe('propertyRolesAdminService', () => {
   it('approve / reject / suspend call the right method and URL', async () => {
     const { calls } = stubFetch(200, profile);
     const mod = await import('@/services/propertyRolesAdminService');
-    await mod.approveRole('p1');
-    await mod.rejectRole('p1', 'blurry id');
+    await mod.approveRole('p1', AT);
+    await mod.rejectRole('p1', 'blurry id', AT);
     await mod.suspendRole('p1', 'fraud');
     await mod.suspendRole('p1');
     expect(calls.map((c) => [c.init?.method, c.url.replace(/^.*\/api\/property/, '')])).toEqual([
@@ -67,20 +68,54 @@ describe('propertyRolesAdminService', () => {
       ['POST', '/admin/roles/p1/suspend'],
       ['POST', '/admin/roles/p1/suspend'],
     ]);
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ reason: 'blurry id' });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ updatedAt: AT });
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ reason: 'blurry id', updatedAt: AT });
     expect(JSON.parse(String(calls[2].init?.body))).toEqual({ reason: 'fraud' });
   });
 
   it('a self-review 403 surfaces the server message on approve', async () => {
     stubFetch(403, { error: 'cannot review your own profile' });
     const mod = await import('@/services/propertyRolesAdminService');
-    await expect(mod.approveRole('p1')).rejects.toThrow(/cannot review your own profile/);
+    await expect(mod.approveRole('p1', AT)).rejects.toThrow(/cannot review your own profile/);
   });
 
   it('blank reject reason never calls fetch', async () => {
     const { fn } = stubFetch(200, profile);
     const mod = await import('@/services/propertyRolesAdminService');
-    await expect(mod.rejectRole('p1', '   ')).rejects.toThrow(/reason/i);
+    await expect(mod.rejectRole('p1', '   ', AT)).rejects.toThrow(/reason/i);
     expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('approve / reject without the loaded updatedAt never call fetch', async () => {
+    const { fn } = stubFetch(200, profile);
+    const mod = await import('@/services/propertyRolesAdminService');
+    await expect(mod.approveRole('p1', '')).rejects.toThrow(/reload/i);
+    await expect(mod.rejectRole('p1', 'r', '  ')).rejects.toThrow(/reload/i);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('a stale 409 surfaces the reload message', async () => {
+    stubFetch(409, { error: 'profile changed since you viewed it; reload', code: 'stale' });
+    const mod = await import('@/services/propertyRolesAdminService');
+    await expect(mod.approveRole('p1', AT)).rejects.toThrow(/changed since you viewed it/);
+  });
+
+  it('getDocumentUrl GETs the document url route and returns {url, expiresIn}', async () => {
+    const { calls } = stubFetch(200, { url: 'https://r2.example/doc?sig=1', expiresIn: 300 });
+    const mod = await import('@/services/propertyRolesAdminService');
+    const out = await mod.getDocumentUrl('p1', 'd 1');
+    expect(out).toEqual({ url: 'https://r2.example/doc?sig=1', expiresIn: 300 });
+    expect(calls[0].init?.method).toBe('GET');
+    expect(calls[0].url).toMatch(/\/api\/property\/admin\/roles\/p1\/documents\/d%201\/url$/);
+  });
+
+  it('getDocumentUrl rejects on 404 and on a non-https url', async () => {
+    stubFetch(404, { error: 'document not found' });
+    let mod = await import('@/services/propertyRolesAdminService');
+    await expect(mod.getDocumentUrl('p1', 'd1')).rejects.toThrow(/document not found/);
+    vi.resetModules();
+    stubFetch(200, { url: 'javascript:alert(1)', expiresIn: 300 });
+    mod = await import('@/services/propertyRolesAdminService');
+    await expect(mod.getDocumentUrl('p1', 'd1')).rejects.toThrow();
   });
 });

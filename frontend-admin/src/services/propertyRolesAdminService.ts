@@ -66,17 +66,42 @@ export async function listRoles(status = 'pending'): Promise<RoleProfile[]> {
   return j.items;
 }
 
-export function approveRole(id: string): Promise<RoleProfile> {
-  return request<RoleProfile>(`${base()}/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+// Approve/reject carry the updatedAt the reviewer loaded; the server refuses
+// with 409 if the profile changed since (the reviewer must reload).
+function seenVersion(updatedAt: string): string {
+  const v = updatedAt?.trim();
+  if (!v) throw new Error('This profile has no loaded version; reload the queue and try again');
+  return v;
 }
 
-export async function rejectRole(id: string, reason: string): Promise<RoleProfile> {
+export async function approveRole(id: string, updatedAt: string): Promise<RoleProfile> {
+  const v = seenVersion(updatedAt);
+  return request<RoleProfile>(`${base()}/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ updatedAt: v }),
+  });
+}
+
+export async function rejectRole(id: string, reason: string, updatedAt: string): Promise<RoleProfile> {
   const r = reason.trim();
   if (!r) throw new Error('A reason is required to reject a role profile');
+  const v = seenVersion(updatedAt);
   return request<RoleProfile>(`${base()}/${encodeURIComponent(id)}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ reason: r }),
+    body: JSON.stringify({ reason: r, updatedAt: v }),
   });
+}
+
+/** Short-lived (300 s) presigned URL to view one document of a profile under review. */
+export async function getDocumentUrl(id: string, docId: string): Promise<{ url: string; expiresIn: number }> {
+  const j = await request<{ url?: unknown; expiresIn?: unknown }>(
+    `${base()}/${encodeURIComponent(id)}/documents/${encodeURIComponent(docId)}/url`,
+    { method: 'GET', cache: 'no-store' },
+  );
+  if (typeof j?.url !== 'string' || !/^https:\/\//i.test(j.url)) {
+    throw new Error('Unexpected response from the property roles API');
+  }
+  return { url: j.url, expiresIn: typeof j.expiresIn === 'number' ? j.expiresIn : 0 };
 }
 
 export function suspendRole(id: string, reason?: string): Promise<RoleProfile> {
