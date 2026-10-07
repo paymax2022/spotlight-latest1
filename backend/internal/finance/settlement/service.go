@@ -326,8 +326,18 @@ var ErrWrongRefundMethod = errors.New("settlement: wrong refund method for this 
 func (s *Service) Refund(ctx context.Context, settlementID, reason string) error {
 	var sett Settlement
 	var fundingSource string
-	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, settlementID).Scan(
+	// Same mechanics as Settle: the row locks FOR UPDATE inside a tx and the
+	// ledger pair + status flip commit atomically. Without it a concurrent
+	// Refund and Settle both read status='escrowed' and post BOTH legs —
+	// refund AND payout — a double spend hidden by whichever flip lands last.
+	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1 FOR UPDATE`
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settlement: begin refund tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := tx.QueryRow(ctx, q, settlementID).Scan(
 		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status, &fundingSource,
 	); err != nil {
 		return fmt.Errorf("settlement: fetch for refund: %w", err)
@@ -343,16 +353,25 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 	if err != nil {
 		return err
 	}
-	if err := s.ledger.Credit(ctx, sett.PayerID,
-		"refund:"+sett.Reference, "refund:"+settlementID, escrowAcc.ID, sett.TotalKobo,
-	); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-		return fmt.Errorf("settlement: credit refund: %w", err)
+	payerWallet, err := s.ledger.GetOrCreateUserWallet(ctx, sett.PayerID)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve payer wallet: %w", err)
 	}
-	// ErrDuplicate is tolerated — a retry after a mid-flight crash finds the leg
-	// posted and proceeds to the flip (same contract as RefundExternal).
-	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
-	_, err = s.db.Exec(ctx, update, settlementID)
-	return err
+	// postPairTx's ON CONFLICT keeps a mid-flight-crash retry safe — the legs
+	// replay as no-ops and the status flip completes.
+	if err := postPairTx(ctx, tx, escrowAcc.ID, payerWallet.ID, sett.TotalKobo,
+		"refund:"+sett.Reference, "refund:"+settlementID); err != nil {
+		return fmt.Errorf("settlement: post refund legs: %w", err)
+	}
+	const update = `UPDATE settlements SET status='refunded' WHERE id=$1 AND status IN ('escrowed','disputed')`
+	tag, err := tx.Exec(ctx, update, settlementID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("settlement: cannot refund — status changed mid-flight")
+	}
+	return tx.Commit(ctx)
 }
 
 // RefundExternal reverses an EscrowExternal escrow — the internal-ledger
@@ -366,8 +385,17 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 func (s *Service) RefundExternal(ctx context.Context, settlementID, reason string) error {
 	var sett Settlement
 	var fundingSource string
-	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, settlementID).Scan(
+	// Same mechanics as Refund — lock the row on the tx so the journal and the
+	// status flip commit atomically; a settlement outside {escrowed, disputed}
+	// stays a safe no-op for the refund-loop callers.
+	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1 FOR UPDATE`
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settlement: begin external refund tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := tx.QueryRow(ctx, q, settlementID).Scan(
 		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status, &fundingSource,
 	); err != nil {
 		return fmt.Errorf("settlement: fetch for external refund: %w", err)
@@ -387,20 +415,15 @@ func (s *Service) RefundExternal(ctx context.Context, settlementID, reason strin
 	if err != nil {
 		return err
 	}
-	err = s.ledger.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       "refund:" + sett.Reference,
-		IdempotencyKey:  "refund:" + settlementID,
-		AmountKobo:      sett.TotalKobo,
-		DebitAccountID:  escrowAcc.ID,
-		CreditAccountID: clearingAcc.ID,
-		Description:     "External refund reversal (Paystack-funded escrow): " + reason,
-	})
-	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := postPairTx(ctx, tx, escrowAcc.ID, clearingAcc.ID, sett.TotalKobo,
+		"refund:"+sett.Reference, "refund:"+settlementID); err != nil {
 		return fmt.Errorf("settlement: post external refund: %w", err)
 	}
-	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
-	_, err = s.db.Exec(ctx, update, settlementID)
-	return err
+	const update = `UPDATE settlements SET status='refunded' WHERE id=$1 AND status IN ('escrowed','disputed')`
+	if _, err = tx.Exec(ctx, update, settlementID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Status tracks a settlement's lifecycle.

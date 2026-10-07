@@ -83,15 +83,16 @@ func (s *Service) ListTickets(ctx context.Context, userID string) ([]SupportTick
 	return out, nil
 }
 
-// GetTicket returns a single ticket (with messages) by id.
-func (s *Service) GetTicket(ctx context.Context, id string) (*SupportTicket, error) {
+// GetTicket returns a single ticket (with messages) by id, scoped to its owner —
+// unscoped, any authenticated caller could read any support thread.
+func (s *Service) GetTicket(ctx context.Context, userID, id string) (*SupportTicket, error) {
 	const q = `
 		SELECT id, reference, subject, category, status, created_at, updated_at
 		FROM cf_support_tickets
-		WHERE id = $1`
+		WHERE id = $1 AND user_id = $2`
 	var t SupportTicket
 	var created, updated time.Time
-	err := s.db.QueryRow(ctx, q, id).Scan(
+	err := s.db.QueryRow(ctx, q, id, userID).Scan(
 		&t.ID, &t.Reference, &t.Subject, &t.Category, &t.Status, &created, &updated,
 	)
 	if err != nil {
@@ -161,12 +162,12 @@ func (s *Service) CreateTicket(ctx context.Context, userID string, in CreateTick
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.GetTicket(ctx, ticketID)
+	return s.GetTicket(ctx, userID, ticketID)
 }
 
 // ReplyTicket appends a user message, sets the ticket to PENDING and bumps
 // updated_at — all in a single transaction.
-func (s *Service) ReplyTicket(ctx context.Context, ticketID, body string) (*SupportTicket, error) {
+func (s *Service) ReplyTicket(ctx context.Context, userID, ticketID, body string) (*SupportTicket, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -174,15 +175,18 @@ func (s *Service) ReplyTicket(ctx context.Context, ticketID, body string) (*Supp
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	now := time.Now()
+	// Owner-scoped: a stranger must not be able to append 'user' messages to or
+	// flip the status of someone else's ticket.
 	const insMsg = `
 		INSERT INTO cf_ticket_messages (id, ticket_id, from_role, body, created_at)
-		VALUES ($1, $2, 'user', $3, $4)`
-	if _, err := tx.Exec(ctx, insMsg, uuid.New().String(), ticketID, body, now); err != nil {
+		SELECT $1, $2, 'user', $3, $4
+		WHERE EXISTS (SELECT 1 FROM cf_support_tickets WHERE id = $2 AND user_id = $5)`
+	if _, err := tx.Exec(ctx, insMsg, uuid.New().String(), ticketID, body, now, userID); err != nil {
 		return nil, err
 	}
 
-	const updTicket = `UPDATE cf_support_tickets SET status = 'PENDING', updated_at = $2 WHERE id = $1`
-	tag, err := tx.Exec(ctx, updTicket, ticketID, now)
+	const updTicket = `UPDATE cf_support_tickets SET status = 'PENDING', updated_at = $2 WHERE id = $1 AND user_id = $3`
+	tag, err := tx.Exec(ctx, updTicket, ticketID, now, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +197,7 @@ func (s *Service) ReplyTicket(ctx context.Context, ticketID, body string) (*Supp
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.GetTicket(ctx, ticketID)
+	return s.GetTicket(ctx, userID, ticketID)
 }
 
 // GetNotifications returns the caller's notifications, newest first.

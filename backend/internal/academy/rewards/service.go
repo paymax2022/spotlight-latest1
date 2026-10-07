@@ -29,6 +29,8 @@ type store interface {
 	UpsertCatalog(ctx context.Context, req UpsertCatalogRequest) (*CatalogItem, error)
 	GetRedemptionByIdempotencyKey(ctx context.Context, key string) (*Redemption, error)
 	InsertRedemption(ctx context.Context, rd Redemption) (*Redemption, error)
+	InsertRedemptionTx(ctx context.Context, tx pgx.Tx, rd Redemption) (*Redemption, error)
+	SumUserBalanceTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error)
 	SetRedemptionState(ctx context.Context, id, state string) error
 	ListPools(ctx context.Context) ([]RewardPool, error)
 	CreatePool(ctx context.Context, req CreatePoolRequest) (*RewardPool, error)
@@ -314,6 +316,25 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 		return nil, rejection{"sku_inactive"}
 	}
 
+	// The balance check, redemption row, and decrementing ledger entry commit in
+	// ONE tx: previously nothing verified the user owned the points at all —
+	// every wallet-kind SKU minted real kobo for free — and no ledger entry
+	// decremented the derived balance, so even a "fixed" check would have raced.
+	tx, err := s.repo.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("rewards: begin redemption tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	bal, err := s.repo.SumUserBalanceTx(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if bal < item.ValueMinor {
+		return nil, rejection{"insufficient_balance"}
+	}
+
+	reason := "redemption:" + sku
 	rd := Redemption{
 		UserID:         userID,
 		SKU:            sku,
@@ -322,7 +343,7 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 		State:          "requested",
 		IdempotencyKey: idemKey,
 	}
-	written, err := s.repo.InsertRedemption(ctx, rd)
+	written, err := s.repo.InsertRedemptionTx(ctx, tx, rd)
 	if errors.Is(err, ErrDuplicate) {
 		if prior, gerr := s.repo.GetRedemptionByIdempotencyKey(ctx, idemKey); gerr == nil {
 			return prior, nil
@@ -332,6 +353,19 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 	if err != nil {
 		return nil, err
 	}
+	if _, err := s.repo.InsertLedgerEntry(ctx, tx, LedgerEntry{
+		UserID:         userID,
+		Type:           EntryRedemption,
+		AmountMinor:    item.ValueMinor,
+		Points:         item.CostPoints,
+		Reason:         &reason,
+		IdempotencyKey: "redeem:" + idemKey,
+	}); err != nil {
+		return nil, fmt.Errorf("rewards: write redemption ledger entry: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("rewards: commit redemption: %w", err)
+	}
 
 	// Wallet-kind redemptions move value on the wallet ledger with the same idemKey.
 	if item.Kind == "wallet" && item.ValueMinor > 0 && s.wallet != nil {
@@ -340,6 +374,25 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 		if err != nil && !isDuplicateCredit(err) {
 			_ = s.repo.SetRedemptionState(ctx, written.ID, "failed")
 			written.State = "failed"
+			// The redemption ledger entry already decremented the derived
+			// balance — post the reversal so a failed fulfilment doesn't
+			// burn the user's points. Best-effort; keyed so it can't double.
+			if rtx, rerr := s.repo.Begin(ctx); rerr == nil {
+				reason := "redemption_reversal:" + sku
+				_, rerr = s.repo.InsertLedgerEntry(ctx, rtx, LedgerEntry{
+					UserID:         userID,
+					Type:           EntryReversal,
+					AmountMinor:    item.ValueMinor,
+					Points:         item.CostPoints,
+					Reason:         &reason,
+					IdempotencyKey: "redeem-reversal:" + idemKey,
+				})
+				if rerr == nil {
+					_ = rtx.Commit(ctx)
+				} else {
+					_ = rtx.Rollback(ctx)
+				}
+			}
 			return written, fmt.Errorf("rewards: redemption wallet credit failed: %w", err)
 		}
 		_ = s.repo.SetRedemptionState(ctx, written.ID, "fulfilled")

@@ -74,9 +74,15 @@ func (t *TripTracker) Start(ctx context.Context) {
 }
 
 // participants returns the rider and (optional) driver user-ids for a trip.
+// trips.driver_id is the drivers ROW id, not the auth user id — returning it
+// raw meant Ingest's `callerID != driver` could never match (live tracking
+// 403'd for the real driver) and the WS fanout addressed a non-user channel.
 func (t *TripTracker) participants(ctx context.Context, tripID string) (rider string, driver string, err error) {
 	var d *string
-	err = t.db.QueryRow(ctx, `SELECT rider_id, driver_id FROM trips WHERE id=$1`, tripID).Scan(&rider, &d)
+	err = t.db.QueryRow(ctx,
+		`SELECT t.rider_id, d.user_id
+		   FROM trips t LEFT JOIN drivers d ON d.id = t.driver_id
+		  WHERE t.id=$1`, tripID).Scan(&rider, &d)
 	if err != nil {
 		return "", "", err
 	}
