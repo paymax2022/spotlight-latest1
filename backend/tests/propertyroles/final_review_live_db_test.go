@@ -138,12 +138,11 @@ func TestUpdate_DeveloperCompanyNameResetsVerification(t *testing.T) {
 		t.Fatalf("want 1 reset event, got %d", c)
 	}
 	// displayName stays non-identity.
-	p2 := pendingAgent(t, s, ctx, uid)
+	pendingAgent(t, s, ctx, uid)
 	n := fixtureName
 	if got, _ = s.Update(ctx, uid, roles.RoleAgent, &n, map[string]any{"agencyName": "New Agency"}); got == nil || got.VerificationStatus != "pending" {
 		t.Fatalf("non-identity change must not reset: %+v", got)
 	}
-	_ = p2
 }
 
 func TestAddDocument_CappedPerProfile(t *testing.T) {
@@ -225,9 +224,11 @@ func TestUpdate_NoEffectiveChangeWritesNothing(t *testing.T) {
 	events := eventCount(t, pool, p.ID, "updated")
 	n := fixtureName
 	for name, call := range map[string]func() (*roles.Profile, error){
-		"empty":        func() (*roles.Profile, error) { return s.Update(ctx, uid, roles.RoleAgent, nil, nil) },
-		"same values":  func() (*roles.Profile, error) { return s.Update(ctx, uid, roles.RoleAgent, &n, agentDetails()) },
-		"delete unset": func() (*roles.Profile, error) { return s.Update(ctx, uid, roles.RoleAgent, nil, map[string]any{"bio": nil}) },
+		"empty":       func() (*roles.Profile, error) { return s.Update(ctx, uid, roles.RoleAgent, nil, nil) },
+		"same values": func() (*roles.Profile, error) { return s.Update(ctx, uid, roles.RoleAgent, &n, agentDetails()) },
+		"delete unset": func() (*roles.Profile, error) {
+			return s.Update(ctx, uid, roles.RoleAgent, nil, map[string]any{"bio": nil})
+		},
 	} {
 		got, err := call()
 		if err != nil || got == nil || got.ID != p.ID {
