@@ -205,6 +205,16 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 	if existing, ok, err := s.findByIdemKey(ctx, tx, sponsorID, idemKey); err != nil {
 		return nil, err
 	} else if ok {
+		// A caller-scoped hit is a true replay ONLY when the request is the
+		// same match — same campaign, ratio and cap. A key replayed against
+		// different material params is idempotency-key misuse: returning the
+		// stored match would confirm a budget reservation this request never
+		// made (post-merge audit D4). Visibility/message are display-only
+		// annotations and do not affect the reservation, so they are not
+		// material here.
+		if existing.CampaignID != in.CampaignID || existing.Ratio != in.Ratio || existing.CapKobo != in.CapKobo {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return existing, nil
 	}
 

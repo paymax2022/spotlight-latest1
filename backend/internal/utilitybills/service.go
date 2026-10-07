@@ -630,6 +630,32 @@ type PayResult struct {
 	Transaction      *TransactionRow `json:"transaction"`
 }
 
+// replayMatchesRequest decides whether a caller-scoped idempotency hit is the
+// SAME purchase this request describes — the pre-check equivalent of
+// sameTransactionParams (which compares two stored rows; this compares the
+// stored row against the request before pricing runs). Material params: what
+// is being bought (category + biller + product), for whom (customer
+// reference), through which rail (payment source), and — when the caller
+// priced it explicitly — for how much. A nil amountKobo can't be compared
+// (the row stores the RESOLVED amount), but category/biller/product/reference
+// still have to agree — a missing amount alone never passes a divergent
+// request.
+func replayMatchesRequest(existing *TransactionRow, category, billerID, productID, customerReference, paymentSource string, amountKobo *int64) bool {
+	if existing.Category != category ||
+		existing.BillerID != billerID ||
+		existing.CustomerReference != customerReference ||
+		existing.PaymentSource != paymentSource {
+		return false
+	}
+	if existing.ProductID == nil || *existing.ProductID != productID {
+		return false
+	}
+	if amountKobo != nil && existing.AmountKobo != *amountKobo {
+		return false
+	}
+	return true
+}
+
 const (
 	paymentSourceWallet   = "wallet"
 	paymentSourcePaystack = "paystack"
@@ -682,10 +708,16 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 	// used must NOT replay their transaction back to this caller (it would leak
 	// their amount/token/customer reference). A foreign key misses here and
 	// instead collides at the unique constraint in (3), which maps the clash to
-	// ErrIdempotencyKeyConflict → 409.
+	// ErrIdempotencyKeyConflict → 409. And a same-caller hit is a true replay
+	// ONLY when the request is the same purchase — replayMatchesRequest
+	// compares the material params and a divergent reuse gets the same 409
+	// (post-merge audit D4).
 	if existing, eerr := s.repo.GetTransactionByIdempotencyKey(ctx, userID, idempotencyKey); eerr != nil {
 		return nil, eerr
 	} else if existing != nil {
+		if !replayMatchesRequest(existing, string(category), billerID, productID, customerReference, paymentSource, in.AmountKobo) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return &PayResult{AlreadyProcessed: true, Transaction: existing}, nil
 	}
 

@@ -293,8 +293,11 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 	// insert. The lookup is CALLER-SCOPED (user_id): a key another member
 	// already used must NOT replay their certificate back to this caller —
 	// that would leak their offer/amount/holding. A foreign key misses here
-	// and collides at the subscriptions unique constraint below → 409.
-	if cert, ok, err := s.certByIdemKey(ctx, tx, userID, idemKey); err != nil {
+	// and collides at the subscriptions unique constraint below → 409. And a
+	// same-caller hit is only a true replay when the request is the SAME
+	// subscription — certByIdemKey compares the stored offer and amount
+	// against this request and conflicts on any divergence (audit D4).
+	if cert, ok, err := s.certByIdemKey(ctx, tx, userID, idemKey, in); err != nil {
 		return InvestmentCertificate{}, err
 	} else if ok {
 		return cert, nil
@@ -407,10 +410,14 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 }
 
 // certByIdemKey returns a prior certificate for the given idempotency key —
-// scoped to THIS user. A key another member already used returns false here
-// and is caught by the unique constraint on insert → ErrIdempotencyKeyConflict;
-// an unscoped lookup would replay a stranger's certificate on a guessed key.
-func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, userID, idemKey string) (InvestmentCertificate, bool, error) {
+// scoped to THIS user, and only when it is THE SAME subscription: a stored
+// row under this key whose offer or amount differs from the request is
+// idempotency-key misuse, so the lookup returns ErrIdempotencyKeyConflict
+// (409) rather than acking a different investment (post-merge audit D4).
+// A key another member already used returns false here and is caught by the
+// unique constraint on insert → ErrIdempotencyKeyConflict; an unscoped lookup
+// would replay a stranger's certificate on a guessed key.
+func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, userID, idemKey string, in InvestmentSubscriptionInput) (InvestmentCertificate, bool, error) {
 	var (
 		cert                    InvestmentCertificate
 		offerID                 string
@@ -431,6 +438,9 @@ func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, userID, idemKey 
 	}
 	if err != nil {
 		return InvestmentCertificate{}, false, err
+	}
+	if offerID != in.OfferID || cert.AmountKobo != in.AmountKobo {
+		return InvestmentCertificate{}, false, ErrIdempotencyKeyConflict
 	}
 	cert.OfferTitle = offerTitle
 	cert.IssuerName = issuerName
