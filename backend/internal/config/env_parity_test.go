@@ -28,7 +28,7 @@ func TestMocksAllowed_OnlyDevelopmentClass(t *testing.T) {
 func TestValidate_BankTransfersDoNotNeedMonnifyWithPaystackDefault(t *testing.T) {
 	c := base(true)
 	c.FeatureBankTransfersEnabled = true
-	c.PaystackSecretKey = "sk_live_abc123def456ghi789"
+	c.PaystackSecretKey = "sk_live_fixture"
 	c.TransferProviderDefault = "paystack"
 	if err := c.Validate(); err != nil {
 		t.Fatalf("paystack-default bank transfers must not require Monnify: %v", err)
@@ -63,7 +63,7 @@ func TestValidate_StagingPassesWhenRealAndConfigured(t *testing.T) {
 	c.FeatureAssociationsEnabled, c.AssocCardSigningSecret = true, "assoc-secret-real"
 	c.FeatureArenaEnabled, c.ArenaSigningSeedTheory = true, seed()
 	c.FeatureMapsEnabled, c.FeatureTransportEnabled, c.MapsGoogleKey = true, true, "AIza-real"
-	c.FeatureWalletEnabled, c.FeatureBankTransfersEnabled, c.PaystackSecretKey = true, true, "sk_test_abc123def456ghi789"
+	c.FeatureWalletEnabled, c.FeatureBankTransfersEnabled, c.PaystackSecretKey = true, true, "sk_test_fixture"
 	c.FeatureAcademyEnabled, c.RailsMode = true, "live"
 	c.FeatureCryptoEnabled, c.CryptoProvider, c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = true, "quidax", "qk_real", "https://app.quidax.io/api/v1"
 	if err := c.Validate(); err != nil {
