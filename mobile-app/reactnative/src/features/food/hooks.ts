@@ -11,6 +11,18 @@ import { goneRestaurantIds } from './availability';
 
 const KEY = 'food';
 
+// Discovery reads ride out a brief upstream stall. The backend answers 503 when its
+// auth/DB dependency is slow or down, and that clears within minutes; the app-wide
+// default (one retry after 1s) gave up long before it did and showed a dead-end
+// error. 4xx is never retried — it will not become a 200.
+const DISCOVERY_RETRIES = 4;
+function retryDiscovery(failureCount: number, error: unknown): boolean {
+  const status = toFoodError(error).status;
+  if (status != null && status < 500) return false;
+  return failureCount < DISCOVERY_RETRIES;
+}
+const discoveryRetryDelay = (attempt: number) => Math.min(1_000 * 2 ** attempt, 8_000);
+
 /**
  * The paged restaurant list, with search and cuisine applied SERVER-side.
  *
@@ -40,6 +52,8 @@ export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
     // between requests, which is how paged lists start skipping items.
     getNextPageParam: (last) => (last.hasMore ? last.offset + last.items.length : undefined),
     staleTime: 30_000,
+    retry: retryDiscovery,
+    retryDelay: discoveryRetryDelay,
   });
 
   const pages = query.data?.pages;
@@ -69,6 +83,8 @@ export function useFeaturedRestaurants(limit = 10) {
     queryKey: [KEY, 'featured', limit],
     queryFn: () => food.listRestaurants({ featured: true, sort: 'likes', limit, offset: 0 }),
     staleTime: 30_000,
+    retry: retryDiscovery,
+    retryDelay: discoveryRetryDelay,
   });
   return { ...query, items: query.data?.items ?? [] };
 }
@@ -87,6 +103,8 @@ export function useNearbyRestaurants(coords: LatLng | null, limit = 10) {
         ? food.listRestaurants({ sort: 'distance', nearLat: coords.lat, nearLng: coords.lng, limit, offset: 0 })
         : food.listRestaurants({ sort: 'eta', limit, offset: 0 }),
     staleTime: 30_000,
+    retry: retryDiscovery,
+    retryDelay: discoveryRetryDelay,
   });
   return { ...query, items: query.data?.items ?? [] };
 }

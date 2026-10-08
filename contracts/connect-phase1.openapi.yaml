@@ -37,10 +37,30 @@ components:
         display_name: { type: string, nullable: true }
         bio: { type: string, nullable: true }
         city: { type: string, nullable: true }
+        gender: { type: string, nullable: true }
+        headline: { type: string, nullable: true }
+        interests: { type: array, items: { type: string } }
+        preferences: { type: object, additionalProperties: true }
+        age: { type: integer, description: "derived from the DOB captured at the age gate" }
         verified_badge: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
-      description: dob and exact geo are never serialised.
+      description: dob and exact geo are never serialised; only the derived age is.
+    ProfilePhoto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, description: "viewable URL (short-lived signed URL when stored in R2)" }
+        moderation_status: { type: string, enum: [pending, approved, rejected] }
+        sort_order: { type: integer, description: "0 is the primary photo" }
+    FullProfile:
+      description: The caller's own complete profile — Profile fields plus modes and photos.
+      allOf:
+        - $ref: '#/components/schemas/Profile'
+        - type: object
+          properties:
+            modes: { type: array, items: { $ref: '#/components/schemas/Mode' } }
+            photos: { type: array, items: { $ref: '#/components/schemas/ProfilePhoto' } }
     ProfileUpdate:
       type: object
       properties:
@@ -49,6 +69,10 @@ components:
         city: { type: string }
         geo_lat: { type: number, description: approximate centroid latitude }
         geo_lng: { type: number, description: approximate centroid longitude }
+        gender: { type: string }
+        headline: { type: string }
+        interests: { type: array, items: { type: string }, description: "omit to leave unchanged; [] clears" }
+        preferences: { type: object, additionalProperties: true, description: "REPLACES the stored object when present" }
     Mode:
       type: object
       properties:
@@ -169,6 +193,12 @@ paths:
       responses:
         '200': { description: Updated, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Profile' } } } } } }
 
+  /profile/me:
+    get:
+      summary: The caller's complete profile (details, modes, photos in display order)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/FullProfile' } } } } } }
+
   /profile/modes:
     get:
       summary: List per-mode visibility/intent/privacy for the caller
@@ -196,6 +226,38 @@ paths:
         content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string }, kind: { type: string, enum: [photo, clip] } } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { id: { type: string }, moderation_status: { type: string } } } } } } } }
+        '400': { description: "invalid reference (an R2 object key must be under the caller own prefix)" }
+        '409': { description: photo limit reached (9) }
+
+  /profile/media/presign:
+    post:
+      summary: Issue a short-lived presigned PUT for one profile photo (the server chooses the key)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [content_type], properties: { file_name: { type: string }, content_type: { type: string, enum: [image/jpeg, image/png, image/webp] } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { upload_url: { type: string }, object_key: { type: string, description: "send back as url to POST /profile/media" }, content_type: { type: string }, expires_in: { type: integer }, method: { type: string } } } } } } } }
+        '400': { description: unsupported content type }
+        '503': { description: photo uploads are not configured }
+
+  /profile/media/order:
+    put:
+      summary: Set photo display order; the first id is the primary photo
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: string, format: uuid }, description: "exactly the caller photo ids, each once" } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/ProfilePhoto' } } } } } } }
+        '400': { description: "list is not exactly the caller photos" }
+
+  /profile/media/{id}:
+    delete:
+      summary: Remove one of the caller's media items
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Removed }
+        '404': { description: "not the caller media" }
 
   /verification/selfie:
     post:

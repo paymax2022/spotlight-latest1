@@ -152,6 +152,7 @@ export const BUS_PHASE_LABEL: Record<BusTicketPhase, string> = {
   completed: 'Completed',
   rescheduled: 'Rescheduled',
   cancelled: 'Cancelled',
+  cancelled_pending_refund: 'Cancelled · refund pending',
   refunded: 'Refunded',
 };
 

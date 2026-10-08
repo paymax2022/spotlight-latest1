@@ -137,3 +137,60 @@ func TestLiveDB_DebitReplay_VerifiesAccountAndReference(t *testing.T) {
 		t.Fatalf("wallet debited %d across replay attempts, want exactly 10000", bal0-bal1)
 	}
 }
+
+// TestLiveDB_DebitReplay_ConvergesAfterFundsMoved pins the wedge: a debit that
+// already committed under this key must converge as a replay even when the
+// wallet no longer holds the amount — the money legitimately moved on after
+// the first posting. Gating the replay identity check on the CURRENT balance
+// used to return ErrInsufficientFunds to a true retry, leaving the caller
+// 409-forever while the journal sits committed. The replay check must run
+// BEFORE the sufficiency gate.
+func TestLiveDB_DebitReplay_ConvergesAfterFundsMoved(t *testing.T) {
+	pool := mustLiveTxPool(t)
+	ctx := context.Background()
+	repo := ledger.NewRepository(pool)
+	svc := ledger.NewService(repo, nil)
+
+	user := seedVerifyReplayUser(t, pool)
+	revenue, err := svc.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
+	clearing, err := svc.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		t.Fatalf("clearing account: %v", err)
+	}
+
+	// Fund just past the debit amount: after the first debit commits the
+	// wallet holds 5_000, below the replayed 10_000 — the wedge.
+	fundKey := "test:vr-wedge-fund:" + uuid.NewString()
+	if err := svc.Credit(ctx, user, fundKey, fundKey, clearing.ID, 15_000); err != nil {
+		t.Fatalf("fund wallet: %v", err)
+	}
+
+	key := "zzvr-wedge-" + uuid.NewString()
+	ref := "zzvr:wedge"
+	if err := svc.Debit(ctx, user, ref, key, revenue.ID, 10_000); err != nil {
+		t.Fatalf("first debit: %v", err)
+	}
+
+	// True retry: identical journal, balance now 5_000 < 10_000. Must converge.
+	if err := svc.Debit(ctx, user, ref, key, revenue.ID, 10_000); err != nil {
+		t.Fatalf("true replay after funds moved must converge as no-op, got %v", err)
+	}
+
+	// Foreign claim under the same key still fails closed even when the wallet
+	// CAN afford it — re-fund and present a different journal.
+	fundKey2 := "test:vr-wedge-fund2:" + uuid.NewString()
+	if err := svc.Credit(ctx, user, fundKey2, fundKey2, clearing.ID, 50_000); err != nil {
+		t.Fatalf("re-fund: %v", err)
+	}
+	if err := svc.Debit(ctx, user, "zzvr:wedge-different-ref", key, revenue.ID, 10_000); !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("foreign journal under held key must return ErrDuplicate, got %v", err)
+	}
+
+	// A brand-new key with insufficient funds still fails as before.
+	if err := svc.Debit(ctx, user, "zzvr:over-balance", "zzvr-new-"+uuid.NewString(), revenue.ID, 999_999_999); !errors.Is(err, ledger.ErrInsufficientFunds) {
+		t.Fatalf("fresh over-balance debit must return ErrInsufficientFunds, got %v", err)
+	}
+}

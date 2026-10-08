@@ -342,6 +342,7 @@ export default function FoodDiscoveryScreen() {
     total,
     isLoading,
     isError,
+    error,
     refetch,
     fetchNextPage,
     hasNextPage,
@@ -523,7 +524,19 @@ export default function FoodDiscoveryScreen() {
           {isLoading ? (
             <StateView kind="loading" message="Finding restaurants near you…" />
           ) : isError ? (
-            <StateView kind="error" title="Couldn't load restaurants" message="Check your connection and try again." actionLabel="Retry" onAction={() => refetch()} />
+            <StateView
+              kind="error"
+              title="Couldn't load restaurants"
+              message={
+                ((error as { status?: number; response?: { status?: number } } | null)?.response?.status ??
+                  (error as { status?: number } | null)?.status ??
+                  0) >= 500
+                  ? "Food & Delivery is temporarily unavailable on our side. Please try again in a moment."
+                  : 'Check your connection and try again.'
+              }
+              actionLabel="Retry"
+              onAction={() => refetch()}
+            />
           ) : restaurants.length === 0 ? (
             <StateView
               kind="empty"

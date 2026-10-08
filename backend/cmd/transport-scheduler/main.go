@@ -46,8 +46,18 @@ func main() {
 	defer stop()
 
 	cfg := config.Load()
-	if !cfg.FeatureTransportSchedulingEnabled {
-		log.Println("transport-scheduler: FEATURE_TRANSPORT_SCHEDULING_ENABLED is off — nothing to do, exiting")
+	// Two independent job families: trip scheduling (FEATURE_TRANSPORT_SCHEDULING_ENABLED)
+	// and the wallet bus sweeper (deferred settlement / lifecycle flags). Exit only
+	// when NONE is on.
+	schedulingOn := cfg.FeatureTransportSchedulingEnabled
+	busSettleOn := cfg.FeatureTransportBusDeferredSettlementEnabled
+	busLifecycleOn := cfg.FeatureTransportBusLifecycleSweeperEnabled
+	// The bus sweep (refund retries, finishing cancelled schedules, orphan-escrow
+	// reversal, payout of deferred tickets) is SAFETY machinery and runs whenever the
+	// transport modes module is on - not only when the deferred flag is.
+	busSweepOn := cfg.FeatureTransportModesEnabled || busSettleOn || busLifecycleOn
+	if !schedulingOn && !busSweepOn {
+		log.Println("transport-scheduler: FEATURE_TRANSPORT_SCHEDULING_ENABLED / FEATURE_TRANSPORT_MODES_ENABLED / bus sweeper flags are all off — nothing to do, exiting")
 		return
 	}
 
@@ -70,7 +80,9 @@ func main() {
 	// marketplace-cron uses.
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	settlementSvc := settlement.NewService(pool, ledgerSvc)
-	svc := transport.NewService(pool, settlementSvc)
+	svc := transport.NewService(pool, settlementSvc).
+		WithBusConfig(transport.NewBusConfig(busSettleOn, cfg.TransportBusSettleGraceMinutes,
+			cfg.TransportBusCancelCutoffMinutes, cfg.TransportBusMinBookingLeadMinutes))
 	// NOTE: MockMaps is used for dispatch fare computation here (no MapService is
 	// wired into the worker). Fares/escrow at dispatch are computed by the same
 	// per-mode path the API uses; in production the maps provider should be wired
@@ -79,35 +91,55 @@ func main() {
 	log.Println("transport-scheduler: starting (dispatch-due / reminders / expire-stale every 60s; materialize-departures every 6h)")
 
 	var wg sync.WaitGroup
-	wg.Add(4)
-	go runLoop(ctx, &wg, "dispatch-due", 60*time.Second, func(c context.Context) {
-		dispatchDue(c, svc)
-	})
-	go runLoop(ctx, &wg, "reminders", 60*time.Second, func(c context.Context) {
-		if n, err := svc.SendDueReminders(c); err != nil {
-			log.Printf("transport-scheduler: reminders: %v", err)
-		} else if n > 0 {
-			log.Printf("transport-scheduler: reminders: sent %d", n)
-		}
-	})
-	go runLoop(ctx, &wg, "expire-stale", 60*time.Second, func(c context.Context) {
-		if n, err := svc.ExpireStale(c); err != nil {
-			log.Printf("transport-scheduler: expire-stale: %v", err)
-		} else if n > 0 {
-			log.Printf("transport-scheduler: expire-stale: expired %d", n)
-		}
-	})
-	// materialize-departures: project active recurring departure templates
-	// (ADR-020) forward into concrete bus_schedules over each template's rolling
-	// horizon. Idempotent via the partial unique index on (template_id,
-	// departure_time), so the 6h cadence never duplicates a departure.
-	go runLoop(ctx, &wg, "materialize-departures", 6*time.Hour, func(c context.Context) {
-		if n, err := svc.MaterializeBusDepartures(c, 14); err != nil {
-			log.Printf("transport-scheduler: materialize-departures: %v", err)
-		} else if n > 0 {
-			log.Printf("transport-scheduler: materialize-departures: created %d schedules", n)
-		}
-	})
+	if schedulingOn {
+		wg.Add(4)
+		go runLoop(ctx, &wg, "dispatch-due", 60*time.Second, func(c context.Context) {
+			dispatchDue(c, svc)
+		})
+		go runLoop(ctx, &wg, "reminders", 60*time.Second, func(c context.Context) {
+			if n, err := svc.SendDueReminders(c); err != nil {
+				log.Printf("transport-scheduler: reminders: %v", err)
+			} else if n > 0 {
+				log.Printf("transport-scheduler: reminders: sent %d", n)
+			}
+		})
+		go runLoop(ctx, &wg, "expire-stale", 60*time.Second, func(c context.Context) {
+			if n, err := svc.ExpireStale(c); err != nil {
+				log.Printf("transport-scheduler: expire-stale: %v", err)
+			} else if n > 0 {
+				log.Printf("transport-scheduler: expire-stale: expired %d", n)
+			}
+		})
+		// materialize-departures: project active recurring departure templates
+		// (ADR-020) forward into concrete bus_schedules over each template's rolling
+		// horizon. Idempotent via the partial unique index on (template_id,
+		// departure_time), so the 6h cadence never duplicates a departure.
+		go runLoop(ctx, &wg, "materialize-departures", 6*time.Hour, func(c context.Context) {
+			if n, err := svc.MaterializeBusDepartures(c, 14); err != nil {
+				log.Printf("transport-scheduler: materialize-departures: %v", err)
+			} else if n > 0 {
+				log.Printf("transport-scheduler: materialize-departures: created %d schedules", n)
+			}
+		})
+
+	}
+	// bus-sweep: wallet bus refund retries, cancelled-schedule completion, orphan
+	// escrow reversal and payout of due deferred tickets (always, when modes are on),
+	// plus the schedule/ticket lifecycle (FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER). Every
+	// step is a CAS-guarded, idempotent transition (see transport/bus_lifecycle.go).
+	if busSweepOn {
+		wg.Add(1)
+		go runLoop(ctx, &wg, "bus-sweep", 60*time.Second, func(c context.Context) {
+			settled, refunded, lc, err := svc.RunBusSweep(c, busLifecycleOn)
+			if err != nil {
+				log.Printf("transport-scheduler: bus-sweep: %v", err)
+				return
+			}
+			if settled+refunded > 0 || lc != (transport.LifecycleCounts{}) {
+				log.Printf("transport-scheduler: bus-sweep: settled=%d refunds-completed=%d lifecycle=%+v", settled, refunded, lc)
+			}
+		})
+	}
 
 	wg.Wait()
 	log.Println("transport-scheduler: shut down")

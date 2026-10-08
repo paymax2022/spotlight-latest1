@@ -3,6 +3,8 @@ import { getApplication, saveApplicationDraft } from '@/src/server/stem/persiste
 import type { StemApplicationStatus } from '@/src/features/stem/types';
 import { requireUser } from '@/src/lib/auth/server';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -10,6 +12,7 @@ export async function GET(
   try {
     const { user } = await requireUser(request);
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) return errorResponse('Invalid application ID', 400);
     const application = await getApplication(id);
     if (!application) return errorResponse('Application not found', 404);
     if (application.applicantUserId !== user.id) return errorResponse('Forbidden', 403);
@@ -26,6 +29,7 @@ export async function PATCH(
   try {
     const { user } = await requireUser(request);
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) return errorResponse('Invalid application ID', 400);
     const current = await getApplication(id);
     if (!current) return errorResponse('Application not found', 404);
     if (current.applicantUserId !== user.id) return errorResponse('Forbidden', 403);

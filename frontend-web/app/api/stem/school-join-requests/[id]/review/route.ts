@@ -2,6 +2,8 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertStemAdmin } from '@/src/server/stem/auth';
 import { reviewSchoolJoinRequest } from '@/src/server/stem/persistence';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -9,6 +11,7 @@ export async function POST(
   try {
     const { actorId } = await assertStemAdmin(request);
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) return errorResponse('Invalid request ID', 400);
     const body = (await request.json().catch(() => null)) as {
       status?: 'approved' | 'rejected';
       note?: string;

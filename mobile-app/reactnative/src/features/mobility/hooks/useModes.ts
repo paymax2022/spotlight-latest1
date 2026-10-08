@@ -298,5 +298,9 @@ export function useCarHireActions() {
     mutationFn: (id: string) => carhire.completeCarHire(id, newIdempotencyKey('carhire-done')),
     onSuccess: (_d, id) => invalidate(id),
   });
-  return { extend, complete };
+  const cancel = useMutation({
+    mutationFn: (id: string) => carhire.cancelCarHire(id),
+    onSuccess: (_d, id) => invalidate(id),
+  });
+  return { extend, complete, cancel };
 }

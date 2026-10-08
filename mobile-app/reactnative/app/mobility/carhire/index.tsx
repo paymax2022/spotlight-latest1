@@ -16,10 +16,12 @@ import VehicleClassCard from '@/features/mobility/components/VehicleClassCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useCarHireQuote, useBookCarHire } from '@/features/mobility/hooks/useModes';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
+import * as carhireAPI from '@/features/mobility/api/carhire.api';
+import { carHireCardDirectResolverRoute } from '@/features/mobility/utils/carhireCardDirect';
 import { HIRE_TYPES, VEHICLE_CLASSES, CARHIRE_ENABLED } from '@/features/mobility/constants/modes.constants';
 import { VEHICLE_CLASS_META, VEHICLE_CLASS_GALLERY } from '@/features/mobility/constants/carhireCatalog';
-import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { formatNairaWhole, newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import type { HireType, VehicleClass, CarHireQuote } from '@/features/mobility/types/modes.types';
 
 export default function CarHireHomeScreen() {
@@ -35,6 +37,12 @@ export default function CarHireHomeScreen() {
   const q: CarHireQuote | undefined = quote.data;
   // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
+  // Card-direct: Paystack collects fare + deposit as ONE charge straight from the
+  // card (no wallet, no KYC-tier gate); the server quotes, verifies and books.
+  const paystackCheckout = useGatewayCheckout();
+  useEffect(() => {
+    if (paystackCheckout.error) setSubmitError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
 
   useEffect(() => {
     setSubmitError(null);
@@ -57,6 +65,7 @@ export default function CarHireHomeScreen() {
     pay.start({
       amountKobo: q.totalKobo,
       title: 'Pay for car hire',
+      domain: 'carhire',
       // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
       charge: () =>
         book.mutateAsync({
@@ -64,6 +73,25 @@ export default function CarHireHomeScreen() {
           durationHours, chauffeur, paymentMethod: 'wallet',
         }),
       onPaid: (booking) => router.replace(`/mobility/carhire/${booking.id}`),
+      // Card → server-initiated Paystack checkout (fare + deposit as one charge). The
+      // client sends the hire details only — never an amount.
+      onCard: async () => {
+        await paystackCheckout.start({
+          domain: 'carhire',
+          initialize: async () => {
+            const r = await carhireAPI.initiateCarHirePaystack({
+              hireType, vehicleClass, startAt: new Date(startDate).toISOString(),
+              durationHours, chauffeur,
+              idempotencyKey: newIdempotencyKey('carhire-paystack'),
+            });
+            if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+            return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+          },
+          onResolved: (res) => {
+            router.replace(carHireCardDirectResolverRoute(res.reference) as never);
+          },
+        });
+      },
     });
   };
 
@@ -135,6 +163,11 @@ export default function CarHireHomeScreen() {
                 ]}
                 showTrustNote
               />
+            )}
+            {q && (
+              <Text style={styles.sectionHint}>
+                Paying by card? The deposit is returned to the same card when your hire is completed (your bank can take a few days to show it), and a booking cancelled before it starts is refunded in full. A card hire can't be extended — book a new hire for extra time.
+              </Text>
             )}
 
             {submitError && (

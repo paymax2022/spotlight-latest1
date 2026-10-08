@@ -19,6 +19,7 @@ import { useCarHire, useCarHireActions } from '@/features/mobility/hooks/useMode
 import { clearMockActiveCarHire } from '@/features/mobility/api/carhire.api';
 import { CARHIRE_PHASE_LABEL, VEHICLE_CLASSES, HIRE_TYPES } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { canCancelCarHire, canEndCarHire, canExtendCarHire, carHireDepositCopy, carHireRefundCopy } from '@/features/mobility/utils/carhireCardDirect';
 
 const startLabel = (iso: string) => new Date(iso).toLocaleString('en-NG', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 const classLabel = (v: string) => VEHICLE_CLASSES.find((c) => c.value === v)?.label ?? v;
@@ -27,7 +28,7 @@ const hireLabel = (v: string) => HIRE_TYPES.find((h) => h.value === v)?.label ??
 export default function CarHireDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const booking = useCarHire(id, { poll: true });
-  const { extend, complete } = useCarHireActions();
+  const { extend, complete, cancel } = useCarHireActions();
   const [extraHours, setExtraHours] = useState(1);
   const [showExtend, setShowExtend] = useState(false);
   const b = booking.data;
@@ -40,11 +41,22 @@ export default function CarHireDetailScreen() {
   }
 
   const completed = b.phase === 'completed';
-  const canExtend = b.phase === 'confirmed' || b.phase === 'active' || b.phase === 'extended';
+  const cancelled = b.phase === 'cancelled';
+  const card = b.fundingRail === 'card';
+  // A card-funded hire can never be extended (the server refuses it); cancel is a
+  // pre-activation action on both rails.
+  const canExtend = canExtendCarHire(b);
+  const canCancel = canCancelCarHire(b);
+  const canEnd = canEndCarHire(b);
   const paymentFailed = b.paymentStatus === 'failed';
+  const depositCopy = carHireDepositCopy(b);
+  const refundCopy = cancelled ? carHireRefundCopy(b.refundStatus, b.fundingRail) : '';
+  // Deposit is only "refunded" in the receipt once the backend says it was returned.
+  const depositReturned = b.depositStatus === 'returned';
 
   const onExtend = () => id && extend.mutate({ id, extraHours }, { onSuccess: () => setShowExtend(false) });
   const onComplete = () => id && complete.mutate(id);
+  const onCancel = () => id && cancel.mutate(id);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -71,10 +83,16 @@ export default function CarHireDetailScreen() {
           {b.chauffeur && b.driverName && <View style={styles.metaRow}><UserCheck size={16} color={Colors.onSurfaceVariant} strokeWidth={2} /><Text style={styles.metaText}>Chauffeur {b.driverName}</Text></View>}
         </View>
 
-        {!completed && (
+        {!completed && !cancelled && (
           <View style={styles.escrowRow}>
             <ShieldCheck size={16} color={Colors.tertiaryContainer} strokeWidth={2.2} />
-            <Text style={styles.escrowText}>{formatNairaWhole(b.depositKobo)} deposit held in escrow — refunded on completion.</Text>
+            <Text style={styles.escrowText}>{depositCopy || `${formatNairaWhole(b.depositKobo)} deposit held in escrow — refunded on completion.`}</Text>
+          </View>
+        )}
+        {cancelled && !!refundCopy && (
+          <View style={styles.escrowRow}>
+            <ShieldCheck size={16} color={Colors.tertiaryContainer} strokeWidth={2.2} />
+            <Text style={styles.escrowText}>{refundCopy}</Text>
           </View>
         )}
 
@@ -84,7 +102,7 @@ export default function CarHireDetailScreen() {
           rows={[
             { label: 'Hire fare', valueKobo: b.fareKobo },
             ...(b.chauffeurKobo > 0 ? [{ label: 'Chauffeur', valueKobo: b.chauffeurKobo }] : []),
-            { label: completed ? 'Deposit refunded' : 'Deposit (held)', valueKobo: b.depositKobo },
+            { label: completed ? (depositReturned ? (card ? 'Deposit sent back to your card' : 'Deposit refunded') : 'Deposit (being returned)') : 'Deposit (held)', valueKobo: b.depositKobo },
           ]}
         />
 
@@ -92,7 +110,7 @@ export default function CarHireDetailScreen() {
           <View style={styles.doneCard}>
             <CheckCircle2 size={40} color={Colors.tertiaryContainer} strokeWidth={2} />
             <Text style={styles.doneTitle}>Hire complete</Text>
-            <Text style={styles.doneSub}>Deposit refunded to your wallet.</Text>
+            <Text style={styles.doneSub}>{depositCopy || 'Your deposit is being returned.'}</Text>
           </View>
         )}
 
@@ -112,12 +130,14 @@ export default function CarHireDetailScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        {completed ? (
+        {completed || cancelled ? (
           <PrimaryButton label="Done" onPress={() => { clearMockActiveCarHire(); router.replace('/mobility'); }} />
         ) : (
           <>
             {canExtend && !showExtend && <PrimaryButton label="Extend hire" variant="secondary" onPress={() => setShowExtend(true)} />}
-            <PrimaryButton label="End hire" onPress={onComplete} loading={complete.isPending} />
+            {card && <Text style={styles.cardNote}>Paid by card — this hire can't be extended. Book a new hire for extra time.</Text>}
+            {canCancel && <PrimaryButton label="Cancel booking" variant="secondary" onPress={onCancel} loading={cancel.isPending} />}
+            {canEnd && <PrimaryButton label="End hire" onPress={onComplete} loading={complete.isPending} />}
           </>
         )}
       </View>
@@ -146,6 +166,7 @@ const styles = StyleSheet.create({
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.md },
   stepBtn: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: Colors.outlineVariant },
   stepValue: { ...Typography.titleMd, color: Colors.onSurface, fontWeight: '700' as const, minWidth: 56, textAlign: 'center' },
+  cardNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
   cancelExtend: { height: 40, alignItems: 'center', justifyContent: 'center' },
   cancelExtendLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest, gap: Spacing.sm },

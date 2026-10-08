@@ -10467,10 +10467,26 @@ paths:
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       responses: { '201': { description: Parcel created }, '422': { description: Prohibited item / invalid } }
     get: { operationId: listParcels, summary: Sender's parcels, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], responses: { '200': { description: Parcels } } }
+  /mobility/parcels/paystack/initiate:
+    post:
+      operationId: initiateParcelPaystack
+      summary: Start a card-direct parcel checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility Parcel]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '409': { description: idempotency_conflict }, '422': { description: Prohibited-items acknowledgement missing } }
+  /mobility/parcels/paystack/{reference}/status:
+    get:
+      operationId: getParcelPaystackStatus
+      summary: Poll + self-heal a card-direct parcel checkout (owner only)
+      tags: [Mobility Parcel]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,parcelId}})' }, '404': { description: unknown_reference } }
   /mobility/parcels/{id}:
     get: { operationId: getParcel, summary: Parcel detail (sender sees PINs), tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Parcel } } }
   /mobility/parcels/{id}/cancel:
-    post: { operationId: cancelParcel, summary: Cancel + refund, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelParcel, summary: Cancel + refund, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' } } }
   /mobility/parcels/{id}/rate:
     post:
       operationId: rateParcel
@@ -10530,6 +10546,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MobilityError' }
+  /mobility/bus/provider/schedules/{id}/cancel:
+    post:
+      operationId: busProviderScheduleCancel
+      summary: Cancel one of the caller's schedules and refund every active ticket
+      description: >-
+        Owner-gated. Marks the schedule cancelled and refunds each active ticket still in escrow
+        through the settlement refund path; legacy already-paid-out tickets are cancelled with
+        refund_status=manual_required (never reported as refunded). Idempotent + resumable.
+        Full schema in contracts/transport.openapi.yaml (BusScheduleCancelResult).
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Schedule cancellation summary }
+        '403': { description: Not your schedule }
+        '404': { description: Schedule not found }
+        '409': { description: Schedule already departed/completed }
+  /mobility/bus/tickets/{id}:
+    get:
+      operationId: busTicketGet
+      summary: Get one of the caller's bus tickets (owner only)
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Ticket (see contracts/transport.openapi.yaml BusTicket) }
+        '403': { description: Not your ticket }
+        '404': { description: Ticket not found }
   /mobility/bus/providers:
     get:
       operationId: busProviders
@@ -10771,6 +10819,22 @@ paths:
     post: { operationId: busValidate, summary: Operator validates QR → boarded, tags: [Mobility Bus], security: [{ bearerAuth: [] }], responses: { '200': { description: Boarded }, '404': { description: Invalid QR } } }
 
   # ── Towing / roadside ─────────────────────────────────────────────────────────
+  /mobility/towing/paystack/initiate:
+    post:
+      operationId: initiateTowingPaystack
+      summary: Start a card-direct towing checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility Towing]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '409': { description: idempotency_conflict } }
+  /mobility/towing/paystack/{reference}/status:
+    get:
+      operationId: getTowingPaystackStatus
+      summary: Poll + self-heal a card-direct towing checkout (owner only)
+      tags: [Mobility Towing]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,towingJobId}})' }, '404': { description: unknown_reference } }
   /mobility/towing/estimate:
     post: { operationId: towingEstimate, summary: Towing estimate (callout + distance), tags: [Mobility Towing], security: [{ bearerAuth: [] }], responses: { '200': { description: Estimate } } }
   /mobility/towing:
@@ -10784,7 +10848,7 @@ paths:
   /mobility/towing/{id}:
     get: { operationId: getTowing, summary: Towing detail, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Job } } }
   /mobility/towing/{id}/cancel:
-    post: { operationId: cancelTowing, summary: Cancel + refund, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelTowing, summary: Cancel + refund, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' } } }
   /mobility/towing/{id}/rate:
     post:
       operationId: rateTowing
@@ -10818,6 +10882,23 @@ paths:
     post: { operationId: towingComplete, summary: Complete + settle, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
 
   # ── Mover trucks (bidding + escrow) ───────────────────────────────────────────
+  /mobility/movers/paystack/initiate:
+    post:
+      operationId: initiateMoverPaystack
+      summary: Start a card-direct checkout for accepting a mover bid (server-read amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility Movers]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [job_id, bid_id], properties: { job_id: { type: string, format: uuid }, bid_id: { type: string, format: uuid } } } } } }
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '403': { description: Not your job }, '409': { description: 'job not open / bid not available / idempotency_conflict' } }
+  /mobility/movers/paystack/{reference}/status:
+    get:
+      operationId: getMoverPaystackStatus
+      summary: Poll + self-heal a card-direct mover checkout (owner only)
+      tags: [Mobility Movers]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,moveId}})' }, '404': { description: unknown_reference } }
   /mobility/movers/quote:
     post: { operationId: moverQuote, summary: Request a move (quote_requested), tags: [Mobility Movers], security: [{ bearerAuth: [] }], responses: { '201': { description: Job created } } }
   /mobility/movers/{id}:
@@ -10833,7 +10914,7 @@ paths:
   /mobility/movers/{id}/confirm-completion:
     post: { operationId: confirmMoverCompletion, summary: Confirm completion → release escrow, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Released + settled } } }
   /mobility/movers/{id}/cancel:
-    post: { operationId: cancelMoverJob, summary: Cancel + refund, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelMoverJob, summary: Cancel + refund, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' } } }
   /mobility/movers/{id}/rate:
     post:
       operationId: rateMoverJob
@@ -10863,6 +10944,22 @@ paths:
     post: { operationId: moverComplete, summary: Mark provider-complete (awaits customer confirm), tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Awaiting confirmation } } }
 
   # ── Car hire / chauffeur ──────────────────────────────────────────────────────
+  /mobility/car-hire/paystack/initiate:
+    post:
+      operationId: initiateCarHirePaystack
+      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '409': { description: idempotency_conflict } }
+  /mobility/car-hire/paystack/{reference}/status:
+    get:
+      operationId: getCarHirePaystackStatus
+      summary: Poll + self-heal a card-direct car-hire checkout (owner only)
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,bookingId}})' }, '404': { description: unknown_reference } }
   /mobility/car-hire:
     get: { operationId: listCarHire, summary: My car-hire bookings, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
   /mobility/car-hire/quote:
@@ -10870,7 +10967,7 @@ paths:
   /mobility/car-hire/{id}/activate:
     post: { operationId: activateCarHire, summary: Activate a confirmed hire, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Active } } }
   /mobility/car-hire/{id}/cancel:
-    post: { operationId: cancelCarHire, summary: Cancel + refund, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelCarHire, summary: 'Cancel + refund (card-funded: refunded to the card, only before activation; 409 CARD_HIRE_ACTIVE_USE_RETURN afterwards)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled ({ok,status,refund_status: none|refunded|pending|failed})' }, '409': { description: CARD_HIRE_ACTIVE_USE_RETURN } } }
   /mobility/car-hire/book:
     post:
       operationId: bookCarHire
@@ -10882,9 +10979,9 @@ paths:
   /mobility/car-hire/{id}:
     get: { operationId: getCarHire, summary: Booking detail, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Booking } } }
   /mobility/car-hire/{id}/extend:
-    post: { operationId: extendCarHire, summary: Extend (escrow delta), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended } } }
+    post: { operationId: extendCarHire, summary: 'Extend (escrow delta from the wallet; card-funded bookings refused 409 EXTENSION_NOT_AVAILABLE_FOR_CARD)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended }, '409': { description: EXTENSION_NOT_AVAILABLE_FOR_CARD } } }
   /mobility/car-hire/{id}/complete:
-    post: { operationId: completeCarHire, summary: Complete (settle + release deposit), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
+    post: { operationId: completeCarHire, summary: 'Complete (settle + release deposit; card-funded: deposit refunded to the card, re-POSTable)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Completed ({ok,status,deposit_refund_status: none|refunded|pending|failed})' }, '409': { description: CARD_HIRE_NO_DRIVER } } }
 
   # ── Business logistics ────────────────────────────────────────────────────────
   /mobility/business/accounts:
