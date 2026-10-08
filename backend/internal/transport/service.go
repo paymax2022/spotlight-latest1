@@ -47,7 +47,11 @@ type Service struct {
 	insurance        InsuranceBinder    // optional; nil ⇒ parcels book/deliver with no real cover
 	ledger           *ledger.Service    // required for cash-ride driver-wallet fee debits (WithLedger)
 	externalRefunder ExternalRefunder   // optional; nil ⇒ an externally-funded refund logs for manual reconciliation instead of running
-	bus              BusConfig          // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
+	// domainRefunders files one ExternalRefunder per non-ride card-direct domain
+	// ("parcel", later "bus"…), set once at wiring (SetDomainExternalRefunder).
+	// Read-only afterwards, so no lock. See external_funding.go.
+	domainRefunders map[string]ExternalRefunder
+	bus             BusConfig // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly

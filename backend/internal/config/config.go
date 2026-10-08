@@ -249,6 +249,47 @@ type Config struct {
 	// FeatureRestaurantPaystackCheckoutEnabled, ported to ride-hailing's
 	// instant-pricing flow (no offer-mode negotiation).
 	FeatureTransportPaystackCheckoutEnabled bool
+	// FeatureTransportPaystackParcelEnabled gates CARD-DIRECT parcel booking
+	// (transport/paystackcheckout Engine + ParcelDomain): the sender pays by
+	// debit card straight through Paystack, escrowed via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate.
+	// Default OFF. Inert unless FeatureTransportPaystackCheckoutEnabled (the
+	// shared-engine master switch) AND FeatureTransportModesEnabled (parcel
+	// routes) are also on. One flag per service so each lifecycle can be
+	// rolled out / killed independently (ADR-PR522-mobility-card-direct).
+	FeatureTransportPaystackParcelEnabled bool
+	// FeatureTransportPaystackTowingEnabled gates CARD-DIRECT towing / roadside
+	// booking (transport/paystackcheckout Engine + TowingDomain): the user pays by
+	// debit card straight through Paystack, escrowed via settlement.EscrowExternal
+	// — no wallet debit, so no KYC-tier gate. Default OFF. Inert unless
+	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
+	// FeatureTransportModesEnabled (towing routes) are also on. Gates ONLY new
+	// checkouts; confirm / status / refund / reconcile for money already collected
+	// stay live (ADR-PR522-mobility-card-direct H7).
+	FeatureTransportPaystackTowingEnabled bool
+	// FeatureTransportPaystackMoversEnabled gates CARD-DIRECT mover bid acceptance
+	// (transport/paystackcheckout Engine + MoversDomain): the customer pays the
+	// ACCEPTED BID by debit card straight through Paystack, escrowed via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate. Charged at bid
+	// acceptance (the amount is the bid read server-side). Default OFF. Inert unless
+	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
+	// FeatureTransportModesEnabled (mover routes) are also on. Gates ONLY new
+	// checkouts; confirm / status / refund / reconcile for money already collected
+	// stay live (ADR-PR522-mobility-card-direct H7).
+	FeatureTransportPaystackMoversEnabled bool
+	// FeatureTransportPaystackCarHireEnabled gates CARD-DIRECT car hire
+	// (transport/paystackcheckout Engine + CarHireDomain): ONE debit-card charge
+	// = fare + refundable deposit, escrowed as TWO settlements via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate. Cancel
+	// before activation and the deposit on completion go back to the CARD as
+	// exact partial gateway refunds. Extensions stay wallet-only (refused for a
+	// card hire). Default OFF. Inert unless FeatureTransportPaystackCheckoutEnabled
+	// (shared-engine master switch) AND FeatureTransportModesEnabled (car-hire
+	// routes) are also on. Gates ONLY new checkouts; confirm / status / refund /
+	// reconcile for money already collected stay live. Verify the Paystack partial
+	// refund behaviours (ADR "Partial refunds (car hire)", UNVERIFIED list) with
+	// one real test-mode run BEFORE enabling.
+	FeatureTransportPaystackCarHireEnabled bool
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
@@ -816,6 +857,10 @@ func Load() Config {
 		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
 		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
+		FeatureTransportPaystackTowingEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_TOWING_ENABLED", false),
+		FeatureTransportPaystackMoversEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_MOVERS_ENABLED", false),
+		FeatureTransportPaystackCarHireEnabled:       getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CARHIRE_ENABLED", false),
 		FeatureTransportSchedulingEnabled:            getEnvBool("FEATURE_TRANSPORT_SCHEDULING_ENABLED", false),
 		FeatureTransportBusDeferredSettlementEnabled: getEnvBool("FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT", false),
 		FeatureTransportBusLifecycleSweeperEnabled:   getEnvBool("FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER", false),
@@ -1001,6 +1046,17 @@ func (c Config) IsProd() bool {
 	return e == "production" || e == "prod"
 }
 
+// MocksAllowed reports whether mock/fake providers and the public dev signing
+// keys are acceptable. Only development-class environments qualify; staging
+// and production must run real providers.
+func (c Config) MocksAllowed() bool {
+	switch strings.ToLower(strings.TrimSpace(c.AppEnv)) {
+	case "", "development", "dev", "local", "test":
+		return true
+	}
+	return false
+}
+
 // isPlaceholder treats empty values and the common template markers as "unset"
 // so a copied-but-unfilled .env fails validation instead of silently running.
 func isPlaceholder(v string) bool {
@@ -1050,7 +1106,10 @@ func (c Config) Validate() error {
 	require(paymentsOn, "PAYSTACK_SECRET_KEY", c.PaystackSecretKey)
 	prefix(c.PaystackSecretKey, "sk_", "PAYSTACK_SECRET_KEY")
 
-	require(c.FeatureBankTransfersEnabled, "MONNIFY_SECRET_KEY", c.MonnifySecretKey)
+	// Monnify is one optional disbursement provider; Paystack is the default.
+	// Only demand its secret when it is the configured default.
+	require(c.FeatureBankTransfersEnabled && strings.EqualFold(strings.TrimSpace(c.TransferProviderDefault), "monnify"),
+		"MONNIFY_SECRET_KEY", c.MonnifySecretKey)
 
 	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
 	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
@@ -1115,11 +1174,55 @@ func (c Config) Validate() error {
 		problems = append(problems, "MAPS_GOOGLE_KEY is missing while FEATURE_MAPS_ENABLED=true — address lookup will fall back to mock/offline")
 	}
 
+	// Outside development no module may silently run on a mock provider or the
+	// public dev signing key. These are fatal on staging as well as production,
+	// so a mock can never leak past development.
+	var strict []string
+	if !c.MocksAllowed() {
+		validSeed := func(v string) bool {
+			raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v))
+			return !isPlaceholder(v) && err == nil && len(raw) == 32
+		}
+		if c.FeatureAssociationsEnabled && isPlaceholder(c.AssocCardSigningSecret) {
+			strict = append(strict, "ASSOC_CARD_SIGNING_SECRET is required when FEATURE_ASSOCIATIONS_ENABLED=true (membership cards would be signed with the public dev key)")
+		}
+		if c.FeatureArenaEnabled && !(validSeed(c.ArenaSigningSeedTheory) || validSeed(c.ArenaSigningSeedPractical) || validSeed(c.ArenaSigningSeedFirstAid)) {
+			strict = append(strict, "FEATURE_ARENA_ENABLED=true needs at least one valid ARENA_SIGNING_SEED_* (base64 of 32 bytes)")
+		}
+		if (c.FeatureMapsEnabled || c.FeatureTransportEnabled) && isPlaceholder(c.MapsGoogleKey) {
+			strict = append(strict, "MAPS_GOOGLE_KEY is required when Maps/Transport is enabled (otherwise the mock map provider serves fabricated fares)")
+		}
+		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
+			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
+		}
+		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
+			if isPlaceholder(c.PaystackSecretKey) {
+				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
+			}
+		}
+		if c.FeatureAcademyEnabled {
+			switch strings.ToLower(strings.TrimSpace(c.RailsMode)) {
+			case "", "off", "fake":
+				strict = append(strict, "RAILS_MODE must be sandbox or live when FEATURE_ACADEMY_ENABLED=true (fake/off run in-process stubs)")
+			}
+		}
+		if c.FeatureCryptoEnabled {
+			key, base := c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL
+			if c.IsProd() {
+				key, base = c.CryptoQuidaxLiveKey, c.CryptoQuidaxLiveBaseURL
+			}
+			if !strings.EqualFold(strings.TrimSpace(c.CryptoProvider), "quidax") || isPlaceholder(key) || strings.TrimSpace(base) == "" {
+				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
+			}
+		}
+		problems = append(problems, strict...)
+	}
+
 	if len(problems) == 0 {
 		return nil
 	}
 
-	if c.IsProd() {
+	if c.IsProd() || len(strict) > 0 {
 		return fmt.Errorf("config validation failed (%d problem(s)):\n  - %s",
 			len(problems), strings.Join(problems, "\n  - "))
 	}

@@ -2187,6 +2187,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				webhookHandler.SetRideOrderConfirmer(rideOrderConfirmer{svc: rideCheckoutSvc})
 			}
 			log.Println("[transport] Paystack-funded ride checkout wired (FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED)")
+			// Shared card-direct engine + per-service domains (parcel, …) — see
+			// transport_card_direct.go. Each domain has its own flag.
+			wireTransportCardDirect(ctx, cfg, mob, transportSvc, pool, paystackClient, settlementSvcTr, webhookHandler, redisClient)
 		}
 		// Public (unauthenticated) resolve path for a live-share link. A share link
 		// must be openable by someone without an account; the handler returns only
@@ -2531,10 +2534,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			requireUserID(),
 			middleware.PerUserRateLimit(redisClient, "vote-bridge-debit", cfg.ConnectPaidVoteRatePerMin),
 			vbHandler.DebitForVotes)
+		// Reversal is the compensation half of the debit→credit saga — the
+		// Next.js bridge calls it when vote fulfilment fails. A member-JWT
+		// route would let any authenticated user refund their own purchase
+		// AFTER votes landed (money returned, votes kept). Service-token auth
+		// only; the member's user_id travels in the body and the ledger still
+		// enforces that the debit leg sits on that user's own wallet.
+		// RequireServiceToken fails closed (503) when the token is unset.
 		r.POST("/api/finance/vote-bridge/reverse",
-			mapsAuth(),
-			requireUserID(),
-			middleware.PerUserRateLimit(redisClient, "vote-bridge-reverse", cfg.ConnectPaidVoteRatePerMin),
+			middleware.RequireServiceToken(cfg.LedgerServiceToken),
 			vbHandler.ReverseForVotes)
 	}
 

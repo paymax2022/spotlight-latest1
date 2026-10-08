@@ -273,7 +273,7 @@ func writeMoneyError(c *gin.Context, err error) {
 	case errors.Is(err, tiers.ErrDailyLimitExceeded):
 		c.JSON(http.StatusForbidden, gin.H{"error": "daily limit exceeded for your tier"})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "transaction could not be completed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
 	}
 }
 

@@ -16,11 +16,13 @@ import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useTowingEstimate, useBookTowing } from '@/features/mobility/hooks/useModes';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
+import * as towingAPI from '@/features/mobility/api/towing.api';
+import { towingCardDirectResolverRoute } from '@/features/mobility/utils/towingCardDirect';
 import {
   TOWING_SERVICES, TOWING_ISSUES, TOWING_VEHICLE_TYPES, TOWING_ENABLED,
 } from '@/features/mobility/constants/modes.constants';
-import { formatNairaWhole, formatEta } from '@/features/mobility/utils/mobilityFormatters';
+import { formatNairaWhole, formatEta, newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import type { TowingServiceType, TowingIssue, TowingVehicleType, TowingEstimate, Place } from '@/features/mobility/types/modes.types';
 
 const PICKUP: Place = { address: '3rd Mainland Bridge (Lagos-bound)', lat: 6.5, lng: 3.4 };
@@ -45,6 +47,15 @@ export default function TowingHomeScreen() {
   const est: TowingEstimate | undefined = estimate.data;
   // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
+  // Card runs through the genuinely separate, server-initiated Paystack rail
+  // (transport/paystackcheckout, towing domain) — NOT usePurchasePayment's
+  // built-in wallet-top-up-then-spend card rail, which is blocked for Tier-0
+  // users ("Verification needed"). No wallet debit ever occurs on this rail;
+  // the server quotes + verifies the amount. The wallet rail keeps its gate.
+  const paystackCheckout = useGatewayCheckout();
+  useEffect(() => {
+    if (paystackCheckout.error) setSubmitError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
 
   const pickupPlace: Place = pickup;
   const destPlace: Place | null = isRoadside ? null : dest;
@@ -79,6 +90,7 @@ export default function TowingHomeScreen() {
     pay.start({
       amountKobo: est.totalKobo,
       title: 'Pay for tow & rescue',
+      domain: 'towing',
       // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
       charge: () =>
         book.mutateAsync({
@@ -87,6 +99,24 @@ export default function TowingHomeScreen() {
           paymentMethod: 'wallet',
         }),
       onPaid: (job) => router.replace(`/mobility/towing/${job.id}`),
+      // Card → server-initiated Paystack checkout (same shape as parcel).
+      onCard: async () => {
+        await paystackCheckout.start({
+          domain: 'towing',
+          initialize: async () => {
+            const r = await towingAPI.initiateTowingPaystack({
+              serviceType, issue, vehicleType,
+              pickup: pickupPlace, dest: destPlace,
+              idempotencyKey: newIdempotencyKey('towing-paystack'),
+            });
+            if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+            return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+          },
+          onResolved: (res) => {
+            router.replace(towingCardDirectResolverRoute(res.reference) as never);
+          },
+        });
+      },
     });
   };
 
@@ -189,6 +219,8 @@ export default function TowingHomeScreen() {
       )}
       {/* Shared wallet/card chooser — drives the booking charge above. */}
       <PaymentSheet controller={pay} />
+      {/* Hosts the in-app Paystack checkout for the card-direct rail. */}
+      <paystackCheckout.Sheet />
 
       {/* Map + autocomplete address pickers (same as ride booking). */}
       <Modal visible={editingPickup} animationType="slide" onRequestClose={() => setEditingPickup(false)}>

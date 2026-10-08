@@ -3,6 +3,7 @@ import { View, Text, Image, ScrollView, Pressable, StyleSheet, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ImagePlus } from 'lucide-react-native';
+import * as Sentry from '@sentry/react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -16,6 +17,7 @@ import { GROUP_TYPE_OPTIONS } from '@/features/association/constants';
 import { initials } from '@/features/association/utils';
 import { logoError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils';
 import { uploadLogo, LogoUploadsUnavailableError } from '@/features/association/api/logoUpload.api';
+import { LogoUploadError, describeLogoUploadFailure } from '@/features/association/api/logoUploadError';
 import TextInputField from '@/components/TextInputField';
 
 export default function WizardBranding() {
@@ -62,7 +64,19 @@ export default function WizardBranding() {
         setUploadsUnavailable(true);
         setUploadError('Image upload is not available on this server yet — paste a logo URL below instead.');
       } else {
-        setUploadError("That image couldn't be uploaded. Try again, or paste a logo URL instead.");
+        // Say WHICH step failed (preparing the upload / reading the photo /
+        // sending it to storage) and send the same detail to Sentry — the three
+        // look identical to the user and have completely different fixes.
+        const where = describeLogoUploadFailure(err);
+        if (err instanceof LogoUploadError) {
+          Sentry.captureException(err, {
+            tags: { feature: 'association-logo-upload', step: err.step, status: String(err.status ?? 'none') },
+            extra: { code: err.code, cause: String(err.cause ?? '') },
+          });
+        }
+        setUploadError(
+          `That image couldn't be uploaded${where ? ` — failed ${where}` : ''}. Try again, or paste a logo URL instead.`,
+        );
       }
       patch({ logoPreviewUri: null });
     } finally {

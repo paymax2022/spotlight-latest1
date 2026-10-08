@@ -313,6 +313,7 @@ export interface MoverJob {
 
 // CAR HIRE
 export type HireType = 'hourly' | 'daily' | 'airport' | 'event';
+export type CarHireRail = 'card' | 'wallet';
 export type VehicleClass = 'economy' | 'executive' | 'suv' | 'luxury' | 'van';
 
 export type CarHirePhase =
@@ -368,6 +369,12 @@ export interface CarHireBooking {
   paymentStatus: 'escrowed' | 'settled' | 'refunded' | 'failed';
   createdAt: string;
   completedAt: string | null;
+  /** 'card' = paid by card-direct (deposit/refunds go back to the CARD; no extensions). Absent on old servers/mocks = wallet. */
+  fundingRail?: CarHireRail;
+  /** none | held | returning (hire over, refund owed/in flight) | returned (refund sent; the bank may take days). */
+  depositStatus?: 'none' | 'held' | 'returning' | 'returned';
+  /** For a cancelled booking: none | pending | refunded | failed. */
+  refundStatus?: 'none' | 'pending' | 'refunded' | 'failed';
 }
 
 export interface CarHireExtendRequest {
