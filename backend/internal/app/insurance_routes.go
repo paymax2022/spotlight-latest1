@@ -20,6 +20,7 @@ import (
 	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/insurance/gateway"
 	"spotlight/backend/internal/insurance/policy"
+	"spotlight/backend/internal/insurance/providerimport"
 	"spotlight/backend/internal/insurance/reconciliation"
 	"spotlight/backend/internal/insurance/webhooks"
 	"spotlight/backend/internal/middleware"
@@ -277,7 +278,7 @@ func (c commissionRecorder) RecordCommission(ctx context.Context, policyID, prov
 // audit/notifier are the shared sinks the embedded saga's auditSafe/notifySafe
 // fan out to — the immutable audit service and the notifications queue,
 // injected by the orchestrator. Both are nil-safe (nil ⇒ no-op).
-func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, serviceToken string, audit services.AuditService, notifier embedded.Notifier) {
+func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, serviceToken string, audit services.AuditService, notifier embedded.Notifier, providerImport bool) {
 	if pool == nil {
 		log.Println("[insurance-claims] nil pool — skipping insurance claims routes")
 		return
@@ -362,11 +363,41 @@ func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, we
 
 	reconciliation.Register(admin, reconHandler, guard)
 
+	// Read-only mirror of the provider's own policy list (FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED).
+	// Never writes to insurance_policy and never touches the ledger or a wallet.
+	if providerImport {
+		importSvc := providerimport.NewService(mycoverGW.Name(), mycoverSource{c: mycoverGW}, providerimport.NewRepository(pool),
+			func(_ context.Context, actorID, action string, detail map[string]any) {
+				if audit != nil {
+					audit.LogAction(actorID, actorID, action, "insurance", "provider_policy_mirror", "", nil, detail, "", "", "info")
+				}
+			})
+		providerimport.Register(admin, providerimport.NewHandler(importSvc), guard)
+	}
+
 	if webhookGroup != nil {
 		webhooks.Register(webhookGroup, webhookHandler)
 	}
 
 	log.Println("[insurance-claims] routes registered — claims + embedded + webhooks + reconciliation/commission live")
+}
+
+// mycoverSource adapts the MyCover client to providerimport.Source, copying the
+// personal-data-free summary across the package boundary.
+type mycoverSource struct{ c *mycover.Client }
+
+func (m mycoverSource) Configured() bool { return m.c.Configured() }
+
+func (m mycoverSource) ListSummaries(ctx context.Context, page, limit int) ([]providerimport.Summary, int, error) {
+	items, total, err := m.c.ListPolicySummaries(ctx, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]providerimport.Summary, 0, len(items))
+	for _, it := range items {
+		out = append(out, providerimport.Summary(it))
+	}
+	return out, total, nil
 }
 
 // embeddedAuditSink bridges the embedded engine's minimal Auditor slice
