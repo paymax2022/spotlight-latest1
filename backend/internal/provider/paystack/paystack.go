@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"spotlight/backend/go-common/cryptox"
@@ -104,6 +107,16 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 // a caller can never accidentally trigger a full refund by a zero value —
 // callers must pass the exact amount they intend to reverse.
 func (c *Client) RefundPayment(ctx context.Context, reference string, amountKobo int64) (*provider.RefundResult, error) {
+	return c.RefundPaymentNoted(ctx, reference, amountKobo, "")
+}
+
+// RefundPaymentNoted is RefundPayment that also stamps the refund with a
+// merchant note (sent as merchant_note; omitted when empty). A transaction may
+// carry several PARTIAL refunds (car hire: fare then deposit); the note is the
+// caller's per-refund identity, echoed back by LookupRefunds. Paystack has no
+// client idempotency key for refunds, so the note is a hint — the caller's
+// lookup arithmetic (sum of accepted refunds) is what guarantees safety.
+func (c *Client) RefundPaymentNoted(ctx context.Context, reference string, amountKobo int64, note string) (*provider.RefundResult, error) {
 	if amountKobo <= 0 {
 		return nil, fmt.Errorf("paystack: refund amount must be positive, got %d", amountKobo)
 	}
@@ -111,14 +124,19 @@ func (c *Client) RefundPayment(ctx context.Context, reference string, amountKobo
 		"transaction": reference,
 		"amount":      amountKobo,
 	}
+	if note != "" {
+		body["merchant_note"] = note
+	}
 	var resp struct {
 		Status bool `json:"status"`
 		Data   struct {
+			ID          int64 `json:"id"`
 			Transaction struct {
 				Reference string `json:"reference"`
 			} `json:"transaction"`
-			Status string `json:"status"`
-			Amount int64  `json:"amount"`
+			Status       string `json:"status"`
+			Amount       int64  `json:"amount"`
+			MerchantNote string `json:"merchant_note"`
 		} `json:"data"`
 		Message string `json:"message"`
 	}
@@ -126,17 +144,133 @@ func (c *Client) RefundPayment(ctx context.Context, reference string, amountKobo
 		return nil, err
 	}
 	if !resp.Status {
+		if isAlreadyReversedMessage(resp.Message) {
+			return nil, fmt.Errorf("paystack: refund %s: %s: %w", reference, resp.Message, provider.ErrAlreadyReversed)
+		}
 		return nil, fmt.Errorf("paystack: refund %s: %s", reference, resp.Message)
 	}
 	ref := resp.Data.Transaction.Reference
 	if ref == "" {
 		ref = reference
 	}
-	return &provider.RefundResult{
+	// The refund STATUS is part of the answer: Paystack can accept the request
+	// (status:true) and still report the refund itself as failed. That is NOT a
+	// refunded customer. pending/processing/processed are accepted; failed is a
+	// definite non-refund; anything else is returned as-is for the caller to
+	// treat as AMBIGUOUS and resolve by LookupRefund.
+	if strings.EqualFold(resp.Data.Status, provider.RefundStatusFailed) {
+		return nil, fmt.Errorf("paystack: refund %s: %w", reference, provider.ErrRefundFailed)
+	}
+	out := &provider.RefundResult{
 		Reference:  ref,
 		Status:     resp.Data.Status,
 		AmountKobo: resp.Data.Amount,
-	}, nil
+		Note:       resp.Data.MerchantNote,
+	}
+	if resp.Data.ID != 0 {
+		out.ID = strconv.FormatInt(resp.Data.ID, 10)
+	}
+	return out, nil
+}
+
+// isAlreadyReversedMessage recognises Paystack's "this transaction was already
+// (fully) reversed/refunded" answers. A match is NOT proof the earlier refund
+// succeeded — callers must LookupRefund.
+func isAlreadyReversedMessage(msg string) bool {
+	m := strings.ToLower(msg)
+	return (strings.Contains(m, "revers") || strings.Contains(m, "refunded")) &&
+		(strings.Contains(m, "fully") || strings.Contains(m, "already"))
+}
+
+// LookupRefund returns the refund Paystack holds for a transaction reference
+// (GET /refund?reference=…), or (nil, nil) when none exists. When several
+// attempts exist, an accepted (processed/pending/processing) refund wins over a
+// failed one: the customer is refunded if ANY attempt is. Any transport/API
+// error is an error — never "no refund".
+func (c *Client) LookupRefund(ctx context.Context, reference string) (*provider.RefundResult, error) {
+	var resp struct {
+		Status bool `json:"status"`
+		Data   []struct {
+			ID                   int64  `json:"id"`
+			Amount               int64  `json:"amount"`
+			Status               string `json:"status"`
+			TransactionReference string `json:"transaction_reference"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := c.get(ctx, "/refund?perPage=50&reference="+url.QueryEscape(reference), &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("paystack: lookup refund %s: %s", reference, resp.Message)
+	}
+	var best *provider.RefundResult
+	for _, r := range resp.Data {
+		ref := r.TransactionReference
+		if ref == "" {
+			ref = reference
+		}
+		cand := &provider.RefundResult{Reference: ref, Status: r.Status, AmountKobo: r.Amount}
+		if best == nil || (!provider.RefundAccepted(best.Status) && provider.RefundAccepted(cand.Status)) ||
+			(best.Status != provider.RefundStatusProcessed && cand.Status == provider.RefundStatusProcessed) {
+			best = cand
+		}
+	}
+	return best, nil
+}
+
+// maxRefundListPages bounds LookupRefunds' paging: a transaction has a handful of
+// refunds, so a list longer than this is a malformed/hostile answer — an ERROR,
+// never a silently truncated total (a truncated list would under-count accepted
+// refunds and allow an over-refund).
+const maxRefundListPages = 20
+
+// LookupRefunds returns EVERY refund Paystack holds for a transaction
+// (GET /refund?reference=…, all pages), failed attempts included, so a caller
+// issuing several partial refunds can reconcile the accepted total against its
+// own books. An empty list means none; any transport/API error is an error —
+// never "no refunds". An entry whose transaction_reference names a DIFFERENT
+// transaction is an error (it must never be counted against this one).
+func (c *Client) LookupRefunds(ctx context.Context, reference string) ([]provider.RefundResult, error) {
+	var out []provider.RefundResult
+	for page := 1; ; page++ {
+		if page > maxRefundListPages {
+			return nil, fmt.Errorf("paystack: lookup refunds %s: more than %d pages", reference, maxRefundListPages)
+		}
+		var resp struct {
+			Status bool `json:"status"`
+			Meta   struct {
+				PageCount int `json:"pageCount"`
+			} `json:"meta"`
+			Data []struct {
+				ID                   int64  `json:"id"`
+				Amount               int64  `json:"amount"`
+				Status               string `json:"status"`
+				TransactionReference string `json:"transaction_reference"`
+				MerchantNote         string `json:"merchant_note"`
+			} `json:"data"`
+			Message string `json:"message"`
+		}
+		if err := c.get(ctx, fmt.Sprintf("/refund?perPage=100&page=%d&reference=%s", page, url.QueryEscape(reference)), &resp); err != nil {
+			return nil, err
+		}
+		if !resp.Status {
+			return nil, fmt.Errorf("paystack: lookup refunds %s: %s", reference, resp.Message)
+		}
+		for _, r := range resp.Data {
+			if r.TransactionReference != "" && r.TransactionReference != reference {
+				return nil, fmt.Errorf("paystack: lookup refunds %s: refund %d belongs to transaction %q", reference, r.ID, r.TransactionReference)
+			}
+			rr := provider.RefundResult{Reference: reference, Status: r.Status, AmountKobo: r.Amount, Note: r.MerchantNote}
+			if r.ID != 0 {
+				rr.ID = strconv.FormatInt(r.ID, 10)
+			}
+			out = append(out, rr)
+		}
+		if resp.Meta.PageCount <= page || len(resp.Data) == 0 {
+			return out, nil
+		}
+	}
 }
 
 func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest) (*provider.PayoutResponse, error) {

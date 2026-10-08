@@ -196,9 +196,24 @@ type DuesOrderConfirmer interface {
 // intents use (paystackcheckout.referenceFor → "duespay:"+idempotencyKey).
 const DuesOrderReferencePrefix = "duespay:"
 
+// PrefixConfirmer is the GENERIC confirm seam for any module that owns a
+// Paystack reference prefix (Mobility card-direct: "parcelorder:", and every
+// later non-ride Mobility service). Register with RegisterPrefixConfirmer —
+// adding a new prefix needs NO change to this file. Same (any, error) contract
+// as the per-module seams above.
+type PrefixConfirmer interface {
+	OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error)
+}
+
+type prefixConfirmer struct {
+	prefix    string
+	confirmer PrefixConfirmer
+}
+
 // PaystackHandler dispatches inbound Paystack webhooks to the appropriate
 // finance sub-handlers.
 type PaystackHandler struct {
+	prefixConfirmers    []prefixConfirmer // generic prefix-routed confirmers (wiring-time only)
 	payment             provider.PaymentProvider
 	vaSvc               *va.Service
 	xferSvc             *transfers.Service
@@ -211,6 +226,26 @@ type PaystackHandler struct {
 
 func NewPaystackHandler(payment provider.PaymentProvider, vaSvc *va.Service, xferSvc *transfers.Service, walletSvc *wallet.Service) *PaystackHandler {
 	return &PaystackHandler{payment: payment, vaSvc: vaSvc, xferSvc: xferSvc, walletSvc: walletSvc}
+}
+
+// RegisterPrefixConfirmer routes any charge.success whose reference starts
+// with prefix to c (checked before the wallet/VA paths, after the legacy
+// per-module prefixes). Wiring-time only; ignored for an empty prefix or nil.
+func (h *PaystackHandler) RegisterPrefixConfirmer(prefix string, c PrefixConfirmer) {
+	if prefix == "" || c == nil {
+		return
+	}
+	h.prefixConfirmers = append(h.prefixConfirmers, prefixConfirmer{prefix: prefix, confirmer: c})
+}
+
+// PrefixConfirmerPrefixes lists the reference prefixes with a registered
+// generic confirmer (wiring checks / diagnostics).
+func (h *PaystackHandler) PrefixConfirmerPrefixes() []string {
+	out := make([]string, 0, len(h.prefixConfirmers))
+	for _, pc := range h.prefixConfirmers {
+		out = append(out, pc.prefix)
+	}
+	return out
 }
 
 // SetFeesConfirmer injects the EdTech-fees confirmer; called from the
@@ -319,6 +354,25 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		}
 		_, err := h.duesConfirmer.OnChargeSuccess(ctx, d.Reference, d.Reference)
 		return err
+	}
+
+	// Generic prefix-routed confirmers (Mobility card-direct domains).
+	//
+	// A confirmer error is returned to Handle, which answers 200 {ok:false} for
+	// EVERY prefix (see Handle: a non-2xx would make Paystack re-deliver, and the
+	// legacy prefixes above already rely on "always 200" so deterministic failures
+	// such as an unknown reference never retry-storm). Card-direct is consistent
+	// with that and does NOT lean on Paystack's redelivery for transient failures:
+	// the intent row is durable before the charge, the client's status poll
+	// self-heals it, and the engine's reconciliation sweeper
+	// (transport/paystackcheckout.StartReconciler) re-verifies every pending /
+	// processing / refunding intent with the gateway. See
+	// docs/adr/ADR-PR522-mobility-card-direct.md "Resolved after ledger audit" H7.
+	for _, pc := range h.prefixConfirmers {
+		if strings.HasPrefix(d.Reference, pc.prefix) {
+			_, err := pc.confirmer.OnChargeSuccess(ctx, d.Reference, d.Reference)
+			return err
+		}
 	}
 
 	// DVA inbound transfer — credit wallet via VA service.

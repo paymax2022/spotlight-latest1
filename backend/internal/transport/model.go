@@ -82,9 +82,24 @@ type CodedError struct {
 	Status  int
 	Code    string
 	Message string
+	// Details are extra machine-readable fields merged into the error body
+	// (e.g. the reference of an already-open checkout so a client can resume it).
+	Details map[string]any
 }
 
 func (e *CodedError) Error() string { return e.Message }
+
+// Body is the JSON error body: {error, code} plus any Details (which can never
+// override those two keys).
+func (e *CodedError) Body() map[string]any {
+	b := map[string]any{}
+	for k, v := range e.Details {
+		b[k] = v
+	}
+	b["error"] = e.Message
+	b["code"] = e.Code
+	return b
+}
 
 func codedErr(status int, code, msg string) *CodedError {
 	return &CodedError{Status: status, Code: code, Message: msg}

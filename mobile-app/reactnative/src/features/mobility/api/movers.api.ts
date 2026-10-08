@@ -3,6 +3,14 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type { MoverJob, MoverQuoteRequest } from '../types/modes.types';
+import type { CardDirectIntent, CardDirectStatus } from '../utils/cardDirect';
+import {
+  buildMoversCardDirectBody,
+  moversCardDirectStatusPath,
+  MOVERS_CARD_DIRECT_BASE,
+  normalizeMoversStatus,
+  type MoversCardDirectInput,
+} from '../utils/moversCardDirect';
 import {
   makeMoverJob,
   moverStore,
@@ -73,6 +81,60 @@ export async function acceptBid(id: string, bidId: string, idempotencyKey: strin
   }
   return unwrap<MoverJob>(
     await api.post(`${BASE}/mobility/movers/${id}/accept-bid`, { bid_id: bidId }, idemHeader(idempotencyKey)),
+  );
+}
+
+// ── Card-direct (pay the accepted bid by debit card, never the wallet KYC gate) ──
+// backend/internal/transport/paystackcheckout (movers domain). Charged at BID
+// ACCEPTANCE: the server reads the bid's amount itself (this request carries only
+// job_id + bid_id), Paystack collects it, the server re-checks the job/bid and
+// escrows it. If the bid was withdrawn/changed or the move is no longer open when
+// the charge confirms, the charge is refunded. The wallet rail (acceptBid) keeps
+// its KYC gate unchanged.
+
+export type MoverCardDirectIntent = CardDirectIntent;
+export type MoverCardDirectStatus = CardDirectStatus & { moveId?: string };
+
+export async function initiateMoverPaystack(
+  req: MoversCardDirectInput & { idempotencyKey: string },
+): Promise<MoverCardDirectIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    const bid = moverStore.active?.bids.find((b) => b.id === req.bidId);
+    return {
+      reference: `moversorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: bid?.amountKobo ?? 0,
+      status: 'pending',
+    };
+  }
+  return unwrap<MoverCardDirectIntent>(
+    await api.post(
+      `${BASE}${MOVERS_CARD_DIRECT_BASE}/initiate`,
+      buildMoversCardDirectBody(req),
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getMoverPaystackStatus(reference: string): Promise<MoverCardDirectStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    const j = moverStore.active;
+    if (j) {
+      // The mock "charge" funds the first bid the way the wallet mock does.
+      const bid = j.acceptedBid ?? j.bids[0] ?? null;
+      j.acceptedBid = bid ? { ...bid, createdAt: new Date().toISOString() } : null;
+      j.fareKobo = bid?.amountKobo ?? null;
+      j.phase = 'bid_accepted';
+      j.paymentStatus = 'escrowed';
+    }
+    return { reference, status: 'confirmed', amountKobo: j?.fareKobo ?? 0, moveId: j?.id ?? 'mock-move-1' };
+  }
+  return normalizeMoversStatus(
+    unwrap<{ reference: string; status: CardDirectStatus['status']; amountKobo?: number; moveId?: string }>(
+      await api.get(`${BASE}${moversCardDirectStatusPath(reference)}`),
+    ),
   );
 }
 
