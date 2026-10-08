@@ -45,7 +45,18 @@ function normalise(path: string): string {
   return withoutQuery.length > 1 ? withoutQuery.replace(/\/+$/, '') : withoutQuery;
 }
 
-export default function ModuleTabBar({ tabs }: { tabs: readonly ModuleTab[] }) {
+export default function ModuleTabBar({
+  tabs,
+  alsoVisibleOn = [],
+}: {
+  tabs: readonly ModuleTab[];
+  /**
+   * Route prefixes (e.g. '/association/create') whose screens show the bar even
+   * though they are not one of its tabs. No tab is highlighted there. Opt-in per
+   * flow: every other pushed screen keeps the narrow default above.
+   */
+  alsoVisibleOn?: readonly string[];
+}) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const current = normalise(pathname ?? '');
@@ -57,8 +68,14 @@ export default function ModuleTabBar({ tabs }: { tabs: readonly ModuleTab[] }) {
     return exact?.href ?? null;
   }, [tabs, current]);
 
-  // Not one of our destinations — a pushed detail screen. Draw nothing.
-  if (!activeHref) return null;
+  const inOptedInFlow = alsoVisibleOn.some((prefix) => {
+    const p = normalise(prefix);
+    return current === p || current.startsWith(`${p}/`);
+  });
+
+  // Not one of our destinations and not an opted-in flow — a pushed detail
+  // screen. Draw nothing.
+  if (!activeHref && !inOptedInFlow) return null;
 
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
