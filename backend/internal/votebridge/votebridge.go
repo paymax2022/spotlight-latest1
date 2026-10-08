@@ -147,19 +147,25 @@ func (h *Handler) DebitForVotes(c *gin.Context) {
 // ReverseForVotesRequest is the body for POST /api/finance/vote-bridge/reverse.
 // Deliberately carries NO amount — the reversal uses the amount recorded in the
 // ledger for the original debit, so a forged request cannot mint value.
+// The route is service-token authenticated, so the member's id travels in the
+// body; the ledger still proves the debit leg sits on THAT user's own wallet
+// before refunding, so a bridge bug cannot refund one member's money to
+// another's wallet.
 type ReverseForVotesRequest struct {
 	ContestID      string `json:"contest_id" binding:"required"`
 	ContestantID   string `json:"contestant_id" binding:"required"`
+	UserID         string `json:"user_id" binding:"required"`
 	IdempotencyKey string `json:"idempotency_key" binding:"required"`
 }
 
 // ReverseForVotes refunds a vote-bridge debit whose vote credit never landed.
 // The Next.js bridge calls this as the compensation step of the debit→credit
-// saga. Only the caller's own debits are reversible: the handler requires the
-// DEBIT leg on this user's wallet and the matching CREDIT leg on the
+// saga under a SERVICE token — member credentials are deliberately not
+// accepted, or any user could refund a fulfilled purchase and keep the votes.
+// Only the named member's own debit is reversible: the ledger requires the
+// DEBIT leg on that user's wallet and the matching CREDIT leg on the
 // commission account for the same idempotency key.
 func (h *Handler) ReverseForVotes(c *gin.Context) {
-	userID := ginutil.UserID(c)
 	var req ReverseForVotesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
@@ -167,7 +173,7 @@ func (h *Handler) ReverseForVotes(c *gin.Context) {
 	}
 
 	ref := "vote-reversal:" + req.ContestID + ":" + req.ContestantID
-	if err := h.wallet.VoteDebitReverse(c.Request.Context(), userID, ref, req.IdempotencyKey); err != nil {
+	if err := h.wallet.VoteDebitReverse(c.Request.Context(), req.UserID, ref, req.IdempotencyKey); err != nil {
 		if errors.Is(err, wallet.ErrNoVoteDebit) {
 			c.JSON(http.StatusNotFound, gin.H{keyError: "no vote debit found for this idempotency key"})
 			return

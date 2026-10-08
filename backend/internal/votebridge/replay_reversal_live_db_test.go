@@ -132,8 +132,25 @@ func TestLiveDB_DebitForVotes_ReversedReplayRefused(t *testing.T) {
 		t.Fatalf("first debit: status %d body %s", w.Code, w.Body.String())
 	}
 
-	if err := walletSvc.VoteDebitReverse(ctx, uid, "vote-reversal:"+key, key); err != nil {
-		t.Fatalf("reverse: %v", err)
+	// Refund via the service-authenticated handler path — user_id travels in
+	// the body now (member JWTs no longer reach ReverseForVotes).
+	rb, rerr := json.Marshal(ReverseForVotesRequest{
+		ContestID:      "c-" + key[:8],
+		ContestantID:   "k-" + key[:8],
+		UserID:         uid,
+		IdempotencyKey: key,
+	})
+	if rerr != nil {
+		t.Fatalf("marshal reverse body: %v", rerr)
+	}
+	rw := httptest.NewRecorder()
+	rc, _ := gin.CreateTestContext(rw)
+	rc.Request = httptest.NewRequestWithContext(context.Background(),
+		http.MethodPost, "/api/finance/vote-bridge/reverse", bytes.NewReader(rb))
+	rc.Request.Header.Set("Content-Type", "application/json")
+	h.ReverseForVotes(rc)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("reverse: %d %s", rw.Code, rw.Body.String())
 	}
 	reversed, err := walletSvc.VoteDebitReversed(ctx, uid, key)
 	if err != nil || !reversed {
