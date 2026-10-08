@@ -58,6 +58,32 @@ describe('RegistrationApplicantsPage', () => {
     expect(screen.getByText('submitted')).toBeTruthy();
   });
 
+  it('states the module and role being applied for', async () => {
+    mockListRegistrationContests.mockResolvedValue([{ slug: 'open-mic-competition', title: 'Open Mic Competition' }]);
+    mockListRegistrationApplications.mockResolvedValue([makeApplication({ role: 'contestant' })]);
+    render(<RegistrationApplicantsPage />);
+    await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeTruthy());
+    expect(screen.getByRole('columnheader', { name: 'Module' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Role' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('Contest · Open Mic Competition')).toBeTruthy());
+    expect(screen.getByText('contestant')).toBeTruthy();
+  });
+
+  it('points to Merchant Onboarding for role and module applications', async () => {
+    render(<RegistrationApplicantsPage />);
+    const link = await screen.findByRole('link', { name: /merchant onboarding/i });
+    expect(link.getAttribute('href')).toBe('/admin/merchant-onboarding');
+  });
+
+  it('opens pre-filtered when the URL carries ?status=', async () => {
+    window.history.pushState({}, '', '/admin/registration?status=submitted');
+    render(<RegistrationApplicantsPage />);
+    await waitFor(() => {
+      expect(mockListRegistrationApplications).toHaveBeenCalledWith(expect.objectContaining({ status: 'submitted' }));
+    });
+    window.history.pushState({}, '', '/');
+  });
+
   it('an empty contest says so instead of looking broken', async () => {
     render(<RegistrationApplicantsPage />);
     await waitFor(() => {
