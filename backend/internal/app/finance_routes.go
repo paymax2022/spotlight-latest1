@@ -2524,10 +2524,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			requireUserID(),
 			middleware.PerUserRateLimit(redisClient, "vote-bridge-debit", cfg.ConnectPaidVoteRatePerMin),
 			vbHandler.DebitForVotes)
+		// Reversal is the compensation half of the debit→credit saga — the
+		// Next.js bridge calls it when vote fulfilment fails. A member-JWT
+		// route would let any authenticated user refund their own purchase
+		// AFTER votes landed (money returned, votes kept). Service-token auth
+		// only; the member's user_id travels in the body and the ledger still
+		// enforces that the debit leg sits on that user's own wallet.
+		// RequireServiceToken fails closed (503) when the token is unset.
 		r.POST("/api/finance/vote-bridge/reverse",
-			mapsAuth(),
-			requireUserID(),
-			middleware.PerUserRateLimit(redisClient, "vote-bridge-reverse", cfg.ConnectPaidVoteRatePerMin),
+			middleware.RequireServiceToken(cfg.LedgerServiceToken),
 			vbHandler.ReverseForVotes)
 	}
 
