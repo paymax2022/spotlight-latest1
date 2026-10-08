@@ -92,12 +92,16 @@ func (s *Service) VoteDebitAmount(ctx context.Context, idempotencyKey string) (i
 }
 
 // VoteDebitHeldByUser reports whether this caller's own vote-bridge journal
-// already committed under idempotencyKey at exactly amountKobo — BOTH legs
-// verified: a DEBIT on THIS user's wallet (the raw key is in the GLOBAL
-// namespace, so the commission-side amount check alone could adopt another
-// member's debit) and a CREDIT on the commission account. A true replay
-// converges on this; anything else is a foreign/tampered claim.
-func (s *Service) VoteDebitHeldByUser(ctx context.Context, userID, idempotencyKey string, amountKobo int64) (bool, error) {
+// already committed under idempotencyKey at exactly amountKobo — the FULL
+// journal identity verified: a DEBIT on THIS user's wallet carrying the
+// vote-purchase reference and a CREDIT on the commission account. Every
+// dimension is needed: the raw key is in the GLOBAL namespace, so an
+// account+amount check alone could adopt another member's debit, and a
+// reference-blind check could adopt the SAME member's journal from a
+// different module (e.g. a marketplace boost key the payer knows). Only
+// votebridge journals carry "vote:" references. A true replay converges on
+// this; anything else is a foreign/tampered claim.
+func (s *Service) VoteDebitHeldByUser(ctx context.Context, userID, idempotencyKey string, amountKobo int64, reference string) (bool, error) {
 	walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
 	if err != nil {
 		return false, err
@@ -106,7 +110,8 @@ func (s *Service) VoteDebitHeldByUser(ctx context.Context, userID, idempotencyKe
 	if err != nil {
 		return false, err
 	}
-	if !found || debit.AccountID != walletAcc.ID || debit.Type != ledger.EntryDebit || debit.AmountKobo != amountKobo {
+	if !found || debit.AccountID != walletAcc.ID || debit.Type != ledger.EntryDebit ||
+		debit.AmountKobo != amountKobo || debit.Reference != reference {
 		return false, nil
 	}
 	credited, found, err := s.VoteDebitAmount(ctx, idempotencyKey)

@@ -248,4 +248,61 @@ func TestLiveDB_DebitForVotes_ForeignKeyRefused(t *testing.T) {
 	if w2.Code == http.StatusOK {
 		t.Fatalf("foreign key adoption fulfilled votes: %s", w2.Body.String())
 	}
+	if w2.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 for foreign claim, got %d: %s", w2.Code, w2.Body.String())
+	}
+	ab, err := walletSvc.GetBalance(ctx, attacker)
+	if err != nil {
+		t.Fatalf("attacker balance: %v", err)
+	}
+	if ab.BalanceKobo != cost {
+		t.Fatalf("attacker wallet touched: balance=%d want %d", ab.BalanceKobo, cost)
+	}
+}
+
+// Same-user, cross-module journal adoption: the idempotency namespace is
+// global, so a member can replay a key their own OTHER-module debit used
+// (marketplace boost keys are payer-knowable) to fulfil votes against that
+// journal — including journals that were already refunded under their own
+// module prefix. The replay probe must verify the vote-purchase reference,
+// not just account+amount.
+func TestLiveDB_DebitForVotes_CrossModuleJournalRefused(t *testing.T) {
+	pool := mustVotePool(t)
+	ctx := context.Background()
+	walletSvc, h := voteFixture(t, pool)
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+
+	uid := seedVoteUser(t, pool)
+	key := "mkt:boost:" + uuid.NewString()[:8] + ":charge"
+
+	commission, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountCommission)
+	if err != nil {
+		t.Fatalf("commission account: %v", err)
+	}
+
+	if err := walletSvc.Credit(ctx, uid, "funding:"+key, "fund-"+key, voteTestCost); err != nil {
+		t.Fatalf("fund: %v", err)
+	}
+	// The member's own marketplace-boost journal: user_wallet → commission at
+	// the same amount, NON-vote reference — exactly the shape a naive
+	// account+amount probe would adopt.
+	if err := led.Debit(ctx, uid, "mkt:boost:premium:charge", key, commission.ID, voteTestCost); err != nil {
+		t.Fatalf("seed boost journal: %v", err)
+	}
+
+	c, w := voteCtx(t, uid, voteBody(t, key))
+	h.DebitForVotes(c)
+	if w.Code == http.StatusOK {
+		t.Fatalf("cross-module journal adoption fulfilled votes: %s", w.Body.String())
+	}
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 for cross-module claim, got %d: %s", w.Code, w.Body.String())
+	}
+	bal, err := walletSvc.GetBalance(ctx, uid)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if bal.BalanceKobo != 0 {
+		t.Fatalf("wallet touched: balance=%d want 0 (boost debit stands)", bal.BalanceKobo)
+	}
 }

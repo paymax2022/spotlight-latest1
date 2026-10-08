@@ -46,6 +46,35 @@ func NewHandler(walletSvc *wallet.Service) *Handler {
 	return &Handler{wallet: walletSvc}
 }
 
+// finishHeldPurchase converges a request whose vote-purchase journal is
+// already committed for THIS caller at this amount and reference: it verifies
+// the durable reversal marker (a refunded purchase must not re-fulfil) and
+// writes the response. Returns true when a response was written — the caller
+// must return without touching the request again.
+func (h *Handler) finishHeldPurchase(c *gin.Context, userID, idempotencyKey string, costKobo int64, ref string) bool {
+	held, herr := h.wallet.VoteDebitHeldByUser(c.Request.Context(), userID, idempotencyKey, costKobo, ref)
+	if herr != nil {
+		// Fail closed: cannot prove the ledger state either way.
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: errVerifyLedgerState})
+		return true
+	}
+	if !held {
+		return false
+	}
+	reversed, rerr := h.wallet.VoteDebitReversed(c.Request.Context(), userID, idempotencyKey)
+	if rerr != nil {
+		// Fail closed: cannot prove the debit is still held.
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: errVerifyReversalState})
+		return true
+	}
+	if reversed {
+		c.JSON(http.StatusConflict, gin.H{keyError: errPurchaseRefunded})
+		return true
+	}
+	c.JSON(http.StatusOK, DebitForVotesResponse{OK: true, IdempotencyKey: idempotencyKey})
+	return true
+}
+
 // DebitForVotes debits the authenticated user's wallet by cost_kobo.
 // The caller (Next.js bridge) is responsible for crediting votes afterwards
 // via the legacy Spotlight vote service. This endpoint enforces:
@@ -60,55 +89,26 @@ func (h *Handler) DebitForVotes(c *gin.Context) {
 		return
 	}
 
+	// Reference encodes the vote intent for the ledger audit trail.
+	ref := "vote:" + req.ContestID + ":" + req.ContestantID
+
 	// Identity-verified replay check BEFORE the tier/balance gates inside
 	// VoteDebit: the original committed debit already counted against both, so
 	// re-running them wedges a true retry (limit consumed, funds moved on, or
-	// the purchase refunded). Both legs are verified as THIS caller's journal —
-	// the raw key lives in the global namespace, so the commission-side amount
-	// check alone could otherwise adopt another member's debit.
-	held, herr := h.wallet.VoteDebitHeldByUser(c.Request.Context(), userID, req.IdempotencyKey, req.CostKobo)
-	if herr != nil {
-		// Fail closed: cannot prove the ledger state either way.
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: errVerifyLedgerState})
-		return
-	}
-	if held {
-		reversed, rerr := h.wallet.VoteDebitReversed(c.Request.Context(), userID, req.IdempotencyKey)
-		if rerr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{keyError: errVerifyReversalState})
-			return
-		}
-		if reversed {
-			c.JSON(http.StatusConflict, gin.H{keyError: errPurchaseRefunded})
-			return
-		}
-		c.JSON(http.StatusOK, DebitForVotesResponse{OK: true, IdempotencyKey: req.IdempotencyKey})
+	// the purchase refunded). The FULL journal identity is verified — the raw
+	// key lives in the global namespace, so a weaker check could adopt
+	// another member's debit or this member's journal from a different module.
+	if h.finishHeldPurchase(c, userID, req.IdempotencyKey, req.CostKobo, ref) {
 		return
 	}
 
-	// Reference encodes the vote intent for the ledger audit trail.
-	ref := "vote:" + req.ContestID + ":" + req.ContestantID
 	if err := h.wallet.VoteDebit(c.Request.Context(), userID, ref, req.IdempotencyKey, req.CostKobo); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) {
 			// The journal landed between the fast-path probe and the debit
 			// (a racing first attempt) or a foreign claim holds the key. The
 			// same identity-verified check decides: only THIS caller's own
 			// journal at the quoted amount may converge.
-			if held2, herr2 := h.wallet.VoteDebitHeldByUser(c.Request.Context(), userID, req.IdempotencyKey, req.CostKobo); herr2 != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{keyError: errVerifyLedgerState})
-				return
-			} else if held2 {
-				reversed, rerr := h.wallet.VoteDebitReversed(c.Request.Context(), userID, req.IdempotencyKey)
-				if rerr != nil {
-					// Fail closed: cannot prove the debit is still held.
-					c.JSON(http.StatusInternalServerError, gin.H{keyError: errVerifyReversalState})
-					return
-				}
-				if reversed {
-					c.JSON(http.StatusConflict, gin.H{keyError: errPurchaseRefunded})
-					return
-				}
-				c.JSON(http.StatusOK, DebitForVotesResponse{OK: true, IdempotencyKey: req.IdempotencyKey})
+			if h.finishHeldPurchase(c, userID, req.IdempotencyKey, req.CostKobo, ref) {
 				return
 			}
 		}
