@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -66,7 +67,10 @@ func RegisterUtilityBills(
 	}
 
 	environment := vtpass.EnvironmentLive
-	if os.Getenv("VTPASS_ENVIRONMENT") == "sandbox" {
+	// Case-insensitive: VTPASS_ENVIRONMENT=SANDBOX used to silently resolve to
+	// live (the env value never matched the lowercase literal), which fired
+	// sandbox credentials at the live endpoint — a 401 on every purchase.
+	if strings.EqualFold(os.Getenv("VTPASS_ENVIRONMENT"), "sandbox") {
 		environment = vtpass.EnvironmentSandbox
 	}
 	vtpassClient := vtpass.New(
