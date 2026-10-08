@@ -93,6 +93,13 @@ func (h *Handler) GetSession(c *gin.Context) {
 		writeErr(c, err)
 		return
 	}
+	// extracted_fields carries provider-returned PII (full name, DOB, address,
+	// document numbers) — serving it to the member makes this endpoint an
+	// oracle for arbitrary BVN/NIN lookups. It stays in the table for admin
+	// review; members get status/confidence/reason only.
+	for i := range checks {
+		checks[i].ExtractedFields = nil
+	}
 	c.JSON(http.StatusOK, gin.H{"session": sess, "checks": checks})
 }
 
@@ -192,6 +199,9 @@ func (h *Handler) runCheck(c *gin.Context, ct provider.KycCheckType) {
 		writeErr(c, err)
 		return
 	}
+	// extracted_fields carries provider-returned PII — withhold from members
+	// (kept in DB for admin review).
+	ch.ExtractedFields = nil
 	c.JSON(http.StatusAccepted, ch) // 202: may still be PENDING (webhook terminal)
 }
 

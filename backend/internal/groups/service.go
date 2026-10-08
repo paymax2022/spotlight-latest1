@@ -206,6 +206,17 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 		return nil, fmt.Errorf("groups: group wallet not found: %w", err)
 	}
 
+	// Member-scoped replay BEFORE the tier gate: a retry of the SAME member's
+	// key returns the recorded payment — the lookup is scoped to the caller
+	// (same convention as social's paymentByIdem), so another member's payment
+	// under a reused key can never echo back as this member's. The gate runs
+	// after it for the same reason transfers put walletPreflight after replay:
+	// once money moved, re-running the gate can only refuse a request whose
+	// debit already posted — and that error invites a fresh-key double-pay.
+	if p, err := s.paymentByIdem(ctx, memberID, req.IdempotencyKey); err == nil && p != nil {
+		return p, nil
+	}
+
 	// Fail-closed tier / daily-limit gate (iron rule #4): a nil gate refuses all
 	// dues rather than silently debiting unlimited (ErrTierGateUnwired).
 	if s.tiers == nil {
@@ -216,8 +227,31 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	}
 
 	ref := "dues:" + groupID + ":" + req.PlanID
-	if err := s.ledger.Debit(ctx, memberID, ref, req.IdempotencyKey, groupWalletID, plan.AmountKobo); err != nil {
+	// The ledger journal key is namespaced ("groups:dues:"): a caller key can
+	// never be absorbed by a journal posted under another rail's purpose (S2).
+	// DebitWithBalanceCheck's replay check compares only amount under the key,
+	// so a raw caller key used on, say, a transfer with the same amount would
+	// silently no-op the debit while the 'paid' row below recorded success.
+	key := "groups:dues:" + req.IdempotencyKey
+	if err := s.ledger.Debit(ctx, memberID, ref, key, groupWalletID, plan.AmountKobo); err != nil {
 		return nil, fmt.Errorf("groups: pay dues debit: %w", err)
+	}
+
+	// Verify the debit leg actually posted on THIS member's wallet (S2):
+	// compare account + key + amount, not merely key existence. A key
+	// colliding with a same-amount journal on a DIFFERENT account satisfies
+	// the ledger's replay check while posting nothing for this member —
+	// recording 'paid' off that would be a phantom row.
+	wallet, err := s.ledger.GetOrCreateUserWallet(ctx, memberID)
+	if err != nil {
+		return nil, fmt.Errorf("groups: pay dues wallet lookup: %w", err)
+	}
+	posted, ok, err := s.ledger.EntryAmount(ctx, wallet.ID, key+":debit")
+	if err != nil {
+		return nil, fmt.Errorf("groups: pay dues verify: %w", err)
+	}
+	if !ok || posted != plan.AmountKobo {
+		return nil, errors.New("groups: dues replayed under a colliding idempotency key — use a fresh Idempotency-Key")
 	}
 
 	p := &SubscriptionPayment{
@@ -235,8 +269,25 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	const insertPayment = `
 		INSERT INTO group_payments (id, group_id, member_id, plan_id, amount_kobo, status, period_start, period_end, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,'paid',$6,$7,$8)`
-	_, err := s.db.Exec(ctx, insertPayment, p.ID, p.GroupID, p.MemberID, p.PlanID, p.AmountKobo, p.PeriodStart, p.PeriodEnd, p.IdempotencyKey)
+	_, err = s.db.Exec(ctx, insertPayment, p.ID, p.GroupID, p.MemberID, p.PlanID, p.AmountKobo, p.PeriodStart, p.PeriodEnd, p.IdempotencyKey)
 	return p, err
+}
+
+// paymentByIdem returns the dues payment recorded for THIS member under
+// idemKey, or nil when none exists — the caller-scoped replay lookup (S2).
+func (s *Service) paymentByIdem(ctx context.Context, memberID, idemKey string) (*SubscriptionPayment, error) {
+	const q = `SELECT id, group_id, member_id, plan_id, amount_kobo, status, period_start, period_end, idempotency_key, created_at
+	           FROM group_payments WHERE member_id=$1 AND idempotency_key=$2`
+	var p SubscriptionPayment
+	if err := s.db.QueryRow(ctx, q, memberID, idemKey).Scan(
+		&p.ID, &p.GroupID, &p.MemberID, &p.PlanID, &p.AmountKobo, &p.Status,
+		&p.PeriodStart, &p.PeriodEnd, &p.IdempotencyKey, &p.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
 }
 
 func (s *Service) assertRole(ctx context.Context, groupID, userID string, allowed ...MemberRole) error {

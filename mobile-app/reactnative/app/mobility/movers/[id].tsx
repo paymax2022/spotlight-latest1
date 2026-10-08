@@ -16,7 +16,10 @@ import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useMoverJob, useMoverActions } from '@/features/mobility/hooks/useModes';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
+import * as moversAPI from '@/features/mobility/api/movers.api';
+import { moversCardDirectResolverRoute } from '@/features/mobility/utils/moversCardDirect';
+import { newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import { MOVER_PHASE_LABEL, TRUCK_SIZES } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { MoverBid } from '@/features/mobility/types/modes.types';
@@ -31,6 +34,17 @@ export default function MoverJobScreen() {
   // Shared chooser: fund the escrow from wallet OR top up the bid amount via
   // card (Paystack) first. The accept (escrow-fund) charge runs inside `charge`.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof acceptBid.mutateAsync>>>();
+  // Card runs through the genuinely separate, server-initiated Paystack rail
+  // (transport/paystackcheckout, movers domain) — NOT usePurchasePayment's
+  // built-in wallet-top-up-then-spend card rail, which is blocked for Tier-0
+  // customers ("Verification needed"). The charge is the accepted bid, read by
+  // the SERVER; no wallet debit ever occurs on this rail. The wallet rail
+  // (acceptBid) keeps its KYC gate unchanged.
+  const paystackCheckout = useGatewayCheckout();
+  const [cardError, setCardError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (paystackCheckout.error) setCardError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
   const j = job.data;
 
   if (job.isLoading) {
@@ -42,12 +56,32 @@ export default function MoverJobScreen() {
 
   const onAccept = (bid: MoverBid) => {
     if (!id) return;
+    setCardError(null);
     pay.start({
       amountKobo: bid.amountKobo,
       title: 'Fund escrow',
       // Existing accept-bid escrow charge (with its Idempotency-Key) runs unchanged.
       charge: () => acceptBid.mutateAsync({ id, bidId: bid.id }),
       // Job auto-refreshes via polling; nothing else to do on success.
+      // Card → server-initiated Paystack checkout for THIS bid (same shape as
+      // parcel/describe.tsx). Only ids are sent; the server prices it.
+      onCard: async () => {
+        await paystackCheckout.start({
+          domain: 'movers',
+          initialize: async () => {
+            const r = await moversAPI.initiateMoverPaystack({
+              jobId: id,
+              bidId: bid.id,
+              idempotencyKey: newIdempotencyKey('mov-paystack'),
+            });
+            if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+            return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+          },
+          onResolved: (res) => {
+            router.replace(moversCardDirectResolverRoute(res.reference) as never);
+          },
+        });
+      },
     });
   };
   const onConfirm = () => id && confirmCompletion.mutate(id, {
@@ -82,6 +116,7 @@ export default function MoverJobScreen() {
         {j.phase === 'bids_received' && (
           <>
             <Text style={styles.section}>{j.bids.length} bid{j.bids.length !== 1 ? 's' : ''} received</Text>
+            {cardError ? <Text style={styles.cardError}>{cardError}</Text> : null}
             {j.bids.map((bid: MoverBid) => (
               <View key={bid.id} style={[styles.bidCard, shadow1]}>
                 <View style={styles.bidHead}>
@@ -134,6 +169,8 @@ export default function MoverJobScreen() {
 
       {/* Shared wallet/card chooser — funds the escrow on bid acceptance. */}
       <PaymentSheet controller={pay} />
+      {/* Hosts the card-direct Paystack checkout WebView (native). */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }
@@ -160,6 +197,7 @@ const styles = StyleSheet.create({
   escrowRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   escrowText: { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
   progressNote: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, lineHeight: 20 },
+  cardError: { ...Typography.bodyMd, color: Colors.error },
   doneCard: { alignItems: 'center', gap: 6, paddingVertical: Spacing.md },
   doneTitle: { ...Typography.headlineMd, color: Colors.onSurface, marginTop: Spacing.xs },
   doneSub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },

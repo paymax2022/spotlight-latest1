@@ -38,6 +38,15 @@ const ADMIN_API_BASE_URL = process.env.ADMIN_API_BASE_URL || 'http://localhost:8
 const TIMEOUT_MS = Number(process.env.ADMIN_PROXY_TIMEOUT_MS ?? 20_000);
 
 async function forward(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  // The enforce opt-out exists for local dev only. In production it would
+  // attach x-admin-api-key to ANY caller's request — fail loud instead.
+  if (process.env.NODE_ENV === 'production' && !resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
+    return NextResponse.json(
+      { success: false, error: 'ADMIN_MIDDLEWARE_ENFORCE must not be disabled in production.' },
+      { status: 503 },
+    );
+  }
+
   const { path } = await ctx.params;
 
   // The HttpOnly session cookie holds the Supabase access token itself.
@@ -100,7 +109,9 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (stemRole) headers['x-stem-role'] = stemRole;
 
   const method = request.method;
-  const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text();
+  // arrayBuffer, not text(): text() corrupts binary/multipart payloads (U+FFFD
+  // on non-UTF8 bytes) — admin file uploads through this proxy arrived mangled.
+  const body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer();
 
   try {
     const upstream = await fetch(target, {

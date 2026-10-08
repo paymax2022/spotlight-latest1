@@ -323,13 +323,17 @@ type bookingRow struct {
 	PassID    *string
 }
 
-// loadBooking resolves the booking plus its effective estate id. The estate is the
-// booking's explicit estate_id override, else the unit's estate_id reached via
-// realtor_listings → realtor_units.
+// loadBooking resolves the booking plus its estate id, taken ONLY from the
+// unit's estate link (realtor_listings → realtor_units). The booking row's own
+// estate_id column is deliberately NOT consulted: guests hold FOR-ALL UPDATE
+// rights on their booking rows, so b.estate_id is attacker-writable — trusting
+// it let a guest book their own shortlet, overwrite estate_id with a victim
+// estate, and mint a real visitor pass for an estate they have no
+// relationship to.
 func (s *StaysService) loadBooking(ctx context.Context, bookingID string) (*bookingRow, error) {
 	const q = `
 		SELECT b.user_id::TEXT, b.guest_name, b.check_in, b.check_out, b.status,
-		       COALESCE(b.estate_id, u.estate_id)::TEXT AS estate_id,
+		       u.estate_id::TEXT AS estate_id,
 		       b.estate_pass_id::TEXT
 		FROM realtor_shortlet_bookings b
 		JOIN realtor_listings l ON l.id = b.listing_id

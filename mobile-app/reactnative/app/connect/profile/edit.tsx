@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ScrollView, View, Text, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -11,6 +11,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import TextInputField from '@/components/TextInputField';
+import SelectField from '@/components/SelectField';
 import DiscoveryChipRow from '@/features/connect/components/discovery-ChipRow';
 import { useUnifiedProfile, useUpdateModeProfile } from '@/features/connect/profile/hooks';
 import type { ConnectMode, EditProfileInput } from '@/features/connect/profile/types';
@@ -19,6 +20,14 @@ import type { ConnectMode, EditProfileInput } from '@/features/connect/profile/t
 // network profile (and vice-versa).
 const DATE_INTENTS = ['Long-term', 'Casual', 'New friends', 'Not sure'];
 const NETWORK_INTENTS = ['Mentoring', 'Hiring', 'Co-founders', 'Collaborating'];
+const GENDERS = ['Female', 'Male'];
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT - Abuja', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+  'Taraba', 'Yobe', 'Zamfara',
+];
 const INTEREST_OPTIONS = [
   'Design', 'Tech', 'Music', 'Travel', 'Fitness',
   'Food', 'Art', 'Startups', 'Wellness', 'Sports',
@@ -33,6 +42,9 @@ export default function ProfileEdit() {
   const source = mode === 'date' ? data?.dateProfile : data?.networkProfile;
   const intentOptions = mode === 'date' ? DATE_INTENTS : NETWORK_INTENTS;
 
+  const [displayName, setDisplayName] = useState('');
+  const [gender, setGender] = useState('');
+  const [city, setCity] = useState('');
   const [headline, setHeadline] = useState('');
   const [bio, setBio] = useState('');
   const [intent, setIntent] = useState('');
@@ -40,13 +52,16 @@ export default function ProfileEdit() {
 
   // Seed from the loaded profile once available (and re-seed if mode changes).
   useEffect(() => {
-    if (source) {
+    if (source && data) {
+      setDisplayName(data.displayName);
+      setGender(data.gender);
+      setCity(data.city);
       setHeadline(source.headline);
       setBio(source.bio);
       setIntent(source.intent || intentOptions[0]);
       setInterests(source.interests);
     }
-  }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [source, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleInterest = (value: string) => {
     setInterests((prev) =>
@@ -55,7 +70,10 @@ export default function ProfileEdit() {
   };
 
   const onSave = () => {
-    const payload: EditProfileInput = { mode, headline, bio, intent, interests };
+    const payload: EditProfileInput = {
+      mode, headline: headline.trim(), bio: bio.trim(), intent, interests,
+      displayName: displayName.trim(), gender, city,
+    };
     update.mutate(payload, { onSuccess: () => goBack('/connect') });
   };
 
@@ -79,6 +97,52 @@ export default function ProfileEdit() {
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+            <Pressable
+              style={styles.photoRow}
+              accessibilityRole="button"
+              accessibilityLabel="Manage photos"
+              onPress={() => router.push('/connect/profile/photos')}
+            >
+              {data.photoItems[0] ? (
+                <Image source={{ uri: data.photoItems[0].url }} style={styles.photoThumb} />
+              ) : (
+                <View style={[styles.photoThumb, styles.photoThumbEmpty]} />
+              )}
+              <View style={styles.photoRowText}>
+                <Text style={styles.photoRowTitle}>Photos</Text>
+                <Text style={styles.photoRowSub}>
+                  {data.photoItems.length === 0
+                    ? 'Add your first photo'
+                    : `${data.photoItems.length} photo${data.photoItems.length === 1 ? '' : 's'} · tap to manage`}
+                </Text>
+              </View>
+            </Pressable>
+
+            <TextInputField
+              label="Name"
+              value={displayName}
+              onChangeText={setDisplayName}
+              placeholder="Your first name"
+            />
+
+            <SelectField
+              label="Gender"
+              placeholder="Select gender"
+              value={gender}
+              options={GENDERS}
+              onChange={setGender}
+              searchable={false}
+            />
+
+            <SelectField
+              label="Location"
+              placeholder="Select your state"
+              value={city}
+              options={NIGERIAN_STATES}
+              onChange={setCity}
+              searchable
+            />
+
             <TextInputField
               label="Headline"
               value={headline}
@@ -128,7 +192,7 @@ export default function ProfileEdit() {
               label="Save changes"
               onPress={onSave}
               loading={update.isPending}
-              disabled={headline.trim().length === 0}
+              disabled={displayName.trim().length < 2}
             />
           </View>
         </>
@@ -142,6 +206,15 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: 40 },
   bioInput: { minHeight: 110, textAlignVertical: 'top' },
   label: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.sm },
+  photoRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    paddingVertical: Spacing.sm, marginBottom: Spacing.md,
+  },
+  photoThumb: { width: 56, height: 70, borderRadius: 10, backgroundColor: Colors.surfaceContainerHigh },
+  photoThumbEmpty: { borderWidth: 1.5, borderStyle: 'dashed', borderColor: Colors.surfaceContainerHigh },
+  photoRowText: { flex: 1 },
+  photoRowTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  photoRowSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   labelSpaced: { marginTop: Spacing.lg },
   segmentWrap: { marginHorizontal: -Spacing.containerMargin },
   footer: {

@@ -92,7 +92,7 @@ func (s *Service) MarkNotificationRead(ctx context.Context, userID, notification
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errors.New("notification not found")
+			return nil, ErrNotFoundCoded("notification")
 		}
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (s *Service) DeleteNotification(ctx context.Context, userID, notificationID
 	}
 
 	if result.RowsAffected() == 0 {
-		return errors.New("notification not found")
+		return ErrNotFoundCoded("notification")
 	}
 
 	return nil

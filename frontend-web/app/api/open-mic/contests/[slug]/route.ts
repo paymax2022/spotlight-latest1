@@ -1,9 +1,10 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { getContestBySlug, getLeaderboard } from '@/src/server/openmic/persistence';
 
-export async function GET(_request: Request, context: { params: { slug: string } }) {
+export async function GET(_request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
-    const contest = await getContestBySlug(context.params.slug);
+    const { slug } = await context.params;
+    const contest = await getContestBySlug(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     const leaderboard = await getLeaderboard(contest.id);
     // Public leaderboard: strip entrant PII (realName/email/phone/user id) and

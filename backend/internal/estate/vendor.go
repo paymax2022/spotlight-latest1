@@ -230,7 +230,12 @@ func (s *Service) MarkJobComplete(ctx context.Context, estateID, userID, jobID s
 	return s.jobTransition(ctx, estateID, userID, jobID, "completed", []string{"in_progress"}, "completed_at")
 }
 
-// SubmitQuote sets the vendor's quote/agreed amount on a job (own, not yet paid).
+// SubmitQuote sets the vendor's quote on a job (own, not yet paid).
+// CRITICAL: it must NEVER touch amount_kobo — that column is the payout field
+// RequestPayout credits from the shared settlement account, and it is set by
+// the estate admin at AssignJob time. Writing it here let a vendor complete
+// any small assigned job, overwrite amount_kobo with an arbitrary figure, and
+// drain the settlement account with no approval anywhere in the chain.
 func (s *Service) SubmitQuote(ctx context.Context, estateID, userID, jobID string, amountKobo int64) (*VendorJob, error) {
 	if amountKobo < 0 {
 		return nil, errors.New("estate: quote must be non-negative kobo")
@@ -240,7 +245,7 @@ func (s *Service) SubmitQuote(ctx context.Context, estateID, userID, jobID strin
 		return nil, err
 	}
 	row := s.db.QueryRow(ctx,
-		`UPDATE vendor_jobs SET quote_kobo=$4, amount_kobo=$4 WHERE id=$1 AND estate_id=$2 AND vendor_id=$3 AND status <> 'paid' RETURNING `+vendorJobCols,
+		`UPDATE vendor_jobs SET quote_kobo=$4 WHERE id=$1 AND estate_id=$2 AND vendor_id=$3 AND status <> 'paid' RETURNING `+vendorJobCols,
 		jobID, estateID, vendorID, amountKobo)
 	j, err := scanVendorJob(row)
 	if err != nil {

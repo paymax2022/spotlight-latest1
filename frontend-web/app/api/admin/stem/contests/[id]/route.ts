@@ -6,11 +6,12 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function GET(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     await assertStemReadAdmin(request);
-    const contest = await getContestById(context.params.id);
+    const { id } = await context.params;
+    const contest = await getContestById(id);
     if (!contest) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest });
   } catch (error) {
@@ -20,20 +21,21 @@ export async function GET(
 
 export async function PATCH(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const identity = await assertStemAdmin(request);
+    const { id } = await context.params;
     const body = (await request.json().catch(() => null)) as Partial<StemContest>;
     if (!body) return errorResponse('Invalid JSON body', 400);
-    const contest = await updateContest(context.params.id, body, identity.actorId);
+    const contest = await updateContest(id, body, identity.actorId);
     addAuditEvent({
       adminUser: identity.actorId || 'admin',
       role: identity.role,
       action: 'stem_contest_update',
       module: 'stem',
       entityType: 'contest',
-      entityId: context.params.id,
+      entityId: id,
       reason: 'Updated STEM contest',
       newValue: body,
       ipAddress: request.headers.get('x-forwarded-for') || undefined,

@@ -488,9 +488,14 @@ func (s *Service) Deposit(ctx context.Context, userID, idem string, amountKobo i
 // contract as Deposit; the Posted pre-check also keeps a replay from re-running
 // the in-tx balance check, which would refuse a completed withdrawal once the
 // cash has been spent.
-func (s *Service) Withdraw(ctx context.Context, userID, idem string, amountKobo int64, dest string) (*WalletView, error) {
+func (s *Service) Withdraw(ctx context.Context, userID, idem string, amountKobo int64, dest, pin string) (*WalletView, error) {
 	if amountKobo <= 0 {
 		return nil, ErrInvalidOrder
+	}
+	// Bearer + idem alone must not move invest cash to the main wallet — the same
+	// PIN gate Buy/Sell enforce runs before ANY ledger write.
+	if err := s.pin.Verify(ctx, userID, pin); err != nil {
+		return nil, err
 	}
 	if idem == "" {
 		idem = fmt.Sprintf("invwd:%s:%d", userID, s.now().UnixNano())
@@ -918,25 +923,19 @@ func (s *Service) ProcessDueSettlements(ctx context.Context, batch int) (int, er
 	count := 0
 	for i := range due {
 		o := &due[i]
-		if o.Side == SideBuy {
-			cost := int64(o.FilledQuantity * float64(o.ExecutedPriceKobo))
-			if err := s.repo.AddToPosition(ctx, o.UserID, o.StockAssetID, o.Symbol, o.FilledQuantity, o.ExecutedPriceKobo); err != nil {
-				continue
-			}
-			_ = cost
-		} else {
-			net := o.TotalAmountKobo
-			if err := s.il.ReleaseSettlement(ctx, o.UserID, "settle:"+o.ID, "release:"+o.IdempotencyKey, net); err != nil {
-				continue
-			}
-			if err := s.repo.ReducePosition(ctx, o.UserID, o.StockAssetID, o.FilledQuantity, net); err != nil {
+		if o.Side == SideSell {
+			// Keyed release: a retry after the settle-claim tx fails replays as a
+			// no-op, so pending-settlement cash is released at most once.
+			if err := s.il.ReleaseSettlement(ctx, o.UserID, "settle:"+o.ID, "release:"+o.IdempotencyKey, o.TotalAmountKobo); err != nil {
 				continue
 			}
 		}
 		o.SettledAt = ptr.Of(s.now())
-		from := o.Status
 		o.Status = StatusSettled
-		if err := s.repo.UpdateOrder(ctx, o, from, "settled (T+N reached)"); err != nil {
+		// Atomic claim+position mutation: a broker webhook settling the same order
+		// concurrently loses the claim (ErrSettlementClaimed) instead of
+		// double-crediting shares or double-reducing the position.
+		if err := s.repo.SettleOrder(ctx, o, "settled (T+N reached)"); err != nil {
 			continue
 		}
 		count++

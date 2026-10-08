@@ -114,6 +114,7 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/referral-rewards', permissions: ['referral.admin.finance'] },
   { prefix: '/admin/referral', permissions: ['referral.admin.view'] },
 
+  { prefix: '/admin/property-roles', permissions: ['property.roles.review'] },
   { prefix: '/admin/merchant-onboarding', permissions: ['merchant.onboarding.view'] },
   { prefix: '/admin/featured-placement', permissions: ['placement.admin.review'] },
   { prefix: '/admin/nutrition', permissions: ['nutrition.admin.manage'] },

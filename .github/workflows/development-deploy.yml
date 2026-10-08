@@ -1,0 +1,137 @@
+name: Development deploy
+
+# Deploys the BACKEND or FRONTEND-ADMIN of a commit on `main` to the matching
+# DEVELOPMENT Railway service.
+#
+# Why: `railway redeploy` (used by development-module-flags) re-runs the existing
+# build snapshot, so it can never pick up new code, and ci.yml's deploy-development
+# lane only runs from the `develop` branch, which is hundreds of commits behind
+# `main`. This ships what main actually contains, the same way ci.yml does
+# (`railway up` of the service directory), and then proves it is live: the backend
+# must report the commit on /api/v1/public/build; frontend-admin has no build
+# endpoint, so its deployment for this commit must be SUCCESS and the console
+# must answer.
+#
+# ── SAFETY ───────────────────────────────────────────────────────────────────
+# workflow_dispatch only, DEVELOPMENT services only, `DEPLOY` to confirm. The target must be an ancestor of origin/main (i.e. it went through the
+# PR gates), and no check run on it may have failed. A failed Railway deploy
+# keeps the previous deployment serving, so a bad build cannot take Development
+# down; this job still goes red.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Which Development service to deploy'
+        required: true
+        type: choice
+        options: [backend, frontend-admin]
+      confirm:
+        description: 'Type DEPLOY to confirm deploying to Development'
+        required: true
+        type: string
+      ref:
+        description: 'Commit SHA or branch on main to deploy (default: current main)'
+        required: false
+        default: 'main'
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: development-deploy-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy Development ${{ inputs.service }}
+    if: ${{ inputs.confirm == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: ${{ inputs.service }}
+      BACKEND_URL: https://backend-development-502c.up.railway.app
+      ADMIN_URL: https://frontend-admin-development-5a67.up.railway.app
+      GH_TOKEN: ${{ github.token }}
+      REF: ${{ inputs.ref }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_DEVELOPMENT}"'
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Gate - commit is on main and has no failed checks
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          git fetch -q origin main
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main - refusing"; exit 1; }
+          failed=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" --paginate \
+            -q '[.check_runs[] | select(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out")] | length' | paste -sd+ - | bc)
+          echo "  deploying $SHA ($(git log -1 --format=%s | cut -c1-70)); failed check runs: ${failed:-0}"
+          [ "${failed:-0}" = "0" ] || { echo "::error::$failed check run(s) failed on $SHA"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # The Dockerfile reads BUILD_COMMIT and bakes it into the binary, which is
+      # what GET /api/v1/public/build reports.
+      - name: Stamp the build commit (backend image only)
+        if: inputs.service == 'backend'
+        run: printf '%s' "$SHA" > backend/BUILD_COMMIT
+
+      - name: Deploy ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          railway up "$SERVICE" --path-as-root --no-gitignore \
+            --service "$SERVICE" --environment development --project "$PROJECT" \
+            --detach --message "$SHA"
+          for attempt in $(seq 1 60); do
+            status="$(railway deployment list --service "$SERVICE" --environment development --project "$PROJECT" --limit 10 --json \
+              | jq -r --arg m "$SHA" '[.[] | select(.meta.cliMessage == $m)] | first | .status // empty')"
+            echo "  attempt $attempt: ${status:-not-found}"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "::error::Railway deployment ended $status - the previous deployment is still serving. Run development-inspect for the cause."; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "::error::timed out waiting for the deployment"; exit 1
+
+      - name: Confirm the running process is this commit (backend)
+        if: inputs.service == 'backend'
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 20); do
+            got=$(curl -s -m 20 "$BACKEND_URL/api/v1/public/build" | jq -r '.commit // empty' 2>/dev/null)
+            echo "  attempt $i: running ${got:-unreachable}"
+            [ "$got" = "$SHA" ] && { echo "  Development backend is on $SHA"; exit 0; }
+            sleep 15
+          done
+          echo "::error::the running backend did not report $SHA"; exit 1
+
+      # frontend-admin reports no commit, so the deployment for this SHA being
+      # SUCCESS (checked above) is the proof; this confirms the console answers.
+      - name: Confirm the console answers (frontend-admin)
+        if: inputs.service == 'frontend-admin'
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$ADMIN_URL/admin/login")
+            echo "  attempt $i: GET /admin/login -> $code"
+            [ "$code" = "200" ] && { echo "  Development frontend-admin is serving $SHA"; exit 0; }
+            sleep 15
+          done
+          echo "::error::the console did not answer 200 on /admin/login"; exit 1

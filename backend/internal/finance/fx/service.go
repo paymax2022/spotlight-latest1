@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
@@ -45,6 +46,34 @@ type walletDebitLimiter interface {
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("fx: money path requires a tier gate (not wired)")
+
+// ErrQuoteNotFound is returned when a conversion references a quote id that does
+// not exist for this user — or one that is not a uuid at all (a malformed id can
+// never name a row, so it gets the same 404, never a raw driver error → 500).
+var ErrQuoteNotFound = errors.New("fx: quote not found")
+
+// ErrInvalidCurrency is returned when a currency code is not a 3-letter ISO
+// 4217 code. Currency is normalized (trimmed + uppercased) BEFORE the check so
+// 'ngn' and 'NGN' resolve to the same row — the CHECK constraint on
+// currency_wallets.currency would otherwise 500 on 'ZZZ9' and the naive upsert
+// would store a second, lowercase wallet.
+var ErrInvalidCurrency = errors.New("fx: currency must be a 3-letter ISO code")
+
+// normalizeCurrency canonicalises a currency code for storage/lookup.
+func normalizeCurrency(c string) string { return strings.ToUpper(strings.TrimSpace(c)) }
+
+// validCurrency reports whether c is a plausible ISO 4217 alphabetic code.
+func validCurrency(c string) bool {
+	if len(c) != 3 {
+		return false
+	}
+	for _, r := range c {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
 
 // Service manages FX quotes, conversions, and currency wallets.
 type Service struct {
@@ -128,7 +157,15 @@ func (s *Service) recordCommissionSafe(ctx context.Context, grossKobo, feeKobo i
 }
 
 // GetOrCreateCurrencyWallet returns the user's wallet for a currency, creating it if absent.
+// The currency is normalized + validated first: the upsert is idempotent-safe
+// (ON CONFLICT DO NOTHING on (user_id, currency)) but only the canonical
+// uppercase code may ever reach it, so 'ngn'/'NGN' can never split into two
+// wallets and a non-code like 'ZZZ9' is refused before the CHECK constraint.
 func (s *Service) GetOrCreateCurrencyWallet(ctx context.Context, userID, currency string) (*CurrencyWallet, error) {
+	currency = normalizeCurrency(currency)
+	if !validCurrency(currency) {
+		return nil, ErrInvalidCurrency
+	}
 	const upsert = `
 		INSERT INTO currency_wallets (user_id, currency, balance_minor)
 		VALUES ($1, $2, 0)
@@ -379,7 +416,15 @@ func (s *Service) getQuote(ctx context.Context, id, userID string) (*FXQuote, er
 		&fq.ID, &fq.UserID, &fq.ProviderQuoteID, &fq.SourceCurrency, &fq.TargetCurrency,
 		&fq.SourceAmountKobo, &fq.TargetAmountMinor, &fq.Rate, &fq.FeeKobo, &fq.ExpiresAt, &fq.CreatedAt,
 	)
-	return fq, err
+	if err != nil {
+		// Bogus quote_id — a fabricated/expired id or a non-uuid string can
+		// never name this user's quote: 404, not a raw pgx error → 500.
+		if errors.Is(err, pgx.ErrNoRows) || dbutil.SQLState(err) == "22P02" {
+			return nil, ErrQuoteNotFound
+		}
+		return nil, err
+	}
+	return fq, nil
 }
 
 func (s *Service) getConversion(ctx context.Context, id string) (*FXConversion, error) {
@@ -397,6 +442,7 @@ func (s *Service) getConversion(ctx context.Context, id string) (*FXConversion, 
 // only when a ledger post + conversion record commit together (RISK-FX-1/2/3).
 // Upsert semantics mirror GetOrCreateCurrencyWallet.
 func (s *Service) mirrorCurrencyWalletTx(ctx context.Context, tx pgx.Tx, userID, currency string, amountMinor int64) error {
+	currency = normalizeCurrency(currency) // canonical code — never a lowercase twin row
 	const upsert = `
 		INSERT INTO currency_wallets (user_id, currency, balance_minor)
 		VALUES ($1, $2, $3)
@@ -541,6 +587,8 @@ func (h *Handler) Convert(c *gin.Context) {
 		// Tier-limit refusals → 403 (same mapping the transfer rail uses);
 		// an unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
 		switch {
+		case errors.Is(err, ErrQuoteNotFound):
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		case errors.Is(err, ErrTierGateUnwired):
@@ -576,6 +624,10 @@ func (h *Handler) GetWallet(c *gin.Context) {
 	currency := c.Param("currency")
 	w, err := h.svc.GetOrCreateCurrencyWallet(c.Request.Context(), userID, currency)
 	if err != nil {
+		if errors.Is(err, ErrInvalidCurrency) {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}

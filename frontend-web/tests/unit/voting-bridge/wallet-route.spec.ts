@@ -130,19 +130,21 @@ describe('POST /api/v2/votes/wallet', () => {
   });
 
   it('still requires contestId/contestantId/voteCount/idempotencyKey', async () => {
+    // Auth runs BEFORE validation now — an anonymous request can no longer
+    // probe the body contract or trigger any DB work for free.
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-1' } as never);
     const res = await POST(voteRequest({ contestId: 'c' }) as never);
     expect(res.status).toBe(400);
-    expect(vi.mocked(requireRequestUser)).not.toHaveBeenCalled();
   });
 
-  it('rejects non-UUID contestId/contestantId with 400 before any DB or auth work', async () => {
+  it('rejects non-UUID contestId/contestantId with 400 before any DB work', async () => {
     // A malformed id used to sail into the KYC gate / pricing queries and
     // surface as a 500 (Postgres 22P02). It can never match a uuid column.
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-1' } as never);
     const badContestant = await POST(voteRequest({ ...BODY, contestantId: 'not-a-uuid' }) as never);
     expect(badContestant.status).toBe(400);
     const badContest = await POST(voteRequest({ ...BODY, contestId: 'not-a-uuid' }) as never);
     expect(badContest.status).toBe(400);
-    expect(vi.mocked(requireRequestUser)).not.toHaveBeenCalled();
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 

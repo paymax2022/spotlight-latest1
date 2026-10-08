@@ -17,7 +17,7 @@ export const MOCK_CONTEXTS: PropertyContext[] = [
 
 export function mockContextEnvelope(): ContextEnvelope {
   return {
-    activeContext: { type: MOCK_CONTEXTS[0].type, id: MOCK_CONTEXTS[0].id },
+    activeContext: { type: 'estate', id: MOCK_CONTEXTS[0].id },
     contexts:      MOCK_CONTEXTS,
   };
 }

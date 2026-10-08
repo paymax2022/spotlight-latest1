@@ -1,6 +1,10 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"errors"
+	"strings"
+)
 
 // PaymentProvider abstracts a payment gateway (Paystack, Maplerad, etc.).
 type PaymentProvider interface {
@@ -140,7 +144,45 @@ type RefundResult struct {
 	Reference  string
 	Status     string // processed | pending | failed
 	AmountKobo int64
+	// ID is the gateway's own id for THIS refund attempt, and Note the
+	// merchant note it was issued with (partial refunds: "<reference>#<key>").
+	// Both are empty when the gateway/adapter does not return them — callers
+	// must never REQUIRE them (they are belt-and-braces identity, see
+	// transport/paystackcheckout partial refunds).
+	ID   string
+	Note string
 }
+
+// Refund statuses a gateway may report. Accepted = the money is on its way back
+// (or already back); Failed = the gateway definitively did not refund; anything
+// else (needs-attention, unknown) is AMBIGUOUS and must be resolved by lookup,
+// never guessed.
+const (
+	RefundStatusProcessed  = "processed"
+	RefundStatusPending    = "pending"
+	RefundStatusProcessing = "processing"
+	RefundStatusFailed     = "failed"
+)
+
+// RefundAccepted reports whether a refund status means "the customer will be /
+// has been refunded".
+func RefundAccepted(status string) bool {
+	switch strings.ToLower(status) {
+	case RefundStatusProcessed, RefundStatusPending, RefundStatusProcessing:
+		return true
+	}
+	return false
+}
+
+var (
+	// ErrRefundFailed: the gateway answered the refund request with a failed
+	// refund — definitively NOT refunded.
+	ErrRefundFailed = errors.New("provider: refund failed at the gateway")
+	// ErrAlreadyReversed: the gateway says the transaction was already (fully)
+	// reversed — an earlier refund exists. The caller must LOOK UP that refund
+	// to learn whether it succeeded; it is not itself proof either way.
+	ErrAlreadyReversed = errors.New("provider: transaction already reversed at the gateway")
+)
 
 type PayoutRequest struct {
 	RecipientCode  string

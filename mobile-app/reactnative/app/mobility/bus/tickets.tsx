@@ -15,6 +15,7 @@ import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusTickets } from '@/features/mobility/hooks/useModes';
 import { BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { busPhaseTone } from '@/features/mobility/utils/busTicket';
 
 const dt = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -42,7 +43,7 @@ export default function BusTicketsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.routeLabel}>{t.routeLabel}</Text>
                 <Text style={styles.meta}>{dt(t.departAt)} · Seat {t.seatNumber} · {formatNairaWhole(t.fareKobo)}</Text>
-                <View style={styles.badgeRow}><StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={t.phase === 'completed' ? 'success' : t.phase === 'cancelled' || t.phase === 'refunded' ? 'danger' : 'info'} /></View>
+                <View style={styles.badgeRow}><StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={busPhaseTone(t.phase)} /></View>
               </View>
               <ChevronRight size={18} color={Colors.onSurfaceVariant} />
             </Pressable>

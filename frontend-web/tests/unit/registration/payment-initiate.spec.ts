@@ -131,6 +131,7 @@ describe('POST /api/registration/applications/[id]/payment/initiate', () => {
   it('replays the same intent for a repeated Idempotency-Key', async () => {
     store.findRegistrationPaymentIntentByIdempotencyKey.mockResolvedValueOnce({
       id: 'intent-old',
+      applicationId: 'app-1',
       paymentReference: 'SPT-REG-OLD',
       amountKobo: 500_000,
       status: 'initiated',
@@ -139,6 +140,22 @@ describe('POST /api/registration/applications/[id]/payment/initiate', () => {
     const body = await res.json();
 
     expect(body.reference).toBe('SPT-REG-OLD');
+    expect(store.createRegistrationPaymentIntent).not.toHaveBeenCalled();
+    expect(initializePaystackPayment).not.toHaveBeenCalled();
+  });
+
+  it('rejects an Idempotency-Key owned by a different application with 409', async () => {
+    store.findRegistrationPaymentIntentByIdempotencyKey.mockResolvedValueOnce({
+      id: 'intent-foreign',
+      applicationId: 'app-OTHER',
+      paymentReference: 'SPT-REG-FOREIGN',
+      amountKobo: 500_000,
+      status: 'initiated',
+    });
+    const res = await POST(req({ method: 'PAYSTACK', inline: true }), ctx);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(JSON.stringify(body)).not.toContain('SPT-REG-FOREIGN');
     expect(store.createRegistrationPaymentIntent).not.toHaveBeenCalled();
     expect(initializePaystackPayment).not.toHaveBeenCalled();
   });

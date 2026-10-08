@@ -51,10 +51,14 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (contestErr) {
-      // A PostgREST parse error (PGRST1xx) means the supplied slug itself was
-      // malformed — a client error. Any other query error is a real backend
-      // fault; collapsing it into "Contest not found" 404 hides outages.
-      if (/^PGRST1/.test(contestErr.code ?? '')) {
+      // A malformed slug surfaces as a PostgREST request error: PGRST1xx when
+      // the `eq.` operand can't be parsed, and PGRST2xx / SQLSTATE 42601/42703
+      // when a crafted `or`/`and` fragment is instead resolved as logic or an
+      // identifier (e.g. `?contestSlug=' OR 1=1`). All are bad client input →
+      // 400. Any other error is a real backend fault; collapsing it into
+      // "Contest not found" 404 hides outages.
+      const code = contestErr.code ?? '';
+      if (/^PGRST[12]/.test(code) || /^(42601|42703)$/.test(code)) {
         return errorResponse('Invalid contestSlug', 400);
       }
       throw contestErr;

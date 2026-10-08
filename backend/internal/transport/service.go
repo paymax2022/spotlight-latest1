@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/dbutil"
@@ -46,6 +47,11 @@ type Service struct {
 	insurance        InsuranceBinder    // optional; nil ⇒ parcels book/deliver with no real cover
 	ledger           *ledger.Service    // required for cash-ride driver-wallet fee debits (WithLedger)
 	externalRefunder ExternalRefunder   // optional; nil ⇒ an externally-funded refund logs for manual reconciliation instead of running
+	// domainRefunders files one ExternalRefunder per non-ride card-direct domain
+	// ("parcel", later "bus"…), set once at wiring (SetDomainExternalRefunder).
+	// Read-only afterwards, so no lock. See external_funding.go.
+	domainRefunders map[string]ExternalRefunder
+	bus             BusConfig // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly
@@ -85,7 +91,7 @@ func (s *Service) SetExternalRefunder(r ExternalRefunder) { s.externalRefunder =
 // only the DB), so no extra wiring is required at the call site. If a future
 // refactor centralises the tiers service, inject it here and drop this line.
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
-	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps()}
+	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps(), bus: DefaultBusConfig()}
 }
 
 // WithTiers injects a pre-configured tier gate, taking the refactor the comment
@@ -174,6 +180,33 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
 		"transport", sourceRef, userID, sourceRef); err != nil {
 		log.Printf("[transport] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
+}
+
+// ExactCommissionRecorder is the optional exact-fee seam (the app adapter implements
+// it next to RecordFor): the caller's ACTUAL realized platform cut is recorded
+// verbatim instead of re-deriving it from the live rate card.
+type ExactCommissionRecorder interface {
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// recordCommissionExactSafe records the realized profit using platformKobo (the cut
+// the settlement legs really moved) when the recorder supports it, else falls back
+// to the rate-card RecordFor. Best-effort; never affects the caller.
+func (s *Service) recordCommissionExactSafe(ctx context.Context, category, service, subtype string, grossKobo, platformKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	ex, ok := s.commission.(ExactCommissionRecorder)
+	if !ok {
+		s.recordCommissionSafe(ctx, category, service, subtype, grossKobo, sourceRef, userID)
+		return
+	}
+	if err := ex.RecordExact(ctx, category, service, subtype, grossKobo, platformKobo,
+		"transport", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[transport] commission record exact (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
 	}
 }
 
@@ -381,16 +414,24 @@ func (s *Service) transitionPhase(ctx context.Context, tx pgx.Tx, tripID, actorI
 		return codedErr(http.StatusConflict, CodeInvalidState,
 			fmt.Sprintf("illegal trip transition %s → %s", from, to))
 	}
+	var tag pgconn.CommandTag
+	var err error
 	if coarse != "" {
-		_, err := tx.Exec(ctx, `UPDATE trips SET phase=$1, status=$2, updated_at=NOW() WHERE id=$3 AND phase=$4`, string(to), coarse, tripID, string(from))
-		if err != nil {
-			return err
-		}
+		tag, err = tx.Exec(ctx, `UPDATE trips SET phase=$1, status=$2, updated_at=NOW() WHERE id=$3 AND phase=$4`, string(to), coarse, tripID, string(from))
 	} else {
-		_, err := tx.Exec(ctx, `UPDATE trips SET phase=$1, updated_at=NOW() WHERE id=$2 AND phase=$3`, string(to), tripID, string(from))
-		if err != nil {
-			return err
-		}
+		tag, err = tx.Exec(ctx, `UPDATE trips SET phase=$1, updated_at=NOW() WHERE id=$2 AND phase=$3`, string(to), tripID, string(from))
+	}
+	if err != nil {
+		return err
+	}
+	// A stale `from` phase yields a 0-row UPDATE — e.g. the rider's cancel
+	// committed between the caller's loadTrip and this write. Committing
+	// anyway would post the settlement leg anyway (the escrow is still
+	// 'escrowed' until Refund flips it) AND record a phantom event; fail the
+	// tx so the caller rolls back instead.
+	if tag.RowsAffected() == 0 {
+		return codedErr(http.StatusConflict, CodeInvalidState,
+			fmt.Sprintf("trip %s no longer in phase %s", tripID, from))
 	}
 	return s.recordEventTx(ctx, tx, tripID, string(to), actorID, from, to, meta)
 }
@@ -724,11 +765,37 @@ const shareLinkTTL = 2 * time.Hour
 // PricingConfig/app config once a public web base URL is threaded through.
 const shareBaseURL = "https://spotlight.app/track"
 
+// sosRequiresDriver is the pure authz decision for a standalone safety
+// incident: a trip-bound SOS is already gated by trip participation, but an
+// SOS with no trip has no object to authz against, so it must carry the same
+// registered-driver gate every sibling /driver/* route enforces
+// (resolveDriverID). Without it any authenticated user could flood
+// safety_incidents with fake criticals (prod probe, w9-transport).
+func sosRequiresDriver(tripID *string) bool { return tripID == nil }
+
 // CreateIncident records a safety case. SOS-type incidents from a rider/driver
 // also flag the trip's safety_status and move it to safety_hold when active.
 func (s *Service) CreateIncident(ctx context.Context, userID string, incType string, tripID *string, lat, lng *float64, description, severity string) (*SafetyIncident, error) {
 	if severity == "" {
 		severity = "high"
+	}
+	if sosRequiresDriver(tripID) {
+		if _, err := s.resolveDriverID(ctx, userID); err != nil {
+			return nil, err
+		}
+	}
+	// An SOS tied to a trip requires the caller to be a trip participant —
+	// unrestricted, it let ANY signed-in user write incidents against and
+	// force ANY trip into safety_hold, and safety_hold → cancelled refunds
+	// the escrow, so it doubled as a payment-evasion / trip-griefing vector.
+	if tripID != nil && incType == "sos" {
+		riderID, driverUserID, err := s.tripParties(ctx, *tripID)
+		if err != nil {
+			return nil, err
+		}
+		if userID != riderID && (driverUserID == "" || userID != driverUserID) {
+			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not a participant of this trip")
+		}
 	}
 	inc := &SafetyIncident{
 		ID:       uuid.New().String(),
@@ -874,6 +941,12 @@ func (s *Service) AddTrustedContact(ctx context.Context, userID, name, phone str
 }
 
 func (s *Service) DeleteTrustedContact(ctx context.Context, userID, id string) error {
+	// trusted_contacts.id is uuid — a malformed id can never match a row, so
+	// answer not-found (same as a missing id) rather than letting Postgres's
+	// 22P02 syntax error surface as a 500.
+	if _, err := uuid.Parse(id); err != nil {
+		return codedErr(http.StatusNotFound, CodeNotFound, "contact not found")
+	}
 	tag, err := s.db.Exec(ctx, `DELETE FROM trusted_contacts WHERE id=$1 AND user_id=$2`, id, userID)
 	if err != nil {
 		return err

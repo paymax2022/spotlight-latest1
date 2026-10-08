@@ -121,12 +121,22 @@ test.describe('CMS-004 insurance: catalog → policy → claim → payout', () =
     // ── Embedded engine test surface ──────────────────────────────────────
     const events = await goFetch(request, '/api/finance/insurance/embedded/events', { token });
     expect(events.status).toBe(200);
+    // The POST trigger debits a member wallet — it moved off the user-JWT
+    // group to a service-token-only internal route (w8 money-rail fix).
+    // Member POST must not exist; a user Bearer on the internal route must
+    // fail closed before reaching the handler.
     const trigger = await goFetch(request, '/api/finance/insurance/embedded/events', {
       method: 'POST',
       token,
       data: { source_event_id: idemKey('emb'), event_type: 'test.trigger', sum_insured_kobo: 1_000_000 },
     });
-    expect([200, 201, 202, 400, 422, 500]).toContain(trigger.status); // provider-less → accepted or fail-closed
+    expect(trigger.status).toBe(404);
+    const internal = await goFetch(request, '/internal/insurance/embedded/events', {
+      method: 'POST',
+      token,
+      data: { source_event_id: idemKey('emb'), event_type: 'test.trigger', sum_insured_kobo: 1_000_000 },
+    });
+    expect([401, 503]).toContain(internal.status); // 401 bad service token, 503 token unconfigured — both fail-closed
 
     // ── Admin control plane (RBAC-gated reads all live) ───────────────────
     for (const path of [

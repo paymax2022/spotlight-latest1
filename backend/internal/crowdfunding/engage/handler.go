@@ -42,7 +42,7 @@ func (h *Handler) ListTickets(c *gin.Context) {
 
 // GetTicket — GET /support/tickets/:id.
 func (h *Handler) GetTicket(c *gin.Context) {
-	ticket, err := h.svc.GetTicket(c.Request.Context(), c.Param("id"))
+	ticket, err := h.svc.GetTicket(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{keyError: "ticket not found"})
 		return
@@ -73,7 +73,7 @@ func (h *Handler) ReplyTicket(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	ticket, err := h.svc.ReplyTicket(c.Request.Context(), c.Param("id"), in.Body)
+	ticket, err := h.svc.ReplyTicket(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -160,15 +161,6 @@ func (h *internalLedgerHandler) PostJournal(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Robust, redis-independent replay detection: if the balanced pair for this base
-	// key already landed in the ledger of record, report a replay WITHOUT re-posting.
-	// This makes replay uniform across both posting paths (the DebitWithBalanceCheck
-	// ON CONFLICT path returns nil, not ErrDuplicate, on a retry when Redis is absent).
-	if posted, err := h.ledger.Posted(ctx, req.IdempotencyKey); err == nil && posted {
-		c.JSON(http.StatusOK, gin.H{"posted": true, "replay": true})
-		return
-	}
-
 	debitID, err := h.resolveAccount(c, req.DebitAccount, req.UserID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown debitAccount"})
@@ -177,6 +169,27 @@ func (h *internalLedgerHandler) PostJournal(c *gin.Context) {
 	creditID, err := h.resolveAccount(c, req.CreditAccount, req.UserID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown creditAccount"})
+		return
+	}
+
+	// Robust, redis-independent replay detection: if the balanced pair for this
+	// base key already landed in the ledger of record AND carries this exact
+	// journal's identity (account, entry type, reference, amount on BOTH legs),
+	// report a replay WITHOUT re-posting. Key EXISTENCE alone is never proof —
+	// a foreign claim holding the same key for a different journal must answer
+	// 409, or internal consumers would fulfil on phantom money.
+	replay, conflict, err := h.journalReplay(ctx, req.IdempotencyKey, debitID, creditID, req.Reference, req.AmountKobo)
+	if err != nil {
+		log.Printf("[internal-ledger] replay check error (idem=%s): %v", req.IdempotencyKey, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ledger_post_failed"})
+		return
+	}
+	if replay {
+		c.JSON(http.StatusOK, gin.H{"posted": true, "replay": true})
+		return
+	}
+	if conflict {
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_conflict"})
 		return
 	}
 
@@ -204,13 +217,63 @@ func (h *internalLedgerHandler) PostJournal(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"posted": true})
 	case errors.Is(err, ledger.ErrDuplicate):
-		// Ledger reports the idempotency key already posted → replay, not a failure.
-		c.JSON(http.StatusOK, gin.H{"posted": true, "replay": true})
+		// ErrDuplicate is a REJECTION, not proof of a replay: the ledger refuses
+		// a key already held by a DIFFERENT journal (verifyReplay), and a bare
+		// unique-violation/Redis-lock duplicate carries no identity at all.
+		// Re-read both legs — only an identity match is a true replay; anything
+		// else is a foreign claim on the key and must not fulfil.
+		replay, conflict, rerr := h.journalReplay(ctx, req.IdempotencyKey, debitID, creditID, req.Reference, req.AmountKobo)
+		if rerr != nil {
+			log.Printf("[internal-ledger] replay re-check error (idem=%s): %v", req.IdempotencyKey, rerr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ledger_post_failed"})
+			return
+		}
+		if replay {
+			c.JSON(http.StatusOK, gin.H{"posted": true, "replay": true})
+			return
+		}
+		log.Printf("[internal-ledger] idempotency key %s held by a foreign journal (conflict=%v)", req.IdempotencyKey, conflict)
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_conflict"})
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		c.JSON(http.StatusConflict, gin.H{"error": "insufficient_funds"})
 	default:
 		log.Printf("[internal-ledger] post journal error (idem=%s): %v", req.IdempotencyKey, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ledger_post_failed"})
+	}
+}
+
+// journalReplay reads the :debit/:credit legs recorded under baseKey from the
+// ledger of record and reports the replay state:
+//   - replay=true:   both legs exist AND carry this journal's identity (same
+//     account, entry type, reference and amount on each leg) — a true
+//     duplicate, safe to report as already-posted.
+//   - conflict=true: any leg exists for a DIFFERENT journal, or only one leg
+//     exists (a partial/foreign claim that can never verify) — fail closed.
+//   - neither:       the key is unclaimed; the caller may post.
+func (h *internalLedgerHandler) journalReplay(ctx context.Context, baseKey, debitAccountID, creditAccountID, reference string, amountKobo int64) (replay, conflict bool, err error) {
+	matchLeg := func(suffix, accountID string, wantType ledger.EntryType) (found, match bool, err error) {
+		e, found, err := h.ledger.EntryByKey(ctx, baseKey+suffix)
+		if err != nil || !found {
+			return found, false, err
+		}
+		return true, e.AccountID == accountID && e.Type == wantType &&
+			e.Reference == reference && e.AmountKobo == amountKobo, nil
+	}
+	dFound, dMatch, err := matchLeg(":debit", debitAccountID, ledger.EntryDebit)
+	if err != nil {
+		return false, false, err
+	}
+	cFound, cMatch, err := matchLeg(":credit", creditAccountID, ledger.EntryCredit)
+	if err != nil {
+		return false, false, err
+	}
+	switch {
+	case dFound && cFound && dMatch && cMatch:
+		return true, false, nil
+	case !dFound && !cFound:
+		return false, false, nil
+	default:
+		return false, true, nil
 	}
 }
 

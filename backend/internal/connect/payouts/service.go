@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // WalletDebiter debits the creator's wallet and credits the given standing
@@ -132,8 +134,15 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		return nil, err
 	}
 	ref := "connect:payout:" + creatorID
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another creator) would
+	// collide on ledger_entries.idempotency_key and the debit would silently
+	// no-op — parking a payout row with no money behind it. The derived key
+	// keeps a genuine retry a no-op while a foreign claim fails closed.
+	ledgerKey := "connect:payout:" + creatorID + ":" + idemKey
 	// Money mutation — tier-checked, balanced double-entry, idempotent.
-	if err := s.wallet.Debit(ctx, creatorID, ref, idemKey, settleAcc, req.AmountKobo); err != nil {
+	if err := s.wallet.Debit(ctx, creatorID, ref, ledgerKey, settleAcc, req.AmountKobo); err != nil {
 		return nil, err
 	}
 
@@ -146,16 +155,39 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		CreatorID:      creatorID,
 		AmountKobo:     req.AmountKobo,
 		DestinationRef: dest,
-		IdempotencyKey: idemKey,
+		IdempotencyKey: ledgerKey,
 		LedgerRef:      ref,
 	})
+	if err != nil && dbutil.IsUniqueViolation(err) {
+		// The debit committed but a previous attempt already recorded this payout
+		// (crash between ledger commit and row insert): converge on the existing
+		// row — and only when it is THIS payout (same creator + amount). Anything
+		// else under the derived key is a foreign claim and must fail closed.
+		existing, lerr := s.repo.GetByIdempotencyKey(ctx, ledgerKey)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if existing == nil || existing.CreatorID != creatorID || existing.AmountKobo != req.AmountKobo ||
+			(existing.DestinationRef == nil) != (dest == nil) ||
+			(existing.DestinationRef != nil && dest != nil && *existing.DestinationRef != *dest) {
+			return nil, errors.New("connect: duplicate idempotency key held by a different payout")
+		}
+		p = existing
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	// Settlement hook (best-effort): initiate the bank transfer + stamp ref.
+	// The destination always comes from the STORED row — on a converge/replay the
+	// request's destination was verified identical above, so p is authoritative.
 	if s.settler != nil {
-		if settlementRef, serr := s.settler.Settle(ctx, p.ID, creatorID, req.DestinationRef, req.AmountKobo); serr == nil {
+		storedDest := ""
+		if p.DestinationRef != nil {
+			storedDest = *p.DestinationRef
+		}
+		if settlementRef, serr := s.settler.Settle(ctx, p.ID, creatorID, storedDest, p.AmountKobo); serr == nil {
 			_ = s.repo.MarkProcessing(ctx, p.ID, settlementRef)
 			p.Status = "processing"
 			p.SettlementRef = &settlementRef

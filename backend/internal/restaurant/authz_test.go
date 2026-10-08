@@ -48,8 +48,11 @@ func TestAuthorizeStatusChange(t *testing.T) {
 		{"owner→preparing", owner, OrderPreparing, nil},
 		{"owner→ready", owner, OrderReady, nil},
 		{"owner→cancelled", owner, OrderCancelled, nil},
-		// Rider owns pickup only.
-		{"rider→picked_up", rider, OrderPickedUp, nil},
+		// picked_up is NEVER allowed via this endpoint (proof-of-pickup closes the
+		// same bypass class as delivered) — the rider must use ConfirmPickup.
+		{"rider→picked_up blocked", rider, OrderPickedUp, ErrPickedUpViaPickupCode},
+		{"owner→picked_up blocked", owner, OrderPickedUp, ErrPickedUpViaPickupCode},
+		{"customer→picked_up blocked", customer, OrderPickedUp, ErrPickedUpViaPickupCode},
 		// Customer may cancel.
 		{"customer→cancelled", customer, OrderCancelled, nil},
 
@@ -62,14 +65,12 @@ func TestAuthorizeStatusChange(t *testing.T) {
 		{"rider→confirmed forbidden", rider, OrderConfirmed, ErrForbidden},
 		{"rider→ready forbidden", rider, OrderReady, ErrForbidden},
 		{"customer→ready forbidden", customer, OrderReady, ErrForbidden},
-		{"customer→picked_up forbidden", customer, OrderPickedUp, ErrForbidden},
-		{"owner→picked_up forbidden", owner, OrderPickedUp, ErrForbidden},
 		{"rider→cancelled forbidden", rider, OrderCancelled, ErrForbidden},
 
 		// Strangers can do nothing (object-level authZ) — the core S1 fix.
 		{"stranger→confirmed forbidden", stranger, OrderConfirmed, ErrForbidden},
 		{"stranger→ready forbidden", stranger, OrderReady, ErrForbidden},
-		{"stranger→picked_up forbidden", stranger, OrderPickedUp, ErrForbidden},
+		{"stranger→picked_up blocked (POP first)", stranger, OrderPickedUp, ErrPickedUpViaPickupCode},
 		{"stranger→cancelled forbidden", stranger, OrderCancelled, ErrForbidden},
 		{"stranger→delivered blocked (POD first)", stranger, OrderDelivered, ErrDeliveredViaHandoff},
 	}

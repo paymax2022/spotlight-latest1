@@ -46,10 +46,15 @@ export default function RemoteBanner({ slug, onPress, accessibilityLabel, priori
         aspectRatio={aspectRatio}
         alt={accessibilityLabel ?? data.alt}
         onPress={onPress}
+        onError={() => setImageFailed(true)}
         style={style}
       />
     );
   }
+
+  // Resolved but nothing to show (no Cloudinary ID, no R2 URL): render nothing
+  // rather than an empty tinted frame.
+  if (!isLoading && !data?.url) return null;
 
   const body = (
     <View style={[styles.frame, { aspectRatio }, style]}>

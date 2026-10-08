@@ -1,0 +1,184 @@
+name: Ops - copy Railway variables between services
+
+# Copies NAMED variables from one Railway service to another INSIDE the same
+# environment — the values never transit the dispatcher's machine, the input
+# pane, or the log. Same doctrine as ops-railway-vars.yml: values go through
+# stdin only, every value is ::add-mask::ed, and verification prints names +
+# lengths + sha256 prefixes only.
+#
+# USE CASE: a credential was hand-set on the wrong service (e.g. VTPASS_* on
+# `backend` when the live path is `frontend-web`). Instead of pasting the
+# secrets again (input pane = disclosure to repo collaborators), this job
+# reads them inside the runner and writes them to the correct service.
+#
+# extra_vars is for NON-SECRET literals the copy needs alongside — e.g.
+# `VTPASS_ENVIRONMENT=live`. Never put a real secret there: inputs are visible
+# to repo collaborators.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Railway environment'
+        required: true
+        type: choice
+        options: [production, staging, development]
+      source_service:
+        description: 'Service that already holds the variables'
+        required: true
+        type: choice
+        options: [backend, frontend-web, frontend-admin]
+      target_service:
+        description: 'Service to write the variables to'
+        required: true
+        type: choice
+        options: [backend, frontend-web, frontend-admin]
+      keys:
+        description: 'Variable names to copy, one per line'
+        required: true
+        type: string
+      extra_vars:
+        description: 'NON-SECRET KEY=VALUE lines written verbatim to the target (e.g. VTPASS_ENVIRONMENT=live)'
+        required: false
+        type: string
+      confirm:
+        description: 'Type COPY to confirm'
+        required: true
+        type: string
+      restart:
+        description: 'Redeploy the target service afterwards'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-railway-copy-${{ inputs.environment }}-${{ inputs.target_service }}
+  cancel-in-progress: false
+
+jobs:
+  copy-vars:
+    name: copy ${{ inputs.source_service }} -> ${{ inputs.target_service }} (${{ inputs.environment }})
+    if: ${{ inputs.confirm == 'COPY' && inputs.source_service != inputs.target_service }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Resolve the per-environment Railway token
+        env:
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            production)  tok="$TOK_PRODUCTION" ;;
+            staging)     tok="$TOK_STAGING" ;;
+            development) tok="$TOK_DEVELOPMENT" ;;
+            *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
+          esac
+          if [ -z "$tok" ]; then
+            echo "::error::missing repo secret RAILWAY_TOKEN_$(printf '%s' "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')"
+            exit 1
+          fi
+          printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          unset tok
+          echo "  token resolved for $ENVIRONMENT (value never printed)"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # Values are extracted INSIDE the runner from --json (never --kv, which is
+      # what leaked ADMIN_API_KEY before), masked before any downstream tool
+      # could echo them, and piped via --stdin. The log only ever sees key names.
+      - name: Copy named keys + extras to the target service
+        env:
+          KEYS_INPUT: ${{ inputs.keys }}
+          EXTRA_INPUT: ${{ inputs.extra_vars }}
+          SOURCE: ${{ inputs.source_service }}
+          TARGET: ${{ inputs.target_service }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEYS_INPUT" | tr -d '\r' | grep -vE '^\s*(#|$)' > keys.txt
+          railway variable list --service "$SOURCE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > source-vars.json
+          : > vars.txt
+          missing=0
+          while IFS= read -r key; do
+            key="$(printf '%s' "$key" | tr -d '[:space:]')"
+            [ -z "$key" ] && continue
+            if ! printf '%s' "$key" | grep -qE '^[A-Z_][A-Z0-9_]{0,127}$'; then
+              echo "::error::invalid variable name: $key"; exit 1
+            fi
+            value="$(node -e '
+              const v = JSON.parse(require("fs").readFileSync("source-vars.json","utf8"))[process.argv[1]];
+              if (v === undefined) process.exit(3);
+              process.stdout.write(String(v));
+            ' "$key")" || {
+              echo "::error::$key is not set on $SOURCE/$ENVIRONMENT — nothing to copy"; missing=1; continue;
+            }
+            printf '%s=%s\n' "$key" "$value" >> vars.txt
+            echo "  resolved $key from $SOURCE (value never printed)"
+          done < keys.txt
+          [ "$missing" -eq 0 ] || exit 1
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            key="${line%%=*}"
+            if ! printf '%s' "$key" | grep -qE '^[A-Z_][A-Z0-9_]{0,127}$'; then
+              echo "::error::invalid extra variable name: $key"; exit 1
+            fi
+            printf '%s\n' "$line" >> vars.txt
+            echo "  will write literal $key from extra_vars"
+          done <<< "$EXTRA_INPUT"
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in ''|'#'*) continue ;; esac
+            key="${line%%=*}"
+            value="${line#*=}"
+            echo "::add-mask::$value"
+            printf '%s' "$value" | railway variable set "$key" --stdin \
+              --service "$TARGET" --environment "$ENVIRONMENT" --project "$PROJECT" \
+              --skip-deploys
+            echo "  wrote $key -> $TARGET"
+          done < vars.txt
+
+      - name: Verify names + digests match on both services
+        env:
+          KEYS_INPUT: ${{ inputs.keys }}
+          EXTRA_INPUT: ${{ inputs.extra_vars }}
+          SOURCE: ${{ inputs.source_service }}
+          TARGET: ${{ inputs.target_service }}
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SOURCE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > source-vars.json
+          railway variable list --service "$TARGET" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > target-vars.json
+          printf '%s\n' "$KEYS_INPUT" "$EXTRA_INPUT" | tr -d '\r' | grep -vE '^\s*(#|$)' | cut -d= -f1 > keys.txt
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            const src = JSON.parse(fs.readFileSync("source-vars.json","utf8"));
+            const tgt = JSON.parse(fs.readFileSync("target-vars.json","utf8"));
+            const dig = (v) => crypto.createHash("sha256").update(String(v)).digest("hex").slice(0,8);
+            const keys = fs.readFileSync("keys.txt","utf8").split("\n").map((k)=>k.trim()).filter(Boolean);
+            let bad = 0;
+            for (const k of keys) {
+              const tv = tgt[k];
+              if (tv === undefined) { console.log(`  BAD  ${k}: NOT SET on target`); bad++; continue; }
+              const sv = src[k];
+              const mark = (sv !== undefined && sv === tv) ? "match" : "set";
+              console.log(`  OK   ${k}: on target (len ${String(tv).length}, sha256 ${dig(tv)}) [${mark}]`);
+            }
+            if (bad) { console.error(`${bad} key(s) missing on target`); process.exit(1); }
+          '
+
+      - name: Redeploy the target so the new variables take effect
+        if: ${{ inputs.restart }}
+        run: |
+          set -euo pipefail
+          railway redeploy --service "${{ inputs.target_service }}" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+          echo "  redeploy requested for ${{ inputs.target_service }} on $ENVIRONMENT"

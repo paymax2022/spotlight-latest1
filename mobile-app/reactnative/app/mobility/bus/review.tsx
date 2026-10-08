@@ -12,7 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
-import { errKind } from '@/features/mobility/utils/errKind';
+import { busSeatMapErrKind, isValidFareKobo, isBookableSeat, parseSeatNumber } from '@/features/mobility/utils/busTicket';
 import { useBusSeatMap, useBookBus } from '@/features/mobility/hooks/useModes';
 import { newIdempotencyKey, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
@@ -26,9 +26,15 @@ export default function BusReviewScreen() {
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
 
   const fareKobo = seatMap.data?.fareKobo ?? 0;
+  // Never open the payment sheet with a missing / zero fare or an unsendable seat.
+  const canPay = Boolean(scheduleId) && isValidFareKobo(fareKobo) && isBookableSeat(seat);
 
   const onPay = () => {
-    if (!scheduleId) return;
+    if (!scheduleId || !canPay) return;
+    // ONE key per payment attempt, generated here - not inside charge(), which the
+    // payment flow may invoke more than once (retry / after a card top-up). A retried
+    // charge must replay the same booking, never mint a second one.
+    const idempotencyKey = newIdempotencyKey('bus');
     pay.start({
       amountKobo: fareKobo,
       title: 'Pay & issue ticket',
@@ -36,10 +42,10 @@ export default function BusReviewScreen() {
       charge: () =>
         book.mutateAsync({
           scheduleId,
-          seatNumber: String(seat),
+          seatNumber: String(parseSeatNumber(seat)),
           passengerName: String(name),
           passengerPhone: String(phone),
-          idempotencyKey: newIdempotencyKey('bus'),
+          idempotencyKey,
         }),
       onPaid: (ticket) => router.replace(`/mobility/bus/ticket/${ticket.id}`),
     });
@@ -57,7 +63,7 @@ export default function BusReviewScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Review booking" />
-        <MobilityEdgeState kind={errKind(seatMap.error)} actionLabel="Retry" onAction={() => seatMap.refetch()} />
+        <MobilityEdgeState kind={busSeatMapErrKind(seatMap.error)} actionLabel="Retry" onAction={() => seatMap.refetch()} />
       </SafeAreaView>
     );
   }
@@ -80,7 +86,8 @@ export default function BusReviewScreen() {
           <Text style={styles.fareLabel}>Total</Text>
           <Text style={styles.fareValue}>{formatNairaWhole(fareKobo)}</Text>
         </View>
-        <PrimaryButton label="Pay & issue ticket" onPress={onPay} loading={book.isPending} />
+        <PrimaryButton label="Pay & issue ticket" onPress={onPay} loading={book.isPending} disabled={!canPay} />
+        {!canPay ? <Text style={styles.errText}>We couldn't confirm the fare or seat for this trip. Go back and pick your seat again.</Text> : null}
       </View>
 
       {/* Shared wallet/card chooser — drives the booking charge above. */}

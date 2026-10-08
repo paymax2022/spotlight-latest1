@@ -97,7 +97,7 @@ export default function ProfileView() {
             <View style={styles.nameRow}>
               <Text style={styles.name}>
                 {data.displayName}
-                <Text style={styles.age}>, {data.age}</Text>
+                {data.age > 0 ? <Text style={styles.age}>, {data.age}</Text> : null}
               </Text>
               <View style={styles.modeBadge}>
                 <ModeIcon size={13} color={ConnectColors.brand} strokeWidth={2.2} />
@@ -105,13 +105,18 @@ export default function ProfileView() {
               </View>
             </View>
 
+            {data.city || data.gender ? (
+              <Text style={styles.headline}>{[data.gender, data.city].filter(Boolean).join(' · ')}</Text>
+            ) : null}
             {profile.headline ? <Text style={styles.headline}>{profile.headline}</Text> : null}
 
-            <View style={styles.intentPill}>
-              <Text style={styles.intentText}>
-                {mode === 'date' ? `Looking for ${profile.intent}` : profile.intent}
-              </Text>
-            </View>
+            {profile.intent ? (
+              <View style={styles.intentPill}>
+                <Text style={styles.intentText}>
+                  {mode === 'date' ? `Looking for ${profile.intent}` : profile.intent}
+                </Text>
+              </View>
+            ) : null}
 
             <View style={styles.badgesWrap}>
               <DiscoveryVerifiedBadges flags={flags} />

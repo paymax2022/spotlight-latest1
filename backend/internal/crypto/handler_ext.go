@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"net/http"
+	"os"
 	"spotlight/backend/go-common/ginutil"
 	"strings"
 
@@ -267,8 +268,15 @@ func (h *Handler) Withdrawal(c *gin.Context) {
 
 // ConfirmWithdrawal POST /withdrawals/:id/confirm (broadcast → confirmed).
 // This is the reconciliation/provider-webhook seam, exposed as an owner action for
-// the mock provider so the terminal state is reachable end-to-end.
+// the mock provider so the terminal state is reachable end-to-end. It is DISABLED
+// whenever a real custody provider is wired (CRYPTO_CUSTODY_WEBHOOK_SECRET set):
+// with a real provider, only the custody webhook may mark a broadcast confirmed —
+// a member's word would burn the parked-units marker ahead of the on-chain event.
 func (h *Handler) ConfirmWithdrawal(c *gin.Context) {
+	if os.Getenv(custodyWebhookSecretEnv) != "" {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "not found"})
+		return
+	}
 	var req struct {
 		TxHash string `json:"tx_hash"`
 	}

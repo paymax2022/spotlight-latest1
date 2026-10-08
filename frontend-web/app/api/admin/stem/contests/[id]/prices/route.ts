@@ -5,13 +5,14 @@ import type { StemPriceCategory } from '@/src/features/stem/types';
 
 export async function POST(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     await assertStemAdmin(request);
+    const { id } = await context.params;
     const body = (await request.json().catch(() => null)) as Partial<StemPriceCategory>;
     if (!body) return errorResponse('Invalid JSON body', 400);
-    const priceCategory = await addPriceCategory(context.params.id, body);
+    const priceCategory = await addPriceCategory(id, body);
     return successResponse({ success: true, priceCategory }, 201);
   } catch (error) {
     return handleApiError(error, 'Failed to create STEM price category');

@@ -533,6 +533,27 @@ jobs:
           probe "/api/finance/associations"
           probe "/api/v1/marketplace/my-listings"
           probe "/api/finance/wallet/balance"
+          echo "  --- utility rail (read-only + provider validate; no purchase) ---"
+          probe "/api/v1/utility/categories"
+          probe "/api/v1/utility/billers?category=airtime"
+          probe "/api/v1/utility/billers?category=electricity"
+          # Exercise the configured biller adapter end-to-end WITHOUT spending:
+          # POST /validate hits the provider's merchant-verify (VTPass
+          # verify). A bogus meter against an electricity biller returns a
+          # business "invalid meter" when the credentials authenticate — and a
+          # provider auth error when they don't, which is exactly the signal
+          # we need to tell "keys rejected" from "provider reachable".
+          EBILLER_ID="$(node -e 'try{const j=JSON.parse(require("fs").readFileSync("/tmp/body","utf8"));const b=(j.billers||j.data||[])[0]||{};process.stdout.write(String(b.id||b.biller_id||""))}catch{process.stdout.write("")}')"
+          if [ -n "$EBILLER_ID" ]; then
+            out="$(curl -s -o /tmp/vbody -w "%{http_code} %{time_total}s" -X POST \
+              -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+              --max-time 45 "$WEB_BASE/api/v1/utility/validate" \
+              -d "{\"category\":\"electricity\",\"biller_id\":\"$EBILLER_ID\",\"customer_reference\":\"00000000000\",\"meter_type\":\"prepaid\"}")"
+            vbody="$(head -c 260 /tmp/vbody | tr '\n' ' ')"
+            printf "  %-62s -> %s  %s\n" "POST /api/v1/utility/validate (bogus meter)" "$out" "$vbody"
+          else
+            echo "  (no electricity biller in catalog — validate probe skipped)"
+          fi
           echo "  --- cleanup ---"
           node -e '
             const [url,key,id]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];

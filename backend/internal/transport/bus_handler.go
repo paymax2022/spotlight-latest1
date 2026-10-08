@@ -66,11 +66,55 @@ func (h *Handler) BusTicketCancel(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
-	if err := h.svc.CancelBusTicket(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+	res, err := h.svc.CancelBusTicket(c.Request.Context(), c.Param("id"), userID, req.Reason)
+	if err != nil {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
+	// 200 only when the money is back (or nothing was owed); 202 while a refund
+	// is still pending/failed - never a success that the wallet does not reflect.
+	c.JSON(res.HTTPStatus(), gin.H{
+		"ok": true, "status": res.Status, "refund_status": res.RefundStatus,
+		"refunded_kobo": res.RefundedKobo, "message": res.Message,
+	})
+}
+
+// BusTicketGet returns one of the caller's tickets (owner-only).
+func (h *Handler) BusTicketGet(c *gin.Context) {
+	t, err := h.svc.BusTicketDetail(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, t)
+}
+
+// BusProviderScheduleCancel cancels one of the caller's schedules and refunds
+// every active ticket (idempotent, resumable).
+func (h *Handler) BusProviderScheduleCancel(c *gin.Context) {
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	res, err := h.svc.CancelProviderSchedule(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.Reason)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// AdminBusCancelSchedule cancels a schedule and refunds every active ticket (audited).
+func (h *AdminHandler) AdminBusCancelSchedule(c *gin.Context) {
+	var req struct {
+		Reason string `json:"reason"`
+		Force  bool   `json:"force"` // allow cancelling past the departure time (audited)
+	}
+	_ = c.ShouldBindJSON(&req)
+	res, err := h.svc.CancelBusSchedule(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.Reason, req.Force)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }
 
 // BusSearch returns bookable interstate trips (state pair / provider filters).

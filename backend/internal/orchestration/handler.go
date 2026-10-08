@@ -150,7 +150,19 @@ func (h *Handler) InboundWebhook(c *gin.Context) {
 		return
 	}
 	// Normalize into the unified ledger (idempotent), then acknowledge.
-	_ = h.svc.HandleProviderEvent(c.Request.Context(), prov, payload)
+	// Permanent refusals (APIError: missing event id, currency mismatch, bad
+	// amount) are acknowledged — a retry would refuse identically. Transient
+	// failures (store errors, refund failures) return 5xx so the provider
+	// redelivers instead of the deposit/refund being silently dropped.
+	if err := h.svc.HandleProviderEvent(c.Request.Context(), prov, payload); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			c.JSON(http.StatusOK, gin.H{"received": true, "refused": apiErr.Code})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"received": false, "error": "processing failed — retry"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"received": true})
 }
 

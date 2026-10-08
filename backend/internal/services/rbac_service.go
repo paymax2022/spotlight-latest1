@@ -179,6 +179,23 @@ func (s *rbacService) DeletePermission(permissionID string) error {
 	return s.repo.DeletePermission(permissionID)
 }
 func (s *rbacService) AssignRoleToUser(userID, roleID, scopeType, scopeID, assignedBy string) error {
+	role, err := s.repo.GetRole(roleID)
+	if err != nil {
+		return err
+	}
+	// super-admin is the highest-privilege grant in the system: never allow an
+	// actor to grant it to themselves, and only let an existing super-admin
+	// extend it — otherwise any actor holding 'users.roles.assign' can mint a
+	// new super-admin at will.
+	if role.Slug == "super-admin" {
+		if userID == assignedBy {
+			return errors.New("super-admin cannot be self-assigned")
+		}
+		roles, _ := s.repo.GetUserRoles(context.Background(), assignedBy)
+		if !slices.Contains(roles, "super-admin") {
+			return errors.New("super-admin can only be granted by a super admin")
+		}
+	}
 	return s.repo.AssignRoleToUser(userID, roleID, scopeType, scopeID, assignedBy)
 }
 func (s *rbacService) RemoveRoleFromUser(actorUserID, userID, roleID string) error {

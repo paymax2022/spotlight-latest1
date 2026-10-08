@@ -155,7 +155,8 @@ export function useDeposit() {
 export function useWithdraw() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (amountKobo: number) => invest.withdrawFromWallet(amountKobo, newIdempotencyKey('wd')),
+    mutationFn: ({ amountKobo, pin }: { amountKobo: number; pin: string }) =>
+      invest.withdrawFromWallet(amountKobo, newIdempotencyKey('wd'), pin),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'wallet'] });
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });

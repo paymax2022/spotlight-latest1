@@ -155,7 +155,7 @@ async function claimUtilityForSettlement(
     .update({ status: 'failed', failure_reason: reason, updated_at: new Date().toISOString() })
     .eq('id', transaction.id)
     .eq('updated_at', transaction.updated_at)
-    .in('status', ['initiated', 'wallet_debited', 'provider_pending'])
+    .in('status', ['initiated', 'wallet_debited', 'provider_pending', 'disputed'])
     .select('*');
   return ((claimed ?? [])[0] ?? null) as UtilityTransactionRow | null;
 }
@@ -894,6 +894,13 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     .maybeSingle();
   if (existing) {
     const existingRow = existing as UtilityTransactionRow;
+    // The key exists but belongs to a DIFFERENT member — returning the row
+    // would leak their transaction (electricity token, meter/phone reference,
+    // amount). Mirror the Go rail + transfers: a foreign key is a 409, never
+    // a replay.
+    if (existingRow.user_id !== userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
     // AUD-BILL-005: a non-terminal row means the original request died
     // mid-flight (or is still running — the recovery age gate leaves those
     // alone). Attempt recovery so a same-key retry converges the transaction
@@ -992,7 +999,13 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         .select('*')
         .eq('idempotency_key', input.idempotencyKey)
         .maybeSingle();
-      if (duplicate) return { alreadyProcessed: true, transaction: duplicate as UtilityTransactionRow };
+      if (duplicate) {
+        const dupRow = duplicate as UtilityTransactionRow;
+        if (dupRow.user_id !== userId) {
+          throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+        }
+        return { alreadyProcessed: true, transaction: dupRow };
+      }
     }
     console.error('[utility] failed to create utility transaction:', insertError);
     throw new ApiError('Failed to create utility transaction', 500);
@@ -1111,6 +1124,18 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         attempt_number: index + 1,
         raw_error: error instanceof Error ? error.message : String(error),
       });
+      // An ambiguous thrown error can mean the provider ACCEPTED the vend but
+      // the response was lost (connection reset after send, or a post-vend
+      // bookkeeping write that threw). Continuing the walk would send a
+      // second vend on one debit — mirror the Go plane: hold pending, let
+      // requery/recovery resolve it.
+      providerResult = {
+        status: 'pending',
+        message: lastProviderError,
+        raw: { ambiguous_attempt_error: true },
+      };
+      fulfilledRoute = candidate;
+      break;
     }
   }
 
@@ -1564,8 +1589,16 @@ export async function adminGetUtilityTransaction(transactionId: string) {
   return data as UtilityTransactionRow;
 }
 
-export async function adminResolveUtilityDispute(transactionId: string, status: 'resolved' | 'rejected', resolutionNote: string) {
+export async function adminResolveUtilityDispute(transactionId: string, status: 'resolved' | 'rejected' | 'refunded', resolutionNote: string) {
   const supabase = createAdminClient();
+  // 'refunded' is the customer-favourable outcome: the vend reported success but
+  // delivery failed, so the debit is returned through the shared reversal path
+  // (claim + money-leg probe + reversal/credit legs). If it throws, the dispute
+  // row stays open rather than recording a refund that never posted.
+  if (status === 'refunded') {
+    const transaction = await adminGetUtilityTransaction(transactionId);
+    await reverseUtilityTransaction(transaction, `Dispute refund: ${resolutionNote}`);
+  }
   const { data, error } = await supabase
     .from('utility_disputes')
     .update({ status, resolution_note: resolutionNote, updated_at: new Date().toISOString() })

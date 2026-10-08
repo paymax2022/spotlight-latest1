@@ -90,7 +90,13 @@ func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey 
 		return fmt.Errorf("connect: record grant txn: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return tx.Commit(ctx) // duplicate key — already granted, idempotent no-op
+		// Duplicate key is a REJECTION, not proof this grant replayed — a foreign
+		// claim on the same key (different user/type/delta) must fail closed rather
+		// than silently absorbing another credit mutation.
+		if err := s.verifyCreditTxnReplay(ctx, tx, idempotencyKey, userID, creditType, amount); err != nil {
+			return err
+		}
+		return tx.Commit(ctx) // true replay — already granted, idempotent no-op
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO connect_credits (user_id, credit_type, balance) VALUES ($1::uuid,$2,$3)
@@ -128,7 +134,13 @@ func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKe
 		return fmt.Errorf("connect: record consume txn: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return tx.Commit(ctx) // already consumed under this key — idempotent success
+		// Duplicate key is a REJECTION, not proof this spend replayed — a foreign
+		// claim on the same key must fail closed rather than silently absorbing
+		// another credit mutation.
+		if err := s.verifyCreditTxnReplay(ctx, tx, idempotencyKey, userID, creditType, -amount); err != nil {
+			return err
+		}
+		return tx.Commit(ctx) // already consumed under this key — verified idempotent
 	}
 
 	// Guarded decrement: only succeeds if enough balance. Under concurrency the row
@@ -146,6 +158,24 @@ func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKe
 		return ErrInsufficientCredits
 	}
 	return tx.Commit(ctx)
+}
+
+// verifyCreditTxnReplay runs when an idempotent insert hit an existing txn row.
+// A duplicate is a true replay ONLY when the recorded row is the same mutation —
+// same user, credit_type and signed delta. Anything else under the key is a
+// foreign claim and must fail closed.
+func (s *Service) verifyCreditTxnReplay(ctx context.Context, tx pgx.Tx, key, userID, creditType string, delta int64) error {
+	var u, t string
+	var d int64
+	if err := tx.QueryRow(ctx,
+		`SELECT user_id::text, credit_type, delta FROM connect_credit_txns WHERE idempotency_key = $1`,
+		key).Scan(&u, &t, &d); err != nil {
+		return fmt.Errorf("connect: verify credit txn replay: %w", err)
+	}
+	if u != userID || t != creditType || d != delta {
+		return fmt.Errorf("connect: idempotency key held by a different credit transaction")
+	}
+	return nil
 }
 
 // Handler exposes the member-facing credit balance read. Consumption is invoked

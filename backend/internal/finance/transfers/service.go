@@ -271,19 +271,34 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 		return nil, fmt.Errorf("transfers: advisory lock: %w", err)
 	}
 
-	senderBalance, err := s.ledger.GetBalance(ctx, senderID)
-	if err != nil {
-		return nil, err
-	}
-	total := req.AmountKobo + fee
-	if senderBalance < total {
-		return nil, ledger.ErrInsufficientFunds
-	}
-
 	senderAcc, err := s.ledger.GetOrCreateUserWallet(ctx, senderID)
 	if err != nil {
 		return nil, err
 	}
+	// Cross-plane serialisation (audit finding: pooled GetBalance read raced
+	// the SQL-RPC wallet plane). transfer_wallet_atomic /
+	// reserve_for_bank_transfer lock pg_advisory_xact_lock(hashtext(
+	// sender_account_id)) — a DIFFERENT key from the Go-plane "wallet:"+uid
+	// lock above. Holding BOTH makes the in-tx balance projection below
+	// authoritative against either writer. Lock order is fixed (user key
+	// first, account key second) and the RPC plane takes only the account
+	// key, so no lock cycle is possible.
+	if _, err := tx.Exec(ctx, lock, senderAcc.ID); err != nil {
+		return nil, fmt.Errorf("transfers: account advisory lock: %w", err)
+	}
+
+	// Sufficiency check inside the tx (balanceTx), not the pool: a pooled
+	// read cannot observe entries a lock-honouring peer is about to commit,
+	// and re-checking here is what closes the double-spend race.
+	total := req.AmountKobo + fee
+	senderBalance, err := balanceTx(ctx, tx, senderAcc.ID)
+	if err != nil {
+		return nil, err
+	}
+	if senderBalance < total {
+		return nil, ledger.ErrInsufficientFunds
+	}
+
 	recipientAcc, err := s.ledger.GetOrCreateUserWallet(ctx, recipient.UserID)
 	if err != nil {
 		return nil, err
@@ -422,7 +437,21 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		return nil, fmt.Errorf("bank_transfer: advisory lock: %w", err)
 	}
 
-	balance, err := s.ledger.GetBalance(ctx, userID)
+	userAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	// Cross-plane serialisation — same reasoning as InitiateWalletToWallet:
+	// the SQL-RPC wallet plane locks hashtext(account_id), the Go plane locks
+	// hashtext("wallet:"+uid). Holding both keys, in this order, makes the
+	// in-tx balance projection below authoritative against either writer
+	// with no lock cycle (the RPC plane takes the account key alone).
+	if _, err := tx.Exec(ctx, lock, userAcc.ID); err != nil {
+		return nil, fmt.Errorf("bank_transfer: account advisory lock: %w", err)
+	}
+
+	// Sufficiency check inside the tx — see InitiateWalletToWallet.
+	balance, err := balanceTx(ctx, tx, userAcc.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -430,10 +459,6 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		return nil, ledger.ErrInsufficientFunds
 	}
 
-	userAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
 		return nil, err
@@ -459,11 +484,15 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	if len(last4) > 4 {
 		last4 = last4[len(last4)-4:]
 	}
+	// account_number stores the FULL destination NUBAN (migration
+	// 20271009000000) — the payout leg needs it: before the column existed the
+	// under-lock re-read overwrote bt.AccountNumber with the 4-digit last4 and
+	// the provider leg fired a malformed recipient.
 	const insertBT = `
 		INSERT INTO bank_transfers
-			(user_id, amount_kobo, fee_kobo, bank_code, bank_name, account_number_last4, account_name,
+			(user_id, amount_kobo, fee_kobo, bank_code, bank_name, account_number_last4, account_number, account_name,
 			 paystack_recipient_code, reference, status, idempotency_key, source_type, provider)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'funds_reserved',$10,'wallet',$11)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'funds_reserved',$11,'wallet',$12)
 		RETURNING id, created_at`
 	bt := &BankTransfer{
 		UserID:         userID,
@@ -481,7 +510,7 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	// paystack_recipient_code is still NOT NULL on the base table — seed with a
 	// placeholder; the real provider recipient code lands on the disburse leg.
 	if err := tx.QueryRow(ctx, insertBT,
-		userID, req.AmountKobo, fee, req.BankCode, bankName, last4, accountName,
+		userID, req.AmountKobo, fee, req.BankCode, bankName, last4, req.AccountNumber, accountName,
 		"pending", reference, req.IdempotencyKey, bt.Provider,
 	).Scan(&bt.ID, &bt.CreatedAt); err != nil {
 		if dbutil.IsUniqueViolation(err) {
@@ -497,17 +526,171 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 
 	// On any provider error we DO NOT roll back the reserve — funds stay parked in
 	// suspense (status funds_reserved) for retry/reconciliation. Never double-spend.
-	s.initiatePayoutLeg(ctx, bt, req.SaveBeneficiary, req.Provider, req.Narration)
+	// A lost leg-lock claim (ErrPayoutLegInFlight) just means the leg is already
+	// running elsewhere — the reserve stands either way, so the error is logged
+	// and the initiated transfer is still returned. The guard is NOT optional: a
+	// reversal/settle landing between this commit and the leg claim must stop
+	// the provider call, or the leg pays out on an already-refunded row.
+	if err := s.initiatePayoutLeg(ctx, bt, req.SaveBeneficiary, req.Provider, req.Narration, requirePayoutableStatus); err != nil {
+		log.Printf("[transfers] payout leg claim transfer=%s: %v", bt.ID, err)
+	}
 	return bt, nil
 }
 
-// initiatePayoutLeg resolves a recipient (reusing cached codes), creates one with
-// the provider when missing, calls the registry payout with failover, and on
-// success persists the provider routing fields + advances to provider_initiated.
-// On error the transfer is left in its reserved/funded hold state.
-func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveBeneficiary bool, preferred, narration string) {
+// payoutLegTimeout bounds the WHOLE locked leg — re-read, guard, provider
+// HTTP calls, status write. The leg lock is a session-scoped advisory lock on a
+// pinned pooled conn; without a deadline a wedged provider call would pin
+// `transfers:payout-leg:<id>` until the conn dies, blocking every other leg
+// claimant (admin retry, webhook auto-leg) and squandering the conn.
+// Two failover-capable providers at the client's 30s HTTP timeout fit inside
+// 2 minutes with room to spare.
+const payoutLegTimeout = 2 * time.Minute
+
+// requirePayoutableStatus is the shared non-terminal guard every payout-leg
+// call site passes: under the claim lock the row is re-read, and this refuses
+// the provider call on any status that has no money to disburse — terminal
+// outcomes (successful/failed/reversed) and, for bank→bank, awaiting_funding
+// (the pay-in has not arrived). The race it closes: a reversal or settle
+// landing between the caller's reserve/fund commit and the leg claim would
+// otherwise pay out on an already-refunded row (refund + payout double spend).
+func requirePayoutableStatus(fresh *BankTransfer) error {
+	switch fresh.Status {
+	case BankTransferFundsReserved, BankTransferFunded, BankTransferProviderInitiated:
+		return nil
+	default:
+		return fmt.Errorf("transfers: payout leg refused on status %q", fresh.Status)
+	}
+}
+
+// initiatePayoutLeg runs the provider payout leg under a per-transfer advisory
+// lock (claim-then-act, audit finding: concurrent admin retries could
+// double-call InitiatePayoutFailover relying only on provider-side dedup of
+// bt.Reference). Every path that can fire a payout — initiate, the funding
+// webhook's auto-leg, and admin retry — funnels through here, so at most ONE
+// caller ever holds the leg at a time; a loser gets ErrPayoutLegInFlight and
+// must not fire the provider itself.
+//
+// guard runs under the lock on a FRESHLY re-read row — the row the
+// caller loaded may be stale by the time the claim lands (a webhook could have
+// settled it). All call sites pass requirePayoutableStatus; AdminRetry's
+// pre-check uses the same gate for its user-facing error.
+func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveBeneficiary bool, preferred, narration string, guard func(*BankTransfer) error) error {
 	if s.registry == nil {
-		return
+		return nil
+	}
+	// Session-scoped advisory lock on a PINNED pooled conn — held across the
+	// provider call and released before the conn returns to the pool. A
+	// transaction-scoped lock can't be used here: the leg spans provider HTTP
+	// calls and must not hold a tx open.
+	conn, err := s.db.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("transfers: payout leg acquire conn: %w", err)
+	}
+	defer conn.Release()
+	var claimed bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, payoutLegLockKey(bt.ID)).Scan(&claimed); err != nil {
+		return fmt.Errorf("transfers: payout leg lock: %w", err)
+	}
+	if !claimed {
+		return ErrPayoutLegInFlight
+	}
+	// WithoutCancel: the request ctx may already be dead after provider
+	// timeouts — a leaked session lock would pin this conn's other users.
+	defer func() {
+		if _, err := conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtext($1))`, payoutLegLockKey(bt.ID)); err != nil {
+			log.Printf("[transfers] payout leg unlock transfer=%s failed: %v", bt.ID, err)
+		}
+	}()
+
+	// Bound the locked section so a wedged provider cannot pin the lock/conn
+	// until connection death (LOW finding). The unlock above uses the outer ctx
+	// (WithoutCancel), so expiry here never strands the lock.
+	legCtx, legCancel := context.WithTimeout(ctx, payoutLegTimeout)
+	defer legCancel()
+
+	// Re-read under the lock: the caller's bt may predate a concurrent status
+	// move; the leg and the guard must act on the freshest row. A failed
+	// re-read is propagated — proceeding on the stale snapshot is exactly how
+	// a leg fires on a row that already settled.
+	fresh, err := s.getBankTransfer(legCtx, bt.ID)
+	if err != nil {
+		return fmt.Errorf("transfers: payout leg re-read transfer=%s: %w", bt.ID, err)
+	}
+	*bt = *fresh
+	if guard != nil {
+		if err := guard(bt); err != nil {
+			return err
+		}
+	}
+	// provider_initiated means a payout was ALREADY fired at the provider once
+	// (provider_transfer_ref is the receipt). Providers do not dedupe on our
+	// reference, so re-firing is a second real payout — reconcile the fired
+	// payout's outcome instead of blind retry (MED-3).
+	if bt.Status == BankTransferProviderInitiated {
+		return s.reconcileFiredLeg(legCtx, bt)
+	}
+	return s.runPayoutLeg(legCtx, bt, saveBeneficiary, preferred, narration)
+}
+
+// reconcileFiredLeg handles a leg claimant that found the row already at
+// provider_initiated — the payout was fired but the webhook hasn't settled it
+// (or was lost). It queries the provider by provider_transfer_ref:
+//
+//   - provider reports failed/reversed → settle that terminal outcome (refund
+//     to source). Only a REAL provider answer can produce failure: the
+//     registry's liveWrap mock fallback always reports "successful".
+//   - provider reports successful/pending/anything else, or cannot answer →
+//     ErrPayoutAlreadyFired: never re-fire a second payout. A polled
+//     "successful" is deliberately NOT settled — liveWrap degrades transport
+//     errors to a fabricated mock "successful", so only a signed webhook may
+//     sweep suspense → settlement. Residual: a transfer whose success webhook
+//     was lost stays held at provider_initiated until manual reconciliation.
+//   - no provider_transfer_ref → the fired payout is unverifiable; fail closed.
+func (s *Service) reconcileFiredLeg(ctx context.Context, bt *BankTransfer) error {
+	ref := ""
+	if bt.ProviderTransferRef != nil {
+		ref = *bt.ProviderTransferRef
+	}
+	if ref == "" {
+		return fmt.Errorf("transfers: %s is provider_initiated but has no provider_transfer_ref — the fired payout is unverifiable; refusing to re-fire (reconcile with the provider, then reverse or retry)", bt.ID)
+	}
+	p, ok := s.registry.ByName(bt.Provider)
+	if !ok {
+		return fmt.Errorf("transfers: provider %q not registered — cannot verify fired payout %s for %s; refusing to re-fire", bt.Provider, ref, bt.ID)
+	}
+	st, err := p.GetTransferStatus(ctx, ref)
+	if err == nil && st == nil {
+		err = errors.New("provider returned an empty status")
+	}
+	if err != nil {
+		return fmt.Errorf("transfers: provider status check failed for %s (ref %s): %w — refusing to re-fire an unverified payout", bt.ID, ref, err)
+	}
+	if next, _, known := ClassifyWebhookStatus(st.Status); known &&
+		(next == BankTransferFailed || next == BankTransferReversed) {
+		if err := s.settleTransfer(ctx, bt, next); err != nil {
+			return fmt.Errorf("transfers: reconcile settle %s for %s: %w", next, bt.ID, err)
+		}
+		return nil
+	}
+	return ErrPayoutAlreadyFired
+}
+
+// runPayoutLeg is the lock-free inner leg — call ONLY via initiatePayoutLeg.
+// It resolves a recipient (reusing cached codes), creates one with the provider
+// when missing, calls the registry payout with failover, and on success
+// persists the provider routing fields + advances to provider_initiated.
+// On provider error the transfer is left in its reserved/funded hold state.
+func (s *Service) runPayoutLeg(ctx context.Context, bt *BankTransfer, saveBeneficiary bool, preferred, narration string) error {
+	if s.registry == nil {
+		return nil
+	}
+	// Fail closed on a missing/malformed destination: rows written before
+	// bank_transfers.account_number existed carry only the 4-digit last4 — the
+	// defect that sent a truncated "account number" to the provider. A
+	// non-NUBAN value holds the row for reconciliation instead of firing.
+	if !looksLikeNUBAN(bt.AccountNumber) {
+		s.audit(ctx, bt.UserID, "transfer.bank.payout_refused_missing_account_number", bt.ID, bt.Reference)
+		return fmt.Errorf("transfers: transfer %s has no full account number on file: %w", bt.ID, ErrPayoutAccountMissing)
 	}
 	accName := bt.AccountName
 	if accName == "" || accName == "UNRESOLVED" {
@@ -515,6 +698,9 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 			accName = res.AccountName
 		}
 	}
+	// Recipient cache is keyed by the FULL account number — keyed by last4 it
+	// collided across different NUBANs, letting a cached recipient code be
+	// reused for a different destination.
 	cached := s.cachedRecipients(ctx, bt.UserID, bt.BankCode, bt.AccountNumber)
 
 	result, err := s.registry.InitiatePayoutFailover(ctx, preferred,
@@ -523,20 +709,44 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 	if err != nil {
 		// Hold funds; a later retry / admin retry resolves it.
 		s.audit(ctx, bt.UserID, "transfer.bank.provider_error", bt.ID, err.Error())
-		return
+		return nil
 	}
 
+	// Terminal-guarded status write: a settle webhook that landed while the
+	// provider call was in flight must never be overwritten back to
+	// provider_initiated — a terminal outcome is authoritative.
 	const up = `
 		UPDATE bank_transfers
 		SET status='provider_initiated', provider=$2, provider_recipient_code=$3,
 		    provider_transfer_ref=$4, provider_transfer_code=$4, failover_from=$5,
 		    account_name=COALESCE(NULLIF($6,''), account_name)
-		WHERE id=$1`
+		WHERE id=$1 AND status NOT IN ('successful','failed','reversed')`
 	var failoverFrom *string
 	if result.FailoverFrom != "" {
 		failoverFrom = &result.FailoverFrom
 	}
-	_, _ = s.db.Exec(ctx, up, bt.ID, result.Provider, result.RecipientCode, result.Response.ProviderRef, failoverFrom, accName)
+	tag, err := s.db.Exec(ctx, up, bt.ID, result.Provider, result.RecipientCode, result.Response.ProviderRef, failoverFrom, accName)
+	if err != nil {
+		// The provider ALREADY accepted real money but we failed to persist the
+		// receipt (provider_transfer_ref) — without it, provider-ref webhook
+		// routing wedges and a retry cannot verify the fired payout. Loud
+		// critical audit + error surface; reconciliation keys on bt.Reference.
+		log.Printf("[transfers] CRITICAL: provider payout accepted but persist failed transfer=%s provider=%s provider_ref=%s: %v",
+			bt.ID, result.Provider, result.Response.ProviderRef, err)
+		s.emitAudit(bt.UserID, "", "transfer.bank.provider_payout_unpersisted", bt.ID, map[string]any{
+			"provider":     result.Provider,
+			"provider_ref": result.Response.ProviderRef,
+			"reference":    bt.Reference,
+			"error":        err.Error(),
+		}, "critical")
+		return fmt.Errorf("transfers: persist provider_initiated transfer=%s (provider already paid out, ref=%s): %w",
+			bt.ID, result.Response.ProviderRef, err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Settled (or removed) while the payout was in flight — leave the
+		// terminal status and the in-memory view untouched.
+		return nil
+	}
 	bt.Status = BankTransferProviderInitiated
 	bt.Provider = result.Provider
 	bt.ProviderRecipientCode = &result.RecipientCode
@@ -554,6 +764,7 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 		s.saveBeneficiaryRow(ctx, bt.UserID, result.Provider, bt.BankCode, bt.AccountNumber, accName, result.RecipientCode)
 	}
 	s.audit(ctx, bt.UserID, "transfer.bank.provider_initiated", bt.ID, result.Provider)
+	return nil
 }
 
 // InitiateBankToBank creates a bank→bank pass-through at awaiting_funding with a
@@ -614,10 +825,10 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 	// is posted until the collection settles (funded webhook).
 	const insertBT = `
 		INSERT INTO bank_transfers
-			(user_id, amount_kobo, fee_kobo, bank_code, bank_name, account_number_last4, account_name,
+			(user_id, amount_kobo, fee_kobo, bank_code, bank_name, account_number_last4, account_number, account_name,
 			 paystack_recipient_code, reference, status, idempotency_key, source_type, provider,
 			 funding_reference, funding_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'awaiting_funding',$10,'bank',$11,$12,'pending')
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'awaiting_funding',$11,'bank',$12,$13,'pending')
 		RETURNING id, created_at`
 	bt := &BankTransfer{
 		UserID:         userID,
@@ -635,7 +846,7 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 	fr := fundingRef
 	bt.FundingReference = &fr
 	if err := s.db.QueryRow(ctx, insertBT,
-		userID, req.AmountKobo, fee, req.BankCode, bankName, last4, accountName,
+		userID, req.AmountKobo, fee, req.BankCode, bankName, last4, req.AccountNumber, accountName,
 		"pending", reference, req.IdempotencyKey, bt.Provider, fundingRef,
 	).Scan(&bt.ID, &bt.CreatedAt); err != nil {
 		if dbutil.IsUniqueViolation(err) {
@@ -650,6 +861,14 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 // markFunded handles a funding (collection) webhook for a bank→bank transfer:
 // posts DR provider_clearing(amount+fee) → CR suspense, advances to funded, then
 // auto-initiates the payout leg from suspense (same as wallet→bank). Idempotent.
+//
+// ATOMICITY: the funding journal and the status UPDATE share ONE transaction.
+// The previous shape posted the journal in its own tx and flipped the status in
+// a separate pooled exec — a crash between the two left the row at
+// 'awaiting_funding' with the ledger already moved (self-healing on replay, but
+// a real window). Now either both land or neither does. Replays still no-op:
+// the leg inserts carry ON CONFLICT DO NOTHING and the UPDATE stays guarded by
+// status='awaiting_funding'.
 func (s *Service) markFunded(ctx context.Context, bt *BankTransfer, curStatus BankTransferStatus) error {
 	if !CanAdvanceBankToBank(curStatus, BankTransferFunded) {
 		return nil // illegal/duplicate transition — no-op
@@ -663,24 +882,39 @@ func (s *Service) markFunded(ctx context.Context, bt *BankTransfer, curStatus Ba
 		return fmt.Errorf("bank_to_bank funded: suspense acct: %w", err)
 	}
 	total := bt.AmountKobo + bt.FeeKobo
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("bank_to_bank funded: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// DR provider_clearing → CR suspense (the collected money is parked for payout).
-	if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       bt.Reference,
-		IdempotencyKey:  LegKey(bt.IdempotencyKey, LegFund),
-		AmountKobo:      total,
-		DebitAccountID:  clearingAcc.ID,
-		CreditAccountID: suspenseAcc.ID,
-	}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := insertJournalLegTx(ctx, tx, bt.Reference, LegKey(bt.IdempotencyKey, LegFund), total, clearingAcc.ID, suspenseAcc.ID); err != nil {
 		return fmt.Errorf("bank_to_bank funded: post journal: %w", err)
 	}
 	const up = `UPDATE bank_transfers SET status='funded', funding_status='successful' WHERE id=$1 AND status='awaiting_funding'`
-	if _, err := s.db.Exec(ctx, up, bt.ID); err != nil {
+	tag, err := tx.Exec(ctx, up, bt.ID)
+	if err != nil {
 		return fmt.Errorf("bank_to_bank funded: update: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// A racing markFunded already committed (or the row moved on) — the
+		// deferred rollback drops our duplicate leg inserts with it.
+		return nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("bank_to_bank funded: commit: %w", err)
 	}
 	bt.Status = BankTransferFunded
 	s.audit(ctx, bt.UserID, "transfer.bank_to_bank.funded", bt.ID, bt.Reference)
 	// Auto-initiate the payout leg (mirrors wallet→bank disburse from suspense).
-	s.initiatePayoutLeg(ctx, bt, false, bt.Provider, "")
+	// A lost leg-lock claim means the leg is already running elsewhere. The
+	// non-terminal guard is required: a settle/reversal landing between the
+	// funded commit and the leg claim must not pay out on a refunded row.
+	if err := s.initiatePayoutLeg(ctx, bt, false, bt.Provider, "", requirePayoutableStatus); err != nil {
+		log.Printf("[transfers] funded payout leg claim transfer=%s: %v", bt.ID, err)
+	}
 	return nil
 }
 
@@ -693,43 +927,34 @@ func (s *Service) getWalletTransfer(ctx context.Context, id string) (*WalletTran
 	return wt, err
 }
 
+// bankTransferCols is the column list every bank_transfers read shares — keep
+// it in lockstep with scanBankTransfer's Scan targets. account_number (the FULL
+// NUBAN, migration 20271009000000) feeds the payout leg; account_number_last4
+// is the display field. account_number is NULL on pre-migration rows → the
+// scan leaves BankTransfer.AccountNumber empty and the leg fails closed.
+const bankTransferCols = `
+	id, user_id, amount_kobo, fee_kobo, account_number_last4, account_number, account_name, bank_code,
+	reference, status, idempotency_key, provider, source_type,
+	provider_recipient_code, provider_transfer_ref, failover_from,
+	funding_reference, funding_status, created_at`
+
 func (s *Service) getBankTransfer(ctx context.Context, id string) (*BankTransfer, error) {
-	const q = `
-		SELECT id, user_id, amount_kobo, fee_kobo, account_number_last4, account_name, bank_code,
-		       reference, status, idempotency_key, provider, source_type,
-		       provider_recipient_code, provider_transfer_ref, failover_from,
-		       funding_reference, funding_status, created_at
-		FROM bank_transfers WHERE id=$1`
+	const q = `SELECT ` + bankTransferCols + ` FROM bank_transfers WHERE id=$1`
 	return s.scanBankTransfer(s.db.QueryRow(ctx, q, id))
 }
 
 func (s *Service) getBankTransferByRef(ctx context.Context, reference string) (*BankTransfer, error) {
-	const q = `
-		SELECT id, user_id, amount_kobo, fee_kobo, account_number_last4, account_name, bank_code,
-		       reference, status, idempotency_key, provider, source_type,
-		       provider_recipient_code, provider_transfer_ref, failover_from,
-		       funding_reference, funding_status, created_at
-		FROM bank_transfers WHERE reference=$1 LIMIT 1`
+	const q = `SELECT ` + bankTransferCols + ` FROM bank_transfers WHERE reference=$1 LIMIT 1`
 	return s.scanBankTransfer(s.db.QueryRow(ctx, q, reference))
 }
 
 func (s *Service) getBankTransferByProviderRef(ctx context.Context, providerRef string) (*BankTransfer, error) {
-	const q = `
-		SELECT id, user_id, amount_kobo, fee_kobo, account_number_last4, account_name, bank_code,
-		       reference, status, idempotency_key, provider, source_type,
-		       provider_recipient_code, provider_transfer_ref, failover_from,
-		       funding_reference, funding_status, created_at
-		FROM bank_transfers WHERE provider_transfer_ref=$1 LIMIT 1`
+	const q = `SELECT ` + bankTransferCols + ` FROM bank_transfers WHERE provider_transfer_ref=$1 LIMIT 1`
 	return s.scanBankTransfer(s.db.QueryRow(ctx, q, providerRef))
 }
 
 func (s *Service) getBankTransferByFundingRef(ctx context.Context, fundingRef string) (*BankTransfer, error) {
-	const q = `
-		SELECT id, user_id, amount_kobo, fee_kobo, account_number_last4, account_name, bank_code,
-		       reference, status, idempotency_key, provider, source_type,
-		       provider_recipient_code, provider_transfer_ref, failover_from,
-		       funding_reference, funding_status, created_at
-		FROM bank_transfers WHERE funding_reference=$1 LIMIT 1`
+	const q = `SELECT ` + bankTransferCols + ` FROM bank_transfers WHERE funding_reference=$1 LIMIT 1`
 	return s.scanBankTransfer(s.db.QueryRow(ctx, q, fundingRef))
 }
 
@@ -740,10 +965,16 @@ type rowScanner interface {
 func (s *Service) scanBankTransfer(row rowScanner) (*BankTransfer, error) {
 	bt := &BankTransfer{}
 	var status string
-	err := row.Scan(&bt.ID, &bt.UserID, &bt.AmountKobo, &bt.FeeKobo, &bt.AccountNumber, &bt.AccountName, &bt.BankCode,
+	// account_number is nullable (pre-migration rows) — scan into a pointer
+	// and leave AccountNumber empty rather than aliasing it to last4.
+	var acctNum *string
+	err := row.Scan(&bt.ID, &bt.UserID, &bt.AmountKobo, &bt.FeeKobo, &bt.AccountNumberLast4, &acctNum, &bt.AccountName, &bt.BankCode,
 		&bt.Reference, &status, &bt.IdempotencyKey, &bt.Provider, &bt.SourceType,
 		&bt.ProviderRecipientCode, &bt.ProviderTransferRef, &bt.FailoverFrom,
 		&bt.FundingReference, &bt.FundingStatus, &bt.CreatedAt)
+	if acctNum != nil {
+		bt.AccountNumber = *acctNum
+	}
 	bt.Status = BankTransferStatus(status)
 	return bt, err
 }
@@ -807,7 +1038,15 @@ func (s *Service) HandleProviderWebhook(ctx context.Context, ev *provider.Webhoo
 //   - failed/reversed: reverse the hold back to the source — REVERSAL_DEBIT to the
 //     user wallet (wallet-src) or to provider_clearing (bank-src refund).
 //
-// All legs use per-leg idempotency keys, so a duplicate webhook is a no-op.
+// ATOMICITY: every journal leg and the status flip commit in ONE transaction.
+// The previous shape committed each journal in its own tx and then ran the
+// status UPDATE on the pool — a crash between them left 'funds_reserved' with
+// the ledger already moved, and two racing opposite webhooks (success + failed)
+// could each post their legs before the last status write won. Now the CAS
+// UPDATE (`status NOT IN terminal`) is the arbiter inside the same tx: a racing
+// settle sees 0 rows and its duplicate leg inserts roll back with it.
+// All legs keep per-leg idempotency keys (ON CONFLICT DO NOTHING inside the
+// tx), so a duplicate webhook or a self-healing replay is still a no-op.
 func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next BankTransferStatus) error {
 	if bt.Status == next {
 		return nil // duplicate — already applied
@@ -816,49 +1055,31 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 	if bt.Status == BankTransferSuccessful || bt.Status == BankTransferFailed || bt.Status == BankTransferReversed {
 		return nil
 	}
+	if next != BankTransferSuccessful && next != BankTransferFailed && next != BankTransferReversed {
+		return nil
+	}
 
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
 		return fmt.Errorf("settle: suspense acct: %w", err)
 	}
 
+	// Resolve the remaining accounts up front (idempotent get-or-create reads)
+	// so the tx below does inserts + the CAS update only.
+	var settlementAcc, revenueAcc, restoreAcc *ledger.Account
 	switch next {
 	case BankTransferSuccessful:
-		settlementAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+		settlementAcc, err = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 		if err != nil {
 			return fmt.Errorf("settle: settlement acct: %w", err)
 		}
-		// Sweep the amount: DR suspense → CR settlement (money has left the building).
-		if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-			Reference:       bt.Reference,
-			IdempotencyKey:  LegKey(bt.IdempotencyKey, LegSettle),
-			AmountKobo:      bt.AmountKobo,
-			DebitAccountID:  suspenseAcc.ID,
-			CreditAccountID: settlementAcc.ID,
-		}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-			return fmt.Errorf("settle: sweep amount: %w", err)
-		}
-		// Recognize the fee: DR suspense(fee) → CR paymax_revenue.
 		if bt.FeeKobo > 0 {
-			revenueAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+			revenueAcc, err = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 			if err != nil {
 				return fmt.Errorf("settle: revenue acct: %w", err)
 			}
-			if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-				Reference:       bt.Reference,
-				IdempotencyKey:  LegKey(bt.IdempotencyKey, LegFeeRev),
-				AmountKobo:      bt.FeeKobo,
-				DebitAccountID:  suspenseAcc.ID,
-				CreditAccountID: revenueAcc.ID,
-			}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-				return fmt.Errorf("settle: recognize fee: %w", err)
-			}
 		}
-
 	case BankTransferFailed, BankTransferReversed:
-		// Reverse the hold back to the source: REVERSAL_DEBIT to the restore account,
-		// REVERSAL_CREDIT draining suspense.
-		var restoreAcc *ledger.Account
 		if SourceType(bt.SourceType) == SourceBank {
 			// bank→bank: refund to provider_clearing (the money came from a collection).
 			restoreAcc, err = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
@@ -869,21 +1090,47 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 		if err != nil {
 			return fmt.Errorf("settle: restore acct: %w", err)
 		}
-		rev := BuildReversalEntry(bt.Reference, restoreAcc.ID, suspenseAcc.ID, bt.AmountKobo+bt.FeeKobo, bt.IdempotencyKey, next)
-		if err := s.ledger.PostReversal(ctx, rev.UserAccountID, rev.SuspenseAccountID, rev.AmountKobo, rev.Reference, rev.IdempotencyKey); err != nil {
-			if errors.Is(err, ledger.ErrDuplicate) {
-				// fall through to the status update (idempotent)
-			} else {
-				return fmt.Errorf("settle: post reversal: %w", err)
-			}
-		}
-	default:
-		return nil
 	}
 
-	const upQ = `UPDATE bank_transfers SET status=$1 WHERE id=$2`
-	if _, err := s.db.Exec(ctx, upQ, string(next), bt.ID); err != nil {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settle: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	switch next {
+	case BankTransferSuccessful:
+		// Sweep the amount: DR suspense → CR settlement (money has left the building).
+		if err := insertJournalLegTx(ctx, tx, bt.Reference, LegKey(bt.IdempotencyKey, LegSettle), bt.AmountKobo, suspenseAcc.ID, settlementAcc.ID); err != nil {
+			return fmt.Errorf("settle: sweep amount: %w", err)
+		}
+		// Recognize the fee: DR suspense(fee) → CR paymax_revenue.
+		if bt.FeeKobo > 0 {
+			if err := insertJournalLegTx(ctx, tx, bt.Reference, LegKey(bt.IdempotencyKey, LegFeeRev), bt.FeeKobo, suspenseAcc.ID, revenueAcc.ID); err != nil {
+				return fmt.Errorf("settle: recognize fee: %w", err)
+			}
+		}
+	case BankTransferFailed, BankTransferReversed:
+		// Reverse the hold back to the source: REVERSAL_DEBIT to the restore account,
+		// REVERSAL_CREDIT draining suspense.
+		rev := BuildReversalEntry(bt.Reference, restoreAcc.ID, suspenseAcc.ID, bt.AmountKobo+bt.FeeKobo, bt.IdempotencyKey, next)
+		if err := insertReversalLegTx(ctx, tx, rev.Reference, rev.IdempotencyKey, rev.AmountKobo, rev.UserAccountID, rev.SuspenseAccountID); err != nil {
+			return fmt.Errorf("settle: post reversal: %w", err)
+		}
+	}
+
+	// CAS terminal claim: a concurrent settle that already committed leaves 0
+	// rows here and our duplicate leg inserts roll back via the defer.
+	const upQ = `UPDATE bank_transfers SET status=$1 WHERE id=$2 AND status NOT IN ('successful','failed','reversed')`
+	tag, err := tx.Exec(ctx, upQ, string(next), bt.ID)
+	if err != nil {
 		return fmt.Errorf("settle: update status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil // racing settle won — nothing to commit
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("settle: commit: %w", err)
 	}
 	bt.Status = next
 	s.audit(ctx, bt.UserID, "transfer.bank.settle."+string(next), bt.ID, bt.Reference)
@@ -1086,18 +1333,24 @@ type WalletTransferResolveResponse struct {
 
 // BankTransfer represents a wallet-to-bank or bank-to-bank transfer.
 type BankTransfer struct {
-	ID             string             `json:"id"`
-	UserID         string             `json:"user_id"`
-	AmountKobo     int64              `json:"amount_kobo"`
-	FeeKobo        int64              `json:"fee_kobo"`
-	AccountNumber  string             `json:"account_number"`
-	AccountName    string             `json:"account_name"`
-	BankCode       string             `json:"bank_code"`
-	Reference      string             `json:"reference"`
-	Status         BankTransferStatus `json:"status"`
-	TransferCode   *string            `json:"transfer_code,omitempty"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	CreatedAt      time.Time          `json:"created_at"`
+	ID         string `json:"id"`
+	UserID     string `json:"user_id"`
+	AmountKobo int64  `json:"amount_kobo"`
+	FeeKobo    int64  `json:"fee_kobo"`
+	// AccountNumber is the FULL destination NUBAN (bank_transfers.account_number)
+	// — it feeds the provider payout leg and the recipient/beneficiary cache
+	// keys. Empty on rows written before migration 20271009000000; the leg
+	// fails closed on those rather than send a truncated number.
+	AccountNumber string `json:"account_number"`
+	// AccountNumberLast4 is the display field (bank_transfers.account_number_last4).
+	AccountNumberLast4 string             `json:"account_number_last4"`
+	AccountName        string             `json:"account_name"`
+	BankCode           string             `json:"bank_code"`
+	Reference          string             `json:"reference"`
+	Status             BankTransferStatus `json:"status"`
+	TransferCode       *string            `json:"transfer_code,omitempty"`
+	IdempotencyKey     string             `json:"idempotency_key"`
+	CreatedAt          time.Time          `json:"created_at"`
 	// Multi-provider + bank→bank fields (additive; mirror the migration columns).
 	Provider              string  `json:"provider"`
 	SourceType            string  `json:"source_type"`

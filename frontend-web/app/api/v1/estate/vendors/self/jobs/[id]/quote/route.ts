@@ -55,13 +55,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       throw new ApiError('Job not found', 404);
     }
 
+    // quote_kobo only — amount_kobo is the payout field the admin sets at
+    // AssignJob time. Writing it here lets a vendor overwrite the payout with
+    // an arbitrary figure and drain the settlement account on RequestPayout.
     const { data: row, error } = await supabase
       .from('vendor_jobs')
-      .update({ quote_kobo: amountKobo, amount_kobo: amountKobo })
+      .update({ quote_kobo: amountKobo })
       .eq('id', params.id)
+      .neq('status', 'paid')
       .select(COLS)
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!row) throw new ApiError('Job not found or already paid', 404);
 
     return NextResponse.json(mapJob(row, (vendor as any).name));
   } catch (error) {

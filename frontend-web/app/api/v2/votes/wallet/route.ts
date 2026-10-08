@@ -44,20 +44,28 @@ async function goVoteDebit(
 
 // Saga compensation for a committed debit whose vote credit failed: the Go
 // endpoint reverses by the RECORDED debit amount (the request carries none).
+// The reverse endpoint is service-token authenticated — member JWTs are
+// rejected so a user cannot refund a fulfilled purchase and keep the votes.
 async function goVoteReverse(
-  token: string,
+  userId: string,
   contestId: string,
   contestantId: string,
   idempotencyKey: string,
 ): Promise<void> {
+  const serviceToken = process.env.GO_INTERNAL_SERVICE_TOKEN || process.env.LEDGER_SERVICE_TOKEN || '';
+  if (!serviceToken) {
+    // Fail loud — the saga cannot compensate without the service credential;
+    // the caller's outbox path records the held charge for reconciliation.
+    throw new Error('vote-bridge reversal not configured (service token missing)');
+  }
   const goApiBase = process.env.GO_API_BASE_URL ?? GO_BACKEND_URL;
   const res = await fetch(`${goApiBase}/api/finance/vote-bridge/reverse`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${serviceToken}`,
     },
-    body: JSON.stringify({ contest_id: contestId, contestant_id: contestantId, idempotency_key: idempotencyKey }),
+    body: JSON.stringify({ contest_id: contestId, contestant_id: contestantId, user_id: userId, idempotency_key: idempotencyKey }),
   });
   // 404 means no committed debit exists for the key — nothing to refund.
   if (!res.ok && res.status !== 404) {
@@ -166,7 +174,7 @@ export async function POST(request: Request) {
       // The debit is committed — compensate. Reversal is idempotent and uses
       // the ledger-recorded amount; if it fails, the outbox event gives
       // reconciliation a handle (charge held, transaction row flagged).
-      const reversed = await goVoteReverse(token, contestId as string, contestantId as string, boundKey)
+      const reversed = await goVoteReverse(user.id, contestId as string, contestantId as string, boundKey)
         .then(() => true)
         .catch(() => false);
       if (reversed) {

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
@@ -34,6 +35,13 @@ type walletDebitLimiter interface {
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("crowdfunding/wallet: money path requires a tier gate (not wired)")
+
+// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used by
+// ANOTHER member's withdrawal request (409). Replay lookups are scoped to the
+// caller, so a foreign key cannot replay a stranger's withdrawal back; the
+// surviving unique-violation on insert is the durable proof of the clash
+// (same convention as finance/transfers' ErrIdempotencyKeyConflict).
+var ErrIdempotencyKeyConflict = errors.New("crowdfunding/wallet: idempotency key already used by another withdrawal")
 
 // Service exposes the campaign wallet, ledger projection, bank accounts, and the
 // withdrawal flow. It never stores a balance: every balance is derived from the
@@ -356,10 +364,35 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 		return nil, ErrLedgerUnavailable
 	}
 
-	// Idempotent replay: return the prior request unchanged.
-	if existing, ok, err := s.findByIdempotencyKey(ctx, idempotencyKey); err != nil {
+	// Idempotent replay: return the prior request unchanged. The lookup is
+	// CALLER-SCOPED (creator_id): a key another member already used must NOT
+	// replay their withdrawal back to this caller — that would leak their
+	// reference/amount/bank label. A foreign key misses here and collides at
+	// the cf_withdrawals unique constraint below → 409.
+	if existing, existingCampaignID, ok, err := s.findByIdempotencyKey(ctx, creatorID, idempotencyKey); err != nil {
 		return nil, err
 	} else if ok {
+		// A caller-scoped hit is a true replay ONLY when the request is the
+		// same withdrawal: same campaign, same amount, same payout
+		// destination. A key replayed against different material params is
+		// idempotency-key misuse — acking the stored row would tell the
+		// creator a different withdrawal "went through" (post-merge audit
+		// D4). Divergence on campaign or amount conflicts outright.
+		if existingCampaignID != campaignID || existing.AmountKobo != in.AmountKobo {
+			return nil, ErrIdempotencyKeyConflict
+		}
+		// The row stores the resolved bank LABEL, not the account id, so the
+		// destination check resolves this request's account the same way the
+		// write path does and compares. An unresolvable account id is a
+		// failure in its own right — the stored row is never returned to a
+		// request whose destination cannot be verified.
+		wantLabel, lerr := s.resolveBankLabel(ctx, creatorID, in.BankAccountID)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if wantLabel != existing.BankLabel {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return existing, nil
 	}
 
@@ -395,33 +428,16 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	reference := "SPL-CFWD-" + id[:8]
 	now := time.Now()
 
-	// Post the balanced double-entry (money leaves the CREATOR'S wallet) BEFORE
-	// the row exists — a deterministic key derived from the withdrawal id makes
-	// a retry-after-partial-failure safe to replay.
-	// DEBIT the creator's own user_wallet, not the shared escrow standing
-	// account: Contribute()'s instant settle already moved the creator's 90%
-	// share OUT of escrow and into their user_wallet via settlement.Settle
-	// (escrow → provider wallet). Debiting escrow here would have drained
-	// OTHER campaigns' unsettled contributions instead of this creator's own
-	// balance — ledger.Debit is also TOCTOU-safe (advisory-locked balance
-	// check), which the manual escrow posting below was not.
-	// Tier gate (fail-closed, E2E-FIN-046): the payout debits the creator's own
-	// wallet, so the same EnforceWalletDebitLimit the transfer rail applies runs
-	// BEFORE money moves — a refused attempt posts zero ledger legs and no
-	// cf_withdrawals row. Replays already returned the existing result above, so
-	// a completed key never reaches this gate.
+	// This endpoint only FILES the withdrawal request — it moves NO money.
+	// adminext.ApproveWithdrawal is the single payout leg: it debits the
+	// creator's wallet into provider_clearing under the deterministic key
+	// "cf:withdraw:payout:<withdrawal id>" and flips PENDING→COMPLETED.
+	// Debiting here (as this path previously did) parked the member's funds in
+	// clearing forever while telling them the withdrawal was "COMPLETED" — no
+	// disbursement provider is wired downstream of clearing yet.
+	// The tier gate stays as an early fail-closed check on the requested amount.
 	if err := s.enforceDebitLimit(ctx, creatorID, in.AmountKobo); err != nil {
 		return nil, err
-	}
-
-	payoutIdem := "cf:withdraw:payout:" + id
-	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
-	if err != nil {
-		return nil, fmt.Errorf("crowdfunding/wallet: resolve clearing account: %w", err)
-	}
-	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, in.AmountKobo); err != nil &&
-		!errors.Is(err, financeledger.ErrDuplicate) {
-		return nil, fmt.Errorf("crowdfunding/wallet: post withdrawal payout: %w", err)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -433,14 +449,21 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	const ins = `
 		INSERT INTO cf_withdrawals
 			(id, campaign_id, creator_id, reference, amount_kobo, bank_label, status, reason, idempotency_key, requested_at)
-		VALUES ($1,$2,$3,$4,$5,$6,'COMPLETED',$7,$8,$9)`
+		VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9)`
 	if _, err := tx.Exec(ctx, ins,
 		id, campaignID, creatorID, reference, in.AmountKobo, bankLabel, in.Reason, idempotencyKey, now,
 	); err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-user key clash — cf_withdrawals.idempotency_key is
+		// UNIQUE. Report it as a conflict rather than a server fault (the M16
+		// convention; a same-caller race loses nothing — the retry replays).
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("crowdfunding/wallet: insert withdrawal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.payout',$2,'')`,
+		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.requested',$2,'')`,
 		creatorID, reference,
 	); err != nil {
 		return nil, fmt.Errorf("crowdfunding/wallet: write audit row: %w", err)
@@ -452,28 +475,37 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	return &WithdrawalResult{
 		ID:          id,
 		Reference:   reference,
-		Status:      "COMPLETED",
+		Status:      "PENDING",
 		AmountKobo:  in.AmountKobo,
 		BankLabel:   bankLabel,
 		RequestedAt: timeutil.RFC3339(now),
 	}, nil
 }
 
-func (s *Service) findByIdempotencyKey(ctx context.Context, key string) (*WithdrawalResult, bool, error) {
+// findByIdempotencyKey returns the caller's own prior withdrawal under this
+// key — scoped to THIS creator — plus the campaign it was filed against
+// (WithdrawalResult carries no campaign field; the caller needs it to verify
+// the replay matches THIS request's path param). A key another member already
+// used returns (nil, "", false, nil) and is caught by the unique constraint
+// on insert → ErrIdempotencyKeyConflict; an unscoped lookup would replay a
+// stranger's withdrawal (leaking their reference/amount/bank label) on a
+// guessed key.
+func (s *Service) findByIdempotencyKey(ctx context.Context, creatorID, key string) (*WithdrawalResult, string, bool, error) {
 	const q = `
-		SELECT id, reference, amount_kobo, bank_label, status, requested_at
-		FROM cf_withdrawals WHERE idempotency_key = $1`
+		SELECT id, reference, amount_kobo, bank_label, status, requested_at, campaign_id
+		FROM cf_withdrawals WHERE idempotency_key = $1 AND creator_id = $2`
 	var r WithdrawalResult
 	var requestedAt time.Time
-	err := s.db.QueryRow(ctx, q, key).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt)
+	var campaignID string
+	err := s.db.QueryRow(ctx, q, key, creatorID).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt, &campaignID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	r.RequestedAt = timeutil.RFC3339(requestedAt)
-	return &r, true, nil
+	return &r, campaignID, true, nil
 }
 
 func (s *Service) resolveBankLabel(ctx context.Context, userID, bankAccountID string) (string, error) {
@@ -645,22 +677,32 @@ func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 
 	res, err := h.svc.SubmitWithdrawal(c.Request.Context(), userID, campaignID, idempotencyKey, in)
 	if err != nil {
-		switch {
-		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
-		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
-		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
-		case errors.Is(err, ErrTierGateUnwired):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
-		case errors.Is(err, ErrCampaignNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
-		case errors.Is(err, ErrLedgerUnavailable):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
-		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
-		}
+		writeWithdrawalErr(c, err)
 		return
 	}
 	// Object returned directly to match the client unwrap.
 	c.JSON(http.StatusCreated, res)
+}
+
+// writeWithdrawalErr maps SubmitWithdrawal's domain errors onto HTTP
+// statuses — extracted so the mapping is unit-testable without a database.
+func writeWithdrawalErr(c *gin.Context, err error) {
+	switch {
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, ErrTierGateUnwired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrCampaignNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrLedgerUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		// 409 + stable code for a cross-member Idempotency-Key reuse (the
+		// same contract as finance/transfers' idempotency_key_conflict).
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+	}
 }
