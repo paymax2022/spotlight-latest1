@@ -36,14 +36,21 @@ jobs:
       - name: Check ADR numbering
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # Passed via env, never interpolated into the script body: a ${{ }}
-          # expression inside `run:` is substituted before the shell sees it, so a
-          # branch name containing quotes or backticks would be script injection.
-          # It also keeps this script runnable (and testable) outside Actions.
+          # pull_request.base.sha is the base sha captured when the PR was
+          # opened — it goes stale on long-lived branches. Diffing "added" files
+          # against it flags ADRs that already merged to base via other PRs and
+          # merely flowed into this branch through a merge. The semantic this
+          # guard needs is "files this PR introduces", i.e. merge-base..HEAD.
+          # BASE_REF is passed via env, never interpolated into the script body:
+          # a ${{ }} expression inside `run:` is substituted before the shell
+          # sees it, so a branch name containing quotes or backticks would be
+          # script injection. It also keeps this script runnable (and testable)
+          # outside Actions.
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
+
+          BASE_SHA=$(git merge-base HEAD "origin/$BASE_REF")
 
           added=$(git diff --name-only --diff-filter=A "$BASE_SHA" HEAD -- 'docs/adr/*.md' || true)
           if [ -z "$added" ]; then
@@ -51,8 +58,10 @@ jobs:
             exit 0
           fi
 
-          # Numbers already used on the base branch.
-          taken=$(git ls-tree --name-only "$BASE_SHA" docs/adr/ \
+          # Numbers already used on the base branch — checked against its
+          # current head, since a number claimed after this PR diverged is
+          # still taken at merge time.
+          taken=$(git ls-tree --name-only "origin/$BASE_REF" docs/adr/ \
                   | grep -oE 'ADR-[0-9]{3}' | sed 's/ADR-//' | sort -u)
 
           fail=0

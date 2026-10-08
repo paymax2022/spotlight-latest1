@@ -13,6 +13,15 @@ import type {
   CourierParcelRequest,
 } from '../types/modes.types';
 import {
+  buildParcelCardDirectBody,
+  normalizeParcelStatus,
+  parcelCardDirectStatusPath,
+  PARCEL_CARD_DIRECT_BASE,
+  type CardDirectIntent,
+  type CardDirectStatus,
+  type ParcelCardDirectInput,
+} from '../utils/cardDirect';
+import {
   mockParcelEstimate,
   makeParcel,
   parcelStore,
@@ -84,6 +93,48 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
         payment_method: req.paymentMethod,
       },
       idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+// ── Card-direct (pay by debit card, never the wallet KYC-tier gate) ─────────
+// backend/internal/transport/paystackcheckout (parcel domain). Same pattern as
+// initiateRidePaystack/getRidePaystackStatus in mobility.api.ts: the server
+// quotes + freezes the amount, Paystack collects it, the server verifies and
+// books. The wallet rail (bookParcel) keeps its KYC gate unchanged.
+
+export type ParcelCardDirectIntent = CardDirectIntent;
+export type ParcelCardDirectStatus = CardDirectStatus & { parcelId?: string };
+
+export async function initiateParcelPaystack(
+  req: ParcelCardDirectInput & { idempotencyKey: string },
+): Promise<ParcelCardDirectIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      reference: `parcelorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+      status: 'pending',
+    };
+  }
+  return unwrap<ParcelCardDirectIntent>(
+    await api.post(
+      `${BASE}${PARCEL_CARD_DIRECT_BASE}/initiate`,
+      buildParcelCardDirectBody(req),
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getParcelPaystackStatus(reference: string): Promise<ParcelCardDirectStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', amountKobo: 0, parcelId: parcelStore.active?.id ?? 'mock-parcel-1' };
+  }
+  return normalizeParcelStatus(
+    unwrap<{ reference: string; status: CardDirectStatus['status']; amountKobo?: number; parcelId?: string }>(
+      await api.get(`${BASE}${parcelCardDirectStatusPath(reference)}`),
     ),
   );
 }

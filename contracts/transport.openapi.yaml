@@ -424,9 +424,14 @@ paths:
     post:
       tags: [car-hire]
       summary: Book a car hire (escrows fare + deposit) — money mutation
-      description: Money mutation — escrows fare + deposit. Requires an Idempotency-Key.
+      description: >
+        Money mutation — escrows fare + deposit FROM THE WALLET (KYC-tier gated). Requires an Idempotency-Key;
+        keys starting `carhireorder:` are reserved for the card-direct rail (400 INVALID_IDEMPOTENCY_KEY).
+        `hire_type` must be one of hourly, daily, airport, event, executive (400 invalid_input otherwise —
+        refused BEFORE any money moves). To pay by debit card without the wallet gate use
+        POST /mobility/car-hire/paystack/initiate.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+      responses: { '200': { description: Booking }, '400': { description: 'invalid_input or INVALID_IDEMPOTENCY_KEY' }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
   /mobility/car-hire:
     get:
       tags: [car-hire]
@@ -448,26 +453,123 @@ paths:
     post:
       tags: [car-hire]
       summary: Extend a car hire (escrows delta) — money mutation
-      description: Money mutation — escrows the additional-hours delta. Requires an Idempotency-Key.
+      description: >
+        Money mutation — escrows the additional-hours delta from the WALLET. Requires an Idempotency-Key.
+        A CARD-funded booking cannot be extended (a card-direct rental has no second charge): 409
+        EXTENSION_NOT_AVAILABLE_FOR_CARD, and no wallet is debited. Rebook for a longer hire.
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '409': { description: 'EXTENSION_NOT_AVAILABLE_FOR_CARD (card-funded booking) or invalid state' } }
   /mobility/car-hire/{id}/complete:
     post:
       tags: [car-hire]
       summary: Complete a car hire (settle split, release deposit) — money mutation
-      description: Money mutation — settles the provider split and releases the deposit. Requires an Idempotency-Key.
+      description: >
+        Money mutation — settles the provider split and releases the deposit. For a CARD-funded booking the
+        deposit goes back to the CARD (a gateway refund of exactly the deposit; never the wallet) and the
+        call is re-POSTable: completing an already-completed card booking finishes a deposit refund that
+        failed after the status flip. A card booking with no driver assigned is refused (409 CARD_HIRE_NO_DRIVER)
+        BEFORE anything changes. `deposit_refund_status` is the honest answer to "is my deposit back?":
+        none | refunded (the gateway accepted the refund; the bank may take days) | pending (not yet; retried
+        by re-POSTing complete and by the reconciler) | failed (wallet refund failed; manual).
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+      responses:
+        '200': { description: Completed, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, deposit_refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }
+        '401': { description: Not authenticated }
+        '409': { description: 'CARD_HIRE_NO_DRIVER or invalid state' }
   /mobility/car-hire/{id}/cancel:
     post:
       tags: [car-hire]
       summary: Cancel a car-hire booking (refund per policy)
+      description: >
+        Refunds the fare AND the deposit. A CARD-funded booking is refunded to the card (two gateway refunds,
+        one per settlement — never the wallet) and can only be cancelled BEFORE activation: while active or
+        extended it is 409 CARD_HIRE_ACTIVE_USE_RETURN (complete the hire to get the deposit back). Re-POSTing
+        cancel on an already-cancelled card booking finishes a refund that failed after the status flip.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+      responses:
+        '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }
+        '401': { description: Not authenticated }
+        '409': { description: 'CARD_HIRE_ACTIVE_USE_RETURN (card-funded, already active) or invalid state' }
+        '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }
+  # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
+  # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackCarHireEnabled AND
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md
+  # ("Partial refunds (car hire)"). ONE card charge = fare + deposit, held as TWO settlements.
+  /mobility/car-hire/paystack/initiate:
+    post:
+      tags: [car-hire]
+      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge; no wallet debit) — money mutation
+      description: >
+        Body is the SAME as POST /mobility/car-hire/book (hire_type, vehicle_class, start_at, duration_hours,
+        chauffeur, pickup_address, special_request) plus optional `email` and `callback_url` (gateway-only;
+        stripped before the request is frozen). There is NO amount field: the server prices the hire
+        (fare = base + hours x hourly rate, floored at the minimum fare; deposit = one base period), freezes the
+        quote AND the pricing config it used, and asks Paystack for fare + deposit in NGN kobo (integers, no
+        rounding). `hire_type` must be one of hourly, daily, airport, event, executive; `start_at` RFC3339 and
+        not more than a day in the past nor more than a year ahead; `duration_hours` 1-720. An invalid request is
+        a 400 BEFORE any gateway call. Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -).
+        Replays behave as for the other card-direct services. No wallet is debited, so the KYC-tier gate never runs;
+        the wallet rail (POST /mobility/car-hire/book) keeps it and refuses keys starting `carhireorder:`.
+        The deposit is refundable: it returns to the SAME CARD on completion (days, not instant) and the whole
+        charge returns to the card on cancel before activation.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201':
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, amountKobo, status]
+                    properties:
+                      reference: { type: string, description: 'carhireorder:<Idempotency-Key>' }
+                      authorizationUrl: { type: string, description: Empty when status is not pending }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64, description: 'Server-quoted fare + deposit in kobo' }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+        '400': { description: 'invalid_input, idempotency_key_required or invalid_idempotency_key' }
+        '401': { description: Not authenticated }
+        '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
+        '409': { description: 'idempotency_conflict, or authorization_unavailable' }
+        '429': { description: Per-user rate limit on checkout creation (rate_limited) }
+  /mobility/car-hire/paystack/{reference}/status:
+    get:
+      tags: [car-hire]
+      summary: Poll a card-direct car-hire checkout (also drives confirmation — self-heals a late/missing webhook)
+      description: >
+        Owner-only (another user's reference is 404). While pending/processing this verifies the charge with
+        Paystack server-side and, once successful, books the hire and escrows fare and deposit as two external
+        settlements (settlement.EscrowExternal). The booking is made exactly once however webhook and polls race.
+        A charge that cannot back a booking is refunded at the gateway in full (`refunded` = accepted by the
+        gateway; `refunding` = in flight). Cancelling a card-funded booking before activation refunds the
+        card — never the wallet.
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, status]
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      bookingId: { type: string, format: uuid, description: Present once confirmed }
+        '401': { description: Not authenticated }
+        '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # PARCEL DELIVERY   [FeatureTransportModesEnabled]
@@ -481,9 +583,13 @@ paths:
     post:
       tags: [parcel]
       summary: Book a parcel delivery (escrows fare) — money mutation
-      description: Money mutation — escrows the fare. Requires an Idempotency-Key.
+      description: >
+        Money mutation — escrows the fare. Requires an Idempotency-Key. Keys beginning with a
+        namespace owned by the card-direct / Paystack checkouts (`parcelorder:`, `rideorder:`,
+        `foodorder:`, `duespay:`, `feespay:`, `towingorder:`, `moversorder:`, `carhireorder:`,
+        `busorder:`, `eventorder:`; case-insensitive) are refused with 400 INVALID_IDEMPOTENCY_KEY.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+      responses: { '200': { description: Parcel }, '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
     get:
       tags: [parcel]
       summary: List parcels
@@ -499,7 +605,82 @@ paths:
       tags: [parcel]
       summary: Cancel a parcel (refund per policy)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
+      responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }, '401': { description: Not authenticated } }
+  # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
+  # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackParcelEnabled AND
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md.
+  /mobility/parcels/paystack/initiate:
+    post:
+      tags: [parcel]
+      summary: Start a card-direct parcel checkout (server-quoted amount; no wallet debit) — money mutation
+      description: >
+        Body is the SAME as POST /mobility/parcels (pickup, dropoff, receiver_name, receiver_phone,
+        category, size, speed, declared_value_kobo, prohibited_ack) plus optional `email` and
+        `callback_url` (gateway-only; stripped before the request is frozen). There is NO amount
+        field: the server prices the parcel (fare only; the indicative insurance premium is never
+        charged at booking), freezes the quote, and asks Paystack for exactly that amount.
+        Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -). Replaying a key
+        with the same request returns the same reference (and the stored authorization URL while
+        unpaid; the terminal status once processed); the same key with a different request or
+        a different user is 409 idempotency_conflict. No wallet is debited, so the KYC-tier gate
+        never runs; the wallet rail (POST /mobility/parcels) keeps it.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201':
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, amountKobo, status]
+                    properties:
+                      reference: { type: string, description: 'parcelorder:<Idempotency-Key>' }
+                      authorizationUrl: { type: string, description: Empty when status is not pending }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64, description: Server-quoted amount in kobo }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+        '400': { description: 'invalid_input, idempotency_key_required or invalid_idempotency_key' }
+        '401': { description: Not authenticated }
+        '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
+        '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
+        '422': { description: Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED) }
+        '429': { description: Per-user rate limit on checkout creation (rate_limited) }
+  /mobility/parcels/paystack/{reference}/status:
+    get:
+      tags: [parcel]
+      summary: Poll a card-direct parcel checkout (also drives confirmation — self-heals a late/missing webhook)
+      description: >
+        Owner-only (another user's reference is 404). While the intent is pending/processing this
+        verifies the charge with Paystack server-side and, once successful, books the parcel and
+        escrows it (settlement.EscrowExternal). Safe to poll concurrently with the webhook: the
+        parcel is booked exactly once. A charge that cannot back a booking (amount/currency
+        mismatch, booking failure) is refunded at the gateway; `refunded` means the gateway
+        accepted the refund, `refunding` means a refund is in flight (outcome being verified with the
+        gateway), `amount_mismatch`/`order_failed` mean the gateway definitively did not refund yet
+        and the reconciler is retrying. Always safe to poll; a `refunded` status never reverts.
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, status]
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      parcelId: { type: string, format: uuid, description: Present once confirmed }
+        '401': { description: Not authenticated }
+        '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }
   /driver/parcels/requests:
     get:
       tags: [parcel]
@@ -606,7 +787,85 @@ paths:
       tags: [towing]
       summary: Cancel a towing job (refund per policy)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Job }, '401': { description: Not authenticated } }
+      responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }, '401': { description: Not authenticated } }
+  # ── Card-direct (pay by debit card; never the wallet KYC-tier gate) ──────────
+  # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackTowingEnabled AND
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md.
+  /mobility/towing/paystack/initiate:
+    post:
+      tags: [towing]
+      summary: Start a card-direct towing checkout (server-quoted amount; no wallet debit) — money mutation
+      description: >
+        Body is the SAME as POST /mobility/towing (service_type, vehicle_type, issue_type, pickup, dest)
+        plus optional `email` and `callback_url` (gateway-only; stripped before the request is frozen).
+        There is NO amount field: the server prices the job (callout + per-km x route distance, floored
+        at the minimum fare), freezes the quote AND its priced inputs (route distance + pricing config),
+        and asks Paystack for exactly that amount. `service_type` must be one of tow, flatbed, jumpstart,
+        tire_change, fuel, battery, unlock, mechanic; `tow` and `flatbed` require `dest`; coordinates must
+        be real (0,0 and out-of-range are refused). An invalid request is a 400 BEFORE any gateway call.
+        Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -). Replaying a key with
+        the same request returns the same reference (and the stored authorization URL while unpaid; the
+        terminal status once processed); the same key with a different request or a different user is 409
+        idempotency_conflict. No wallet is debited, so the KYC-tier gate never runs; the wallet rail
+        (POST /mobility/towing) keeps it and refuses keys starting `towingorder:` (400 INVALID_IDEMPOTENCY_KEY).
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201':
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, amountKobo, status]
+                    properties:
+                      reference: { type: string, description: 'towingorder:<Idempotency-Key>' }
+                      authorizationUrl: { type: string, description: Empty when status is not pending }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64, description: Server-quoted amount in kobo }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+        '400': { description: 'invalid_input, idempotency_key_required or invalid_idempotency_key' }
+        '401': { description: Not authenticated }
+        '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
+        '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
+        '429': { description: Per-user rate limit on checkout creation (rate_limited) }
+  /mobility/towing/paystack/{reference}/status:
+    get:
+      tags: [towing]
+      summary: Poll a card-direct towing checkout (also drives confirmation — self-heals a late/missing webhook)
+      description: >
+        Owner-only (another user's reference is 404). While the intent is pending/processing this verifies
+        the charge with Paystack server-side and, once successful, books the towing job and escrows it
+        (settlement.EscrowExternal). Safe to poll concurrently with the webhook: the job is booked exactly
+        once. A charge that cannot back a booking (amount/currency mismatch, booking failure) is refunded
+        at the gateway; `refunded` means the gateway accepted the refund, `refunding` means a refund is in
+        flight (outcome being verified with the gateway), `amount_mismatch`/`order_failed` mean the gateway
+        definitively did not refund yet and the reconciler is retrying. Always safe to poll; a `refunded`
+        status never reverts. Cancelling a card-funded job (POST /mobility/towing/{id}/cancel) refunds the
+        card via the gateway — never the wallet — and is re-POSTable to finish a refund that failed after
+        the status flip.
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, status]
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      towingJobId: { type: string, format: uuid, description: Present once confirmed }
+        '401': { description: Not authenticated }
+        '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }
   /driver/towing/requests:
     get:
       tags: [towing]
@@ -686,7 +945,100 @@ paths:
       tags: [movers]
       summary: Cancel a mover job (refund per policy)
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
-      responses: { '200': { description: Mover job }, '401': { description: Not authenticated } }
+      responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' }, '401': { description: Not authenticated } }
+  # ── Card-direct (pay the accepted bid by debit card; never the wallet KYC-tier gate) ──
+  # [FeatureTransportPaystackCheckoutEnabled AND FeatureTransportPaystackMoversEnabled AND
+  #  FeatureTransportModesEnabled]. See docs/adr/ADR-PR522-mobility-card-direct.md.
+  /mobility/movers/paystack/initiate:
+    post:
+      tags: [movers]
+      summary: Start a card-direct checkout for ACCEPTING a mover bid (server-read amount; no wallet debit) — money mutation
+      description: >
+        Charged at BID ACCEPTANCE, not at quote time. Body is `{ job_id, bid_id }` plus optional `email` and
+        `callback_url` (gateway-only; stripped before the request is frozen). There is NO amount field and any
+        client-sent amount is ignored: the server reads the bid's amount itself, requires that the job belongs
+        to the caller, is still open (quote_requested / bids_received) and unfunded, and that the bid belongs to
+        the job and is still `submitted`, freezes {bid, provider, amount}, and asks Paystack for exactly that
+        amount. Anything else is refused before any gateway call (403 not your job, 404 job/bid not found,
+        409 job not open / already funded / bid not available).
+        When the charge confirms, the server RE-CHECKS the job and bid; if the bid was withdrawn or replaced,
+        its amount or provider changed, or the job was cancelled / funded by another path in the meantime, the
+        charge is REFUNDED at the gateway in full and nothing is accepted or escrowed (status `refunded`).
+        Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -). Replaying a key with the
+        same request returns the same reference (stored authorization URL while unpaid; terminal status once
+        processed); the same key with a different request or user is 409 idempotency_conflict. No wallet is
+        debited, so the KYC-tier gate never runs; the wallet rail (POST /mobility/movers/{id}/accept-bid)
+        keeps it and refuses keys starting `moversorder:` (400 INVALID_IDEMPOTENCY_KEY).
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [job_id, bid_id]
+              properties:
+                job_id: { type: string, format: uuid }
+                bid_id: { type: string, format: uuid }
+                email: { type: string }
+                callback_url: { type: string }
+      responses:
+        '201':
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, amountKobo, status]
+                    properties:
+                      reference: { type: string, description: 'moversorder:<Idempotency-Key>' }
+                      authorizationUrl: { type: string, description: Empty when status is not pending }
+                      accessCode: { type: string }
+                      amountKobo: { type: integer, format: int64, description: The accepted bid, read server-side, in kobo }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+        '400': { description: 'invalid_input (job_id/bid_id missing), idempotency_key_required or invalid_idempotency_key' }
+        '401': { description: Not authenticated }
+        '403': { description: Not your job }
+        '404': { description: 'job/bid not found, or service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
+        '409': { description: 'job not open / already funded / bid not available, idempotency_conflict, or authorization_unavailable (start a new checkout; a payment already made still confirms automatically)' }
+        '429': { description: Per-user rate limit on checkout creation (rate_limited) }
+  /mobility/movers/paystack/{reference}/status:
+    get:
+      tags: [movers]
+      summary: Poll a card-direct mover checkout (also drives confirmation — self-heals a late/missing webhook)
+      description: >
+        Owner-only (another user's reference is 404). While the intent is pending/processing this verifies the
+        charge with Paystack server-side and, once successful, accepts the bid and escrows it
+        (settlement.EscrowExternal) — job becomes bid_accepted, escrow funded. Safe to poll concurrently with
+        the webhook: the bid is accepted exactly once. A charge that cannot back an acceptance (amount/currency
+        mismatch, bid withdrawn/changed, job no longer open) is refunded at the gateway; `refunded` means the
+        gateway accepted the refund, `refunding` means a refund is in flight (outcome being verified),
+        `amount_mismatch`/`order_failed` mean the gateway definitively did not refund yet and the reconciler
+        is retrying. Cancelling a card-funded move (POST /mobility/movers/{id}/cancel) refunds the card via the
+        gateway — never the wallet — and is re-POSTable to finish a refund that failed after the status flip.
+      parameters:
+        - { name: reference, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [reference, status]
+                    properties:
+                      reference: { type: string }
+                      status: { type: string, enum: [pending, processing, confirmed, amount_mismatch, order_failed, refunding, refunded] }
+                      amountKobo: { type: integer, format: int64 }
+                      moveId: { type: string, format: uuid, description: The mover job id; present once confirmed }
+        '401': { description: Not authenticated }
+        '404': { description: 'unknown_reference (also returned for a reference that is not yours)' }
   /driver/movers/open:
     get:
       tags: [movers]

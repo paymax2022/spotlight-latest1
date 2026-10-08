@@ -2185,6 +2185,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				webhookHandler.SetRideOrderConfirmer(rideOrderConfirmer{svc: rideCheckoutSvc})
 			}
 			log.Println("[transport] Paystack-funded ride checkout wired (FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED)")
+			// Shared card-direct engine + per-service domains (parcel, …) — see
+			// transport_card_direct.go. Each domain has its own flag.
+			wireTransportCardDirect(ctx, cfg, mob, transportSvc, pool, paystackClient, settlementSvcTr, webhookHandler, redisClient)
 		}
 		// Public (unauthenticated) resolve path for a live-share link. A share link
 		// must be openable by someone without an account; the handler returns only
