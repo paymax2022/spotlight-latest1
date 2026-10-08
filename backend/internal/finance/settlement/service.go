@@ -133,6 +133,32 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if err := split.Validate(); err != nil {
 		return err
 	}
+	// Account get-or-create runs BEFORE the tx, not inside it: these calls take
+	// their own pool connection, and a goroutine that holds a tx conn while
+	// acquiring a second one deadlocks the pool under concurrency (conn
+	// starvation — every tx holder waits on a conn it already holds). Moves no
+	// money, idempotent, so running before Begin is safe even if the settle
+	// turns out not to apply.
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	revAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		return err
+	}
+	providerWallet, err := s.ledger.GetOrCreateUserWallet(ctx, split.ProviderID)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve provider wallet: %w", err)
+	}
+	var riderWallet *ledger.Account
+	if split.RiderID != nil {
+		riderWallet, err = s.ledger.GetOrCreateUserWallet(ctx, *split.RiderID)
+		if err != nil {
+			return fmt.Errorf("settlement: resolve rider wallet: %w", err)
+		}
+	}
+
 	var sett Settlement
 	const q = `SELECT id, reference, payer_id, total_kobo, status FROM settlements WHERE id=$1 FOR UPDATE`
 	tx, err := s.db.Begin(ctx)
@@ -159,21 +185,8 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 
 	// Atomicity (money invariant): the ledger API has no tx-aware Credit/Debit,
 	// so every leg posts as a raw balanced pair on THIS tx — money movement and
-	// the status flip commit atomically. Account get-or-create runs OUTSIDE the
-	// tx (moves no money); ON CONFLICT (idempotency_key) makes Settle re-triable.
-	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
-		return err
-	}
-	revAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
-	if err != nil {
-		return err
-	}
-	providerWallet, err := s.ledger.GetOrCreateUserWallet(ctx, split.ProviderID)
-	if err != nil {
-		return fmt.Errorf("settlement: resolve provider wallet: %w", err)
-	}
-
+	// the status flip commit atomically. ON CONFLICT (idempotency_key) makes
+	// Settle re-triable.
 	ref := "settle:" + sett.Reference
 	idem := "settle:" + settlementID
 
@@ -192,11 +205,7 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 		}
 	}
 	// Escrow → rider wallet (if applicable): DEBIT escrow, CREDIT rider wallet.
-	if split.RiderID != nil && riderKobo > 0 {
-		riderWallet, err := s.ledger.GetOrCreateUserWallet(ctx, *split.RiderID)
-		if err != nil {
-			return fmt.Errorf("settlement: resolve rider wallet: %w", err)
-		}
+	if riderWallet != nil && riderKobo > 0 {
 		if err := postPairTx(ctx, tx, escrowAcc.ID, riderWallet.ID, riderKobo,
 			ref+":rider", idem+":rider"); err != nil {
 			return fmt.Errorf("settlement: credit rider: %w", err)
@@ -224,6 +233,29 @@ func (s *Service) SettleToStandingAccounts(ctx context.Context, settlementID str
 	if err := split.Validate(); err != nil {
 		return err
 	}
+	// Account get-or-create before the money tx, matching Settle — a tx that
+	// blocks acquiring a second pool conn while holding its own deadlocks the
+	// pool under concurrency.
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	providerAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, providerAccount)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve provider clearing account: %w", err)
+	}
+	platformAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, platformAccount)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve platform account: %w", err)
+	}
+	var riderWallet *ledger.Account
+	if split.RiderID != nil {
+		riderWallet, err = s.ledger.GetOrCreateUserWallet(ctx, *split.RiderID)
+		if err != nil {
+			return fmt.Errorf("settlement: resolve rider wallet: %w", err)
+		}
+	}
+
 	var sett Settlement
 	const q = `SELECT id, reference, payer_id, total_kobo, status FROM settlements WHERE id=$1 FOR UPDATE`
 	tx, err := s.db.Begin(ctx)
@@ -245,20 +277,6 @@ func (s *Service) SettleToStandingAccounts(ctx context.Context, settlementID str
 		return err
 	}
 
-	// Account get-or-create outside the money tx, matching Settle.
-	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
-		return err
-	}
-	providerAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, providerAccount)
-	if err != nil {
-		return fmt.Errorf("settlement: resolve provider clearing account: %w", err)
-	}
-	platformAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, platformAccount)
-	if err != nil {
-		return fmt.Errorf("settlement: resolve platform account: %w", err)
-	}
-
 	ref := "settle:" + sett.Reference
 	idem := "settle:" + settlementID
 
@@ -277,11 +295,7 @@ func (s *Service) SettleToStandingAccounts(ctx context.Context, settlementID str
 		}
 	}
 	// Escrow → rider wallet (a rider is always a wallet-holding user).
-	if split.RiderID != nil && legs.RiderKobo > 0 {
-		riderWallet, err := s.ledger.GetOrCreateUserWallet(ctx, *split.RiderID)
-		if err != nil {
-			return fmt.Errorf("settlement: resolve rider wallet: %w", err)
-		}
+	if riderWallet != nil && legs.RiderKobo > 0 {
 		if err := postPairTx(ctx, tx, escrowAcc.ID, riderWallet.ID, legs.RiderKobo,
 			ref+":rider", idem+":rider"); err != nil {
 			return fmt.Errorf("settlement: credit rider: %w", err)
@@ -324,6 +338,25 @@ var ErrWrongRefundMethod = errors.New("settlement: wrong refund method for this 
 // — see RefundExternal for that case, and ErrWrongRefundMethod's doc comment
 // for why this check exists.
 func (s *Service) Refund(ctx context.Context, settlementID, reason string) error {
+	// Resolve accounts BEFORE Begin: every GetOrCreate takes its own pool conn,
+	// and a goroutine holding a tx conn while waiting for a second one starves
+	// the pool under concurrency. payer_id is immutable, so this pre-read is
+	// safe — the FOR UPDATE read below still re-validates status/funding under
+	// the row lock before any money moves.
+	var payerID string
+	if err := s.db.QueryRow(ctx, `SELECT payer_id FROM settlements WHERE id=$1`, settlementID).
+		Scan(&payerID); err != nil {
+		return fmt.Errorf("settlement: fetch payer for refund: %w", err)
+	}
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	payerWallet, err := s.ledger.GetOrCreateUserWallet(ctx, payerID)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve payer wallet: %w", err)
+	}
+
 	var sett Settlement
 	var fundingSource string
 	// Same mechanics as Settle: the row locks FOR UPDATE inside a tx and the
@@ -349,14 +382,6 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 		return fmt.Errorf("settlement: cannot refund — current status is %s", sett.Status)
 	}
 
-	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
-		return err
-	}
-	payerWallet, err := s.ledger.GetOrCreateUserWallet(ctx, sett.PayerID)
-	if err != nil {
-		return fmt.Errorf("settlement: resolve payer wallet: %w", err)
-	}
 	// postPairTx's ON CONFLICT keeps a mid-flight-crash retry safe — the legs
 	// replay as no-ops and the status flip completes.
 	if err := postPairTx(ctx, tx, escrowAcc.ID, payerWallet.ID, sett.TotalKobo,
@@ -383,6 +408,17 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 // settlement outside {escrowed, disputed} is a safe no-op: callers are
 // refund-loop cleanups over batches that may race concurrent resolutions.
 func (s *Service) RefundExternal(ctx context.Context, settlementID, reason string) error {
+	// Account resolution before Begin — see Refund for the pool-starvation
+	// hazard of acquiring a second conn while holding the tx conn.
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		return err
+	}
+
 	var sett Settlement
 	var fundingSource string
 	// Same mechanics as Refund — lock the row on the tx so the journal and the
@@ -407,14 +443,6 @@ func (s *Service) RefundExternal(ctx context.Context, settlementID, reason strin
 		return nil
 	}
 
-	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
-		return err
-	}
-	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
-	if err != nil {
-		return err
-	}
 	if err := postPairTx(ctx, tx, escrowAcc.ID, clearingAcc.ID, sett.TotalKobo,
 		"refund:"+sett.Reference, "refund:"+settlementID); err != nil {
 		return fmt.Errorf("settlement: post external refund: %w", err)
