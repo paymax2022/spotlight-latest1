@@ -122,6 +122,22 @@ func TestSubmitTier1_InvalidIdentifier_RefusesBeforeAnyProviderCall(t *testing.T
 	require.Nil(t, fake.runCheckArgs)
 }
 
+func TestSubmitTier1_NonNumericIdentifier_RefusesBeforeAnyProviderCall(t *testing.T) {
+	// 11 characters long but not a BVN/NIN: must be refused before consent is
+	// recorded or the provider is called (it would otherwise ride into a query string).
+	for _, id := range []string{"1234567890a", "1&bvn=2#x_y", "           ", "١٢٣٤٥٦٧٨٩٠١"} {
+		fake := &fakeKycVerifyGateway{}
+		h := &KYCConnectHandler{kycVerify: fake}
+		c, w := newTier1TestContext(`{"identifier":"` + id + `","identifierType":"bvn","consentVersion":"2026-07-ndpa-cbn-v1"}`)
+
+		h.SubmitTier1(c)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, "identifier %q", id)
+		assert.Equal(t, 0, fake.consentCalls, "identifier %q", id)
+		require.Nil(t, fake.runCheckArgs, "identifier %q", id)
+	}
+}
+
 func TestSubmitTier1_ValidRequest_RunsRealIDNumberCheck(t *testing.T) {
 	// Confirms the actual check dispatched is ID_NUMBER with the identifier the
 	// client sent, and that consent + session both happen before it — this is
