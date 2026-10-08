@@ -31,6 +31,10 @@ func ledgerDerivedRef(prefix, ledgerKey string) string {
 	return prefix + hex.EncodeToString(sum[:])[:12]
 }
 
+// errTxnCouldNotComplete is the generic client-facing error for a replay
+// verification failure — the durable state could not be proven either way.
+const errTxnCouldNotComplete = "transaction could not be completed"
+
 // adoptLedgerReplay resolves a same-key debit rejection: the caller-scoped
 // ledger key may already hold THIS caller's journal posted under an earlier
 // reference shape (e.g. a debit committed before a crash, replayed after a
@@ -126,21 +130,6 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	elig, err := h.store.GetPayoutEligibility(c.Request.Context(), userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check payout eligibility"})
-		return
-	}
-	if !elig.Eligible {
-		c.JSON(http.StatusForbidden, gin.H{"error": "not eligible for payouts: " + elig.Message})
-		return
-	}
-
-	if body.AmountKobo > elig.CurrentBalanceKobo {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "amount exceeds your available balance"})
-		return
-	}
-
 	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
 	// enters the global ledger keyspace: a raw key is unique per journal, so
 	// the same key arriving from another rail (or another user) would collide
@@ -165,33 +154,62 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "settlement account unavailable"})
 		return
 	}
-	debitErr := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, settlement.ID, body.AmountKobo)
-	if errors.Is(debitErr, ledger.ErrDuplicate) {
-		// The derived key embeds this caller's user id, so a claim on it can only
-		// come from this user's own earlier attempt — e.g. a debit committed under
-		// an older reference shape before a crash. If the durable pair is provably
-		// this payout, adopt the RECORDED reference and finish the projection;
-		// a foreign or tampered claim still fails closed as 409.
-		walletAcc, werr := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), userID)
-		if werr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "wallet unavailable"})
-			return
-		}
-		recRef, ok, aerr := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, walletAcc.ID, settlement.ID, body.AmountKobo)
-		if aerr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "transaction could not be completed"})
-			return
-		}
-		if !ok {
-			writeMoneyError(c, debitErr)
-			return
-		}
-		reference = recRef
-		debitErr = nil
-	}
-	if debitErr != nil {
-		writeMoneyError(c, debitErr)
+
+	// Identity-verified replay fast-path BEFORE the eligibility/balance gates:
+	// the original committed debit already counted against all of them, so
+	// re-running the gates wedges a true retry (e.g. amount > remaining
+	// balance after the first debit parked the funds). A key that already
+	// holds THIS journal skips the gates and the debit and converges on the
+	// recorded row below; a key held by a different journal is not matched and
+	// falls through to the gates, where the debit fails closed.
+	walletAcc, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "wallet unavailable"})
 		return
+	}
+	var elig *PayoutEligibility
+	recRef, journalHeld, aerr := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, walletAcc.ID, settlement.ID, body.AmountKobo)
+	if aerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
+		return
+	}
+	if journalHeld {
+		reference = recRef
+	} else {
+		elig, err = h.store.GetPayoutEligibility(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check payout eligibility"})
+			return
+		}
+		if !elig.Eligible {
+			c.JSON(http.StatusForbidden, gin.H{"error": "not eligible for payouts: " + elig.Message})
+			return
+		}
+
+		if body.AmountKobo > elig.CurrentBalanceKobo {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "amount exceeds your available balance"})
+			return
+		}
+
+		if debitErr := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, settlement.ID, body.AmountKobo); debitErr != nil {
+			if errors.Is(debitErr, ledger.ErrDuplicate) {
+				// The journal landed between the fast-path probe and the debit
+				// (a racing first attempt). Adopt it only if it is provably
+				// THIS journal; a foreign or tampered claim fails closed.
+				if ref2, ok, aerr2 := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, walletAcc.ID, settlement.ID, body.AmountKobo); aerr2 != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
+					return
+				} else if ok {
+					reference = ref2
+				} else {
+					writeMoneyError(c, debitErr)
+					return
+				}
+			} else {
+				writeMoneyError(c, debitErr)
+				return
+			}
+		}
 	}
 
 	payout, err := h.store.RequestPayout(c.Request.Context(), userID, body.AmountKobo, "", "", "", reference, ledgerKey)
@@ -227,8 +245,13 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 	}
 
 	// Read the post-debit balance back from the ledger rather than deriving it
-	// from the pre-check figure, which is stale by the time the journal posts.
-	availableKobo := elig.CurrentBalanceKobo - body.AmountKobo
+	// from the pre-check figure, which is stale by the time the journal posts
+	// (and absent entirely on a journal replay, which skips the eligibility
+	// read).
+	var availableKobo int64
+	if elig != nil {
+		availableKobo = elig.CurrentBalanceKobo - body.AmountKobo
+	}
 	if bal, balErr := h.walletSvc.GetBalance(c.Request.Context(), userID); balErr == nil {
 		availableKobo = bal.BalanceKobo
 	}
