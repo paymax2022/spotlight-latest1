@@ -1,13 +1,8 @@
-// ── Insurance (live) — the schema-driven purchase form ──────────────────────
 // THE central piece of this module.
-//
 // Every MyCover product publishes its OWN required-field table, and no two are
 // alike. A Bastion health application wants gender, an 11-digit NIN, a passport
-// photo and a past date of birth; an STI comprehensive motor application wants
 // 23 fields including four utility-backed dropdowns, one of which is empty until
-// its parent is chosen; an office-content application wants tenancy, a Nigerian
 // LGA and a repeating list of items. Most also nest a `policy_holder` block.
-//
 // So there is no shared quote form to hardcode. This renders whatever
 // `FormSchema` it is handed:
 //   · chunks fields into steps (`buildSteps`) so a 23-field motor form is a
@@ -21,16 +16,15 @@
 //     before its parent is answered
 //   · takes server-side field errors back and jumps to the step that owns the
 //     first one, so a rejection lands under the input that caused it
-//
 // It holds NO product knowledge whatsoever. A product with a schema nobody has
 // seen requires no change here.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import {

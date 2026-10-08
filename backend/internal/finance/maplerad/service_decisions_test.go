@@ -47,7 +47,7 @@ func TestBoolToRows_DedupeBridge(t *testing.T) {
 	if DecideDedupe(boolToRows(true)).Process {
 		process++
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if DecideDedupe(boolToRows(false)).Process {
 			process++
 		}

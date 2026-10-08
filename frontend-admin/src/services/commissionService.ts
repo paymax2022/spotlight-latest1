@@ -1,16 +1,9 @@
-// ── Admin — central Commission & Profit module service ────────────────────────
 // Copies the staysAdminService.ts / academyAdminService.ts request stack EXACTLY:
 //  • financeBase() builds the absolute backend path via apiRoot() + /api/finance
-//  • authHeaders() attaches the admin Bearer token from localStorage
-//  • getJson/sendJson throw on non-2xx; the commission handler wraps payloads in a
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //    { success, ... } envelope (NOT { data }), so each caller reads its named field.
-//
-// Backend: backend/internal/finance/commission/{handler.go,model.go}. All money is
-// integer minor units (kobo); all rates are integer basis points (bps). The UI shows
 // ₦ (kobo/100) and % (bps/100) but ALWAYS converts back to integer kobo/bps on submit
 // (see toBps/toKobo) — floats never cross the wire for money.
-//
-// financeBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/commission/... instead
@@ -21,7 +14,6 @@ import { resolveUseMock } from '@/config/useMock';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_COMMISSION_USE_MOCK);
 
-// ── Domain types (mirror commission/model.go JSON tags — camelCase) ───────────
 export type FeeModel = 'commission' | 'platform_charge' | 'fixed' | 'commission_plus_fee' | 'none';
 export type FeePayer = 'customer' | 'provider' | 'merchant' | 'none';
 
@@ -108,16 +100,12 @@ export interface Earning {
 
 export type GroupBy = 'category' | 'service' | 'day';
 
-// ── Request stack ─────────────────────────────────────────────────────────────
 function financeBase(): string {
   return `${apiRoot()}/api/finance`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
@@ -132,7 +120,6 @@ async function sendRaw<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, body: 
   return (await res.json()) as T;
 }
 
-// ── Money / rate conversion helpers (integer-safe) ────────────────────────────
 // bps = round(pct * 100); kobo = round(naira * 100). Never emit floats for money.
 export function pctToBps(pct: number): number { return Math.round((Number(pct) || 0) * 100); }
 export function bpsToPct(bps: number): number { return (Number(bps) || 0) / 100; }
@@ -146,7 +133,6 @@ export function formatPct(bps: number): string {
   return `${bpsToPct(bps).toLocaleString('en-NG', { maximumFractionDigits: 2 })}%`;
 }
 
-// ── Mock fixtures (mirror the seed rate card) ─────────────────────────────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
 const MOCK_CONFIGS: Config[] = [
@@ -202,7 +188,6 @@ const MOCK_EARNINGS: Earning[] = [
   { id: 'ern_5', configId: 'cfg_health_pharm', serviceCategory: 'Health', service: 'pharmacy', serviceSubtype: '', grossAmountKobo: 1200000, commissionKobo: 96000, platformChargeKobo: 0, convenienceFeeKobo: 0, fixedFeeKobo: 0, spotlightRevenueKobo: 96000, currency: 'NGN', sourceModule: 'health', sourceRef: 'rx_2201', ledgerRef: 'led_ee05', userId: 'usr_ee05', createdAt: iso(14) },
 ];
 
-// ── API ───────────────────────────────────────────────────────────────────────
 // GET /finance/commission/config → { success, configs, grouped, count }
 export async function listConfig(opts?: { category?: string; activeOnly?: boolean }): Promise<ConfigList> {
   if (USE_MOCK) {

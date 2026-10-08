@@ -29,7 +29,6 @@ test.describe('Bills E2E - Transaction history and details', () => {
     if (await txCardTitle.count() > 0) {
       await txCardTitle.click();
     } else {
-      // Fallback: navigate directly to a known transaction ID
       await page.goto('/services/transactions/tx-airtime-success');
     }
 

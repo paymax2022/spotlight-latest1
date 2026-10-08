@@ -1,7 +1,6 @@
 package utilitybills_test
 
 // Money invariants for the Utility Bills domain, asserted with ZERO I/O.
-//
 // These are the properties that must hold for every possible input, not just the
 // fixtures the live-DB suite happens to drive. They run on every PR with no
 // database, which is the point: a pricing or state-machine regression should fail
@@ -14,10 +13,9 @@ import (
 	"spotlight/backend/internal/utilitybills"
 )
 
-func kobo(v int64) *int64 { return &v }
+//go:fix inline
+func kobo(v int64) *int64 { return new(v) }
 
-// ── INVARIANT 1: retail = amount + markup + convenience fee ─────────────────
-//
 // This is the sum the WALLET IS DEBITED FOR. If it ever drifts from its parts,
 // the member is charged an amount no line item explains.
 
@@ -32,16 +30,16 @@ func TestInvariant_RetailIsExactlySumOfParts(t *testing.T) {
 			name: "variable electricity with fee and markup",
 			product: utilitybills.Product{
 				AmountType:    utilitybills.AmountTypeVariable,
-				MinAmountKobo: kobo(100_000), MaxAmountKobo: kobo(10_000_000),
+				MinAmountKobo: new(int64(100_000)), MaxAmountKobo: new(int64(10_000_000)),
 				MarkupBps: 150, ConvenienceFeeKobo: 10_000, ProviderDiscountBps: 200,
 			},
 			mapping:    utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive, ProviderDiscountBps: 200},
-			amountKobo: kobo(500_000),
+			amountKobo: new(int64(500_000)),
 		},
 		{
 			name: "fixed data bundle, no fee, no markup",
 			product: utilitybills.Product{
-				AmountType: utilitybills.AmountTypeFixed, AmountKobo: kobo(50_000),
+				AmountType: utilitybills.AmountTypeFixed, AmountKobo: new(int64(50_000)),
 				ProviderDiscountBps: 500,
 			},
 			mapping: utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive, ProviderDiscountBps: 500},
@@ -53,7 +51,7 @@ func TestInvariant_RetailIsExactlySumOfParts(t *testing.T) {
 				MarkupBps:  333, ConvenienceFeeKobo: 1, ProviderDiscountBps: 111,
 			},
 			mapping:    utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive, ProviderDiscountBps: 111},
-			amountKobo: kobo(100_001),
+			amountKobo: new(int64(100_001)),
 		},
 	}
 
@@ -75,14 +73,12 @@ func TestInvariant_RetailIsExactlySumOfParts(t *testing.T) {
 	}
 }
 
-// ── INVARIANT 2: every priced amount is a positive integer ──────────────────
-
 func TestInvariant_PricingRejectsNonPositiveAmounts(t *testing.T) {
 	product := utilitybills.Product{AmountType: utilitybills.AmountTypeVariable, ProviderDiscountBps: 100}
 	mapping := utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive}
 
 	for _, amount := range []int64{0, -1, -500_000} {
-		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, kobo(amount)); !errors.Is(err, utilitybills.ErrInvalidAmount) {
+		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, new(amount)); !errors.Is(err, utilitybills.ErrInvalidAmount) {
 			t.Fatalf("amount %d: got %v, want ErrInvalidAmount", amount, err)
 		}
 	}
@@ -92,19 +88,17 @@ func TestInvariant_PricingRejectsNonPositiveAmounts(t *testing.T) {
 	}
 }
 
-// ── INVARIANT 3: a non-positive provider cost is refused outright ───────────
-//
 // A zero or negative provider cost means we would be recording a purchase we
 // apparently paid nothing (or were paid) for. That is a catalogue
 // misconfiguration, and letting it through would corrupt every margin report
 // downstream.
 
 func TestInvariant_NonPositiveProviderCostIsRefused(t *testing.T) {
-	product := utilitybills.Product{AmountType: utilitybills.AmountTypeFixed, AmountKobo: kobo(50_000)}
+	product := utilitybills.Product{AmountType: utilitybills.AmountTypeFixed, AmountKobo: new(int64(50_000))}
 	for _, cost := range []int64{0, -1} {
 		mapping := utilitybills.ProviderMapping{
 			Status:           utilitybills.MappingStatusActive,
-			ProviderCostKobo: kobo(cost),
+			ProviderCostKobo: new(cost),
 		}
 		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, nil); !errors.Is(err, utilitybills.ErrProviderCostNotPositive) {
 			t.Fatalf("cost %d: got %v, want ErrProviderCostNotPositive", cost, err)
@@ -112,8 +106,6 @@ func TestInvariant_NonPositiveProviderCostIsRefused(t *testing.T) {
 	}
 }
 
-// ── INVARIANT 4: a pending provider outcome NEVER becomes 'failed' ──────────
-//
 // The single most expensive mistake this module could make. A timeout or a
 // "processing" answer means VTpass may still deliver; mapping it to 'failed'
 // triggers the auto-reverse and hands the member both the electricity and a
@@ -132,8 +124,6 @@ func TestInvariant_PendingNeverBecomesFailed(t *testing.T) {
 		t.Fatalf("timed-out attempt landed in %s — must be provider_pending", got)
 	}
 }
-
-// ── INVARIANT 5: only definitively-settled states are terminal ──────────────
 
 func TestInvariant_TerminalAndReversibleStates(t *testing.T) {
 	terminal := map[utilitybills.Status]bool{
@@ -168,8 +158,6 @@ func TestInvariant_TerminalAndReversibleStates(t *testing.T) {
 	}
 }
 
-// ── INVARIANT 6: requery is only offered where it can change anything ──────
-
 func TestInvariant_RequeryOnlyForUnsettledStates(t *testing.T) {
 	requeryable := map[utilitybills.Status]bool{
 		utilitybills.StatusProviderPending: true,
@@ -187,8 +175,6 @@ func TestInvariant_RequeryOnlyForUnsettledStates(t *testing.T) {
 	}
 }
 
-// ── INVARIANT 7: routing never returns a route it filtered out ─────────────
-
 func TestInvariant_SelectProviderNeverReturnsAnIneligibleRoute(t *testing.T) {
 	cands := []utilitybills.RouteCandidate{
 		{
@@ -205,8 +191,6 @@ func TestInvariant_SelectProviderNeverReturnsAnIneligibleRoute(t *testing.T) {
 	}
 }
 
-// ── INVARIANT 8: the commission convenience-fee override conserves the delta ─
-//
 // Whatever the override does to what the CUSTOMER pays, it must move gross profit
 // by exactly the same amount. Any other relationship would silently create or
 // destroy margin.

@@ -141,8 +141,8 @@ Reuses the existing `consult/[id]/chat.tsx` screen. Text send REUSES Phase 1
 
 Reuses the existing `consult/[id]/call.tsx` screen. Base call REUSES Phase 1
 `useCallSession`; everything layers on `CallSessionRich` + `PreCallCheck`.
-Reconnecting / dropped / disconnected / poor-network / Agora-failure /
-VideoSDK-fallback are STATES read from `CallSessionRich.phase` / `provider` /
+Reconnecting / dropped / disconnected / poor-network / provider-failure
+are STATES read from `CallSessionRich.phase` / `provider` /
 `networkQuality` / participant states. Hooks: `useCallSessionRich`,
 `usePreCallCheck`, `useCallDisputes`, `useRunDeviceCheck`, `useJoinCall`,
 `useLeaveCall`, `useSwitchProvider`, `useSubmitCallFeedback`,
@@ -166,9 +166,9 @@ VideoSDK-fallback are STATES read from `CallSessionRich.phase` / `provider` /
 | I14 | speaker toggle | STATE of call | `CallControls.speakerOn` |
 | I15 | poor network warning | STATE of call | `networkQuality === 'poor'` + `NETWORK_QUALITY_LABELS` |
 | I16 | reconnecting | STATE of call | `CallPhase === 'reconnecting'` |
-| I17 | Agora active | STATE of call | `provider === 'agora'` |
-| I18 | Agora failure | STATE of call | `providerFailed === true` |
-| I19 | switch to VideoSDK fallback | STATE of call | `useSwitchProvider` (to `videosdk`) |
+| I17 | provider active | STATE of call | `provider === 'videosdk'` (only provider) |
+| I18 | provider failure | STATE of call | `providerFailed === true` |
+| I19 | rejoin on VideoSDK | STATE of call | `useSwitchProvider` (to `videosdk`) |
 | I20 | VideoSDK active | STATE of call | `provider === 'videosdk'` |
 | I21 | call dropped | STATE of call | `CallPhase === 'dropped'` |
 | I22 | patient disconnected | STATE of call | `patientState.connected === false` |

@@ -1,13 +1,8 @@
-// ── Insurance (live) — domain types ─────────────────────────────────────────
 // These mirror `SCRATCHPAD/INTERNAL-CONTRACT.md` one-for-one. The wire format is
-// snake_case; `live/normalize.ts` is the ONLY place that translates. Screens see
 // nothing but the camelCase shapes below.
-//
 // IRON RULE: every monetary field is an INTEGER in kobo (minor units) and its
 // name ends in `Kobo`. No floats, no decimal strings, no client-side arithmetic
 // on a premium — the server computes it, we render it.
-//
-// This file is import-free on purpose so the pure layer (normalize/formEngine/
 // money/catalog/html) loads under plain `node --test` with no alias resolver.
 
 /** The seven real MyCover categories, lowercased as the contract sends them. */

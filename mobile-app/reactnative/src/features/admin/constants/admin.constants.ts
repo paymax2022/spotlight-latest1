@@ -1,10 +1,8 @@
-// ── Paymax · Admin Console — Constants ───────────────────────────────────────
-// Role labels, the client-side permission map (mirrors backend RBAC; used only
 // to show/hide action buttons — the server is always authoritative), status →
 // chip styling (design tokens only, like crypto's STATUS_STYLE), and the
 // dashboard nav sections. Money/format helpers are re-exported for convenience.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { Permission, Role } from '../types/admin.types';
 
 // Re-export the format helpers so screens can import everything admin from here.
@@ -20,8 +18,6 @@ export {
 
 /** Feature flag gating the whole admin surface. */
 export const ADMIN_FEATURE_FLAG = 'admin_console';
-
-// ─── Roles ─────────────────────────────────────────────────────────────────────
 
 export const ROLE_LABEL: Record<Role, string> = {
   SuperAdmin: 'Super Admin',
@@ -58,7 +54,6 @@ export const ROLE_STYLE: Record<Role, { fg: string; bg: string }> = {
   ContentAdmin:    { fg: Colors.tertiaryContainer,     bg: Colors.iconBgGreen },
 };
 
-// ─── Permissions (mirror backend policy; client-side gate for action buttons) ──
 // SuperAdmin holds every permission. Other roles hold the slice they own. These
 // are advisory only — privileged actions are re-checked server-side.
 
@@ -83,8 +78,6 @@ export const PERMISSIONS: Record<Role, Permission[]> = {
 export function can(role: Role, perm: Permission): boolean {
   return PERMISSIONS[role]?.includes(perm) ?? false;
 }
-
-// ─── Status → chip styling (design tokens only, mirrors CRYPTO_STATUS_STYLE) ───
 
 type ChipStyle = { label: string; fg: string; bg: string };
 
@@ -145,7 +138,6 @@ export function riskChip(score: number): ChipStyle {
   return { label: `Risk ${score}`, ...OK };
 }
 
-// ─── Dashboard nav sections (the console menu grid) ────────────────────────────
 // `permission` gates the tile (client-side); `route` is under /admin.
 
 export interface NavSection {

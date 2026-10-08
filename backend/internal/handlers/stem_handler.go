@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type StemHandler struct {
@@ -92,11 +95,7 @@ func (h *StemHandler) Overview(c *gin.Context) {
 
 // MyRole reports which STEM role name(s) — if any — the caller's real RBAC
 // roles resolve to, using the exact mapping RequireStemRoles itself checks
-// against (middleware.ResolveStemRoleNames). ADR-057 frontend follow-up:
-// frontend-admin's stemAccess.ts used to derive the "current" STEM role from
-// a build-time env var; this endpoint lets it ask the real, signed-in-user
-// question instead.
-//
+// against (middleware.ResolveStemRoleNames; ADR-057).
 // Deliberately sits behind RequireVerifiedIdentity ONLY (router.go's
 // stemGroup), not RequireStemRoles: the whole point is that ANY verified
 // admin can call this, including one who holds no STEM role at all — an
@@ -114,7 +113,7 @@ func (h *StemHandler) MyRole(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing verified identity"})
 		return
 	}
-	roleSlugs, err := h.rbac.GetUserRoles(adminUserID)
+	roleSlugs, err := h.rbac.GetUserRoles(c.Request.Context(), adminUserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not resolve roles"})
 		return
@@ -176,15 +175,15 @@ func (h *StemHandler) CreateSchool(c *gin.Context) {
 		return
 	}
 	if err := validateStemArtifactURL(payload.SchoolLogoURL, "image"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid schoolLogoUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid schoolLogoUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.RegistrationDocumentURL, "document"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid registrationDocumentUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid registrationDocumentUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.AccreditationDocumentURL, "document"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid accreditationDocumentUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid accreditationDocumentUrl: %v", err))})
 		return
 	}
 	created, err := h.service.CreateSchool(domain.StemSchoolCreateInput{
@@ -419,19 +418,19 @@ func (h *StemHandler) CreateEmergingInnovator(c *gin.Context) {
 		return
 	}
 	if err := validateStemArtifactURL(payload.PitchDeckURL, "deck"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid pitchDeckUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid pitchDeckUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.VideoDemoURL, "video"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid videoDemoUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid videoDemoUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.PhotoURL, "image"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid photoUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid photoUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.IDVerificationURL, "id_doc"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid idVerificationUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid idVerificationUrl: %v", err))})
 		return
 	}
 
@@ -1023,14 +1022,14 @@ func validateStemArtifactURL(raw string, kind string) error {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid URL format")
+		return errors.New("invalid URL format")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("URL must use http or https")
+		return errors.New("URL must use http or https")
 	}
 	ext := strings.ToLower(path.Ext(parsed.Path))
 	if ext == "" {
-		return fmt.Errorf("missing file extension")
+		return errors.New("missing file extension")
 	}
 
 	allowed := map[string]map[string]struct{}{
@@ -1052,7 +1051,7 @@ func validateStemArtifactURL(raw string, kind string) error {
 	}
 	group, ok := allowed[kind]
 	if !ok {
-		return fmt.Errorf("unknown artifact type")
+		return errors.New("unknown artifact type")
 	}
 	if _, ok := group[ext]; !ok {
 		return fmt.Errorf("unsupported file extension %s", ext)

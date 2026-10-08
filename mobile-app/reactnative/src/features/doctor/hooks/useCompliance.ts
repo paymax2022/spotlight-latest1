@@ -1,4 +1,3 @@
-// ── Doctor — compliance dashboard hooks ──────────────────────────────────────
 // Phase 2. Licence/consent/audit/alerts/policy reads + acknowledge-policy
 // mutation (auto-generates idempotencyKey, invalidates the dashboard).
 

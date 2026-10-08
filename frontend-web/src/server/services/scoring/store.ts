@@ -1,7 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-// ── Rubric definitions per contest type ───────────────────────────────────────
-
 export interface RubricCriterion {
   key: string;
   label: string;
@@ -57,8 +55,6 @@ export function getRubricForContest(contestSlug: string): RubricCriterion[] {
   return GENERAL_RUBRIC;
 }
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 export type Recommendation = 'pending' | 'shortlist' | 'approve' | 'reject';
 
 export interface JudgeScoreCard {
@@ -88,7 +84,6 @@ export interface ScoreSummary {
   consensusRecommendation: Recommendation;
 }
 
-// ── Supabase-backed store (public.judge_application_scorecards) ────────────────
 // See supabase/migrations/20261230000000_judge_application_scorecards.sql —
 // this used to be a globalThis Map, so every score vanished on server
 // restart/redeploy. Service-role client mirrors registration/supabase-store.ts:
@@ -147,8 +142,6 @@ function calcTotals(scores: Record<string, number>, rubric: RubricCriterion[]) {
   const max   = rubric.reduce((sum, c) => sum + c.maxScore, 0);
   return { totalScore: total, maxScore: max, percentageScore: max > 0 ? Math.round((total / max) * 100) : 0 };
 }
-
-// ── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function getScorecardForJudge(applicationId: string, judgeId: string): Promise<JudgeScoreCard | null> {
   const { data, error } = await getSupabase()

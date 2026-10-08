@@ -1,18 +1,16 @@
 import React from 'react';
 import { Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, EdgeStateView } from '@/features/doctor/components';
 import { useAppStatus } from '@/features/doctor/hooks';
 import { APP_STATUS_MODE_LABELS } from '@/features/doctor/constants';
 
-// ── Section AD — App-status gate (maintenance / forced update, AD.25-26) ───────
 // Dedicated full-screen gate. When useAppStatus reports maintenance or
 // app_update_required, the matching EDGE_STATES descriptor renders via the shared
-// EdgeStateView; otherwise an "up to date" status card is shown. Reachable from
 // the settings hub so reviewers can preview both gate states.
 
 export default function AppStatusScreen() {

@@ -1,13 +1,9 @@
 // Pure-logic unit tests for the card rail (top up, then spend).
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/payments/*.spec.ts"
-//
 // The bug these guard: the card rail used to charge the card directly at Paystack
 // for the purchase amount and THEN run the module's charge — which escrows from
-// the WALLET. The customer paid twice; and when the wallet was short, the escrow
 // failed after the card had already been charged, destroying the PSP money
 // (no ledger entry, no settlement, no refund path — the receiving webhook only
 // writes an audit row).
-//
 // The rail now funds the wallet for the exact amount, waits for the webhook to
 // credit it, and only then runs the module's ordinary wallet charge. Net wallet
 // change is zero and the money travels on one ledger.
@@ -104,7 +100,6 @@ describe('waitForTopup — only a real credit lets the purchase proceed', () => 
 
   it('resolves false on timeout rather than assuming success', async () => {
     // A slow webhook must NOT be read as a credit. The customer's money is
-    // recorded against the intent and still lands in their wallet; guessing here
     // would debit a wallet that has not been funded.
     let t = 0;
     const ok = await waitForTopup('TOPUP_ABC', {

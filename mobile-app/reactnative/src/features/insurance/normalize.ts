@@ -1,9 +1,7 @@
-// ── Insurance — live-response normalisation ──────────────────────────────────
 // The Go catalog surface returns a `{ "data": [...] }` envelope of snake_case,
 // routing-oriented rows. Screens only ever consume the normalised camelCase
 // `InsuranceProduct` (PRD §7 — provider/back-end JSON never leaks past api.ts).
 // This module is the single mapping boundary; keep it presentation-only.
-//
 // Money stays in kobo (minor units) end to end — no conversions here.
 
 import type {
@@ -16,7 +14,6 @@ import type {
   Provider,
 } from './types';
 
-// ── Envelope ─────────────────────────────────────────────────────────────────
 /** Unwrap `{ data: T }` (Go handler envelope) or accept a bare payload. */
 export function unwrapList<T = unknown>(body: unknown): T[] {
   const inner = isEnvelope(body) ? body.data : body;
@@ -32,7 +29,6 @@ function isEnvelope(b: unknown): b is { data: unknown } {
   return typeof b === 'object' && b !== null && 'data' in b;
 }
 
-// ── Enum coercions (lenient — unknown values fall back, never throw) ─────────
 function toProvider(raw: unknown): Provider {
   return String(raw ?? '').toLowerCase() === 'octamile' ? 'OCTAMILE' : 'MYCOVER';
 }
@@ -67,8 +63,6 @@ function toCadence(raw: unknown): InsuranceProduct['premiumCadence'] {
   return CADENCES.includes(v) ? v : 'annual';
 }
 
-// ── Presentation lookups (pure display, kept inline so this stays hermetic and
-// unit-testable under plain Node). Mirrors PRODUCT_LINES in insurance.constants;
 // the catalog never carries icon/description — they are line-level presentation.
 const LINE_ICON: Record<string, string> = {
   HEALTH: 'HeartPulse',
@@ -122,7 +116,6 @@ function toSumInsuredRules(raw: unknown): InsuranceProduct['sumInsuredRules'] {
   return { min: Number(r.min ?? 0), max: Number(r.max ?? 0), basis };
 }
 
-// ── The mapping ──────────────────────────────────────────────────────────────
 /** Map one raw Go catalog row → normalised InsuranceProduct. */
 export function mapCatalogProduct(raw: any): InsuranceProduct {
   const provider = toProvider(raw?.provider);

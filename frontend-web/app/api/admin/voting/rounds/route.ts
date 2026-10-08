@@ -22,7 +22,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.contestId || !body.name || !body.slug) return errorResponse('contestId, name, slug required', 400);
 
     const supabase = createAdminClient();
@@ -46,7 +47,10 @@ export async function POST(request: Request) {
       status: 'upcoming',
     }).select('*').single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/rounds POST]', error.message);
+      return errorResponse('Failed to create round', 500);
+    }
 
     await appendAuditLog({ actorId: identity.actorId, actorRole: identity.role, action: 'voting_round_created',
       entityType: 'voting_round', entityId: (data as any).id, contestId: body.contestId, newValue: body });
@@ -58,7 +62,8 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.id) return errorResponse('id required', 400);
 
     const supabase = createAdminClient();
@@ -75,7 +80,10 @@ export async function PATCH(request: Request) {
     }
 
     const { data, error } = await supabase.from('voting_rounds').update(updates).eq('id', body.id).select('*').single();
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/rounds PATCH]', error.message);
+      return errorResponse('Failed to update round', 500);
+    }
 
     await appendAuditLog({ actorId: identity.actorId, actorRole: identity.role, action: 'voting_round_updated',
       entityType: 'voting_round', entityId: body.id, newValue: updates });

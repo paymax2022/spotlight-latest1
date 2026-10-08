@@ -2,23 +2,22 @@ import React from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Smartphone, Monitor, MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { useDevices, useRevokeDevice } from '@/features/association/hooks/useSettings';
+import { useDevices, useRevokeDevice } from '@/features/association/hooks';
 import { useRegisterThisDevice } from '@/features/association/hooks/useAuthoring';
-import { relativeTime } from '@/features/association/utils/associationFormatters';
-import type { Device } from '@/features/association/types/settings.types';
+import { relativeTime } from '@/features/association/utils';
+import type { Device } from '@/features/association/types';
 import { confirmAsync } from '@/lib/confirm';
 
 export default function DevicesScreen() {
   // `assoc_devices` had no writer anywhere in the repo, so this list was always
   // empty and the revoke endpoint had no row to act on. Registering on open
-  // gives the screen a real device to show; the call is idempotent on
   // (user, name, platform), so revisiting only touches `last_active`.
   useRegisterThisDevice();
 

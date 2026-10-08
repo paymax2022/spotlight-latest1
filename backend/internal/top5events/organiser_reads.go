@@ -7,6 +7,7 @@ package top5events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -78,7 +79,7 @@ type AttendeeRow struct {
 func (s *Service) AttendeesForEvent(ctx context.Context, callerID, eventID string) ([]AttendeeRow, error) {
 	var organiserID string
 	if err := s.db.QueryRow(ctx, `SELECT organiser_id FROM events WHERE id=$1`, eventID).Scan(&organiserID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err

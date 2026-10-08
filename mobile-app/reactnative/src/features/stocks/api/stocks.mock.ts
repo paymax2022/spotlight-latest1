@@ -1,4 +1,3 @@
-// ── Paymax Invest · Stocks — Mock fixtures ───────────────────────────────────
 // Deterministic seed data so every UI state renders in mock mode. Flip
 // EXPO_PUBLIC_STOCKS_USE_MOCK=false to hit the real Go endpoints (stocks.api.ts).
 // All fiat is in minor units (NGN kobo / USD cents).
@@ -15,8 +14,6 @@ import type {
 
 const ngn = (major: number) => Math.round(major * 100);
 const usd = (major: number) => Math.round(major * 100);
-
-// ─── Whitelisted assets (admin-controlled in production) ──────────────────────
 
 export const MOCK_STOCKS: StockAsset[] = [
   {
@@ -185,8 +182,6 @@ export const MOCK_STOCKS: StockAsset[] = [
   },
 ];
 
-// ─── Holdings (portfolio positions) ───────────────────────────────────────────
-
 const dangcem = MOCK_STOCKS[0];
 const gtco = MOCK_STOCKS[2];
 const aapl = MOCK_STOCKS[6];
@@ -213,8 +208,6 @@ export const MOCK_POSITIONS: StockPosition[] = [
   buildPosition(gtco, 2_400, ngn(44.50)),
   buildPosition(aapl, 18, usd(190.20)),
 ];
-
-// ─── Order history ──────────────────────────────────────────────────────────--
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -323,8 +316,6 @@ export const MOCK_ORDERS: StockOrder[] = [
   },
 ];
 
-// ─── News ─────────────────────────────────────────────────────────────────────
-
 export const MOCK_NEWS: StockNews[] = [
   {
     id: 'nw_1', title: 'Dangote Cement reports higher quarterly volumes across West Africa',
@@ -343,8 +334,6 @@ export const MOCK_NEWS: StockNews[] = [
   },
 ];
 
-// ─── Dividends ──────────────────────────────────────────────────────────────--
-
 export const MOCK_DIVIDENDS: Dividend[] = [
   {
     id: 'dv_1', symbol: 'GTCO', exDate: daysFromNow(8), payDate: daysFromNow(22),
@@ -355,8 +344,6 @@ export const MOCK_DIVIDENDS: Dividend[] = [
     amountPerShare: { amount: ngn(30.00), currency: 'NGN' }, status: 'paid',
   },
 ];
-
-// ─── Corporate actions ────────────────────────────────────────────────────────
 
 export const MOCK_CORPORATE_ACTIONS: CorporateAction[] = [
   {
@@ -370,8 +357,6 @@ export const MOCK_CORPORATE_ACTIONS: CorporateAction[] = [
     exDate: hoursAgo(400 * 24), status: 'completed',
   },
 ];
-
-// ─── Public offers (IPO / rights) ─────────────────────────────────────────────
 
 export const MOCK_OFFERS: PublicOffer[] = [
   {

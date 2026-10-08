@@ -1,4 +1,3 @@
-// ── Doctor — Batch 1 · Section F · appointment & consultation queue hooks ──────
 // Consultation queue / priority queue, pending appointment requests (accept /
 // reject / reschedule-request), and the consult lifecycle (start / end /
 // no-show). Reuses the Phase 1 DoctorAppointment + useUpdateAppointmentStatus
@@ -30,7 +29,6 @@ import type {
   MarkNoShowInput,
 } from '@/types/doctor.batch1';
 
-// Re-export the pure countdown helper so screens can import it from the hooks
 // barrel alongside the queue hooks.
 export { computeConsultCountdown } from '@/api/doctor.batch1.api';
 

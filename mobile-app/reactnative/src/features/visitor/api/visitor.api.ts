@@ -1,10 +1,7 @@
-// ── Visitor module API surface ───────────────────────────────────────────────
-// This is the contract the screens code against. Each function has two paths:
 //   • USE_MOCK === true  → in-memory mock (visitor.mock.ts) with simulated latency
 //   • USE_MOCK === false → real HTTP against the /visitor endpoints via api/client
 // Signatures, types, and the hooks above this layer are identical for both paths,
 // so flipping EXPO_PUBLIC_VISITOR_USE_MOCK=false is the only change needed to go live.
-// IRON RULE: monetary amounts are integers in minor units (kobo); money/audit
 // mutations carry an Idempotency-Key.
 
 import { api } from '@/api/client';
@@ -81,7 +78,6 @@ export class VisitorApiError extends Error {
   }
 }
 
-// ── Resident: restriction ────────────────────────────────────────────────────
 export async function getRestrictionStatus(): Promise<RestrictionStatus> {
   if (USE_MOCK) {
     await latency(300);
@@ -96,7 +92,6 @@ export function __setRestriction(next: Partial<RestrictionStatus>): void {
   restriction = { ...restriction, ...next };
 }
 
-// ── Resident: codes ──────────────────────────────────────────────────────────
 export async function listAccessCodes(): Promise<AccessCode[]> {
   if (USE_MOCK) {
     await latency();
@@ -202,7 +197,6 @@ export async function logShare(id: string): Promise<void> {
   await api.post(`${B}/codes/${id}/share`, {});
 }
 
-// ── Resident: history ────────────────────────────────────────────────────────
 export async function listVisitHistory(): Promise<VisitEvent[]> {
   if (USE_MOCK) {
     await latency();
@@ -212,7 +206,6 @@ export async function listVisitHistory(): Promise<VisitEvent[]> {
   return data;
 }
 
-// ── Guard: session ───────────────────────────────────────────────────────────
 export async function getGateSession(): Promise<GateSession> {
   if (USE_MOCK) {
     await latency(300);
@@ -268,7 +261,6 @@ export async function syncPendingLogs(): Promise<number> {
   return data.synced;
 }
 
-// ── Guard: verification ──────────────────────────────────────────────────────
 // VM-202/203/204 — lookup a code by its numeric value or QR payload.
 export async function lookupCode(raw: string): Promise<LookupOutcome> {
   if (USE_MOCK) {
@@ -297,7 +289,6 @@ export async function approveEntry(input: ApproveEntryInput): Promise<VisitEvent
     const code = codes.find((c) => c.id === input.accessCodeId);
     if (!code) throw new VisitorApiError('NOT_FOUND', 'Access code not found.');
     code.entriesUsed += 1;
-    // One-time codes are consumed on first entry; entry+exit codes stay active so
     // the visitor can leave and return within the validity window.
     if (code.usageMode === 'one_time') code.status = 'used';
     const event: VisitEvent = {
@@ -348,7 +339,6 @@ export async function denyEntry(input: DenyEntryInput): Promise<VisitEvent> {
   return data;
 }
 
-// ── Attendance: live check-in/out tracking per code ──────────────────────────
 function attendanceFromEvents(codeId: string): CodeAttendance {
   const evs = events
     .filter((e) => e.accessCodeId === codeId)
@@ -456,8 +446,6 @@ export async function listPhonebookContacts(query = ''): Promise<PhonebookContac
   return list.slice();
 }
 
-// ── Guard: open visits & check-out (VM-212) ──────────────────────────────────
-// An open visit = a check_in/walk_in/emergency with no later check_out for the
 // same visitor + unit.
 export async function listOpenVisits(): Promise<OpenVisit[]> {
   if (USE_MOCK) {
@@ -491,7 +479,6 @@ export async function listOpenVisits(): Promise<OpenVisit[]> {
 }
 
 // VM-213 — open visits past their expected/allowed duration. For coded visits
-// the expected end is the code's validity end; walk-ins/emergencies fall back to
 // a fixed window from check-in.
 const WALKIN_WINDOW_MS = 8 * 3_600_000;
 export async function listOverstays(): Promise<OverstayVisit[]> {
@@ -537,7 +524,6 @@ export async function checkOutVisit(input: CheckOutInput): Promise<VisitEvent> {
   return data;
 }
 
-// ── Guard: walk-in / emergency entry (VM-215) ────────────────────────────────
 export async function createWalkIn(input: WalkInInput): Promise<VisitEvent> {
   if (USE_MOCK) {
     await latency(500);
@@ -563,7 +549,6 @@ export async function createWalkIn(input: WalkInInput): Promise<VisitEvent> {
   return data;
 }
 
-// ── Guard: shift handover (VM-216) ───────────────────────────────────────────
 export async function getOpenVisitCount(): Promise<number> {
   if (USE_MOCK) {
     const open = await listOpenVisits();
@@ -583,7 +568,6 @@ export async function submitHandover(input: HandoverInput): Promise<GateSession>
   return data;
 }
 
-// ── Notifications (Section W) ────────────────────────────────────────────────
 export async function listNotifications(): Promise<VisitorNotification[]> {
   if (USE_MOCK) {
     await latency();
@@ -620,7 +604,6 @@ export async function unreadNotificationCount(): Promise<number> {
   return data.count;
 }
 
-// ── Blacklist (VM-241 / 244) ─────────────────────────────────────────────────
 export async function listBlacklist(): Promise<BlacklistEntry[]> {
   if (USE_MOCK) {
     await latency();
@@ -662,7 +645,6 @@ export async function removeBlacklist(id: string): Promise<void> {
   await api.delete(`${B}/blacklist/${id}`);
 }
 
-// ── Incident / suspicious (VM-242 / 217) ─────────────────────────────────────
 export async function listIncidents(): Promise<IncidentReport[]> {
   if (USE_MOCK) {
     await latency();
@@ -696,7 +678,6 @@ export async function submitIncident(input: IncidentInput): Promise<IncidentRepo
   return data;
 }
 
-// ── Analytics (Section X / §14) ──────────────────────────────────────────────
 export async function getVisitorAnalytics(): Promise<VisitorAnalytics> {
   if (USE_MOCK) {
     await latency(500);
@@ -706,7 +687,6 @@ export async function getVisitorAnalytics(): Promise<VisitorAnalytics> {
   return data;
 }
 
-// ── Lookup (VM-204) ──────────────────────────────────────────────────────────
 export async function lookupVisitorsAndResidents(query: string): Promise<LookupResults> {
   if (USE_MOCK) {
     await latency(300);
@@ -728,7 +708,6 @@ export async function lookupVisitorsAndResidents(query: string): Promise<LookupR
   return data;
 }
 
-// ── Vehicle entry log (VM-210) ───────────────────────────────────────────────
 export async function listVehicleEntries(): Promise<VisitEvent[]> {
   if (USE_MOCK) {
     await latency();
@@ -740,7 +719,6 @@ export async function listVehicleEntries(): Promise<VisitEvent[]> {
   return data;
 }
 
-// ── Event guest bulk (VM-107) ────────────────────────────────────────────────
 export async function createEventGuestCodes(input: EventGuestInput): Promise<EventGuestManifest> {
   if (USE_MOCK) {
     await latency(700);
@@ -789,7 +767,6 @@ export async function createEventGuestCodes(input: EventGuestInput): Promise<Eve
   return data;
 }
 
-// ── Restriction: proof of payment & appeal (§10 / Section I) ──────────────────
 export async function submitProofOfPayment(): Promise<RestrictionStatus> {
   if (USE_MOCK) {
     await latency(600);

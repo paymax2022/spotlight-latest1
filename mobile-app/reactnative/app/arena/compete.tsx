@@ -5,11 +5,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   ClipboardCheck, GraduationCap, CalendarClock, Award, Trophy, XCircle, Clock, MapPin, FileCheck2, ChevronRight, PlayCircle,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -191,8 +191,6 @@ function StageBody({ contestant, competitionId }: { contestant: Contestant; comp
   }
 }
 
-// ─── C5 batch assignment + T-minus + readiness ──────────────────────────────
-
 function BatchAssignment({ contestant, competitionId }: { contestant: Contestant; competitionId: string }) {
   const opens = contestant.examWindowOpensAt ? new Date(contestant.examWindowOpensAt).getTime() : NaN;
   const windowOpen = !Number.isNaN(opens) && Date.now() >= opens;
@@ -227,8 +225,6 @@ function ReadyItem({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-// ─── C8 finalist logistics ──────────────────────────────────────────────────
-
 function FinalistLogistics({ contestant, competitionId }: { contestant: Contestant; competitionId: string }) {
   return (
     <StageCard Icon={Trophy} tint={Colors.iconBgGold} iconColor={Colors.gold}
@@ -240,8 +236,6 @@ function FinalistLogistics({ contestant, competitionId }: { contestant: Contesta
     </StageCard>
   );
 }
-
-// ─── Inline read fragments ──────────────────────────────────────────────────
 
 function MeritInline({ competitionId, showCutoff }: { competitionId: string; showCutoff?: boolean }) {
   const merit = useMyMerit(competitionId);
@@ -298,8 +292,6 @@ function TrainingInline({ competitionId }: { competitionId: string }) {
     </View>
   );
 }
-
-// ─── Shared bits ─────────────────────────────────────────────────────────────
 
 function StageCard({
   Icon, tint, iconColor, title, body, children,

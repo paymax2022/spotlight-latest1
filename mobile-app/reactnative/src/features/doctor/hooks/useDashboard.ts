@@ -1,4 +1,3 @@
-// ── Doctor — Batch 1 · Section D · dashboard hooks ────────────────────────────
 // The dashboard aggregate (counts + previews + alerts), the platform
 // announcement, presence toggle and announcement dismissal. Reads use the
 // DEMO_* exports as placeholderData; mutations auto-generate the Idempotency-Key.

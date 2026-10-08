@@ -1,12 +1,14 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestRequireAdmin_MissingAPIKey(t *testing.T) {
@@ -15,7 +17,7 @@ func TestRequireAdmin_MissingAPIKey(t *testing.T) {
 	r.Use(RequireAdmin("secret-key", "production"))
 	r.GET("/admin/stem/overview", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/stem/overview", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/stem/overview", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -50,7 +52,7 @@ func stemTestRouter(t *testing.T, userID string, rbac *fakeConsoleRBAC, allowedR
 }
 
 func doStemRequest(r *gin.Engine, method, path, bearer string) int {
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, nil)
 	req.Header.Set("x-admin-api-key", "secret-key")
 	req.Header.Set("Authorization", bearer)
 	w := httptest.NewRecorder()
@@ -147,7 +149,7 @@ func TestRequireAdmin_AndStemRole_APIKeyAloneIsNotVerifiedAdmin(t *testing.T) {
 	stemManage.Use(RequireStemRoles(nil, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
 	stemManage.PATCH("/submissions/abc/status", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodPatch, "/admin/stem/submissions/abc/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/admin/stem/submissions/abc/status", nil)
 	req.Header.Set("x-admin-api-key", "secret-key")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

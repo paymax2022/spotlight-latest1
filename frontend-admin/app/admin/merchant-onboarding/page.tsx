@@ -1,29 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import type { OnboardingQueueRow, OnboardingQueueFilters } from '@/types/onboarding';
 import { listReviewQueue, ageFromNow, slaBreached } from '@/services/onboardingService';
 import { StatusBadge, RiskBadge } from './statusBadge';
 import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_OPTIONS = ['', 'SUBMITTED', 'UNDER_REVIEW', 'NEEDS_MORE_INFO', 'APPROVED', 'REJECTED'];
-const MODULE_OPTIONS = [
-  ['', 'All modules'],
-  ['restaurant', 'Restaurant Delivery'],
-  ['transport', 'Transport'],
-  ['estate', 'Estate'],
-  ['telemedicine', 'Telemedicine'],
-  ['crowdfunding', 'Crowdfunding'],
-  ['events', 'Events'],
-];
-const TYPE_OPTIONS = [
-  ['', 'All types'],
-  ['food_vendor', 'Food Vendor'],
-  ['fleet_operator', 'Fleet Operator'],
-  ['estate_manager', 'Estate Manager'],
-  ['health_provider', 'Health Provider'],
-];
 const AGE_OPTIONS = [
   ['', 'Any age'],
   ['1d', 'Older than 1 day'],
@@ -35,7 +19,7 @@ const defaultFilters: OnboardingQueueFilters = { module: '', type: '', status: '
 
 export default function MerchantOnboardingQueuePage() {
   const [filters, setFilters] = useState<OnboardingQueueFilters>(defaultFilters);
-  const [rows, setRows] = useState<OnboardingQueueRow[]>([]);
+  const [allRows, setAllRows] = useState<OnboardingQueueRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -43,17 +27,37 @@ export default function MerchantOnboardingQueuePage() {
     setLoading(true);
     setError('');
     try {
-      setRows(await listReviewQueue(filters));
+      // Module and type are filtered here, not on the server: the dropdown values
+      // used to be hard-coded guesses ('restaurant', 'food_vendor') that match no
+      // real id (mod-food, mt-restaurant), so picking one returned nothing.
+      setAllRows(await listReviewQueue({ status: filters.status, age: filters.age }));
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters.status, filters.age]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const moduleOptions = useMemo(
+    () => [...new Map(allRows.map((r) => [r.moduleId, r.moduleName] as const))],
+    [allRows],
+  );
+  const typeOptions = useMemo(
+    () => [...new Map(
+      allRows
+        .filter((r) => !filters.module || r.moduleId === filters.module)
+        .map((r) => [r.merchantTypeId, r.merchantTypeName] as const),
+    )],
+    [allRows, filters.module],
+  );
+  const rows = useMemo(
+    () => allRows.filter((r) => (!filters.module || r.moduleId === filters.module) && (!filters.type || r.merchantTypeId === filters.type)),
+    [allRows, filters.module, filters.type],
+  );
 
   return (
     <Page>
@@ -64,11 +68,13 @@ export default function MerchantOnboardingQueuePage() {
       {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginBottom: 10 }}>
-        <select value={filters.module} onChange={(e) => setFilters((f) => ({ ...f, module: e.target.value }))}>
-          {MODULE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        <select value={filters.module} onChange={(e) => setFilters((f) => ({ ...f, module: e.target.value, type: '' }))}>
+          <option value="">All modules</option>
+          {moduleOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <select value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}>
-          {TYPE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <option value="">All types</option>
+          {typeOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           {STATUS_OPTIONS.map((v) => <option key={v} value={v}>{v ? v.replace(/_/g, ' ') : 'All statuses'}</option>)}

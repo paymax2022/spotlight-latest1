@@ -18,8 +18,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 var ErrNotFound = errors.New("connect: not found")
 
-// ── Company pages ───────────────────────────────────────────────────────────
-
 // CreateClaim inserts a company page in claim_submitted (the FSM start state).
 func (r *Repository) CreateClaim(ctx context.Context, in ClaimCompanyInput) (*CompanyPage, error) {
 	const q = `INSERT INTO connect_company_pages (verified_business_id, name, about, claim_state)
@@ -78,8 +76,6 @@ func (r *Repository) TransitionClaim(ctx context.Context, id string, from, to Cl
 	return ct.RowsAffected() == 1, nil
 }
 
-// ── Object-scoped grants (PN-9) ─────────────────────────────────────────────
-
 // GrantAdmin inserts (or no-ops on) an independently revocable per-page capability row.
 func (r *Repository) GrantAdmin(ctx context.Context, companyPageID, userID, role string) (*CompanyAdmin, error) {
 	const q = `INSERT INTO connect_company_admins (company_page_id, user_id, role)
@@ -119,8 +115,6 @@ func (r *Repository) HasCompanyGrant(ctx context.Context, companyPageID, userID 
 	}
 	return ok, nil
 }
-
-// ── Jobs ────────────────────────────────────────────────────────────────────
 
 // CreateJob inserts a draft job for a company page.
 func (r *Repository) CreateJob(ctx context.Context, companyPageID, posterID string, in CreateJobInput) (*Job, error) {
@@ -207,8 +201,6 @@ func (r *Repository) SetJobStatus(ctx context.Context, id string, from, to JobSt
 	}
 	return ct.RowsAffected() == 1, nil
 }
-
-// ── Applications ────────────────────────────────────────────────────────────
 
 const appCols = `id, job_id, applicant_user_id, COALESCE(resume_ref,''), COALESCE(cover_note,''),
 	state, created_at, updated_at`
@@ -308,7 +300,7 @@ func (r *Repository) HireApplicant(ctx context.Context, appID string, from AppSt
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// (a) guarded application → hired; capture job id.
 	var jobID string
@@ -349,8 +341,6 @@ func (r *Repository) HireApplicant(ctx context.Context, appID string, from AppSt
 	}
 	return bountyID, nil
 }
-
-// ── Referral bounties (single-level, PN-2) ──────────────────────────────────
 
 const bountyCols = `id, referrer_user_id, COALESCE(job_application_id::text,''), amount_kobo, state,
 	COALESCE(ledger_entry_ref,''), created_at, updated_at`
@@ -423,8 +413,6 @@ func (r *Repository) MarkBountyPaid(ctx context.Context, id, ledgerEntryRef stri
 	}
 	return ct.RowsAffected() == 1, nil
 }
-
-// ── Followers & open-to-work ────────────────────────────────────────────────
 
 // Follow adds an idempotent follow row (follower_count is derived from these).
 func (r *Repository) Follow(ctx context.Context, companyPageID, userID string) error {

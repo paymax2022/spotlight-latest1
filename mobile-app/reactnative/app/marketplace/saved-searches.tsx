@@ -1,5 +1,3 @@
-// ── Screen 9 — Saved Searches + instant-alert manager ────────────────────────
-// Passive discovery — let the market come to the buyer. List of saved queries,
 // each with instant/daily/off alert-frequency control, re-run, and delete.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
@@ -7,10 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search as SearchIcon, Trash2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { MarketColors } from '@/features/marketplace';

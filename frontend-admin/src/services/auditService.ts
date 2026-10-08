@@ -33,9 +33,7 @@ function toQuery(filters: AuditFilters): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}` };
+  return {};
 }
 
 export async function listAuditLogs(filters: AuditFilters): Promise<GenericRow[]> {

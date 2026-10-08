@@ -1,9 +1,6 @@
-// ── Doctor — Pet E-Prescription hooks (Batch 5, Section T) ───────────────────
 // Query keys under ['doctor', 'vet', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 3 `useCreatePetPrescription` (from useVet.ts)
-// for creating the draft; this file adds the issue / send-to-pharmacy / refill
 // pieces and re-exports the pure helpers `computePetDosage` + `checkPetRxWarnings`
-// for UI import.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -30,8 +27,6 @@ import type {
 
 // Re-export the pure helpers so UI imports them from the hook layer.
 export { computePetDosage, checkPetRxWarnings } from '@/api/doctor.batch5.api';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function usePetPharmacies() {
   return useQuery({
@@ -60,8 +55,6 @@ export function usePetRefillRequests() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useIssuePetPrescription() {
   const qc = useQueryClient();

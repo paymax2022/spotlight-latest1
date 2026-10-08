@@ -5,9 +5,7 @@ import (
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // State machine
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestCanTransition(t *testing.T) {
 	cases := []struct {
@@ -75,9 +73,7 @@ func TestIsTerminal(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Duration discount mapping
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestDurationDiscountBps(t *testing.T) {
 	cases := []struct {
@@ -102,9 +98,7 @@ func TestDurationDiscountBps(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Pricing (integer kobo only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestQuotePriceKobo(t *testing.T) {
 	const hero = 5000000 // ₦50,000/day in kobo (zone seed)
@@ -160,9 +154,7 @@ func TestHalfUpDiv(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Pro-rata earned / refund split
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestProRataSplit(t *testing.T) {
 	cases := []struct {
@@ -220,9 +212,7 @@ func TestElapsedDaysUTC(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Rotation determinism (resolver)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func mkCampaigns(ids ...string) []Campaign {
 	out := make([]Campaign, 0, len(ids))
@@ -317,9 +307,7 @@ func TestHeroFallbackNeverEmpty(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Creative validation
-// ─────────────────────────────────────────────────────────────────────────────
 
 func testZone() *Zone {
 	return &Zone{

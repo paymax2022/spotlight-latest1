@@ -1,29 +1,19 @@
-// ── Paymax Marketplace — shared HTTP client ──────────────────────────────────
-//
 // THE single fix for the snake_case (backend) ↔ camelCase (screens) mismatch.
 // The Go marketplace module returns snake_case JSON (market_id, price_kobo,
 // escrow_eligible, amount_kobo, created_at, …) and binds snake_case request
 // bodies. Every screen and every sibling domain agent talks camelCase. This
 // module normalizes in ONE place:
-//
 //   • ALL responses  → deepCamel()  (recursive snake_case → camelCase)
 //   • ALL request bodies → deepSnake() (recursive camelCase → snake_case)
-//
 // so nobody downstream re-implements the conversion. Import mktGet/mktPost/… and
 // the returned data is already camelCase and type-safe against ../types.
-//
-// Transport: the shared axios instance `@/api/client` (baseURL → frontend-web),
-// which forwards the Supabase Bearer. BASE = '/api/v1/marketplace' — INTENDED
 // to hit a Next.js catch-all proxy (frontend-web/app/api/v1/marketplace/
-// [...path]/route.ts) that forwards to the Go backend's r.Group("/v1/marketplace")
 // (confirmed in backend/internal/app/marketplace_routes.go — mounted directly on
 // the gin engine, NOT under /api/finance, so the blanket /api/finance/:path*
 // rewrite in frontend-web/next.config.mjs does not cover it either).
-//
 // STATUS (go-live audit): the proxy route now EXISTS at
 // frontend-web/app/api/v1/marketplace/[...path]/route.ts — it forwards every
 // /api/v1/marketplace/* call to the Go backend's /v1/marketplace group. Live
-// calls below therefore resolve once EXPO_PUBLIC_MARKETPLACE_USE_MOCK=false;
 // mock stays the default so the group is demoable/offline out of the box.
 // Money POSTs attach an Idempotency-Key.
 
@@ -41,8 +31,6 @@ export const MKT_BASE = '/api/v1/marketplace';
  */
 export const MKT_USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_MARKETPLACE_USE_MOCK, true);
-
-// ─── Case conversion helpers ─────────────────────────────────────────────────
 
 const snakeToCamel = (s: string): string =>
   s.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
@@ -87,8 +75,6 @@ export function deepSnake<T = unknown>(input: unknown): T {
   }
   return input as T;
 }
-
-// ─── Error normalization ─────────────────────────────────────────────────────
 
 /** Uniform backend error envelope: { error: { code, message, field, request_id } }. */
 export interface MktApiErrorBody {
@@ -149,10 +135,8 @@ function toMktError(err: unknown): MktApiError {
   );
 }
 
-// ─── Response envelope unwrap ────────────────────────────────────────────────
 // House convention: handlers may reply { data: <payload> } or the bare payload.
 // Unwrap by KEY PRESENCE (not nullishness): if the body carries a `data` key we
-// return its value even when null — so an empty result serialized as
 // { data: null } yields null, never the wrapper object (which would break Array
 // ops downstream). Then deep-camel the result. Mirrors fx.api.ts's unwrap().
 function unwrap<T>(res: { data?: unknown }): T {
@@ -169,8 +153,6 @@ function unwrap<T>(res: { data?: unknown }): T {
 export function arr<T>(v: T[] | null | undefined): T[] {
   return Array.isArray(v) ? v : [];
 }
-
-// ─── Verbs ───────────────────────────────────────────────────────────────────
 
 /** GET with camelCase params → snake_case query, camelCase response. */
 export async function mktGet<T>(path: string, params?: Record<string, unknown>): Promise<T> {
@@ -224,8 +206,6 @@ export async function mktDelete<T>(path: string): Promise<T> {
     throw toMktError(e);
   }
 }
-
-// ─── Idempotency key minting ─────────────────────────────────────────────────
 
 /**
  * Mints a fresh opaque idempotency token (the server treats it as an opaque

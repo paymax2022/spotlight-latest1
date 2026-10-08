@@ -8,8 +8,6 @@ import type {
   VotingNotification,
 } from '../types/voting.types';
 
-// ─── Contests ─────────────────────────────────────────────────────────────────
-
 export const MOCK_CONTESTS: Contest[] = [
   {
     id: 'c1',
@@ -121,8 +119,6 @@ export const MOCK_CONTESTS: Contest[] = [
   },
 ];
 
-// ─── Contestants ──────────────────────────────────────────────────────────────
-
 export const MOCK_CONTESTANTS: Contestant[] = [
   {
     id: 'ct1',
@@ -139,8 +135,9 @@ export const MOCK_CONTESTANTS: Contestant[] = [
     status: 'ACTIVE',
     votesNeededToNextRank: 0,
     movement: 'UP',
-    profileViews: 45_230,
-    shareClicks: 3_421,
+    likeCount: 45_230,
+    shareCount: 3_421,
+    likedByMe: false,
   },
   {
     id: 'ct2',
@@ -157,8 +154,9 @@ export const MOCK_CONTESTANTS: Contestant[] = [
     status: 'ACTIVE',
     votesNeededToNextRank: 3_650,
     movement: 'SAME',
-    profileViews: 38_100,
-    shareClicks: 2_890,
+    likeCount: 38_100,
+    shareCount: 2_890,
+    likedByMe: false,
   },
   {
     id: 'ct3',
@@ -175,8 +173,9 @@ export const MOCK_CONTESTANTS: Contestant[] = [
     status: 'ACTIVE',
     votesNeededToNextRank: 2_500,
     movement: 'UP',
-    profileViews: 29_500,
-    shareClicks: 1_700,
+    likeCount: 29_500,
+    shareCount: 1_700,
+    likedByMe: false,
   },
   {
     id: 'ct4',
@@ -193,8 +192,9 @@ export const MOCK_CONTESTANTS: Contestant[] = [
     status: 'ACTIVE',
     votesNeededToNextRank: 4_350,
     movement: 'DOWN',
-    profileViews: 21_000,
-    shareClicks: 1_200,
+    likeCount: 21_000,
+    shareCount: 1_200,
+    likedByMe: false,
   },
   {
     id: 'ct5',
@@ -211,8 +211,9 @@ export const MOCK_CONTESTANTS: Contestant[] = [
     status: 'ACTIVE',
     votesNeededToNextRank: 2_250,
     movement: 'UP',
-    profileViews: 18_900,
-    shareClicks: 980,
+    likeCount: 18_900,
+    shareCount: 980,
+    likedByMe: false,
   },
   {
     id: 'ct6',
@@ -229,12 +230,11 @@ export const MOCK_CONTESTANTS: Contestant[] = [
     status: 'ACTIVE',
     votesNeededToNextRank: 2_300,
     movement: 'SAME',
-    profileViews: 14_500,
-    shareClicks: 760,
+    likeCount: 14_500,
+    shareCount: 760,
+    likedByMe: false,
   },
 ];
-
-// ─── Vote Packages ─────────────────────────────────────────────────────────────
 
 export const MOCK_VOTE_PACKAGES: VotePackage[] = [
   {
@@ -271,8 +271,6 @@ export const MOCK_VOTE_PACKAGES: VotePackage[] = [
     bonusVotes: 100,
   },
 ];
-
-// ─── Vote Transactions ────────────────────────────────────────────────────────
 
 export const MOCK_VOTE_TRANSACTIONS: VoteTransaction[] = [
   {
@@ -315,16 +313,12 @@ export const MOCK_VOTE_TRANSACTIONS: VoteTransaction[] = [
   },
 ];
 
-// ─── Free Vote Allocation ──────────────────────────────────────────────────────
-
 export const MOCK_FREE_VOTE_ALLOCATION: FreeVoteAllocation = {
   total: 5,
   used: 2,
   remaining: 3,
   resetsAt: '2026-06-15T00:00:00Z',
 };
-
-// ─── Leaderboard ──────────────────────────────────────────────────────────────
 
 export const MOCK_LEADERBOARD: LeaderboardEntry[] = MOCK_CONTESTANTS
   .filter((c) => c.contestId === 'c1')
@@ -334,8 +328,6 @@ export const MOCK_LEADERBOARD: LeaderboardEntry[] = MOCK_CONTESTANTS
     previousRank: c.movement === 'UP' ? c.rank + 1 : c.movement === 'DOWN' ? c.rank - 1 : c.rank,
     movement: c.movement,
   }));
-
-// ─── Notifications ────────────────────────────────────────────────────────────
 
 export const MOCK_VOTING_NOTIFICATIONS: VotingNotification[] = [
   {

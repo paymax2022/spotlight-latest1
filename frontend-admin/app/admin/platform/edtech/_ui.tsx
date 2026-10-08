@@ -1,24 +1,18 @@
 'use client';
 
-// ── Shared UI for the Platform SUPER-ADMIN EdTech console (SU-01..SU-12) ──────
-//
 // Design system is REUSED, not reinvented: the presentational primitives
 // (PageHeader, Card, Kpi, Badge, StateBlock, DisclosureNote, AuditNote, Bar,
 // btn*, th/td/input/label/select, formatNaira, fmtDate) come straight from the
 // Academy console's _ui.tsx (../../academy/_ui). This file only adds the two
 // things unique to the platform surface: PlatformTabs (its own tab strip,
 // SEPARATE from AcademyTabs) and PlatformGuard (the per-page RBAC assertion).
-//
-// ── Checkpoint E — RBAC scope separation (READ THIS) ──────────────────────────
 // This console is gated on the SINGLE platform-operator capability
 // `platform_edtech_admin`. It is NOT reachable by any school-level role
 // (school_owner / bursar / class_teacher / head_teacher / guardian / student).
 //   • Nav: the "Platform · EdTech" section in AdminSidebar.tsx lists every route
-//     with permissions:['platform_edtech_admin']; hasAnyPermission() filters the
 //     whole section out for anyone lacking it — a bursar sees nothing.
 //   • Page: PlatformGuard below RE-ASSERTS the same capability on every page, so
 //     a school role that guesses/deep-links a URL is shown "access denied", never
-//     the data. Defence in depth on the client; the Go backend
 //     (middleware.RequirePermission "platform_edtech_admin") stays authoritative.
 // A school role having this capability would be a mis-grant, not an escalation
 // path — there is no "school-admin → super-admin" bridge anywhere in this code.
@@ -38,7 +32,6 @@ export {
   FilterBar, Bar, timeAgo, fmtDate, pct, formatNaira,
 } from '../../academy/_ui';
 
-// ── Platform console tab strip (SEPARATE from AcademyTabs) ────────────────────
 type Tab = { href: string; label: string; key: string };
 const TABS: Tab[] = [
   { href: '/admin/platform/edtech', label: 'Directory (SU-01)', key: 'directory' },
@@ -65,7 +58,6 @@ export function PlatformTabs({ active }: { active: string }) {
   );
 }
 
-// ── PlatformGuard — per-page RBAC assertion (Checkpoint E, page layer) ────────
 // Reads the same admin session used everywhere (localStorage 'spotlight_admin_user',
 // the store the existing AdminSidebar + voting/visibility page already read) and
 // renders children ONLY if the session carries `platform_edtech_admin`. A school

@@ -1,4 +1,3 @@
-// ── Doctor — Follow-Up Care hooks (Batch 4, Section Q) ──────────────────────
 // Query keys under ['doctor', …]. Mutations auto-generate the idempotencyKey and
 // invalidate the relevant lists. REUSE: base follow-up CRUD (useFollowUps /
 // useCreateFollowUp / useReviewFollowUpRequest) lives in Phase 2 — these add
@@ -27,8 +26,6 @@ import type {
   RecordAdherenceCheckInput,
   SaveCarePlanInput,
 } from '@/types/doctor.batch4';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useFollowUpEligibility(patientId: string, appointmentId?: string) {
   return useQuery({
@@ -75,8 +72,6 @@ export function useAdherenceChecks(patientId?: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useSetFollowUpReminder() {
   const qc = useQueryClient();

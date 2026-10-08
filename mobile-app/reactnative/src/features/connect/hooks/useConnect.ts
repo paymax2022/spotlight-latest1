@@ -37,8 +37,6 @@ export function useConnectConfig() {
   });
 }
 
-// ── Tier / wallet ────────────────────────────────────────────────────────────
-
 export function useTierStatus() {
   return useQuery({ queryKey: connectKeys.tierStatus(), queryFn: connectApi.getTierStatus });
 }
@@ -51,13 +49,9 @@ export function useWalletSummary() {
   return useQuery({ queryKey: connectKeys.wallet(), queryFn: connectApi.getWalletSummary });
 }
 
-// ── Me hub ───────────────────────────────────────────────────────────────────
-
 export function useMeSummary() {
   return useQuery({ queryKey: connectKeys.me(), queryFn: connectApi.getMeSummary });
 }
-
-// ── Onboarding ───────────────────────────────────────────────────────────────
 
 export function useOnboardingDraft() {
   return useQuery({ queryKey: connectKeys.onboardingDraft(), queryFn: connectApi.getOnboardingDraft });
@@ -107,8 +101,6 @@ export function useCompleteOnboarding() {
   });
 }
 
-// ── Notifications ────────────────────────────────────────────────────────────
-
 export function useNotificationPrefs() {
   return useQuery({ queryKey: connectKeys.notifications(), queryFn: connectApi.getNotificationPrefs });
 }
@@ -120,8 +112,6 @@ export function useUpdateNotificationPrefs() {
     onSuccess: (data) => qc.setQueryData(connectKeys.notifications(), data),
   });
 }
-
-// ── Privacy / blocked ────────────────────────────────────────────────────────
 
 export function usePrivacyPrefs() {
   return useQuery({ queryKey: connectKeys.privacy(), queryFn: connectApi.getPrivacyPrefs });
@@ -194,8 +184,6 @@ export function useAddSosContact() {
     onSuccess: (data) => qc.setQueryData(connectKeys.dateSafety(), data),
   });
 }
-
-// ── Language / data-saver / premium / help / legal ────────────────────────────
 
 export function useLanguage() {
   return useQuery({ queryKey: connectKeys.language(), queryFn: connectApi.getLanguage });

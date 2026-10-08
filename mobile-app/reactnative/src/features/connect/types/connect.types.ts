@@ -1,15 +1,12 @@
 // Paymax Connect — mobile types (Phase 0 shell + onboarding/me/settings).
 
 // Backend-owned config exposed to mobile (public subset only). Values are kept
-// loosely typed because the backend owns the schema; mobile must never hard-code
 // these flags/weights/limits. See docs/prd/dating/architecture.md §26.4.
 export type ConnectConfig = Record<string, unknown>;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tiers / KYC (PRD §7). Money is ALWAYS in minor units (kobo). The mobile app
 // never computes limits locally — these are projections of backend-owned config
 // and verification state, surfaced read-only.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type ConnectTier = 0 | 1 | 2 | 3;
 
@@ -17,7 +14,7 @@ export interface TierBenefit {
   tier: ConnectTier;
   label: string;            // e.g. "Tier 1"
   requirement: string;      // verification required
-  dailyLimitKobo: number | null; // null => no fixed limit (Tier 3)
+  dailyLimitKobo: number | null;
   privileges: string[];     // human-readable privilege bullets
 }
 
@@ -26,8 +23,8 @@ export interface TierBenefit {
 export interface TierStatus {
   tier: ConnectTier;
   label: string;
-  dailyLimitKobo: number | null; // null => unlimited (Tier 3)
-  remainingKobo: number | null;  // null => unlimited
+  dailyLimitKobo: number | null;
+  remainingKobo: number | null;
   canSend: boolean;
   canReceive: boolean;
   canWithdraw: boolean;
@@ -43,9 +40,7 @@ export interface WalletSummary {
   tier: TierStatus;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Onboarding & verification (PRD §10.1, ON-01..ON-15)
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type ConnectIntent = 'date' | 'network' | 'discover';
 
@@ -62,7 +57,7 @@ export interface OnboardingDraft {
   dob?: string;              // ISO yyyy-mm-dd
   gender?: string;
   location?: string;
-  photos: string[];          // local/remote URIs (primary = index 0)
+  photos: string[];
   bio?: string;
   headline?: string;         // networking
   interests: string[];
@@ -78,14 +73,12 @@ export interface OnboardingDraft {
 }
 
 export interface AgeCheckResult {
-  ok: boolean;        // true => 18+, may proceed
+  ok: boolean;
   age: number;
-  underage: boolean;  // true => routed to underage block + queued server-side
+  underage: boolean;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Settings / Notifications / Safety / Support (PRD §10.11, §10.12)
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface NotificationPrefs {
   // channel toggles
@@ -199,9 +192,7 @@ export interface LegalDoc {
   updatedAt: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Gamification entry (Me hub summary only — full screen built by another agent)
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface GamificationSummary {
   level: number;

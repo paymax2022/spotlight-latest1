@@ -1,14 +1,10 @@
-// ── Paystack gateway (client-side Inline SDK) ────────────────────────────────
 // A DIRECT Paystack charge for a purchase amount — NOT a wallet top-up. The
 // caller pays the exact amount on the Paystack gateway and runs its own
 // fulfilment (e.g. placeOrder) on the success callback.
-//
 //   web    → js.paystack.co/v2 inline `PaystackPop` (see usePaystackGateway.tsx)
 //   native → the same inline JS inside a react-native-webview (…native.tsx)
-//
 // Both read the public key from EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY (the same
 // pk_test_… used by the web app's NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY).
-//
 // NOTE: a client success callback is not proof of payment. Production must
 // confirm server-side via the Paystack webhook before final fulfilment.
 

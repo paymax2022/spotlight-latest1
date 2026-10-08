@@ -14,7 +14,6 @@ export function mapJob(row: any, vendorName?: string) {
   };
 }
 
-// GET /api/v1/estate/vendors/jobs
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

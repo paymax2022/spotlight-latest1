@@ -3,6 +3,9 @@ package connectpayouts
 import (
 	"context"
 	"errors"
+	"time"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // WalletDebiter debits the creator's wallet and credits the given standing
@@ -43,6 +46,17 @@ type SolicitationFlagger interface {
 	FlagPayout(ctx context.Context, creatorID string, amountKobo int64, ref string) error
 }
 
+// PayoutReverser reverses a payout's parked settlement debit when an admin
+// rejects it: a balanced reversal pair (money restored to the creator's
+// wallet, released from the settlement account) — the mirror of the debit
+// Request() posted, keyed by a deterministic idempotency key so a retry (or a
+// double-click in the admin console) is a safe no-op, never a double-refund.
+// Implemented by internal/finance/ledger.Service.PostReversal via an adapter
+// in connect_money_routes.go (same pattern as connectSettlementAdapter).
+type PayoutReverser interface {
+	ReversePayout(ctx context.Context, creatorID, payoutID string, amountKobo int64) error
+}
+
 // MinTier is the minimum KYC tier required to request a payout (CBN: cash-out
 // requires verified identity). Tier 2 = ID-verified.
 const MinTier = 2
@@ -52,6 +66,10 @@ var (
 	ErrMissingIdem   = errors.New("connect: Idempotency-Key required")
 	ErrInvalidAmount = errors.New("connect: payout amount must be positive kobo")
 	ErrTierTooLow    = errors.New("connect: payout requires KYC tier 2 or higher")
+	// ErrAlreadyTerminal is returned by the admin settle/reject actions when the
+	// payout is already in the OTHER terminal state (settling a failed payout,
+	// or rejecting a settled one) — a real conflict, not a safe retry.
+	ErrAlreadyTerminal = errors.New("connect: payout already in a terminal state")
 )
 
 // Service orchestrates creator payouts. It owns NO balance state — the debit is
@@ -66,10 +84,13 @@ type Service struct {
 	settler      Settler
 	audit        Auditor
 	solicitation SolicitationFlagger
+	reverser     PayoutReverser
 }
 
-// NewService builds the payouts service. settler/solicitation may be nil.
-func NewService(repo *Repository, wallet WalletDebiter, settlement SettlementAccountResolver, tiers TierGate, settler Settler, audit Auditor, solicitation SolicitationFlagger) *Service {
+// NewService builds the payouts service. settler/solicitation/reverser may be
+// nil — reverser being nil only disables the admin reject action (AdminReject
+// returns an error rather than silently skipping the reversal).
+func NewService(repo *Repository, wallet WalletDebiter, settlement SettlementAccountResolver, tiers TierGate, settler Settler, audit Auditor, solicitation SolicitationFlagger, reverser PayoutReverser) *Service {
 	return &Service{
 		repo:         repo,
 		wallet:       wallet,
@@ -78,11 +99,11 @@ func NewService(repo *Repository, wallet WalletDebiter, settlement SettlementAcc
 		settler:      settler,
 		audit:        audit,
 		solicitation: solicitation,
+		reverser:     reverser,
 	}
 }
 
 // Request is the money path for a creator gift-revenue payout.
-//
 // Ordering (correctness > convenience):
 //  1. require an Idempotency-Key + positive amount;
 //  2. enforce the Tier-2+/KYC gate, fail-closed;
@@ -113,8 +134,15 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		return nil, err
 	}
 	ref := "connect:payout:" + creatorID
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another creator) would
+	// collide on ledger_entries.idempotency_key and the debit would silently
+	// no-op — parking a payout row with no money behind it. The derived key
+	// keeps a genuine retry a no-op while a foreign claim fails closed.
+	ledgerKey := "connect:payout:" + creatorID + ":" + idemKey
 	// Money mutation — tier-checked, balanced double-entry, idempotent.
-	if err := s.wallet.Debit(ctx, creatorID, ref, idemKey, settleAcc, req.AmountKobo); err != nil {
+	if err := s.wallet.Debit(ctx, creatorID, ref, ledgerKey, settleAcc, req.AmountKobo); err != nil {
 		return nil, err
 	}
 
@@ -127,16 +155,39 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		CreatorID:      creatorID,
 		AmountKobo:     req.AmountKobo,
 		DestinationRef: dest,
-		IdempotencyKey: idemKey,
+		IdempotencyKey: ledgerKey,
 		LedgerRef:      ref,
 	})
+	if err != nil && dbutil.IsUniqueViolation(err) {
+		// The debit committed but a previous attempt already recorded this payout
+		// (crash between ledger commit and row insert): converge on the existing
+		// row — and only when it is THIS payout (same creator + amount). Anything
+		// else under the derived key is a foreign claim and must fail closed.
+		existing, lerr := s.repo.GetByIdempotencyKey(ctx, ledgerKey)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if existing == nil || existing.CreatorID != creatorID || existing.AmountKobo != req.AmountKobo ||
+			(existing.DestinationRef == nil) != (dest == nil) ||
+			(existing.DestinationRef != nil && dest != nil && *existing.DestinationRef != *dest) {
+			return nil, errors.New("connect: duplicate idempotency key held by a different payout")
+		}
+		p = existing
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	// Settlement hook (best-effort): initiate the bank transfer + stamp ref.
+	// The destination always comes from the STORED row — on a converge/replay the
+	// request's destination was verified identical above, so p is authoritative.
 	if s.settler != nil {
-		if settlementRef, serr := s.settler.Settle(ctx, p.ID, creatorID, req.DestinationRef, req.AmountKobo); serr == nil {
+		storedDest := ""
+		if p.DestinationRef != nil {
+			storedDest = *p.DestinationRef
+		}
+		if settlementRef, serr := s.settler.Settle(ctx, p.ID, creatorID, storedDest, p.AmountKobo); serr == nil {
 			_ = s.repo.MarkProcessing(ctx, p.ID, settlementRef)
 			p.Status = "processing"
 			p.SettlementRef = &settlementRef
@@ -155,4 +206,165 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 // List returns a creator's payouts.
 func (s *Service) List(ctx context.Context, creatorID string, limit int) ([]Payout, error) {
 	return s.repo.List(ctx, creatorID, limit)
+}
+
+// AdminList returns the cross-creator payout queue for the admin console,
+// enriching each row with the creator's CURRENT KYC tier (read live — a
+// creator's tier can change after the payout was requested, and the queue
+// should reflect that, not a stale snapshot).
+func (s *Service) AdminList(ctx context.Context, f AdminListFilter) ([]AdminPayout, error) {
+	rows, err := s.repo.AdminList(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		tier, terr := s.tiers.GetUserTier(ctx, rows[i].CreatorID)
+		if terr == nil {
+			rows[i].CreatorTier = tier
+		}
+		// A tier lookup failure here is display-only (unlike the fail-closed gate
+		// in Request()) — the row still renders with tier 0 rather than the whole
+		// admin queue failing to load over one bad row.
+	}
+	return rows, nil
+}
+
+// AdminGet returns a single payout for the admin detail view, tier-enriched
+// the same way as AdminList.
+func (s *Service) AdminGet(ctx context.Context, id string) (*AdminPayout, error) {
+	p, err := s.repo.AdminGet(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if tier, terr := s.tiers.GetUserTier(ctx, p.CreatorID); terr == nil {
+		p.CreatorTier = tier
+	}
+	return p, nil
+}
+
+// AdminSettle confirms a payout's bank settlement completed out-of-band (the
+// Settler hook is a stub in production today — see connect_money_routes.go —
+// so this is how an operator reconciles a real bank transfer against the
+// payout row). Forward-only: requested/processing → settled. It does NOT move
+// any money — the debit already happened in Request(); this only stamps the
+// row that confirms the money that was already parked in settlement left the
+// building. Idempotent: settling an already-settled payout with the same ref
+// is a no-op success; a DIFFERENT settlementRef on an already-settled payout
+// is refused (ErrAlreadyTerminal) rather than silently overwritten.
+func (s *Service) AdminSettle(ctx context.Context, adminID, payoutID, settlementRef string) (*Payout, error) {
+	p, err := s.repo.Get(ctx, payoutID)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status == "settled" {
+		if p.SettlementRef != nil && *p.SettlementRef == settlementRef {
+			return p, nil // idempotent no-op
+		}
+		return nil, ErrAlreadyTerminal
+	}
+	if p.Status == "failed" {
+		return nil, ErrAlreadyTerminal
+	}
+	if err := s.repo.MarkSettled(ctx, payoutID, settlementRef); err != nil {
+		return nil, err
+	}
+	p.Status = "settled"
+	if settlementRef != "" {
+		ref := settlementRef
+		p.SettlementRef = &ref
+	}
+	_ = s.audit.WriteAudit(ctx, "connect.payout.admin_settle", adminID, "connect_payout", p.ID, map[string]any{
+		"settlement_ref": settlementRef, "amount_kobo": p.AmountKobo, "creator_id": p.CreatorID,
+	})
+	return p, nil
+}
+
+// AdminReject reverses a payout an operator has determined will never settle
+// (provider rejected the bank transfer, fraud hold, etc.). Ordering mirrors
+// Request()'s correctness-first discipline:
+//  1. re-read the row and refuse if it is already terminal (settled/failed —
+//     see the same-state idempotent-no-op / ErrAlreadyTerminal split below);
+//  2. reverse the parked settlement debit BACK to the creator's wallet — a
+//     balanced double-entry, the mirror of the original debit, via the SAME
+//     ledger the money path already uses (no new money-movement code);
+//  3. only after the reversal succeeds, mark the payout row 'failed' —
+//     ordering the ledger write before the row write means a crash between
+//     the two leaves the row inconsistent with the ledger in the SAFE
+//     direction (money already reversed; a retry of MarkFailed is a cheap,
+//     idempotent repo update) rather than the unsafe one;
+//  4. emit an audit event.
+func (s *Service) AdminReject(ctx context.Context, adminID, payoutID, reason string) (*Payout, error) {
+	if s.reverser == nil {
+		return nil, errors.New("connect: payout reversal not wired")
+	}
+	p, err := s.repo.Get(ctx, payoutID)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status == "failed" {
+		return p, nil // idempotent no-op
+	}
+	if p.Status == "settled" {
+		return nil, ErrAlreadyTerminal // money already left settlement — not reversible here
+	}
+	if err := s.reverser.ReversePayout(ctx, p.CreatorID, p.ID, p.AmountKobo); err != nil {
+		return nil, err
+	}
+	if err := s.repo.MarkFailed(ctx, payoutID); err != nil {
+		return nil, err
+	}
+	p.Status = "failed"
+	_ = s.audit.WriteAudit(ctx, "connect.payout.admin_reject", adminID, "connect_payout", p.ID, map[string]any{
+		"reason": reason, "amount_kobo": p.AmountKobo, "creator_id": p.CreatorID,
+	})
+	return p, nil
+}
+
+// Payout mirrors a row of public.connect_payouts.
+type Payout struct {
+	ID             string    `json:"id"`
+	CreatorID      string    `json:"creator_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Status         string    `json:"status"`
+	DestinationRef *string   `json:"destination_ref,omitempty"`
+	IdempotencyKey string    `json:"-"`
+	LedgerRef      string    `json:"ledger_ref"`
+	SettlementRef  *string   `json:"settlement_ref,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
+}
+
+// RequestPayoutRequest is the body for POST /payouts. The amount is in kobo; the
+// destination is a tokenised reference to a previously-verified bank account
+// (never raw account details in this request).
+type RequestPayoutRequest struct {
+	AmountKobo     int64  `json:"amountKobo" binding:"required"`
+	DestinationRef string `json:"destinationRef"`
+}
+
+// AdminListFilter narrows the admin payout queue. All fields are optional;
+// Status must be one of the connect_payouts.status CHECK values when set
+// ("requested","processing","settled","failed") — the repo does not validate
+// it (an unknown value simply matches no rows), so the handler validates it.
+type AdminListFilter struct {
+	Status    string
+	CreatorID *string
+	From      *time.Time
+	To        *time.Time
+	Limit     int
+	Offset    int
+}
+
+// AdminPayout is the admin-list/detail projection: a Payout row enriched with
+// data that is not stored per-row and must be read live —
+//   - CreatorHandle: from connect_creator_profiles.handle (falling back to
+//     user_profiles.display_name), joined at read time so it always reflects
+//     the creator's current profile, not a stale copy.
+//   - CreatorTier: from tiers.Service.GetUserTier, read live for the same
+//     reason (a creator's tier can change after the payout was requested).
+type AdminPayout struct {
+	Payout
+
+	CreatorHandle string `json:"creator_handle"`
+	CreatorTier   int    `json:"creator_tier"`
 }

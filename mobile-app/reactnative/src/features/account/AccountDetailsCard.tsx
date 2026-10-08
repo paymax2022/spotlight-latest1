@@ -1,13 +1,12 @@
-// ── "Your details" — read-only summary of what the account already knows ──────
 // Rendered by a form INSTEAD of asking for these again. Only rows with a value
 // appear; a detail the account lacks is left to the form to ask for.
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 export interface AccountDetailRow {
   label: string;

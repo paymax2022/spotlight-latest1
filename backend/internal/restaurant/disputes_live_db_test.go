@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for food-order disputes (Phase 9): party-only raise on a
 // delivered order, the one-active-dispute guard, and admin resolution with a
 // PLATFORM-FUNDED refund (debit paymax_revenue → credit customer wallet), including
 // idempotency. Skipped unless TEST_DATABASE_URL is set. Requires the
 // restaurant, disputes, ledger, and restaurant-disputes migrations.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

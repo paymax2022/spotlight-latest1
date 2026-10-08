@@ -6,18 +6,18 @@ import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, Bell, CalendarDays, Megaphone, ListTodo, ChevronRight, AlertTriangle, UserRound, ShieldCheck,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
-import MembershipCardView from '@/features/association/components/MembershipCardView';
-import QuickNav from '@/features/association/components/QuickNav';
-import { useDashboard } from '@/features/association/hooks/useAssociation';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
-import { formatNaira, formatDateTime, relativeTime, dueLabel } from '@/features/association/utils/associationFormatters';
+import {MembershipCardView} from '@/features/association/components';
+import {QuickNav} from '@/features/association/components';
+import { useDashboard } from '@/features/association/hooks';
+import { useAdminAccess } from '@/features/association/hooks';
+import { formatNaira, formatDateTime, relativeTime, dueLabel } from '@/features/association/utils';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 
@@ -157,7 +157,7 @@ const styles = StyleSheet.create({
   },
   duesLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   duesAmount: { ...Typography.headlineMd, color: Colors.onSurface },
-  duesDue: { ...Typography.labelSm, color: Colors.gold, marginTop: 2 },
+  duesDue: { ...Typography.labelSm, color: Colors.onWarning, marginTop: 2 },
   payChip: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm },
   payChipText: { ...Typography.labelMd, color: Colors.onPrimary, fontWeight: '700' as const },
   sectionGap: { marginTop: Spacing.sm, marginBottom: 0, paddingHorizontal: 0 },

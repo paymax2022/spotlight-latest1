@@ -44,12 +44,9 @@ test('an unloaded contest with no packages yet is unknown, not closed', () => {
   assert.equal(getPaidVotingAvailability(undefined, undefined).available, undefined);
 });
 
-// ---------------------------------------------------------------------------
 // Drift guard.
-//
 // buy-votes was fixed first and payment-method was not, so the voter cleared one
 // screen only to be refused on the next with the same wrong message. Both now
-// share getPaidVotingAvailability; this fails if a screen goes back to reading
 // the flag directly.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -73,9 +70,7 @@ test('no voting screen gates a purchase on contest.paidVotingEnabled directly', 
   assert.deepEqual(offenders, [], `gate the purchase on getPaidVotingAvailability instead:\n${offenders.join('\n')}`);
 });
 
-// ---------------------------------------------------------------------------
 // Dead-endpoint guard.
-//
 // /api/votes/paid/wallet debits the wallet atomically, prices the package
 // server-side, records the transaction and credits the votes. The client never
 // called it: paymentMethod was dropped, so "Pay with Wallet" opened a Paystack

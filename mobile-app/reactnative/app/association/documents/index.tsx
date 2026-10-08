@@ -3,20 +3,20 @@ import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { FileText, FileImage, Lock, ChevronRight, AlertCircle, Plus } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
-import { useDocuments } from '@/features/association/hooks/useEngagement';
-import { formatDate } from '@/features/association/utils/associationFormatters';
-import { DOC_SEGMENTS, DOC_CATEGORY_LABEL } from '@/features/association/constants/engagement.constants';
-import type { DocumentSummary } from '@/features/association/types/engagement.types';
+import { useAdminAccess } from '@/features/association/hooks';
+import { useDocuments } from '@/features/association/hooks';
+import { formatDate } from '@/features/association/utils';
+import { DOC_SEGMENTS, DOC_CATEGORY_LABEL } from '@/features/association/constants';
+import type { DocumentSummary } from '@/features/association/types';
 
 export default function DocumentsVault() {
   const access = useAdminAccess();
@@ -121,5 +121,5 @@ const styles = StyleSheet.create({
   title: { ...Typography.labelLg, color: Colors.onSurface },
   meta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 1 },
   ackRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  ackText: { ...Typography.caption, color: Colors.gold, fontWeight: '700' as const },
+  ackText: { ...Typography.caption, color: Colors.onWarning, fontWeight: '700' as const },
 });

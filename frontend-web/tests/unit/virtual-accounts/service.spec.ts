@@ -25,9 +25,7 @@ import { handleDvaTransferWebhook } from '@/src/server/virtual-accounts/webhook'
 import { creditWallet } from '@/src/server/wallet/service';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// ---------------------------------------------------------------------------
 // Fixtures
-// ---------------------------------------------------------------------------
 
 const USER_ID = 'user-dva-001';
 const DVA_ROW = {
@@ -73,9 +71,7 @@ function setupMock() {
   return tools;
 }
 
-// ---------------------------------------------------------------------------
 // getVirtualAccount
-// ---------------------------------------------------------------------------
 
 describe('getVirtualAccount', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -98,9 +94,7 @@ describe('getVirtualAccount', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // provisionVirtualAccount
-// ---------------------------------------------------------------------------
 
 describe('provisionVirtualAccount', () => {
   beforeEach(() => {
@@ -193,9 +187,7 @@ describe('provisionVirtualAccount', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // getOrProvisionVirtualAccount
-// ---------------------------------------------------------------------------
 
 describe('getOrProvisionVirtualAccount', () => {
   beforeEach(() => {
@@ -219,7 +211,7 @@ describe('getOrProvisionVirtualAccount', () => {
   it('provisions using the profile name when none exists yet', async () => {
     const { maybySingle, insertFn } = setupMock();
     maybySingle
-      .mockResolvedValueOnce({ data: null, error: null }) // getVirtualAccount: none yet
+      .mockResolvedValueOnce({ data: null, error: null })
       .mockResolvedValueOnce({                             // user_profiles lookup
         data: { email: 'jane@example.com', first_name: 'Jane', last_name: 'Doe', full_name: 'Jane Doe' },
         error: null,
@@ -289,9 +281,7 @@ describe('getOrProvisionVirtualAccount', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // handleDvaTransferWebhook
-// ---------------------------------------------------------------------------
 
 describe('handleDvaTransferWebhook', () => {
   const PAYSTACK_SECRET = 'sk_test_webhook_secret';

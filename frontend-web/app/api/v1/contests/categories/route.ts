@@ -9,7 +9,12 @@ export async function GET() {
     const { data, error } = await supabase
       .from('contests')
       .select('category')
-      .in('status', ['active', 'open', 'published'])
+      // contests.status is the contest_status enum ('draft'|'active'|'upcoming'|'ended'
+      // — supabase/migrations/20260404210000_create_contests.sql). 'open' belongs to
+      // connect_contests.status and 'published' to no enum at all; sending either
+      // here 500s on enum coercion.
+      // Matches the contest list route so counts reflect what the list shows.
+      .in('status', ['active', 'upcoming'])
       .not('category', 'is', null);
 
     if (error) throw error;

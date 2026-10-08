@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { View, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
-import RiskAckSheet from '@/features/fractionalre/components/RiskAckSheet';
+import { RiskAckSheet } from '@/features/fractionalre/components';
 import { MASTER_RISK_DISCLOSURE } from '@/features/fractionalre/constants';
 import { useActivate, useAcknowledgeRisk } from '@/features/fractionalre/hooks';
 

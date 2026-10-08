@@ -2,7 +2,7 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import ModuleCard from './ModuleCard';
 import { ServiceModule } from '@/constants/modules';
-import { Spacing } from '@/constants/spacing';
+import { Spacing } from '@/constants/tokens';
 import { router } from 'expo-router';
 
 interface Props {

@@ -1,8 +1,6 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the association module.
-//
 // association.Service (association.NewService(pool, ledgerSvc)) talks to a
 // concrete *pgxpool.Pool for every mutation (PayInvoice, DecideApplication,
 // DecideOfflinePayment, SuspendMember/RestoreMember/TransferMember/AssignRole,
@@ -15,7 +13,6 @@ package association_test
 // written end-to-end so it can be un-skipped the moment infra is available —
 // the skip is NOT a stub; every step below drives the real Service against
 // real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply migrations in order, in particular:
 //       supabase/migrations/20260628000000_association_module.sql
@@ -37,11 +34,9 @@ package association_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/association/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id — no truncation, no shared fixtures, safe to run repeatedly
 // against the same test database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -119,11 +114,12 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	membershipID = uuid.New().String()
 	// The member's ledger wallet account FKs auth.users(id); seed the user first
 	// (email required by the handle_new_user trigger → user_profiles.email NOT NULL).
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, userID+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, userID+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, userID)
-	_, err := pool.Exec(ctx, `
+	testsupport.SetKycTier(t, ctx, pool, userID, testsupport.KycTierUnlimited)
+	_, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing, joined_at)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE', now())`,
 		membershipID, orgID, userID, "TEST-"+membershipID[:8])
@@ -139,7 +135,7 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 func seedAdminRole(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, role string) (adminUserID string) {
 	t.Helper()
 	adminUserID, membershipID := seedActiveMembership(t, ctx, pool, orgID)
-	_, err := pool.Exec(ctx, `
+	_, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_member_roles (id, membership_id, role, jurisdiction)
 		VALUES ($1, $2, $3, 'NATIONAL')`, uuid.New().String(), membershipID, role)
 	if err != nil {
@@ -152,7 +148,7 @@ func seedAdminRole(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID,
 func seedDuesInvoice(t *testing.T, ctx context.Context, pool *pgxpool.Pool, membershipID string, amountKobo int64) string {
 	t.Helper()
 	invoiceID := uuid.New().String()
-	_, err := pool.Exec(ctx, `
+	_, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_dues_invoices (id, membership_id, title, amount_kobo, cadence, scope, status, due_date)
 		VALUES ($1, $2, 'Annual dues', $3, 'ANNUAL', 'NATIONAL', 'DUE', now() + interval '30 days')`,
 		invoiceID, membershipID, amountKobo)
@@ -176,9 +172,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PayInvoice: idempotency, balanced double-entry, audit, already-PAID receipt.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt drives a real dues
 // payment twice with the SAME Idempotency-Key and proves: (a) exactly one
@@ -219,7 +213,7 @@ func TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt(t *testing.T) {
 	}
 
 	var paymentCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_payments WHERE invoice_id=$1`, invoiceID).Scan(&paymentCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_payments WHERE invoice_id=$1`, invoiceID).Scan(&paymentCount); err != nil {
 		t.Fatalf("count payments: %v", err)
 	}
 	if paymentCount != 1 {
@@ -227,7 +221,7 @@ func TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt(t *testing.T) {
 	}
 
 	var invoiceStatus string
-	if err := pool.QueryRow(ctx, `SELECT status FROM assoc_dues_invoices WHERE id=$1`, invoiceID).Scan(&invoiceStatus); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM assoc_dues_invoices WHERE id=$1`, invoiceID).Scan(&invoiceStatus); err != nil {
 		t.Fatalf("read invoice status: %v", err)
 	}
 	if invoiceStatus != "PAID" {
@@ -235,7 +229,7 @@ func TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt(t *testing.T) {
 	}
 
 	var auditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_audit_log WHERE subject_type='invoice' AND subject_id=$1 AND action='DUES_PAY'`, invoiceID).Scan(&auditCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_audit_log WHERE subject_type='invoice' AND subject_id=$1 AND action='DUES_PAY'`, invoiceID).Scan(&auditCount); err != nil {
 		t.Fatalf("count audit rows: %v", err)
 	}
 	if auditCount != 1 {
@@ -244,10 +238,10 @@ func TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt(t *testing.T) {
 
 	var splitCount int
 	var paymentID string
-	if err := pool.QueryRow(ctx, `SELECT id FROM assoc_payments WHERE invoice_id=$1`, invoiceID).Scan(&paymentID); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT id FROM assoc_payments WHERE invoice_id=$1`, invoiceID).Scan(&paymentID); err != nil {
 		t.Fatalf("read payment id: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_revenue_splits WHERE payment_id=$1`, paymentID).Scan(&splitCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_revenue_splits WHERE payment_id=$1`, paymentID).Scan(&splitCount); err != nil {
 		t.Fatalf("count splits: %v", err)
 	}
 	if splitCount != len(association.RevenueSplit(amount)) {
@@ -345,9 +339,7 @@ func TestLiveDB_PayInvoice_RequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideApplication: persistence + audit.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_DecideApplication_ApprovePersistsAndActivatesMembership seeds a
 // PENDING application + a matching (not-yet-active) membership row, approves
@@ -457,9 +449,7 @@ func TestLiveDB_DecideApplication_RejectDoesNotActivateMembership(t *testing.T) 
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideOfflinePayment: persistence + balanced journal on approve.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_DecideOfflinePayment_ApprovePostsBalancedJournal seeds a pending
 // offline payment against a DUE invoice, approves it as a FINANCE_ADMIN, and
@@ -601,10 +591,8 @@ func TestLiveDB_DecideOfflinePayment_NonFinanceAdminForbidden(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Member actions: suspend / restore / transfer / role — persistence + audit +
 // OLA (only association admins).
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_SuspendThenRestoreMember_PersistsStatusAndAudit exercises the
 // full suspend -> restore cycle and proves each transition persists and is
@@ -761,10 +749,8 @@ func TestLiveDB_AssignRole_PersistsRoleAndAudit_ChapterAdminForbidden(t *testing
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PublishOrganisation: state persists (org + chapters + committees +
 // categories + audit) in one transaction.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit publishes a new
 // organisation with chapters, committees, and membership categories, then
@@ -805,7 +791,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 
 	var published bool
 	var name string
-	if err := pool.QueryRow(ctx, `SELECT name, published FROM assoc_organisations WHERE id=$1`, result.OrganisationID).Scan(&name, &published); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT name, published FROM assoc_organisations WHERE id=$1`, result.OrganisationID).Scan(&name, &published); err != nil {
 		t.Fatalf("read organisation: %v", err)
 	}
 	if !published {
@@ -816,7 +802,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	}
 
 	var chapterCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_chapters WHERE organisation_id=$1`, result.OrganisationID).Scan(&chapterCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_chapters WHERE organisation_id=$1`, result.OrganisationID).Scan(&chapterCount); err != nil {
 		t.Fatalf("count chapters: %v", err)
 	}
 	if chapterCount != 2 {
@@ -824,7 +810,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	}
 
 	var committeeCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_committees WHERE organisation_id=$1`, result.OrganisationID).Scan(&committeeCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_committees WHERE organisation_id=$1`, result.OrganisationID).Scan(&committeeCount); err != nil {
 		t.Fatalf("count committees: %v", err)
 	}
 	if committeeCount != 1 {
@@ -832,7 +818,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	}
 
 	var categoryCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_membership_categories WHERE organisation_id=$1`, result.OrganisationID).Scan(&categoryCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_membership_categories WHERE organisation_id=$1`, result.OrganisationID).Scan(&categoryCount); err != nil {
 		t.Fatalf("count categories: %v", err)
 	}
 	if categoryCount != 1 {
@@ -840,7 +826,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	}
 
 	var auditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_audit_log WHERE subject_type='organisation' AND subject_id=$1 AND action='ORG_PUBLISH'`, result.OrganisationID).Scan(&auditCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_audit_log WHERE subject_type='organisation' AND subject_id=$1 AND action='ORG_PUBLISH'`, result.OrganisationID).Scan(&auditCount); err != nil {
 		t.Fatalf("count audit: %v", err)
 	}
 	if auditCount != 1 {
@@ -888,13 +874,11 @@ func TestLiveDB_PublishOrganisation_RejectsWithoutAcceptedTerms(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // AI-note approve/publish: state transitions persist. (See
 // money_invariants_test.go TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap
 // for the accompanying authorization-gap finding — these tests only prove the
 // STATE TRANSITION persists as coded; they do not assert an authz boundary
 // that does not currently exist in source.)
-// ---------------------------------------------------------------------------
 
 // seedAiNote inserts an assoc_ai_notes row in READY status and returns its id.
 func seedAiNote(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID string) string {

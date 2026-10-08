@@ -56,7 +56,6 @@ export default function LearnAdminPage() {
   }
   useEffect(() => { load(); }, []);
 
-  // ── Paths ───────────────────────────────────────────────────────────────
   function editPath(p: LearnPath) {
     setEditingPathId(p.id);
     setPathForm({ id: p.id, title: p.title, description: p.description, iconColor: p.iconColor, level: p.level, sortOrder: 0, published: true });
@@ -95,7 +94,6 @@ export default function LearnAdminPage() {
     setLessonsLoading(true); setExpandedLessons(null);
     try {
       const detail = await getPathDetail(pathId);
-      // getPathDetail returns lessonIds only; fetch each lesson individually
       // is unnecessary for admin authoring — the lesson form below lets an
       // admin create/edit lessons directly by pathId without needing full
       // lesson bodies rendered inline.
@@ -110,7 +108,6 @@ export default function LearnAdminPage() {
     await refreshLessons(pathId);
   }
 
-  // ── Lessons ─────────────────────────────────────────────────────────────
   function newLessonFor(pathId: string) {
     setEditingLessonId(null);
     setLessonForm({ ...emptyLessonForm, pathId });
@@ -153,7 +150,6 @@ export default function LearnAdminPage() {
     finally { setBusy(false); }
   }
 
-  // ── Glossary ────────────────────────────────────────────────────────────
   async function submitGlossary() {
     setBusy(true); setActionError(null);
     try {

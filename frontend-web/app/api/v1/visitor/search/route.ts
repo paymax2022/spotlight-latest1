@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// GET /api/v1/visitor/search?q= — search visitor codes and residents.
+// Search visitor codes and residents.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

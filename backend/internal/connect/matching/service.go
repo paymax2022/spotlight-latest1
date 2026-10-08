@@ -2,11 +2,23 @@ package connectmatching
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"strconv"
+	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyError = "error"
 )
 
 // ErrNoProfile is returned when the acting user has no Connect profile yet.
@@ -14,6 +26,12 @@ var ErrNoProfile = errors.New("connect: no profile for user")
 
 // ErrSelfLike is returned when a user tries to like their own profile.
 var ErrSelfLike = errors.New("connect: cannot like your own profile")
+
+// ErrTargetNotFound is returned when the like target is not an existing profile —
+// including a malformed (non-UUID) id, which can never resolve. Exported so the
+// discovery swipe path can translate it into its own not-found sentinel rather
+// than falling through to a 500.
+var ErrTargetNotFound = errors.New("connect: target profile not found")
 
 // ErrBlocked is returned when a like/match is refused because a block exists
 // between the two users in either direction (EC-004 / safety invariant 3: block
@@ -74,7 +92,6 @@ func (s *Service) profileIDForUser(ctx context.Context, q pgx.Row) (string, erro
 
 // Like records a like/super-like from the authed user to a target profile and, if
 // the target has already liked back, creates the mutual match — all in one tx.
-//
 // Idempotency: the (from,to) row is upserted with ON CONFLICT DO NOTHING, so a
 // retried/double-submitted like is a no-op. A match is created only when the
 // reciprocal like exists, and the match insert itself is ON CONFLICT DO NOTHING
@@ -86,12 +103,17 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 	if !ValidKind(kind) {
 		return nil, fmt.Errorf("connect: invalid like kind %q", kind)
 	}
+	// Guard the uuid columns: a malformed target id would otherwise surface as a
+	// Postgres "invalid input syntax" error → 500 instead of a clean not-found.
+	if _, err := uuid.Parse(toProfileID); err != nil {
+		return nil, ErrTargetNotFound
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin like tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	fromProfile, err := s.profileIDForUser(ctx, tx.QueryRow(ctx,
 		`SELECT id FROM connect_profiles WHERE user_id = $1`, fromUserID))
@@ -121,7 +143,7 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 		return nil, fmt.Errorf("connect: check target: %w", err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("connect: target profile not found")
+		return nil, ErrTargetNotFound
 	}
 
 	// EC-004 / safety invariant 3: block is absolute. Refuse the like (and thus any
@@ -204,7 +226,6 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 
 	res := &LikeResult{Liked: true, Kind: kind, Replayed: replayed}
 
-	// Mutual check: does the target already like the actor back?
 	var reciprocal bool
 	if err := tx.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM connect_likes WHERE from_profile = $1 AND to_profile = $2)`,
@@ -265,9 +286,107 @@ func (s *Service) ListMatches(ctx context.Context, userID string, limit int) ([]
 			return nil, err
 		}
 		if len(reason) > 0 {
-			_ = jsonUnmarshal(reason, &m.Reason)
+			_ = json.Unmarshal(reason, &m.Reason)
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// Like kinds — MUST match the connect_likes.kind CHECK constraint.
+const (
+	KindLike  = "like"
+	KindSuper = "super"
+)
+
+// ValidKind reports whether k is a known like kind.
+func ValidKind(k string) bool { return k == KindLike || k == KindSuper }
+
+// LikeResult is returned from recording a like.
+type LikeResult struct {
+	Liked    bool   `json:"liked"`   // the like is recorded (idempotent)
+	Matched  bool   `json:"matched"` // a mutual match exists / was just created
+	MatchID  string `json:"match_id,omitempty"`
+	Kind     string `json:"kind"`
+	Replayed bool   `json:"replayed"` // true when this was a duplicate (no-op) submit
+}
+
+// Match is a participant-facing view of a connect_matches row.
+type Match struct {
+	ID           string         `json:"id"`
+	OtherProfile string         `json:"other_profile_id"`
+	OtherUserID  string         `json:"other_user_id,omitempty"`
+	OtherName    *string        `json:"other_display_name,omitempty"`
+	Status       string         `json:"status"`
+	Reason       map[string]any `json:"reason,omitempty"` // match-reason card
+	MatchedAt    time.Time      `json:"matched_at"`
+}
+
+// LikeRequest is the member body for POST /likes. The actor is the authenticated
+// user, resolved to their profile server-side — never taken from the body.
+type LikeRequest struct {
+	ToProfile string `json:"to_profile" binding:"required"`
+	Kind      string `json:"kind"` // "like" (default) | "super"
+}
+
+// Handler exposes the Phase-1 likes + matches endpoints.
+type Handler struct{ svc *Service }
+
+// NewHandler builds the matching HTTP handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Like — POST /api/v1/connect/likes (authenticated member).
+// Idempotent (Idempotency-Key honoured by clients; uniqueness enforced in DB).
+// A match is created ONLY on a mutual like.
+func (h *Handler) Like(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
+		return
+	}
+	var req LikeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	res, err := h.svc.Like(c.Request.Context(), uid, req.ToProfile, req.Kind)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNoProfile):
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "create your profile first"})
+		case errors.Is(err, ErrSelfLike):
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "cannot like your own profile"})
+		case errors.Is(err, ErrNeedsCredits):
+			c.JSON(http.StatusPaymentRequired, gin.H{keyError: "out of super-like credits", "upsell": "pass_super5"})
+		case errors.Is(err, ErrTargetNotFound):
+			c.JSON(http.StatusNotFound, gin.H{keyError: "target profile not found"})
+		case errors.Is(err, ErrBlocked), errors.Is(err, ErrRestricted), errors.Is(err, ErrIneligibleTarget):
+			c.JSON(http.StatusForbidden, gin.H{keyError: "not allowed"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": res})
+}
+
+// ListMatches — GET /api/v1/connect/matches?limit= (authenticated member).
+func (h *Handler) ListMatches(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
+		return
+	}
+	limit := 0
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	matches, err := h.svc.ListMatches(c.Request.Context(), uid, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "could not list matches"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": matches})
 }

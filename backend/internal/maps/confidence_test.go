@@ -9,9 +9,7 @@ import (
 // almostEqual compares two confidences with a small tolerance (float math).
 func almostEqual(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Google: location_type + partial_match → Confidence (MAPSERVICE.md §3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestGoogleConfidence(t *testing.T) {
 	cases := []struct {
@@ -38,9 +36,7 @@ func TestGoogleConfidence(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // HERE: scoring.queryScore + fieldScore avg → Confidence (MAPSERVICE.md §3/§10)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestHereConfidence(t *testing.T) {
 	t.Run("query_score_only", func(t *testing.T) {
@@ -54,7 +50,6 @@ func TestHereConfidence(t *testing.T) {
 		it := hereItem{}
 		it.Scoring.QueryScore = 1.0
 		it.Scoring.FieldScore = map[string]float64{"streets": 0.5, "houseNumber": 0.5}
-		// 0.7*1.0 + 0.3*0.5 = 0.85
 		if got := hereConfidence(it); !almostEqual(got, 0.85) {
 			t.Fatalf("blended = %v, want 0.85", got)
 		}
@@ -72,9 +67,7 @@ func TestHereConfidence(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Geoapify/Nominatim: rank.confidence / rank.importance → Confidence
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestGeoapifyConfidence(t *testing.T) {
 	cases := []struct {
@@ -98,9 +91,7 @@ func TestGeoapifyConfidence(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Mock: deterministic confidence + H3 cell so the v2 chain behaves
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestMockGeocodeConfidenceAndCell(t *testing.T) {
 	m := NewMockProvider("geoapify", SourceOpenStack)
@@ -138,9 +129,7 @@ func TestMockGeocodeConfidenceAndCell(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // License coherence: HERE + Google are NEVER cacheable (MAPSERVICE.md §10)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestHereGoogleNeverCacheable(t *testing.T) {
 	if isCacheableSource(SourceHere) {

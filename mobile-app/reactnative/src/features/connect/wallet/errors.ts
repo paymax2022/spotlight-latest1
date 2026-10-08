@@ -36,7 +36,6 @@ export function isDuplicateReplay(e: unknown): boolean {
  */
 export function isAmbiguousOutcome(e: unknown): boolean {
   if (!axios.isAxiosError(e)) return false;
-  // No response at all => never reached the server, or reached it and we never
   // heard back. Only the latter is dangerous, and we cannot tell them apart.
   return e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT' || !e.response;
 }

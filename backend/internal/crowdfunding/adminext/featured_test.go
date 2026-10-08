@@ -14,19 +14,18 @@ import (
 // therefore actually RUN in CI rather than skipping (a package whose tests all
 // skip still prints "ok", which is how a dead suite hides).
 
-func boolPtr(b bool) *bool { return &b }
-
-// ─── ACTIVE-only rule ────────────────────────────────────────────────────────
+//go:fix inline
+func boolPtr(b bool) *bool { return new(b) }
 
 // TestGuardFlagPromotion_ActiveOnly is the core rule: a campaign may only be
 // PROMOTED onto a public discovery rail while it is ACTIVE.
 func TestGuardFlagPromotion_ActiveOnly(t *testing.T) {
 	promotions := map[string]CampaignFlagsRequest{
-		"featured": {Featured: boolPtr(true)},
-		"trending": {Trending: boolPtr(true)},
-		"urgent":   {Urgent: boolPtr(true)},
+		"featured": {Featured: new(true)},
+		"trending": {Trending: new(true)},
+		"urgent":   {Urgent: new(true)},
 		"all three": {
-			Featured: boolPtr(true), Trending: boolPtr(true), Urgent: boolPtr(true),
+			Featured: new(true), Trending: new(true), Urgent: new(true),
 		},
 	}
 	nonActive := []string{"PENDING_REVIEW", "CHANGES_REQUESTED", "REJECTED", "FROZEN", "DRAFT", ""}
@@ -53,10 +52,10 @@ func TestGuardFlagPromotion_ActiveOnly(t *testing.T) {
 // public rail with no way off it.
 func TestGuardFlagPromotion_DemotionAlwaysAllowed(t *testing.T) {
 	demotions := []CampaignFlagsRequest{
-		{Featured: boolPtr(false)},
-		{Trending: boolPtr(false)},
-		{Urgent: boolPtr(false)},
-		{Featured: boolPtr(false), Trending: boolPtr(false), Urgent: boolPtr(false)},
+		{Featured: new(false)},
+		{Trending: new(false)},
+		{Urgent: new(false)},
+		{Featured: new(false), Trending: new(false), Urgent: new(false)},
 	}
 	for _, status := range []string{"ACTIVE", "PENDING_REVIEW", "REJECTED", "FROZEN", "CHANGES_REQUESTED"} {
 		for i, req := range demotions {
@@ -71,7 +70,7 @@ func TestGuardFlagPromotion_DemotionAlwaysAllowed(t *testing.T) {
 // demotes is all-or-nothing. Applying only the demote half would be a silent
 // partial success the caller never asked for.
 func TestGuardFlagPromotion_MixedBodyRefusedWholesale(t *testing.T) {
-	mixed := CampaignFlagsRequest{Featured: boolPtr(true), Urgent: boolPtr(false)}
+	mixed := CampaignFlagsRequest{Featured: new(true), Urgent: new(false)}
 	if err := guardFlagPromotion("PENDING_REVIEW", mixed); !errors.Is(err, ErrCampaignNotActive) {
 		t.Fatalf("mixed promote+demote on a non-ACTIVE campaign must be refused, got %v", err)
 	}
@@ -92,8 +91,6 @@ func TestGuardFlagPromotion_EmptyBodyIsNotAPromotion(t *testing.T) {
 	}
 }
 
-// ─── Partial-update semantics ────────────────────────────────────────────────
-
 // TestFlagAssignments_OnlySuppliedKeys is the partial-update contract: an ABSENT
 // key (nil pointer) produces no write at all. If this ever regressed to plain
 // bools, `{"featured":true}` would also silently set trending=false, urgent=false.
@@ -104,16 +101,16 @@ func TestFlagAssignments_OnlySuppliedKeys(t *testing.T) {
 		want []flagAssignment
 	}{
 		{"empty", CampaignFlagsRequest{}, nil},
-		{"featured only true", CampaignFlagsRequest{Featured: boolPtr(true)},
+		{"featured only true", CampaignFlagsRequest{Featured: new(true)},
 			[]flagAssignment{{"featured", true}}},
-		{"trending only false", CampaignFlagsRequest{Trending: boolPtr(false)},
+		{"trending only false", CampaignFlagsRequest{Trending: new(false)},
 			[]flagAssignment{{"trending", false}}},
-		{"urgent only true", CampaignFlagsRequest{Urgent: boolPtr(true)},
+		{"urgent only true", CampaignFlagsRequest{Urgent: new(true)},
 			[]flagAssignment{{"urgent", true}}},
 		{"featured+urgent, trending untouched",
-			CampaignFlagsRequest{Featured: boolPtr(true), Urgent: boolPtr(false)},
+			CampaignFlagsRequest{Featured: new(true), Urgent: new(false)},
 			[]flagAssignment{{"featured", true}, {"urgent", false}}},
-		{"all three", CampaignFlagsRequest{Featured: boolPtr(false), Trending: boolPtr(true), Urgent: boolPtr(true)},
+		{"all three", CampaignFlagsRequest{Featured: new(false), Trending: new(true), Urgent: new(true)},
 			[]flagAssignment{{"featured", false}, {"trending", true}, {"urgent", true}}},
 	}
 	for _, tc := range cases {
@@ -134,7 +131,7 @@ func TestFlagAssignments_OnlySuppliedKeys(t *testing.T) {
 func TestBuildFlagsUpdate_PartialSQL(t *testing.T) {
 	const id = "11111111-1111-1111-1111-111111111111"
 
-	sql, args, ok := buildFlagsUpdate(id, CampaignFlagsRequest{Featured: boolPtr(true)})
+	sql, args, ok := buildFlagsUpdate(id, CampaignFlagsRequest{Featured: new(true)})
 	if !ok {
 		t.Fatal("a one-key body must produce an update")
 	}
@@ -150,7 +147,7 @@ func TestBuildFlagsUpdate_PartialSQL(t *testing.T) {
 		t.Fatalf("args = %v, want [true %s]", args, id)
 	}
 
-	sql, args, ok = buildFlagsUpdate(id, CampaignFlagsRequest{Trending: boolPtr(false), Urgent: boolPtr(true)})
+	sql, args, ok = buildFlagsUpdate(id, CampaignFlagsRequest{Trending: new(false), Urgent: new(true)})
 	if !ok {
 		t.Fatal("a two-key body must produce an update")
 	}
@@ -184,27 +181,23 @@ func TestSetCampaignFlags_EmptyBodyRejected(t *testing.T) {
 func TestSetCampaignFlags_BlankIDRejected(t *testing.T) {
 	s := NewService(nil)
 	if _, err := s.SetCampaignFlags(context.Background(), "  ", "admin",
-		CampaignFlagsRequest{Featured: boolPtr(true)}); !errors.Is(err, ErrCampaignNotFound) {
+		CampaignFlagsRequest{Featured: new(true)}); !errors.Is(err, ErrCampaignNotFound) {
 		t.Fatalf("want ErrCampaignNotFound, got %v", err)
 	}
 }
-
-// ─── Audit trail ─────────────────────────────────────────────────────────────
 
 // TestAuditFlagsTarget records exactly which flags moved and to what, so the
 // cf_audit_logs row is self-explanatory without re-reading the campaign.
 func TestAuditFlagsTarget(t *testing.T) {
 	const id = "22222222-2222-2222-2222-222222222222"
-	got := auditFlagsTarget(id, CampaignFlagsRequest{Featured: boolPtr(true), Urgent: boolPtr(false)})
+	got := auditFlagsTarget(id, CampaignFlagsRequest{Featured: new(true), Urgent: new(false)})
 	if want := id + " featured=true,urgent=false"; got != want {
 		t.Fatalf("audit target = %q, want %q", got, want)
 	}
-	if got := auditFlagsTarget(id, CampaignFlagsRequest{Trending: boolPtr(true)}); got != id+" trending=true" {
+	if got := auditFlagsTarget(id, CampaignFlagsRequest{Trending: new(true)}); got != id+" trending=true" {
 		t.Fatalf("audit target = %q", got)
 	}
 }
-
-// ─── Discovery coupling ──────────────────────────────────────────────────────
 
 // TestFlagColumnsMatchDiscoveryFilters pins the column names this module writes to
 // the ones public discovery reads (internal/crowdfunding/query.go filters on
@@ -213,7 +206,7 @@ func TestAuditFlagsTarget(t *testing.T) {
 func TestFlagColumnsMatchDiscoveryFilters(t *testing.T) {
 	want := []string{"featured", "trending", "urgent"}
 	got := flagAssignments(CampaignFlagsRequest{
-		Featured: boolPtr(true), Trending: boolPtr(true), Urgent: boolPtr(true),
+		Featured: new(true), Trending: new(true), Urgent: new(true),
 	})
 	if len(got) != len(want) {
 		t.Fatalf("got %d columns, want %d", len(got), len(want))

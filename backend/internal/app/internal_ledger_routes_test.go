@@ -1,6 +1,5 @@
 package app
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the internal, service-authenticated ledger API
 // (Stage 1.5c). It drives RegisterInternalLedgerAPI's real handlers against a real
 // Postgres + the real finance ledger.Service, proving the money-path invariants
@@ -9,16 +8,13 @@ package app
 //   (2) An idempotent replay (same idempotencyKey) is a single logical movement.
 //   (3) A balanceChecked overdraw is rejected 409 insufficient_funds (fail-closed).
 //   (4) The service-token guard rejects a missing / wrong Bearer token.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset — the SAME gate the
 // other finance/ledger live-DB tests use (see
 // backend/internal/referral/ledger/withdraw_integration_test.go). Point it at a
 // disposable, migrated Postgres — NEVER production. Every row is keyed by a fresh
 // UUID; no truncation, safe to run repeatedly.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./internal/app/... -run InternalLedgerAPI -v
-// ---------------------------------------------------------------------------
 
 import (
 	"bytes"
@@ -85,7 +81,7 @@ func newInternalLedgerRouter(pool *pgxpool.Pool) (*gin.Engine, *financeledger.Se
 func postJournal(t *testing.T, r *gin.Engine, token string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	buf, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/internal/finance/ledger/journal", bytes.NewReader(buf))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/finance/ledger/journal", bytes.NewReader(buf))
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -187,7 +183,7 @@ func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 	}
 
 	// Balance endpoint reflects the same projected wallet balance.
-	req := httptest.NewRequest(http.MethodGet, "/internal/finance/ledger/balance?userId="+uid+"&account=user_wallet", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/internal/finance/ledger/balance?userId="+uid+"&account=user_wallet", nil)
 	req.Header.Set("Authorization", "Bearer "+testServiceToken)
 	bw := httptest.NewRecorder()
 	r.ServeHTTP(bw, req)
@@ -200,6 +196,114 @@ func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 	_ = json.Unmarshal(bw.Body.Bytes(), &balResp)
 	if balResp.BalanceKobo != 70_000 {
 		t.Fatalf("balance endpoint = %d, want 70000", balResp.BalanceKobo)
+	}
+}
+
+// TestInternalLedgerAPI_ForeignClaimConflicts_Integration proves the hardened
+// replay contract: a pre-existing idempotency key is only a replay when BOTH
+// recorded legs carry the exact journal identity. A same-key request whose
+// amount, reference or accounts differ — or a key holding only one leg — is a
+// foreign claim and must answer 409, never a phantom 200.
+func TestInternalLedgerAPI_ForeignClaimConflicts_Integration(t *testing.T) {
+	pool := internalLedgerPool(t)
+	t.Cleanup(pool.Close)
+	r, ledgerSvc := newInternalLedgerRouter(pool)
+	ctx := context.Background()
+
+	uid := seedAuthUser(t, pool)
+
+	// Fund the wallet so every attempt passes any balance gate.
+	w := postJournal(t, r, testServiceToken, map[string]any{
+		"userId":         uid,
+		"debitAccount":   "settlement",
+		"creditAccount":  "user_wallet",
+		"amountKobo":     500_000,
+		"reference":      "trade:fund:" + uid,
+		"idempotencyKey": "il-fc-fund-" + uid,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("fund: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	base := map[string]any{
+		"userId":         uid,
+		"debitAccount":   "user_wallet",
+		"creditAccount":  "settlement",
+		"amountKobo":     10_000,
+		"reference":      "trade:fc:" + uid,
+		"idempotencyKey": "il-fc-" + uid,
+		"balanceChecked": true,
+	}
+	if w := postJournal(t, r, testServiceToken, base); w.Code != http.StatusOK {
+		t.Fatalf("first post: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// True replay — same identity → 200 replay (unchanged).
+	if w := postJournal(t, r, testServiceToken, base); w.Code != http.StatusOK {
+		t.Fatalf("true replay: status=%d body=%s, want 200", w.Code, w.Body.String())
+	}
+
+	// Foreign claims under the same key → 409 each.
+	for name, mutate := range map[string]func(map[string]any){
+		"different amount":   func(b map[string]any) { b["amountKobo"] = 20_000 },
+		"different ref":      func(b map[string]any) { b["reference"] = "trade:fc-other:" + uid },
+		"different debitAcc": func(b map[string]any) { b["debitAccount"] = "provider_clearing"; b["balanceChecked"] = false },
+	} {
+		claim := map[string]any{}
+		for k, v := range base {
+			claim[k] = v
+		}
+		mutate(claim)
+		w := postJournal(t, r, testServiceToken, claim)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("%s: status=%d body=%s, want 409", name, w.Code, w.Body.String())
+		}
+		var er struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &er)
+		if er.Error != "idempotency_key_conflict" {
+			t.Fatalf("%s: error=%q, want idempotency_key_conflict", name, er.Error)
+		}
+	}
+
+	// Partial claim: only the :debit leg exists under a fresh key → 409.
+	wallet, err := ledgerSvc.GetOrCreateUserWallet(ctx, uid)
+	if err != nil {
+		t.Fatalf("user wallet: %v", err)
+	}
+	// ledger_entries is trigger-guarded append-only — the seeded debit can't be
+	// deleted and would leak into the global conservation invariant, so a contra
+	// CREDIT on a standing account (different key, never touched by the check)
+	// keeps the journal balanced while the claim stays "partial".
+	settleAcc, err := ledgerSvc.GetOrCreateStandingAccount(ctx, financeledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement account: %v", err)
+	}
+	partialKey := "il-fc-partial-" + uid
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+		 VALUES ($1, 'DEBIT', 10_000, $2, $3), ($4, 'CREDIT', 10_000, $2, $5)`,
+		wallet.ID, "trade:fc:"+uid, partialKey+":debit", settleAcc.ID, partialKey+":contra"); err != nil {
+		t.Fatalf("seed partial leg: %v", err)
+	}
+	w = postJournal(t, r, testServiceToken, map[string]any{
+		"userId":         uid,
+		"debitAccount":   "user_wallet",
+		"creditAccount":  "settlement",
+		"amountKobo":     10_000,
+		"reference":      "trade:fc:" + uid,
+		"idempotencyKey": partialKey,
+	})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("partial claim: status=%d body=%s, want 409", w.Code, w.Body.String())
+	}
+
+	// The seeded REVERSAL-free partial DEBIT leg moved -10k: funded 500k,
+	// spent 10k once, phantom partial debit -10k → 480k... verify no phantom
+	// fulfilment double-moved money: exactly one 10k spend + the seeded leg.
+	if bal, _ := ledgerSvc.GetBalance(ctx, uid); bal != 480_000 {
+		t.Fatalf("balance = %d, want 480000 (single spend + seeded leg)", bal)
 	}
 }
 

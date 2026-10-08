@@ -13,14 +13,11 @@ import (
 )
 
 // TM-003 live-DB integration test for consent-gated consult recording.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate as the
 // FX / lab-amendment / rx-refills live-DB suites). Bring-up:
-//
 //	supabase start   # or any Postgres with the migrations applied
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/consult/ -run TestRecordingConsent_LiveDB
-//
 // It seeds a SCHEDULED consult and drives the two-party consent gate: patient-only
 // consent cannot enable recording; once the provider also consents recording turns
 // on; when the patient withdraws, recording turns off again.

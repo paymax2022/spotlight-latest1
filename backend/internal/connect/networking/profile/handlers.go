@@ -8,41 +8,38 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyError = "error"
 
 type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
-// idemKey reads the client idempotency token so a retried create is a no-op.
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 // fail maps domain errors to HTTP status codes (deny-by-default: unknown → 500).
 func fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrSelfReco), errors.Is(err, ErrSelfRequest):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrNotSubject), errors.Is(err, ErrNotAuthor):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrBadTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
-// ─────────────────────────────── Experience ──────────────────────────────────
-
 func (h *Handler) ListExperience(c *gin.Context) {
-	out, err := h.svc.ListExperience(c.Request.Context(), uid(c))
+	out, err := h.svc.ListExperience(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -53,10 +50,10 @@ func (h *Handler) ListExperience(c *gin.Context) {
 func (h *Handler) AddExperience(c *gin.Context) {
 	var in ExperienceInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	e, err := h.svc.AddExperience(c.Request.Context(), uid(c), in, idemKey(c))
+	e, err := h.svc.AddExperience(c.Request.Context(), ginutil.UserID(c), in, ginutil.IdempotencyKey(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -67,10 +64,10 @@ func (h *Handler) AddExperience(c *gin.Context) {
 func (h *Handler) UpdateExperience(c *gin.Context) {
 	var in ExperienceInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	e, err := h.svc.UpdateExperience(c.Request.Context(), uid(c), c.Param("id"), in)
+	e, err := h.svc.UpdateExperience(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		fail(c, err)
 		return
@@ -79,17 +76,15 @@ func (h *Handler) UpdateExperience(c *gin.Context) {
 }
 
 func (h *Handler) DeleteExperience(c *gin.Context) {
-	if err := h.svc.DeleteExperience(c.Request.Context(), uid(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteExperience(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": true}})
 }
 
-// ─────────────────────────────── Education ───────────────────────────────────
-
 func (h *Handler) ListEducation(c *gin.Context) {
-	out, err := h.svc.ListEducation(c.Request.Context(), uid(c))
+	out, err := h.svc.ListEducation(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -100,10 +95,10 @@ func (h *Handler) ListEducation(c *gin.Context) {
 func (h *Handler) AddEducation(c *gin.Context) {
 	var in EducationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	e, err := h.svc.AddEducation(c.Request.Context(), uid(c), in, idemKey(c))
+	e, err := h.svc.AddEducation(c.Request.Context(), ginutil.UserID(c), in, ginutil.IdempotencyKey(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -114,10 +109,10 @@ func (h *Handler) AddEducation(c *gin.Context) {
 func (h *Handler) UpdateEducation(c *gin.Context) {
 	var in EducationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	e, err := h.svc.UpdateEducation(c.Request.Context(), uid(c), c.Param("id"), in)
+	e, err := h.svc.UpdateEducation(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		fail(c, err)
 		return
@@ -126,17 +121,15 @@ func (h *Handler) UpdateEducation(c *gin.Context) {
 }
 
 func (h *Handler) DeleteEducation(c *gin.Context) {
-	if err := h.svc.DeleteEducation(c.Request.Context(), uid(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteEducation(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": true}})
 }
 
-// ─────────────────────────────────── About ───────────────────────────────────
-
 func (h *Handler) GetAbout(c *gin.Context) {
-	a, err := h.svc.GetAbout(c.Request.Context(), uid(c))
+	a, err := h.svc.GetAbout(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -147,10 +140,10 @@ func (h *Handler) GetAbout(c *gin.Context) {
 func (h *Handler) SetAbout(c *gin.Context) {
 	var in AboutInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	a, err := h.svc.SetAbout(c.Request.Context(), uid(c), in)
+	a, err := h.svc.SetAbout(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		fail(c, err)
 		return
@@ -158,12 +151,10 @@ func (h *Handler) SetAbout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": a})
 }
 
-// ──────────────────────── Profile strength (PR-11) ───────────────────────────
-
 // Strength — GET /network/strength. Returns only a coarse band + missing sections
 // (PN-1: no raw numeric trust score is ever serialized).
 func (h *Handler) Strength(c *gin.Context) {
-	view, err := h.svc.Strength(c.Request.Context(), uid(c))
+	view, err := h.svc.Strength(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -171,16 +162,14 @@ func (h *Handler) Strength(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": view})
 }
 
-// ──────────────────────────── Recommendations ────────────────────────────────
-
 // WriteRecommendation — POST /network/recommendations (RC-01).
 func (h *Handler) WriteRecommendation(c *gin.Context) {
 	var in WriteRecommendationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	rec, err := h.svc.WriteRecommendation(c.Request.Context(), uid(c), in)
+	rec, err := h.svc.WriteRecommendation(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		fail(c, err)
 		return
@@ -190,7 +179,7 @@ func (h *Handler) WriteRecommendation(c *gin.Context) {
 
 // SendRecommendation — PATCH /network/recommendations/:id/send (author, DRAFTED→SENT).
 func (h *Handler) SendRecommendation(c *gin.Context) {
-	rec, err := h.svc.SendRecommendation(c.Request.Context(), uid(c), c.Param("id"))
+	rec, err := h.svc.SendRecommendation(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -200,7 +189,7 @@ func (h *Handler) SendRecommendation(c *gin.Context) {
 
 // AcceptRecommendation — PATCH /network/recommendations/:id/accept (SUBJECT ONLY, PN-4).
 func (h *Handler) AcceptRecommendation(c *gin.Context) {
-	rec, err := h.svc.AcceptRecommendation(c.Request.Context(), uid(c), c.Param("id"))
+	rec, err := h.svc.AcceptRecommendation(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -210,7 +199,7 @@ func (h *Handler) AcceptRecommendation(c *gin.Context) {
 
 // DeclineRecommendation — PATCH /network/recommendations/:id/decline (SUBJECT ONLY, PN-4).
 func (h *Handler) DeclineRecommendation(c *gin.Context) {
-	rec, err := h.svc.DeclineRecommendation(c.Request.Context(), uid(c), c.Param("id"))
+	rec, err := h.svc.DeclineRecommendation(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -220,7 +209,7 @@ func (h *Handler) DeclineRecommendation(c *gin.Context) {
 
 // Inbox — GET /network/recommendations/inbox (RC-02, subject's pending).
 func (h *Handler) Inbox(c *gin.Context) {
-	out, err := h.svc.Inbox(c.Request.Context(), uid(c))
+	out, err := h.svc.Inbox(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -230,7 +219,7 @@ func (h *Handler) Inbox(c *gin.Context) {
 
 // Authored — GET /network/recommendations/authored (caller's own written).
 func (h *Handler) Authored(c *gin.Context) {
-	out, err := h.svc.Authored(c.Request.Context(), uid(c))
+	out, err := h.svc.Authored(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -253,18 +242,16 @@ func (h *Handler) PublicRecommendations(c *gin.Context) {
 func (h *Handler) RequestRecommendation(c *gin.Context) {
 	var in RequestRecommendationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	req, err := h.svc.RequestRecommendation(c.Request.Context(), uid(c), in)
+	req, err := h.svc.RequestRecommendation(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": req})
 }
-
-// ─────────────────────────────────── Admin ───────────────────────────────────
 
 // AdminListRecommendations — GET /network/recommendations?state=&limit= (moderation).
 func (h *Handler) AdminListRecommendations(c *gin.Context) {
@@ -279,7 +266,7 @@ func (h *Handler) AdminListRecommendations(c *gin.Context) {
 
 // AdminHideRecommendation — POST /network/recommendations/:id/hide (moderation).
 func (h *Handler) AdminHideRecommendation(c *gin.Context) {
-	rec, err := h.svc.AdminHideRecommendation(c.Request.Context(), uid(c), c.Param("id"))
+	rec, err := h.svc.AdminHideRecommendation(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		fail(c, err)
 		return

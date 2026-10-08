@@ -4,16 +4,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Mic, MicOff, PhoneOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { useStartCall } from '@/features/connect/messaging/hooks';
 import type { CallStatus } from '@/features/connect/messaging/types';
 
-// MS-08 — Voice call. Starts the call on mount (kind:'voice'); status text is
 // driven by the CallSession status. Simulated progression ringing -> active.
 
 const STATUS_LABEL: Record<CallStatus, string> = {

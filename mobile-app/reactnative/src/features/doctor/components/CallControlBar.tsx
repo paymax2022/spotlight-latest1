@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, SwitchCamera, Volume2, VolumeX, Minimize2, Maximize2, PhoneOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { CallControls } from '@/types/doctor.batch2';
 
 interface Props {
@@ -20,7 +20,6 @@ interface Props {
 
 // New component: the in-call control bar driving the full CallControls shape
 // (mute, camera, switch camera, speaker, minimize/fullscreen, end). The base
-// call.tsx inlined a small ControlBtn set; this consolidates the richer Batch 2
 // control surface in one reusable bar. Sits on the call gradient, so the
 // translucent control backgrounds use rgba overlays (accepted exception).
 export default function CallControlBar({

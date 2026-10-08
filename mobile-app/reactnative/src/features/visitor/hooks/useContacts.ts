@@ -4,6 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { getDeviceContacts } from '@/lib/contacts';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import * as api from '../api/visitor.api';
 import { visitorKeys } from './useVisitor';
 import type { PhonebookContact } from '../types/visitor.types';
@@ -13,7 +14,9 @@ export function useContacts(query: string) {
     queryKey: visitorKeys.contacts(query),
     queryFn: async () => {
       const device = await getDeviceContacts();
-      const all = device ?? (await api.listPhonebookContacts(''));
+      // The simulated phonebook is a dev aid; a deployed build with contacts
+      // access denied shows an empty picker, not invented people.
+      const all = device ?? (isMocklessEnvironment() ? [] : await api.listPhonebookContacts(''));
       const q = query.trim().toLowerCase();
       return q ? all.filter((c) => c.name.toLowerCase().includes(q) || c.phone.includes(q)) : all;
     },

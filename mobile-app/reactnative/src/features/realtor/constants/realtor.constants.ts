@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Static config & label maps ───────────────────────────
 // Single source of truth for human labels + filter option lists, so screens and
 // the data layer never disagree on copy.
 
@@ -145,8 +144,6 @@ export const APPLICATION_STATUS_META: Record<
   offer_sent: { label: 'Offer sent', tone: 'success' },
   withdrawn: { label: 'Withdrawn', tone: 'neutral' },
 };
-
-// ─── Filter option lists (drive the filter sheet) ─────────────────────────────
 
 export const MODE_OPTIONS: TransactionMode[] = ['long_rent', 'for_sale', 'for_lease', 'short_stay'];
 

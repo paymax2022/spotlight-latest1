@@ -62,6 +62,14 @@ export default function CustodyPage() {
         (COLLECTED → IN_CUSTODY → HANDED_OVER → ACCESSIONED). A break (seal broken, temperature excursion,
         custody gap) marks the chain BROKEN → RECOLLECT_REQUIRED; the result pipeline is blocked until a fresh
         sample is collected. All custody events are written to the immutable audit log (HL-12).
+        <br />
+        <strong>Admin-portal gap closure:</strong> this list and the per-sample drawer both now read the real
+        backend at <code>GET /api/health/lab/admin/custody-audit</code> (this module's only custody read — the
+        previously-called <code>/custody</code> and <code>/custody/:id</code> routes never existed). The list is
+        the real event stream reduced to one row per sample client-side; the drawer uses the audit route's new
+        <code>sample_id</code> filter. <em>test_summary</em> and <em>phlebotomist_masked</em> have no honest
+        source in that query (no test/role join) and read as an explicit placeholder rather than fabricated —
+        see <code>healthLabAdminService.ts</code>'s <code>sampleFromEvents</code> for the exact derivation.
       </DisclosureNote>
 
       {breaks > 0 && (

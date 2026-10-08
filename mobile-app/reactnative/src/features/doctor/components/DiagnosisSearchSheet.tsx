@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, FlatList, StyleSheet, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import { Search, Check, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { searchDiagnosisCodes } from '@/features/doctor/hooks';
 import { ICD_CODES } from '@/features/doctor/constants';
 import type { DiagnosisCode } from '@/types/doctor.batch2';
@@ -17,7 +17,6 @@ interface Props {
 }
 
 // New component: a searchable, multi-select ICD-code picker sheet. SelectField
-// only handles a single-string flat list with single selection; the diagnosis
 // picker needs code + label + category rows, multi-select with running ticks,
 // and the pure searchDiagnosisCodes() helper, so a dedicated sheet is justified.
 // Reuses the Modal/sheet pattern from reviews/index.

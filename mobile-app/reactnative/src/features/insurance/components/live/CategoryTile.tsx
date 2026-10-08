@@ -1,4 +1,3 @@
-// ── Insurance (live) — category tile ────────────────────────────────────────
 // Seven tiles for the seven real MyCover categories. The count is passed in from
 // the live catalog, never hardcoded — if the aggregator retires a product the
 // tile says so instead of promising cover that no longer exists.
@@ -7,10 +6,10 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Icons from 'lucide-react-native';
 import { ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import type { CategoryMeta } from '../../live/catalog';
 import { toneTokens } from './tone';

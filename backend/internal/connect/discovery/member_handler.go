@@ -3,10 +3,13 @@ package connectdiscovery
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // MemberHandler exposes the mobile-aligned member discovery surface
@@ -26,9 +29,6 @@ func NewMemberHandler(svc *Service, liker LikeRecorder, boost *BoostService) *Me
 	return &MemberHandler{svc: svc, liker: liker, boost: boost}
 }
 
-func memberUID(c *gin.Context) string  { return c.GetString("user_id") }
-func memberIdem(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 // mapDiscoveryError converts service errors to HTTP status codes, mirroring the
 // gifting/voting money-error shape so the money path reports consistently.
 func mapDiscoveryError(c *gin.Context, err error) {
@@ -38,7 +38,7 @@ func mapDiscoveryError(c *gin.Context, err error) {
 	case errors.Is(err, ErrSelfSwipe):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot swipe your own profile"})
 	case errors.Is(err, ErrInvalidSwipe):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrTargetNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "target profile not found"})
 	case errors.Is(err, ErrNothingToUndo):
@@ -46,7 +46,7 @@ func mapDiscoveryError(c *gin.Context, err error) {
 	case errors.Is(err, ErrBoostMissingIdem):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 	case errors.Is(err, ErrBoostInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
 		msg := err.Error()
 		switch {
@@ -73,7 +73,7 @@ func memberLimit(c *gin.Context, def int) int {
 
 // Stack — GET /discovery/stack?limit=&<filters> → { profiles: [ProfileCard...] }.
 func (h *MemberHandler) Stack(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -105,14 +105,21 @@ type SwipeRequest struct {
 
 // Swipe — POST /discovery/swipe → { match: bool, matchId?: string }.
 func (h *MemberHandler) Swipe(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 	var req SwipeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	// UUID-shape gate: connect_profiles.id is uuid, so a malformed targetId can
+	// never resolve. Reject it here as not-found (the same answer a well-formed
+	// but nonexistent id gets) rather than letting Postgres error → 500.
+	if _, uerr := uuid.Parse(req.TargetID); uerr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "target profile not found"})
 		return
 	}
 	matched, matchID, err := h.svc.Swipe(c.Request.Context(), uid, req.TargetID, req.Direction, h.liker)
@@ -129,7 +136,7 @@ func (h *MemberHandler) Swipe(c *gin.Context) {
 
 // LikesYou — GET /discovery/likes-you → { profiles: [...] } (reverse-likes).
 func (h *MemberHandler) LikesYou(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -145,7 +152,7 @@ func (h *MemberHandler) LikesYou(c *gin.Context) {
 // Nearby — GET /discovery/nearby → { profiles: [{ ...card, distanceBucket }] }.
 // Bucketed distance ONLY; raw coordinates never leave the service.
 func (h *MemberHandler) Nearby(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -160,7 +167,7 @@ func (h *MemberHandler) Nearby(c *gin.Context) {
 
 // Rewind — POST /discovery/rewind → { undone: profileId } (premium action).
 func (h *MemberHandler) Rewind(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -175,7 +182,7 @@ func (h *MemberHandler) Rewind(c *gin.Context) {
 
 // BoostInfo — GET /discovery/boosts → { activeBoost?, priceKobo, durationMinutes }.
 func (h *MemberHandler) BoostInfo(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -198,7 +205,7 @@ type BuyBoostRequest struct {
 // MONEY PATH: charges priceKobo via the ledger (balanced double-entry), tier-checked
 // fail-closed, audited. The Idempotency-Key dedups the charge.
 func (h *MemberHandler) BuyBoost(c *gin.Context) {
-	uid := memberUID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -206,10 +213,63 @@ func (h *MemberHandler) BuyBoost(c *gin.Context) {
 	var req BuyBoostRequest
 	// Body is optional; ignore bind errors on an empty body.
 	_ = c.ShouldBindJSON(&req)
-	b, err := h.boost.Purchase(c.Request.Context(), uid, memberIdem(c), req.DurationMinutes)
+	b, err := h.boost.Purchase(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req.DurationMinutes)
 	if err != nil {
 		mapDiscoveryError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"boost": b})
+}
+
+// Handler exposes the Phase-1 discovery + search endpoints.
+type Handler struct{ svc *Service }
+
+// NewHandler builds the discovery HTTP handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Discovery — GET /api/v1/connect/discovery?mode= (authenticated member).
+// Curated daily matches with match-reason cards; anti-fatigue limit from config.
+func (h *Handler) Discovery(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	resp, err := h.svc.Discovery(c.Request.Context(), uid, c.Query("mode"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "create your profile first"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": resp})
+}
+
+// Search — GET /api/v1/connect/search (authenticated member).
+// Filters: verified-only, intent, approximate (bucketed) distance.
+func (h *Handler) Search(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	f := SearchFilters{
+		Mode:         c.Query("mode"),
+		VerifiedOnly: c.Query("verified") == "true" || c.Query("verified_only") == "true",
+		Intent:       c.Query("intent"),
+	}
+	if v := c.Query("max_distance_km"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			f.MaxDistKm = n
+		}
+	}
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			f.Limit = n
+		}
+	}
+	results, err := h.svc.Search(c.Request.Context(), uid, f)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "create your profile first"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": results})
 }

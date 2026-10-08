@@ -1,15 +1,12 @@
 // "Have I already applied to this contest?" — the lookup the apply button needs.
-//
 // WHY THIS EXISTS
 // The mobile contest screen offered "Register / Apply to Compete" unconditionally,
 // so an applicant who had already applied simply applied again. One account
 // accumulated five applications to `open-mic-competition`, two of them approved.
 // Nothing in the UI was wrong about its own state — it had no way to know.
-//
 // The join is awkward enough to be worth centralising: the voting app addresses
 // a contest by `connect_contests.id`, while `registrations` keys on
 // `contest_slug` (TEXT). Resolving one to the other is the whole job here.
-//
 // Terminal statuses are deliberately NOT live: a rejected or withdrawn applicant
 // is allowed to apply again, and the partial unique index added in migration
 // 20270125000000 uses this same status set as its predicate. Keep the two lists

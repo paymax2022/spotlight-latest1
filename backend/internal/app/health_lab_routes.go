@@ -7,13 +7,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/settlement"
 	healthlab "spotlight/backend/internal/health/lab"
 	healthrecords "spotlight/backend/internal/health/records"
+	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
@@ -22,21 +26,15 @@ import (
 // RegisterHealthLab wires HEALTH-BUILD Phase-2 Laboratory onto the finance member
 // group + a health lab admin group. It is the ONLY wiring point for the lab
 // vertical and edits no existing file. All reuse is by import:
-//
 //   - escrow.Service         — HL-9 payment HELD→RELEASE→REFUND (idempotent).
-//
 //   - transport.Service      — phlebotomist dispatch + results courier (last-mile rail).
-//
 //   - healthrecords.Service  — HL-8 result release → consent-gated, signed-URL vault.
-//
 //   - finance/kyc.Service    — HL-10 payout KYC gating.
-//
 //   - member: /api/finance/health/lab/*  (member-authenticated; user_id mirrored)
-//
 //   - admin : /api/health/lab/admin/*    (per-route RBAC health.lab.*)
 //
 // Gated by FeatureHealthLabEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config) {
+func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config, supabase *integrations.SupabaseRestClient) {
 	if pool == nil {
 		log.Println("[health.lab] nil pool — skipping lab routes")
 		return
@@ -45,7 +43,13 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Reuse rails (by import, never copy).
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	escrowSvc := escrow.NewService(pool, ledgerSvc, nil)
-	transportSvc := transport.NewService(pool, nil)
+	// transport.Service needs a real settlement instance for its own escrow
+	// (phlebotomist dispatch payout) — a nil settlement service isn't a
+	// no-op, it's a nil pointer BookParcel dereferences unconditionally.
+	// Identical bug to PHARMACY-004: any home-collection Schedule call would
+	// panic (500) inside settlement.Service.Escrow. Mirrors the pharmacy fix
+	// and finance_routes.go's own transport.NewService wiring.
+	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)
 	recordsSvc := healthrecords.NewService(pool, nil, nil, nil)
 
@@ -67,7 +71,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag ⇒
 	// off leaves the recorder nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthLabAdmin(c, rbac) }
@@ -77,7 +81,6 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	// --- Member routes (/api/finance/health/lab) — HEALTH-BUILD §6 Laboratory ---
 	lg := member.Group("/health/lab")
 	lg.GET("/tests", h.ListTests)                    // catalog: prep, TAT, price
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
@@ -89,16 +92,28 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.GET("/orders/:id/results", h.Results)         // object-level authZ (HL-8)
 	lg.GET("/orders/:id/custody", h.Custody)         // chain-of-custody trail (HL-6/12)
 	lg.POST("/orders/:id/schedule", h.Schedule)      // phlebotomist dispatch (HOME)
-	lg.POST("/orders/:id/collect", h.Collect)        // phlebotomist: sample + custody (HL-6)
-	lg.POST("/orders/:id/results", h.EnterResults)   // scientist enter + validate (HL-7)
-	lg.POST("/orders/:id/release", h.Release)        // sign-off → vault; release payment (HL-7/8/9)
-	lg.POST("/orders/:id/cancel", h.Cancel)          // pre-collection → refund (HL-9)
-	lg.POST("/samples/:id/accession", h.Accession)   // lab intake, HL-6 chain gate
-	lg.POST("/samples/:id/handover", h.Handover)     // custody transfer (HL-6)
-	lg.POST("/samples/:id/breach", h.FlagBreach)     // chain break → recollect (HL-6)
+	lg.POST("/orders/:id/collect", h.Collect)
+	lg.POST("/orders/:id/results", h.EnterResults) // scientist enter + validate (HL-7)
+	lg.POST("/orders/:id/release", h.Release)      // sign-off → vault; release payment (HL-7/8/9)
+	lg.POST("/orders/:id/cancel", h.Cancel)        // pre-collection → refund (HL-9)
+	lg.POST("/samples/:id/accession", h.Accession) // lab intake, HL-6 chain gate
+	lg.POST("/samples/:id/handover", h.Handover)   // custody transfer (HL-6)
+	lg.POST("/samples/:id/breach", h.FlagBreach)   // chain break → recollect (HL-6)
 
-	// --- Admin routes (/api/health/lab/admin, RBAC health.lab.*) ---
 	ag := admin.Group("")
+	// Identical bug to PHARMACY-006: `admin` here is adminGroupTop5
+	// (top5_admin_group.go), which applies ONLY requireUserID() — a guard
+	// that checks ginutil.UserID(c) with nothing upstream of it ever
+	// setting that context key. Every lab admin route (old and new) 401'd
+	// "authentication required" regardless of token validity. Fixed the same
+	// way pharmacy was: the caller (finance_routes.go) now passes a plain
+	// r.Group(...) instead of adminGroupTop5, and RequireAuthContext runs
+	// here as this group's own first middleware.
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Dashboard is an extension of the SAME admin-oversight surface /orders
+	// already sits behind — reusing health.lab.orders rather than minting a
+	// new permission slug (mirrors pharmacy's PHARMACY-001 dashboard route).
+	ag.GET("/dashboard", guard("health.lab.orders"), h.AdminDashboard)                   // platform-wide KPI aggregate
 	ag.GET("/orders", guard("health.lab.orders"), h.AdminListOrders)                     // order/results oversight
 	ag.GET("/custody-audit", guard("health.lab.custody"), h.AdminCustodyAudit)           // chain-of-custody oversight (HL-6)
 	ag.GET("/escalations", guard("health.lab.escalation"), h.AdminEscalations)           // critical-result escalation (HL-7)
@@ -113,15 +128,13 @@ func isHealthLabAdmin(c *gin.Context, rbac services.RBACService) bool {
 	if rbac == nil {
 		return false
 	}
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		return false
 	}
 	ok, err := rbac.CheckPermission(uid, "health.lab.orders", "global", "")
 	return err == nil && ok
 }
-
-// ─── Adapters: bridge the reused rails to the package's narrow interfaces ─────
 
 type labEscrowAdapter struct{ e *escrow.Service }
 

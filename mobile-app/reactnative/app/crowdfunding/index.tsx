@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Bookmark, Plus, ArrowLeft, Bell, LayoutDashboard, HandCoins, Wallet, Settings } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import SearchBar from '@/components/SearchBar';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
@@ -17,6 +17,7 @@ import CategoryTile from '@/features/crowdfunding/components/CategoryTile';
 import { useCampaigns, useCategories, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import { INVESTMENT_ENABLED, CSR_ENABLED } from '@/features/crowdfunding/constants/crowdfunding.constants';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { RemoteBanner } from '@/features/media/banners';
 import { TrendingUp, Building2 } from 'lucide-react-native';
 
 /** Source artwork is 1200x600. */
@@ -29,7 +30,6 @@ export default function CrowdfundingHome() {
   const trending = useCampaigns({ collection: 'trending', sort: 'trending' });
   // Unfiltered — no collection/category, just every campaign the discovery
   // endpoint's ACTIVE-only default returns. Featured/urgent/trending are
-  // curated subsets an admin flags; an ordinary active campaign with none of
   // those flags set is otherwise invisible on this screen, so this is the
   // one section that's guaranteed to surface every active campaign.
   const allActive = useCampaigns({ sort: 'newest' });
@@ -96,6 +96,8 @@ export default function CrowdfundingHome() {
               onPress={() => router.push('/crowdfunding/search')}
             />
           </View>
+
+          <RemoteBanner slug="crowdfunding" priority style={styles.banner} />
 
           {/* Crowdfunding-only menu — everything a user needs to run their
               own campaign(s) and track their giving, scoped strictly to this
@@ -324,6 +326,7 @@ const styles = StyleSheet.create({
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
   scroll: { paddingBottom: 120 },
   searchWrap: { marginTop: Spacing.sm },
+  banner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md },
   menuRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, paddingHorizontal: Spacing.containerMargin },
   menuAction: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, paddingVertical: Spacing.md, ...shadow1 },
   menuActionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },

@@ -9,18 +9,14 @@ import type {
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
-// Backend: Go/Gin, per docs/prd/marketplace/SWARM_INTEGRATION_CONTRACT.md. Unlike
 // most other modules (placement/arena/etc.), RegisterMarketplace groups routes
 // directly off the raw *gin.Engine at "/v1/marketplace" — there is NO "/api"
 // prefix for this module. Admin routes: /v1/marketplace/admin/*, each mutating
 // route requires reason_code in the body and RBAC guard("marketplace.admin.<perm>").
 // Escrow/orders/disputes were REMOVED from the backend per ADR-023 — this console
 // only covers moderation, flags, boosts, and the audit log.
-//
 // apiRoot() strips any trailing /api/v1 from the proxy base and nothing else,
 // leaving the engine root — append /v1/marketplace/admin onto that.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')`, which stopped
 // matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix). Every request then went to
 // <proxy>/v1/marketplace/admin/... intact rather than silently breaking here —
@@ -31,10 +27,7 @@ export function marketplaceAdminBase(): string {
 }
 
 function authHeaders(): Record<string, string> {
-  if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return { 'Content-Type': 'application/json' };
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 export function formatKobo(kobo: number | null | undefined): string {
@@ -62,8 +55,6 @@ async function parseErrorMessage(res: Response, fallback: string): Promise<strin
 
 const now = Date.now();
 const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const FIXTURE_MODERATION_QUEUE: MktListing[] = [
   {
@@ -119,8 +110,6 @@ const FIXTURE_BOOSTS: MktBoost[] = [
   { id: 'bst_2', listing_id: 'lst_c3d4', seller_id: 'usr_2b9e', tier: 'diamond', duration_days: 14, price_kobo: 1_500_000, ledger_charge_ref: 'ldg_chg_45', status: 'purchased', starts_at: null, ends_at: null, listing_title: '2015 Toyota Camry — full option, clean papers' },
 ];
 
-// ─── M1 — Moderation queue ───────────────────────────────────────────────────
-
 export async function listModerationQueue(): Promise<MktListing[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_MODERATION_QUEUE]);
   const res = await fetch(`${marketplaceAdminBase()}/moderation/queue`, { cache: 'no-store', headers: authHeaders() });
@@ -135,7 +124,6 @@ export async function getModerationListing(id: string): Promise<MktListing> {
     if (!found) throw new Error(`Listing ${id} not found`);
     return delay(found);
   }
-  // No dedicated admin GET-by-id in the frozen route list; the queue already
   // returns full listing objects, so the detail page is hydrated from the
   // cached queue result and falls back to the public listing GET if needed.
   const res = await fetch(`${apiRoot()}/v1/marketplace/listings/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
@@ -172,8 +160,6 @@ export async function rejectListing(id: string, reasonCode: string): Promise<Mkt
   return res.json();
 }
 
-// ─── Flags queue ─────────────────────────────────────────────────────────────
-
 export async function listFlags(status?: 'open' | 'actioned' | 'dismissed'): Promise<MktFlag[]> {
   if (USE_FIXTURES) return delay(status ? FIXTURE_FLAGS.filter((f) => f.status === status) : [...FIXTURE_FLAGS]);
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
@@ -197,8 +183,6 @@ export async function actionFlag(id: string, input: MktFlagActionRequest): Promi
   return res.json();
 }
 
-// ─── Audit log (read-only, append-only) ─────────────────────────────────────
-
 export async function listAuditLog(filters?: { target_type?: string; target_id?: string; admin_id?: string }): Promise<MktAdminAuditLogEntry[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_AUDIT_LOG]);
   const qs = new URLSearchParams();
@@ -211,8 +195,6 @@ export async function listAuditLog(filters?: { target_type?: string; target_id?:
   const data = await res.json();
   return Array.isArray(data) ? data : data.data ?? [];
 }
-
-// ─── Boosts admin (list + reject-with-reason) ───────────────────────────────
 
 export async function listBoosts(): Promise<MktBoost[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_BOOSTS]);
@@ -238,8 +220,6 @@ export async function rejectBoost(id: string, reasonCode: string): Promise<MktBo
   return res.json();
 }
 
-// ─── Marketplace Analytics ───────────────────────────────────────────────────
-
 export async function getMarketplaceAnalytics(rangeDays?: number): Promise<any> {
   if (USE_FIXTURES) {
     return delay({
@@ -263,8 +243,6 @@ export async function getMarketplaceAnalytics(rangeDays?: number): Promise<any> 
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Analytics fetch failed'));
   return res.json();
 }
-
-// ─── Taxonomy (Categories) ───────────────────────────────────────────────────
 
 export async function listCategories(): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
@@ -308,8 +286,6 @@ export async function setCategoryActive(id: string, active: boolean, reasonCode?
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set category active failed'));
   return res.json();
 }
-
-// ─── CMS (Banners & Content) ──────────────────────────────────────────────────
 
 export async function listBanners(): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
@@ -361,8 +337,6 @@ export async function upsertCategoryContent(categoryId: string, data: any): Prom
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Upsert category content failed'));
   return res.json();
 }
-
-// ─── Pricing (Boosts, commissions, discounts) ─────────────────────────────────
 
 export async function listBoostPackages(): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
@@ -462,8 +436,6 @@ export async function setFeaturedSlotCap(surface: string, maxSlots: number, reas
   return res.json();
 }
 
-// ─── User Management ──────────────────────────────────────────────────────────
-
 export async function searchUsers(filters?: { q?: string; status?: string; minFraud?: number }): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
   const qs = new URLSearchParams();
@@ -534,8 +506,6 @@ export async function logViewAs(id: string, reasonCode?: string): Promise<any> {
   return res.json();
 }
 
-// ─── Appeals ──────────────────────────────────────────────────────────────────
-
 export async function listAppeals(status?: string): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
@@ -588,8 +558,6 @@ export async function approveAppealSecondSign(id: string, reasonCode?: string): 
   return res.json();
 }
 
-// ─── Fraud Detection ───────────────────────────────────────────────────────────
-
 export async function listFraudSignals(severity?: string): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
   const qs = severity ? `?severity=${encodeURIComponent(severity)}` : '';
@@ -598,8 +566,6 @@ export async function listFraudSignals(severity?: string): Promise<any[]> {
   const data = await res.json();
   return Array.isArray(data) ? data : data.data ?? [];
 }
-
-// ─── Vendor Management ─────────────────────────────────────────────────────────
 
 export async function listVendorMetrics(): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
@@ -625,8 +591,6 @@ export async function deleteVendor(id: string): Promise<any> {
   return res.json();
 }
 
-// ─── Communications ───────────────────────────────────────────────────────────
-
 export async function listCommunications(): Promise<any[]> {
   if (USE_FIXTURES) return delay([]);
   const res = await fetch(`${marketplaceAdminBase()}/communications`, { cache: 'no-store', headers: authHeaders() });
@@ -644,13 +608,9 @@ export async function createAnnouncement(data: any): Promise<any> {
   return res.json();
 }
 
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Real-time dashboard service (class API) — used by app/admin/marketplace/page.tsx
 // for live metrics/activity/audit polling. Grafted alongside the functional
-// console API above during the feat/admin-portal-consolidation merge; both
 // surfaces share the same backend and types.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import type { AuditLog } from '@/types/marketplaceAdmin';
 import { resolveUseMock } from '@/config/useMock';
@@ -702,16 +662,9 @@ interface Listing {
 
 class MarketplaceAdminService {
   private getHeaders(): HeadersInit {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    // Same key every other admin service reads (adminAuth.ts on sign-in) —
-    // this class used to read a 'auth_token' key nothing in this app ever
-    // writes, so every request here went out with no Authorization header
-    // at all and 401'd (or, once the route existed, still 401'd) silently.
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('spotlight_admin_access_token');
-      if (token) headers.Authorization = `Bearer ${token}`;
-    }
-    return headers;
+    // No Authorization header — the same-origin admin proxy attaches the
+    // Bearer from the HttpOnly session cookie server-side.
+    return { 'Content-Type': 'application/json' };
   }
 
   /**
@@ -736,7 +689,6 @@ class MarketplaceAdminService {
     }
 
     // Every marketplace admin route replies {"data": ...} (respond() in
-    // admin_handler.go) — this class used to return the envelope itself as
     // if it were the payload.
     const json = await response.json();
     return (json?.data ?? json) as Metrics;
@@ -875,7 +827,6 @@ class MarketplaceAdminService {
       console.log('Disconnected from marketplace real-time updates');
     };
 
-    // Return unsubscribe function
     return () => {
       ws.close();
     };
@@ -910,7 +861,6 @@ class MarketplaceAdminService {
       }
     };
 
-    // Return unsubscribe function
     return () => {
       eventSource.close();
     };

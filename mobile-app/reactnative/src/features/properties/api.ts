@@ -1,7 +1,7 @@
 // Estate Property management (Block 38) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 export type PropertyType = 'apartment' | 'house' | 'commercial' | 'land' | 'other';
 export type OccupancyStatus = 'vacant' | 'occupied' | 'reserved';
@@ -64,7 +64,6 @@ export async function listProperties(): Promise<PropertiesResponse> {
   return { summary: summarize(properties), properties };
 }
 
-// ── Block 29 property management ──────────────────────────────────────────────
 export async function getProperty(id: string): Promise<Property> {
   if (USE_MOCK) { await latency(); const p = mockProperties.find((x) => x.id === id); if (!p) throw new Error('not found'); return { ...p }; }
   const { data } = await api.get(`${PROPERTIES_API_BASE}/${id}`); return propFromApi(data);

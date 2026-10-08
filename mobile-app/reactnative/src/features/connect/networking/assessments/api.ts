@@ -2,7 +2,6 @@
 // Mock-first (USE_MOCK): the whole flow is walkable offline. Live path hits
 // `${CONNECT_API_BASE}/networking/assessments…`. Every mutating call sends an
 // Idempotency-Key (money/state safety convention).
-//
 // PN-12: `assessmentVersion` is threaded through start → submit → badge so a
 // badge permanently records the bank version it was passed against.
 
@@ -33,7 +32,6 @@ export function newIdempotencyKey(): string {
 }
 const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? newIdempotencyKey() } });
 
-// ── Mock catalogue (SA-01) ───────────────────────────────────────────────────
 const MOCK_ASSESSMENTS: SkillAssessment[] = [
   {
     id: 'sa_go',
@@ -136,7 +134,6 @@ function toSafeQuestions(assessmentId: string): { questions: AssessmentQuestion[
   return { questions, key };
 }
 
-// ── Catalogue (SA-01) ────────────────────────────────────────────────────────
 export async function getAssessments(domain?: string): Promise<SkillAssessment[]> {
   if (USE_MOCK) {
     await delay();
@@ -150,7 +147,6 @@ export async function getAssessments(domain?: string): Promise<SkillAssessment[]
   return unwrap<SkillAssessment[]>(res);
 }
 
-// ── Start an attempt (SA-02) — returns contestant-safe questions ─────────────
 export async function startAssessmentAttempt(assessmentId: string, idempotencyKey?: string): Promise<AssessmentAttempt> {
   if (USE_MOCK) {
     await delay(320);
@@ -172,7 +168,6 @@ export async function startAssessmentAttempt(assessmentId: string, idempotencyKe
   return unwrap<AssessmentAttempt>(res);
 }
 
-// ── Submit an attempt (SA-03 / SA-04) ────────────────────────────────────────
 export async function submitAssessmentAttempt(
   assessmentId: string,
   attemptId: string,
@@ -228,7 +223,6 @@ export async function submitAssessmentAttempt(
   return unwrap<AssessmentSubmitResult>(res);
 }
 
-// ── My assessed badges (SA-03 → profile) ─────────────────────────────────────
 export async function getAssessmentBadges(): Promise<AssessmentBadge[]> {
   if (USE_MOCK) {
     await delay(160);

@@ -1,4 +1,3 @@
-// ── Invest formatting helpers ────────────────────────────────────────────────
 // Money is always integer kobo. Display in Naira (₦) with thousands separators.
 
 export function koboToNaira(kobo: number): number {

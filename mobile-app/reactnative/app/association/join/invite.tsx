@@ -1,5 +1,5 @@
 import React from 'react';
-import CodeEntryView from '@/features/association/components/CodeEntryView';
+import {CodeEntryView} from '@/features/association/components';
 
 export default function InviteCodeEntry() {
   return (

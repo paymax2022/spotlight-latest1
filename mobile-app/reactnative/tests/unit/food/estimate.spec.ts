@@ -1,7 +1,4 @@
 // Pure-logic unit tests for what the checkout estimate may contain.
-// Run: npm run test:food
-//
-// The defect this pins: checkout added `Math.round(subtotal * 0.05)` as a
 // "Service fee". The server prices service fee from the restaurant's own
 // service_fee_bp — 0 for all 44 restaurants, and not exposed to the client at
 // all — so the estimate was ₦560 above the ₦12,801.40 the server actually

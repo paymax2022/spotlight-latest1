@@ -1,9 +1,6 @@
-// ── Doctor — Section A (Onboarding) hooks ────────────────────────────────────
 // Query keys under ['doctor', 'onboarding', …]. Reads use the DEMO_* exports as
 // placeholderData. Mutations auto-generate the idempotencyKey and accept
-// `Omit<Input, 'idempotencyKey'>`. ADDITIVE; exported from hooks/index.ts via a
 // single new line.
-//
 // REUSE notes:
 //   - Entries 5/6 (doctor / specialist profile update) → use the existing
 //     Section B hooks in useProfileBuilder.ts (e.g. useProfileDraft,
@@ -12,7 +9,6 @@
 //     hooks in useVetProfile.ts (e.g. useVetProfileDraft, useSubmitVetVerification).
 //   - Entries 17–20 (account pending / rejected / suspended / under review) →
 //     REUSE useAccountStatus from useAppStatus.ts. `useOnboardingAccountStatus`
-//     below is a thin alias re-export so a Section A screen can import it from a
 //     single Section A import site without re-declaring the query.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -42,8 +38,6 @@ import type {
   AcceptConsentInput,
   RecordPermissionDecisionInput,
 } from '@/types/doctor.onboarding';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 // Entry 2 — intro carousel
 export function useOnboardingSlides() {
@@ -99,8 +93,6 @@ export function usePermissionStates() {
 export function useOnboardingAccountStatus() {
   return useAccountStatus();
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 // Entry 3 — request user→merchant (provider) upgrade
 export function useRequestMerchantUpgrade() {

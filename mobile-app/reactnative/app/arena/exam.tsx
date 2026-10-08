@@ -4,9 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Wifi, WifiOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import QuizRunner, { QuizRunnerResult } from '@/features/arena/components/QuizRunner';
@@ -37,7 +37,7 @@ export default function ExamScreen() {
   const competitionId = raw ?? '';
   ensureExamAutosave(competitionId);
 
-  const [online, setOnline] = useState(true); // stub: assume online; real = NetInfo
+  const [online, setOnline] = useState(true);
   const q = useExam(competitionId, online);
   const submit = useSubmitExam();
   const [idemKey] = useState(() => newIdempotencyKey());
@@ -71,7 +71,6 @@ export default function ExamScreen() {
     );
   };
 
-  // ── Submitted (handled by redirect; guard against back-nav flash) ───────────
   if (submitted) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -81,7 +80,6 @@ export default function ExamScreen() {
     );
   }
 
-  // ── Guard: not THEORY_ASSIGNED (409) ────────────────────────────────────────
   if (notAssigned) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>

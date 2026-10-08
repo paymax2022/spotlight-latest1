@@ -1,10 +1,6 @@
-// ── Curriculum live-response adapters (Go → mobile) ──────────────────────────
 // The Go backend (GET /api/finance/academy/curriculum/*) returns snake_case rows
-// in a named envelope ({classes:[…]}, {versions:[…]}); the mobile screens code
 // against camelCase AcademyClass / CurriculumVersion. These pure adapters bridge
 // the two so the live branch (USE_MOCK=false) matches the mock shape exactly.
-//
-// SCOPE: only versions + classes map cleanly today. Subjects/topics/lessons still
 // need BACKEND enrichment before they can go live — the Go rows omit fields the
 // mobile UI requires (Subject.classCode + topicCount/masteredTopics/progressPct/
 // examRelevance are all absent), and /classes/:id/subjects is keyed by the class
@@ -74,7 +70,6 @@ export function adaptVersions(res: { versions?: GoVersion[] } | GoVersion[] | nu
   return rows.map(adaptVersion);
 }
 
-// ── Subjects ─────────────────────────────────────────────────────────────────
 const EXAM_SLUGS = new Set<ExamSlug>(['utme', 'bece', 'wassce', 'neco', 'cce', 'nabteb']);
 const SUBJECT_COLORS = ['iconBgBlue', 'iconBgTeal', 'iconBgPurple', 'iconBgGold', 'iconBgGreen', 'iconBgRed'];
 
@@ -119,7 +114,6 @@ export function adaptSubjects(res: { subjects?: GoSubject[] } | GoSubject[] | nu
   return rows.map((s) => adaptSubject(s, classCode));
 }
 
-// ── Topics ───────────────────────────────────────────────────────────────────
 /**
  * Adapt a Go topic → mobile Topic. mastery/locked/examRelevant default to
  * unlocked-not-started, and objectiveCount/lessonCount to 0 — they need per-user
@@ -147,7 +141,6 @@ export function adaptTopics(res: { topics?: GoTopic[] } | GoTopic[] | null | und
   return rows.map(adaptTopic);
 }
 
-// ── Objectives ───────────────────────────────────────────────────────────────
 /**
  * Adapt a Go objective → mobile Objective. statement←title; mastery/masteryPct
  * default to not-started/0 (per-user progress the API does not yet serve). The
@@ -169,7 +162,6 @@ export function adaptObjectives(res: { objectives?: GoObjective[] } | GoObjectiv
   return rows.map(adaptObjective);
 }
 
-// ── Lessons ──────────────────────────────────────────────────────────────────
 /**
  * Adapt a Go lesson → mobile Lesson. Data fields (title, duration, transcript)
  * map through; topicId is injected by the caller (Go carries objective_id, and

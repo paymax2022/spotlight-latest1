@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
-import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -18,11 +18,11 @@ import { getEducationProducts, getEducationProviders, initiateEducationPaystack,
 import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow2 } from '@/constants/shadows';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { EducationProduct, EducationProvider } from '@/types/billing';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -169,7 +169,6 @@ export default function EducationScreen() {
           return { authorizationUrl: r.authorizationUrl, reference: r.paymentReference };
         },
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
-        onFallback: async (res) => { setShowConfirm(false); await Linking.openURL(res.authorizationUrl); },
       });
     } catch (err) {
       setPaystackError(getErrorMessage(err));

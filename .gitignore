@@ -55,6 +55,21 @@ yarn-debug.log*
 yarn-error.log*
 # <<< AUTO-MANAGED: update-gitignore <<<
 
+# Except shared, repo-tracked VS Code tooling (not personal editor state) —
+# one-click Android AAB/APK build tasks. Lives here, not inside the managed
+# block above, so scripts/update-gitignore.sh can't silently drop it: that
+# script preserves everything outside its markers but rewrites the block
+# itself wholesale. An !-rule per file, not the whole .vscode/ dir, so
+# personal .vscode/ additions elsewhere stay ignored by default.
+!mobile-app/reactnative/.vscode/
+!mobile-app/reactnative/.vscode/tasks.json
+!mobile-app/reactnative/.vscode/settings.json
+
+# build-aab.sh's env-stamped .aab copies (staging + production kept side by
+# side, since gradlew clean wipes android/app/build/outputs on every build).
+# Local build output, never source.
+mobile-app/reactnative/release-artifacts/
+
 # --- Launch hardening (manual): secret-leak prevention ---
 # Editor "Local History" and agent worktrees committed .env snapshots before.
 # Never track these trees again.
@@ -97,3 +112,20 @@ __pycache__/
 # single `git add -A` from the repo root would have resurrected the vulnerable
 # dependencies the removal existed to get rid of. Ignored so that cannot happen.
 /apps/
+
+# Typecheck scratch — per-slice chunk/tmp configs and captured tsc output.
+# Named check configs that ARE referenced (mapscheck, visitorcheck, ...)
+# remain tracked; only the disposable patterns are ignored.
+.tscscratch/
+tsconfig.chunk*.json
+tsconfig.*.tmp.json
+tsc*.txt
+err.txt
+coverage.out
+parse_err.txt
+
+# Concurrent-session task trackers (per task-tracker.json's own note, the
+# root file is contended by concurrent sessions — they are scratch state,
+# not docs).
+task-tracker.json
+*_TASK_TRACKER.json

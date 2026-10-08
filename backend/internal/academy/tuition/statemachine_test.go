@@ -2,8 +2,6 @@ package tuition
 
 import "testing"
 
-// ── CanPayInstallment ──────────────────────────────────────────────────
-
 func TestCanPayInstallment_Pending(t *testing.T) {
 	if !CanPayInstallment(PaymentStatusPending) {
 		t.Error("expected true for pending")
@@ -27,8 +25,6 @@ func TestCanPayInstallment_Waived(t *testing.T) {
 		t.Error("expected false for waived")
 	}
 }
-
-// ── CanWaiveInstallment ────────────────────────────────────────────────
 
 func TestCanWaiveInstallment_Pending(t *testing.T) {
 	if !CanWaiveInstallment(PaymentStatusPending) {
@@ -54,8 +50,6 @@ func TestCanWaiveInstallment_AlreadyWaived(t *testing.T) {
 	}
 }
 
-// ── NextStatusAfterPayment ────────────────────────────────────────────
-
 func TestNextStatusAfterPayment_Pending(t *testing.T) {
 	got := NextStatusAfterPayment(PaymentStatusPending)
 	if got != PaymentStatusPaid {
@@ -78,8 +72,6 @@ func TestNextStatusAfterPayment_AlreadyPaid(t *testing.T) {
 	}
 }
 
-// ── NextStatusAfterWaiver ────────────────────────────────────────────
-
 func TestNextStatusAfterWaiver_Pending(t *testing.T) {
 	got := NextStatusAfterWaiver(PaymentStatusPending)
 	if got != PaymentStatusWaived {
@@ -93,8 +85,6 @@ func TestNextStatusAfterWaiver_Overdue(t *testing.T) {
 		t.Errorf("expected %s, got %s", PaymentStatusWaived, got)
 	}
 }
-
-// ── CanTransition ──────────────────────────────────────────────────────
 
 func TestCanTransition_PendingToPaid(t *testing.T) {
 	if !CanTransition(PaymentStatusPending, PaymentStatusPaid) {
@@ -150,8 +140,6 @@ func TestCanTransition_InvalidTo(t *testing.T) {
 	}
 }
 
-// ── CanCancelPlan ──────────────────────────────────────────────────────
-
 func TestCanCancelPlan_Active(t *testing.T) {
 	if !CanCancelPlan(PlanStatusActive) {
 		t.Error("expected true for active plan")
@@ -169,8 +157,6 @@ func TestCanCancelPlan_Cancelled(t *testing.T) {
 		t.Error("expected false for already cancelled plan")
 	}
 }
-
-// ── CanCompletePlan ────────────────────────────────────────────────────
 
 func TestCanCompletePlan_Active(t *testing.T) {
 	if !CanCompletePlan(PlanStatusActive) {

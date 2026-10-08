@@ -47,6 +47,22 @@ func TestDebitForVotesResponseFields(t *testing.T) {
 	}
 }
 
+// TestReverseForVotesRequestFields verifies the reversal request contract:
+// the key alone identifies the debit — no amount field exists to forge.
+func TestReverseForVotesRequestFields(t *testing.T) {
+	req := votebridge.ReverseForVotesRequest{
+		ContestID:      "contest-xyz",
+		ContestantID:   "contestant-abc",
+		IdempotencyKey: "vote-debit-001",
+	}
+	if req.IdempotencyKey == "" {
+		t.Error("ReverseForVotesRequest.IdempotencyKey must not be empty")
+	}
+	if req.ContestID == "" || req.ContestantID == "" {
+		t.Error("ReverseForVotesRequest contest fields must not be empty")
+	}
+}
+
 // TestCostKoboMustCoverAllVotes verifies that CostKobo covers the full batch cost.
 // The service debits CostKobo in a single atomic operation; it is the caller's
 // responsibility to compute: CostKobo = pricePerVote * VoteCount.

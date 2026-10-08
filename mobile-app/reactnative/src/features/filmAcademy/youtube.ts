@@ -1,9 +1,7 @@
 // Turning a YouTube watch URL into something embeddable.
-//
 // The curriculum stores ordinary watch URLs because that is what a human pastes.
 // Playing one inline needs the /embed/ form, so the id is extracted here rather
 // than at each call site.
-//
 // Every URL in the seeded pathway was verified through YouTube's oEmbed endpoint,
 // which resolves ONLY for videos that are live AND embeddable — so an oEmbed pass
 // is also a guarantee that the inline player will work, not just that the link
@@ -29,7 +27,6 @@ export function youtubeVideoId(url: string): string | null {
 
   if (host !== 'youtube.com' && host !== 'youtube-nocookie.com') return null;
 
-  // /watch?v=<id>
   const v = u.searchParams.get('v');
   if (isVideoId(v)) return v;
 

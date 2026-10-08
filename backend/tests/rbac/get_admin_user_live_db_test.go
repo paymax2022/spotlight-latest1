@@ -1,42 +1,31 @@
 package rbac_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: GetAdminUser fetches the REQUESTED user, not just whichever
 // user happens to be newest.
-//
 // WHY THIS EXISTS (AUTH-019)
-// --------------------------
-// GetAdminUser used to be implemented as ListAdminUsers(Limit: 1) followed by
-// a linear search of that one-row result for a matching ID. ListAdminUsers
-// orders by created_at.desc, so a Limit of 1 fetches only the single newest
-// platform_users row system-wide — every other lookup silently 404'd. This
-// broke the admin console's per-user inspect/update/suspend/lock workflow for
-// every user except whoever registered last.
-//
+// ListAdminUsers orders by created_at.desc, so ListAdminUsers(Limit: 1)
+// fetches only the single newest platform_users row system-wide — a
+// GetAdminUser built on it + a client-side match 404s every lookup except the
+// newest user.
 // A test that seeds one user and fetches it by ID would pass against BOTH the
 // broken implementation (if that user happens to be newest) and the fixed
 // one, so it would not have caught this. The property that actually matters
 // is: fetching a user that is NOT the most recently created one still
 // succeeds and returns the right row. This seeds three users with distinct,
 // explicit created_at timestamps and fetches the two that are NOT newest.
-//
 // Runs against real PostgREST (the same code path GetAdminUser uses in
 // production — internal/integrations.SupabaseRestClient), not a mock, so a
 // wrong query-param shape (e.g. malformed `id=eq.<uuid>`) fails here instead
 // of only in production.
-//
 // Gated on TEST_DATABASE_URL (never DATABASE_URL — see
 // scripts/ci/check-live-db-gate.sh) AND on SUPABASE_URL /
 // SUPABASE_SERVICE_ROLE_KEY, because the repository talks to PostgREST, not
 // the database directly.
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	export SUPABASE_URL="http://127.0.0.1:54321"
 //	export SUPABASE_SERVICE_ROLE_KEY="<local service role key>"
 //	cd backend && go test ./tests/rbac/... -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -98,7 +87,7 @@ func seedPlatformUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 		t.Fatalf("seed platform_users row: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM platform_users WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id = $1`, id); err != nil {
 			t.Errorf("cleanup platform_users row %s: %v", id, err)
 		}
 	})
@@ -131,8 +120,8 @@ func TestLiveDB_GetAdminUserFetchesNonNewestUserByID(t *testing.T) {
 			"test assumptions about created_at ordering are stale", oldestID)
 	}
 
-	// Fetch the OLDEST seeded user — the case that was broken (it is never
-	// the single row a Limit:1/created_at.desc query returns).
+	// Fetch the OLDEST seeded user — never the single row a
+	// Limit:1/created_at.desc query returns.
 	got, err := repo.GetAdminUser(oldestID)
 	if err != nil {
 		t.Fatalf("GetAdminUser(oldest, non-newest user): %v", err)

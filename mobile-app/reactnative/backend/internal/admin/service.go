@@ -16,7 +16,6 @@ import (
 // existing crypto repository and stocks service (read-through) and owns the
 // admin-only state: feature flags, asset controls, risk limits, fees, KYC cases,
 // operators, the maker-checker approval queue and the append-only audit log.
-//
 // Every method takes the lock for its whole call and returns JSON-ready values.
 // Mutations are RBAC-gated; sensitive ones open an Approval instead of applying.
 type Service struct {
@@ -43,10 +42,10 @@ type Service struct {
 // with representative demo data.
 func NewService(repo store.Repository, stx *stocks.Service) *Service {
 	s := &Service{
-		repo:      repo,
-		stocks:    stx,
-		flags:     map[string]FeatureFlag{},
-		controls:  map[string]AssetControl{},
+		repo:     repo,
+		stocks:   stx,
+		flags:    map[string]FeatureFlag{},
+		controls: map[string]AssetControl{},
 	}
 	s.seedControls()
 	s.seedFlags()
@@ -57,8 +56,6 @@ func NewService(repo store.Repository, stx *stocks.Service) *Service {
 	s.seedProviders()
 	return s
 }
-
-// ── Seeding (constructor holds no lock; called single-threaded) ──────────────
 
 func (s *Service) seedControls() {
 	for _, a := range s.repo.Assets() {
@@ -173,8 +170,6 @@ func (s *Service) seedProviders() {
 	}
 }
 
-// ── Audit (caller holds the lock) ────────────────────────────────────────────
-
 func (s *Service) record(actor Role, action, entityType, entityID, reason, oldV, newV string) {
 	s.audit = append(s.audit, AuditEntry{
 		ID: engine.NewID("aud"), Actor: string(actor), Action: action,
@@ -182,8 +177,6 @@ func (s *Service) record(actor Role, action, entityType, entityID, reason, oldV,
 		OldValue: oldV, NewValue: newV, At: engine.Now(),
 	})
 }
-
-// ── Dashboard ────────────────────────────────────────────────────────────────
 
 // Dashboard computes the operational summary from the live modules + own state.
 func (s *Service) Dashboard() Dashboard {
@@ -267,8 +260,6 @@ func (s *Service) Dashboard() Dashboard {
 	}
 }
 
-// ── Users (single demo user derived from portfolio/positions) ────────────────
-
 func (s *Service) usersLocked() []UserSummary {
 	pf := s.repo.Portfolio()
 	return []UserSummary{{
@@ -314,8 +305,6 @@ func (s *Service) User(id string) (UserDetail, bool) {
 	}
 	return UserDetail{}, false
 }
-
-// ── KYC ──────────────────────────────────────────────────────────────────────
 
 // KycQueue returns the KYC cases (pending first, newest first).
 func (s *Service) KycQueue() []KycCase {
@@ -367,8 +356,6 @@ func (s *Service) ReviewKyc(id, decision string, actor Role, reason string) *Adm
 		return &AdminError{Type: "invalid", Message: "decision must be approve or reject"}
 	}
 }
-
-// ── Assets ───────────────────────────────────────────────────────────────────
 
 // Assets returns the asset control plane (stable order: crypto then stocks).
 func (s *Service) Assets() []AssetControl {
@@ -470,8 +457,6 @@ func controlMap(c AssetControl) map[string]any {
 	}
 }
 
-// ── Orders (unified crypto + stock) ──────────────────────────────────────────
-
 // Orders merges crypto transactions and stock orders into unified rows, newest
 // first. filter is a side ("buy"/"sell"/…) or "" for all.
 func (s *Service) Orders(filter string) []AdminOrder {
@@ -505,8 +490,6 @@ func (s *Service) Orders(filter string) []AdminOrder {
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
 	return out
 }
-
-// ── Withdrawal review ────────────────────────────────────────────────────────
 
 // WithdrawalQueue returns crypto withdrawals awaiting manual review.
 func (s *Service) WithdrawalQueue() []WithdrawalReviewItem {
@@ -560,8 +543,6 @@ func (s *Service) ReviewWithdrawal(reference, decision string, actor Role, reaso
 	return nil
 }
 
-// ── Reconciliation ───────────────────────────────────────────────────────────
-
 // Reconciliation returns the ledger-vs-positions reconciliation report.
 func (s *Service) Reconciliation() recon.Report {
 	s.mu.Lock()
@@ -569,16 +550,12 @@ func (s *Service) Reconciliation() recon.Report {
 	return recon.Reconcile(s.repo)
 }
 
-// ── Providers ────────────────────────────────────────────────────────────────
-
 // Providers returns the upstream provider health snapshots.
 func (s *Service) Providers() []ProviderHealth {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]ProviderHealth(nil), s.providers...)
 }
-
-// ── Risk limits ──────────────────────────────────────────────────────────────
 
 // RiskLimits returns the configured risk thresholds.
 func (s *Service) RiskLimits() []RiskLimit {
@@ -606,8 +583,6 @@ func (s *Service) UpdateRiskLimit(id string, valueMinor int64, actor Role, reaso
 	return &AdminError{Type: "not_found", Message: "risk limit not found"}
 }
 
-// ── Fees ─────────────────────────────────────────────────────────────────────
-
 // Fees returns the configurable platform fees.
 func (s *Service) Fees() []FeeConfigItem {
 	s.mu.Lock()
@@ -633,8 +608,6 @@ func (s *Service) UpdateFee(id string, bps int64, actor Role, reason string) *Ad
 	}
 	return &AdminError{Type: "not_found", Message: "fee not found"}
 }
-
-// ── Feature flags ────────────────────────────────────────────────────────────
 
 // FeatureFlags returns the product flags in seed order.
 func (s *Service) FeatureFlags() []FeatureFlag {
@@ -679,8 +652,6 @@ func (s *Service) SetFlag(key string, enabled bool, actor Role, reason string) *
 	s.record(actor, "flag.set", "flag", key, reason, old, fmt.Sprintf("%t", enabled))
 	return nil
 }
-
-// ── Maker-checker approvals ──────────────────────────────────────────────────
 
 // openApproval appends a PENDING approval (caller holds the lock + has checked
 // RBAC) and audits the request.
@@ -872,8 +843,6 @@ func toInt64(v any) int64 {
 		return 0
 	}
 }
-
-// ── Audit / admins ───────────────────────────────────────────────────────────
 
 // Audit returns the append-only audit log, newest first.
 func (s *Service) Audit() []AuditEntry {

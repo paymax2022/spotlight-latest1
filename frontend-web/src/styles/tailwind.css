@@ -829,6 +829,12 @@ h3 {
 .form-input:focus {
   border-color: var(--accent-gold);
   background: #ffffff;
+  /* Legacy theme has a bare `input:focus { color: var(--white) }` rule
+     (main.css) whose specificity (0,1,1) beats `.form-input`'s (0,1,0),
+     so a focused input — i.e. exactly while someone is typing — fell
+     back to white text on this white background. Repeat the color here
+     so `.form-input:focus` (0,2,0) always wins. */
+  color: #111827;
 }
 .form-input::placeholder {
   color: #9ca3af;
@@ -1107,8 +1113,15 @@ section.border-b.border-border {
 
 .banner-wrapper .page-heading {
   padding: 0 !important;
-  width: 100vw;
-  height: 60vh;
+  width: 100%;
+  /* Match the banner image's own aspect ratio so it always renders in full
+     (no cropping), capped so it can't blow out the viewport on tall/narrow
+     screens — the previous fixed `height: 60vh` rendered at ~500-600px on
+     a typical viewport and, worse, cropped the image's left/right edges on
+     any screen narrower than ~427px (i.e. effectively every phone), since
+     60vh is usually taller than the image's own 1280:480 ratio would need. */
+  aspect-ratio: 1280 / 480;
+  max-height: 420px;
 }
 
 .banner-wrapper .page-heading img {

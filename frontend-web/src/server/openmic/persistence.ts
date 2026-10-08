@@ -1607,7 +1607,6 @@ export async function castVote(input: OpenMicVoteInput) {
       });
     }
 
-    // --- Shared cross-cutting core (unifies open-mic with v1/v2) ---
     // Fraud signals (velocity/high-volume) + a canonical vote-audit entry in
     // vote_audit_logs, in addition to the open-mic-specific records above. The
     // domain table (competition_entry_votes) is untouched.

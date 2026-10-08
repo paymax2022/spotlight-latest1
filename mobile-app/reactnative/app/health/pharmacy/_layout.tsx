@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Pharmacy vertical stack (HEALTH-BUILD Phase 1). Mounts under the shared health

@@ -7,11 +7,11 @@ import * as Icons from 'lucide-react-native';
 import StarRating from '@/features/mobility/components/StarRating';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { useOrder, useRateOrder } from '@/features/food/hooks';
 import { HomeMenuButton } from '@/components/HomeMenu';
 

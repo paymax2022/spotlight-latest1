@@ -1,4 +1,3 @@
-// ── Paymax Invest · Crypto — Formatters & quote math ─────────────────────────
 // All money is minor units (integer). Display helpers convert to major units.
 // The quote/fee math lives here so the mock API and the screens compute the
 // exact same numbers (the screens preview a quote; the API executes one).
@@ -21,8 +20,6 @@ import type {
   QuoteRequest,
   SwapQuote,
 } from '../types/crypto.types';
-
-// ─── Display ──────────────────────────────────────────────────────────────────
 
 /** Format fiat minor units as a localized major-unit string with the symbol. */
 export function formatFiat(amount: number, currency: FiatCurrency, opts?: { decimals?: boolean }): string {
@@ -97,8 +94,6 @@ export function fiatMinorToInput(amount: number, currency: FiatCurrency): string
   return (amount / 10 ** meta.decimals).toString();
 }
 
-// ─── Time / countdown ─────────────────────────────────────────────────────────
-
 export function secondsUntil(iso: string): number {
   return Math.max(0, Math.floor((new Date(iso).getTime() - Date.now()) / 1000));
 }
@@ -136,7 +131,6 @@ export function newIdempotencyKey(prefix = 'cr'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ─── Quote engine (mock) ──────────────────────────────────────────────────────
 // Deterministic so the entry screen's live preview and the executed order agree.
 
 /**
@@ -167,7 +161,6 @@ export function buildQuote(asset: CryptoAsset, req: QuoteRequest): CryptoQuote {
       // top of the entered amount.
       tradeFiat = Math.round((amount * 10_000) / (10_000 + feeBpsTotal));
     } else {
-      // Fiat basis on a SELL: the entered `amount` is the trade value; the user
       // receives that value minus fees (applied below).
       tradeFiat = amount;
     }
@@ -186,7 +179,6 @@ export function buildQuote(asset: CryptoAsset, req: QuoteRequest): CryptoQuote {
   // Buy: total debit = trade value + fees. Sell: total credit = trade value − fees.
   let totalFiat: number;
   if (side === 'buy' && basis === 'fiat') {
-    // Gross is fixed to exactly what the user entered; absorb sub-kobo rounding
     // into the trade value so `total === entered` and `trade + fees === total`
     // both hold precisely.
     totalFiat = amount;

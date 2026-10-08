@@ -5,7 +5,6 @@ import "time"
 // CalculateInstallmentAmount splits tuition evenly across installments, with
 // remainder distributed to the last payment. Returns per-installment amount
 // and any error (e.g., zero tuition, negative count).
-//
 // Example: 5000 NGN / 4 = 1250 per payment, no remainder.
 // Example: 5000 NGN / 3 = 1666, 1666, 1668 (remainder to last).
 func CalculateInstallmentAmount(tuitionNGN int64, count int32) (int64, error) {
@@ -20,7 +19,6 @@ func CalculateInstallmentAmount(tuitionNGN int64, count int32) (int64, error) {
 
 // CalculateLumpSumDiscount applies a percentage discount to a tuition amount.
 // Returns the discounted amount (original - discount).
-//
 // Example: CalculateLumpSumDiscount(5000, 10) = 4500 (10% off).
 // If discountPct is 0, returns the original amount unchanged.
 func CalculateLumpSumDiscount(tuitionNGN int64, discountPct int32) int64 {
@@ -31,7 +29,6 @@ func CalculateLumpSumDiscount(tuitionNGN int64, discountPct int32) int64 {
 		return 0 // full discount
 	}
 	// Discount = original * (discount% / 100)
-	// Discounted = original - discount
 	discount := (tuitionNGN * int64(discountPct)) / 100
 	return tuitionNGN - discount
 }
@@ -70,7 +67,6 @@ func IsApplicationReadyForEnrollment(payments []InstallmentPayment) bool {
 // CalculateDueDate calculates the due date for an installment given its
 // index (0-based) and the start date. Frequency must be one of the valid
 // constants; panics otherwise (should be validated upstream).
-//
 // Example: index=0, start=2025-01-01, freq="biweekly" → 2025-01-15.
 func CalculateDueDate(startDate time.Time, index int32, frequency string) time.Time {
 	switch frequency {

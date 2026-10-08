@@ -26,7 +26,6 @@ export default function AssociationMembersPage() {
   const [search, setSearch] = useState('');
 
   // No status filter here: GetDirectory (service.go) hardcodes
-  // WHERE m.status='ACTIVE' and ANDs any status param onto that, so
   // anything but 'ACTIVE' always returns empty — this directory only ever
   // lists active members.
   const load = useCallback(async () => {

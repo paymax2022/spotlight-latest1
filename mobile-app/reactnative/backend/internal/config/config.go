@@ -36,15 +36,21 @@ type Config struct {
 	TrustAdminRoleHeader bool
 	CORSAllowOrigins     string // raw comma list; empty => safe localhost default
 	RateLimitRPS         float64
-	CryptoWebhookSecret  string
-	LedgerBackend        string
-	LedgerBaseURL        string
-	LedgerServiceToken   string
-	Provider             string // generic httpadapter selector ("", "http")
-	ProviderBaseURL      string
-	ProviderAPIKey       string
-	Alpaca               ProviderCreds // stocks brokerage + market data
-	Quidax               ProviderCreds // crypto market data / liquidity / custody
+	// TrustedProxyHops is the number of trusted proxies in the request path,
+	// counting the directly-connected peer (same convention as Express
+	// `trust proxy`). 0 (default) ignores XFF entirely — the rate limiter
+	// then keys on RemoteAddr, which fails closed (aggregating real clients
+	// behind an unconfigured proxy is the safe direction).
+	TrustedProxyHops    int
+	CryptoWebhookSecret string
+	LedgerBackend       string
+	LedgerBaseURL       string
+	LedgerServiceToken  string
+	Provider            string // generic httpadapter selector ("", "http")
+	ProviderBaseURL     string
+	ProviderAPIKey      string
+	Alpaca              ProviderCreds // stocks brokerage + market data
+	Quidax              ProviderCreds // crypto market data / liquidity / custody
 }
 
 // Load reads the configuration from the environment.
@@ -58,6 +64,7 @@ func Load() Config {
 		TrustAdminRoleHeader: os.Getenv("TRUST_ADMIN_ROLE_HEADER") == "true",
 		CORSAllowOrigins:     os.Getenv("CORS_ALLOW_ORIGINS"),
 		RateLimitRPS:         envFloat("RATE_LIMIT_RPS", 50),
+		TrustedProxyHops:     envInt("TRUSTED_PROXY_HOPS", 0),
 		CryptoWebhookSecret:  os.Getenv("CRYPTO_WEBHOOK_SECRET"),
 		LedgerBackend:        os.Getenv("LEDGER_BACKEND"),
 		LedgerBaseURL:        os.Getenv("LEDGER_BASE_URL"),
@@ -85,6 +92,17 @@ func envFloat(key string, def float64) float64 {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			return f
+		}
+	}
+	return def
+}
+
+// envInt parses a non-negative int from env, falling back to def when unset,
+// unparseable, or negative.
+func envInt(key string, def int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
 		}
 	}
 	return def

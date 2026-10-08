@@ -3,14 +3,15 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDeliveries } from '@/features/mobility/hooks/useLogistics';
 import { LOGISTICS_ENABLED, DELIVERY_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -66,7 +67,7 @@ export default function TrackingScreen() {
       {deliveries.isLoading ? (
         <StateView kind="loading" message="Loading deliveries…" />
       ) : deliveries.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => deliveries.refetch()} />
+        <MobilityEdgeState kind={errKind(deliveries.error)} actionLabel="Retry" onAction={() => deliveries.refetch()} />
       ) : list.length === 0 ? (
         <MobilityEdgeState kind="empty" title="No deliveries here" message="Nothing matches this filter yet." />
       ) : (

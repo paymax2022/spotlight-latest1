@@ -1,19 +1,16 @@
-// ── Screen 34 — Help & Support Center ────────────────────────────────────────
 // Self-serve resolution before escalating. Searchable FAQ (escrow / dispute /
 // fee explainers — static content) + "Contact support" that PRE-ATTACHES context
 // (an active order/listing, if the screen was opened from one) rather than a blank
 // form, then routes into the existing Paymax support surface.
-//
-// Entry (optional route params): ?orderId=<id>&listingId=<id>
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Search, ChevronDown, ChevronUp, LifeBuoy } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';

@@ -9,7 +9,6 @@ const KEYS = {
   tiers:   ['loyalty', 'tiers'] as const,
 };
 
-// ── Reads ──────────────────────────────────────────────────────────────────────
 export const useLoyaltyAccount = () =>
   useQuery({ queryKey: KEYS.account, queryFn: api.getAccount });
 
@@ -22,7 +21,6 @@ export const useCatalog = () =>
 export const useTiers = () =>
   useQuery({ queryKey: KEYS.tiers, queryFn: api.getTiers });
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 export function useRedeem() {
   const qc = useQueryClient();
   return useMutation({

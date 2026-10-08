@@ -1,6 +1,4 @@
-// ── Admin — Paymax Connect control-plane service ─────────────────────────────
 // Mock by default (mirrors realtorAdminService). Flip with
-// NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK=false to hit the live Go backend at
 // /api/connect/admin/*. Read-only in Phase 0 (cases + audit + config views).
 
 import { apiRoot } from '@/config/env';
@@ -31,7 +29,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_ADMIN_USE
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK';
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -41,10 +38,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 async function getJson<T>(path: string): Promise<T> {
@@ -54,7 +48,6 @@ async function getJson<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const CASES: ConnectCase[] = [
   { id: 'case_1', reporter_id: 'usr_a', subject_id: 'usr_b', type: 'harassment', source_ref: 'message:abc', status: 'open', severity: 'high', resolution: null, assigned_admin: null, notes: null, created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString() },
   { id: 'case_2', reporter_id: 'usr_c', subject_id: 'usr_d', type: 'scam', source_ref: 'profile:xyz', status: 'investigating', severity: 'critical', resolution: null, assigned_admin: 'adm_1', notes: 'Possible romance-scam script', created_at: new Date(Date.now() - 26 * 3_600_000).toISOString(), updated_at: new Date(Date.now() - 5 * 3_600_000).toISOString() },
@@ -67,7 +60,6 @@ const AUDIT: ConnectAuditEntry[] = [
   { id: 'a3', actor_id: 'usr_a', actor_role: null, action: 'connect.case.open', entity_type: 'connect_case', entity_id: 'case_1', reason: null, created_at: new Date(Date.now() - 2 * 3_600_000).toISOString() },
 ];
 
-// ─── API ──────────────────────────────────────────────────────────────────────
 export async function getCases(status?: string): Promise<ConnectCase[]> {
   if (USE_MOCK) { await delay(); return status ? CASES.filter((c) => c.status === status) : [...CASES]; }
   return getJson<ConnectCase[]>(`/cases${status ? `?status=${encodeURIComponent(status)}` : ''}`);
@@ -78,7 +70,6 @@ export async function getAudit(): Promise<ConnectAuditEntry[]> {
   return getJson<ConnectAuditEntry[]>('/audit');
 }
 
-// ─── Shared helpers ────────────────────────────────────────────────────────────
 /** Format kobo (minor units) → "₦1,234.56". Always money via this helper. */
 export function formatNaira(kobo: number): string {
   const naira = kobo / 100;
@@ -98,9 +89,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 const iso = (hAgo: number) => new Date(Date.now() - hAgo * 3_600_000).toISOString();
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.1 — Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: ConnectDashboard = {
   dau: 18_420, mau: 142_900, matches_today: 3_184, live_sessions: 47,
   gift_volume_today_kobo: 4_820_650_00, gift_volume_30d_kobo: 118_430_900_00,
@@ -120,9 +109,7 @@ export async function getConnectDashboard(): Promise<ConnectDashboard> {
   return getJson<ConnectDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.2 — Users & identity
-// ════════════════════════════════════════════════════════════════════════════
 const USERS: ConnectUserSummary[] = [
   { id: 'usr_a', handle: '@ada_live', display_name: 'Ada O.', tier: 2, status: 'active', region: 'Lagos', verification: 'full', flags: [], wallet_balance_kobo: 1_240_500_00, created_at: iso(2400), last_active_at: iso(1) },
   { id: 'usr_b', handle: '@tunde_fx', display_name: 'Tunde A.', tier: 1, status: 'restricted', region: 'Abuja', verification: 'bvn', flags: ['velocity'], wallet_balance_kobo: 86_300_00, created_at: iso(1800), last_active_at: iso(3) },
@@ -194,9 +181,7 @@ export async function listUnderageFlags(status?: string): Promise<UnderageFlag[]
   return getJson<UnderageFlag[]>(`/underage${status ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.4 — Moderation
-// ════════════════════════════════════════════════════════════════════════════
 const MODERATION: ModerationCaseSummary[] = [
   { id: 'mod_1', case_id: 'case_1', content_type: 'message', reason: 'Harassment reported', ai_reason_codes: ['HARASSMENT', 'THREAT'], reporter_id: 'usr_a', subject_id: 'usr_b', severity: 'high', status: 'open', created_at: iso(2) },
   { id: 'mod_2', case_id: 'case_2', content_type: 'profile', reason: 'Romance-scam script', ai_reason_codes: ['FINANCIAL_SOLICITATION', 'SCAM_SCRIPT', 'OFF_PLATFORM_PRESSURE'], reporter_id: 'usr_c', subject_id: 'usr_d', severity: 'critical', status: 'investigating', created_at: iso(26) },
@@ -236,9 +221,7 @@ export async function listMediaReview(state?: string): Promise<MediaReviewItem[]
   return getJson<MediaReviewItem[]>(`/media-review${state ? `?state=${encodeURIComponent(state)}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.5 — Finance, gifting & AML
-// ════════════════════════════════════════════════════════════════════════════
 const FINANCE: ConnectFinanceSummary = {
   gift_volume_today_kobo: 4_820_650_00, gift_volume_30d_kobo: 118_430_900_00,
   paid_vote_volume_30d_kobo: 31_209_400_00, payout_volume_30d_kobo: 76_540_000_00,
@@ -272,6 +255,123 @@ export async function listGifts(opts?: { status?: string; limit_state?: string }
   return getJson<GiftTransaction[]>(`/gifts${s ? `?${s}` : ''}`);
 }
 
+// Routes actually registered (handlers.go Register()):
+//   GET  /aml/alerts             ListAlerts  (connect.aml.view)
+//   GET  /aml/cases              ListCases   (connect.aml.view)
+//   POST /aml/cases              OpenCase    (connect.aml.manage)
+//   POST /aml/cases/:id/file-str FileSTR     (connect.aml.file)
+// This page previously called plain `/aml` and `/aml/:id`, neither of which
+// were ever registered — every AML admin call 404'd in production
+// (CONNECT-002). There is also no GET /aml/cases/:id (no per-id read at
+// all) and no alert↔case link in the schema (connect_aml_alerts.case_id is
+// never populated by any code path — OpenCase takes a subject + report type,
+// not an alert id). Rather than inventing new backend routes/columns to
+// paper over that, the mappings below reuse the real list routes and derive
+// source for is left disclosed (0 / null / "not available"), never
+// fabricated — mirrors healthLabAdminService.ts's custody-audit reduction.
+
+/** Raw row of connect_aml_alerts (models.go Alert). No `rule`/`severity`/
+ *  `status` columns exist — those are UI categories this page invented. */
+interface RawAlert {
+  id: string;
+  subject_id: string;
+  event_kind: 'gift' | 'paid_vote' | 'payout';
+  reason_code: 'THRESHOLD_EXCEEDED' | 'VELOCITY_BURST' | 'STRUCTURING' | 'SANCTIONS_HIT' | string;
+  amount_kobo: number;
+  window_count: number;
+  ledger_ref?: string | null;
+  case_id?: string | null;
+  created_at: string;
+}
+
+/** Raw row of connect_aml_cases (models.go Case). status is 'open' | 'filed'
+ *  only (repo.go: OpenCase inserts 'open'; FileSTR forward-transitions to
+ *  'filed') — no 'investigating' / 'escalated' / 'cleared' states exist. */
+interface RawCase {
+  id: string;
+  subject_id: string;
+  report_type: string;
+  status: 'open' | 'filed' | string;
+  reason_codes: string[];
+  narrative?: string | null;
+  opened_by?: string | null;
+  filed_by?: string | null;
+  filed_ref?: string | null;
+  filed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** UI "rule" category derived from the real reason_code — the backend has
+ *  no rule column, so this just relabels the reason code it already has. */
+function reasonToRule(reason: string): AmlAlert['rule'] {
+  switch (reason) {
+    case 'VELOCITY_BURST': return 'velocity';
+    case 'STRUCTURING': return 'structuring';
+    case 'SANCTIONS_HIT': return 'sanctions_hit';
+    case 'THRESHOLD_EXCEEDED': return 'threshold_exceeded';
+    default: return 'velocity';
+  }
+}
+
+/** UI severity heuristic derived from the real reason_code — the backend
+ *  has no severity column (AML is detect-and-report, not a scored gate). */
+function reasonToSeverity(reason: string): string {
+  if (reason === 'SANCTIONS_HIT' || reason === 'STRUCTURING') return 'critical';
+  return 'high';
+}
+
+function alertFromRaw(a: RawAlert): AmlAlert {
+  return {
+    id: a.id,
+    subject_id: a.subject_id,
+    reason_codes: [a.reason_code],
+    rule: reasonToRule(a.reason_code),
+    amount_kobo: a.amount_kobo,
+    severity: reasonToSeverity(a.reason_code),
+    // No status column on connect_aml_alerts and case_id is never populated
+    // in the current schema — 'investigating' is only reachable once/if a
+    // case does get linked; otherwise always 'open'. Not fabricated.
+    status: a.case_id ? 'investigating' : 'open',
+    case_id: a.case_id ?? null,
+    created_at: a.created_at,
+  };
+}
+
+function caseDetailFromRaw(c: RawCase): AmlCaseDetail {
+  const reasonCode = c.reason_codes?.[0] ?? '';
+  const history: AmlCaseDetail['history'] = [
+    { at: c.created_at, actor: c.opened_by ?? 'compliance', action: 'case_opened', reason_code: reasonCode || undefined },
+  ];
+  if (c.filed_at) {
+    history.push({ at: c.filed_at, actor: c.filed_by ?? 'compliance', action: 'str_filed', reason_code: reasonCode || undefined });
+  }
+  return {
+    id: c.id,
+    subject_id: c.subject_id,
+    reason_codes: c.reason_codes ?? [],
+    rule: reasonToRule(reasonCode),
+    // connect_aml_cases carries no trigger amount or window aggregate — that
+    // lives on the Alert row, and there is no alert↔case link to join
+    // through. Disclosed as 0 rather than invented.
+    amount_kobo: 0,
+    severity: reasonToSeverity(reasonCode),
+    status: c.status === 'filed' ? 'str_filed' : 'open',
+    case_id: c.id,
+    created_at: c.created_at,
+    window_txn_count: 0,
+    window_volume_kobo: 0,
+    str_reference: c.filed_ref ?? null,
+    str_filed_at: c.filed_at ?? null,
+    history,
+    notes: c.narrative ?? null,
+  };
+}
+
+async function fetchRawCases(limit = 200): Promise<RawCase[]> {
+  return (await getJson<RawCase[]>(`/aml/cases?limit=${limit}`)) ?? [];
+}
+
 const AML: AmlAlert[] = [
   { id: 'aml_1', subject_id: 'usr_d', reason_codes: ['STRUCT_SUB_THRESHOLD', 'RAPID_SUCCESSION'], rule: 'structuring', amount_kobo: 4_950_000_00, severity: 'critical', status: 'str_filed', case_id: 'case_2', created_at: iso(30) },
   { id: 'aml_2', subject_id: 'usr_d', reason_codes: ['RING_COLLUSION', 'CIRCULAR_FLOW'], rule: 'gifting_ring', amount_kobo: 12_400_000_00, severity: 'critical', status: 'investigating', case_id: 'case_2', created_at: iso(0.4) },
@@ -281,8 +381,16 @@ const AML: AmlAlert[] = [
 ];
 export async function listAmlAlerts(status?: string): Promise<AmlAlert[]> {
   if (USE_MOCK) { await delay(); return status ? AML.filter((a) => a.status === status) : [...AML]; }
-  return getJson<AmlAlert[]>(`/aml${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+  // Real route is GET /aml/alerts (was calling plain `/aml`, which 404s —
+  // CONNECT-002). No server-side status filter exists (no status column on
+  // connect_aml_alerts), so fetch a working page and filter client-side on
+  // the derived status instead of sending an unsupported query param.
+  const raw = await getJson<RawAlert[]>('/aml/alerts?limit=200');
+  const rows = (raw ?? []).map(alertFromRaw);
+  return status ? rows.filter((a) => a.status === status) : rows;
 }
+/** `id` is a connect_aml_cases id (case_id), not an alert id — the list page
+ *  only links to cases that actually exist (see aml/page.tsx). */
 export async function getAmlCase(id: string): Promise<AmlCaseDetail> {
   if (USE_MOCK) {
     await delay();
@@ -301,31 +409,68 @@ export async function getAmlCase(id: string): Promise<AmlCaseDetail> {
       notes: 'Reason codes only — no raw PII in case record.',
     };
   }
-  return getJson<AmlCaseDetail>(`/aml/${encodeURIComponent(id)}`);
+  // GET /aml/:id and GET /aml/cases/:id were never registered — handlers.go
+  // only exposes ListCases as a flat list, no per-id read. Reuse that real
+  // route and find the case client-side rather than inventing a new
+  // backend endpoint (same pattern as healthLabAdminService's custody-audit
+  // reduction).
+  const cases = await fetchRawCases();
+  const c = cases.find((x) => x.id === id);
+  if (!c) throw new Error(`AML case ${id} not found`);
+  return caseDetailFromRaw(c);
 }
-/** File an STR/SAR with the NFIU. Audited; reason codes only. */
-export async function fileStr(alertId: string, payload: { reason_code: string; narrative_ref: string }): Promise<StrFilingResult> {
+/** File an STR/SAR with the NFIU for an OPEN case (connect_aml_cases.status
+ *  = 'open' — FileSTR is a forward-only open→filed transition; repo.go's
+ *  UPDATE only matches rows already in 'open'). `filed_ref` is the NFIU
+ *  acknowledgement reference obtained when filing with the NFIU directly;
+ *  `narrative` is the reason-codes-only compliance summary — see
+ *  models.go FileSTRRequest. Audited server-side (service.go FileSTR). */
+export async function fileStr(caseId: string, payload: { filed_ref: string; narrative: string }): Promise<StrFilingResult> {
   if (USE_MOCK) {
     await delay();
     return { str_reference: `NFIU-STR-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`, filed_at: new Date().toISOString(), status: 'submitted' };
   }
-  return postJson<StrFilingResult>(`/aml/${encodeURIComponent(alertId)}/str`, payload);
+  // Real route is POST /aml/cases/:id/file-str (was calling
+  // `/aml/:id/str`, which also 404s). It returns the updated Case, not a
+  // {str_reference, filed_at, status} envelope — reshape client-side.
+  const c = await postJson<RawCase>(`/aml/cases/${encodeURIComponent(caseId)}/file-str`, {
+    filedRef: payload.filed_ref,
+    narrative: payload.narrative,
+  });
+  return {
+    str_reference: c.filed_ref ?? payload.filed_ref,
+    filed_at: c.filed_at ?? new Date().toISOString(),
+    status: 'submitted',
+  };
+}
+/** Opens a connect_aml_cases row for a subject (connect.aml.manage) — the
+ *  real prerequisite before fileStr() can succeed on a given case id, since
+ *  no alert auto-creates a case in the current schema (see RawAlert doc
+ *  comment above). Exposed so the AML pages can offer "Open case" on an
+ *  alert that has none yet, instead of linking to a case id that doesn't
+ *  exist. */
+export async function openAmlCase(subjectId: string, reportType: 'str' | 'sar', reasonCodes: string[]): Promise<AmlCaseDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const base = AML.find((a) => a.subject_id === subjectId) ?? AML[0];
+    return { ...base, id: `case_mock_${Date.now()}`, window_txn_count: 0, window_volume_kobo: 0, str_reference: null, str_filed_at: null, history: [{ at: new Date().toISOString(), actor: 'compliance', action: 'case_opened' }], notes: null };
+  }
+  const c = await postJson<RawCase>('/aml/cases', { subjectId, reportType, reasonCodes });
+  return caseDetailFromRaw(c);
 }
 
 const PAYOUTS: ConnectPayout[] = [
-  { id: 'pay_1', reference: 'PO-3301', user_id: 'usr_c', handle: '@zara_creates', amount_kobo: 2_500_000_00, fee_kobo: 25_000_00, tier: 3, status: 'pending', requested_at: iso(2) },
-  { id: 'pay_2', reference: 'PO-3302', user_id: 'usr_a', handle: '@ada_live', amount_kobo: 480_000_00, fee_kobo: 4_800_00, tier: 2, status: 'review', requested_at: iso(5) },
-  { id: 'pay_3', reference: 'PO-3303', user_id: 'usr_b', handle: '@tunde_fx', amount_kobo: 120_000_00, fee_kobo: 1_200_00, tier: 1, status: 'rejected', requested_at: iso(20) },
-  { id: 'pay_4', reference: 'PO-3304', user_id: 'usr_c', handle: '@zara_creates', amount_kobo: 5_910_000_00, fee_kobo: 59_100_00, tier: 3, status: 'paid', requested_at: iso(50) },
+  { id: 'pay_1', reference: 'PO-3301', user_id: 'usr_c', handle: '@zara_creates', amount_kobo: 2_500_000_00, fee_kobo: 0, tier: 3, status: 'requested', requested_at: iso(2) },
+  { id: 'pay_2', reference: 'PO-3302', user_id: 'usr_a', handle: '@ada_live', amount_kobo: 480_000_00, fee_kobo: 0, tier: 2, status: 'processing', requested_at: iso(5) },
+  { id: 'pay_3', reference: 'PO-3303', user_id: 'usr_b', handle: '@tunde_fx', amount_kobo: 120_000_00, fee_kobo: 0, tier: 1, status: 'failed', requested_at: iso(20) },
+  { id: 'pay_4', reference: 'PO-3304', user_id: 'usr_c', handle: '@zara_creates', amount_kobo: 5_910_000_00, fee_kobo: 0, tier: 3, status: 'settled', requested_at: iso(50) },
 ];
 export async function listPayouts(status?: string): Promise<ConnectPayout[]> {
   if (USE_MOCK) { await delay(); return status ? PAYOUTS.filter((p) => p.status === status) : [...PAYOUTS]; }
   return getJson<ConnectPayout[]>(`/payouts${status ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.6 — Voting integrity
-// ════════════════════════════════════════════════════════════════════════════
 const CONTESTS: VotingContestSummary[] = [
   { id: 'vc_1', title: 'Connect Star — Season 3', status: 'live', paid_votes: 482_300, free_votes: 1_204_900, paid_vote_volume_kobo: 24_115_000_00, integrity_score: 78, flags_open: 2, starts_at: iso(72), ends_at: iso(-48) },
   { id: 'vc_2', title: 'Lagos Creator Cup', status: 'scheduled', paid_votes: 0, free_votes: 0, paid_vote_volume_kobo: 0, integrity_score: 100, flags_open: 0, starts_at: iso(-120), ends_at: iso(-240) },

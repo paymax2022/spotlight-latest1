@@ -6,10 +6,10 @@ import {
   Bell, Camera, Mic, MapPin, ChevronRight, ShieldQuestion, KeyRound,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, StatusBadge } from '@/features/doctor/components';
@@ -18,8 +18,6 @@ import { usePermissionStates } from '@/features/doctor/hooks';
 import { PERMISSION_ORDER, PERMISSION_LABELS } from '@/features/doctor/constants';
 import type { AppPermissionKind, PermissionState } from '@/types/doctor.onboarding';
 
-// ── Section A · Entries 13–16 (hub) — Permission primer checklist ────────────
-// Reads usePermissionStates (always four kinds; an "empty" permission is
 // undetermined). Each row deep links to the single permission primer screen.
 // When every required permission is decided, routes into the profile builder
 // matching the persisted provider type.

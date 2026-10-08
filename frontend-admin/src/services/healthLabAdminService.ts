@@ -1,13 +1,8 @@
-// ── Admin — Paymax Health · Laboratory (HEALTH-BUILD Phase 2 ADM) ──────────────
 // Mock by default (mirrors healthPharmacyAdminService P1). Flip with
-// NEXT_PUBLIC_HEALTH_USE_MOCK=false to hit the live Go backend at
 // /api/health/lab/admin/*. RBAC: health.lab.* gates wired on the sidebar.
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces HEALTH invariants the Lab vertical enforces:
-//  HL-2 credential-gated supply (MLSCN lab + scientist licences; auto-suspend on expiry),
-//  HL-6 chain-of-custody integrity (break → recollect; no result without an unbroken chain),
 //  HL-7 critical-result human escalation (never silent),
-//  HL-8 health data sensitive NDPA (masked; consent gates release),
 //  HL-9 money held→released→refunded, HL-10 payout KYC+AML gate, HL-12 immutable audit.
 
 import { apiRoot } from '@/config/env';
@@ -42,7 +37,6 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
 // Verified against backend/internal/app/finance_routes.go:
 //   RegisterHealthLab(finance, adminGroupTop5(r, "/api/health/lab/admin"), ...)
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/lab/admin')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/dashboard instead of
@@ -52,17 +46,14 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
-// Verified against backend/internal/health/lab/{handler,admin}.go: the entire
-// admin surface is 4 routes — list orders, custody audit, list escalations
-// (all reads), and POST /tests/:id/deactivate. None of the 6 writes below have
-// a matching route; each says so on its own throw. Their old fixture branches
+// Verified against backend/internal/health/lab/{handler,admin}.go: the admin
+// surface is 5 routes — dashboard, list orders, custody audit (+ its
+// sample_id filter), list escalations (all reads), and
+// POST /tests/:id/deactivate. None of the 6 writes below have a matching
 // were all prefixed "Fixture — nothing was saved" (an honest disclaimer, not a
 // fabricated claim), but several then went on to say things like "KYC + AML
 // gate (HL-10) passed" — wording docs/audit/ADMIN_SIMULATED_WRITES.md's
@@ -86,7 +77,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -95,9 +85,7 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: LabDashboard = {
   generated_at: iso(0.1),
   orders_today: 920,
@@ -147,14 +135,68 @@ const DASHBOARD: LabDashboard = {
     { id: 'la6', kind: 'payout_held', label: 'Lab payout held — KYC tier insufficient (HL-10)', ref: 'lpay_8810', created_at: iso(7.5) },
   ],
 };
-export async function getLabDashboard(): Promise<LabDashboard> {
-  if (USE_MOCK) { await delay(); return { ...DASHBOARD, order_mix: [...DASHBOARD.order_mix], tat_trend: [...DASHBOARD.tat_trend], activity: [...DASHBOARD.activity] }; }
-  return getJson<LabDashboard>('/dashboard');
+/** Raw shape of GET /api/health/lab/admin/dashboard's `data`
+ *  (healthlab.AdminDashboard, backend/internal/health/lab/admin_model.go). */
+interface RawAdminDashboard {
+  total_orders: number;
+  orders_by_state: Record<string, number>;
+  platform_revenue_kobo_week: number;
+  total_labs: number;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+export async function getLabDashboard(): Promise<LabDashboard> {
+  if (USE_MOCK) { await delay(); return { ...DASHBOARD, order_mix: [...DASHBOARD.order_mix], tat_trend: [...DASHBOARD.tat_trend], activity: [...DASHBOARD.activity] }; }
+  const raw = await getJson<RawAdminDashboard>('/dashboard');
+  return {
+    generated_at: new Date().toISOString(),
+    // Real, this-pass-scoped fields — see admin_model.go's AdminDashboard doc
+    // comment for exactly what each one is and, for platform revenue, why it
+    // is a direct read of commission_earnings rather than a recomputed %.
+    orders_total: raw.total_orders,
+    orders_by_state: raw.orders_by_state,
+    platform_revenue_kobo_week: raw.platform_revenue_kobo_week,
+    labs_active: raw.total_labs,
+    // Everything below this line is NOT computed by the real backend yet —
+    // this pass scoped only the order-state aggregate, trailing-7-day
+    // platform revenue, and APPROVED-lab count (see the dashboard page's
+    // DisclosureNote for the same list). Left at 0/empty rather than
+    // fabricated, matching Pharmacy's (PHARMACY-001) and Telemedicine's
+    // analytics-endpoint honesty precedent.
+    orders_today: 0,
+    orders_30d: 0,
+    gmv_today_kobo: 0,
+    gmv_30d_kobo: 0,
+    net_revenue_30d_kobo: 0,
+    take_rate: 0,
+    avg_order_value_kobo: 0,
+    tat_median_hours: 0,
+    tat_target_hours: 0,
+    tat_breaches: 0,
+    critical_results_open: 0,
+    critical_results_30d: 0,
+    escalation_sla_minutes: 0,
+    escalation_sla_target_minutes: 0,
+    custody_breaks_open: 0,
+    custody_breaks_30d: 0,
+    samples_in_transit: 0,
+    recollections_required: 0,
+    mlscn_pending_review: 0,
+    catalog_pending_governance: 0,
+    results_pending_release: 0,
+    results_released_30d: 0,
+    payouts_kyc_hold: 0,
+    held_balance_kobo: 0,
+    released_30d_kobo: 0,
+    refunded_30d_kobo: 0,
+    labs_suspended: 0,
+    phlebotomists_active: 0,
+    order_mix: [],
+    tat_trend: [],
+    activity: [],
+  };
+}
+
 // B · MLSCN credential audit queue (HL-2)
-// ════════════════════════════════════════════════════════════════════════════
 const MLSCN_APPS: MlscnApplication[] = [
   { id: 'mlscn_7741', lab_name: 'PathCare Diagnostics Lekki', lab_scientist_masked: 'MLS A. Olawale•••', mlscn_lab_no: 'MLSCN/LAB/LA/2024/00821', mlscn_scientist_no: 'MLSCN/RS/2016/04412', cac_rc_no: 'RC-2210984', state: 'Lagos', lga: 'Eti-Osa', status: 'submitted', lab_verified: false, scientist_verified: true, licence_expires_at: dateStr(-300), docs: [{ kind: 'MLSCN_lab_licence', reference: 'MLSCN/LAB/LA/2024/00821', expires_at: dateStr(-300), verified: false }, { kind: 'lab_scientist_licence', reference: 'MLSCN/RS/2016/04412', expires_at: dateStr(-180), verified: true }, { kind: 'CAC', reference: 'RC-2210984', verified: true }], submitted_at: iso(5), created_at: iso(50) },
   { id: 'mlscn_7742', lab_name: 'Synlab Garki', lab_scientist_masked: 'MLS C. Danjuma•••', mlscn_lab_no: 'MLSCN/LAB/FC/2023/00440', mlscn_scientist_no: 'MLSCN/RS/2014/02201', cac_rc_no: 'RC-1880221', state: 'FCT', lga: 'Abuja Municipal', status: 'under_review', lab_verified: true, scientist_verified: true, licence_expires_at: dateStr(-95), docs: [{ kind: 'MLSCN_lab_licence', reference: 'MLSCN/LAB/FC/2023/00440', expires_at: dateStr(-95), verified: true }, { kind: 'lab_scientist_licence', reference: 'MLSCN/RS/2014/02201', expires_at: dateStr(-60), verified: true }, { kind: 'equipment_cert', reference: 'EQ-CAL-2026-118', verified: true }], submitted_at: iso(28), created_at: iso(110) },
@@ -184,9 +226,7 @@ export async function decideMlscn(id: string, decision: MlscnDecision, note?: st
   return sendJson<MlscnDecisionResult>('POST', `/mlscn/applications/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Test catalog governance
-// ════════════════════════════════════════════════════════════════════════════
 const CATALOG: LabCatalogItem[] = [
   { id: 'lcat_4401', test_name: 'Full Blood Count (FBC)', loinc_code: '58410-2', category: 'haematology', is_package: false, specimen: 'blood', prep_required: 'None', tat_hours: 6, lab_masked: 'PathCare Lekki•••', price_kobo: 6_500_00, status: 'approved', flagged_reason: null, created_at: dateStr(30) },
   { id: 'lcat_4410', test_name: 'Fasting Blood Sugar', loinc_code: '1558-6', category: 'chemistry', is_package: false, specimen: 'blood', prep_required: 'Fasting 8–12h', tat_hours: 4, lab_masked: 'Synlab Garki•••', price_kobo: 3_500_00, status: 'pending', flagged_reason: null, created_at: dateStr(2) },
@@ -223,9 +263,7 @@ export async function governTest(id: string, action: LabCatalogGovernanceAction,
   return sendJson<LabCatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Chain-of-custody oversight (HL-6)
-// ════════════════════════════════════════════════════════════════════════════
 const CUSTODY: CustodySample[] = [
   { id: 'smp_6610', order_ref: 'lab_9920', patient_masked: 'pt Chioma•••', test_summary: 'FBC + Lipid Profile', lab_masked: 'PathCare Lekki•••', phlebotomist_masked: 'Phleb. A. Musa•••', status: 'accessioned', chain_intact: true, break_reason: null, collected_at: iso(20), updated_at: iso(16) },
   { id: 'smp_6615', order_ref: 'lab_9922', patient_masked: 'pt Aisha•••', test_summary: 'Fasting Blood Sugar', lab_masked: 'Synlab Garki•••', phlebotomist_masked: 'Phleb. B. Yusuf•••', status: 'in_custody', chain_intact: true, break_reason: null, collected_at: iso(6), updated_at: iso(5) },
@@ -234,6 +272,80 @@ const CUSTODY: CustodySample[] = [
   { id: 'smp_6622', order_ref: 'lab_9926', patient_masked: 'pt Bola•••', test_summary: 'Lipid Profile (recollect)', lab_masked: 'Bridge Clinical PH•••', phlebotomist_masked: 'Phleb. D. Eze•••', status: 'recollect_required', chain_intact: false, break_reason: 'Recollection scheduled after upstream custody break on smp_6620 (HL-6).', collected_at: iso(8), updated_at: iso(7) },
   { id: 'smp_6630', order_ref: 'lab_9900', patient_masked: 'pt Ngozi•••', test_summary: 'Malaria Parasite', lab_masked: 'Wellness Path Enugu•••', phlebotomist_masked: 'Phleb. E. Obi•••', status: 'collected', chain_intact: true, break_reason: null, collected_at: iso(1.5), updated_at: iso(1.5) },
 ];
+/** Raw shape of one row in GET /api/health/lab/admin/custody-audit's `data`
+ *  (healthlab.Service.AdminCustodyAudit, backend/internal/health/lab/admin.go).
+ *  One row is one custody EVENT, not one sample — a sample has many. */
+interface RawCustodyEvent {
+  id: string;
+  sample_id: string;
+  order_id: string;
+  lab_provider_id: string;
+  patient_id: string;
+  from_state: string;
+  to_state: string; // COLLECTED | IN_CUSTODY | HANDED_OVER | ACCESSIONED | BREACHED | RECOLLECT_REQUIRED
+  actor_id: string;
+  from_custodian: string | null;
+  to_custodian: string | null;
+  note: string;
+  occurred_at: string;
+}
+
+/** NDPA masking (HL-8) for a raw uuid the backend never resolves to a display
+ * name — mirrors healthPharmacyAdminService.ts's maskPersonId. */
+function maskId(id: string): string {
+  return id ? `${id.slice(0, 8)}…` : 'Unknown';
+}
+
+/** Reconciliation note (custody page, this pass): the admin frontend has
+ * always called GET /custody (list, one row per SAMPLE) and GET /custody/:id
+ * (one sample's full event history) — routes that never existed. The real
+ * backend has exactly one custody read, GET /custody-audit, which is a flat
+ * EVENT stream (many rows per sample), not a per-sample list. Rather than
+ * inventing a second backend subsystem to produce a pre-aggregated
+ * per-sample view, this reduces the real event stream into that shape
+ * client-side: group events by sample_id, and derive each sample's current
+ * status/chain_intact/break_reason from its own real events (latest to_state
+ * wins; chain_intact is false iff any event's to_state is BREACHED or
+ * RECOLLECT_REQUIRED). test_summary and phlebotomist_masked have no honest
+ * source in this query (no lab_tests join, and actor_id is whoever performed
+ * the LATEST event, not necessarily a phlebotomist) — left as an explicit
+ * placeholder rather than fabricated, disclosed inline.
+ */
+function sampleFromEvents(sampleID: string, events: RawCustodyEvent[]): CustodySample {
+  // events are already ordered newest-first (ORDER BY occurred_at DESC in admin.go).
+  const latest = events[0];
+  const oldest = events[events.length - 1];
+  const breachEvent = events.find((e) => e.to_state === 'BREACHED' || e.to_state === 'RECOLLECT_REQUIRED');
+  const chainIntact = !breachEvent;
+  return {
+    id: sampleID,
+    order_ref: latest.order_id,
+    patient_masked: `pt ${maskId(latest.patient_id)}`,
+    // No lab_tests join in AdminCustodyAudit — not fabricated.
+    test_summary: '— (not computed by this read)',
+    lab_masked: maskId(latest.lab_provider_id),
+    // actor_id is the event's actor, not a confirmed phlebotomist-role
+    // credential — labelled as such rather than asserting a role the data
+    // doesn't actually establish.
+    phlebotomist_masked: `actor ${maskId(latest.actor_id)}`,
+    status: latest.to_state.toLowerCase() as CustodySample['status'],
+    chain_intact: chainIntact,
+    break_reason: chainIntact ? null : (breachEvent?.note || null),
+    collected_at: oldest.occurred_at,
+    updated_at: latest.occurred_at,
+  };
+}
+
+function groupBySample(events: RawCustodyEvent[]): Map<string, RawCustodyEvent[]> {
+  const byId = new Map<string, RawCustodyEvent[]>();
+  for (const e of events) {
+    const arr = byId.get(e.sample_id);
+    if (arr) arr.push(e);
+    else byId.set(e.sample_id, [e]);
+  }
+  return byId;
+}
+
 export async function listCustody(opts?: { status?: string; chain?: string; q?: string }): Promise<CustodySample[]> {
   if (USE_MOCK) {
     await delay();
@@ -247,11 +359,18 @@ export async function listCustody(opts?: { status?: string; chain?: string; q?: 
     }
     return rows;
   }
-  const qs = new URLSearchParams();
-  if (opts?.status) qs.set('status', opts.status);
-  if (opts?.chain) qs.set('chain', opts.chain);
-  if (opts?.q) qs.set('q', opts.q);
-  return getJson<CustodySample[]>(`/custody${qs.toString() ? `?${qs}` : ''}`);
+  // this calls the real /custody-audit route (an event stream) and reduces
+  // it to one row per sample, the shape this page has always rendered.
+  const raw = await getJson<RawCustodyEvent[]>('/custody-audit');
+  let rows = Array.from(groupBySample(raw ?? []).entries()).map(([sampleID, events]) => sampleFromEvents(sampleID, events));
+  if (opts?.status) rows = rows.filter((r) => r.status === opts.status);
+  if (opts?.chain === 'broken') rows = rows.filter((r) => !r.chain_intact);
+  if (opts?.chain === 'intact') rows = rows.filter((r) => r.chain_intact);
+  if (opts?.q) {
+    const q = opts.q.toLowerCase();
+    rows = rows.filter((r) => r.patient_masked.toLowerCase().includes(q) || r.lab_masked.toLowerCase().includes(q) || r.order_ref.includes(q) || r.id.includes(q));
+  }
+  return rows;
 }
 export async function getCustodyChain(id: string): Promise<CustodyChain> {
   if (USE_MOCK) {
@@ -271,18 +390,42 @@ export async function getCustodyChain(id: string): Promise<CustodyChain> {
       ],
     };
   }
-  return getJson<CustodyChain>(`/custody/${id}`);
+  // GET /custody/:id never existed either. AdminCustodyAudit's new sample_id
+  // parameter (admin.go) is exactly this read — every event for one sample —
+  // added as a thin filter on the existing query rather than a new custody
+  // subsystem. See handler.go's AdminCustodyAudit doc comment.
+  const raw = await getJson<RawCustodyEvent[]>(`/custody-audit?sample_id=${encodeURIComponent(id)}`);
+  const events = raw ?? [];
+  if (events.length === 0) {
+    throw new Error(`No custody events found for sample ${id}`);
+  }
+  const base = sampleFromEvents(id, events);
+  // oldest-first, so reverse for display.
+  const chrono = [...events].reverse();
+  return {
+    ...base,
+    events: chrono.map((e) => ({
+      id: e.id,
+      step: e.to_state,
+      label: e.note || `${e.from_state || '(start)'} → ${e.to_state}`,
+      actor_masked: `actor ${maskId(e.actor_id)}`,
+      // No location/temperature column on lab_custody_events — not computed
+      // by this read, left honest rather than fabricated.
+      location: '— (not computed)',
+      temperature_c: null,
+      seal_intact: e.to_state !== 'BREACHED',
+      audit_id: e.id,
+      at: e.occurred_at,
+    })),
+  };
 }
 export async function flagCustodyBreak(id: string, reason: string): Promise<CustodyBreakResult> {
-  // AdminCustodyAudit (GET /custody-audit) is read-only; no break-flagging
   // action exists anywhere in backend/internal/health/lab.
   if (USE_MOCK) throw new Error(`Flagging a custody break ${NO_BACKEND_YET}`);
   return sendJson<CustodyBreakResult>('POST', `/custody/${id}/break`, { reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Results audit & release controls (HL-8)
-// ════════════════════════════════════════════════════════════════════════════
 const RESULTS: ResultAuditItem[] = [
   { id: 'res_5510', order_ref: 'lab_9920', patient_masked: 'pt Chioma•••', test_summary: 'FBC + Lipid Profile', lab_masked: 'PathCare Lekki•••', scientist_masked: 'MLS A. Olawale•••', status: 'released', abnormal_flag: 'normal', chain_intact: true, signed_off: true, consent_on_file: true, tat_hours: 18, released_at: iso(2), created_at: iso(6) },
   { id: 'res_5520', order_ref: 'lab_9922', patient_masked: 'pt Aisha•••', test_summary: 'Fasting Blood Sugar', lab_masked: 'Synlab Garki•••', scientist_masked: 'MLS C. Danjuma•••', status: 'result_ready', abnormal_flag: 'abnormal', chain_intact: true, signed_off: true, consent_on_file: true, tat_hours: 5, released_at: null, created_at: iso(3) },
@@ -314,9 +457,7 @@ export async function releaseResult(id: string, action: ResultReleaseAction, not
   return sendJson<ResultReleaseResult>('POST', `/results/${id}/release`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Critical-result escalation queue (HL-7)
-// ════════════════════════════════════════════════════════════════════════════
 const ESCALATIONS: Escalation[] = [
   { id: 'esc_3301', order_ref: 'lab_9930', result_ref: 'res_5530', patient_masked: 'pt Emeka•••', test_summary: 'Serum Electrolytes (U&E)', abnormal_value: 'Potassium 7.2 mmol/L (critical > 6.0)', severity: 'critical', status: 'open', lab_masked: 'Synlab Garki•••', scientist_masked: 'MLS C. Danjuma•••', escalated_to_masked: null, acknowledged_at: null, sla_minutes: 30, minutes_elapsed: 12, created_at: iso(0.2) },
   { id: 'esc_3302', order_ref: 'lab_9912', result_ref: 'res_5490', patient_masked: 'pt Ibrahim•••', test_summary: 'Haematology — Platelets', abnormal_value: 'Platelets 18 ×10⁹/L (critical < 20)', severity: 'critical', status: 'acknowledged', lab_masked: 'PathCare Lekki•••', scientist_masked: 'MLS A. Olawale•••', escalated_to_masked: 'Dr. (on-call)•••', acknowledged_at: iso(1.4), sla_minutes: 30, minutes_elapsed: 95, created_at: iso(1.7) },
@@ -342,15 +483,12 @@ export async function listEscalations(opts?: { status?: string; severity?: strin
   return getJson<Escalation[]>(`/escalations${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function resolveEscalation(id: string, action: EscalationResolveAction, note?: string): Promise<EscalationResolveResult> {
-  // AdminEscalations (GET /escalations) is read-only; no resolve action exists
   // anywhere in backend/internal/health/lab.
   if (USE_MOCK) throw new Error(`Resolving an escalation ${NO_BACKEND_YET}`);
   return sendJson<EscalationResolveResult>('POST', `/escalations/${id}/resolve`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Phlebotomist management
-// ════════════════════════════════════════════════════════════════════════════
 const PHLEBOTOMISTS: Phlebotomist[] = [
   { id: 'phl_8801', name_masked: 'Phleb. A. Musa•••', licence_no: 'MLSCN/PH/2018/01120', licence_expires_at: dateStr(-200), state: 'Lagos', lga: 'Eti-Osa', status: 'active', kyc_tier: 'tier3', kyc_verified: true, collections_30d: 318, custody_breaks_30d: 0, rating: 4.9, created_at: dateStr(400) },
   { id: 'phl_8802', name_masked: 'Phleb. B. Yusuf•••', licence_no: 'MLSCN/PH/2020/02240', licence_expires_at: dateStr(-90), state: 'FCT', lga: 'Abuja Municipal', status: 'active', kyc_tier: 'tier2', kyc_verified: true, collections_30d: 204, custody_breaks_30d: 1, rating: 4.6, created_at: dateStr(260) },
@@ -376,9 +514,7 @@ export async function listPhlebotomists(opts?: { status?: string; q?: string }):
   return getJson<Phlebotomist[]>(`/phlebotomists${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // H · Payouts (KYC-gated — HL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const PAYOUTS: LabPayoutRecord[] = [
   { id: 'lpay_8801', lab_masked: 'PathCare Lekki•••', kyc_tier: 'tier3', kyc_verified: true, collected_kobo: 14_200_000_00, fees_kobo: 1_136_000_00, net_payable_kobo: 13_064_000_00, payout_status: 'approved', aml_flag: false, created_at: dateStr(2) },
   { id: 'lpay_8810', lab_masked: 'QuickLab•••', kyc_tier: 'tier0', kyc_verified: false, collected_kobo: 4_800_000_00, fees_kobo: 384_000_00, net_payable_kobo: 4_416_000_00, payout_status: 'kyc_hold', aml_flag: false, created_at: dateStr(1) },
@@ -408,9 +544,7 @@ export async function decidePayout(id: string, decision: LabPayoutDecision, note
   return sendJson<LabPayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // I · Reporting
-// ════════════════════════════════════════════════════════════════════════════
 const REPORTING: LabReportingData = {
   generated_at: iso(0.2),
   period_label: 'Last 30 days',

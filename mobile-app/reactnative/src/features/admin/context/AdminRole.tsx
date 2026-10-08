@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Role context ────────────────────────────────────
 // Holds the currently-selected admin Role (default 'SuperAdmin'). The setter
 // also pushes the role into the api module so every LIVE request attaches it as
 // the `X-Admin-Role` header. Screens read the role via useAdminRole() to gate

@@ -4,8 +4,8 @@
 import React from 'react';
 import { Text, StyleSheet } from 'react-native';
 import { VideoOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 
 export interface SelfVideoProps {
   stream: unknown | null;

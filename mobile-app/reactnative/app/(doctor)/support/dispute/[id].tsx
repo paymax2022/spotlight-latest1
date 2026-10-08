@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-nativ
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Paperclip } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, StatusBadge, UploadField } from '@/features/doctor/components';
@@ -17,7 +17,6 @@ import { DISPUTE_KIND_LABELS, DISPUTE_STATUS_LABELS } from '@/features/doctor/co
 import { formatKobo } from '@/api/doctor.batch7.api';
 import type { Dispute } from '@/types/doctor.batch7';
 
-// ── Section AA — Dispute detail + status + upload evidence (AA.9 / AA.15) ──────
 // NEW screen: a dispute detail (works for all kinds incl. the patient-complaint
 // detail), its status timeline, evidence list and an evidence uploader
 // (UploadField). Reuses StatusBadge / InfoRow / UploadField. Opens the shared

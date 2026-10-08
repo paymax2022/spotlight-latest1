@@ -1,7 +1,5 @@
 // Admin: define and grade the PARTS of an assignment — the week 1-4 timeline.
-//
 // A part is one week's deliverable inside a larger brief. Creating parts is what
-// turns a single-shot assignment into a staged one; an assignment with no parts
 // keeps its original whole-submission behaviour, so this is purely additive to
 // the existing flow.
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
@@ -26,7 +24,7 @@ export async function GET(request: Request) {
 
     if (error) {
       console.error('[admin/academy/assignment-parts] list failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to load assignment parts', 500);
     }
     return successResponse({ success: true, parts: data ?? [] });
   } catch (error) {
@@ -38,7 +36,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const assignmentId = String(body.assignment_id ?? '').trim();
     const title = String(body.title ?? '').trim();
@@ -104,7 +103,7 @@ export async function POST(request: Request) {
         return errorResponse(`Part ${partNumber} already exists on this assignment`, 409);
       }
       console.error('[admin/academy/assignment-parts] create failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to create assignment part', 500);
     }
     return successResponse({ success: true, part: data }, 201);
   } catch (error) {
@@ -116,10 +115,10 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const supabase = createAdminClient();
 
-    // ── Grading a part submission ───────────────────────────────────────────
     if (body.partSubmissionId) {
       const id = String(body.partSubmissionId);
       const { data: sub } = await supabase
@@ -132,7 +131,6 @@ export async function PATCH(request: Request) {
       if (body.score === undefined || body.score === null) {
         return errorResponse('score is required', 400);
       }
-      // A part whose max_score is null is progress-only; 100 is the implied
       // ceiling so a typo of 500 is still caught rather than stored.
       const maxScore = Number(
         (sub as { academy_assignment_parts?: { max_score?: number | null } }).academy_assignment_parts?.max_score ?? 100,
@@ -156,12 +154,11 @@ export async function PATCH(request: Request) {
 
       if (error) {
         console.error('[admin/academy/assignment-parts] grade failed', error);
-        return errorResponse(error.message, 500);
+        return errorResponse('Failed to grade part submission', 500);
       }
       return successResponse({ success: true, partSubmissionId: id, score });
     }
 
-    // ── Editing the part itself ─────────────────────────────────────────────
     if (!body.id) return errorResponse('id or partSubmissionId is required', 400);
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -195,7 +192,7 @@ export async function PATCH(request: Request) {
 
     if (error) {
       console.error('[admin/academy/assignment-parts] update failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to update assignment part', 500);
     }
     return successResponse({ success: true, part: data });
   } catch (error) {
@@ -222,7 +219,7 @@ export async function DELETE(request: Request) {
     const { error } = await supabase.from('academy_assignment_parts').delete().eq('id', id);
     if (error) {
       console.error('[admin/academy/assignment-parts] delete failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to delete assignment part', 500);
     }
     return successResponse({ success: true, deletedSubmissions: count ?? 0 });
   } catch (error) {

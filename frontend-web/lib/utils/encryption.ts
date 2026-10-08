@@ -44,7 +44,6 @@ export async function encryptData(
   password: string
 ): Promise<string> {
   try {
-    // Convert data to JSON string if object
     const plaintext = typeof data === 'string' ? data : JSON.stringify(data);
 
     // Generate random salt (16 bytes) and IV (12 bytes)
@@ -68,7 +67,6 @@ export async function encryptData(
     combined.set(iv, salt.length);
     combined.set(new Uint8Array(encrypted), salt.length + iv.length);
 
-    // Convert to base64
     return btoa(String.fromCharCode(...combined));
   } catch (error) {
     console.error('Encryption failed:', error);
@@ -90,10 +88,8 @@ export async function decryptData<T = string>(
   asObject: boolean = false
 ): Promise<T | string> {
   try {
-    // Convert from base64
     const combined = Uint8Array.from(atob(encryptedData), (c) => c.charCodeAt(0));
 
-    // Extract salt, IV, and encrypted data
     const salt = combined.slice(0, 16);
     const iv = combined.slice(16, 28);
     const encrypted = combined.slice(28);
@@ -108,11 +104,9 @@ export async function decryptData<T = string>(
       encrypted
     );
 
-    // Convert to string
     const decoder = new TextDecoder();
     const plaintext = decoder.decode(decrypted);
 
-    // Parse as JSON if requested
     if (asObject) {
       return JSON.parse(plaintext) as T;
     }
@@ -132,7 +126,6 @@ export async function hashData(data: string): Promise<string> {
   const encoder = new TextEncoder();
   const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
 
-  // Convert to hex string
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }

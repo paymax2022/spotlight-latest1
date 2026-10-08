@@ -1,13 +1,11 @@
 package crypto
 
 // PURE money-path invariant tests — no live DB.
-//
 // The crypto Repository is pgx-backed (repository.go / repository_ext.go), so the
 // order-fill, holding-projection and withdrawal-persistence write paths cannot run
 // without Postgres and are NOT exercised here (see the header note at the bottom for
 // what still needs a live-DB integration test). What IS exercised is every PURE
 // money primitive the service layer relies on:
-//
 //   - unitsForCash / cashForUnits: integer-only unit<->cash conversion + the int64
 //     overflow guard (big.Int intermediate, fail-closed to 0). These are the exact
 //     helpers service.go / service_ext.go call to size fills and swaps.
@@ -17,14 +15,11 @@ package crypto
 //   - networkFeeUnits: the in-asset miner-fee floor.
 //   - canTransitionWithdrawal: the guarded AML withdrawal FSM (legal transitions
 //     succeed, illegal skips rejected, terminal states reject).
-//
 // All symbols under test are unexported, so this file is in-package (package crypto).
 
 import "testing"
 
-// ---------------------------------------------------------------------------
 // unit <-> cash conversion (iron rule: integers only, truncate, never over-credit)
-// ---------------------------------------------------------------------------
 
 // TestUnitsForCash_ExactAndTruncating verifies the buy-side sizing: units are
 // cashKobo*scale/priceKobo with integer truncation, so the buyer is never
@@ -118,7 +113,6 @@ func TestCashForUnits_OverflowGuard(t *testing.T) {
 
 // TestUnitsCashRoundTrip verifies cash -> units -> cash never INFLATES value: after
 // buying units for some cash and re-valuing at the same price, the recovered cash is
-// <= the cash spent (truncation only ever loses fractions, never mints value).
 func TestUnitsCashRoundTrip(t *testing.T) {
 	const scale = 100_000_000
 	for _, price := range []int64{1, 37, 1_000, 5_000_000} {
@@ -133,9 +127,7 @@ func TestUnitsCashRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // swap spread math (transcribed from service_ext.go priceSwap, lines ~60-64)
-// ---------------------------------------------------------------------------
 
 // swapSpread mirrors priceSwap: spreadKobo = cashKobo*spreadBps/10_000 and the buy
 // leg receives netCash = cashKobo - spreadKobo. Kept here as a transcription so a
@@ -178,9 +170,7 @@ func TestDefaultSwapSpreadBps_Sane(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // networkFeeUnits (in-asset miner fee floor, service_ext.go)
-// ---------------------------------------------------------------------------
 
 // TestNetworkFeeUnits verifies the 0.05% fee (units/2000) floored at one minor unit.
 func TestNetworkFeeUnits(t *testing.T) {
@@ -209,9 +199,7 @@ func TestNetworkFeeUnits(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // withdrawal state machine (guarded FSM — AML gate before any provider dispatch)
-// ---------------------------------------------------------------------------
 
 // TestWithdrawalFSM_LegalTransitions verifies every intended edge is permitted:
 // requested -> pending_review -> approved -> broadcast -> confirmed, plus the reject
@@ -284,9 +272,7 @@ func TestWithdrawalFSM_UnknownStateRejects(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DOC — needs a live-DB integration test (no injectable seam here):
-//
 //   - Order fill (service.go Buy/Sell): the ledger legs (wallet debit -> escrow /
 //     credit) + holding projection + the unique idempotency partial index that makes
 //     a replayed fill a no-op are all pgx-backed. Assert: a replayed idem key does
@@ -298,4 +284,3 @@ func TestWithdrawalFSM_UnknownStateRejects(t *testing.T) {
 //     pending_review without any provider dispatch (the AML gate).
 //   - Reject-returns-units: pending_review/approved -> failed must credit the parked
 //     units back to the holding (conservation). Only assertable against the DB.
-// ---------------------------------------------------------------------------

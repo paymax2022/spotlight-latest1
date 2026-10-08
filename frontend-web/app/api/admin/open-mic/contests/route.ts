@@ -1,4 +1,4 @@
-import { handleApiError, listResponse, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, listResponse, successResponse } from '@/src/lib/api/responses';
 import { assertOpenMicAdmin, assertOpenMicReadAdmin } from '@/src/server/openmic/auth';
 import { createContest, listContests } from '@/src/server/openmic/persistence';
 import type { OpenMicContest } from '@/src/features/openmic/types';
@@ -26,7 +26,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertOpenMicAdmin(request);
-    const body = (await request.json()) as Partial<OpenMicContest>;
+    const body = (await request.json().catch(() => null)) as Partial<OpenMicContest>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const result = await createContest(body, identity.actorId);
     if (!result.success) return successResponse(result, 400);
     addAuditEvent({

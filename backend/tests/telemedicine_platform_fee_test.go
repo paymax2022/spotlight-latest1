@@ -10,14 +10,12 @@ import (
 // Telemedicine's 5% platform booking fee is ADDITIVE to the patient: the escrow
 // holds consult + fee, and the fee is handed to the platform at settlement via
 // settlement.Split.ServiceFeeKobo (the 100%-platform mirror of TipKobo).
-//
 // The decision this file locks: the additive fee must NOT dilute the doctor. The
 // doctor is paid exactly what the OLD pure 85/15 split on the consultation fee
 // paid — the patient funds the platform's cut on top. Any refactor that applies
 // the percentages to the escrowed TOTAL instead of the reconstructed gross would
 // quietly shave 15% of the platform fee off every doctor's payout, and every
 // arithmetic unit test would still be green.
-//
 // Following settlement_split_test.go's convention, the Settle() formula is
 // REIMPLEMENTED here rather than executed (Settle needs a live pgx pool). If the
 // production split formula changes, update telemedSplit() to match — the
@@ -29,7 +27,6 @@ import (
 // no rider, no tip, no discount, a fixed 100%-platform service fee.
 //
 //	base     = total − tip − serviceFee
-//	gross    = base + discount
 //	platform = int64(gross × platformPct) + serviceFee
 //	provider = total − platform − rider        // absorbs the rounding remainder
 func telemedSplit(escrowedTotal, serviceFeeKobo int64, platformPct float64) (platform, provider int64) {
@@ -72,7 +69,6 @@ var consultAmounts = []struct {
 // TestTelemedicinePlatformFee_DoctorIsNotDiluted is the core money invariant of
 // the whole change: an ADDITIVE patient-side fee must leave the doctor's payout
 // bit-for-bit identical to the old consult-only 85/15 split.
-//
 // Money bug prevented: escrowing consult+fee while applying 85/15 to the escrowed
 // TOTAL — the doctor would be paid 85% of the platform's fee as well (over-pay),
 // or, with the fee subtracted twice, 85% of consult minus 15% of the fee
@@ -107,7 +103,6 @@ func TestTelemedicinePlatformFee_DoctorIsNotDiluted(t *testing.T) {
 
 // TestTelemedicinePlatformFee_ConservesEscrowedTotal: doctor + platform must equal
 // the escrowed total to the kobo, for every amount.
-//
 // Money bug prevented: a leaked (or conjured) kobo sitting permanently in the
 // escrow standing account — the ledger conservation invariant would start failing
 // platform-wide, and the escrow would never drain to zero.
@@ -131,7 +126,6 @@ func TestTelemedicinePlatformFee_ConservesEscrowedTotal(t *testing.T) {
 // TestTelemedicinePlatformFee_SplitPassesValidation exercises the REAL Split type
 // so the shape telemedicine hands to Settle is provably well-formed, and the
 // Settle precondition (tip + serviceFee ≤ escrowed total) holds for every amount.
-//
 // Money bug prevented: a service fee larger than the escrow, which Settle rejects
 // at runtime — a booking that escrows successfully and then can never be settled,
 // stranding the patient's money.
@@ -161,7 +155,6 @@ func TestTelemedicinePlatformFee_SplitPassesValidation(t *testing.T) {
 // compatibility lock: rows escrowed BEFORE this change carry
 // PlatformFeeKobo == 0 and an escrow equal to the consult fee alone. They must
 // settle as the exact old pure 85/15 split.
-//
 // Money bug prevented: a migration/default that back-fills a phantom platform fee
 // onto already-escrowed appointments would try to pay the platform money that was
 // never escrowed, under-paying the doctor by that amount on every in-flight row.
@@ -193,7 +186,6 @@ func TestTelemedicinePlatformFee_LegacyAppointmentsSettleUnchanged(t *testing.T)
 // TestTelemedicinePlatformFee_CancellationRefundsFullTotal: a cancelled booking
 // refunds the ENTIRE escrowed amount — consult fee AND platform fee. The platform
 // keeps nothing from a consultation that never happened.
-//
 // settlement.Refund credits sett.TotalKobo (whatever was escrowed), so this is an
 // algebraic assertion that the escrowed total is the additive total, not the bare
 // consult fee. Money bug prevented: escrowing consult+fee but reasoning about
@@ -229,14 +221,12 @@ func TestTelemedicinePlatformFee_CancellationRefundsFullTotal(t *testing.T) {
 }
 
 // TestTelemedicinePlatformFee_GoldenLegs pins the exact kobo of every leg.
-//
 // The tests above express each invariant as a FORMULA, and both telemedSplit and
 // legacyPureSplit share the `int64(float64(x)*pct)` expression they are checking.
 // That makes them blind in one direction: if the production Settle formula changed
 // and the mirror above were updated to match, "the doctor is not diluted" would
 // still pass while every payout silently moved. A ledger-auditor review flagged
 // exactly that.
-//
 // These literals were derived independently of both mirrors, by hand, from
 // settlement.Settle's algebra. They are the contract: if any number below has to
 // change, real money is moving differently and that needs a decision, not a test

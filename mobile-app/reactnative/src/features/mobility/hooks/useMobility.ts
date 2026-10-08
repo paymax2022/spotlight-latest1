@@ -1,4 +1,3 @@
-// ── Paymax Mobility — Data hooks ─────────────────────────────────────────────
 // React Query hooks mirroring useFx.ts so screens stay declarative and share
 // caching / loading / error contracts. Money mutations attach Idempotency-Keys.
 
@@ -19,7 +18,6 @@ import type {
   VehicleDraft,
 } from '../types/mobility.types';
 
-// ─── Home / config / history ───────────────────────────────────────────────────
 export function useMobilityHome() {
   return useQuery({ queryKey: [KEY, 'home'], queryFn: mob.getHome, staleTime: 15_000 });
 }
@@ -36,7 +34,6 @@ export function useHistory() {
   return useQuery({ queryKey: [KEY, 'history'], queryFn: mob.getHistory, staleTime: 30_000 });
 }
 
-// ─── Estimate ─────────────────────────────────────────────────────────────────
 export function useRideEstimate() {
   return useMutation({
     mutationFn: (req: RideEstimateRequest) => mob.estimateRide(req),
@@ -44,7 +41,6 @@ export function useRideEstimate() {
   });
 }
 
-// ─── Request (money mutation → Idempotency-Key) ────────────────────────────────
 export function useRideRequest() {
   const qc = useQueryClient();
   return useMutation({
@@ -57,7 +53,6 @@ export function useRideRequest() {
   });
 }
 
-// ─── Active trip (polled so the state machine advances) ────────────────────────
 export function useActiveTrip(options?: { poll?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'active'],
@@ -89,7 +84,6 @@ export function useCancelRide() {
   });
 }
 
-// ─── Fare negotiation ───────────────────────────────────────────────────────────
 export function useFareNegotiation(tripId?: string) {
   const qc = useQueryClient();
   const invalidate = () => {
@@ -144,7 +138,6 @@ export function useSafety(tripId?: string) {
   return { contacts, addContact, deleteContact, shareTrip, sos };
 }
 
-// ─── Rating (tip = money mutation → Idempotency-Key) ───────────────────────────
 export function useRateTrip() {
   const qc = useQueryClient();
   return useMutation({
@@ -157,9 +150,7 @@ export function useRateTrip() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // DRIVER hooks
-// ═══════════════════════════════════════════════════════════════════════════════
 
 export function useDriverMe() {
   return useQuery({ queryKey: [KEY, 'driver', 'me'], queryFn: mob.getDriverMe, staleTime: 15_000 });
@@ -250,7 +241,6 @@ export function useDriverEarnings() {
   return useQuery({ queryKey: [KEY, 'driver', 'earnings'], queryFn: mob.getDriverEarnings, staleTime: 20_000 });
 }
 
-// ─── Trip chat ────────────────────────────────────────────────────────────────
 // `role` selects which side of the (identical, authz-gated) endpoint this
 // client calls — 'rider' for the customer app, 'driver' for the driver app.
 
@@ -272,7 +262,6 @@ export function useSendTripMessage(tripId?: string, role: 'rider' | 'driver' = '
   });
 }
 
-// ─── Ride settings (default payment method, saved addresses) ──────────────────
 export function useRideSettings() {
   return useQuery({ queryKey: [KEY, 'ride-settings'], queryFn: mob.getRideSettings, staleTime: 10_000 });
 }

@@ -3,7 +3,6 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 // ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
 // the in-memory version nothing real ever writes to — real applications live
 // in Supabase (registration/supabase-store). This route backs the Judges &
-// Scores console shipped over Path A in slice 4; it was scoring against an
 // applicant list that was always empty.
 import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
 import { getScoreSummary, getScoredApplicationIds, getRubricForContest } from '@/src/server/services/scoring/store';

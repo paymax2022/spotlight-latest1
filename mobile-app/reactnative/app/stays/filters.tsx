@@ -5,10 +5,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import { Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -74,7 +74,7 @@ export default function FiltersScreen() {
                 inputMode="decimal"
                 maxLength={13}
                 value={local.minPriceKobo != null ? String(local.minPriceKobo / 100) : ''}
-                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ minPriceKobo: s ? Number(s) * 100 : undefined }); }}
+                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ minPriceKobo: s ? Math.round(Number(s) * 100) : undefined }); }}
                 placeholder="0"
               />
             </View>
@@ -85,7 +85,7 @@ export default function FiltersScreen() {
                 inputMode="decimal"
                 maxLength={13}
                 value={local.maxPriceKobo != null ? String(local.maxPriceKobo / 100) : ''}
-                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ maxPriceKobo: s ? Number(s) * 100 : undefined }); }}
+                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ maxPriceKobo: s ? Math.round(Number(s) * 100) : undefined }); }}
                 placeholder="Any"
               />
             </View>

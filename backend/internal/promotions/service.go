@@ -3,8 +3,16 @@ package promotions
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/httperr"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyError = "error"
 )
 
 type Service struct {
@@ -93,4 +101,111 @@ func (s *Service) DeleteBanner(ctx context.Context, bannerID string) error {
 	const q = `UPDATE promotions_banners SET is_active = false, updated_at = NOW() WHERE id = $1`
 	_, err := s.db.Exec(ctx, q, bannerID)
 	return err
+}
+
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// ListBanners → GET /promotions/banners?module={module}
+// Returns active promotional banners for a given module.
+func (h *Handler) ListBanners(c *gin.Context) {
+	module := c.Query("module")
+	if module == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "module parameter required"})
+		return
+	}
+
+	banners, err := h.svc.ListActiveBanners(c.Request.Context(), module)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "failed to load banners"})
+		return
+	}
+
+	if banners == nil {
+		banners = []Banner{} // Return empty array instead of null
+	}
+	c.JSON(http.StatusOK, gin.H{"banners": banners})
+}
+
+// CreateBanner → POST /promotions/banners (admin only)
+// Creates a new promotional banner. Requires admin role.
+func (h *Handler) CreateBanner(c *gin.Context) {
+	var input BannerInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+
+	banner, err := h.svc.CreateBanner(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "failed to create banner"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"banner": banner})
+}
+
+// UpdateBanner → PATCH /promotions/banners/:id (admin only)
+// Updates a promotional banner.
+func (h *Handler) UpdateBanner(c *gin.Context) {
+	var input BannerInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+
+	banner, err := h.svc.UpdateBanner(c.Request.Context(), c.Param("id"), input)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "failed to update banner"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"banner": banner})
+}
+
+// DeleteBanner → DELETE /promotions/banners/:id (admin only)
+// Soft-deletes a promotional banner.
+func (h *Handler) DeleteBanner(c *gin.Context) {
+	if err := h.svc.DeleteBanner(c.Request.Context(), c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "failed to delete banner"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// Banner represents a promotional banner/hero image.
+type Banner struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	ImageURL    string    `json:"image_url"` // Cloudflare R2 URL
+	ActionLink  string    `json:"action_link,omitempty"`
+	ActionLabel string    `json:"action_label,omitempty"`
+	Module      string    `json:"module"`   // health, restaurant, mobility, etc.
+	Priority    int       `json:"priority"` // Higher = shown first
+	StartDate   time.Time `json:"start_date"`
+	EndDate     time.Time `json:"end_date"`
+	IsActive    bool      `json:"is_active"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// BannerInput is the request body for creating/updating banners.
+type BannerInput struct {
+	Title       string    `json:"title" binding:"required,max=200"`
+	Description string    `json:"description" binding:"max=500"`
+	ImageURL    string    `json:"image_url" binding:"required"` // Pre-uploaded R2 URL
+	ActionLink  string    `json:"action_link" binding:"max=500"`
+	ActionLabel string    `json:"action_label" binding:"max=100"`
+	Module      string    `json:"module" binding:"required,max=50"` // health, restaurant, etc.
+	Priority    int       `json:"priority" binding:"min=0,max=1000"`
+	StartDate   time.Time `json:"start_date"`
+	EndDate     time.Time `json:"end_date"`
+	IsActive    bool      `json:"is_active"`
 }

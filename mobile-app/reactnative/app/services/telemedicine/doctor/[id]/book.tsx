@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, TextInput, Platform, ActivityIndica
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { ClipboardList, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
 import { getDoctor, getDoctorAvailability, DEMO_DOCTORS } from '@/api/telemedicine.api';
 import { TeleHeader, SlotPicker, ConsultTypePicker } from '@/features/telemedicine/components';

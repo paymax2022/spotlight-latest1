@@ -11,9 +11,7 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // Request building — payload shape genuinely differs by category
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestPurchasePayload_Airtime(t *testing.T) {
 	req := provider.BillRequest{
@@ -133,10 +131,6 @@ func TestPurchasePayload_Education(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Response normalization
-// ════════════════════════════════════════════════════════════════════════════
-
 func TestNormalizeProviderStatus(t *testing.T) {
 	cases := []struct {
 		name string
@@ -202,10 +196,6 @@ func TestTokenFrom(t *testing.T) {
 		t.Fatalf("tokenFrom must prefer token over purchased_code, got %q", tokenFrom(both))
 	}
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Sandbox meter simulation table
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestSandboxPurchase_MeterTable(t *testing.T) {
 	c := New("k", "p", "s", EnvironmentSandbox, "")
@@ -285,16 +275,14 @@ func TestSandboxGetBill_AlwaysSuccessful(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Auth headers — api-key always; public-key for GET; secret-key for POST
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 	var gotAPIKey, gotSecretKey, gotPublicKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAPIKey = r.Header.Get("api-key")
-		gotSecretKey = r.Header.Get("secret-key")
-		gotPublicKey = r.Header.Get("public-key")
+		gotAPIKey = r.Header.Get("Api-Key")
+		gotSecretKey = r.Header.Get("Secret-Key")
+		gotPublicKey = r.Header.Get("Public-Key")
 		_, _ = w.Write([]byte(`{"code":"000","response_description":"successful","requestId":"req-x"}`))
 	}))
 	defer srv.Close()
@@ -323,8 +311,8 @@ func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 func TestAuthHeaders_GetUsesPublicKey(t *testing.T) {
 	var gotPublicKey, gotSecretKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPublicKey = r.Header.Get("public-key")
-		gotSecretKey = r.Header.Get("secret-key")
+		gotPublicKey = r.Header.Get("Public-Key")
+		gotSecretKey = r.Header.Get("Secret-Key")
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
@@ -343,19 +331,15 @@ func TestAuthHeaders_GetUsesPublicKey(t *testing.T) {
 
 func TestAuthHeaders_MissingKeysFailClosed(t *testing.T) {
 	c := New("", "", "", EnvironmentLive, "http://unused.invalid")
-	if _, err := c.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime"}); err == nil {
+	if _, err := c.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime", AmountKobo: 10_000}); err == nil {
 		t.Fatal("PurchaseBill with no API key must fail")
 	}
 
 	c2 := New("api", "", "", EnvironmentLive, "http://unused.invalid")
-	if _, err := c2.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime"}); err == nil {
+	if _, err := c2.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime", AmountKobo: 10_000}); err == nil {
 		t.Fatal("PurchaseBill with no secret key must fail (POST requires secret-key)")
 	}
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Base URL selection by environment
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	live := New("a", "p", "s", EnvironmentLive, "")
@@ -381,9 +365,7 @@ func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // End-to-end (HTTP-boundary mocked): purchase + requery
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	var gotBody map[string]any
@@ -401,7 +383,7 @@ func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	req := provider.BillRequest{
 		Ref:        "ledger-ref-9",
 		Type:       "electricity",
-		AmountKobo: 500_050, // ₦5,000.50 → rounds to ₦5001
+		AmountKobo: 500_000, // ₦5,000 — whole naira only; sub-naira is rejected below
 		Params: map[string]string{
 			"providerBillerCode": "ikeja-electric",
 			"customerReference":  "9999999999999",
@@ -424,11 +406,41 @@ func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	if res.Ref != "ledger-ref-9" {
 		t.Fatalf("Bill.Ref = %q, want the client ref echoed back", res.Ref)
 	}
-	if gotBody["amount"].(float64) != 5001 {
-		t.Fatalf("provider saw amount=%v naira, want 5001", gotBody["amount"])
+	if gotBody["amount"].(float64) != 5000 {
+		t.Fatalf("provider saw amount=%v naira, want 5000", gotBody["amount"])
 	}
 	if gotBody["billersCode"] != "9999999999999" {
 		t.Fatalf("provider saw billersCode=%v", gotBody["billersCode"])
+	}
+}
+
+func TestPurchaseBill_SubNairaRejectedWithoutProviderCall(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer srv.Close()
+
+	c := New("api", "pub", "sec", EnvironmentLive, srv.URL)
+	// ₦5,000.50 — sub-naira: asNaira would silently vend ₦5001 while we
+	// collected 500050 kobo, so the adapter refuses before any provider call.
+	res, err := c.PurchaseBill(context.Background(), provider.BillRequest{
+		Ref:        "ledger-ref-sub",
+		Type:       "electricity",
+		AmountKobo: 500_050,
+		Params: map[string]string{
+			"providerBillerCode": "ikeja-electric",
+			"customerReference":  "9999999999999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PurchaseBill: %v", err)
+	}
+	if called {
+		t.Fatal("provider must not be called for a sub-naira amount")
+	}
+	if res.Status != StatusFailed {
+		t.Fatalf("status = %q, want FAILED (deterministic validation)", res.Status)
 	}
 }
 
@@ -466,9 +478,7 @@ func TestGetBill_EmptyRefRejected(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // HTTP-failure normalization — no live network calls anywhere in this suite
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestDo_NonOKStatusSynthesizesEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

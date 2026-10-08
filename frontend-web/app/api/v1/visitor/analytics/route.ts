@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 
-// GET /api/v1/visitor/analytics — aggregate stats for the estate admin.
+// Aggregate stats for the estate admin.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

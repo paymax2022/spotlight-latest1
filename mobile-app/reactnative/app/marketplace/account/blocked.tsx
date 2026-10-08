@@ -1,14 +1,13 @@
-// ── Screen 32 — Blocked users ────────────────────────────────────────────────
 // User-controlled safety list. GET /blocks → list; DELETE /blocks/:id → unblock.
 // Empty state is an invitation, not a bare blank.
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserX } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';

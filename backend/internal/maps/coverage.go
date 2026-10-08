@@ -10,13 +10,11 @@ import (
 )
 
 // coverage.go — the self-improving CoverageIndex (MAPSERVICE.md §5).
-//
 // Each H3 coverage cell carries a tier (GOOD/FAIR/LOW) that drives the per-area
-// provider order (config_v2.go ProviderOrder). The tier evolves from observed
+// provider order (). The tier evolves from observed
 // outcomes: areas that keep forcing us past the cheap OSM path (high escalation
 // rate) get demoted toward LOW (so accuracy providers go first); areas with many
 // confirmed gazetteer pins and low escalation get promoted toward GOOD.
-//
 // All writes are BEST-EFFORT (MS-6 — degrade, never hard-fail). A coverage write
 // failing must never block a resolution: callers ignore the error in practice and
 // the orchestrator injects this via a nil-safe interface.
@@ -31,8 +29,6 @@ func NewCoverage(pool *pgxpool.Pool) *Coverage { return &Coverage{pool: pool} }
 
 // compile-time interface assertion.
 var _ CoverageIndex = (*Coverage)(nil)
-
-// --- tier derivation (pure, unit-testable) -------------------------------
 
 // Tuning constants for deriveTier. Kept package-level so tests document the rules.
 const (
@@ -51,7 +47,6 @@ const (
 
 // deriveTier is the pure decision function for a cell's coverage tier. It maps
 // the rolling escalation rate, confirmed-pin count, and sample size onto a tier.
-//
 // Rules (MAPSERVICE.md §5):
 //   - Too few samples            → FAIR (default; don't over-fit on noise).
 //   - escalationRate > 0.50      → LOW  (cheap path keeps failing → accuracy first).
@@ -69,8 +64,6 @@ func deriveTier(escalationRate float64, pinCount, sampleCount int64) CoverageTie
 	}
 	return TierFair
 }
-
-// --- CoverageIndex implementation ----------------------------------------
 
 // Tier returns the coverage tier for an H3 cell. If the fine cell has no row it
 // rolls up to the parent cell (CellParent) before falling back to FAIR. Read
@@ -110,7 +103,6 @@ func (c *Coverage) tierFor(ctx context.Context, h3 string) (CoverageTier, bool) 
 }
 
 // Observe records one resolution outcome against a cell and re-derives its tier.
-//
 // It UPSERTs the cell, increments sample_count, recomputes a rolling escalation
 // rate (escalated calls / samples), bumps pin_count when a confirmed gazetteer
 // point was chosen (chosenSource == "gazetteer" with confidence >= 1.0), then
@@ -168,8 +160,6 @@ func (c *Coverage) Observe(ctx context.Context, h3Cell, chosenSource string, esc
 	}
 	return nil
 }
-
-// --- seeding -------------------------------------------------------------
 
 // seedCell is a starting coverage cell for SeedLagos.
 type seedCell struct {

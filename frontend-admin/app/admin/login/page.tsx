@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInAdmin } from '@/features/auth/adminAuth';
-import { syncAdminSession } from '@/features/auth/adminSession';
+import { syncAdminSession } from '@/features/auth/adminAuth';
+import { AdminSignupPanel } from '@/features/auth/AdminSignupPanel';
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -11,14 +12,13 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // Drop a dead session's leftovers on arrival.
-  //
   // middleware.ts (ADR-047) is the real gate and redirects here server-side, so
   // AdminRouteGuard's effect — the only thing that clears expired keys — never
   // runs on that path. The identity therefore outlived the session in
   // localStorage, and roughly two dozen screens read it straight from there.
-  //
   // syncAdminSession() is the safe way to do this: it clears the token and the
   // user record ONLY when Supabase has no recoverable session. Wiping them
   // unconditionally would sign out anyone who merely visited /admin/login with
@@ -54,6 +54,23 @@ export default function AdminLoginPage() {
         {error ? <p style={{ color: 'crimson' }}>{error}</p> : null}
         <button type="submit" disabled={loading}>{loading ? 'Signing in...' : 'Sign in'}</button>
       </form>
+
+      <hr style={{ margin: '24px 0', border: 0, borderTop: '1px solid #ddd' }} />
+
+      {/* The same panel has its own page at /admin/admins/new, linked from the
+          sidebar — signing in is not the only reason to be here, and a signed-in
+          operator never sees this screen. */}
+      {!panelOpen ? (
+        <button type="button" onClick={() => setPanelOpen(true)}>
+          Create admin account
+        </button>
+      ) : (
+        <AdminSignupPanel
+          title="Create admin account"
+          onCancel={() => setPanelOpen(false)}
+          onCreated={setUsername}
+        />
+      )}
     </div>
   );
 }

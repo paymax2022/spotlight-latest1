@@ -92,8 +92,6 @@ export function getModuleHistory(key: string): Promise<ModuleAuditEntry[]> {
   return request<ModuleAuditEntry[]>(`/${encodeURIComponent(key)}/history`);
 }
 
-// ─── Per-user module grants ──────────────────────────────────────────────────
-//
 // A grant opens a RESTRICTED module for one user who has not completed KYC. It does
 // NOT lift money limits: wallet debits, transfers and escrow still obey the user's KYC
 // tier server-side, so this is safe to delegate to support staff. Wording in the UI

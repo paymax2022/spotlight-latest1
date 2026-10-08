@@ -3,10 +3,10 @@ import { View, Text, Pressable, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Sparkles, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
@@ -14,7 +14,6 @@ import { useIcebreakers } from '@/features/connect/messaging/hooks';
 import type { Icebreaker } from '@/features/connect/messaging/types';
 
 // MS-04 — Icebreakers. Tapping one navigates back to the thread with the chosen
-// text as an `icebreaker` param; thread.tsx reads it on mount and prefills the
 // composer (decoupled — this screen never sends).
 
 export default function Icebreakers() {

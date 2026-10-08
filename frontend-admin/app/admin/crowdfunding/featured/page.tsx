@@ -1,18 +1,15 @@
 'use client';
 
-// ── Crowdfunding — Featured campaigns ────────────────────────────────────────
 // Three jobs on one screen:
 //   1. Queue      — action campaign owners' requests for the featured slot.
 //   2. Management — flip the featured / trending / urgent placement flags.
 //   3. Reporting  — how many campaigns carry each flag, how many requests are
 //      waiting, and what the featured rail is actually raising.
-//
 // The request queue lives HERE rather than on its own page because approving a
 // request sets the very `featured` flag the management list below owns: after an
 // approval the campaign appears in that list on the same screen, under one refresh
 // and one mental model. The pending count also sits in the stat row, so a queue
 // cannot quietly accumulate.
-//
 // Placement rule (enforced by the backend, mirrored here): a flag may only be set
 // TRUE on an ACTIVE campaign. Turning a flag OFF is legal at any status — that is
 // how a frozen or completed campaign gets pulled off the home rail — so the UI
@@ -215,7 +212,6 @@ export default function FeaturedCampaignsAdminPage() {
     }
   }
 
-  // Prefer the server's own tally when the report carries one; otherwise count the
   // queue. The report endpoint predates the queue, so `pendingRequestCount` is
   // optional and the stat card must be right either way.
   const pendingRequestCount = useMemo(

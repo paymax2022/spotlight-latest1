@@ -30,7 +30,7 @@ func TestHealthCheck_HealthyOnCode1WithNumericBalance(t *testing.T) {
 			t.Errorf("path = %s, want /balance", r.URL.Path)
 		}
 		// GET must carry the public key, not the secret (authHeaders).
-		if got := r.Header.Get("public-key"); got != "pub" {
+		if got := r.Header.Get("Public-Key"); got != "pub" {
 			t.Errorf("public-key header = %q, want %q", got, "pub")
 		}
 		_, _ = w.Write([]byte(`{"code":"1","contents":{"balance":1500.75}}`))

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Maintenance hooks (V2) ───────────────────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as m from '../api/realtorMaintenance.api';
 import type { NewMaintenanceDraft, QuoteDraft } from '../types/realtor.maintenance.types';

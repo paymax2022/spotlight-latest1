@@ -23,8 +23,6 @@ var (
 	ErrNotFound = errors.New("reconciliation: not found")
 )
 
-// --- premium read (for matching) ---
-
 // PremiumForPolicy returns the net posted premium (kobo) for a policy: the sum of
 // posted DEBITs minus REVERSALs. This is the expected amount a provider statement
 // line is matched against.
@@ -52,8 +50,6 @@ func (r *Repository) ProviderForPolicy(ctx context.Context, policyID string) (st
 	}
 	return provider, nil
 }
-
-// --- reconciliation records ---
 
 const recCols = `id, provider, policy_id, premium_tx_id, statement_ref, expected_amount_kobo,
 	statement_amount_kobo, status, break_reason, resolution_note, created_at, resolved_at`
@@ -111,7 +107,7 @@ func (r *Repository) ListRecords(ctx context.Context, status, provider string, l
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ReconciliationRecord
+	out := []ReconciliationRecord{}
 	for rows.Next() {
 		rec, err := scanRecord(rows)
 		if err != nil {
@@ -146,8 +142,6 @@ func (r *Repository) ResolveBreak(ctx context.Context, id, note string) error {
 	}
 	return nil
 }
-
-// --- commission entries ---
 
 const commCols = `id, policy_id, provider, amount_kobo, ledger_ref, idempotency_key, status,
 	created_at, updated_at`
@@ -227,7 +221,7 @@ func (r *Repository) ListCommission(ctx context.Context, status, provider string
 		return nil, err
 	}
 	defer rows.Close()
-	var out []CommissionEntry
+	out := []CommissionEntry{}
 	for rows.Next() {
 		ce, err := scanCommission(rows)
 		if err != nil {

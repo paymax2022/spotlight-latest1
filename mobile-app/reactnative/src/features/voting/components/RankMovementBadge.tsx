@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { resolveMovement } from '../utils/voteFormatters';
 import type { RankChange } from '../types/voting.types';
 

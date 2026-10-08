@@ -18,7 +18,6 @@ export async function GET(request: Request) {
 
     if (error) return errorResponse('Failed to load settings', 500);
 
-    // If no settings row exists yet, return safe defaults
     return successResponse({
       success: true,
       settings: data ?? {
@@ -38,12 +37,12 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const input = parseAcademySettingsUpdateInput(body);
 
     const supabase = createAdminClient();
 
-    // Find the active settings row; if none, create one
     const { data: existing } = await supabase
       .from('academy_settings')
       .select('id')

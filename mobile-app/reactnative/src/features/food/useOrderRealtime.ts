@@ -1,4 +1,3 @@
-// ── Restaurant & Delivery — Order realtime hook ──────────────────────────────
 // Layers live order updates on top of the polled order: subscribes to the
 // per-order WebSocket (GET /api/finance/restaurant/orders/:id/ws) and surfaces
 // the latest status, rider location, and incoming chat messages. Polling stays
@@ -9,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { openWebSocket } from '@/lib/nativeWebSocket';
 import { api } from '@/api/client';
 import { USE_MOCK } from './api';
@@ -19,7 +19,7 @@ import { isLiveTrackable, isTerminalStatus } from './utils';
 // client uses. Kept as a fallback for when the signed-ticket endpoint (below)
 // is unreachable.
 function orderWsUrl(orderId: string): string {
-  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const base = getDevUrl(resolveApiBaseUrl());
   const path = `/api/finance/restaurant/orders/${encodeURIComponent(orderId)}/ws`;
   return base.replace(/^http/, 'ws').replace(/\/$/, '') + path;
 }
@@ -153,7 +153,6 @@ export function useOrderRealtime(
         const usingTicket = wsUrl !== orderWsUrl(orderId);
         const ws = openWebSocket(
           wsUrl,
-          // The signed URL already authenticates via its ?ticket= query, so the
           // header is only needed on the legacy fallback path (native only —
           // see nativeWebSocket.ts for why web can't use it at all).
           !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},

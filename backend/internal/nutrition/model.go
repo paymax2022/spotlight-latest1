@@ -1,14 +1,12 @@
 // Package nutrition is the Nutrition Resolution Engine (NRE): it estimates
 // per-serving nutrition + allergens for orderable dishes via a tiered resolver,
 // a guarded profile status machine, and a safety-critical allergen model.
-//
 // This is NOT a money module — there is no ledger. Values are real-number
 // nutrient quantities (g / mg / kcal), not integer kobo. The safety-critical
 // invariants (AI may never set CONTAINS/FREE_FROM; FREE_FROM requires a
 // cross-contamination acknowledgement; definitive allergen claims are
 // vendor-attested only) are enforced BOTH by DB CHECK constraints and by the
 // app code in this package — defense in depth.
-//
 // "Never an anonymous number": every resolved value carries its source +
 // confidence + the composition_version it was pinned against, and every display
 // string is precision-formatted (a bare number is never emitted).
@@ -19,13 +17,12 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Errors (sentinels — handlers map these to clean HTTP codes; the DB
 // check_violation 23514 is mapped to ErrAllergenRuleViolation in the repo).
-// ─────────────────────────────────────────────────────────────────────────────
 var (
 	// ErrForbidden is returned for an object-level authz failure (caller does
 	// not own the dish's restaurant).
@@ -49,9 +46,7 @@ var (
 	ErrLLMUnavailable = errors.New("nutrition: AI estimator not available")
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Disclaimer — included on every nutrition response.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Disclaimer is the mandatory "not medical advice" notice attached to every
 // nutrition payload returned to a client.
@@ -60,14 +55,11 @@ const Disclaimer = "Estimated nutrition for general information only. Not medica
 	"Allergen information is vendor-attested where shown and may default to \"may contain\" when unconfirmed. " +
 	"If you have a food allergy or medical condition, confirm directly with the vendor."
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Grounding / confidence / status vocab (mirrors the v2 DB CHECK domains).
-//
 // v2 (onboarding-first): the curated Nigerian library is no longer a vendor-facing
 // tier — it is grounding INSIDE the AI. A profile records WHERE the estimate came
 // from (grounding), how confident it is (confidence), and where it sits in the
 // honesty machine (status). The vendor experiences a single "AI suggestion".
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Grounding records the source the estimate was grounded in (mirrors DB CHECK).
 type Grounding string
@@ -80,7 +72,6 @@ const (
 )
 
 // Confidence is the resolved value's confidence band (mirrors DB CHECK).
-//
 // HIGH was removed in v2. The recipe path (grounding RECIPE) yields
 // RESTAURANT_CONFIRMED + confidence MEDIUM — declaring a recipe is an explicit
 // confirmation, not a measured label, so MEDIUM (not the retired HIGH) is the
@@ -111,7 +102,6 @@ const (
 	StatusStale Status = "STALE"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Status machine — guarded, fail-closed (3 honesty states + STALE). Any edge not
 // listed is rejected.
 //
@@ -121,8 +111,6 @@ const (
 //	RESTAURANT_CONFIRMED → STALE (name/photo/portion/version change) | EXACT (barcode)
 //	EXACT                → STALE (barcode changed) — otherwise terminal
 //	STALE                → AI_ESTIMATE | RESTAURANT_CONFIRMED | EXACT (re-estimate)
-//
-// ─────────────────────────────────────────────────────────────────────────────
 var statusTransitions = map[Status]map[Status]bool{
 	StatusAIEstimate: {
 		StatusRestaurantConfirmed: true,
@@ -185,7 +173,6 @@ func groundingRank(g Grounding) int {
 
 // supersedes reports whether a newly resolved grounding should overwrite an
 // existing profile.
-//
 //   - RESTAURANT_CONFIRMED / EXACT: a confirmed value is never auto-downgraded by
 //     a routine re-estimate. Only a STRICTLY higher-rank (lower-number) grounding
 //     may take over — e.g. a barcode (LABEL) appearing on a confirmed recipe — so
@@ -198,9 +185,7 @@ func supersedes(newG Grounding, currentG Grounding, currentStatus Status) bool {
 	return groundingRank(newG) <= groundingRank(currentG)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Nutrient model.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Nutrient keys — the canonical set the engine tracks per serving.
 const (
@@ -260,9 +245,7 @@ func (p PerServing) scale(factor float64) PerServing {
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Domain rows (DB projections).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Composition is one per-100g-edible-portion reference row.
 type Composition struct {
@@ -343,10 +326,8 @@ type Profile struct {
 	Version            int        `json:"version"`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Portion selector — the lightweight Edit path rescales every value by the
 // small/regular/large factor (applied to portion_size_g + per_serving values).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Portion labels (mirror the DB CHECK).
 const (
@@ -407,10 +388,8 @@ const (
 	AllergenSourceAI     = "AI"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Allergen safety enforcement (pure — mirrors the DB CHECK constraints so an
 // illegal request is rejected BEFORE it ever reaches the DB).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AllergenAttestInput is a single vendor allergen attestation request.
 type AllergenAttestInput struct {
@@ -454,11 +433,9 @@ func validateAllergen(allergen, declType, source string, attested, crossContamAc
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Display transform — pure. Bands, traffic-lights, precision-formatted strings.
 // Defaults reflect the Nigerian disease burden (hypertension → sodium; diabetes
 // → sugar; CVD → saturated fat). Thresholds are per-serving.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // EnergyBand classifies a serving's energy load.
 type EnergyBand string
@@ -542,7 +519,6 @@ type NutrientDisplay struct {
 // DisplayBlock is the buyer-facing presentation of a resolved profile. It NEVER
 // contains a bare number without grounding+confidence context (the precision
 // string carries the "estimate" qualifier for non-exact values).
-//
 // v2: precision is driven by STATUS (not just confidence). AI_ESTIMATE shows a
 // range; RESTAURANT_CONFIRMED shows a point value but is still labelled an
 // estimate (estimated=true); only EXACT is true exactness.
@@ -603,7 +579,7 @@ func formatRange(nutrient string, r Range, status Status) string {
 // trimNum renders a float without a trailing ".0" (e.g. 540, 6.5).
 func trimNum(v float64) string {
 	if v == math.Trunc(v) {
-		return fmt.Sprintf("%d", int64(math.Round(v)))
+		return strconv.FormatInt(int64(math.Round(v)), 10)
 	}
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", v), "0"), ".")
 }
@@ -611,7 +587,6 @@ func trimNum(v float64) string {
 // BuildDisplay turns a resolved profile into the buyer-facing display block.
 // Pure: no DB, no network. Energy drives the band; sodium/sugar/sat_fat get
 // traffic lights; every nutrient gets a precision string.
-//
 // v2: precision is driven by STATUS. Only EXACT is true exactness (estimated
 // false); RESTAURANT_CONFIRMED shows a point value but is semantically still an
 // estimate (estimated true) so the "estimate" label is honest.
@@ -645,10 +620,8 @@ func BuildDisplay(p PerServing, g Grounding, conf Confidence, status Status) Dis
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Sanity bounds — plausibility checks before publishing vendor/recipe values.
 // Implausible values are flagged for ops review and NOT auto-published.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Sanity-bound constants.
 const (
@@ -660,7 +633,6 @@ const (
 // CheckSanity validates a resolved per-serving profile against physical
 // plausibility for the given portion. Pure. Returns nil when plausible, else an
 // error wrapping ErrSanityBounds describing the first failure.
-//
 //  1. kcal/gram within [0.2, 9.0]
 //  2. all macros + sodium non-negative
 //  3. Atwater reconciliation: 4*protein + 4*carb + 9*fat ≈ energy_kcal (±30%)
@@ -701,9 +673,7 @@ func CheckSanity(p PerServing, portionG float64) error {
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Cart aggregation — pure range propagation across components.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CartLine is one resolved dish in a cart-summary request.
 type CartLine struct {
@@ -777,13 +747,10 @@ func worstConfidence(cs []Confidence) Confidence {
 	return worst
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Library fuzzy match — pure. Case-insensitive contains + token overlap.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // libraryMatch scores a dish name against a library entry's name + aliases.
 // Returns a score in [0,1]; 0 means no match. The caller picks the highest.
-//
 //   - An exact (case-insensitive) name/alias equality scores 1.0.
 //   - A containment (name contains alias or alias contains name) scores 0.8.
 //   - Otherwise the Jaccard token overlap (shared tokens / union) is used.
@@ -838,7 +805,7 @@ func normalize(s string) string {
 // tokens splits a normalized string into a set of word tokens.
 func tokens(s string) map[string]bool {
 	out := map[string]bool{}
-	for _, t := range strings.Fields(s) {
+	for t := range strings.FieldsSeq(s) {
 		out[t] = true
 	}
 	return out
@@ -888,10 +855,8 @@ func BestLibraryMatch(dishName string, entries []LibraryEntry) (*LibraryEntry, f
 	return &hits[0].entry, hits[0].score
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Recipe → profile math — pure. Sum composition × quantity, apply yield/retention
 // factors, scale to portion.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // cookFactor is the (yield, retention) pair applied to a cooked ingredient. yield
 // adjusts mass change on cooking (water loss/gain); retention is the fraction of
@@ -932,7 +897,6 @@ var labileNutrients = map[string]bool{NutSugar: true, NutFiber: true}
 // lookup. Pure: `lookup` resolves an ingredient (food_code[,source,prep]) to its
 // per-100g Composition; a missing lookup returns (Composition{}, false) and that
 // ingredient is skipped (the resolver flags incompleteness separately).
-//
 // For each ingredient: per-100g × (quantity_g/100), with labile nutrients trimmed
 // by the prep-method retention factor. The summed total is then scaled so the sum
 // of ingredient grams maps onto the declared portion_size_g (defensive: if the

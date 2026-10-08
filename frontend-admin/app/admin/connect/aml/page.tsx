@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { listAmlAlerts, formatNaira } from '@/services/connectAdminService';
+import { useRouter } from 'next/navigation';
+import { listAmlAlerts, openAmlCase, formatNaira } from '@/services/connectAdminService';
 import type { AmlAlert } from '@/types/connectAdmin';
 import { ConnectTabs, timeAgo } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
@@ -23,10 +24,12 @@ function statusColor(status: string): string {
 }
 
 export default function ConnectAmlPage() {
+  const router = useRouter();
   const [rows, setRows] = useState<AmlAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('all');
+  const [openingId, setOpeningId] = useState<string | null>(null);
 
   const filter = useMemo(() => (status === 'all' ? undefined : status), [status]);
   async function load() {
@@ -36,6 +39,20 @@ export default function ConnectAmlPage() {
     finally { setLoading(false); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+
+  // No alert auto-creates a connect_aml_cases row in the current schema
+  // (case_id is never populated — see connectAdminService.ts's RawAlert doc
+  // comment), so an alert with no case needs one opened before it can be
+  // filed. This does that via the real POST /aml/cases route, then
+  // navigates to the case the same way an existing case_id would.
+  async function openCaseFor(a: AmlAlert) {
+    setOpeningId(a.id); setError(null);
+    try {
+      const c = await openAmlCase(a.subject_id, 'str', a.reason_codes);
+      router.push(`/admin/connect/aml/${c.id}`);
+    } catch (e) { setError(String(e)); }
+    finally { setOpeningId(null); }
+  }
 
   return (
     <Page>
@@ -68,7 +85,13 @@ export default function ConnectAmlPage() {
                   <td style={tdCell}><Badge text={a.severity} color={severityColor(a.severity)} /></td>
                   <td style={tdCell}><Badge text={a.status.replace(/_/g, ' ')} color={statusColor(a.status)} /></td>
                   <td style={tdCell}>{timeAgo(a.created_at)}</td>
-                  <td style={{ ...tdCell, textAlign: 'right' }}><Link href={`/admin/connect/aml/${a.id}`} style={{ color: colors.primary, textDecoration: 'none', fontWeight: 600 }}>Open →</Link></td>
+                  <td style={{ ...tdCell, textAlign: 'right' }}>
+                    {a.case_id ? (
+                      <Link href={`/admin/connect/aml/${a.case_id}`} style={{ color: colors.primary, textDecoration: 'none', fontWeight: 600 }}>Open case →</Link>
+                    ) : (
+                      <Button variant="outline" sm disabled={openingId === a.id} onClick={() => openCaseFor(a)}>{openingId === a.id ? 'Opening…' : 'Open case'}</Button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

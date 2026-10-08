@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { extractSessionToken, isSessionValid, resolveEnforce } from '../../../../middleware';
 
 /**
  * Server-side proxy to the PUBLIC WEB APP: /api/web-proxy/<...> -> <WEB_API_BASE_URL>/<...>
@@ -16,8 +17,15 @@ import { NextResponse } from 'next/server';
  * the admin key to the wrong origin.
  *
  * Auth needs no bridge: frontend-admin holds a Supabase session.access_token and
- * frontend-web validates exactly that via supabase.auth.getUser. The caller's
- * Bearer is forwarded unchanged; frontend-web still runs its own authorization.
+ * frontend-web validates exactly that via supabase.auth.getUser. The token lives
+ * in the HttpOnly session cookie and is attached as Bearer HERE, server-side —
+ * browser code never reads it (CodeQL js/clear-text-storage-of-sensitive-data);
+ * frontend-web still runs its own authorization.
+ *
+ * Like /api/admin-proxy this route runs the same session gate middleware.ts
+ * uses (AUTH-010 pattern): it sits outside the '/admin/:path*' matcher, holds
+ * a real credential (the session bearer), and honors the same
+ * ADMIN_MIDDLEWARE_ENFORCE opt-out for local dev without SUPABASE_JWT_SECRET.
  */
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +44,26 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
     );
   }
 
+  // The enforce opt-out exists for local dev only; in production it would let
+  // any request through this proxy unauthenticated — fail loud instead.
+  if (process.env.NODE_ENV === 'production' && !resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
+    return NextResponse.json(
+      { error: 'ADMIN_MIDDLEWARE_ENFORCE must not be disabled in production.' },
+      { status: 503 },
+    );
+  }
+
+  // The HttpOnly session cookie holds the Supabase access token itself — the
+  // same credential frontend-web validates. Attach it server-side; the token
+  // must never be readable by browser JS.
+  const sessionToken = extractSessionToken(request.headers.get('cookie'));
+
+  if (resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
+    if (!(await isSessionValid(sessionToken))) {
+      return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
+    }
+  }
+
   const { path } = await ctx.params;
   const search = new URL(request.url).search;
   const target = `${WEB_API_BASE_URL}/${path.join('/')}${search}`;
@@ -43,24 +71,24 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   const headers: Record<string, string> = { Accept: 'application/json' };
   // Forward the caller's identity. Deliberately no service key of any kind:
   // frontend-web authorizes the real user, so a stolen console session cannot
-  // become blanket service-role access.
-  const auth = request.headers.get('authorization');
+  // become blanket service-role access. The verified cookie token wins over a
+  // client-supplied Authorization header, as in /api/admin-proxy.
+  const auth = sessionToken
+    ? `Bearer ${sessionToken}`
+    : request.headers.get('authorization');
   if (auth) headers['Authorization'] = auth;
   const contentType = request.headers.get('content-type');
   if (contentType) headers['Content-Type'] = contentType;
   // Not a secret — a per-request dedup key the CALLER generates and frontend-web
   // requires for money mutations (see app/api/admin/payments-finance/wallet/
   // adjust/route.ts). Every route proxied here until payments-finance only
-  // needed Authorization + Content-Type, so this was never forwarded; without
   // it, any money-mutation route reached through this proxy 400s unconditionally.
   const idempotencyKey = request.headers.get('idempotency-key');
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
   const method = request.method;
-  // Read as BYTES, not text. request.text() decodes as UTF-8, which silently
   // corrupts any binary body — a multipart image upload arrives with its bytes
   // replaced by U+FFFD and the file lands unopenable. Every route proxied here
-  // was JSON until contest banner uploads, so text() was harmless; it is not
   // harmless now. An ArrayBuffer forwards JSON and multipart alike, verbatim,
   // and the Content-Type (including the multipart boundary) is already
   // forwarded above.

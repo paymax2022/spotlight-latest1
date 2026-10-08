@@ -1,7 +1,4 @@
-// ── Listing insights — seller performance for one listing ────────────────────
-//
 // Entry: the "Insights" quick action on a My Listings card.
-//
 // Every figure comes from GET /listings/:id/insights, which counts the event
 // tables (saves, threads, offers, contact reveals, orders) rather than the
 // denormalised counters on mkt_listings — save_count has no writer, so reading it
@@ -13,11 +10,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Eye, Heart, MessageSquare, Tag, Phone, ShoppingBag, Zap, TrendingUp } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useListingInsights } from '@/features/marketplace/sell.hooks';

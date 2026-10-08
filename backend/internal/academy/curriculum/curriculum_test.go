@@ -1,6 +1,9 @@
 package curriculum
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestBindVersion exercises the pure version-binding policy: entry classes from
 // the NERDC effective year (2025) onward bind to NERDC-2025; earlier cohorts (and
@@ -180,12 +183,7 @@ func TestSeedNilPoolIsNoop(t *testing.T) {
 }
 
 func containsString(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, want)
 }
 
 // isSubsetStrings reports whether every element of a appears in allowed.

@@ -1,14 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Registration form registry.
-//
 // Each contest has its OWN self-contained form module in this folder. This file
 // is the only place that knows the slug -> builder mapping. To add a new bespoke
-// form: create `<slug>.ts` exporting a `build<...>Steps(draft)` function, then
 // register it below. Contests without an entry here fall back to `buildDefaultSteps`.
-//
 // Because every form is self-contained, editing one contest's file (fields,
 // labels, required flags, step titles) affects ONLY that contest.
-// ─────────────────────────────────────────────────────────────────────────────
 import type { ContestFormSchema, RegistrationDraft, RegistrationStep } from '../types';
 import { buildRealityTvShowSteps } from './reality-tv-show';
 import { buildStemContestSteps } from './stem-contest';

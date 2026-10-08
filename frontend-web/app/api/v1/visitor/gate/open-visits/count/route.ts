@@ -4,7 +4,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/gate/open-visits/count — count of open visits today.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

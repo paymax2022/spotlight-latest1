@@ -128,7 +128,6 @@ export function fmtDate(isoStr: string | null | undefined): string {
 
 // Render integer asset minor-units as a decimal whole-unit string using the
 // asset's minor_unit_scale. NEVER used for money — money is formatKobo() only.
-// Integer division keeps the whole part exact; the fractional part is derived by
 // remainder, so no float rounding touches the ledger-critical integer value.
 export function fmtUnits(units: number, minorUnitScale: number, symbol?: string): string {
   if (!minorUnitScale || minorUnitScale <= 0) return `${units.toLocaleString('en-NG')}${symbol ? ` ${symbol}` : ''}`;
@@ -153,8 +152,6 @@ export function RiskBadge({ score }: { score: number | null | undefined }) {
 export function FlagPill({ children }: PropsWithChildren) {
   return <span style={{ display: 'inline-block', padding: '0.05rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.68rem', fontWeight: 600, color: colors.warning, background: tint(colors.warning, 0.1), border: `1px solid ${tint(colors.warning, 0.4)}`, marginRight: '0.25rem', marginBottom: '0.15rem', whiteSpace: 'nowrap' }}>{children}</span>;
 }
-
-// ── Badges ──────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   filled: { fg: colors.success, bg: tint(colors.success, 0.12) },
@@ -181,9 +178,7 @@ export function StatusBadge({ status }: { status: string }) {
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{String(status).replace(/_/g, ' ')}</span>;
 }
 
-// ── RBAC ──────────────────────────────────────────────────────────────────
 // Per-console permission — MUST match backend/internal/crypto/model.go
-// PermAdmin = "crypto.admin". Server RBAC (guard("crypto.admin")) remains
 // authoritative — this is a UX gate only.
 export const CRYPTO_PERMS = {
   admin: 'crypto.admin',

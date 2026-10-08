@@ -3,16 +3,17 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Minus, Plus, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useOffer, useBookOffer } from '@/features/mobility/hooks/useEvent';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
@@ -38,12 +39,11 @@ export default function BookOfferScreen() {
   }
   if (offer.isError || !o) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Book seats" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => offer.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Book seats" /><MobilityEdgeState kind={errKind(offer.error)} actionLabel="Retry" onAction={() => offer.refetch()} /></SafeAreaView>
     );
   }
 
   const seatsLeft = Math.max(0, o.capacity - o.bookedCount);
-  // total is the server per-seat fare × seats; the client only multiplies the
   // server-provided per-seat value for display — never computes a fare.
   const totalKobo = o.fareKobo * seats;
   const canSubmit = seats >= 1 && seats <= seatsLeft && !book.isPending && (!bundle || ticketRef.trim().length > 0);

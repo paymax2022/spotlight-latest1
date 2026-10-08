@@ -1,10 +1,7 @@
-// ── Film Academy — my application ────────────────────────────────────────────
 // A NATIVE screen showing the signed-in applicant their own application: where
 // it stands, what happened so far, and what they must do next.
-//
 // The "what next" list is NOT derived here. The server returns it, so the app
 // and the web console can never disagree about whether tuition is payable.
-//
 // Money note: every academy amount is in NAIRA, not kobo — these tables predate
 // the kobo convention used across finance. Do not multiply by 100.
 
@@ -15,10 +12,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, CircleCheck, Clock, CircleAlert, FileText } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getApplicationStatus, FILM_ACADEMY_STATUS_KEY } from '@/features/filmAcademy/api';
 import type { FilmAcademyAction, FilmAcademyTimelineEntry } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
@@ -43,9 +40,9 @@ function statusPresentation(status: string | null): { label: string; color: stri
     case 'rejected':
       return { label: 'Not successful', color: Colors.error, bg: Colors.surfaceVariant };
     case 'under_review':
-      return { label: 'Under review', color: Colors.gold, bg: Colors.iconBgGold };
+      return { label: 'Under review', color: Colors.onWarning, bg: Colors.iconBgGold };
     case 'waitlisted':
-      return { label: 'Waitlisted', color: Colors.gold, bg: Colors.iconBgGold };
+      return { label: 'Waitlisted', color: Colors.onWarning, bg: Colors.iconBgGold };
     default:
       return { label: 'Submitted', color: Colors.onSurfaceVariant, bg: Colors.surfaceVariant };
   }
@@ -288,7 +285,7 @@ const styles = StyleSheet.create({
   actionBody:  { flex: 1, gap: 2 },
   actionLabel: { ...Typography.labelLg, color: Colors.onSurface },
   actionDetail:{ ...Typography.bodySm, color: Colors.onSurfaceVariant },
-  actionAmount:{ ...Typography.labelLg, color: Colors.gold, marginTop: 2 },
+  actionAmount:{ ...Typography.labelLg, color: Colors.onWarning, marginTop: 2 },
 
   feeRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   feeLabel:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant },

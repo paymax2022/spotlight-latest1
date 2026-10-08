@@ -1,4 +1,3 @@
-// ── Association — Engagement mock dataset ─────────────────────────────────────
 
 import type {
   Announcement,
@@ -6,7 +5,7 @@ import type {
   Meeting,
   Task,
   DocumentDetail,
-} from '../types/engagement.types';
+} from '../types';
 
 export const MOCK_ANNOUNCEMENTS: Announcement[] = [
   {

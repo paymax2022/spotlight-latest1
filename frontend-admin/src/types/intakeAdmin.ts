@@ -3,8 +3,6 @@
 // RBAC permission `health.admin.intake`. See
 // docs/prd/health/Paymax-Telemedicine-PreConsult-Intake.md §8.
 
-// ─── A1 · Intake Form Builder ────────────────────────────────────────────────
-
 export type IntakeFieldType =
   | 'text'
   | 'textarea'
@@ -36,8 +34,6 @@ export interface IntakeSchema {
   fields: IntakeSchemaField[];
 }
 
-// ─── A2 · Red-flag Rules ─────────────────────────────────────────────────────
-
 export type RedFlagSeverity = 'emergency' | 'urgent';
 export type RedFlagRouting = 'EMERGENCY' | 'URGENT_CARE' | 'CRISIS';
 
@@ -54,8 +50,6 @@ export interface RedFlagRule {
   version: number;
 }
 
-// ─── A3 · Clinical Vocabularies ──────────────────────────────────────────────
-
 export type VocabKind = 'condition' | 'allergen' | 'medication';
 
 export interface VocabEntry {
@@ -65,8 +59,6 @@ export interface VocabEntry {
   active: boolean;
 }
 
-// ─── A4 · Consent Versions ───────────────────────────────────────────────────
-
 export interface ConsentVersion {
   consent_key: string;
   version: number;
@@ -74,8 +66,6 @@ export interface ConsentVersion {
   body: string;
   active: boolean;
 }
-
-// ─── A5–A7 · Config (reminder / summary / guidance / localization) ───────────
 
 // Config value is opaque JSON keyed by config_key. The console renders a
 // structured editor per known key but stores/sends the raw value object.
@@ -103,8 +93,6 @@ export interface ContentLocalizationValue {
   guidance: Record<string, string>;
 }
 
-// ─── A8 · Intake Monitoring ──────────────────────────────────────────────────
-
 export type IntakeStatus = 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED';
 
 export interface MonitoringRow {
@@ -115,8 +103,6 @@ export interface MonitoringRow {
   appointment_at: string;
   incomplete_near_appt: boolean;
 }
-
-// ─── A9 · Intake Record Viewer ───────────────────────────────────────────────
 
 export interface IntakeRecordSection {
   key: string;
@@ -140,8 +126,6 @@ export interface IntakeRecord {
   access_logged: boolean;
 }
 
-// ─── A10 · Access & Audit Log ────────────────────────────────────────────────
-
 export type AccessLogEventType =
   | 'RECORD_VIEW'
   | 'CONSENT_ACCEPTED'
@@ -159,8 +143,6 @@ export interface AccessLogRow {
   created_at: string;
 }
 
-// ─── A11 · Red-flag Queue ────────────────────────────────────────────────────
-
 export type RedFlagDisposition =
   | 'OPEN'
   | 'ROUTED'
@@ -176,8 +158,6 @@ export interface RedFlagQueueRow {
   created_at: string;
   disposition: RedFlagDisposition;
 }
-
-// ─── A12–A13 · Analytics ─────────────────────────────────────────────────────
 
 export interface StepDropoff {
   step: string;

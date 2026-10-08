@@ -26,10 +26,7 @@ function webBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 export async function listAdminContests(type?: string): Promise<AdminContest[]> {
@@ -44,7 +41,6 @@ export async function listAdminContests(type?: string): Promise<AdminContest[]> 
   return (await res.json()).contests ?? [];
 }
 
-// ── Generic contest create/edit/delete ──────────────────────────────────────
 // Reaches the SAME /api/admin/contests[/[slug]] routes SmePitchAdminService
 // uses for sme_pitch specifically — this is the generic version, any
 // category/type. Real writes to Postgres (registration-v2/contest-store.ts).
@@ -158,7 +154,6 @@ export async function setContestStatus(slug: string, status: ContestPublishStatu
   return { mobileStatus: (json.mobileStatus as string | null) ?? null };
 }
 
-// ── Contest stages ───────────────────────────────────────────────────────────
 // /api/admin/contests/:slug/stages[/:stageId] — CRUD over public.contest_stages,
 // the same table Go's connect/voting module reads for the mobile eviction flow
 // (GetStages, GetContestantsByStage). A stage groups a start/end voting window
@@ -257,8 +252,6 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
   return json.result as AdvanceStageResult;
 }
 
-// ── Contest banner upload ────────────────────────────────────────────────────
-
 /**
  * Upload a contest banner and return the URL to store in `bannerImageUrl`.
  *
@@ -269,15 +262,14 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
  * header.
  */
 export async function uploadContestBanner(file: File): Promise<string> {
-  const token = typeof window !== 'undefined'
-    ? localStorage.getItem('spotlight_admin_access_token') || ''
-    : '';
   const form = new FormData();
   form.append('file', file);
 
+  // No Authorization header here — the same-origin web-proxy attaches the
+  // Bearer from the HttpOnly session cookie server-side (multipart bodies must
+  // not carry a hand-set Content-Type either; the browser adds the boundary).
   const res = await fetch(`${webBase()}/api/admin/contests/banner`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
   });
   const json = await readJsonOrThrow(res, 'Uploading banner');

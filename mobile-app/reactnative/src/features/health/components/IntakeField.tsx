@@ -1,32 +1,15 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Check, Paperclip, FileText, X, Plus } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import DatePickerField from '@/components/DatePickerField';
 import type { IntakeField as IntakeFieldType, IntakeValue, IntakeAttachment } from '../types';
 import { HealthColors } from '../constants/health.constants';
-
-// ── Medication list helpers (med_list field, M6) ──────────────────────────────
-// Stored as a JSON string of {name, dose} so it fits IntakeValue (string) and the
-// answers payload without a schema/type change. Tolerates a legacy plain-text
-// value (treated as a single medication name).
-type Med = { name: string; dose: string };
-function parseMeds(v: IntakeValue): Med[] {
-  if (typeof v !== 'string' || !v.trim()) return [];
-  try {
-    const arr = JSON.parse(v);
-    if (Array.isArray(arr)) return arr.map((m) => ({ name: String(m?.name ?? ''), dose: String(m?.dose ?? '') }));
-  } catch { /* legacy free-text → one med */ }
-  return [{ name: v, dose: '' }];
-}
-function serializeMeds(meds: Med[]): IntakeValue {
-  const clean = meds.filter((m) => m.name.trim() || m.dose.trim());
-  return clean.length ? JSON.stringify(clean) : ''; // empty → '' so required/validation treats it as blank
-}
+import { parseMeds, serializeMeds, type Med } from '../medListCodec';
 
 interface Props {
   field: IntakeFieldType;
@@ -75,7 +58,6 @@ export default function IntakeField({
     </View>
   );
 
-  // ── Scale (1–10 severity chips — no slider lib, PRD M5) ─────────────────────
   if (field.type === 'scale') {
     const min = field.min ?? 1;
     const max = field.max ?? 10;
@@ -107,7 +89,6 @@ export default function IntakeField({
     );
   }
 
-  // ── Attachment (photos / lab results / prescriptions, PRD M12) ──────────────
   if (field.type === 'attachment') {
     const list = attachments ?? [];
     return (
@@ -143,7 +124,6 @@ export default function IntakeField({
     );
   }
 
-  // ── Date → real date-picker widget (PRD: "when did it start" uses a date widget) ──
   if (field.type === 'date') {
     return (
       <View style={styles.wrap}>
@@ -158,7 +138,6 @@ export default function IntakeField({
     );
   }
 
-  // ── Medication list → repeatable name + dose rows ("add another") ────────────
   if (field.type === 'med_list') {
     const parsed = parseMeds(value);
     const rows: Med[] = parsed.length ? parsed : [{ name: '', dose: '' }];
@@ -202,7 +181,6 @@ export default function IntakeField({
     );
   }
 
-  // ── Free-text / number → reuse the shared TextInputField ────────────────────
   if (field.type === 'short_text' || field.type === 'long_text' || field.type === 'number') {
     return (
       <View style={styles.wrap}>
@@ -226,7 +204,6 @@ export default function IntakeField({
     );
   }
 
-  // ── Boolean (yes/no) ────────────────────────────────────────────────────────
   if (field.type === 'boolean') {
     const bool = value === true;
     return (
@@ -257,7 +234,6 @@ export default function IntakeField({
     );
   }
 
-  // ── Single / multi select (option chips) ────────────────────────────────────
   const selected: string[] =
     field.type === 'multi_select' ? (Array.isArray(value) ? value : []) : value != null ? [String(value)] : [];
 

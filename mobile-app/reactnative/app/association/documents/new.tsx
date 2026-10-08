@@ -3,26 +3,25 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { UploadCloud, FileText } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
-import { pickDocument } from '@/features/association/utils/docPicker';
+import { useAdminAccess } from '@/features/association/hooks';
+import { pickDocument } from '@/features/association/utils';
 import { uploadDocumentFile, createDocument } from '@/features/association/api/authoring.api';
 import { alertAsync } from '@/lib/confirm';
-import { DOC_SEGMENTS } from '@/features/association/constants/engagement.constants';
-import type { DocCategory } from '@/features/association/types/engagement.types';
+import { DOC_SEGMENTS } from '@/features/association/constants';
+import type { DocCategory } from '@/features/association/types';
 import type { DocKind } from '@/features/association/types/authoring.types';
 
 // Taken from the vault's OWN filter chips rather than restated here. The vault
 // filters by DOC_SEGMENTS and labels them differently from DOC_CATEGORY_LABEL
 // (constitution reads as "Governance" there), so a third label set invented in
-// this form would let someone pick a category that then appears under a
 // different chip — or under none but "All".
 const CATEGORIES = DOC_SEGMENTS.filter((seg) => seg.value !== 'all') as ReadonlyArray<{ value: DocCategory; label: string }>;
 

@@ -2,9 +2,7 @@
 // instance (which injects the Supabase Bearer token and points at frontend-web),
 // and targets the relative /api/v1/maps proxy → Go /api/finance/maps endpoints —
 // the same base + auth path every other service uses.
-//
 // The app calls ONLY these endpoints — never a maps provider directly — so no
-// provider key ever ships in the app. Every result carries `provider` + `source`;
 // the renderer refuses to draw a Google-sourced point on the OpenStack basemap.
 
 import { api } from '@/api/client';
@@ -15,7 +13,6 @@ import { api } from '@/api/client';
 //   • a full URL       → hit that base directly, e.g. the Go backend on
 //                        http://localhost:8080/api/finance/maps (skips the Next
 //                        proxy — useful when frontend-web isn't running).
-//   • 'off'/'offline'  → proxy disabled; the resolver uses the offline geocoder
 //                        only (no network calls, clean console for mock dev).
 // The shared axios `api` still injects the Supabase Bearer token either way.
 const RAW_MAPS_BASE = (process.env.EXPO_PUBLIC_MAPS_BASE_URL ?? '').trim();

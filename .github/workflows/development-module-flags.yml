@@ -1,0 +1,237 @@
+name: Development module flags
+
+# Sets (or clears) FEATURE_*_ENABLED on the DEVELOPMENT backend so the admin
+# console's flag-gated pages stop returning a bare Gin "404 page not found".
+#
+# ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+# ~356 of the admin console's 426 pages call Go routes that are only registered
+# when their FEATURE_*_ENABLED flag is true, and every one of those flags
+# defaults to false. staging-module-flags.yml writes a fixed list to STAGING
+# only; nothing could set flags on Development, so e.g.
+# /admin/finance/kyc-verify failed with "KYC review queue failed: 404".
+# The page -> route -> flag map, defaults and startup prerequisites are in
+# docs/ops/admin-pages-to-backend-flags.md.
+#
+# ── SAFETY ───────────────────────────────────────────────────────────────────
+# workflow_dispatch ONLY, the DEVELOPMENT backend only, and it requires typing
+# SET to confirm. On top of that:
+#   * the flag list is checked against an allowlist; anything else is refused
+#     (FEATURE_CONNECT_WALLET_FUND_ENABLED mints money, FEATURE_INVEST_PIN_DEV_BYPASS
+#     skips the PIN, FEATURE_MODULE_GATE_ENFORCE 503s mapped routes - none of
+#     them can be set from here);
+#   * a flag whose module needs a secret to boot (Associations, KYC verify,
+#     Arena, Transport/Maps, Wallet, Bank transfers) is refused unless that
+#     variable is already present on the service - only NAMES are checked, never
+#     printed. ASSOCIATIONS in particular is log.Fatalf at boot without its secret
+#     unless APP_ENV is exactly "development";
+#   * it refuses to run if APP_ENV on the service is production/prod;
+#   * `disable: true` writes the listed flags back to false (rollback).
+# Values are read back and compared; only names and verdicts are ever printed.
+# `railway variable list --json` ONLY, never `--kv` (raw values leaked
+# ADMIN_API_KEY on run 32545670584).
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type SET to confirm writing to the Development backend'
+        required: true
+        type: string
+      flags:
+        description: 'Comma-separated flags, with or without FEATURE_ / _ENABLED (e.g. KYC_VERIFY,CONNECT). Default = every no-prerequisite admin flag.'
+        required: true
+        type: string
+        default: 'COMMISSION,DISPUTES,ONBOARDING,PLACEMENT,NUTRITION,CROWDFUNDING,EVENTS,SAVINGS,SOCIAL_PAY,P2P_MARKET,LOYALTY,CREATORS,INSURANCE,STAYS,REFERRALS,ESTATE,PROPERTY_SUITE,REALTOR,FRACTIONAL_RE,RESTAURANT,TELEMEDICINE,DOCTOR,BUSINESS_REGISTRY,LEARN,SPOTLIGHTWEALTH,MARKETPLACE,HEALTH,HEALTH_PHARMACY,PHARMACY_SYMPTOM_SEARCH,HEALTH_LAB,HEALTH_VET,HEALTH_INTAKE,HEALTH_TRIAGE,ACADEMY,ACADEMY_SPINE,ACADEMY_EXAM,ACADEMY_EDUPAY,ACADEMY_CREDENTIALS,ACADEMY_LIVE,ACADEMY_SCHOOLS,ACADEMY_TUTOR,ACADEMY_FEES,CONNECT,CONTEST_STAGE_EVICTION,MAPS_V2'
+      disable:
+        description: 'Instead of enabling, set the listed flags to false (rollback)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-module-flags
+  cancel-in-progress: false
+
+jobs:
+  set-flags:
+    name: set Development backend FEATURE_* flags
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: backend
+      ENVIRONMENT: development
+      BACKEND_URL: https://backend-development-502c.up.railway.app
+      FLAGS_INPUT: ${{ inputs.flags }}
+      DISABLE: ${{ inputs.disable }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_DEVELOPMENT}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # Everything user-typed reaches the script through env, never interpolated
+      # into shell. Writes flags.txt (normalised FEATURE_*_ENABLED names) only if
+      # every check passes.
+      - name: Preflight - allowlist, APP_ENV, prerequisites
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node - <<'JS'
+          const fs = require("fs");
+
+          const ALLOWED = new Set([
+            "COMMISSION","DISPUTES","ONBOARDING","PLACEMENT","NUTRITION","CROWDFUNDING","EVENTS",
+            "SAVINGS","SOCIAL_PAY","P2P_MARKET","LOYALTY","CREATORS","INSURANCE","STAYS","REFERRALS",
+            "REFERRAL_REWARDS","ESTATE","PROPERTY_SUITE","REALTOR","FRACTIONAL_RE","RESTAURANT",
+            "TELEMEDICINE","DOCTOR","INVEST","CRYPTO","BUSINESS_REGISTRY","LEARN","SPOTLIGHTWEALTH",
+            "MARKETPLACE","HEALTH","HEALTH_PHARMACY","PHARMACY_SYMPTOM_SEARCH","HEALTH_LAB",
+            "HEALTH_VET","HEALTH_INTAKE","HEALTH_TRIAGE","ACADEMY","ACADEMY_SPINE","ACADEMY_EXAM",
+            "ACADEMY_EDUPAY","ACADEMY_CREDENTIALS","ACADEMY_LIVE","ACADEMY_SCHOOLS","ACADEMY_TUTOR",
+            "ACADEMY_FEES","CONNECT","CONTEST_STAGE_EVICTION","MAPS_V2",
+            // need a secret / config first - checked below
+            "KYC_VERIFY","WALLET","BANK_TRANSFERS","ASSOCIATIONS","ARENA","MAPS",
+            "TRANSPORT","TRANSPORT_MODES","TRANSPORT_SCHEDULING",
+          ]);
+
+          let vars;
+          try { vars = JSON.parse(fs.readFileSync("vars.json", "utf8")); }
+          catch { console.error("Could not parse the variable list as JSON. Refusing to print it - it holds every Development variable in the clear."); process.exit(1); }
+          const has = (k) => typeof vars[k] === "string" && vars[k].trim() !== "";
+          const b64of32 = (k) => has(k) && /^[A-Za-z0-9+\/]+={0,2}$/.test(vars[k].trim()) && Buffer.from(vars[k].trim(), "base64").length === 32;
+
+          const appEnv = vars.APP_ENV || "(unset)";
+          console.log("  APP_ENV on the service: " + appEnv);
+          if (/^(production|prod)$/i.test(appEnv)) {
+            console.error("APP_ENV is production - this workflow is for Development only. Refusing.");
+            process.exit(1);
+          }
+
+          const disable = process.env.DISABLE === "true";
+          const names = [...new Set(process.env.FLAGS_INPUT.split(/[\s,]+/).map((s) => s.trim().toUpperCase()
+            .replace(/^FEATURE_/, "").replace(/_ENABLED$/, "")).filter(Boolean))];
+          if (names.length === 0) { console.error("No flags given."); process.exit(1); }
+
+          const unknown = names.filter((n) => !ALLOWED.has(n));
+          if (unknown.length) {
+            console.error("Not on the allowlist (refused): " + unknown.join(", "));
+            console.error("Money-minting / PIN-bypass / gate-enforcement flags are deliberately not settable here.");
+            process.exit(1);
+          }
+
+          const problems = [];
+          if (!disable) {
+            const want = (n) => names.includes(n) || vars["FEATURE_" + n + "_ENABLED"] === "true";
+            const need = (flag, ok, msg) => { if (names.includes(flag) && !ok) problems.push("FEATURE_" + flag + "_ENABLED: " + msg); };
+            need("KYC_VERIFY", has("DOJAH_SECRET_KEY") || (has("SMILEID_PARTNER_ID") && has("SMILEID_API_KEY")) || has("YOUVERIFY_TOKEN"),
+              "no KYC provider (DOJAH_SECRET_KEY, or SMILEID_PARTNER_ID+SMILEID_API_KEY, or YOUVERIFY_TOKEN) is set");
+            need("KYC_VERIFY", b64of32("KYC_PII_ENC_KEY"), "KYC_PII_ENC_KEY missing or not base64 of exactly 32 bytes");
+            need("WALLET", has("PAYSTACK_SECRET_KEY"), "PAYSTACK_SECRET_KEY is not set");
+            need("BANK_TRANSFERS", has("PAYSTACK_SECRET_KEY") && has("MONNIFY_SECRET_KEY"), "PAYSTACK_SECRET_KEY and MONNIFY_SECRET_KEY must both be set");
+            need("ASSOCIATIONS", has("ASSOC_CARD_SIGNING_SECRET"), "ASSOC_CARD_SIGNING_SECRET is not set (boot would log.Fatalf unless APP_ENV is exactly development)");
+            need("ARENA", ["THEORY","PRACTICAL","FIRSTAID"].some((s) => b64of32("ARENA_SIGNING_SEED_" + s)), "no ARENA_SIGNING_SEED_THEORY|PRACTICAL|FIRSTAID that is base64 of 32 bytes");
+            need("MAPS", has("MAPS_GOOGLE_KEY"), "MAPS_GOOGLE_KEY is not set");
+            for (const t of ["TRANSPORT","TRANSPORT_MODES","TRANSPORT_SCHEDULING"]) {
+              need(t, want("MAPS") && has("MAPS_GOOGLE_KEY"), "needs FEATURE_MAPS_ENABLED=true and MAPS_GOOGLE_KEY, otherwise it falls back to mock fares (and aborts in production)");
+            }
+          }
+          if (problems.length) {
+            console.error("Prerequisites missing - nothing was written:");
+            for (const p of problems) console.error("  - " + p);
+            process.exit(1);
+          }
+
+          fs.writeFileSync("flags.txt", names.map((n) => "FEATURE_" + n + "_ENABLED").join("\n") + "\n");
+          console.log("  " + (disable ? "Will set to false" : "Will set to true") + " (" + names.length + "): " + names.join(", "));
+          JS
+
+      # Snapshot before the write so the restart can be proven afterwards.
+      - name: Record the running backend's start time
+        run: |
+          set -uo pipefail
+          curl -s -m 20 "$BACKEND_URL/api/v1/public/build" > build-before.json || true
+          node -e 'try{const b=JSON.parse(require("fs").readFileSync("build-before.json","utf8"));console.log("  before: commit "+b.commit+", started_at "+b.started_at)}catch{console.log("  before: build endpoint unreadable")}'
+
+      # One `variable set` with every pair and --skip-deploys: Railway redeploys
+      # on each write by default, so N separate writes would queue N restarts.
+      - name: Write the flags
+        run: |
+          set -euo pipefail
+          VALUE=$([ "$DISABLE" = "true" ] && echo false || echo true)
+          mapfile -t NAMES < flags.txt
+          ARGS=()
+          for n in "${NAMES[@]}"; do ARGS+=("$n=$VALUE"); done
+          railway variable set "${ARGS[@]}" \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+          echo "  wrote ${#NAMES[@]} flag(s) = $VALUE"
+
+      - name: Verify every flag reads back exactly as written
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node - <<'JS'
+          const fs = require("fs");
+          let vars;
+          try { vars = JSON.parse(fs.readFileSync("vars.json", "utf8")); }
+          catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+          const want = process.env.DISABLE === "true" ? "false" : "true";
+          const names = fs.readFileSync("flags.txt", "utf8").split("\n").filter(Boolean);
+          let bad = 0;
+          for (const k of names) {
+            const ok = vars[k] === want;
+            if (!ok) bad++;
+            console.log("  " + (ok ? "OK  " : "BAD ") + k);
+          }
+          if (bad) { console.error(bad + " flag(s) did not read back as \"" + want + "\" (the registry needs that literal string)."); process.exit(1); }
+          JS
+
+      # The backend reads flags at startup; a variable write alone changes nothing
+      # until the process restarts.
+      - name: Restart the backend
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+          for i in $(seq 1 60); do
+            st=$(railway deployment list --service "$SERVICE" --environment "$ENVIRONMENT" \
+                   --project "$PROJECT" --limit 5 --json 2>/dev/null \
+                 | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log((r[0]&&r[0].status)||"")}catch{console.log("")}})')
+            echo "  attempt $i: ${st:-unknown}"
+            case "$st" in
+              SUCCESS) echo "  backend deployment is live"; break ;;
+              FAILED|CRASHED|REMOVED) echo "::error::deployment ended $st - roll back by re-running with disable=true"; exit 1 ;;
+            esac
+            sleep 15
+          done
+
+      # End to end: the process must actually have restarted, and (for the route
+      # that prompted this) a gated admin route must now be REGISTERED - 401/403
+      # from RBAC, not Gin's 404.
+      - name: Confirm the restart and probe a gated route
+        run: |
+          set -uo pipefail
+          before=$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync("build-before.json","utf8")).started_at||"")}catch{console.log("")}')
+          after=""
+          for i in $(seq 1 20); do
+            after=$(curl -s -m 20 "$BACKEND_URL/api/v1/public/build" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{console.log(JSON.parse(d).started_at||"")}catch{console.log("")}})')
+            echo "  attempt $i: started_at=${after:-unreachable}"
+            [ -n "$after" ] && [ "$after" != "$before" ] && break
+            sleep 15
+          done
+          if [ -z "$after" ] || [ "$after" = "$before" ]; then
+            echo "::error::backend did not restart (started_at unchanged or unreachable)"; exit 1
+          fi
+          if [ "$DISABLE" != "true" ] && grep -qx FEATURE_KYC_VERIFY_ENABLED flags.txt; then
+            code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$BACKEND_URL/api/finance/admin/kyc/review-queue")
+            echo "  GET /api/finance/admin/kyc/review-queue -> $code (404 = still unregistered)"
+            [ "$code" = "404" ] && { echo "::error::KYC admin routes still not registered"; exit 1; }
+          fi
+          echo "  backend restarted"

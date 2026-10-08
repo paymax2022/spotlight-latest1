@@ -6,7 +6,7 @@ package healthpharmacy
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 )
 
@@ -55,7 +55,7 @@ func TestOpenReviewCase_ForwardsOrderContext(t *testing.T) {
 
 // An opener failure is audited (nil-safe) and swallowed — the paid order stands.
 func TestOpenReviewCase_ErrorDoesNotPanicOrPropagate(t *testing.T) {
-	rec := &recordingOpener{err: fmt.Errorf("review store down")}
+	rec := &recordingOpener{err: errors.New("review store down")}
 	s := &Service{}
 	s.SetReviewCaseOpener(rec)
 	s.openReviewCase(context.Background(), "patient-1", "order-1", "prov-1", nil, true)

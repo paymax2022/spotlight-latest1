@@ -1,9 +1,7 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Mock unless explicitly disabled — matches the app-wide convention used by
-// every other module ((X ?? 'true') !== 'false'). The env var name is the
-// singular EXPO_PUBLIC_EVENT_USE_MOCK, matching .env / .env.example; the old
 // plural EXPO_PUBLIC_EVENTS_USE_MOCK never matched the configured flag, so the
 // toggle silently did nothing and the module always hit the live backend.
 export const USE_MOCK =
@@ -32,7 +30,6 @@ export const EventColors = {
   border:     Colors.outlineVariant,
 } as const;
 
-// ── Compliance copy (NL-3 closed-loop value only) ────────────────────────────
 // Surfaced verbatim on the event-wallet top-up / withdraw screens.
 export const EVENT_WALLET_DISCLOSURE =
   'Your event wallet is closed-loop: balance is spendable only with vendors inside ' +
@@ -70,7 +67,6 @@ export const EVENT_CATEGORIES = [
   { value: 'faith',    label: 'Faith' },
 ] as const;
 
-// ── Display-only cover art (backend has no cover image / banner color field) ─
 // Deterministic per-category (with an id-based color shade) so cards look
 // distinct without depending on any network-provided art asset.
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -108,7 +104,6 @@ export function eventBannerColor(id: string, category: string): string {
   return hashId(id) % 2 === 0 ? base : base + 'CC';
 }
 
-// ── Event state → badge label/color (real backend enum: DRAFT | SUBMITTED |
 // APPROVED | LIVE | CLOSED | SUSPENDED). Discovery only ever shows
 // non-draft/non-suspended events, but the map covers every state defensively.
 export const EVENT_STATE_BADGE: Record<string, { label: string; color: string; bg: string }> = {

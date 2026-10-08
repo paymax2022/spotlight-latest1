@@ -1,6 +1,6 @@
 import { View } from 'react-native';
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { useCartSync } from '@/features/food/useCartSync';
 import ModuleTabBar from '@/components/ModuleTabBar';
 import { FOOD_TABS } from '@/constants/moduleTabs';

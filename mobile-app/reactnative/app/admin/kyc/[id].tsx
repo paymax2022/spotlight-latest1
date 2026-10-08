@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — KYC case detail ─────────────────────────────────
 // Case detail (tier, risk flags, timestamps). If the role holds `kyc.review`,
 // surfaces Approve / Reject actions gated behind a required reason. On success
 // the backend may return a maker-checker pending state — we surface the result.
@@ -7,10 +6,10 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { AdminHeader, ListCard, DataRow, StatusPill, ReasonPrompt } from '@/features/admin/components';

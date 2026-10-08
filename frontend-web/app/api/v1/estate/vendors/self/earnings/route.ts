@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/estate/resident';
 
-// GET /api/v1/estate/vendors/self/earnings — the caller's vendor earnings in
+// The caller's vendor earnings in
 // their estate (Block 42). Resident-scoped: estate + vendor resolved
 // server-side (estate_vendors.user_id = caller). Amounts kobo.
 export async function GET(request: Request) {

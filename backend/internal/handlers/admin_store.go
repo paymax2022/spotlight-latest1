@@ -15,14 +15,10 @@ type AdminStore struct {
 // tradingOrdersSQL projects the two trading-order tables the admin console's
 // order views span — crypto (crypto_orders) and stocks (invest_orders) — onto a
 // single shape.
-//
 // There is NO single `orders` table for trading: public.orders belongs to the
 // restaurant module (customer_id / restaurant_id / total_kobo) and carries none
-// of the columns this console needs. Earlier revisions of this file queried
-// `orders.user_id` / `order_type` / `amount_kobo`, so every read that touched it
-// failed with `column "amount_kobo" does not exist` and the endpoint returned
-// 500 unconditionally.
-//
+// of the columns this console needs — querying it here 500s with
+// `column "amount_kobo" does not exist`.
 // status is normalised onto the admin console's AdminOrderStatus union —
 // Filled | PartiallyFilled | Processing | Pending | Failed | Reversed |
 // ComplianceHold (mobile-app/reactnative/src/features/admin/types/admin.types.ts).
@@ -30,23 +26,19 @@ type AdminStore struct {
 // exact strings, so an unmapped value renders a blank status pill, and its
 // failed/pending KPI tiles compare against 'Failed'/'Reversed' and
 // 'Pending'/'Processing' literally.
-//
 // The two sources disagree: crypto_orders stores lower-case (pending/filled/
 // failed) while invest_orders stores the 18-state invest.OrderStatus machine in
 // CamelCase. invest is the wider vocabulary and the client union is modelled on
 // it, so crypto is mapped UP and invest's extra in-flight and terminal states
 // are folded onto the nearest union member. Anything unrecognised falls back to
 // 'Processing' rather than leaking a raw value the client cannot style.
-//
 // amount: invest_orders carries both a requested notional (amount_kobo) and a
 // settled total (total_amount_kobo, 0 until fill), so report the total once it
 // exists and fall back to the request before then.
-//
 // side is lower-cased to match the console's OrderSide ('buy' | 'sell'). Both
 // tables already store lower-case, but invest_orders has no CHECK constraint on
 // the column, and OrderRow renders anything that is not exactly 'buy' as "Sell"
 // — so a stray 'Buy' would silently mislabel the trade direction.
-//
 // symbol comes from a LEFT JOIN for crypto (crypto_orders keys an asset_id, not
 // a symbol) and straight off the column for stocks. LEFT, not INNER: an order
 // whose asset row was removed must still appear in an admin list rather than
@@ -109,12 +101,12 @@ func NewAdminStore(db *pgxpool.Pool) *AdminStore {
 
 // DashboardStats represents high-level platform metrics.
 type DashboardStats struct {
-	TotalUsers     int64 `json:"totalUsers"`
-	KYCPending     int64 `json:"kycPending"`
-	ActiveOrders   int64 `json:"activeOrders"`
-	TotalVolume    int64 `json:"totalVolume"`
-	AvgOrderValue  int64 `json:"avgOrderValue"`
-	FailedTxns     int64 `json:"failedTransactions"`
+	TotalUsers    int64 `json:"totalUsers"`
+	KYCPending    int64 `json:"kycPending"`
+	ActiveOrders  int64 `json:"activeOrders"`
+	TotalVolume   int64 `json:"totalVolume"`
+	AvgOrderValue int64 `json:"avgOrderValue"`
+	FailedTxns    int64 `json:"failedTransactions"`
 }
 
 // GetDashboardStats retrieves platform-wide aggregates.
@@ -161,21 +153,16 @@ type User struct {
 
 // ListUsers retrieves paginated user list.
 func (s *AdminStore) ListUsers(ctx context.Context, limit int, offset int) ([]User, int64, error) {
-	// Get total count
 	var total int64
 	err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM platform_users`).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
-
-	// Get paginated results.
-	//
 	// Reads platform_users, not auth.users: this pool runs as service_role,
 	// which Supabase never grants access to the auth schema, and
 	// platform_users.id mirrors auth.users.id 1:1. Every projected column is
 	// COALESCE'd: email and status are both nullable in principle, and a NULL
 	// scanned into a string field is a hard error.
-	//
 	// NULLS LAST is kept defensively even though platform_users.created_at is
 	// NOT NULL — Postgres sorts NULLs FIRST on DESC, and a future nullable
 	// column here should not silently push unknown-date rows to page 1.
@@ -216,18 +203,17 @@ func (s *AdminStore) ListUsers(ctx context.Context, limit int, offset int) ([]Us
 
 // KYCEntry represents a KYC verification queue entry.
 type KYCEntry struct {
-	ID       string `json:"id"`
-	UserID   string `json:"userId"`
-	Email    string `json:"email"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Tier     int    `json:"tier"`
-	Document string `json:"document"`
+	ID          string `json:"id"`
+	UserID      string `json:"userId"`
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Tier        int    `json:"tier"`
+	Document    string `json:"document"`
 	SubmittedAt string `json:"submittedAt"`
 }
 
 // GetKYCQueue retrieves pending KYC verifications.
-//
 // NOTE: only 'pending' can ever match — user_profiles_kyc_status_check permits
 // unverified/pending/verified/failed/suspended, so the 'submitted' arm below is
 // dead. It is kept because the same pair appears in GetDashboardStats and the two
@@ -376,15 +362,15 @@ func (s *AdminStore) ListWithdrawals(ctx context.Context) ([]Withdrawal, error) 
 
 // AuditLog represents a single audit event.
 type AuditLog struct {
-	ID           string `json:"id"`
-	UserID       string `json:"userId"`
-	Action       string `json:"action"`
-	Module       string `json:"module"`
-	ResourceID   string `json:"resourceId"`
-	OldValues    map[string]interface{} `json:"oldValues"`
-	NewValues    map[string]interface{} `json:"newValues"`
-	Timestamp    string `json:"timestamp"`
-	Severity     string `json:"severity"`
+	ID         string         `json:"id"`
+	UserID     string         `json:"userId"`
+	Action     string         `json:"action"`
+	Module     string         `json:"module"`
+	ResourceID string         `json:"resourceId"`
+	OldValues  map[string]any `json:"oldValues"`
+	NewValues  map[string]any `json:"newValues"`
+	Timestamp  string         `json:"timestamp"`
+	Severity   string         `json:"severity"`
 }
 
 // ListAuditLogs retrieves recent audit events.

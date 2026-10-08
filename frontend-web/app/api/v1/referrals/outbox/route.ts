@@ -1,5 +1,5 @@
 /**
- * POST /api/v1/referrals/outbox/process
+ * POST /api/v1/referrals/outbox
  *
  * Drains pending `referral.triggered` events from bridge_outbox and processes
  * each one — resolving the share code, preventing self-referral, and crediting

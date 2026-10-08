@@ -2,36 +2,41 @@
 // registry behind a single provider-agnostic port, BusinessRegistryProvider. The
 // domain (internal/business) depends ONLY on this port — no CAC HTTP/DTO detail
 // ever leaks into the money-path service (iron rule: no vendor SDK in domain logic).
-//
 // Two concrete implementations are provided:
 //   - httpProvider    — a real HTTP client reading base URL + credentials from config
 //     (Bearer api key + HMAC consumer secret). The exact CAC VAS
 //     request/response field mapping is behind accredited-only docs,
 //     so every wire mapping is marked TODO(cac-vas) to confirm
 //     against https://vas.cac.gov.ng accredited documentation.
-//   - sandboxProvider — a deterministic stub used when credentials are absent, so
-//     dev/CI stay offline-functional. NEVER used when creds are set.
+//   - sandboxProvider — a deterministic stub used when credentials are absent AND
+//     Config.AllowSandbox is true, so dev/CI stay offline-functional. NEVER used
+//     when creds are set.
+//   - disabledProvider — fail-closed stub selected when credentials are absent and
+//     AllowSandbox is false (production). Every call returns ErrUnavailable so a
+//     misconfigured prod deployment can never fabricate "verified" CAC identities
+//     that satisfy the merchant-upgrade gate.
 //
 // New(cfg) picks the implementation: httpProvider when a base URL AND api key are
-// configured, else sandboxProvider.
+// configured; else sandboxProvider when AllowSandbox; else disabledProvider.
+
 package cac
 
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/go-common/timeutil"
 	"strings"
 	"time"
 )
-
-// ── Domain models (provider-agnostic; NOT CAC DTOs) ──────────────────────────
 
 // Availability is the result of a proposed-name search.
 type Availability struct {
@@ -124,16 +129,30 @@ type BusinessRegistryProvider interface {
 	Name() string
 }
 
+// ErrUnavailable is returned by disabledProvider on every call — CAC credentials
+// are absent and the sandbox fallback is not allowed (production). Callers should
+// map it to 503 Service Unavailable: a missing integration is a deployment
+// misconfiguration, NOT a license to fabricate registry answers.
+var ErrUnavailable = errors.New("cac: provider not configured")
+
 // Config is the config-driven construction input (mirrors sibling provider creds).
 type Config struct {
 	BaseURL        string // CAC VAS API root, e.g. https://vas.cac.gov.ng/api
 	APIKey         string // Bearer / consumer key
 	ConsumerSecret string // HMAC signing secret (request signature)
 	Timeout        time.Duration
+	// AllowSandbox permits the deterministic sandbox fallback when BaseURL/APIKey
+	// are absent. MUST be false in production: the sandbox fabricates "verified"
+	// entities and SBX-* refs, and a fabricated verification satisfies the
+	// merchant-upgrade gate (business.Service.HasVerifiedBusiness). The zero value
+	// fails closed — a caller that forgets gets disabledProvider, not sandbox.
+	AllowSandbox bool
 }
 
-// New returns the HTTP provider when a base URL AND api key are configured,
-// otherwise the deterministic sandbox provider (offline dev/CI).
+// New returns the HTTP provider when a base URL AND api key are configured;
+// otherwise the deterministic sandbox provider when AllowSandbox is set
+// (offline dev/CI); otherwise the fail-closed disabledProvider (production with
+// missing credentials).
 func New(cfg Config) BusinessRegistryProvider {
 	if strings.TrimSpace(cfg.BaseURL) != "" && strings.TrimSpace(cfg.APIKey) != "" {
 		to := cfg.Timeout
@@ -147,10 +166,12 @@ func New(cfg Config) BusinessRegistryProvider {
 			httpClient:     &http.Client{Timeout: to},
 		}
 	}
-	return &sandboxProvider{}
+	if cfg.AllowSandbox {
+		return &sandboxProvider{}
+	}
+	log.Println("[cac] WARN: CAC_VAS_BASE_URL/CAC_VAS_API_KEY unset and sandbox fallback disallowed — provider DISABLED (fail-closed); verify/name-reserve/registration return 503 until credentials are configured")
+	return &disabledProvider{}
 }
-
-// ── HTTP provider ────────────────────────────────────────────────────────────
 
 type httpProvider struct {
 	baseURL        string
@@ -209,9 +230,9 @@ func (c *httpProvider) ReserveName(ctx context.Context, proposedName string, app
 		return Reservation{}, err
 	}
 	if data.Ref == "" {
-		return Reservation{}, fmt.Errorf("cac: reserve name: empty reservation reference")
+		return Reservation{}, errors.New("cac: reserve name: empty reservation reference")
 	}
-	exp := parseTime(data.ExpiresAt)
+	exp, _ := timeutil.ParseTime(data.ExpiresAt)
 	if exp.IsZero() {
 		exp = time.Now().Add(60 * 24 * time.Hour) // CAC availability codes are long-lived; refresh on confirm
 	}
@@ -256,9 +277,9 @@ func (c *httpProvider) SubmitRegistration(ctx context.Context, req RegistrationR
 		return Submission{}, err
 	}
 	if data.Ref == "" {
-		return Submission{}, fmt.Errorf("cac: submit registration: empty registration reference")
+		return Submission{}, errors.New("cac: submit registration: empty registration reference")
 	}
-	state := firstNonEmpty(data.State, data.Status, "submitted")
+	state := strutil.FirstNonBlank(data.State, data.Status, "submitted")
 	return Submission{Ref: data.Ref, Status: normalizeState(state)}, nil
 }
 
@@ -280,7 +301,7 @@ func (c *httpProvider) GetRegistrationStatus(ctx context.Context, ref string) (R
 		RCOrBNNumber:   data.RCOrBNNumber,
 		RegisteredName: data.Name,
 		Reason:         data.Reason,
-		CertificateURL: firstNonEmpty(data.CertificateURL, data.CertificateAlt),
+		CertificateURL: strutil.FirstNonBlank(data.CertificateURL, data.CertificateAlt),
 	}, nil
 }
 
@@ -303,17 +324,15 @@ func (c *httpProvider) VerifyEntity(ctx context.Context, rcOrBnNumber string) (E
 	if err := c.get(ctx, "/entities/"+rcOrBnNumber, &data); err != nil {
 		return EntityVerification{}, err
 	}
-	name := firstNonEmpty(data.CompanyName, data.BusinessName)
+	name := strutil.FirstNonBlank(data.CompanyName, data.BusinessName)
 	return EntityVerification{
 		Found:        name != "" || data.RCNumber != "",
 		Name:         name,
 		Status:       data.Status,
-		Type:         firstNonEmpty(data.Type, data.Classified),
+		Type:         strutil.FirstNonBlank(data.Type, data.Classified),
 		RegisteredAt: data.RegisteredAt,
 	}, nil
 }
-
-// ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 func (c *httpProvider) post(ctx context.Context, path string, body, dst any) error {
 	b, err := json.Marshal(body)
@@ -345,9 +364,7 @@ func (c *httpProvider) get(ctx context.Context, path string, dst any) error {
 func (c *httpProvider) sign(req *http.Request, body []byte) {
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	if c.consumerSecret != "" {
-		mac := hmac.New(sha256.New, []byte(c.consumerSecret))
-		mac.Write(body)
-		req.Header.Set("X-CAC-Signature", hex.EncodeToString(mac.Sum(nil)))
+		req.Header.Set("X-Cac-Signature", cryptox.HMACSHA256Hex(c.consumerSecret, string(body)))
 	}
 }
 
@@ -373,7 +390,7 @@ func (c *httpProvider) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("cac: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("cac: read response: %w", err)
@@ -389,9 +406,9 @@ func (c *httpProvider) do(req *http.Request, dst any) error {
 	if err := json.Unmarshal(b, &env); err != nil {
 		return fmt.Errorf("cac: decode envelope (%d): %w", resp.StatusCode, err)
 	}
-	ok := env.Success || env.StatusCode == 200 || strings.EqualFold(env.Status, "OK")
+	ok := env.Success || env.StatusCode == http.StatusOK || strings.EqualFold(env.Status, "OK")
 	if !ok {
-		msg := firstNonEmpty(env.Message, env.Status)
+		msg := strutil.FirstNonBlank(env.Message, env.Status)
 		if msg == "" {
 			msg = fmt.Sprintf("status %d", firstNonZero(env.StatusCode, resp.StatusCode))
 		}
@@ -422,13 +439,8 @@ func (c *httpProvider) VerifyWebhookSignature(payload []byte, signature string) 
 	if c.consumerSecret == "" || signature == "" {
 		return false
 	}
-	mac := hmac.New(sha512.New, []byte(c.consumerSecret))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
+	return cryptox.VerifyHMACSHA512(c.consumerSecret, payload, signature)
 }
-
-// ── shared normalizers ───────────────────────────────────────────────────────
 
 func normalizeState(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -451,23 +463,127 @@ func normalizeState(s string) string {
 	}
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
+// sandboxProvider is a deterministic, offline stub used when CAC credentials are
+// absent AND Config.AllowSandbox is set, so dev/CI stay functional without the
+// accredited VAS gateway (production passes AllowSandbox=false → disabledProvider).
+// Its outputs
+// are a pure function of the inputs — the SAME name always resolves the same way,
+// and a derived ref is stable — so tests are reproducible. It NEVER performs I/O and
+// NEVER panics. It is NOT used when real credentials are configured (see New).
+type sandboxProvider struct{}
+
+func (s *sandboxProvider) Name() string { return "cac-sandbox" }
+
+// CheckNameAvailability marks names containing common blocked tokens as taken/
+// restricted and everything else available, deterministically.
+func (s *sandboxProvider) CheckNameAvailability(ctx context.Context, proposedName, lineOfBusiness string) (Availability, error) {
+	name := strings.ToLower(strings.TrimSpace(proposedName))
+	if name == "" {
+		return Availability{Available: false, Status: "review", Reason: "empty name"}, nil
+	}
+	for _, restricted := range []string{"federal", "national", "government", "cbn", "central bank"} {
+		if strings.Contains(name, restricted) {
+			return Availability{Available: false, Status: "restricted", Reason: "contains a restricted term: " + restricted}, nil
 		}
 	}
-	return ""
+	// Deterministic "already taken" bucket: ~1 in 4 names by hash parity.
+	if hashByte(name)%4 == 0 {
+		return Availability{
+			Available:   false,
+			Status:      "taken",
+			Reason:      "a similar name already exists",
+			Suggestions: []string{proposedName + " Ventures", proposedName + " Global", proposedName + " NG"},
+		}, nil
+	}
+	return Availability{Available: true, Status: "available"}, nil
 }
 
-func parseTime(s string) time.Time {
-	if s == "" {
-		return time.Time{}
+func (s *sandboxProvider) ReserveName(ctx context.Context, proposedName string, applicant Applicant) (Reservation, error) {
+	ref := "SBX-RSV-" + shortHash(proposedName+applicant.Email)
+	return Reservation{Ref: ref, ExpiresAt: time.Now().Add(60 * 24 * time.Hour)}, nil
+}
+
+func (s *sandboxProvider) SubmitRegistration(ctx context.Context, req RegistrationRequest) (Submission, error) {
+	ref := "SBX-REG-" + shortHash(req.ProposedName+req.ReservationRef)
+	// Sandbox accepts into review; a subsequent GetRegistrationStatus resolves it.
+	return Submission{Ref: ref, Status: "under_review"}, nil
+}
+
+func (s *sandboxProvider) GetRegistrationStatus(ctx context.Context, ref string) (RegistrationStatus, error) {
+	// Deterministic terminal outcome so a poll eventually resolves. Refs whose hash
+	// is divisible by 7 "reject"; everything else registers with a derived number.
+	if hashByte(ref)%7 == 0 {
+		return RegistrationStatus{State: "rejected", Reason: "sandbox: name conflict on final review"}, nil
 	}
-	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t
-		}
+	num := "BN" + fmt.Sprintf("%07d", int(hashByte(ref))<<12|int(hashByte(ref+"x")))
+	return RegistrationStatus{
+		State:          "registered",
+		RCOrBNNumber:   num[:9],
+		CertificateURL: "https://sandbox.vas.cac.gov.ng/certificates/" + num[:9] + ".pdf",
+	}, nil
+}
+
+func (s *sandboxProvider) VerifyEntity(ctx context.Context, rcOrBnNumber string) (EntityVerification, error) {
+	num := strings.ToUpper(strings.TrimSpace(rcOrBnNumber))
+	if num == "" {
+		return EntityVerification{Found: false}, nil
 	}
-	return time.Time{}
+	// Deterministic "not found" bucket so the verify path exercises both branches.
+	if hashByte(num)%5 == 0 {
+		return EntityVerification{Found: false}, nil
+	}
+	typ := "business_name"
+	if strings.HasPrefix(num, "RC") {
+		typ = "company"
+	}
+	return EntityVerification{
+		Found:        true,
+		Name:         "Sandbox Enterprises " + shortHash(num),
+		Status:       "active",
+		Type:         typ,
+		RegisteredAt: "2020-01-15",
+	}, nil
+}
+
+// disabledProvider fails closed: it is selected when CAC credentials are absent
+// and the sandbox fallback is not allowed (production). Every port method returns
+// ErrUnavailable — the handler maps that to 503. The sandbox fabricates terminal
+// "verified" identities, so production must NEVER answer registry calls with
+// fabricated data; an unconfigured rail is unavailable, not imaginary.
+type disabledProvider struct{}
+
+// ProviderNameDisabled is the disabledProvider.Name() value; surfaced in startup
+// logs and persisted verification_source so a disabled write path (should one
+// ever exist) remains distinguishable.
+const ProviderNameDisabled = "cac-disabled"
+
+func (d *disabledProvider) Name() string { return ProviderNameDisabled }
+
+func (d *disabledProvider) CheckNameAvailability(ctx context.Context, proposedName, lineOfBusiness string) (Availability, error) {
+	return Availability{}, ErrUnavailable
+}
+
+func (d *disabledProvider) ReserveName(ctx context.Context, proposedName string, applicant Applicant) (Reservation, error) {
+	return Reservation{}, ErrUnavailable
+}
+
+func (d *disabledProvider) SubmitRegistration(ctx context.Context, req RegistrationRequest) (Submission, error) {
+	return Submission{}, ErrUnavailable
+}
+
+func (d *disabledProvider) GetRegistrationStatus(ctx context.Context, ref string) (RegistrationStatus, error) {
+	return RegistrationStatus{}, ErrUnavailable
+}
+
+func (d *disabledProvider) VerifyEntity(ctx context.Context, rcOrBnNumber string) (EntityVerification, error) {
+	return EntityVerification{}, ErrUnavailable
+}
+
+func hashByte(s string) byte {
+	h := sha256.Sum256([]byte(s))
+	return h[0]
+}
+
+func shortHash(s string) string {
+	return strings.ToUpper(cryptox.SHA256Hex(s)[:8])
 }

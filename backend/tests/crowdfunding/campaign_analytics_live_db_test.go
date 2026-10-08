@@ -1,34 +1,22 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for creator campaign analytics.
-//
 // WHY THIS EXISTS
-// ---------------
 // GetCampaignAnalytics used to INVENT the headline numbers on the creator
 // performance screen:
-//
-//	views  := 1200 + idSeed(campaignID)%8000 + contributorCount*40
-//	shares := 40 + idSeed(campaignID)%400
-//
 // with the traffic-source breakdown a fixed 38/27/18/11/6 % split of that
 // invented view count. Because the figures shifted when contributors changed,
 // they read as real. They are now aggregated from cf_campaign_events.
-//
 // This test pins the properties that make them real, and would fail against the
 // old implementation: a campaign with NO recorded events must report zero (the
 // hash version reported >= 1200 views), and a contribution must be attributed
 // to the channel of the contributor's LAST view before giving.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -72,7 +60,6 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 
 // seedCampaign creates a creator and a campaign, and returns their ids plus a
 // trackUser hook for any additional user the test creates (e.g. a contributor).
-//
 // Everything is namespaced by a fresh uuid and removed on cleanup, so the test is
 // safe to re-run and cannot disturb existing data. Cleanup deletes in FK-safe
 // order — events and contributions reference the campaign, and contributions
@@ -101,7 +88,7 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 
 	t.Cleanup(func() {
 		mustExec := func(what, sql string, args ...any) {
-			if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			if _, err := pool.Exec(context.WithoutCancel(ctx), sql, args...); err != nil {
 				t.Errorf("cleanup %s: %v (fixture rows may be left in the database)", what, err)
 			}
 		}
@@ -115,7 +102,7 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 
 		// Prove the fixture is actually gone rather than trusting the DELETEs.
 		var left int
-		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM campaigns WHERE id = $1`, campaignID).Scan(&left); err == nil && left != 0 {
+		if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT COUNT(*) FROM campaigns WHERE id = $1`, campaignID).Scan(&left); err == nil && left != 0 {
 			t.Errorf("fixture campaign %s survived cleanup", campaignID)
 		}
 	})
@@ -130,10 +117,10 @@ func TestLiveDB_AnalyticsAreZeroWithoutEvents(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 
-	campaignID, _, _ := seedCampaign(t, ctx, pool)
+	campaignID, creatorID, _ := seedCampaign(t, ctx, pool)
 	svc := creator.NewService(pool)
 
-	a, err := svc.GetCampaignAnalytics(ctx, campaignID)
+	a, err := svc.GetCampaignAnalytics(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}
@@ -157,7 +144,7 @@ func TestLiveDB_AnalyticsCountRecordedEvents(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 
-	campaignID, _, _ := seedCampaign(t, ctx, pool)
+	campaignID, creatorID, _ := seedCampaign(t, ctx, pool)
 
 	for _, ev := range []struct{ typ, src string }{
 		{"VIEW", "whatsapp"}, {"VIEW", "whatsapp"}, {"VIEW", "facebook"},
@@ -170,7 +157,7 @@ func TestLiveDB_AnalyticsCountRecordedEvents(t *testing.T) {
 		}
 	}
 
-	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID)
+	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}
@@ -197,7 +184,7 @@ func TestLiveDB_ContributionAttributedToLastTouch(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 
-	campaignID, _, trackUser := seedCampaign(t, ctx, pool)
+	campaignID, creatorID, trackUser := seedCampaign(t, ctx, pool)
 	contributorID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO auth.users (id, email, aud, role)
@@ -229,7 +216,7 @@ func TestLiveDB_ContributionAttributedToLastTouch(t *testing.T) {
 		t.Fatalf("insert contribution: %v", err)
 	}
 
-	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID)
+	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}

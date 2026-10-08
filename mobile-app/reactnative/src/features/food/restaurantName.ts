@@ -1,10 +1,7 @@
-// ── Restaurant & Delivery — naming a cart section ────────────────────────────
-//
 // Checkout groups the cart's packages by restaurantId, but the store keeps only
 // ONE `restaurantName` (the first restaurant added), so every other group
 // rendered as "Restaurant 2", "Restaurant 3"… — a positional placeholder shown
 // to a customer about to pay, next to real food and real prices.
-//
 // Lives outside cartStore.ts because that module pulls in zustand, react-native
 // and AsyncStorage, none of which resolve under `node --test`. Types-only here,
 // same reasoning as normalize.ts.

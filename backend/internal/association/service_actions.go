@@ -42,7 +42,6 @@ func (s *Service) primaryMembership(ctx context.Context, userID string) (members
 // membershipForObject resolves the caller's membership in the organisation that
 // OWNS the given object, rather than whichever organisation happens to be their
 // primary one.
-//
 // The member-write endpoints below (announcement ack, meeting RSVP/check-in,
 // document ack, committee join, event RSVP/register/feedback) previously
 // resolved the caller's own primary membership and then wrote a join row keyed
@@ -50,7 +49,6 @@ func (s *Service) primaryMembership(ctx context.Context, userID string) (members
 // that organisation. A member of org A could therefore RSVP to, check into and
 // issue themselves a ticket for org B's meetings and events, and inflate
 // another organisation's attendance counts.
-//
 // `table` is always an internal constant, never user input. Returns ErrForbidden
 // when the caller holds no usable membership in the owning org (fail-closed),
 // which is also the correct answer for a non-existent object id — existence is
@@ -71,8 +69,6 @@ func (s *Service) membershipForObject(ctx context.Context, userID, table, object
 	}
 	return membershipID, orgID, nil
 }
-
-// ─── Engagement ───────────────────────────────────────────────────────────────
 
 func (s *Service) AcknowledgeAnnouncement(ctx context.Context, userID, announcementID string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_announcements", announcementID)
@@ -100,8 +96,6 @@ func (s *Service) MarkNotificationsRead(ctx context.Context, userID string) erro
 	}
 	return nil
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 func (s *Service) RsvpMeeting(ctx context.Context, userID, meetingID, status string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_meetings", meetingID)
@@ -135,8 +129,6 @@ func (s *Service) CheckInMeeting(ctx context.Context, userID, meetingID string) 
 	return nil
 }
 
-// ─── Tasks ────────────────────────────────────────────────────────────────────
-
 func (s *Service) UpdateTaskStatus(ctx context.Context, userID, taskID, status string) error {
 	const q = `
 		UPDATE assoc_tasks SET status = $3
@@ -150,8 +142,6 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, userID, taskID, status s
 	}
 	return nil
 }
-
-// ─── Documents ────────────────────────────────────────────────────────────────
 
 func (s *Service) AcknowledgeDocument(ctx context.Context, userID, documentID string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_documents", documentID)
@@ -167,8 +157,6 @@ func (s *Service) AcknowledgeDocument(ctx context.Context, userID, documentID st
 	return nil
 }
 
-// ─── Committees ───────────────────────────────────────────────────────────────
-
 // RequestJoinCommittee creates a PENDING committee-member row and audit-logs
 // the request. Idempotent (ON CONFLICT DO NOTHING).
 func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID string) error {
@@ -180,7 +168,7 @@ func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `
 		INSERT INTO assoc_committee_members (committee_id, membership_id, status)
@@ -194,8 +182,6 @@ func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID 
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Events ───────────────────────────────────────────────────────────────────
 
 func (s *Service) RsvpEvent(ctx context.Context, userID, eventID, rsvp string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_events", eventID)
@@ -213,7 +199,6 @@ func (s *Service) RsvpEvent(ctx context.Context, userID, eventID, rsvp string) e
 }
 
 // RegisterEvent registers the caller for an event. Idempotent.
-//
 // A PAID event now raises an invoice instead of issuing a free ticket:
 // assoc_events.paid / fee_kobo were read and rendered by three query paths but
 // nothing ever charged them, so every "paid" event handed out tickets for free.
@@ -243,7 +228,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 			return nil, fmt.Errorf("association: event capacity: %w", err)
 		}
 		if taken >= *capacity {
-			return nil, fmt.Errorf("association: event is full")
+			return nil, errors.New("association: event is full")
 		}
 	}
 
@@ -255,7 +240,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if !paid || feeKobo <= 0 {
 		if _, err := tx.Exec(ctx, `
@@ -346,8 +331,6 @@ func (s *Service) SubmitEventFeedback(ctx context.Context, userID, eventID strin
 	return nil
 }
 
-// ─── Admin: offline payments ──────────────────────────────────────────────────
-
 // DecideOfflinePayment approves or rejects an offline payment submission.
 // Approval posts a balanced double-entry: DR provider_clearing → CR settlement.
 // Requires Idempotency-Key for the approve path (iron rule: fail-closed).
@@ -373,7 +356,7 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var invoiceID string
 	var amountKobo int64
@@ -389,12 +372,10 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 		// ledger failure (or a crash in that window) left a durably PAID invoice
 		// with no ledger entries and no compensating path — and the error surfaced
 		// to the admin was indistinguishable from "nothing happened".
-		//
 		// PostJournal is idempotent on IdempotencyKey, so the reverse order is
 		// safe under retry: a replay posts nothing new and the bookkeeping below
 		// converges. Rolling back the tx on a ledger error now leaves no trace,
 		// which is the correct fail-closed outcome.
-		//
 		// Double-entry: DR provider_clearing (external cash received) → CR settlement.
 		clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 		if err != nil {
@@ -461,8 +442,6 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	return tx.Commit(ctx)
 }
 
-// ─── Admin: member lifecycle ──────────────────────────────────────────────────
-
 func (s *Service) SuspendMember(ctx context.Context, adminID, memberID, reason string) error {
 	return s.memberStatusAction(ctx, adminID, memberID, "SUSPENDED", "MEMBER_SUSPEND", map[string]any{"reason": reason})
 }
@@ -485,7 +464,7 @@ func (s *Service) memberStatusAction(ctx context.Context, adminID, memberID, sta
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_memberships SET status=$2 WHERE id=$1`, memberID, status); err != nil {
 		return fmt.Errorf("association: member status: %w", err)
 	}
@@ -508,7 +487,7 @@ func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		UPDATE assoc_memberships
 		SET chapter_id = (
@@ -545,7 +524,7 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `INSERT INTO assoc_member_roles (id, membership_id, role, granted_by) VALUES ($1,$2,$3,$4)
 		           ON CONFLICT (membership_id, role) DO UPDATE SET granted_by=EXCLUDED.granted_by, granted_at=now()`
 	if _, err := tx.Exec(ctx, q, uuid.New().String(), memberID, role, adminID); err != nil {
@@ -556,8 +535,6 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Admin: bulk import ───────────────────────────────────────────────────────
 
 // BulkImportRow is one record from the CSV (header row is skipped).
 // Required: email. Optional: name, phone, member_code, category_label, chapter_label.
@@ -596,12 +573,12 @@ func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, 
 	if err != nil {
 		return 0, fmt.Errorf("association: import: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	count := 0
 	for {
 		rec, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

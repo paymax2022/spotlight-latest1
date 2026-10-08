@@ -1,15 +1,10 @@
-// ── Multi-outlet (multi-restaurant) selection ────────────────────────────────
-//
 // Spotlight is multi-restaurant on the server: `restaurants.owner_id` is 1:N, the
-// owner queue joins on it (`ListOrders` role=restaurant spans every owned store),
 // and 61 owners in the live data already run 2–3 outlets.
-//
 // The owner console was not. Manage Store read `stores.data?.[0]` — the FIRST
 // store — so an owner with three outlets could see, price and edit the menu of
 // exactly one of them, and had no way to reach the others. This module is the
 // selection rule that fixes that, kept pure so it can be tested under
 // `node --test`.
-//
 // The rule matters more than it looks: the console mutates real things (menu
 // prices, packaging fee, open/closed). Picking the wrong outlet silently edits
 // the wrong shop.

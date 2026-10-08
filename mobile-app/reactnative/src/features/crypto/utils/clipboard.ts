@@ -1,4 +1,3 @@
-// ── Paymax Invest · Crypto — clipboard helper ────────────────────────────────
 // expo-clipboard is not a project dependency, so we feature-detect it at runtime
 // and fall back to the native Share sheet (mirrors the fx helper). Works today
 // and "just works" if expo-clipboard is added later.

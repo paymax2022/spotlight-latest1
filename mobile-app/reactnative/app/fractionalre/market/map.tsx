@@ -3,10 +3,10 @@ import { View, Text, NativeModules, Pressable, ScrollView, StyleSheet } from 're
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MapPin, List } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useOfferings } from '@/features/fractionalre/hooks';
@@ -55,7 +55,6 @@ export default function MarketMap() {
         </View>
       ) : (
         // Native map build present — render a simple placeholder hookpoint.
-        // (Full MapLibre wiring deferred; the realtor MapView component can be
         //  dropped in here when this module ships against a native build.)
         <View style={styles.nativeStub}>
           <StateView kind="empty" icon="Map" title="Map ready" message="Native map module detected. Pins render in a native build." />

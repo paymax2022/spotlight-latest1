@@ -9,14 +9,11 @@ import (
 )
 
 // Committee RBAC has two tiers, and the split is the whole point:
-//
 //	LIFECYCLE (create / rename / delete)          -> ManageCommittees -> owner
 //	ROSTER    (add / approve / remove / set role) -> ManageMembers
-//
 // All six used to sit behind ManageMembers, so a CHAPTER_ADMIN could delete any
 // committee in the organisation — and DeleteCommittee drops every
 // assoc_committee_members row with it.
-//
 // These call the real service against a live database rather than transcribing
 // capabilitiesFor(), so they fail if the gate drifts rather than agreeing with a
 // stale copy of it. Gated on TEST_DATABASE_URL like the rest of the suite.
@@ -105,7 +102,6 @@ func TestCommitteeRoster_ChapterAdminKeepsIt_LiveDB(t *testing.T) {
 	if err := svc.RemoveCommitteeMember(ctx, chapterAdmin, committeeID, membershipID); err != nil {
 		t.Fatalf("chapter admin RemoveCommitteeMember: %v", err)
 	}
-	// ...but does not own the committee itself.
 	if err := svc.DeleteCommittee(ctx, chapterAdmin, committeeID); !errors.Is(err, association.ErrForbidden) {
 		t.Fatalf("chapter admin DeleteCommittee err = %v, want ErrForbidden", err)
 	}

@@ -1,14 +1,11 @@
 package restaurantpayout_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for the merchant earnings read (slice 4): GetMerchantEarnings
 // summarizes a restaurant owner's food-delivery earnings — pending (settled
 // provider shares not yet paid out) vs paid-out (net of PAID runs). It must be
 // owner-scoped and move a settlement's amount from `pending` to `paid` after a
 // payout run is processed.
-//
 // Reuses the payout test's seed helpers. Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

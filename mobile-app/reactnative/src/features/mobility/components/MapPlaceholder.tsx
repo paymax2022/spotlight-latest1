@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ViewStyle, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MapPin, Navigation } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { LatLng } from '../types/mobility.types';
 
 interface Props {
@@ -57,7 +57,6 @@ export default function MapPlaceholder({
     [hasCoords, pickup, dropoff, driver, route],
   );
 
-  // Web: react-native-web renders intrinsic DOM elements, so we mount the exact
   // same Leaflet document in a real <iframe> — a genuine interactive OSM map
   // (pan, tiles, pickup/drop-off markers, route) instead of the decorative grid.
   if (hasCoords && Platform.OS === 'web') {
@@ -146,9 +145,7 @@ export default function MapPlaceholder({
   );
 }
 
-// ── Leaflet (OSM raster) HTML for the WebView fallback ─────────────────────────
 // Self-contained document: pulls Leaflet from a CDN and OSM tiles at runtime.
-// Markers use the brand colours; the route is the [lng,lat] polyline from the
 // tracking hook (flipped to Leaflet's [lat,lng]). No API key — OSM tiles only.
 function buildLeafletHtml(opts: {
   pickup?: LatLng | null;

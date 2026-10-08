@@ -1,4 +1,3 @@
-// ── Admin — Paymax Social Pay (P2P / Split / Pools) ops console types ─────────
 // Field names mirror the Go JSON (snake_case) from /api/social/admin/*.
 // Money is BIGINT kobo (minor units) throughout.
 // Invariants surfaced in the UI: NL-8 (money is a ledger), NL-10 (KYC gates &
@@ -8,7 +7,6 @@ export type DisputeStatus = 'open' | 'investigating' | 'resolved' | 'rejected' |
 export type ReversalStatus = 'pending' | 'reversed' | 'rejected';
 export type CashtagStatus = 'active' | 'reserved' | 'flagged' | 'suspended' | 'verified';
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 export interface SocialDashboardActivity {
   id: string;
   kind: string; // p2p_send | split_settled | pool_payout | reversal | limit_breach | dispute_opened …
@@ -39,7 +37,6 @@ export interface SocialDashboard {
   activity: SocialDashboardActivity[];
 }
 
-// ── Velocity / AML limits config (NL-10) ─────────────────────────────────────
 export interface VelocityLimit {
   id: string;
   scope: 'tier1' | 'tier2' | 'tier3' | 'global';
@@ -62,7 +59,6 @@ export interface UpdateLimitsResult {
   message: string;
 }
 
-// ── Reversal tooling ─────────────────────────────────────────────────────────
 export interface ReversalRecord {
   id: string;
   txn_ref: string;
@@ -83,7 +79,6 @@ export interface ReverseTxnResult {
   message: string;
 }
 
-// ── Disputes (request / payment) ─────────────────────────────────────────────
 export interface SocialDispute {
   id: string;
   kind: 'payment' | 'request' | 'split' | 'pool';
@@ -97,7 +92,6 @@ export interface SocialDispute {
   updated_at: string;
 }
 
-// ── Cashtag directory (handle abuse / impersonation review) ───────────────────
 export interface CashtagRecord {
   id: string;
   handle: string;          // @handle

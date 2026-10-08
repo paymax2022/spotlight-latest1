@@ -2,12 +2,11 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { View, Platform, StyleSheet } from 'react-native';
 import { House, Send, Wallet, Target, Megaphone } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 // Earn-hub 5-tab nav (PRD §5): Home (earnings) · Invite · Earnings/Rewards ·
-// Missions · Campaigns. Home is built here as a minimal root; the other four are
 // placeholder roots that RM2/RM3 replace.
 function TabIcon({
   icon: Icon,

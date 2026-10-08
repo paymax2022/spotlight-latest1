@@ -1,7 +1,6 @@
 // Package exam is the Spotlight Academy exam-arena + CBT sub-package: national exam
 // arenas, CBT blueprints, UTME subject-combination rules, and the guarded,
 // server-authoritative CBT attempt engine.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech exam-arena.md, state-machines.md §2):
 //   - Guarded CBT attempt state machine. The attempt lifecycle (created→started→
 //     paused→submitted→scored→reviewed) only accepts listed transitions; illegal
@@ -19,8 +18,6 @@
 package exam
 
 import "time"
-
-// ── Exam attempt lifecycle ─────────────────────────────────────────────────────
 
 // AttemptState mirrors academy_attempts.state CHECK.
 type AttemptState string
@@ -44,8 +41,6 @@ func validAttemptState(s AttemptState) bool {
 	}
 }
 
-// ── Exam arena (academy_exam_arenas) ───────────────────────────────────────────
-
 // ArenaStatus mirrors academy_exam_arenas.status CHECK.
 type ArenaStatus string
 
@@ -66,8 +61,6 @@ type Arena struct {
 	CountdownAt  *time.Time     `json:"countdown_at,omitempty"`
 	Status       ArenaStatus    `json:"status"`
 }
-
-// ── CBT blueprint (academy_cbt_blueprints) ──────────────────────────────────────
 
 // BlueprintVariant mirrors academy_cbt_blueprints.variant CHECK.
 type BlueprintVariant string
@@ -97,13 +90,11 @@ type CBTBlueprint struct {
 	TotalItems   int              `json:"total_items"`
 	TotalSeconds int              `json:"total_seconds"` // server timer budget
 	Navigation   map[string]any   `json:"navigation"`    // jsonb
-	Tools        map[string]any   `json:"tools"`         // jsonb (calculator/none)
+	Tools        map[string]any   `json:"tools"`
 	Shuffle      bool             `json:"shuffle"`
 	PausePolicy  PausePolicy      `json:"pause_policy"`
 	Status       string           `json:"status"`
 }
-
-// ── Subject-combination rule (academy_subject_combination_rules) ────────────────
 
 // SubjectCombinationRule maps an intended course → required subject set + guidance.
 type SubjectCombinationRule struct {
@@ -113,8 +104,6 @@ type SubjectCombinationRule struct {
 	RequiredSubjects []string `json:"required_subjects"`
 	Guidance         *string  `json:"guidance,omitempty"`
 }
-
-// ── Attempt (academy_attempts) ──────────────────────────────────────────────────
 
 // Attempt is one academy_attempts row.
 type Attempt struct {
@@ -127,7 +116,7 @@ type Attempt struct {
 	ServerDeadline *time.Time     `json:"server_deadline,omitempty"` // server-authoritative
 	PausedAt       *time.Time     `json:"paused_at,omitempty"`
 	SubmittedAt    *time.Time     `json:"submitted_at,omitempty"`
-	Score          map[string]any `json:"score"` // jsonb; per-subject + overall
+	Score          map[string]any `json:"score"`
 	Readiness      *float64       `json:"readiness,omitempty"`
 	Predicted      map[string]any `json:"predicted"` // jsonb
 	Integrity      map[string]any `json:"integrity"` // jsonb; anti-cheat signals (logged, not punitive)
@@ -135,8 +124,6 @@ type Attempt struct {
 	IdempotencyKey *string        `json:"idempotency_key,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`
 }
-
-// ── Response (academy_responses) ────────────────────────────────────────────────
 
 // Response is one academy_responses row. Immutable once the attempt is submitted.
 type Response struct {
@@ -159,8 +146,6 @@ type ServedQuestion struct {
 	SubjectID   *string `json:"subject_id,omitempty"`
 	ObjectiveID *string `json:"objective_id,omitempty"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // BeginAttemptRequest — member POST /exam/attempts.
 type BeginAttemptRequest struct {
@@ -237,8 +222,6 @@ type CombinationRequest struct {
 	RequiredSubjects []string `json:"required_subjects,omitempty"`
 	Guidance         *string  `json:"guidance,omitempty"`
 }
-
-// ── Result DTOs ─────────────────────────────────────────────────────────────────
 
 // SubjectScore is the per-subject scoring breakdown.
 type SubjectScore struct {

@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Modal
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Zap, HandCoins, Wallet, CreditCard, Banknote, Check, MapPin, LocateFixed, Pencil, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityMap from '@/features/mobility/components/MobilityMap';
@@ -14,13 +14,15 @@ import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import ServiceTypeCard from '@/features/mobility/components/ServiceTypeCard';
 import FareOfferSheet from '@/features/mobility/components/FareOfferSheet';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
-import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
+import { errKind } from '@/features/mobility/utils/errKind';
+import type { SelectedAddress } from '@/components/AddressAutocompleteInput';
+import AddressField from '@/features/mobility/components/AddressField';
 import { useRideEstimate, useRideRequest, useRideSettings } from '@/features/mobility/hooks/useMobility';
 import * as mobAPI from '@/features/mobility/api/mobility.api';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import { SERVICE_TYPES, RIDE_NEGOTIATION_ENABLED } from '@/features/mobility/constants/mobility.constants';
-import { toMobilityError, isNoDriverError, isFareBoundError, fareBoundMessage, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { toMobilityError, isNoDriverError, isFareBoundError, fareBoundMessage, formatNairaWhole, newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import type { ServiceType, PricingMode, PaymentMethod, Place, RideEstimate, Trip } from '@/features/mobility/types/mobility.types';
 
 // Only used when location permission is denied or expo-location is unavailable —
@@ -47,7 +49,6 @@ export default function EstimateScreen() {
   }));
   const [editingDest, setEditingDest] = useState(false);
 
-  // Pickup can be set explicitly on the mobility home ("Current location"); when
   // passed it takes precedence over GPS auto-detect below.
   const pickupFromParams: Place | null = useMemo(
     () =>
@@ -84,7 +85,6 @@ export default function EstimateScreen() {
     setDefaultPaymentApplied(true);
   }, [defaultPaymentApplied, rideSettings.data]);
 
-  // Pickup: explicit "Current location" from the planner if present, else real
   // device location (GPS + reverse geocode) with graceful fallback.
   const [pickup, setPickup] = useState<Place>(pickupFromParams ?? FALLBACK_PICKUP);
   const [pickupResolved, setPickupResolved] = useState(Boolean(pickupFromParams));
@@ -108,6 +108,15 @@ export default function EstimateScreen() {
   const [failedServiceTypes, setFailedServiceTypes] = useState<Set<ServiceType>>(new Set());
   // Shared wallet/card chooser — gates the wallet debit exactly like carhire/bus.
   const pay = usePurchasePayment<Trip>();
+  // Card runs through a genuinely separate, server-initiated Paystack rail
+  // (transport/paystackcheckout) — NOT usePurchasePayment's built-in
+  // no wallet debit ever occurs, so this works even without KYC. Only
+  // instant pricing is supported (see initiateRidePaystack's doc comment).
+  const paystackCheckout = useGatewayCheckout();
+  const [paystackError, setPaystackError] = useState('');
+  useEffect(() => {
+    if (paystackCheckout.error) setPaystackError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
 
   // On mount, try to capture the device's current location as the pickup.
   // When GPS is unavailable or denied, do NOT silently keep the fallback
@@ -137,15 +146,15 @@ export default function EstimateScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onPickupConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setPickup({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng, label: 'Pickup' });
+  const onPickupConfirmed = useCallback((addr: SelectedAddress) => {
+    setPickup({ address: addr.label, lat: addr.lat, lng: addr.lng, label: 'Pickup' });
     setPickupResolved(true);
     setPickupIsManual(true); // rider stated this pickup — not GPS
     setEditingPickup(false);
   }, []);
 
-  const onDestConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setDest({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng });
+  const onDestConfirmed = useCallback((addr: SelectedAddress) => {
+    setDest({ address: addr.label, lat: addr.lat, lng: addr.lng });
     setEditingDest(false);
   }, []);
 
@@ -223,8 +232,15 @@ export default function EstimateScreen() {
       );
       return;
     }
+    setPaystackError('');
     // Wallet / card → shared PaymentSheet (PIN + KYC/tier gating live inside it),
     // mirroring the carhire & bus flows. The ride request runs as the charge.
+    // Card on an INSTANT fare routes through onCard (the genuinely separate,
+    // no-KYC Paystack rail) instead of the sheet's built-in wallet-top-up
+    // card handling — see paystackCheckout above. Offer-mode fares can still
+    // change after booking (fare negotiation), which the Paystack rail does
+    // not support (see initiateRidePaystack's doc comment), so a card
+    // payment in offer mode keeps using the sheet's built-in rail.
     pay.start({
       amountKobo: pricingMode === 'offer' ? (offerKobo || selectedEst.systemFareKobo) : selectedEst.systemFareKobo,
       title: pricingMode === 'offer' ? 'Confirm your fare offer' : 'Pay for your ride',
@@ -241,6 +257,28 @@ export default function EstimateScreen() {
         }
       },
       onPaid: onRideCreated,
+      ...(pricingMode === 'instant'
+        ? {
+            onCard: async () => {
+              await paystackCheckout.start({
+                domain: 'ride',
+                initialize: async () => {
+                  const r = await mobAPI.initiateRidePaystack({
+                    pickup,
+                    dest,
+                    serviceType,
+                    idempotencyKey: newIdempotencyKey('ride-paystack'),
+                  });
+                  if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+                  return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+                },
+                onResolved: (res) => {
+                  router.replace(`/mobility/paystack/${encodeURIComponent(res.reference)}` as never);
+                },
+              });
+            },
+          }
+        : {}),
     });
   };
 
@@ -251,7 +289,7 @@ export default function EstimateScreen() {
       <ScreenHeader title="Confirm your ride" />
 
       {fareError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => estimate.mutate({ pickup, dest, serviceType })} />
+        <MobilityEdgeState kind={errKind(estimate.error)} actionLabel="Retry" onAction={() => estimate.mutate({ pickup, dest, serviceType })} />
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -403,6 +441,7 @@ export default function EstimateScreen() {
             {submitError && pricingMode === 'instant' && (
               <Text style={styles.submitError}>{submitError}</Text>
             )}
+            {paystackError && <Text style={styles.submitError}>{paystackError}</Text>}
           </ScrollView>
 
           {/* CTA */}
@@ -429,6 +468,8 @@ export default function EstimateScreen() {
 
       {/* Shared wallet/card chooser — drives the ride-request charge above. */}
       <PaymentSheet controller={pay} />
+      {/* Hosts the in-app Paystack checkout for the instant-fare card rail. */}
+      <paystackCheckout.Sheet />
 
       {/* Edit pickup: autocomplete + confirm-on-map pin (Nigeria address rule). */}
       <Modal visible={editingPickup} animationType="slide" onRequestClose={() => setEditingPickup(false)}>
@@ -440,17 +481,18 @@ export default function EstimateScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry
-              surface="checkout"
-              initialCenter={{ lat: pickup.lat, lng: pickup.lng }}
-              initialQuery={pickupResolved ? pickup.address : ''}
-              onConfirmed={onPickupConfirmed}
+            <AddressField
+              initial={pickupResolved ? pickup.address : ''}
+              near={{ lat: pickup.lat, lng: pickup.lng }}
+              placeholder="Enter pickup address"
+              onSelect={onPickupConfirmed}
+              currentLocation
             />
           </ScrollView>
         </SafeAreaView>
       </Modal>
 
-      {/* Edit destination: same autocomplete + confirm-on-map pin. */}
+      {/* Edit destination: same autocomplete. */}
       <Modal visible={editingDest} animationType="slide" onRequestClose={() => setEditingDest(false)}>
         <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
           <View style={styles.modalHeader}>
@@ -460,11 +502,11 @@ export default function EstimateScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry
-              surface="checkout"
-              initialCenter={{ lat: dest.lat, lng: dest.lng }}
-              initialQuery={dest.address}
-              onConfirmed={onDestConfirmed}
+            <AddressField
+              initial={dest.address}
+              near={{ lat: dest.lat, lng: dest.lng }}
+              placeholder="Enter destination"
+              onSelect={onDestConfirmed}
             />
           </ScrollView>
         </SafeAreaView>

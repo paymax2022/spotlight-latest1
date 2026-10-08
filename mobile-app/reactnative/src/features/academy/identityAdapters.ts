@@ -1,6 +1,4 @@
-// ── Academy identity adapters (Go /me aggregate → mobile AcademyProfile) ─────
 // The Go identity API returns a nested aggregate
-// ({user_id, roles[], profiles[], guardian_links[], guarded_by[]}); the mobile
 // screens code against a flat AcademyProfile. Pure so it is unit-testable.
 
 import type { AcademyProfile, AcademyRole, KycTier, GuardianConsentState } from './types';

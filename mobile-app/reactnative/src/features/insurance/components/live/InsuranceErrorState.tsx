@@ -1,4 +1,3 @@
-// ── Insurance (live) — real error states ────────────────────────────────────
 // The module used to fall back to fixtures whenever a call failed, so a broken
 // backend looked like a working product. It no longer does: a failure is shown,
 // named, and retryable. This component turns a normalised `InsuranceError` into
@@ -7,10 +6,10 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { CloudOff, Lock, ServerCrash, TriangleAlert, WifiOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import type { InsuranceError } from '../../live/types';

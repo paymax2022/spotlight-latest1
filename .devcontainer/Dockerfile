@@ -1,7 +1,7 @@
 # Dev-container base. Go + Node are layered by devcontainer features; here we add
 # the CLIs the build/migrate/deploy loop needs: psql, make, jq, and the supabase
 # CLI (migrations live in supabase/migrations). Keep this lean and pinned.
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 ARG SUPABASE_CLI_VERSION=2.20.5
 
@@ -40,5 +40,6 @@ RUN arch="$(dpkg --print-architecture)" \
 # ── trivy DS-0026 ("No HEALTHCHECK defined") — also not applicable here ────────
 # Nothing ever orchestrates or polls this image for liveness; it's opened
 # interactively by VS Code / Codespaces on a developer's own machine, not run
-# as a service. A HEALTHCHECK would have no consumer.
-# trivy:ignore:DS-0026
+# as a service. A HEALTHCHECK would have no consumer. Suppressed via the
+# repo-root .trivyignore (DS-0026) — like DS-0002 it reports at file scope,
+# so an inline `# trivy:ignore:DS-0026` here has no effect under trivy 0.70.

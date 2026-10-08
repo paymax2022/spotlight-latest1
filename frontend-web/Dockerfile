@@ -1,12 +1,12 @@
 # Production image for Railway. The standalone Next.js output removes the
 # complete build dependency tree from the runtime image and keeps Node pinned
 # to the project's CI major version.
-FROM node:20-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-FROM node:20-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 # next.config.mjs reads GO_BACKEND_URL in rewrites(), which Next evaluates at
 # BUILD time and bakes into the routes manifest. A Docker build does NOT inherit
@@ -33,7 +33,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:26-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -51,4 +51,11 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 # high port, so nothing here needs privilege.
 USER node
 EXPOSE 8080
+
+# Container-level liveness only (the process accepts connections) — no
+# dedicated /healthz route exists, so this hits the root. node:20-alpine
+# ships wget via busybox; no extra install needed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3000}/" || exit 1
+
 CMD ["node", "server.js"]

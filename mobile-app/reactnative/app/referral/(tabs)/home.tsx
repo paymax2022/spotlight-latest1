@@ -5,12 +5,13 @@ import { router } from 'expo-router';
 import {
   ChevronRight, Share2, QrCode, Users, UserCheck, Trophy, ArrowUpRight, Wallet, Clock, TrendingUp, Activity,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { ReferralHeader, DisclosureCard, EarnStatePill } from '@/features/referral/components';
+import { RemoteBanner } from '@/features/media/banners';
 import { ReferralColors, COMPLIANT_EARN_SHORT } from '@/features/referral/constants/referral.constants';
 import { formatNaira } from '@/features/referral/constants/format';
 import { useDashboard, useActivity } from '@/features/referral/home/hooks';
@@ -39,6 +40,8 @@ export default function ReferralHome() {
       ) : (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <DisclosureCard tone="compliant" title="How you earn" body={COMPLIANT_EARN_SHORT} />
+
+          <RemoteBanner slug="refer-earn" priority />
 
           {/* Eligible balance hero */}
           <View style={styles.hero}>

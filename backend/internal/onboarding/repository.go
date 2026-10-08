@@ -19,8 +19,6 @@ type Repository struct{ db *pgxpool.Pool }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// ─── Modules ─────────────────────────────────────────────────────────────────
-
 func (r *Repository) ListOpenModules(ctx context.Context) ([]Module, error) {
 	const q = `
 		SELECT m.id, m.slug, m.name, COALESCE(m.description,''), COALESCE(m.icon,''),
@@ -72,8 +70,6 @@ func (r *Repository) InsertModule(ctx context.Context, req CreateModuleRequest) 
 		req.Icon, req.IconColor, req.BgColor, status)
 	return err
 }
-
-// ─── Merchant types ──────────────────────────────────────────────────────────
 
 func (r *Repository) ListMerchantTypes(ctx context.Context, moduleID string) ([]MerchantType, error) {
 	const q = `
@@ -164,8 +160,6 @@ func (r *Repository) InsertMerchantType(ctx context.Context, req CreateMerchantT
 	return err
 }
 
-// ─── Form schemas ────────────────────────────────────────────────────────────
-
 func (r *Repository) GetFormSchema(ctx context.Context, id string) (*FormSchema, error) {
 	const q = `SELECT id, merchant_type_id, version, status, steps FROM onb_form_schema WHERE id = $1`
 	return r.scanFormSchema(r.db.QueryRow(ctx, q, id))
@@ -223,8 +217,6 @@ func (r *Repository) InsertFormSchema(ctx context.Context, fs FormSchema) error 
 	return nil
 }
 
-// ─── Applications ────────────────────────────────────────────────────────────
-
 const appSelect = `
 	SELECT a.id, a.user_id, a.merchant_type_id, t.name, t.module_id, m.name,
 	       COALESCE(a.form_schema_id,''), COALESCE(a.form_schema_version,0), a.status,
@@ -247,7 +239,7 @@ func (r *Repository) scanApplication(row pgx.Row) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.Data = map[string]interface{}{}
+	a.Data = map[string]any{}
 	if len(data) > 0 {
 		_ = json.Unmarshal(data, &a.Data)
 	}
@@ -282,7 +274,7 @@ func (r *Repository) HasActiveApplicationOrProfile(ctx context.Context, userID, 
 	return exists, err
 }
 
-func (r *Repository) InsertApplication(ctx context.Context, userID, merchantTypeID string, data map[string]interface{}) (string, error) {
+func (r *Repository) InsertApplication(ctx context.Context, userID, merchantTypeID string, data map[string]any) (string, error) {
 	raw, _ := json.Marshal(data)
 	if len(raw) == 0 {
 		raw = []byte("{}")
@@ -295,7 +287,7 @@ func (r *Repository) InsertApplication(ctx context.Context, userID, merchantType
 	return id, err
 }
 
-func (r *Repository) UpdateDraftData(ctx context.Context, id, userID string, data map[string]interface{}) (int64, error) {
+func (r *Repository) UpdateDraftData(ctx context.Context, id, userID string, data map[string]any) (int64, error) {
 	raw, _ := json.Marshal(data)
 	if len(raw) == 0 {
 		raw = []byte("{}")
@@ -384,7 +376,6 @@ func (r *Repository) ReviewQueue(ctx context.Context, moduleID, typeID, status s
 	if maxAgeHours > 0 {
 		q += " AND a.submitted_at >= $" + strconv.Itoa(i)
 		args = append(args, time.Now().Add(-time.Duration(maxAgeHours)*time.Hour))
-		i++
 	}
 	q += " ORDER BY a.submitted_at ASC NULLS LAST, a.created_at ASC LIMIT 200"
 	rows, err := r.db.Query(ctx, q, args...)
@@ -402,8 +393,6 @@ func (r *Repository) ReviewQueue(ctx context.Context, moduleID, typeID, status s
 	}
 	return out, rows.Err()
 }
-
-// ─── Merchant profiles ───────────────────────────────────────────────────────
 
 func (r *Repository) ListMerchantProfiles(ctx context.Context, userID string) ([]MerchantProfile, error) {
 	const q = `
@@ -451,4 +440,62 @@ func (r *Repository) ListActiveApplications(ctx context.Context, userID string) 
 		out = append(out, *a)
 	}
 	return out, rows.Err()
+}
+
+// grantRole idempotently assigns the role identified by slug to the user at global
+// scope by inserting into the existing public.user_roles table. A retry is a no-op
+// thanks to the table's UNIQUE(user_id, role_id, scope_type, scope_id) constraint.
+// Returns false if the role slug is unknown.
+func (r *Repository) grantRole(ctx context.Context, userID, roleSlug string) (bool, error) {
+	var roleID string
+	err := r.db.QueryRow(ctx,
+		`SELECT id FROM public.roles WHERE slug = $1 AND is_active = true`, roleSlug).Scan(&roleID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	const q = `
+		INSERT INTO public.user_roles (user_id, role_id, scope_type, scope_id, is_active)
+		VALUES ($1, $2, 'global', NULL, true)
+		ON CONFLICT (user_id, role_id, scope_type, scope_id)
+		DO UPDATE SET is_active = true, updated_at = NOW()`
+	_, err = r.db.Exec(ctx, q, userID, roleID)
+	return true, err
+}
+
+// activateProfile idempotently creates (or re-activates) the merchant profile for an
+// approved application. The UNIQUE(user_id, merchant_type_id) constraint makes retries
+// safe. Returns the profile id.
+func (r *Repository) activateProfile(ctx context.Context, userID, moduleID, merchantTypeID, applicationID, roleSlug, workspaceRoute string) (string, error) {
+	const q = `
+		INSERT INTO onb_merchant_profile
+			(user_id, module_id, merchant_type_id, application_id, role_granted, status, workspace_route, activated_at)
+		VALUES ($1,$2,$3,$4,$5,'ACTIVE',$6, NOW())
+		ON CONFLICT (user_id, merchant_type_id)
+		DO UPDATE SET status = 'ACTIVE',
+		              application_id = EXCLUDED.application_id,
+		              role_granted = EXCLUDED.role_granted,
+		              workspace_route = EXCLUDED.workspace_route,
+		              activated_at = COALESCE(onb_merchant_profile.activated_at, NOW()),
+		              updated_at = NOW()
+		RETURNING id`
+	var id string
+	err := r.db.QueryRow(ctx, q, userID, moduleID, merchantTypeID, applicationID, roleSlug, workspaceRoute).Scan(&id)
+	return id, err
+}
+
+// writeAudit appends an immutable entry to the existing public.audit_logs table.
+func (r *Repository) writeAudit(ctx context.Context, actorUserID, targetUserID, action, resourceID string, newValues any) error {
+	var nv []byte
+	if newValues != nil {
+		nv, _ = json.Marshal(newValues)
+	}
+	const q = `
+		INSERT INTO public.audit_logs
+			(actor_user_id, target_user_id, action, module, resource_type, resource_id, new_values, severity)
+		VALUES ($1, NULLIF($2,'')::uuid, $3, 'onboarding', 'onboarding_application', $4, $5, 'info')`
+	_, err := r.db.Exec(ctx, q, nullUUID(actorUserID), targetUserID, action, resourceID, nv)
+	return err
 }

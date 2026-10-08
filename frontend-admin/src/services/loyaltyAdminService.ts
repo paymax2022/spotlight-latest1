@@ -1,4 +1,3 @@
-// ── Admin — Paymax Loyalty (Points, Tiers, Catalog) control-plane service ──────
 // Mock by default (mirrors stays / savings / events admin services). Flip with
 // NEXT_PUBLIC_LOYALTY_USE_MOCK=false to hit the live Go backend at /api/loyalty/admin/*.
 // RBAC: loyalty.admin.* gates wired on the sidebar.
@@ -29,10 +28,7 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK)
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_LOYALTY_USE_MOCK';
 
 // Verified against backend/internal/app/top5_p2_routes.go RegisterLoyalty:
-//   RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin"), pool, rbac)
 // — the admin group really is rooted at /api/loyalty/admin.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin')`,
 // which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
 // it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
 // stopped matching, the replace was a no-op, and every live call went to the
@@ -42,10 +38,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -75,7 +68,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helpers ──────────────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -88,13 +80,11 @@ export function formatPoints(points: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard — points liability + tier distribution
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: LoyaltyDashboard = {
   points_outstanding: 482_400_000,
   points_liability_kobo: 241_200_000_00,     // 482.4m pts × ₦0.50 redemption value
-  points_redemption_value_kobo: 50,          // ₦0.50 per point = 50 kobo
+  points_redemption_value_kobo: 50,
   points_earned_30d: 64_200_000,
   points_redeemed_30d: 38_700_000,
   points_expiring_30d: 12_400_000,
@@ -128,9 +118,7 @@ export async function getLoyaltyDashboard(): Promise<LoyaltyDashboard> {
   return getJson<LoyaltyDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Earn rules — by action/module, versioned
-// ════════════════════════════════════════════════════════════════════════════
 const EARN_RULES: EarnRule[] = [
   { id: 'er_tickets', module: 'tickets', action: 'ticket_purchase', points_per_naira: 0.02, flat_points: 0, cap_points_per_day: 100_000, status: 'active', config_version: 4, updated_at: iso(0.5) },
   { id: 'er_payments', module: 'payments', action: 'bill_payment', points_per_naira: 0.01, flat_points: 0, cap_points_per_day: 50_000, status: 'active', config_version: 2, updated_at: dateStr(12) },
@@ -162,9 +150,7 @@ export async function updateEarnRule(id: string, patch: EarnRuleUpdate): Promise
   return sendJson<EarnRuleResult>('PATCH', `/earn-rules/${id}`, patch);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Tiers — thresholds + benefits config
-// ════════════════════════════════════════════════════════════════════════════
 const TIERS: TierConfig[] = [
   { id: 'tier_1', name: 'Tier 1', rank: 1, threshold_points: 0, members: 142_800, benefits: ['Standard earn rate', 'Access to catalog'], earn_multiplier: 1.0, status: 'active', config_version: 2, updated_at: dateStr(60) },
   { id: 'tier_2', name: 'Tier 2', rank: 2, threshold_points: 250_000, members: 34_100, benefits: ['1.25× earn multiplier', 'Priority support', 'Early ticket access'], earn_multiplier: 1.25, status: 'active', config_version: 3, updated_at: iso(4) },
@@ -179,9 +165,7 @@ export async function updateTier(id: string, patch: TierUpdate): Promise<TierRes
   return sendJson<TierResult>('PATCH', `/tiers/${id}`, patch);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Rewards catalog — CRUD
-// ════════════════════════════════════════════════════════════════════════════
 const CATALOG: CatalogItem[] = [
   { id: 'cat_air500', name: '₦500 Airtime', kind: 'airtime', cost_points: 1_000, cash_value_kobo: 500_00, stock: -1, redeemed: 18_420, status: 'active', updated_at: dateStr(30) },
   { id: 'cat_dstv', name: 'DStv Compact Bill Credit', kind: 'bill_credit', cost_points: 19_000, cash_value_kobo: 9_500_00, stock: -1, redeemed: 2_140, status: 'active', updated_at: iso(7) },
@@ -217,9 +201,7 @@ export async function upsertCatalogItem(item: CatalogUpsert): Promise<CatalogRes
   return sendJson<CatalogResult>(item.id ? 'PATCH' : 'POST', item.id ? `/catalog/${item.id}` : '/catalog', item);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Redemptions log + fraud
-// ════════════════════════════════════════════════════════════════════════════
 const REDEMPTIONS: RedemptionRecord[] = [
   { id: 'rdm_9001', member_masked: 'Chioma A•••', item_name: '₦2,000 Airtime', kind: 'airtime', cost_points: 4_000, cash_value_kobo: 2_000_00, status: 'flagged', fraud_flag: true, fraud_reason: 'Velocity: 8 redemptions in 10 minutes', created_at: iso(0.4) },
   { id: 'rdm_8990', member_masked: 'Tunde B•••', item_name: 'DStv Compact Bill Credit', kind: 'bill_credit', cost_points: 19_000, cash_value_kobo: 9_500_00, status: 'completed', fraud_flag: false, fraud_reason: null, created_at: iso(1.1) },
@@ -248,9 +230,7 @@ export async function listRedemptions(opts?: { status?: string; kind?: string; f
   return getJson<RedemptionRecord[]>(`/redemptions${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Liability + expiry dashboard (NL-4)
-// ════════════════════════════════════════════════════════════════════════════
 const LIABILITY: PointsLiability = {
   generated_at: iso(0.2),
   points_outstanding: 482_400_000,

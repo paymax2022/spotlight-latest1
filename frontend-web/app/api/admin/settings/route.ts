@@ -1,4 +1,4 @@
-import { handleApiError, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getAdminSettings, updateAdminSettings } from '@/src/server/admin/settings';
@@ -15,7 +15,8 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'roles:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const oldSettings = getAdminSettings();
     const settings = updateAdminSettings(body || {});
 

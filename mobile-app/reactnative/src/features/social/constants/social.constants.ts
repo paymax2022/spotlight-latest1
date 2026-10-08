@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Flip to false once live /api/v1/social endpoints are reachable
 // (or set EXPO_PUBLIC_SOCIAL_USE_MOCK=false). Mock-first convention.
@@ -29,7 +29,6 @@ export const SocialColors = {
   border:   Colors.outlineVariant,
 };
 
-// ── AML / KYC limit messaging (NL-10) ────────────────────────────────────────
 // Display-only mirror of backend-owned velocity limits. The server is the source
 // of truth; copy here keeps the UX honest about why a transfer may be blocked.
 export const AML_DAILY_LIMIT_KOBO = 50_000_000; // ₦500,000 Tier-2 daily ceiling

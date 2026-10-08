@@ -1,17 +1,13 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 4 API client ────────────────
 // Sections O (HMO/Insurance), P (Collaboration), Q (Follow-Up Care),
-// R (Emergency & Escalation). Phase A style: every function resolves demo data
 // so screens render without a live API. `DEMO_*` exports double as
 // `placeholderData` in useQuery. ADDITIVE to `@/api/doctor.api` and
 // `@/api/doctor.phase2.api` — earlier fns/exports are untouched.
-//
 // Emergency (Section R) content is DEMO + clearly NON-ACTIONABLE: no real
 // dialing, no real dispatch. See EMERGENCY_DISCLAIMER in the constants.
-//
 // TODO(Phase C): replace each body with the live endpoint and pass the
 //   Idempotency-Key header on every mutation below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   HmoPlanCoverage,
   PreAuthRequest,
@@ -88,9 +84,7 @@ const PATIENT_FATIMA = { id: 'pat-2', name: 'Fatima Bello',   initials: 'FB', av
 const PATIENT_CHIDI  = { id: 'pat-3', name: 'Chidi Okeke',    initials: 'CO', avatarColor: '#F59E0B',        age: 45, gender: 'male' as const };
 const PATIENT_NGOZI  = { id: 'pat-4', name: 'Ngozi Adeyemi',  initials: 'NA', avatarColor: Colors.teal,      age: 52, gender: 'female' as const };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section O — HMO / Insurance demo data
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_HMO_PLAN_COVERAGE: HmoPlanCoverage = {
   planId: 'plan-1', planName: 'Hygeia HMO — Silver', provider: 'Hygeia HMO',
@@ -169,9 +163,7 @@ export const DEMO_HMO_FRAUD_WARNINGS: HmoFraudWarning[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section P — Referral & Specialist Collaboration demo data
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_INCOMING_REFERRALS: IncomingReferral[] = [
   {
@@ -264,9 +256,7 @@ export const DEMO_SHARED_CASE_SUMMARY: SharedCaseSummary = {
   updatedAt: iso(1),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section Q — Follow-Up Care demo data
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_FOLLOW_UP_ELIGIBILITY: FollowUpEligibility = {
   patientId: 'pat-4', appointmentId: 'apt-4',
@@ -310,9 +300,7 @@ export const DEMO_ADHERENCE_CHECKS: MedicationAdherenceCheck[] = [
   { id: 'ad-2', patient: PATIENT_CHIDI, prescriptionRef: 'RX-7C1B88', drugSummary: 'Lisinopril 10mg OD', level: 'partial', missedDoses: 6, periodLabel: 'Last 30 days', recordedAt: iso(2), note: 'Reports forgetting weekend doses' },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section R — Emergency & Escalation demo data (NON-ACTIONABLE)
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_EMERGENCY_FACILITIES: EmergencyFacility[] = [
   { id: 'ef-1', kind: 'hospital',          name: 'Lagoon Emergency Centre',        distanceKm: 3.2,  etaMins: 12, contact: 'Demo line — not dialable', address: 'Ikoyi, Lagos',          open24h: true },
@@ -347,11 +335,8 @@ export const DEMO_EMERGENCY_CASE_RECORDS: EmergencyCaseRecord[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Read endpoints
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section O ──
 export async function getHmoPlanCoverage(patientId: string): Promise<HmoPlanCoverage> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_HMO_PLAN_COVERAGE);
   return doctorGet<HmoPlanCoverage>(`/hmo/coverage/${patientId}`);
@@ -385,7 +370,6 @@ export async function getHmoFraudWarnings(): Promise<HmoFraudWarning[]> {
   return doctorGet<HmoFraudWarning[]>('/hmo/fraud-warnings');
 }
 
-// ── Section P ──
 export async function getIncomingReferrals(status?: IncomingReferralStatus): Promise<IncomingReferral[]> {
   if (DOCTOR_USE_MOCK) {
     const list = status ? DEMO_INCOMING_REFERRALS.filter((r) => r.status === status) : DEMO_INCOMING_REFERRALS;
@@ -422,7 +406,6 @@ export async function getSharedCaseSummary(caseRef: string): Promise<SharedCaseS
   return doctorGet<SharedCaseSummary>(`/case-summaries/${caseRef}`);
 }
 
-// ── Section Q ──
 export async function getFollowUpEligibility(patientId: string, appointmentId?: string): Promise<FollowUpEligibility> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_FOLLOW_UP_ELIGIBILITY);
   return doctorGet<FollowUpEligibility>(`/patients/${patientId}/follow-up-eligibility`, { appointmentId });
@@ -448,7 +431,6 @@ export async function getAdherenceChecks(patientId?: string): Promise<Medication
   return doctorGet<MedicationAdherenceCheck[]>('/adherence-checks', { patientId });
 }
 
-// ── Section R ──
 export async function getEmergencyFacilities(kind?: EmergencyFacility['kind']): Promise<EmergencyFacility[]> {
   if (DOCTOR_USE_MOCK) {
     const list = kind ? DEMO_EMERGENCY_FACILITIES.filter((f) => f.kind === kind) : DEMO_EMERGENCY_FACILITIES;
@@ -477,11 +459,8 @@ export async function getEmergencyCaseRecord(id: string): Promise<EmergencyCaseR
   return doctorGet<EmergencyCaseRecord | undefined>(`/emergency/cases/${id}`);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Mutations
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section O ──
 export async function requestPreAuth(input: RequestPreAuthInput): Promise<RequestPreAuthResult> {
   if (DOCTOR_USE_MOCK) {
     void input.estimatedKobo;
@@ -507,7 +486,6 @@ export async function acknowledgeFraudWarning(input: AcknowledgeFraudWarningInpu
   return doctorPost<AcknowledgeFraudWarningResult>(`/hmo/fraud-warnings/${input.warningId}/ack`, input, input.idempotencyKey);
 }
 
-// ── Section P ──
 export async function acceptReferral(input: AcceptReferralInput): Promise<AcceptReferralResult> {
   if (DOCTOR_USE_MOCK) {
     void input.note;
@@ -545,7 +523,6 @@ export async function sendCareTeamMessage(input: SendCareTeamMessageInput): Prom
   return doctorPost<SendCareTeamMessageResult>(`/care-team/${input.threadId}/messages`, input, input.idempotencyKey);
 }
 
-// ── Section Q ──
 export async function setFollowUpReminder(input: SetFollowUpReminderInput): Promise<SetFollowUpReminderResult> {
   if (DOCTOR_USE_MOCK) return wait({ followUpId: input.followUpId, remindAt: input.remindAt }, 400);
   return doctorPost<SetFollowUpReminderResult>(`/follow-ups/${input.followUpId}/reminder`, input, input.idempotencyKey);
@@ -577,7 +554,6 @@ export async function saveCarePlan(input: SaveCarePlanInput): Promise<SaveCarePl
   return doctorPost<SaveCarePlanResult>('/care-plans', input, input.idempotencyKey);
 }
 
-// ── Section R (DEMO — non-actionable) ──
 export async function escalateToHospital(input: EscalateInput): Promise<EscalateResult> {
   if (DOCTOR_USE_MOCK) {
     // DEMO ONLY — no real dispatch.

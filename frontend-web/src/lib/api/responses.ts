@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import type { AdminListMeta } from '@/src/server/admin/query';
 
 export class ApiError extends Error {
@@ -48,6 +49,15 @@ export function handleApiError(error: unknown, fallbackMessage = 'Internal serve
 
   if (error instanceof Error && error.message === 'FORBIDDEN') {
     return errorResponse('Forbidden', 403);
+  }
+
+  // AUD-FE-006: this handler is the last chance to record an unexpected error
+  // before the route returns a bare 500 — report it, never swallow it.
+  console.error('[api] Unhandled route error:', error);
+  try {
+    Sentry.captureException(error);
+  } catch {
+    // Error reporting must never break the error response path.
   }
 
   return errorResponse(fallbackMessage, 500);

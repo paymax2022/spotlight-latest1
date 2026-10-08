@@ -13,14 +13,11 @@ import (
 )
 
 // DP-004 live-DB integration test for prescription refills.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate as the
 // FX / lab-amendment live-DB suites). Bring-up:
-//
 //	supabase start   # or any Postgres with the migrations applied
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/rx/ -run TestRefills_LiveDB
-//
 // It seeds a DISPENSED prescription (no POM items) with 2 refills authorized, then
 // dispenses refills: the first two succeed and increment refills_used, the third is
 // blocked with ErrRefillsExhausted — refills allowed within count, blocked after.

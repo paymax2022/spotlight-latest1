@@ -1,4 +1,3 @@
-// ── Pure name handling for account prefill ───────────────────────────────────
 // Kept free of React Native imports so it can be unit-tested under plain node
 // (the hook in ./identity pulls in the auth store, and with it Supabase).
 

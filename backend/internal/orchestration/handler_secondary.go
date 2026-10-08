@@ -4,15 +4,18 @@ package orchestration
 // rate alerts (backed by SecondaryStore / the orch_beneficiaries + orch_rate_alerts
 // tables). When h.sec is nil (no pool) they fall back to the previous stub
 // behaviour so the app still renders in a DB-less dev setup.
-//
 // These are NOT money-path: no ledger, no balances, no idempotency requirement.
-// Every query is scoped to customerID(c) for object-level authorization.
+// Every query is scoped to ginutil.UserID(c) for object-level authorization.
 
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/timeutil"
 )
 
 // beneficiaryDraft is the create/update payload from the mobile app.
@@ -35,8 +38,6 @@ func (d beneficiaryDraft) toBeneficiary(id string) Beneficiary {
 		Validated: true, Favorite: d.Favorite,
 	}
 }
-
-// ─── server-side input validation (fail-closed on malformed payloads) ─────────
 
 var fxCurrencies = map[string]bool{
 	"NGN": true, "USD": true, "EUR": true, "GBP": true, "GHS": true,
@@ -76,14 +77,12 @@ func validateBeneficiaryDraft(d beneficiaryDraft) *APIError {
 	return nil
 }
 
-// ─── Beneficiaries ────────────────────────────────────────────────────────────
-
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
 	if h.sec == nil {
 		c.JSON(http.StatusOK, gin.H{"data": []any{}})
 		return
 	}
-	list, err := h.sec.ListBeneficiaries(c.Request.Context(), customerID(c))
+	list, err := h.sec.ListBeneficiaries(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -103,11 +102,11 @@ func (h *Handler) CreateBeneficiary(c *gin.Context) {
 	}
 	b := d.toBeneficiary(stubID("ben"))
 	if h.sec == nil {
-		b.CreatedAt = nowISO()
+		b.CreatedAt = timeutil.RFC3339(time.Now())
 		c.JSON(http.StatusCreated, b)
 		return
 	}
-	created, err := h.sec.CreateBeneficiary(c.Request.Context(), customerID(c), b)
+	created, err := h.sec.CreateBeneficiary(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -153,11 +152,11 @@ func (h *Handler) UpdateBeneficiary(c *gin.Context) {
 	id := c.Param("id")
 	b := d.toBeneficiary(id)
 	if h.sec == nil {
-		b.CreatedAt = nowISO()
+		b.CreatedAt = timeutil.RFC3339(time.Now())
 		c.JSON(http.StatusOK, b)
 		return
 	}
-	updated, ok, err := h.sec.UpdateBeneficiary(c.Request.Context(), customerID(c), id, b)
+	updated, ok, err := h.sec.UpdateBeneficiary(c.Request.Context(), ginutil.UserID(c), id, b)
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -175,7 +174,7 @@ func (h *Handler) FavoriteBeneficiary(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	if h.sec != nil {
-		if err := h.sec.SetBeneficiaryFavorite(c.Request.Context(), customerID(c), c.Param("id"), body.Favorite); err != nil {
+		if err := h.sec.SetBeneficiaryFavorite(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Favorite); err != nil {
 			writeErr(c, asAPIError(err))
 			return
 		}
@@ -185,7 +184,7 @@ func (h *Handler) FavoriteBeneficiary(c *gin.Context) {
 
 func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 	if h.sec != nil {
-		if err := h.sec.DeleteBeneficiary(c.Request.Context(), customerID(c), c.Param("id")); err != nil {
+		if err := h.sec.DeleteBeneficiary(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 			writeErr(c, asAPIError(err))
 			return
 		}
@@ -193,14 +192,12 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// ─── Rate alerts ──────────────────────────────────────────────────────────────
-
 func (h *Handler) ListRateAlerts(c *gin.Context) {
 	if h.sec == nil {
 		c.JSON(http.StatusOK, gin.H{"data": []any{}})
 		return
 	}
-	list, err := h.sec.ListRateAlerts(c.Request.Context(), customerID(c))
+	list, err := h.sec.ListRateAlerts(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -240,11 +237,11 @@ func (h *Handler) CreateRateAlert(c *gin.Context) {
 		Direction: req.Direction, Target: req.Target, Active: true,
 	}
 	if h.sec == nil {
-		a.CreatedAt = nowISO()
+		a.CreatedAt = timeutil.RFC3339(time.Now())
 		c.JSON(http.StatusCreated, a)
 		return
 	}
-	created, err := h.sec.CreateRateAlert(c.Request.Context(), customerID(c), a)
+	created, err := h.sec.CreateRateAlert(c.Request.Context(), ginutil.UserID(c), a)
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -254,7 +251,7 @@ func (h *Handler) CreateRateAlert(c *gin.Context) {
 
 func (h *Handler) DeleteRateAlert(c *gin.Context) {
 	if h.sec != nil {
-		if err := h.sec.DeleteRateAlert(c.Request.Context(), customerID(c), c.Param("id")); err != nil {
+		if err := h.sec.DeleteRateAlert(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 			writeErr(c, asAPIError(err))
 			return
 		}

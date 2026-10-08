@@ -8,19 +8,15 @@ import (
 	"spotlight/backend/internal/finance/transfers"
 )
 
-// ---------------------------------------------------------------------------
 // Wallet-to-wallet recipient resolution.
-//
 // The resolver used to compare RAW strings (`WHERE phone = $1`) against a column
 // that was never normalised, so the same subscriber failed to resolve whenever
 // the sender's format differed from the stored one — "08159491618" vs
 // "8159491618" vs "+2348159491618" are all the same person and all missed.
-//
 // These tests pin the two properties that matter for money:
 //   1. every spelling of one number resolves to the SAME account, and
 //   2. when two accounts share a number the resolver REFUSES rather than
 //      guessing — paying the wrong person is unrecoverable.
-// ---------------------------------------------------------------------------
 
 const (
 	nsn = "8159491618" // the canonical 10-digit national significant number

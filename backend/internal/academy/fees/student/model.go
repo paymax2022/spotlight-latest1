@@ -8,7 +8,6 @@ import (
 // Package feesstudent owns the Student entity + Guardian LINKING for the EdTech
 // School-Fees module (build-spec §2 Student/Guardian, §4 SF-7), built against
 // public.academy_students (migration 20260918000000_academy_fees_edtech.sql).
-//
 // GOLDEN RULE (REUSE-MAP §1 "Guardian/student identity", §5.1): this package NEVER
 // creates a parallel guardian/student identity store. A guardian is an EXISTING Paymax
 // identity (auth.users). One guardian identity spans all children / all schools. Links
@@ -16,7 +15,6 @@ import (
 // mirror the sibling academy/identity GuardianLink model — we reuse identities, we do not
 // mint new ones. The Student.student_user_id / guardian_user_ids MUST reference existing
 // auth.users rows; this package only records associations, it never inserts an identity.
-//
 // No money moves here. Every mutation is audit-logged (module 'academy.fees').
 
 // StudentStatus mirrors academy_students.status CHECK.
@@ -46,8 +44,6 @@ type Student struct {
 	CreatedAt       time.Time     `json:"createdAt"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreateStudentRequest enrolls a student in a school. admission_number is unique per
 // school (DB UNIQUE (school_id, admission_number)). guardian_user_ids, if supplied, MUST
 // be existing identities — they are linked, never created.
@@ -65,8 +61,6 @@ type CreateStudentRequest struct {
 type LinkGuardianRequest struct {
 	GuardianUserID string `json:"guardianUserId" binding:"required"`
 }
-
-// ── Bulk CSV import (parse + validate → preview + approval queue) ─────────────────
 
 // ImportRow is one parsed+validated CSV row in an import preview. Valid rows are
 // eligible for approval; invalid rows carry a stable snake_case Error code and are
@@ -95,8 +89,6 @@ type ImportPreview struct {
 	// the uploaded batch (a batch-level collision, separate from an existing-DB collision).
 	DuplicateAdmissionNumbers []string `json:"duplicateAdmissionNumbers,omitempty"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound              = errors.New("not_found")

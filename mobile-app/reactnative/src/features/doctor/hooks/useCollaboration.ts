@@ -1,4 +1,3 @@
-// ── Doctor — Referral & Specialist Collaboration hooks (Batch 4, Section P) ───
 // Query keys under ['doctor', …]. Mutations auto-generate the idempotencyKey and
 // invalidate the relevant lists. REUSE: outgoing referrals + specialists live in
 // `useReferrals` (useReferrals / useReferral / useCreateReferral / useSpecialists)
@@ -31,8 +30,6 @@ import type {
   RequestOpinionInput,
   SendCareTeamMessageInput,
 } from '@/types/doctor.batch4';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useIncomingReferrals(status?: IncomingReferralStatus) {
   return useQuery({
@@ -89,8 +86,6 @@ export function useSharedCaseSummary(caseRef: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useAcceptReferral() {
   const qc = useQueryClient();

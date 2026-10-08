@@ -10,16 +10,13 @@ import (
 // built against public.academy_fee_schedules (edupay spine + the fees extension columns
 // session_id, class_id, fee_items, installment_policy, locked — migration
 // 20260918000000_academy_fees_edtech.sql).
-//
 // SF-1 (release blocker): a FeeSchedule becomes IMMUTABLE once an Invoice references it.
 // This package enforces that in the SERVICE layer (service.go): any mutating operation
 // fails with ErrFeeScheduleImmutable when the schedule is `locked` OR when a row in
 // academy_invoices references it. The DB lock trigger (migration §B) is a backstop, not
 // the primary guard.
-//
 // SF-6: installment terms are part of the immutable schedule — fee_items +
 // installment_policy are set at CREATION ONLY and can never change afterwards.
-//
 // Money is int64 minor units (kobo). This package moves no money.
 
 // FeeSchedule mirrors public.academy_fee_schedules (with the fees extension columns).
@@ -40,8 +37,6 @@ type FeeSchedule struct {
 	Status            string          `json:"status"`
 	CreatedAt         time.Time       `json:"createdAt"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // CreateFeeScheduleRequest publishes a fee schedule for a school. fee_items +
 // installment_policy are captured HERE and only here (SF-6 — immutable thereafter).
@@ -66,8 +61,6 @@ type UpdateFeeScheduleRequest struct {
 	Name    string `json:"name"`
 	DueDate string `json:"dueDate"` // YYYY-MM-DD; "" leaves unchanged
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound        = errors.New("not_found")

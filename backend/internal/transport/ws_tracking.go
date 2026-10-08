@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/maps"
@@ -74,9 +77,24 @@ func (t *TripTracker) Start(ctx context.Context) {
 }
 
 // participants returns the rider and (optional) driver user-ids for a trip.
+// trips.driver_id is the drivers ROW id, not the auth user id — returning it
+// raw meant Ingest's `callerID != driver` could never match (live tracking
+// 403'd for the real driver) and the WS fanout addressed a non-user channel.
 func (t *TripTracker) participants(ctx context.Context, tripID string) (rider string, driver string, err error) {
 	var d *string
-	err = t.db.QueryRow(ctx, `SELECT rider_id, driver_id FROM trips WHERE id=$1`, tripID).Scan(&rider, &d)
+	// trips.id is uuid — a malformed id can never resolve, so answer not-found
+	// rather than letting Postgres's 22P02 syntax error surface as a 500
+	// through TrackPosition (prod probe, w9-transport).
+	if _, perr := uuid.Parse(tripID); perr != nil {
+		return "", "", codedErr(http.StatusNotFound, CodeNotFound, "trip not found")
+	}
+	err = t.db.QueryRow(ctx,
+		`SELECT t.rider_id, d.user_id
+		   FROM trips t LEFT JOIN drivers d ON d.id = t.driver_id
+		  WHERE t.id=$1`, tripID).Scan(&rider, &d)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", codedErr(http.StatusNotFound, CodeNotFound, "trip not found")
+	}
 	if err != nil {
 		return "", "", err
 	}

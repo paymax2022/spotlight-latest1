@@ -1,18 +1,12 @@
 package adminext
 
 // Crowdfunding FEATURED / TRENDING / URGENT placement.
-//
-// Public discovery (internal/crowdfunding/query.go) filters its "featured",
+// Public discovery (internal/crowdfunding/service_discovery.go) filters its "featured",
 // "trending" and "urgent" collections on campaigns.featured / .trending /
 // .urgent, and sortClause("recommended") ranks on c.verified DESC, c.featured
-// DESC. Those three booleans default to FALSE and, until this file, nothing in
-// the product could ever set them: no creator route, no admin route, no job. So
-// every one of those collections was permanently empty on the live database and
-// the app's Featured/Trending rails rendered nothing.
-//
-// This adds the missing operator surface: list the placement candidates, patch
-// the flags, and report on what is currently placed.
-//
+// DESC. Those three booleans default to FALSE; this file is the ONLY writer —
+// it adds the operator surface: list the placement candidates, patch the flags,
+// and report on what is currently placed.
 // RULE — only an ACTIVE campaign may be PROMOTED. Turning a flag ON puts the
 // campaign on a public discovery rail, so it must have cleared review first;
 // promoting a PENDING_REVIEW / REJECTED / FROZEN campaign would publish
@@ -20,7 +14,6 @@ package adminext
 // flag OFF is always allowed regardless of status — a campaign that LEAVES
 // ACTIVE (frozen for fraud, say) must remain demotable, and a status-gated
 // clear would trap it on the rail exactly when it most needs removing.
-//
 // No migration: campaigns.featured/trending/urgent already exist (added by
 // supabase/migrations/20260622000000_crowdfunding_full.sql).
 
@@ -32,9 +25,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-)
 
-// ─── Errors ──────────────────────────────────────────────────────────────────
+	"spotlight/backend/go-common/timeutil"
+)
 
 // ErrNoFlagsSupplied is returned when a flags PATCH body carries none of the
 // three keys — there is nothing to change, and silently succeeding would let a
@@ -51,12 +44,9 @@ var ErrCampaignNotActive = errors.New("adminext: only an ACTIVE campaign can be 
 // reviewStatusActive is the single review_status that permits promotion.
 const reviewStatusActive = "ACTIVE"
 
-// ─── DTOs ────────────────────────────────────────────────────────────────────
-
 // FeaturedCampaign is the placement-console row: identity, review status and the
 // four discovery booleans, plus the money figures an operator needs to judge
 // whether a campaign deserves a rail. All money is BIGINT kobo.
-//
 // Category carries the human LABEL ("NGO", "Medical") from crowdfunding_categories;
 // CategorySlug carries the raw column value ("ngo", "medical") for filtering.
 type FeaturedCampaign struct {
@@ -106,8 +96,6 @@ type CampaignFlagsRequest struct {
 	Trending *bool `json:"trending"`
 	Urgent   *bool `json:"urgent"`
 }
-
-// ─── Pure helpers (unit-tested without a database) ───────────────────────────
 
 // flagAssignment is one column := value write derived from a PATCH body.
 type flagAssignment struct {
@@ -186,8 +174,6 @@ func auditFlagsTarget(campaignID string, req CampaignFlagsRequest) string {
 	return campaignID + " " + strings.Join(parts, ",")
 }
 
-// ─── Queries ─────────────────────────────────────────────────────────────────
-
 // featuredSelectCols is the shared projection. raised_kobo is DERIVED from the
 // contributions ledger on every read — never a stored balance column.
 const featuredSelectCols = `
@@ -210,7 +196,7 @@ func scanFeatured(scan func(dest ...any) error) (FeaturedCampaign, error) {
 	if err != nil {
 		return f, err
 	}
-	f.CreatedAt = rfc3339(createdAt)
+	f.CreatedAt = timeutil.RFC3339(createdAt)
 	return f, nil
 }
 
@@ -270,7 +256,7 @@ func (s *Service) SetCampaignFlags(ctx context.Context, campaignID, adminID stri
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the row so the status we gate on is the status we write against — a
 	// concurrent review decision cannot slip an ACTIVE→REJECTED between the two.

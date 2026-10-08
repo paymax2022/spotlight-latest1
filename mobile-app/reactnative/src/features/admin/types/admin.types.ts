@@ -1,23 +1,16 @@
-// ── Paymax · Admin Console — Type Contract ───────────────────────────────────
 // Source of truth the admin screens code against. Mirrors the Go admin DTOs
 // served under /api/v1/admin/* (Backend role owns the Go side).
-//
 // IRON RULES honoured here:
 //  • Money is integer MINOR UNITS — fiat in kobo/cents, crypto in the asset's
 //    base unit. Never floats. Carried as { amount, currency }.
-//  • Every privileged action is server-authoritative; the client only renders
 //    what the role/permission payload allows (maker-checker, audit, approvals).
 //  • The selected admin Role is sent on every live request as `X-Admin-Role`.
 
-// ─── Money primitive ──────────────────────────────────────────────────────────
-
 /** Integer minor-unit money object + ISO-4217 currency (e.g. { 105000, 'NGN' }). */
 export interface Money {
-  amount: number; // integer, minor units (105000 = ₦1,050.00)
+  amount: number;
   currency: string; // 'NGN' | 'USD' | a crypto symbol for in-asset amounts
 }
-
-// ─── Roles & permissions ──────────────────────────────────────────────────────
 
 /** Admin role taxonomy — mirrors the backend RBAC roles. */
 export type Role =
@@ -46,8 +39,6 @@ export type Permission =
   | 'admin.manage'
   | 'user.view';
 
-// ─── Dashboard (GET /admin/dashboard) ─────────────────────────────────────────
-
 /** A single liquidity/custody/payment provider's roll-up on the dashboard. */
 export interface ProviderSummary {
   name: string;
@@ -68,8 +59,6 @@ export interface Dashboard {
   tradingVolume: Money; // settled trading volume (period)
   providerSummary: ProviderSummary[];
 }
-
-// ─── Users (GET /admin/users, /admin/users/{id}) ──────────────────────────────
 
 export type UserStatus = 'active' | 'suspended' | 'closed' | 'pending';
 
@@ -94,8 +83,6 @@ export interface UserDetail extends UserSummary {
   flags: string[]; // risk/ops flags on the account
 }
 
-// ─── KYC queue (GET /admin/kyc, POST /admin/kyc/{id}/review) ───────────────────
-
 export type KycStatus = 'pending' | 'approved' | 'rejected' | 'escalated';
 export type KycDecision = 'approve' | 'reject' | 'escalate';
 
@@ -108,8 +95,6 @@ export interface KycCase {
   submittedAt: string;
   riskFlags: string[]; // e.g. ['pep', 'address_mismatch']
 }
-
-// ─── Asset controls (GET /admin/assets, PATCH /admin/assets/{id}) ──────────────
 
 export type AssetKind = 'crypto' | 'stock';
 export type AssetControlStatus = 'active' | 'paused' | 'delisted';
@@ -139,8 +124,6 @@ export interface AssetControlPatch {
   maxOrder?: Money;
 }
 
-// ─── Orders (GET /admin/orders?filter=) ───────────────────────────────────────
-
 export type AdminOrderStatus =
   | 'Filled'
   | 'PartiallyFilled'
@@ -167,8 +150,6 @@ export interface AdminOrder {
 /** Filter passed to GET /admin/orders?filter= */
 export type OrderFilter = 'all' | 'failed' | 'pending' | 'crypto' | 'stock';
 
-// ─── Withdrawal review (GET /admin/withdrawals, POST …/{ref}/review) ───────────
-
 export type WithdrawalReviewStatus =
   | 'pending'
   | 'approved'
@@ -189,8 +170,6 @@ export interface WithdrawalReviewItem {
   createdAt: string;
 }
 
-// ─── Reconciliation (GET /admin/reconciliation) — kept loose ───────────────────
-
 export interface ReconException {
   id: string;
   asset: string;
@@ -209,8 +188,6 @@ export interface ReconReport {
   [key: string]: unknown; // keep flexible for backend additions
 }
 
-// ─── Providers (GET /admin/providers) ─────────────────────────────────────────
-
 export type ProviderStatus = 'healthy' | 'degraded' | 'down';
 
 export interface ProviderHealth {
@@ -221,8 +198,6 @@ export interface ProviderHealth {
   lastCheck: string;
 }
 
-// ─── Risk limits (GET /admin/risk-limits, PATCH …/{id}) ────────────────────────
-
 export interface RiskLimit {
   id: string;
   label: string;
@@ -231,8 +206,6 @@ export interface RiskLimit {
   currency: string;
 }
 
-// ─── Fees (GET /admin/fees, PATCH …/{id}) ──────────────────────────────────────
-
 export interface FeeConfigItem {
   id: string;
   label: string;
@@ -240,15 +213,11 @@ export interface FeeConfigItem {
   bps: number; // fee in basis points
 }
 
-// ─── Feature flags (GET /admin/feature-flags, PATCH …/{key}) ───────────────────
-
 export interface FeatureFlag {
   key: string;
   label: string;
   enabled: boolean;
 }
-
-// ─── Audit log (GET /admin/audit) ──────────────────────────────────────────────
 
 export interface AuditEntry {
   id: string;
@@ -259,8 +228,6 @@ export interface AuditEntry {
   reason: string;
   at: string;
 }
-
-// ─── Approvals / maker-checker (GET /admin/approvals, POST …/approve|reject) ───
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
@@ -275,8 +242,6 @@ export interface Approval {
   checker?: string; // who approved/rejected (set once acted on)
 }
 
-// ─── Admin directory (GET /admin/admins) ───────────────────────────────────────
-
 export type AdminUserStatus = 'active' | 'suspended';
 
 export interface AdminUser {
@@ -286,8 +251,6 @@ export interface AdminUser {
   role: Role;
   status: AdminUserStatus;
 }
-
-// ─── Shared error shape (backend returns { type, code, message }) ──────────────
 
 export interface AdminApiError {
   type: string;

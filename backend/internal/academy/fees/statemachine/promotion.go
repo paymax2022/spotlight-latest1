@@ -1,19 +1,17 @@
 package feesstatemachine
 
-// ── Promotion state machine (build-spec §3.3, invariant SF-3 — RELEASE BLOCKER)
-//
+import "spotlight/backend/go-common/fsm"
+
 //	session_active     → results_finalized   (all required scores entered)
 //	results_finalized  → promotion_computed  (engine proposes per pass-mark policy)
 //	promotion_computed → promotion_reviewed  (REQUIRES a TeacherApproval event)
 //	promotion_reviewed → promotion_approved  (REQUIRES an AdminApproval event)
 //	promotion_approved → applied             (Class + FeeSchedule reassignment)
-//
 // SF-3 HARD RULE (release blocker, not a style preference): there is NO path
 // from promotion_computed straight to `applied`, no path from promotion_computed
 // to promotion_approved, and no path from promotion_reviewed to `applied`. The
 // ONLY predecessor of `applied` is promotion_approved. This is enforced
 // STRUCTURALLY, three ways at once:
-//
 //  1. The adjacency table below simply does not contain those edges — an
 //     illegal target is not in the map, so it cannot resolve.
 //  2. `applied` is produced by exactly one event (EvAdminApply) which is only
@@ -23,7 +21,6 @@ package feesstatemachine
 //     (EvTeacherApproval, EvAdminApproval). You cannot advance to
 //     promotion_reviewed / promotion_approved with any other event, so the two
 //     human approvals cannot be skipped or forged by a generic "advance" call.
-//
 // See RequiresTwoApprovals() for the documented contract.
 
 // PromotionState mirrors the PromotionRecord lifecycle (build-spec §3.3).
@@ -51,12 +48,12 @@ const (
 // promotionTransitions is the legal, strictly-forward adjacency for the
 // promotion SM. Crucially it contains NO computed→applied, NO computed→approved,
 // and NO reviewed→applied edge — those illegal jumps are structurally absent.
-var promotionTransitions = map[PromotionState]map[PromotionState]bool{
-	PromotionSessionActive:    {PromotionResultsFinalized: true},
-	PromotionResultsFinalized: {PromotionComputed: true},
-	PromotionComputed:         {PromotionReviewed: true},
-	PromotionReviewed:         {PromotionApproved: true},
-	PromotionApproved:         {PromotionApplied: true},
+var promotionTransitions = fsm.Table[PromotionState]{
+	PromotionSessionActive:    fsm.Set(PromotionResultsFinalized),
+	PromotionResultsFinalized: fsm.Set(PromotionComputed),
+	PromotionComputed:         fsm.Set(PromotionReviewed),
+	PromotionReviewed:         fsm.Set(PromotionApproved),
+	PromotionApproved:         fsm.Set(PromotionApplied),
 	PromotionApplied:          {}, // terminal
 }
 
@@ -88,16 +85,11 @@ func validPromotionState(s PromotionState) bool {
 // PromotionCanTransition reports whether from→to is a legal promotion
 // transition. Pure. Returns false for every SF-3-forbidden jump.
 func PromotionCanTransition(from, to PromotionState) bool {
-	targets, ok := promotionTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return promotionTransitions.Can(from, to)
 }
 
 // PromotionTransition applies an event and returns the resulting state or a
 // typed error.
-//
 // SF-3 error semantics: any attempt to reach `applied` (event EvAdminApply) from
 // a state other than promotion_approved returns ErrApprovalRequired — NOT a
 // generic illegal transition — so the bypass is observably its own failure. The

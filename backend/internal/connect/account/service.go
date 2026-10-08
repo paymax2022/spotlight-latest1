@@ -1,13 +1,11 @@
 // Package connectaccount implements the Paymax Connect account-deletion /
 // data-subject-request (DSR) cascade — test-plan rows ON-010, EC-011, MB-020 and
 // the privacy invariants (§4).
-//
 // Design: deletion ANONYMISES in place rather than hard-deleting rows that other
 // users reference, so a partner sees a graceful "Deleted user" state instead of a
 // broken match/thread. The whole cascade runs in ONE transaction and is idempotent
 // (safe to replay), fail-closed (any step error rolls the whole thing back), and
 // audited immutably in connect_audit_log.
-//
 // Retained on purpose (NOT erased): connect_audit_log (immutable compliance),
 // connect_account_restrictions (a ban must survive deletion — anti ban-evasion),
 // connect_cases (safety record), connect_consents (proof of consent). Everything
@@ -18,7 +16,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,10 +33,10 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 
 // Result reports what the deletion did (useful for the caller/audit and tests).
 type Result struct {
-	UserID          string `json:"user_id"`
-	AlreadyDeleted  bool   `json:"already_deleted"`
-	MatchesEnded    int64  `json:"matches_ended"`
-	MessagesRedacted int64 `json:"messages_redacted"`
+	UserID           string `json:"user_id"`
+	AlreadyDeleted   bool   `json:"already_deleted"`
+	MatchesEnded     int64  `json:"matches_ended"`
+	MessagesRedacted int64  `json:"messages_redacted"`
 }
 
 // DeleteAccount erases/anonymises a user's Connect footprint. actorID is who
@@ -53,7 +55,7 @@ func (s *Service) DeleteAccount(ctx context.Context, userID, actorID string) (*R
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin delete tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	res := &Result{UserID: userID}
 
@@ -143,7 +145,7 @@ func (s *Service) DeleteAccount(ctx context.Context, userID, actorID string) (*R
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO connect_audit_log (actor_id, actor_role, action, entity_type, entity_id, new_value)
 		VALUES ($1::uuid, $2, 'connect.account.delete', 'connect_user', $3, $4::jsonb)`,
-		nullUUID(actorID), roleFor(actorID, userID), userID,
+		dbutil.NullUUID(actorID), roleFor(actorID, userID), userID,
 		fmt.Sprintf(`{"matches_ended":%d,"messages_redacted":%d}`, res.MatchesEnded, res.MessagesRedacted),
 	); err != nil {
 		return nil, fmt.Errorf("connect: audit delete: %w", err)
@@ -155,16 +157,33 @@ func (s *Service) DeleteAccount(ctx context.Context, userID, actorID string) (*R
 	return res, nil
 }
 
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 func roleFor(actorID, userID string) string {
 	if actorID == userID {
 		return "member"
 	}
 	return "admin"
+}
+
+// Handler exposes the member-facing account-deletion / DSR endpoint.
+type Handler struct{ svc *Service }
+
+// NewHandler wires the account handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Delete — DELETE /api/v1/connect/account (authenticated member self-serve DSR).
+// The subject is ALWAYS the authenticated user (never a body param), so a member
+// can only delete their own account. Idempotent; returns what was affected.
+func (h *Handler) Delete(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	res, err := h.svc.DeleteAccount(c.Request.Context(), userID, userID)
+	if err != nil {
+		// A deletion failure must not silently leave partial state; it rolled back.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete account"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
 }

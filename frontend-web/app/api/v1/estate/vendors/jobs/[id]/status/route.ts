@@ -5,10 +5,16 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/estate/resident';
 import { mapJob } from '../../route';
 
-const COLS = 'id, estate_id, vendor_id, repair_request_id, status, amount_kobo, created_at';
-const STATUSES = ['available', 'accepted', 'rejected', 'en_route', 'in_progress', 'completed', 'paid'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// POST /api/v1/estate/vendors/jobs/[id]/status
+
+const COLS = 'id, estate_id, vendor_id, repair_request_id, status, amount_kobo, created_at';
+// 'paid' is intentionally absent: payout must go through the Go vendor-payout
+// route, which requires status='completed', posts the ledger credit inside a
+// transaction, and records payout_ref + idempotency key. Writing 'paid' here
+// would mark a job settled with no money moved.
+const STATUSES = ['available', 'accepted', 'rejected', 'en_route', 'in_progress', 'completed'];
+
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
@@ -16,7 +22,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
-    const body = await request.json();
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(params.id)) throw new ApiError('Invalid job ID', 400);
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const status = STATUSES.includes(body?.status) ? body.status : null;
     if (!status) throw new ApiError('A valid status is required', 400);
 

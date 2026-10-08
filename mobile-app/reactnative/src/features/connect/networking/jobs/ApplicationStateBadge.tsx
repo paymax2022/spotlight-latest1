@@ -13,10 +13,10 @@ import {
   Undo2,
   type LucideIcon,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { ApplicationState } from './types';
 
 interface StateMeta {
@@ -27,7 +27,6 @@ interface StateMeta {
 }
 
 // Mirrors the backend application FSM. Colors are grouped by intent:
-// blue = in-motion, purple = advancing, gold = attention/celebrate,
 // teal = success, muted = terminal-neutral, error = action required.
 export const APPLICATION_STATE_META: Record<ApplicationState, StateMeta> = {
   draft:        { label: 'Draft',        fg: Colors.onSurfaceVariant, bg: Colors.surfaceContainerHigh, Icon: FileText },

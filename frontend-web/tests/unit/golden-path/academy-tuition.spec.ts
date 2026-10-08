@@ -30,21 +30,22 @@ vi.mock('next/server', () => ({
 vi.mock('@/src/lib/auth/request', () => ({ requireRequestUser: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn(), createClient: vi.fn() }));
 vi.mock('@/src/lib/go-backend', () => ({ proxyToGoBackend: vi.fn() }));
-vi.mock('@/src/server/services/academy/enrollment', () => ({ ensureEnrollment: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('@/src/lib/email/transactional', () => ({
+vi.mock('@/src/server/services/academy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/src/server/services/academy')>()),
+  ensureEnrollment: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/src/lib/email', () => ({
   sendTransactionalEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { POST as PAY } from '../../../app/api/academy/installments/pay/route';
 import { GET as STATUS } from '../../../app/api/academy/application/route';
-import { autoCreateInstallmentPlan } from '@/src/server/services/academy/installments';
+import { autoCreateInstallmentPlan } from '@/src/server/services/academy';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 
 const USER = { id: 'user-001', email: 'student@example.com' };
-
-// ── A Supabase stub that records inserts, keyed by table ─────────────────────
 
 type Rows = Record<string, unknown>;
 
@@ -81,8 +82,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(requireRequestUser).mockResolvedValue(USER as any);
 });
-
-// ── 1. What gets billed on approval ──────────────────────────────────────────
 
 describe('autoCreateInstallmentPlan — what the applicant is billed', () => {
   function runWith(appRow: Rows, batchRow: Rows) {
@@ -192,8 +191,6 @@ describe('autoCreateInstallmentPlan — what the applicant is billed', () => {
   });
 });
 
-// ── 2. What is accepted as payment ───────────────────────────────────────────
-//
 // Ownership, amount, currency, and reference-reuse verification all moved to the
 // Go backend (backend/internal/academy/tuition) — see its live-DB test suite
 // (backend/tests/academy/tuition_service_live_db_test.go) for those invariants
@@ -283,8 +280,6 @@ describe('POST /api/academy/installments/pay — proxies to the Go money path', 
     expect((options as any)?.headers?.['Idempotency-Key']).toBeTruthy();
   });
 });
-
-// ── 3. What the applicant is told to do next ─────────────────────────────────
 
 describe('GET /api/academy/application — required actions', () => {
   /** Stubs the three tables the route reads, keyed by table name. */

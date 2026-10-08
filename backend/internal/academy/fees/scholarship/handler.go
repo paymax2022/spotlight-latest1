@@ -6,14 +6,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
+const keyMessage = "message"
+
 // Handler exposes the Sponsor-a-Student pledge → fund → apply surface over Gin. Router
 // registration into RegisterAcademy is owned by the QA/integration task — see
 // RegisterFeesScholarship.
-//
 // NOTE (integration wiring): this package takes an already-assembled Service because it needs
 // the injected LedgerPoster (finance/ledger) + InvoicePayer (feesinvoice) ports composed at the
 // academy registration root (the same pattern edupay uses for its rails).
@@ -24,10 +27,9 @@ type Handler struct {
 // NewHandler builds the scholarship handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,7 +37,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -43,31 +45,28 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 	return u, true
 }
 
-// idemKey reads the Idempotency-Key header (required for the money-path fund/apply mutations).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingStudent):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_student", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_student", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyReused):
-		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrPledgeNotFunded):
-		c.JSON(http.StatusConflict, gin.H{"error": "pledge_not_funded", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "pledge_not_funded", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrPledgeExhausted):
-		c.JSON(http.StatusConflict, gin.H{"error": "pledge_amount_exhausted", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "pledge_amount_exhausted", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -97,8 +96,6 @@ func RegisterFeesScholarship(group *gin.RouterGroup, svc *Service, rbac services
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) CreatePledge(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -106,7 +103,7 @@ func (h *Handler) CreatePledge(c *gin.Context) {
 	}
 	var req CreatePledgeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreatePledge(c.Request.Context(), u, req)
@@ -122,7 +119,7 @@ func (h *Handler) FundPledge(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.FundPledge(c.Request.Context(), u, c.Param("id"), idemKey(c))
+	out, err := h.svc.FundPledge(c.Request.Context(), u, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -137,11 +134,11 @@ func (h *Handler) ApplyAward(c *gin.Context) {
 	}
 	var req ApplyAwardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	req.PledgeID = c.Param("id")
-	out, err := h.svc.ApplyAward(c.Request.Context(), u, req, idemKey(c))
+	out, err := h.svc.ApplyAward(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

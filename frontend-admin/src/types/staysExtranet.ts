@@ -1,11 +1,9 @@
-// ── Hotelier Extranet — Paymax Stays (Booking.com Extranet/Pulse equivalent) ─
 // Object-scoped to the signed-in hotelier's OWN property. Field names mirror the
 // Go JSON (snake_case) from /api/stays/extranet/*. Money is BIGINT kobo (minor
 // units) and settled in Naira (NGN). RBAC: stays.hotelier.* + staff roles.
 
 export type Currency = 'NGN' | 'USD' | 'EUR' | 'GBP';
 
-// ── A · Onboarding & verification ────────────────────────────────────────────
 export type PropertyType = 'hotel' | 'apartment' | 'guesthouse' | 'resort' | 'hostel' | 'villa';
 export type VerificationStage = 'signup' | 'property' | 'verification' | 'content' | 'policies' | 'go_live';
 export type VerificationItemStatus = 'pending' | 'in_progress' | 'submitted' | 'approved' | 'rejected' | 'needs_changes';
@@ -49,7 +47,6 @@ export interface BankSettings {
   next_payout_date: string;
 }
 
-// ── B · Content & inventory ──────────────────────────────────────────────────
 export interface Geo { lat: number; lng: number; }
 export interface PropertyProfile {
   property_id: string;
@@ -106,7 +103,7 @@ export interface RatePlan {
   cancellation_window_hours: number;
   mobile_rate: boolean;
   derived_from?: string | null; // parent rate plan id (linked/derived)
-  derived_adjustment_pct?: number | null; // e.g. -0.10 = 10% below parent
+  derived_adjustment_pct?: number | null;
   loyalty_opt_in: boolean;
   base_rate_kobo: number;
   currency: Currency;
@@ -158,7 +155,6 @@ export interface Restriction {
   stop_sell: boolean;
 }
 
-// ── C · Promotions & visibility ──────────────────────────────────────────────
 export type PromotionType = 'early_bird' | 'los' | 'last_minute' | 'mobile';
 export interface Promotion {
   id: string;
@@ -200,7 +196,6 @@ export interface Opportunity {
   cta_href?: string | null;
 }
 
-// ── D · Reservations & guests ────────────────────────────────────────────────
 export type ReservationStatus =
   | 'confirmed' | 'in_house' | 'completed' | 'cancelled_by_guest'
   | 'cancelled_by_hotel' | 'no_show' | 'pending';
@@ -274,7 +269,6 @@ export interface Review {
   status: 'published' | 'pending' | 'flagged';
 }
 
-// ── E · Finance ──────────────────────────────────────────────────────────────
 export interface Payout {
   id: string;
   period: string; // "2026-06-01 → 2026-06-15"
@@ -313,7 +307,6 @@ export interface DepositReconRow {
   currency: Currency;
 }
 
-// ── F · Analytics ────────────────────────────────────────────────────────────
 export interface PerformanceAnalytics {
   currency: Currency;
   occupancy_pct: number; // 0..1
@@ -343,7 +336,6 @@ export interface MarketContext {
   note: string;
 }
 
-// ── G · Account & staff ──────────────────────────────────────────────────────
 export type StaffRole = 'owner' | 'revenue_manager' | 'front_desk';
 export interface StaffMember {
   id: string;

@@ -1,4 +1,3 @@
-// ── Restaurant & Delivery — feature barrel ───────────────────────────────────
 export * from './types';
 export * from './hooks';
 export * from './utils';

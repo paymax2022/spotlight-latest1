@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/trading/ladder"
 	"spotlight/backend/internal/trading/quant/committee"
 	"spotlight/backend/internal/trading/quant/pipeline"
@@ -49,8 +50,6 @@ func returnsFrom(prices []float64) []float64 {
 	return r
 }
 
-// ── Member: decision pipeline (read-only; records nothing, executes nothing) ────
-
 // Evaluate runs the deterministic pipeline for a strategy on client-supplied market
 // data and returns the decision + reasoning trace. It is gated by Module-KYC access
 // AND the strategy's ladder stage (must be Paper or above). Risk/committee config is
@@ -58,10 +57,10 @@ func returnsFrom(prices []float64) []float64 {
 // executed:false because this build has no venue adapter.
 func (h *Handler) Evaluate(c *gin.Context) {
 	var body struct {
-		StrategyID       string    `json:"strategy_id"`
-		Asset            string    `json:"asset"`
-		Prices           []float64 `json:"prices"`
-		LiquidityScoreBps int64    `json:"liquidity_score_bps"`
+		StrategyID        string    `json:"strategy_id"`
+		Asset             string    `json:"asset"`
+		Prices            []float64 `json:"prices"`
+		LiquidityScoreBps int64     `json:"liquidity_score_bps"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
@@ -74,7 +73,7 @@ func (h *Handler) Evaluate(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Gate 1: the caller must hold Module-KYC trading access.
-	access, err := h.kyc.HasTradingAccess(ctx, uid(c))
+	access, err := h.kyc.HasTradingAccess(ctx, ginutil.UserID(c))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -117,8 +116,6 @@ func (h *Handler) Evaluate(c *gin.Context) {
 	})
 }
 
-// ── Member: strategy-maturity transparency (read-only, sanitized) ────────────────
-
 // Strategies returns the sanitized promotion ladder for member transparency (§12):
 // which strategies run the fund and at what validated maturity. No governance
 // internals (verdict/track-record/circuit/maker-checker/audit) are exposed.
@@ -130,8 +127,6 @@ func (h *Handler) Strategies(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
 }
-
-// ── Admin: promotion ladder (§12) ───────────────────────────────────────────────
 
 func (h *Handler) AdminPromoteRegister(c *gin.Context) {
 	if err := h.promo.Register(c.Request.Context(), c.Param("id")); err != nil {
@@ -170,16 +165,16 @@ func (h *Handler) AdminPromoteGet(c *gin.Context) {
 // strategy record, not the request.
 func (h *Handler) AdminPromote(c *gin.Context) {
 	var body struct {
-		ToStage      string `json:"to_stage"`
-		MakerID      string `json:"maker_id"`
-		RiskSignedOff  bool `json:"risk_signed_off"`
-		LegalSignedOff bool `json:"legal_signed_off"`
+		ToStage        string `json:"to_stage"`
+		MakerID        string `json:"maker_id"`
+		RiskSignedOff  bool   `json:"risk_signed_off"`
+		LegalSignedOff bool   `json:"legal_signed_off"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	st, err := h.promo.Promote(c.Request.Context(), uid(c), c.Param("id"), ladder.Stage(body.ToStage), body.MakerID, body.RiskSignedOff, body.LegalSignedOff)
+	st, err := h.promo.Promote(c.Request.Context(), ginutil.UserID(c), c.Param("id"), ladder.Stage(body.ToStage), body.MakerID, body.RiskSignedOff, body.LegalSignedOff)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -196,7 +191,7 @@ func (h *Handler) AdminDemote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	st, err := h.promo.Demote(c.Request.Context(), uid(c), c.Param("id"), ladder.Stage(body.ToStage), body.Reason)
+	st, err := h.promo.Demote(c.Request.Context(), ginutil.UserID(c), c.Param("id"), ladder.Stage(body.ToStage), body.Reason)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -205,12 +200,14 @@ func (h *Handler) AdminDemote(c *gin.Context) {
 }
 
 func (h *Handler) AdminHalt(c *gin.Context) {
-	var body struct{ Reason string `json:"reason"` }
+	var body struct {
+		Reason string `json:"reason"`
+	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	st, err := h.promo.Halt(c.Request.Context(), uid(c), c.Param("id"), body.Reason)
+	st, err := h.promo.Halt(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -230,7 +227,7 @@ func (h *Handler) AdminReadiness(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	st, err := h.promo.SetReadiness(c.Request.Context(), uid(c), c.Param("id"), body.ValidationPassed, body.TrackRecordDays, body.CircuitTripped)
+	st, err := h.promo.SetReadiness(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.ValidationPassed, body.TrackRecordDays, body.CircuitTripped)
 	if err != nil {
 		httpErr(c, err)
 		return

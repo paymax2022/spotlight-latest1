@@ -13,7 +13,6 @@ import type { CfReviewCampaign, CfCampaignFunding, CfBackersPage } from '@/types
 // One campaign, end to end: what it is, where its money stands, and who funded
 // it. The console could previously open a campaign only from the review queue,
 // which shows the submission — not the funding, and not the backers.
-//
 // Everything here is read from the campaign's own rows. Where the schema cannot
 // attribute something to a campaign (refunds and settlements carry no
 // campaign_id) the page says so rather than showing a plausible zero.

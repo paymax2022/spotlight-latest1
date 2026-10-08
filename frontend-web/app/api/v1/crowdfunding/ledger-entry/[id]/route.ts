@@ -3,7 +3,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/crowdfunding/ledger-entry/[id]
 // → Go: GET /api/finance/crowdfunding/ledger/:id
 // [id] is the LEDGER ENTRY id. Returns a single projected LedgerEntry object.
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {

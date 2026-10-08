@@ -11,7 +11,6 @@ import (
 // orchestrator.go — the heart of MapService v2: the cheapest-accurate-first
 // resolution chain (MAPSERVICE.md §4). Runs only when v2Enabled. Every step is
 // nil-safe; selection is deterministic and emitted as a ResolutionEvent (MS-7).
-//
 //	gazetteer → cache → prediction → coverage-ordered providers (OSM↔Google/HERE)
 //	with confidence escalation (τ) and a NEEDS_PIN floor (τ_floor).
 
@@ -77,7 +76,7 @@ func (s *Service) forwardV2(ctx context.Context, address, surface, requestType s
 		if !ok {
 			continue
 		}
-		if !s.guard.Allow(ctx, name, PrimGeocode) { // budget/circuit (MS-6)
+		if !s.guard.Allow(ctx, name, PrimGeocode) {
 			continue
 		}
 		if haveBest {

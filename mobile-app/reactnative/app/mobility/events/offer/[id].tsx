@@ -4,16 +4,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
 import { MapPin, Clock, Users, User, Radar } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useOffer } from '@/features/mobility/hooks/useEvent';
 import { EVENT_OFFER_TYPES, OFFER_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
@@ -43,7 +44,7 @@ export default function OfferDetailScreen() {
   }
   if (offer.isError || !o) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Transport offer" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => offer.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Transport offer" /><MobilityEdgeState kind={errKind(offer.error)} actionLabel="Retry" onAction={() => offer.refetch()} /></SafeAreaView>
     );
   }
 

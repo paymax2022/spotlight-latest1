@@ -1,7 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { Candle } from '../types/stocks.types';
 
 interface Props {

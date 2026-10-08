@@ -4,11 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/argon2"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // VAProvisioner provisions a user's virtual account on tier upgrade. Kept as a
@@ -59,7 +66,6 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 
 // Initiate moves the user to status=pending for the requested tier.
 // Idempotent: submitting again while already in 'pending' is a no-op.
-//
 // The status written here MUST be a value user_profiles_kyc_status_check
 // actually permits (unverified/pending/verified/failed/suspended — see
 // 20260613000000_kyc_fields.sql). It used to write 'submitted', which the
@@ -69,11 +75,21 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 // already documents this exact mismatch for the older admin console, which
 // works around it by checking both values).
 func (s *Service) Initiate(ctx context.Context, userID string, req InitiateRequest) (*Profile, error) {
+	// The UPDATE below writes DocumentType straight into
+	// user_profiles.document_type, which is bound by the
+	// user_profiles_document_type_check CHECK constraint
+	// (supabase/migrations/20260613000000_kyc_fields.sql). Validate BEFORE
+	// opening the tx: an out-of-enum value rejected by the CHECK surfaces to
+	// the caller as an opaque 500 — and did exactly that on
+	// /api/v1/kyc/tier2+3, whose handler passed 'government_id'/'liveness'.
+	if req.DocumentType != nil && !allowedDocumentTypes[*req.DocumentType] {
+		return nil, ErrInvalidDocumentType
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("kyc: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Captured for the audit row below — kyc_events.old_status/old_tier record
 	// what the profile was BEFORE this transition, and new_tier is NOT NULL even
@@ -96,7 +112,11 @@ func (s *Service) Initiate(ctx context.Context, userID string, req InitiateReque
 		    bvn_hash      = COALESCE($5, bvn_hash),
 		    nin_hash      = COALESCE($6, nin_hash),
 		    updated_at    = NOW()
-		WHERE id = $1 AND kyc_status NOT IN ('submitted', 'pending')
+		-- 'verified' and 'suspended' must also block re-initiation: without them a
+		-- suspended-for-fraud user could self-reset to pending (undoing the
+		-- suspension) and a verified user could regress to pending while swapping
+		-- which BVN/NIN their account is bound to via the COALESCEs above.
+		WHERE id = $1 AND kyc_status NOT IN ('submitted', 'pending', 'verified', 'suspended')
 		RETURNING id`
 
 	var returnedID string
@@ -132,7 +152,7 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	if err != nil {
 		return nil, fmt.Errorf("kyc: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var oldStatus string
 	var oldTier int
@@ -142,6 +162,15 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 		return nil, fmt.Errorf("kyc: lookup user=%s: %w", userID, err)
 	}
 
+	// A late-arriving webhook for an old session must not resurrect or
+	// downgrade: suspended stays suspended (admin action is authoritative),
+	// and a stale lower-tier session must never pull kyc_tier down.
+	if oldStatus == "suspended" {
+		return nil, fmt.Errorf("kyc: cannot approve suspended user=%s", userID)
+	}
+	if newTier < oldTier {
+		return nil, fmt.Errorf("kyc: cannot downgrade user=%s tier %d -> %d", userID, oldTier, newTier)
+	}
 	const update = `
 		UPDATE user_profiles
 		SET kyc_tier = $2, kyc_status = 'verified', kyc_verified_at = NOW(), updated_at = NOW()
@@ -207,15 +236,15 @@ func (s *Service) ListPending(ctx context.Context, limit, offset int) ([]Profile
 	return profiles, rows.Err()
 }
 
-// Fail marks a KYC attempt as failed. Atomic with its audit row (the update and
-// audit insert used to be two unguarded statements — a crash between them left
-// a status change with no audit trail).
+// Fail marks a KYC attempt as failed. The status update and its audit row
+// commit in one tx — a crash between them must never leave a status change
+// with no audit trail.
 func (s *Service) Fail(ctx context.Context, userID string, actorID *string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("kyc: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var oldStatus string
 	var oldTier int
@@ -247,9 +276,110 @@ func hashIfPresent(v *string) *string {
 	if v == nil || *v == "" {
 		return nil
 	}
-	_ = fmt.Sprintf // keep fmt import used elsewhere in the file
 	salt := sha256.Sum256([]byte(*v))
 	key := argon2.IDKey([]byte(*v), salt[:], 1, 64*1024, 4, 32)
 	hashed := "argon2id:" + hex.EncodeToString(key)
 	return &hashed
+}
+
+// Handler exposes KYC endpoints.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// GetMe handles GET /finance/kyc/me
+func (h *Handler) GetMe(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	profile, err := h.svc.GetProfile(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, profile)
+}
+
+// Initiate/Approve/Reject/ListPending have no HTTP routes here — tier/status
+// moves go through the KYC verification gateway (internal/finance/kycverify),
+// which requires real provider evidence before admin review. The Service
+// methods remain because Approve is still kycverify's tier-write sink (see
+// kycTierElevator in internal/app/finance_routes.go) and Initiate is still
+// called by the mobile tier-submission handlers
+// (internal/handlers/kyc_connect_handler.go).
+
+// Status mirrors the kyc_status check constraint in the Supabase migration.
+type Status string
+
+const (
+	StatusNone      Status = "none"
+	StatusPending   Status = "pending"
+	StatusSubmitted Status = "submitted"
+	StatusVerified  Status = "verified"
+	StatusFailed    Status = "failed"
+)
+
+// ErrInvalidDocumentType — InitiateRequest.DocumentType outside the
+// user_profiles_document_type_check enum (BVN/NIN/PASSPORT/DRIVERS_LICENSE —
+// 20260613000000_kyc_fields.sql). Callers map it to 400; the alternative was an
+// opaque 500 CHECK-constraint violation at the UPDATE.
+var ErrInvalidDocumentType = errors.New("kyc: document_type outside the allowed set")
+
+// allowedDocumentTypes mirrors user_profiles_document_type_check. Keep in sync
+// with the migration; widening the set requires a (non-additive) constraint
+// change, so tier-2/3 submissions deliberately send nil — document_ref carries
+// the uploaded artifact URI instead.
+var allowedDocumentTypes = map[string]bool{
+	"BVN":             true,
+	"NIN":             true,
+	"PASSPORT":        true,
+	"DRIVERS_LICENSE": true,
+}
+
+// Tier is the verified access level (0–3).
+type Tier int
+
+// Profile is the KYC state for a user.
+type Profile struct {
+	UserID        string     `json:"user_id"`
+	Tier          Tier       `json:"kyc_tier"`
+	Status        Status     `json:"kyc_status"`
+	SubmittedAt   *time.Time `json:"kyc_submitted_at,omitempty"`
+	VerifiedAt    *time.Time `json:"kyc_verified_at,omitempty"`
+	PhoneVerified bool       `json:"phone_verified"`
+	DocumentType  *string    `json:"document_type,omitempty"`
+	RequestedTier *int       `json:"requested_tier,omitempty"`
+}
+
+// InitiateRequest is the body for POST /finance/kyc/initiate.
+type InitiateRequest struct {
+	// Tier the user is requesting (1, 2, or 3).
+	RequestedTier int     `json:"requested_tier" binding:"required,min=1,max=3"`
+	DocumentType  *string `json:"document_type,omitempty"`
+	DocumentRef   *string `json:"document_ref,omitempty"`
+	BVN           *string `json:"bvn,omitempty"`
+	NIN           *string `json:"nin,omitempty"`
+}
+
+// AuditEvent is written to kyc_events on every state transition. Field names
+// mirror the actual table (20260613010000_kyc_events.sql) — old_status/
+// new_status/old_tier/new_tier/document_type/actor_id/note — not an
+// event_type column, which the table has never had.
+type AuditEvent struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	OldStatus    *string   `json:"old_status,omitempty"`
+	NewStatus    Status    `json:"new_status"`
+	OldTier      *Tier     `json:"old_tier,omitempty"`
+	NewTier      Tier      `json:"new_tier"`
+	DocumentType *string   `json:"document_type,omitempty"`
+	ActorID      *string   `json:"actor_id,omitempty"`
+	Note         *string   `json:"note,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }

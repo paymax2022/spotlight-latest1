@@ -2,9 +2,9 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { Bell } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   name:          string;
@@ -14,10 +14,6 @@ interface Props {
 }
 
 // Time-of-day greeting based on the device's local hour:
-//   05:00–11:59 → Good Morning
-//   12:00–16:59 → Good Afternoon
-//   17:00–20:59 → Good Evening
-//   21:00–04:59 → Good Night
 function getGreeting(): string {
   const h = new Date().getHours();
   if (h >= 5 && h < 12) return 'Good Morning';

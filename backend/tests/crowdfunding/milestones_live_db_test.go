@@ -1,20 +1,15 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for campaign milestones.
-//
 // cf_campaign_milestones existed and a read endpoint existed, but nothing ever
 // wrote a row: the submit DTO accepted no milestone data, so the wizard collected
 // a funding plan and the server dropped it. GetDetail returned a literal empty
 // array on top of that, so the Milestones screen told every visitor "this campaign
 // releases funds without milestone gating" — a claim about how money moves, made
 // on no evidence.
-//
 // Gated on TEST_DATABASE_URL alone (scripts/ci/check-live-db-gate.sh).
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Milestone -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -65,9 +60,11 @@ func TestLiveDB_MilestonesArePersistedAndOrdered(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
-	rows, err := pool.Query(ctx, `
+	rows, err := pool.Query(context.WithoutCancel(ctx), `
 		SELECT title, target_kobo, status, sort_order
 		  FROM cf_campaign_milestones WHERE campaign_id=$1 ORDER BY sort_order`, campaignID)
 	if err != nil {
@@ -100,7 +97,7 @@ func TestLiveDB_MilestonesArePersistedAndOrdered(t *testing.T) {
 
 	// And the detail payload carries them — the Milestones screen reads that and
 	// nothing else.
-	detail, err := svc.GetDetail(ctx, campaignID)
+	detail, err := svc.GetDetail(ctx, campaignID, creator)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -131,7 +128,7 @@ func TestLiveDB_MilestoneStatusIsNotSelfDeclared(t *testing.T) {
 		}
 		// The whole submission rolls back: no campaign, not just no milestone.
 		var n int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM campaigns WHERE title=$1`, title).Scan(&n); err != nil {
+		if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM campaigns WHERE title=$1`, title).Scan(&n); err != nil {
 			t.Fatalf("count: %v", err)
 		}
 		if n != 0 {
@@ -155,10 +152,12 @@ func TestLiveDB_MilestoneDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
 	var first, second string
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT max(status) FILTER (WHERE sort_order=0), max(status) FILTER (WHERE sort_order=1)
 		  FROM cf_campaign_milestones WHERE campaign_id=$1`, campaignID).Scan(&first, &second); err != nil {
 		t.Fatalf("read statuses: %v", err)
@@ -170,7 +169,7 @@ func TestLiveDB_MilestoneDefaultsAndValidation(t *testing.T) {
 	for _, bad := range []cf.SubmitMilestoneRequest{
 		{Title: "   ", TargetKobo: 1},
 		{Title: "negative", TargetKobo: -1},
-		{Title: "bad date", TargetKobo: 1, DueAt: ptrStr("not-a-date")},
+		{Title: "bad date", TargetKobo: 1, DueAt: new("not-a-date")},
 		{Title: "unknown", TargetKobo: 1, Status: "WHATEVER"},
 	} {
 		if _, err := svc.SubmitForReview(ctx, creator, baseSubmit("Rejected "+bad.Title, bad)); !errors.Is(err, cf.ErrInvalidSubmission) {
@@ -179,4 +178,5 @@ func TestLiveDB_MilestoneDefaultsAndValidation(t *testing.T) {
 	}
 }
 
-func ptrStr(s string) *string { return &s }
+//go:fix inline
+func ptrStr(s string) *string { return new(s) }

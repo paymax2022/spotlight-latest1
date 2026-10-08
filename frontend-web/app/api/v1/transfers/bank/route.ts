@@ -27,14 +27,16 @@ export async function POST(request: Request) {
     const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();
     if (!idempotencyKey) throw new ApiError('Idempotency-Key header is required', 400);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       bank_code?: unknown;
       bank_name?: unknown;
       account_number?: unknown;
       amount_kobo?: unknown;
       narration?: unknown;
       save_beneficiary?: unknown;
+      pin?: unknown;
     };
+    if (!body) throw new ApiError('Invalid JSON body', 400);
 
     const bankCode         = String(body.bank_code ?? '').trim();
     const accountNumber    = String(body.account_number ?? '').trim().replace(/\D/g, '');
@@ -51,7 +53,6 @@ export async function POST(request: Request) {
     // Resolve account name (validates the account exists at the bank)
     const resolved = await resolveBankAccount(bankCode, accountNumber);
 
-    // Use bank_name from the request body when provided; fall back to bank_code
     // so the stored record is always human-readable.
     const bankName = typeof body.bank_name === 'string' && body.bank_name.trim()
       ? body.bank_name.trim()
@@ -67,6 +68,8 @@ export async function POST(request: Request) {
       idempotencyKey,
       narration,
       saveBeneficiary,
+      pin: typeof body.pin === 'string' ? body.pin : '',
+      authHeader: request.headers.get('Authorization') || request.headers.get('authorization'),
     });
 
     const feeKobo = calculateBankTransferFee(amountKobo);

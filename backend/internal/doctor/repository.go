@@ -9,6 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/strutil"
 )
 
 // Repository is the pgx data-access layer for the doctor module.
@@ -24,8 +28,6 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 // ErrNotFound is returned when a scoped row does not exist for the doctor.
 var ErrNotFound = errors.New("doctor: not found")
-
-// ── Profile ─────────────────────────────────────────────────────────────────
 
 func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	const q = `
@@ -48,8 +50,6 @@ func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, e
 	}
 	return p, err
 }
-
-// ── Verification ────────────────────────────────────────────────────────────
 
 func (r *Repository) GetLatestVerification(ctx context.Context, userID string) (*Verification, error) {
 	const q = `
@@ -86,8 +86,6 @@ func (r *Repository) InsertVerification(ctx context.Context, userID string, req 
 		CreatedAt: now, UpdatedAt: now}, nil
 }
 
-// ── Availability ────────────────────────────────────────────────────────────
-
 func (r *Repository) GetAvailability(ctx context.Context, userID string) (*Availability, error) {
 	const q = `
 		SELECT id, user_id, working_days, breaks, rules, consult_duration_mins,
@@ -108,14 +106,14 @@ func (r *Repository) GetAvailability(ctx context.Context, userID string) (*Avail
 
 // UpsertAvailability writes the single per-doctor availability row (UNIQUE user_id).
 func (r *Repository) UpsertAvailability(ctx context.Context, userID string, req UpdateAvailabilityRequest) (*Availability, error) {
-	workingDays := jsonOrEmptyArray(req.WorkingDays)
-	breaks := jsonOrEmptyArray(req.Breaks)
-	rules := jsonOrEmptyObject(req.Rules)
-	reminders := jsonOrEmptyObject(req.ReminderSettings)
-	dur := intOrDefault(req.ConsultDurationMins, 30)
-	buf := intOrDefault(req.BufferMins, 0)
-	instant := boolOrDefault(req.AcceptsInstant, false)
-	emergency := boolOrDefault(req.EmergencyEnabled, false)
+	workingDays := jsonx.RawOrEmptyArray(req.WorkingDays)
+	breaks := jsonx.RawOrEmptyArray(req.Breaks)
+	rules := jsonx.RawOrEmptyObject(req.Rules)
+	reminders := jsonx.RawOrEmptyObject(req.ReminderSettings)
+	dur := ptr.Deref(req.ConsultDurationMins, 30)
+	buf := ptr.Deref(req.BufferMins, 0)
+	instant := ptr.Deref(req.AcceptsInstant, false)
+	emergency := ptr.Deref(req.EmergencyEnabled, false)
 	tz := strOrDefault(req.Timezone, "Africa/Lagos")
 
 	const q = `
@@ -140,8 +138,6 @@ func (r *Repository) UpsertAvailability(ctx context.Context, userID string, req 
 	}
 	return r.GetAvailability(ctx, userID)
 }
-
-// ── Appointments ────────────────────────────────────────────────────────────
 
 func (r *Repository) ListAppointments(ctx context.Context, userID, status string) ([]Appointment, error) {
 	q := `
@@ -214,8 +210,6 @@ func (r *Repository) UpdateAppointmentStatus(ctx context.Context, userID, id, st
 	return r.GetAppointment(ctx, userID, id)
 }
 
-// ── Clinical notes ──────────────────────────────────────────────────────────
-
 func (r *Repository) ListNotes(ctx context.Context, userID, appointmentID string) ([]ClinicalNote, error) {
 	const q = `
 		SELECT id, user_id, appointment_id, patient_id, subjective, objective, assessment,
@@ -258,7 +252,7 @@ func (r *Repository) InsertNote(ctx context.Context, userID, appointmentID, idem
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := r.db.Exec(ctx, q, id, userID, appointmentID, req.Subjective, req.Objective,
-		req.Assessment, req.Plan, jsonOrEmptyArray(req.Diagnosis), jsonOrEmptyObject(req.Sections),
+		req.Assessment, req.Plan, jsonx.RawOrEmptyArray(req.Diagnosis), jsonx.RawOrEmptyObject(req.Sections),
 		status, finalizedAt, idemKey)
 	if err != nil {
 		return nil, err
@@ -269,7 +263,7 @@ func (r *Repository) InsertNote(ctx context.Context, userID, appointmentID, idem
 	}
 	return &ClinicalNote{ID: id, UserID: userID, AppointmentID: &appointmentID,
 		Subjective: req.Subjective, Objective: req.Objective, Assessment: req.Assessment,
-		Plan: req.Plan, Diagnosis: jsonOrEmptyArray(req.Diagnosis), Sections: jsonOrEmptyObject(req.Sections),
+		Plan: req.Plan, Diagnosis: jsonx.RawOrEmptyArray(req.Diagnosis), Sections: jsonx.RawOrEmptyObject(req.Sections),
 		Status: status, FinalizedAt: finalizedAt, CreatedAt: now, UpdatedAt: now}, nil
 }
 
@@ -287,8 +281,6 @@ func (r *Repository) getNoteByIdem(ctx context.Context, userID, idemKey string) 
 	}
 	return n, err
 }
-
-// ── Prescriptions ───────────────────────────────────────────────────────────
 
 func (r *Repository) ListPrescriptions(ctx context.Context, userID string) ([]Prescription, error) {
 	const q = `
@@ -372,7 +364,7 @@ func (r *Repository) InsertPrescription(ctx context.Context, userID, idemKey str
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insRx = `
 		INSERT INTO doctor_prescriptions
@@ -380,7 +372,7 @@ func (r *Repository) InsertPrescription(ctx context.Context, userID, idemKey str
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insRx, id, userID, req.AppointmentID, req.PatientID,
-		jsonOrEmptyObject(req.Patient), req.Diagnosis, status, issuedAt, idemKey)
+		jsonx.RawOrEmptyObject(req.Patient), req.Diagnosis, status, issuedAt, idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -420,8 +412,6 @@ func (r *Repository) getPrescriptionByIdem(ctx context.Context, userID, idemKey 
 	return r.GetPrescription(ctx, userID, id)
 }
 
-// ── Lab orders / results ────────────────────────────────────────────────────
-
 func (r *Repository) ListLabOrders(ctx context.Context, userID string) ([]LabOrder, error) {
 	const q = `
 		SELECT id, user_id, ref, appointment_id, patient_id, patient, clinical_note,
@@ -457,7 +447,7 @@ func (r *Repository) InsertLabOrder(ctx context.Context, userID, idemKey string,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `
 		INSERT INTO doctor_lab_orders
@@ -465,7 +455,7 @@ func (r *Repository) InsertLabOrder(ctx context.Context, userID, idemKey string,
 		VALUES ($1,$2,$3,$4,$5,$6,'ordered',$7,$8,$9)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insOrder, id, userID, req.AppointmentID, req.PatientID,
-		jsonOrEmptyObject(req.Patient), req.ClinicalNote, priority, req.LabProvider, idemKey)
+		jsonx.RawOrEmptyObject(req.Patient), req.ClinicalNote, priority, req.LabProvider, idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +558,7 @@ func (r *Repository) ReviewLabResult(ctx context.Context, userID, resultID, idem
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const upd = `
 		UPDATE doctor_lab_results SET reviewed = true, reviewed_at = now(), updated_at = now()
@@ -586,7 +576,7 @@ func (r *Repository) ReviewLabResult(ctx context.Context, userID, resultID, idem
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	if _, err := tx.Exec(ctx, insInterp, resultID, userID, req.Interpretation,
-		jsonOrEmptyObject(req.Detail), idemKey); err != nil {
+		jsonx.RawOrEmptyObject(req.Detail), idemKey); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -609,8 +599,6 @@ func (r *Repository) getLabResultByID(ctx context.Context, userID, id string) (*
 	}
 	return res, err
 }
-
-// ── Patients (denormalised read) ────────────────────────────────────────────
 
 func (r *Repository) GetPatientRecord(ctx context.Context, userID, patientID string) (*PatientRecord, error) {
 	const latest = `
@@ -655,8 +643,6 @@ func (r *Repository) listAppointmentsForPatient(ctx context.Context, userID, pat
 	return out, rows.Err()
 }
 
-// ── Notifications ───────────────────────────────────────────────────────────
-
 func (r *Repository) ListNotifications(ctx context.Context, userID string) ([]Notification, error) {
 	const q = `
 		SELECT id, user_id, notif_type, title, body, read, read_at, detail, created_at
@@ -689,8 +675,6 @@ func (r *Repository) MarkNotificationRead(ctx context.Context, userID, id string
 	}
 	return nil
 }
-
-// ── Settings ────────────────────────────────────────────────────────────────
 
 func (r *Repository) GetSettings(ctx context.Context, userID string) (*Settings, error) {
 	const q = `
@@ -742,13 +726,11 @@ func (r *Repository) UpsertSettings(ctx context.Context, userID string, req Upda
 		req.NotifyAppointments, req.NotifyMessages, req.NotifyPayouts, req.PushEnabled,
 		req.EmailEnabled, req.SMSEnabled, req.ShowOnlineStatus, req.AutoAcceptInstant,
 		req.PreferredCurrency, req.BiometricEnabled, req.TwoFactorEnabled,
-		nullableJSON(req.AppPreferences), nullableJSON(req.Security)); err != nil {
+		jsonx.NullJSON(req.AppPreferences), jsonx.NullJSON(req.Security)); err != nil {
 		return nil, err
 	}
 	return r.GetSettings(ctx, userID)
 }
-
-// ── Payouts (money record) ──────────────────────────────────────────────────
 
 // FindPayoutByIdem returns a prior payout for an idempotency key (replay), if any.
 func (r *Repository) FindPayoutByIdem(ctx context.Context, userID, idemKey string) (*Payout, error) {
@@ -799,7 +781,7 @@ func (r *Repository) InsertPayoutWithAudit(ctx context.Context, userID, idemKey,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insPayout = `
 		INSERT INTO doctor_payouts
@@ -812,7 +794,7 @@ func (r *Repository) InsertPayoutWithAudit(ctx context.Context, userID, idemKey,
 	const insAudit = `
 		INSERT INTO doctor_compliance_audit (user_id, action, entity_type, entity_id, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6)`
-	auditDetail := jsonOrEmptyObject(toJSON(map[string]any{
+	auditDetail := jsonx.RawOrEmptyObject(toJSON(map[string]any{
 		"amount_kobo": amountKobo,
 		"currency":    "NGN",
 		"ledger_ref":  ledgerRef,
@@ -834,34 +816,12 @@ func (r *Repository) InsertAudit(ctx context.Context, userID, action, entityType
 	const q = `
 		INSERT INTO doctor_compliance_audit (user_id, action, entity_type, entity_id, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6)`
-	_, err := r.db.Exec(ctx, q, userID, action, entityType, entityID, jsonOrEmptyObject(toJSON(detail)), idemKey)
+	_, err := r.db.Exec(ctx, q, userID, action, entityType, entityID, jsonx.RawOrEmptyObject(toJSON(detail)), idemKey)
 	return err
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────
-
-func jsonOrEmptyArray(v []byte) []byte {
-	if len(v) == 0 {
-		return []byte("[]")
-	}
-	return v
-}
-
-func jsonOrEmptyObject(v []byte) []byte {
-	if len(v) == 0 {
-		return []byte("{}")
-	}
-	return v
-}
-
-// nullableJSON returns nil for empty input so COALESCE keeps the existing value.
-func nullableJSON(v []byte) []byte {
-	if len(v) == 0 {
-		return nil
-	}
-	return v
-}
-
+// toJSON normalises a detail payload: raw bytes and json.RawMessage pass through
+// verbatim, anything else is marshalled. nil in, nil out so COALESCE sees NULL.
 func toJSON(v any) []byte {
 	if v == nil {
 		return nil
@@ -879,23 +839,6 @@ func toJSON(v any) []byte {
 	return b
 }
 
-func intOrDefault(p *int, d int) int {
-	if p != nil {
-		return *p
-	}
-	return d
-}
-
-func boolOrDefault(p *bool, d bool) bool {
-	if p != nil {
-		return *p
-	}
-	return d
-}
-
 func strOrDefault(p *string, d string) string {
-	if p != nil && *p != "" {
-		return *p
-	}
-	return d
+	return strutil.FirstNonEmpty(ptr.DerefZero(p), d)
 }

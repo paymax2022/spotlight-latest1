@@ -22,6 +22,17 @@ updates:
     commit-message: { prefix: "chore(deps)" }
     labels: [dependencies, crypto-backend]
 
+  # Test/fake services (AUD-SEC-002 coverage gap)
+  - package-ecosystem: gomod
+    directory: /tools/fakes
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, tools]
+
   # ── Node / npm ───────────────────────────────────────────────────────────────
   - package-ecosystem: npm
     directory: /frontend-web
@@ -53,6 +64,16 @@ updates:
     commit-message: { prefix: "chore(deps)" }
     labels: [dependencies, mobile]
 
+  - package-ecosystem: npm
+    directory: /mobile-app/vue-quasar
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, mobile]
+
   # ── GitHub Actions ───────────────────────────────────────────────────────────
   - package-ecosystem: github-actions
     directory: /
@@ -69,6 +90,44 @@ updates:
 
   - package-ecosystem: docker
     directory: /frontend-admin
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  # AUD-SEC-002 coverage: the remaining Dockerfiles were outside any ecosystem
+  # directory — most importantly the root Dockerfile that ships the Go binaries.
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /frontend-web
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /mobile-app/reactnative
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /mobile-app/reactnative/backend
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /tools/fakes
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /.devcontainer
     schedule: { interval: weekly }
     commit-message: { prefix: "chore(deps)" }
     labels: [dependencies, docker]

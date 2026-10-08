@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Flag, Ban, Heart, MapPin, CircleCheck, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -17,7 +17,6 @@ import { useReportUser, useBlockUser, useUnmatch } from '@/features/connect/mess
 import type { SafetyCaseResult } from '@/features/connect/messaging/types';
 
 // MS-07 — In-chat safety hub. §7: every report / block / unmatch ALWAYS
-// resolves with a caseId; the UI MUST surface it in a confirmation and NEVER
 // swallow it. Mutation errors are shown inline, never silently.
 
 export default function SafetyHub() {

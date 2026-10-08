@@ -1,8 +1,5 @@
-// ── Marketplace — Sell React Query hooks ─────────────────────────────────────
-// Query keys namespaced under ['mkt','sell', …]; mutations invalidate/patch the
 // relevant queries. Layered on the Sell API (./api/sell.api) which itself talks
 // the shared client. Mirrors the Discover hooks conventions.
-//
 // The boost purchase is the one money mutation here: it PERSISTS an
 // Idempotency-Key (SecureStore-backed, keyed by listingId+tier) so an app-kill
 // mid-charge + retry reuses the same key and the backend dedupes rather than
@@ -19,7 +16,6 @@ import type {
   UpdateListingInput,
 } from './types';
 
-// ─── Idempotency-Key persistence (SecureStore-backed) ────────────────────────
 const IDEM_PREFIX = 'mkt_sell_idem_';
 
 async function getOrCreateIdemKey(operationKey: string): Promise<string> {
@@ -35,7 +31,6 @@ async function clearIdemKey(operationKey: string): Promise<void> {
   await deleteSecureItem(IDEM_PREFIX + operationKey);
 }
 
-// ─── Query keys ───────────────────────────────────────────────────────────────
 export const SELL_KEYS = {
   categories: ['mkt', 'sell', 'categories'] as const,
   category: (id: string) => ['mkt', 'sell', 'category', id] as const,
@@ -47,12 +42,10 @@ export const SELL_KEYS = {
   insights: (id: string) => ['mkt', 'sell', 'insights', id] as const,
 };
 
-// ─── Current seller id (for GET /sellers/:id/listings) ───────────────────────
 export function useCurrentSellerId(): string | null {
   return useAuthStore((s) => s.user?.id ?? null);
 }
 
-// ─── Categories / attribute schema ────────────────────────────────────────────
 export const useSellCategories = () =>
   useQuery({ queryKey: SELL_KEYS.categories, queryFn: sellApi.getCategories, staleTime: 5 * 60_000 });
 
@@ -64,7 +57,6 @@ export const useSellCategory = (id: string | null) =>
     staleTime: 5 * 60_000,
   });
 
-// ─── My Listings dashboard (screen 15) ────────────────────────────────────────
 export function useMyListings() {
   const sellerId = useCurrentSellerId();
   return useQuery({
@@ -73,7 +65,6 @@ export function useMyListings() {
   });
 }
 
-// ─── Listing (create → submit is the publish sequence, screen 14) ────────────
 export function useCreateListing() {
   return useMutation({ mutationFn: (input: CreateListingInput) => sellApi.createListing(input) });
 }
@@ -86,7 +77,6 @@ export function useUpdateListing() {
   });
 }
 
-// ─── Photo management on an existing listing (edit screen, LM-002) ──────────
 function useListingMediaMutation<TArgs extends { id: string }>(
   mutationFn: (args: TArgs) => Promise<import('./types').Listing>,
 ) {
@@ -127,7 +117,6 @@ export const useSellListing = (id: string | null) =>
     enabled: !!id,
   });
 
-// ─── Listing lifecycle quick actions (screen 15) ─────────────────────────────
 function useListingLifecycle(mutationFn: (id: string) => Promise<unknown>) {
   const qc = useQueryClient();
   return useMutation({
@@ -149,7 +138,6 @@ export const usePurgeListing = () => useListingLifecycle(sellApi.purgeListing);
 
 // Bulk manage (LM-006). No batch endpoint exists, so this fans out over the
 // per-listing lifecycle calls and reports partial success. Uses allSettled so one
-// failure never aborts the rest; refreshes My Listings once at the end. Returns
 // { ok, failed } counts so the UI can surface partial failures.
 export function useBulkListings() {
   const qc = useQueryClient();
@@ -172,7 +160,6 @@ export function useMarkSold() {
   });
 }
 
-// ─── Boosts (screens 16–17) ───────────────────────────────────────────────────
 export const useBoostTiers = () =>
   useQuery({ queryKey: SELL_KEYS.boostTiers, queryFn: sellApi.getBoostTiers, staleTime: 5 * 60_000 });
 

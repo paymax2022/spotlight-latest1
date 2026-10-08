@@ -1,9 +1,7 @@
-// ── Spotlight Academy — Domain types (Phase 0 + Phase 1) ─────────────────────
 // Source of truth for the data layer the screens code against. Mirrors the
 // /api/finance/academy contract. Money is always integers in minor units (kobo).
 // Reward points are plain non-monetary integers (never spendable as cash).
 
-// ── Identity & roles ─────────────────────────────────────────────────────────
 export type AcademyRole = 'learner' | 'parent' | 'tutor' | 'kid';
 
 export type KycTier = 'tier0' | 'tier1' | 'tier2';
@@ -30,7 +28,6 @@ export interface AcademyProfile {
 
 export type GuardianConsentState = 'not_required' | 'pending' | 'granted';
 
-// ── Curriculum tree ──────────────────────────────────────────────────────────
 export interface CurriculumVersion {
   id: string;
   label: string;       // e.g. "NERDC 2024 (new 12-subject)"
@@ -81,7 +78,6 @@ export interface Objective {
 
 export type MasteryState = 'not_started' | 'learning' | 'proficient' | 'mastered';
 
-// ── Lessons (L6 player) ──────────────────────────────────────────────────────
 export interface Lesson {
   id: string;
   topicId: string;
@@ -97,7 +93,6 @@ export interface Lesson {
   transcript: string;
 }
 
-// ── Assessment (practice + mastery) ──────────────────────────────────────────
 export type QuestionType = 'mcq' | 'multi' | 'true_false';
 
 export interface Question {
@@ -139,7 +134,6 @@ export interface PracticeResult {
   pointsEarned: number;
 }
 
-// ── Onboarding placement quiz (curriculum-grounded diagnostic) ────────────────
 export interface PlacementQuestion {
   id: string;
   type: QuestionType;
@@ -182,7 +176,6 @@ export interface MasterySnapshot {
   pct: number;
 }
 
-// ── Exam arenas (the Crown) ──────────────────────────────────────────────────
 export type ExamSlug = 'utme' | 'bece' | 'wassce' | 'neco' | 'cce' | 'nabteb';
 
 export interface ExamArena {
@@ -252,7 +245,6 @@ export interface UtmeCombination {
   note: string;
 }
 
-// ── Gamification ─────────────────────────────────────────────────────────────
 export interface GamificationProfile {
   level: number;
   xp: number;
@@ -299,7 +291,6 @@ export interface ClassLeaderboard {
   entries: LeaderboardEntry[];
 }
 
-// ── Rewards (learn-to-earn) ──────────────────────────────────────────────────
 export interface RewardBalance {
   /** Non-monetary reward points. */
   points: number;
@@ -329,7 +320,6 @@ export interface RewardCatalogItem {
   category: 'airtime' | 'data' | 'voucher' | 'wallet' | 'exam';
 }
 
-// ── Commerce (plans, bundles, store) ─────────────────────────────────────────
 export interface Plan {
   id: string;
   name: string;
@@ -378,7 +368,6 @@ export interface AccessCardResult {
   valueKobo: number;
 }
 
-// ── Wallet ───────────────────────────────────────────────────────────────────
 export interface AcademyWallet {
   /** Spendable cash balance, kobo. */
   spendableKobo: number;
@@ -388,14 +377,10 @@ export interface AcademyWallet {
   recent: { id: string; ts: string; label: string; amountKobo?: number; points?: number; kind: 'credit' | 'debit' | 'reward' }[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — Progression, Parent/Guardian, EduPay
-// New domain types for the Phase-2 backend endpoints. Mock-first like Phase 1;
 // money stays in kobo, reward points stay plain integers. Child-safety: parent
 // actions require an active guardian link (asserted in the data layer).
-// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Progression (adaptive learning paths) ────────────────────────────────────
 export type PathStepStatus = 'locked' | 'available' | 'in_progress' | 'mastered';
 
 export interface LearningStep {
@@ -441,7 +426,6 @@ export interface Recommendation {
   icon: string;              // lucide name
 }
 
-// ── Parent / Guardian ────────────────────────────────────────────────────────
 export interface ChildSummary {
   minorId: string;
   displayName: string;
@@ -536,7 +520,6 @@ export interface PurchaseApproval {
   status: ApprovalStatus;
 }
 
-// ── EduPay (school fees + save-for-school) ───────────────────────────────────
 export interface School {
   id: string;
   name: string;
@@ -600,7 +583,6 @@ export interface SavingsPot {
   cadence: 'manual' | 'weekly' | 'monthly';
 }
 
-// ── Scholarships (P11) ───────────────────────────────────────────────────────
 export interface Scholarship {
   id: string;
   title: string;
@@ -614,7 +596,6 @@ export interface Scholarship {
   icon: string;
 }
 
-// ── Billing & subscriptions (P12) ────────────────────────────────────────────
 export interface Subscription {
   id: string;
   planName: string;
@@ -635,7 +616,6 @@ export interface Invoice {
   receiptUrl: string;
 }
 
-// ── Offline downloads library (L17) ──────────────────────────────────────────
 export type DownloadStatus = 'downloaded' | 'downloading' | 'queued' | 'failed' | 'not_downloaded';
 
 export interface DownloadedBundle {
@@ -658,7 +638,6 @@ export interface StorageInfo {
   bundleCount: number;
 }
 
-// ── Bookmarks & notes (L15/L16) ──────────────────────────────────────────────
 export interface Bookmark {
   id: string;
   kind: 'lesson' | 'topic' | 'past_question';
@@ -677,7 +656,6 @@ export interface LessonNote {
   ts: string;
 }
 
-// ── Search (L14) ─────────────────────────────────────────────────────────────
 export interface SearchResult {
   id: string;
   kind: 'lesson' | 'topic' | 'subject' | 'past_question';
@@ -687,7 +665,6 @@ export interface SearchResult {
   icon: string;
 }
 
-// ── Daily goal & streak (L2) ─────────────────────────────────────────────────
 export interface StreakDay {
   date: string;              // ISO date (day granularity)
   state: 'studied' | 'frozen' | 'missed' | 'today' | 'future';
@@ -702,13 +679,10 @@ export interface DailyGoal {
   calendar: StreakDay[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — Trade & Skills (the Moat) + Live/Community + Credentials
 // Mock-first like Phases 1–2. Money stays in kobo. Child-safety: community is
 // group/Q&A only — NO 1:1 DMs for minors (asserted in the data layer).
-// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Trade & Skills tracks (S1–S4) ────────────────────────────────────────────
 /** Paymax-relevant vocational trades surfaced as the moat. */
 export type TradeSlug = 'solar' | 'fashion' | 'gsm' | 'agric' | 'beauty' | 'catering' | 'auto';
 
@@ -756,7 +730,6 @@ export interface TradeHub {
   credentialEarned: boolean;
 }
 
-// ── Project / portfolio submission (S3) ──────────────────────────────────────
 export type ProjectSubmissionStatus = 'not_started' | 'submitted' | 'graded' | 'needs_rework';
 
 export interface RubricCriterion {
@@ -783,7 +756,6 @@ export interface TradeProject {
   feedback?: string;
 }
 
-// ── Skill assessment (S4 → credential) ───────────────────────────────────────
 export interface SkillAssessment {
   id: string;
   trackId: string;
@@ -806,7 +778,6 @@ export interface AssessmentResult {
   pointsEarned: number;
 }
 
-// ── Credentials / verifiable certificates (S5, G10, G11) ─────────────────────
 export type CredentialKind = 'academic' | 'trade';
 
 export interface Credential {
@@ -843,7 +814,6 @@ export interface CredentialVerification {
   verifiedAt: string;
 }
 
-// ── Earning opportunities (S6/S7 — the Paymax bridge) ────────────────────────
 /** Roles a learner can unlock in the Paymax super app via credentials. */
 export type PaymaxRole = 'driver' | 'agent' | 'creator' | 'merchant' | 'service';
 
@@ -882,7 +852,6 @@ export interface EarningApplication {
   nextStep: string;
 }
 
-// ── Mentor connect (S8) ──────────────────────────────────────────────────────
 export interface Mentor {
   id: string;
   name: string;
@@ -897,7 +866,6 @@ export interface Mentor {
   bio: string;
 }
 
-// ── Live classes (C1–C3) ──────────────────────────────────────────────────────
 export type LiveStatus = 'upcoming' | 'live' | 'replay';
 
 export interface LiveSession {
@@ -929,7 +897,6 @@ export interface LiveJoinToken {
   moderated: boolean;
 }
 
-// ── Community: study groups + discussions (C4, C5) ────────────────────────────
 export interface StudyGroup {
   id: string;
   name: string;
@@ -972,7 +939,6 @@ export interface ModerationReport {
   ts: string;
 }
 
-// ── Notifications & announcements (C6, C7) ────────────────────────────────────
 export type NotificationKind =
   | 'lesson' | 'reward' | 'exam_reminder' | 'live' | 'credential' | 'opportunity' | 'parent_msg' | 'community';
 
@@ -998,15 +964,10 @@ export interface Announcement {
   pinned: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 4 — Tutor & School (T1–T8) + ECCE / Little Learners (E1–E3)
 // New domain types for the Phase-4 backend endpoints. Mock-first like the earlier
-// phases; money stays in kobo, reward points stay plain integers. Tutor verify
-// reuses the KYC affordance; tutor payouts reuse the payout-rail concept; ECCE is
 // parent-gated (E3) before any settings/purchases.
-// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Tutor identity & verification (T1, T2) ────────────────────────────────────
 /** Tutor verification mirrors the KYC tier ladder: unverified → pending → verified. */
 export type TutorVerifyState = 'unverified' | 'pending' | 'verified' | 'rejected';
 
@@ -1072,7 +1033,6 @@ export interface TutorListing {
   avatarColorKey: string;
 }
 
-// ── Cohorts & roster (T3) ─────────────────────────────────────────────────────
 export interface RosterStudent {
   id: string;
   name: string;
@@ -1092,7 +1052,6 @@ export interface Cohort {
   students: RosterStudent[];
 }
 
-// ── Assignments & grading (T4, T5) ────────────────────────────────────────────
 export type AssignmentKind = 'lesson' | 'assessment' | 'homework';
 export type AssignmentStatus = 'assigned' | 'submitted' | 'graded' | 'overdue';
 
@@ -1142,7 +1101,6 @@ export interface GradeInput {
   feedback: string;
 }
 
-// ── Earnings & payouts (T7) ───────────────────────────────────────────────────
 export type TutorLedgerKind = 'session' | 'assignment_bonus' | 'payout' | 'adjustment';
 
 export interface TutorLedgerEntry {
@@ -1179,7 +1137,6 @@ export interface PayoutRequest {
   expectedSettlement: string;
 }
 
-// ── School admin (lite) (T8) ──────────────────────────────────────────────────
 export type LicenceStatus = 'active' | 'expiring' | 'expired';
 
 export interface SchoolClassStat {
@@ -1215,7 +1172,6 @@ export interface SchoolOverview {
   pendingInvites: number;
 }
 
-// ── ECCE / Little Learners (E1–E3) ────────────────────────────────────────────
 export type EcceActivityKind = 'phonics' | 'numeracy' | 'shapes' | 'colors';
 
 export interface EcceActivity {

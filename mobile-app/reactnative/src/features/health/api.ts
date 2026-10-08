@@ -1,5 +1,3 @@
-// ── Paymax Health — Shared API layer (Phase 0) ───────────────────────────────
-// Typed data layer screens code against. Mock-first (USE_MOCK); flip the flag to
 // hit the live ${HEALTH_API_BASE}/... endpoints on the frontend-web proxy.
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
 // HL-8: every records/consent read is consent-gated + access-logged server-side.
@@ -54,7 +52,6 @@ let consents: ConsentGrant[] = [...MOCK_CONSENTS];
 const responses: IntakeResponse[] = [...MOCK_INTAKE_RESPONSES];
 const consults: Consult[] = MOCK_CONSULTS.map((c) => ({ ...c, messages: [...c.messages] }));
 
-// ── Hub ──────────────────────────────────────────────────────────────────────
 export async function getHubSummary(): Promise<HealthHubSummary> {
   if (USE_MOCK) {
     await delay();
@@ -73,7 +70,6 @@ export async function getHubSummary(): Promise<HealthHubSummary> {
   return data;
 }
 
-// ── Subjects (patient + pets) ─────────────────────────────────────────────────
 export async function getSubjects(): Promise<RecordSubject[]> {
   if (USE_MOCK) {
     await delay();
@@ -83,7 +79,6 @@ export async function getSubjects(): Promise<RecordSubject[]> {
   return data;
 }
 
-// ── Records vault (HL-8 consent-gated) ────────────────────────────────────────
 export interface RecordQuery {
   subjectId?: string;
   kind?: HealthRecord['kind'];
@@ -130,7 +125,6 @@ export async function getDocSignedUrl(recordId: string, docId: string): Promise<
   return data;
 }
 
-// ── Consent & data-sharing (HL-8) ─────────────────────────────────────────────
 export async function getConsents(subjectId?: string): Promise<ConsentGrant[]> {
   if (USE_MOCK) {
     await delay();
@@ -176,7 +170,6 @@ export async function revokeConsent(id: string): Promise<ConsentGrant> {
   return data;
 }
 
-// ── Intake (schema-driven, versioned) ─────────────────────────────────────────
 export async function getIntakeSchema(schemaId: string): Promise<IntakeSchema> {
   if (USE_MOCK) {
     await delay();
@@ -247,7 +240,6 @@ export async function submitIntake(
   return data;
 }
 
-// ── Pre-Consult Intake (telemedicine appointment prerequisite, M1–M17) ────────
 // Endpoints (Next proxy → Go /api/finance/health):
 //   GET    /intake/appointments/{id}            → bundle (intake/schema/prefill/consent)
 //   PUT    /intake/appointments/{id}/draft       (autosave)
@@ -350,7 +342,6 @@ export async function getHealthProfile(): Promise<HealthProfile> {
   return data;
 }
 
-// ── Providers (HL-2 credential-gated discovery) ──────────────────────────────
 export async function getProviders(vertical?: HealthProvider['vertical']): Promise<HealthProvider[]> {
   if (USE_MOCK) {
     await delay();
@@ -371,7 +362,6 @@ export async function getProvider(id: string): Promise<HealthProvider> {
   return data;
 }
 
-// ── Consult (tele-consult lobby + room) ───────────────────────────────────────
 export async function getConsult(id: string): Promise<Consult> {
   if (USE_MOCK) {
     await delay();
@@ -402,7 +392,6 @@ export async function sendConsultMessage(consultId: string, body: string): Promi
   return data;
 }
 
-// ── Provider-application credential uploads (presigned R2) ───────────────────
 // Shared by pharmacy/lab/vet onboarding — one credential-vault backend
 // (backend/internal/health/providers/*) serves all three domains, so one
 // upload helper does too. Mirrors the doctor module's doctorUploadFile: get a
@@ -441,7 +430,6 @@ export async function uploadProviderCredential(
   return data.storage_key;
 }
 
-// credType: VCN | PCN | MLSCN | NAFDAC | PREMISES | OTHER (backend/internal/
 // health/providers/model.go CredentialDoc.CredType — no closed enum server
 // side, kept as a plain string here to match).
 export async function addProviderCredential(

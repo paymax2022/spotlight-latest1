@@ -143,11 +143,9 @@ describe('GET /api/admin/voting/{contestId}/audit-log (route)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Integration against the real getAuditLogs implementation (mocked Supabase
 // client only) — proves the route composes correctly with its dependency's
 // actual query shape, not just a mocked module boundary.
-// ---------------------------------------------------------------------------
 
 vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),

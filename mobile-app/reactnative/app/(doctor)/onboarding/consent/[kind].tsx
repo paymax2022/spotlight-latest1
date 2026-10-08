@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Check, FileWarning } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { ConsentDocView, StateView, DisclaimerBanner } from '@/features/doctor/components';
@@ -15,7 +15,6 @@ import { useLegalDocument, useAcceptConsent, useConsentStatus } from '@/features
 import { LEGAL_DOC_LABELS, LEGAL_DOC_ORDER } from '@/features/doctor/constants';
 import type { LegalDocKind } from '@/types/doctor.onboarding';
 
-// ── Section A · Entries 8–12 — One versioned consent screen ──────────────────
 // Parameterised by LegalDocKind. Renders the document (ConsentDocView) with a
 // scroll, an accept checkbox, and submits the accepted *version* via
 // useAcceptConsent. On success returns to the consent hub.

@@ -22,3 +22,8 @@
 # <<< AUTO-MANAGED: update-gitignore <<<
 .uploads/
 .registration-store.json
+
+# Playwright E2E artifacts + saved auth state (tests/e2e/)
+/tests/e2e/.auth/
+/playwright-report/
+/test-results/

@@ -1,15 +1,11 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for the campaign beneficiary.
-//
 // The wizard has a whole step for this and will not let a creator past it, and
 // GetDetail returned a hardcoded nil — so "raising for my mother" and "raising
 // for myself" were indistinguishable to everyone who saw the campaign.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Beneficiary -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -36,9 +32,11 @@ func TestLiveDB_BeneficiaryIsStoredAndSurfaced(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
-	detail, err := svc.GetDetail(ctx, campaignID)
+	detail, err := svc.GetDetail(ctx, campaignID, creator)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -73,11 +71,13 @@ func TestLiveDB_BeneficiaryVerifiedIsNotSelfDeclared(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
 	var verified bool
 	var verifiedAt, verifiedBy *string
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT verified, verified_at::text, verified_by::text
 		  FROM cf_campaign_beneficiary WHERE campaign_id=$1`, campaignID,
 	).Scan(&verified, &verifiedAt, &verifiedBy); err != nil {
@@ -105,14 +105,16 @@ func TestLiveDB_BeneficiaryOptionalAndPartial(t *testing.T) {
 		t.Fatalf("submit without beneficiary: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
-	detail, _ := svc.GetDetail(ctx, campaignID)
+	detail, _ := svc.GetDetail(ctx, campaignID, creator)
 	if detail["beneficiary"] != nil {
 		t.Errorf("beneficiary = %v with none supplied, want nil", detail["beneficiary"])
 	}
 	var rows int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM cf_campaign_beneficiary WHERE campaign_id=$1`, campaignID).Scan(&rows); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM cf_campaign_beneficiary WHERE campaign_id=$1`, campaignID).Scan(&rows); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if rows != 0 {
@@ -134,7 +136,7 @@ func TestLiveDB_BeneficiaryOptionalAndPartial(t *testing.T) {
 				t.Errorf("err = %v, want ErrInvalidSubmission", err)
 			}
 			var n int
-			if err := pool.QueryRow(ctx, `SELECT count(*) FROM campaigns WHERE title=$1`, req.Title).Scan(&n); err != nil {
+			if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM campaigns WHERE title=$1`, req.Title).Scan(&n); err != nil {
 				t.Fatalf("count: %v", err)
 			}
 			if n != 0 {

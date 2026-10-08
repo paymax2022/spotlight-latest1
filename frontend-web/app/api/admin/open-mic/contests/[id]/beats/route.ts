@@ -1,4 +1,4 @@
-import { handleApiError, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertOpenMicAdmin } from '@/src/server/openmic/auth';
 import { upsertBeat } from '@/src/server/openmic/persistence';
 
@@ -6,7 +6,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const params = await context.params;
   try {
     await assertOpenMicAdmin(request);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const beat = await upsertBeat(params.id, body);
     return successResponse({ success: true, beat }, 201);
   } catch (error) {

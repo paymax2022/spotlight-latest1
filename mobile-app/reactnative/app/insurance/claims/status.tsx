@@ -1,4 +1,3 @@
-// ── Protection — claim status ────────────────────────────────────────────────
 // One claim, as the insurer reports it. Everything here comes from GET
 // /claims/:id — progress is driven by the insurer's own assessment and reaches
 // us over webhooks, so this screen reads rather than acts.
@@ -9,10 +8,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { FileText, Paperclip } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   DetailSkeleton,
   InsuranceErrorState,

@@ -11,6 +11,7 @@ import {
   runBasicFraudChecks,
   validateStepData,
 } from '@/src/features/registration/validation';
+import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
 import {
   findLiveRegistrationForContest,
@@ -20,7 +21,6 @@ import {
   listRegistrationContests,
   getRegistrationContestBySlug,
 } from '@/src/server/registration/store';
-// Contest definitions also stay in the in-memory catalog; re-export so routes
 // importing them from this module resolve.
 export { listRegistrationContests, getRegistrationContestBySlug } from '@/src/server/registration/store';
 import {
@@ -56,16 +56,35 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function makeReference(contestSlug: string) {
+// Exported for RG-005 (contestant/reference number uniqueness) test coverage.
+// The random suffix used to be 4 base36 chars (~1.68M combinations). Under a
+// registration burst (many applicants submitting in the same millisecond —
+// the `stamp` component only changes once per ms), the birthday bound puts a
+// collision at ~99.9% likely by ~5000 same-millisecond calls — confirmed by
+// tests/unit/registration/dedup-and-reference-uniqueness.spec.ts, which
+// reproduced a real collision at that volume before this fix. Reference is a
+// human-facing/support-lookup value (the DB row identity is the UUID `id`,
+// unaffected), but a collided reference is still a real support/traceability
+// defect, so the suffix is widened to 6 chars (~2.18B combinations) — the same
+// per-slug format, just far lower collision odds at realistic burst sizes.
+export function makeReference(contestSlug: string) {
   const prefix = contestSlug.replace(/[^a-z0-9]/gi, '').slice(0, 6).toUpperCase() || 'SPOT';
   const stamp = Date.now().toString().slice(-6);
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
 }
 
+// UUID_RE is declared below (module-level, line ~290) — hoisting is fine
+// because this only runs at call time.
 export async function getRegistrationDraft(applicationId: string): Promise<RegistrationDraft | null> {
   if (!applicationId || typeof applicationId !== 'string') {
     throw new Error('Invalid application ID');
+  }
+  // registrations.id is uuid — a malformed id can never match. Return
+  // not-found (callers map it to 404) instead of letting Postgres 22P02
+  // surface as a 500 in every [id] route that calls this.
+  if (!UUID_RE.test(applicationId)) {
+    return null;
   }
 
   const { data, error } = await getSupabase()
@@ -76,7 +95,6 @@ export async function getRegistrationDraft(applicationId: string): Promise<Regis
 
   if (error) {
     if (error.code === 'PGRST116') {
-      // Not found
       console.warn('[registration/supabase-store] registration not found:', applicationId);
       return null;
     }
@@ -208,7 +226,6 @@ export async function saveRegistrationStep(params: {
   nextDraft.completionPercent = calculateCompletionPercent(steps, mergedData);
   nextDraft.fraudFlags = runBasicFraudChecks(nextDraft);
 
-  // Update in Supabase
   const { error: updateError } = await getSupabase()
     .from('registrations')
     .update({
@@ -297,15 +314,44 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
   const inMemory = getRegistrationContestBySlug(slugOrId) || resolveContestRegistration(slugOrId);
   if (inMemory) return inMemory;
 
-  const bySlug = await getPersistedContestBySlug(slugOrId);
-  if (bySlug) return bySlug;
+  // listPersistedContests() THROWS on a read failure (e.g. a prod column drift
+  // on contests). An unreadable catalog cannot confirm any slug, so the
+  // contest is unresolvable — the caller maps that to 404. Swallowing it here
+  // (with a log) is what stops a bogus slug from surfacing as a 500.
+  try {
+    const bySlug = await getPersistedContestBySlug(slugOrId);
+    if (bySlug) return bySlug;
 
-  if (UUID_RE.test(slugOrId)) {
-    const byId = await getPersistedContestById(slugOrId);
-    if (byId) return byId;
+    if (UUID_RE.test(slugOrId)) {
+      const byId = await getPersistedContestById(slugOrId);
+      if (byId) return byId;
+    }
+  } catch (error) {
+    console.warn('[registration] persisted contest lookup failed; treating as unresolvable:', error);
   }
 
   return null;
+}
+
+/**
+ * Look up a connect_contests.id by slug. Used by reviewRegistrationApplication
+ * (AD-003/CS-004) to resolve which contest a registration's photo template
+ * (contest_templates.connect_contest_id) should come from. There was no
+ * existing slug -> connect_contests.id lookup in this file to reuse —
+ * resolveAnyContest above resolves against public.contests / the in-memory
+ * catalog, not connect_contests. Returns null (never throws) on any miss or
+ * error — an unresolvable contest just means the template resolver is
+ * skipped and the caller falls back to the no-template pipeline.
+ */
+async function resolveConnectContestId(slug: string | undefined): Promise<string | null> {
+  if (!slug) return null;
+  const { data, error } = await getSupabase()
+    .from('connect_contests')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data as { id: string }).id;
 }
 
 export async function startRegistrationDraft(params: {
@@ -326,11 +372,9 @@ export async function startRegistrationDraft(params: {
   }
 
   // One live application per contest per user.
-  //
   // The check sits HERE, after resolution, rather than in the route: callers
   // pass either a slug or a contest id (the mobile contest screen passes an id),
   // so a check on the raw request value would miss half the duplicates. Migration
-  // 20270125000000 adds a partial unique index as the real authority; this exists
   // to hand back the existing application instead of a constraint violation.
   if (params.userId) {
     const existing = await findLiveRegistrationForContest(params.userId, {
@@ -401,7 +445,6 @@ export async function startRegistrationDraft(params: {
 
   const draft = rowToDraft(data);
 
-  // Create status event
   await getSupabase().from('registration_status_events').insert({
     registration_id: draft.id,
     new_status: 'draft',
@@ -413,11 +456,17 @@ export async function startRegistrationDraft(params: {
   return draft;
 }
 
+// SEC-010/RG-003/EC-006 (UAT Batch 9): the two photo/likeness-adjacent
+// consent checkboxes audited into registration_consent_records at submission
+// time. Kept as one constant so submitRegistrationApplication's audit-row
+// insert and reviewRegistrationApplication's promotion-time gate (further
+// below) can never drift onto different key lists.
+const CONSENT_RECORD_KEYS = ['media.rightsConfirmed', 'publicProfile.publicVotingConsent'] as const;
+
 export async function submitRegistrationApplication(applicationId: string) {
   const draft = await getRegistrationDraft(applicationId);
   if (!draft) throw new Error('Application not found.');
 
-  // Check if already submitted
   if (['submitted', 'awaiting_payment', 'under_review'].includes(draft.status)) {
     return { success: true, draft, alreadySubmitted: true };
   }
@@ -437,7 +486,55 @@ export async function submitRegistrationApplication(applicationId: string) {
   }
 
   const now = nowIso();
-  const nextStatus: ApplicationStatus = draft.formData['payment.paymentStatus'] === 'pending' ? 'awaiting_payment' : 'submitted';
+
+  // AUD-BILL-002 — 'payment.paymentStatus' is merged wholesale from the
+  // client PATCH (saveRegistrationStep), so a bare claim of 'paid' with any
+  // (or no) reference previously transitioned a PAID contest straight to
+  // 'submitted' with zero money changing hands. Gate the transition on proof:
+  // a completed intent row for the application, or the recorded reference
+  // re-verifying with Paystack for at least the server-quoted fee (the fee is
+  // re-read from the contest here, not trusted from formData).
+  const lockedContest = await resolveAnyContest(draft.contestSlug).catch(() => null);
+  const feeNgn = lockedContest
+    ? lockedContest.registrationFeeNgn || 0
+    : Number(draft.formData['payment.feeAmount'] || 0);
+  const isPaidContest = lockedContest
+    ? lockedContest.isPaid
+    : feeNgn > 0 || draft.formData['derived.isPaidContest'] === true;
+  let paymentProven = false;
+  if (isPaidContest && draft.formData['payment.paymentStatus'] === 'paid') {
+    const intent = await getRegistrationPaymentIntentByApplicationAndMethod(applicationId, 'PAYSTACK');
+    if (intent?.status === 'completed' || intent?.status === 'verified') {
+      paymentProven = true;
+    } else {
+      // Pre-intent wizard path: the PATCHed reference can still be real —
+      // verify it against Paystack and backfill the intent so the charge is
+      // reconcilable by the gateway sweep/recover path.
+      const ref = String(draft.formData['payment.transactionReference'] || '').trim();
+      const verification = ref ? await verifyPaystackPayment(ref).catch(() => null) : null;
+      if (verification?.success && verification.amountKobo >= Math.round(feeNgn * 100)) {
+        paymentProven = true;
+        try {
+          const recorded = await createRegistrationPaymentIntent({
+            applicationId,
+            amountKobo: Math.round(feeNgn * 100),
+            paymentReference: ref,
+            idempotencyKey: `submit-verify:${ref}`,
+          });
+          await markRegistrationPaymentIntentStatus(recorded.id, 'completed');
+        } catch {
+          // best-effort bookkeeping — the verified charge already gates submit
+        }
+      }
+    }
+  }
+  const nextStatus: ApplicationStatus = isPaidContest
+    ? paymentProven
+      ? 'submitted'
+      : 'awaiting_payment'
+    : draft.formData['payment.paymentStatus'] === 'pending'
+      ? 'awaiting_payment'
+      : 'submitted';
 
   const { error } = await getSupabase()
     .from('registrations')
@@ -457,7 +554,6 @@ export async function submitRegistrationApplication(applicationId: string) {
   draft.submittedAt = now;
   draft.completionPercent = 100;
 
-  // Create status event
   await getSupabase().from('registration_status_events').insert({
     registration_id: applicationId,
     old_status: 'draft',
@@ -466,6 +562,37 @@ export async function submitRegistrationApplication(applicationId: string) {
     actor_role: draft.role,
     created_at: now,
   });
+
+  // SEC-010/RG-003/EC-006 (UAT Batch 9): record an immutable audit row for
+  // each of the two photo/likeness-adjacent consent checkboxes, captured
+  // AFTER validation succeeded above — a submission validateStepData just
+  // rejected can never produce a false "consent accepted" event here. Records
+  // whatever the field actually resolved to (should be `true`, since
+  // validateStepData now requires it — see field-catalog.ts's defaultRequired
+  // on both keys — but this reads form_data directly rather than assuming).
+  // to the request's IP or a device fingerprint. The only caller is
+  // app/api/registration/applications/[id]/submit/route.ts, which is on the
+  // brownfield-protected legacy list (.claude/hooks/protect-legacy.sh) and
+  // cannot be edited to thread that data through without violating the
+  // brownfield-safety rule — so those columns stay null here rather than
+  // working around the protection.
+  const consentRows = CONSENT_RECORD_KEYS.map((key) => ({
+    registration_id: applicationId,
+    consent_key: key,
+    accepted: draft.formData[key] === true,
+    accepted_at: now,
+    version: 'v1',
+    ip_address: null,
+    device_fingerprint: null,
+    created_at: now,
+  }));
+  const { error: consentError } = await getSupabase().from('registration_consent_records').insert(consentRows);
+  if (consentError) {
+    // Do not block a successful submission on the audit log failing to write —
+    // losing the audit trail for one submission is a lesser failure than
+    // silently rejecting an otherwise-valid submission because of it.
+    console.error(`Failed to record registration consent audit rows for ${applicationId}: ${consentError.message}`);
+  }
 
   return { success: true, draft, message: `Your application has been submitted. Reference: ${draft.reference}.` };
 }
@@ -478,7 +605,6 @@ export async function submitRegistrationApplication(applicationId: string) {
 // Paystack charge could still leave an application looking unpaid forever
 // because the record proving it happened was gone. Fixed: the table already
 // existed for exactly this (its own migration says so); this is that move.
-//
 // applyRegistrationPaymentSuccess had the same bug one level up: it wrote
 // "paid" onto the in-memory store.ts draft Map, which getRegistrationDraft
 // (above, Postgres-only) never reads — so even a successful verify() call
@@ -544,7 +670,6 @@ export async function getRegistrationPaymentIntentByReference(
 // back button, a retry with a fresh Idempotency-Key) is invisible to the
 // idempotency-key lookup above and previously fell straight into an INSERT,
 // hitting that constraint and 500ing. Callers must check this before
-// inserting: reuse (retry) the existing row for 'initiated'/'failed', or
 // short-circuit entirely for 'completed'/'verified'.
 export async function getRegistrationPaymentIntentByApplicationAndMethod(
   applicationId: string,
@@ -586,7 +711,6 @@ export async function createRegistrationPaymentIntent(input: {
 // intent row, in place — required because `unique_payment_per_app_method`
 // permits only one row per (application_id, method), so a retry can never be
 // a second INSERT. `reference` and `idempotency_key` both carry their own
-// UNIQUE constraint too; both must be values not already in use, which a
 // freshly generated reference and the caller's new Idempotency-Key satisfy.
 export async function retryRegistrationPaymentIntent(
   id: string,
@@ -657,10 +781,8 @@ export async function applyRegistrationPaymentSuccess(
     // is the applicant-facing "how did you pay", whose options are
     // Card / Bank Transfer / USSD / Wallet. Writing the gateway here meant
     // validateStepData's select-option check rejected the very value this
-    // function had just recorded, so a successfully PAID application could
     // never be submitted (submitRegistration validates every step).
     'payment.method': PAYSTACK_METHOD_OPTION,
-    // The gateway is still worth keeping; it just does not belong in a field
     // that means something else.
     'payment.gateway': params.method,
   };
@@ -704,12 +826,10 @@ export async function listRegistrationApplications(filter: {
 
   let drafts = (data || []).map(rowToDraft);
 
-  // Filter by category
   if (filter.contestCategory) {
     drafts = drafts.filter((d) => d.formData['contest.category'] === filter.contestCategory);
   }
 
-  // Filter by age
   if (filter.minAge !== undefined || filter.maxAge !== undefined) {
     drafts = drafts.filter((d) => {
       const age = d.formData['derived.age'] as number | undefined;
@@ -720,7 +840,6 @@ export async function listRegistrationApplications(filter: {
     });
   }
 
-  // Filter by query (search in reference or name)
   if (filter.query) {
     const q = filter.query.toLowerCase();
     drafts = drafts.filter(
@@ -777,6 +896,15 @@ export async function withdrawRegistrationApplication(
  * shape immediately above: update the row, then append a
  * registration_status_events row for the audit timeline.
  */
+// Statuses that promote_registration_to_contestant() (via review_registration_application,
+// migration 20270125000000) actually fires for. Kept in sync manually with that SQL —
+// there's no shared source of truth to import from across the SQL/TS boundary.
+const PROMOTING_STATUSES: ReadonlyArray<ApplicationStatus> = [
+  'approved',
+  'selected_for_public_voting',
+  'selected_for_bootcamp',
+];
+
 export async function reviewRegistrationApplication(
   applicationId: string,
   input: RegistrationReviewInput,
@@ -786,12 +914,128 @@ export async function reviewRegistrationApplication(
 
   const now = nowIso();
   const nextFraudFlags = input.fraudFlags || current.fraudFlags;
-  const nextFormData = {
+  const nextFormData: Record<string, any> = {
     ...current.formData,
     'admin.reviewNote': input.note || '',
     'admin.reviewScore': typeof input.score === 'number' ? input.score : current.formData['admin.reviewScore'],
     'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
   };
+
+  // SEC-010/RG-003/EC-006 (UAT Batch 9): hard consent gate BEFORE the photo
+  // moderation pipeline below — cheap synchronous checks first, so a missing
+  // consent never pays for an (external-service-calling) moderation/
+  // compositing pass it's about to reject anyway. Exactly matches the
+  // a blocked review leaves the application entirely untouched and the admin
+  // sees a failed action they can retry after resolving it (re-request
+  // consent from the applicant).
+  // NEITHER key is universal across the 5 hand-tailored live contest forms
+  // (forms/*.ts) — this was verified by running buildRegistrationSteps for
+  // every slug, not assumed:
+  //   - media.rightsConfirmed literally exists only on reality-tv-show and
+  //     film-academy. stem-contest, sme-pitch-contest and open-mic-competition
+  //     capture the equivalent "I have rights to what I submitted" consent
+  //     under a DIFFERENT, category-appropriate key instead
+  //     (compliance.ownWork / category.ownsRights) — this batch is scoped to
+  //     reusing exactly the two named catalog fields, not chasing every
+  //     synonym, so those categories are intentionally left alone here.
+  //   - publicProfile.publicVotingConsent exists on all 4 voting-capable
+  //     forms (reality-tv-show, stem-contest, sme-pitch-contest,
+  //     open-mic-competition) but NOT on film-academy, whose header
+  //     documents it "does NOT support public voting" and so never renders
+  //     that field at all.
+  // Checking either key unconditionally would therefore permanently block
+  // approval for whichever live contests don't happen to collect it under
+  // that exact name — a functional regression, not SEC-010 compliance. So
+  // each key is enforced only when this registration's OWN built form
+  // actually collects it (checked dynamically below via
+  // buildRegistrationSteps, not a hardcoded per-slug list, so a future new
+  // is additionally scoped to contests with derived.supportsVoting true,
+  // matching the flag every form already gates its own public-voting step on.
+  if (PROMOTING_STATUSES.includes(input.status)) {
+    const collectedKeys = new Set(buildRegistrationSteps(current).flatMap((step) => step.fields.map((field) => field.key)));
+
+    if (collectedKeys.has('media.rightsConfirmed') && nextFormData['media.rightsConfirmed'] !== true) {
+      throw new Error('Cannot approve: applicant has not confirmed rights to the uploaded materials (media.rightsConfirmed consent missing).');
+    }
+    const supportsVoting = current.formData['derived.supportsVoting'] === true;
+    if (
+      supportsVoting &&
+      collectedKeys.has('publicProfile.publicVotingConsent') &&
+      nextFormData['publicProfile.publicVotingConsent'] !== true
+    ) {
+      throw new Error('Cannot approve: applicant has not consented to public voting visibility (publicProfile.publicVotingConsent consent missing).');
+    }
+  }
+
+  // G-IMG / TS-3 (IMG-001/SEC-010): when this decision is one that promotes
+  // the applicant to a public contestant, run their photo through moderation
+  // + background-removal BEFORE any DB write, so a failed/rejected photo
+  // leaves the application entirely untouched (admin can retry the action).
+  // promote_registration_to_contestant() reads
+  // form_data->>'media.photoUrl' (falling back to 'media.headshotUrl')
+  // verbatim into contestants.photo_url — see
+  // supabase/migrations/20260812010000_registration_contestant_seam.sql
+  // line ~104. By rewriting that same key here before the RPC fires, the
+  // RPC's existing COALESCE picks up the processed image with zero SQL
+  // changes.
+  // AD-003/CS-004: contest_templates now has a connect_contest_id bridge
+  // column (supabase/migrations/20270212000000_contest_templates_connect_bridge.sql)
+  // linking it to connect_contests — the table registrations actually
+  // resolve via contest_slug. We resolve the registration's connect_contests
+  // id, then look up an active template for it via
+  // resolveActiveTemplateForContest(). If one is configured (with a
+  // 'contestant' slot), we run the full compositing pipeline
+  // sets one up in the template manager) we fall back to
+  // processContestantPhotoNoTemplate exactly as before. See
+  // src/server/registration/photo-pipeline.ts module doc.
+  if (PROMOTING_STATUSES.includes(input.status)) {
+    const rawPhotoUrl =
+      (nextFormData['media.photoUrl'] as string | undefined) ||
+      (nextFormData['media.headshotUrl'] as string | undefined);
+
+    if (rawPhotoUrl) {
+      const { processContestantPhoto, processContestantPhotoNoTemplate } = await import(
+        '@/src/server/registration/photo-pipeline'
+      );
+      const { resolveActiveTemplateForContest } = await import(
+        '@/src/server/registration/template-resolver'
+      );
+
+      let pipelineResult;
+
+      const connectContestId = await resolveConnectContestId(current.contestSlug);
+      const resolvedTemplate = connectContestId
+        ? await resolveActiveTemplateForContest(connectContestId)
+        : null;
+
+      if (resolvedTemplate) {
+        pipelineResult = await processContestantPhoto({
+          rawPhotoUrl,
+          templateUrl: resolvedTemplate.templateUrl,
+          templateWidth: resolvedTemplate.templateWidth,
+          templateHeight: resolvedTemplate.templateHeight,
+          slot: resolvedTemplate.slot,
+        });
+      } else {
+        pipelineResult = await processContestantPhotoNoTemplate(rawPhotoUrl);
+      }
+
+      if (pipelineResult.status === 'rejected') {
+        // IMG-001/SEC-010 content-safety gate: refuse the approval outright
+        // rather than silently promoting with no/unsafe photo. The admin
+        // sees this as a failed review action and must resolve the photo
+        // (e.g. request a new one) before retrying.
+        throw new Error(`Cannot approve: contestant photo failed content moderation (${pipelineResult.reason})`);
+      }
+
+      // 'ready' or 'fallback' — either way we have a usable URL to promote.
+      if (nextFormData['media.photoUrl'] !== undefined) {
+        nextFormData['media.photoUrl'] = pipelineResult.photoUrl;
+      } else {
+        nextFormData['media.headshotUrl'] = pipelineResult.photoUrl;
+      }
+    }
+  }
 
   // Review notes first. These are cosmetic, and writing them before the status
   // transition means a failed transition leaves notes without a false decision —
@@ -812,7 +1056,6 @@ export async function reviewRegistrationApplication(
   // The status transition goes through review_registration_application (migration
   // 20270125000000), which changes the status, records the audit event AND moves
   // the voting roster in one transaction.
-  //
   // This used to be a plain UPDATE here. It looked fine and it was not: approving
   // from the admin console changed the status but never called
   // promote_registration_to_contestant, so the applicant never became a
@@ -860,7 +1103,6 @@ export async function getRegistrationStatusTimeline(
   }));
 }
 
-// Helper: Convert Supabase row to RegistrationDraft
 function rowToDraft(row: any): RegistrationDraft {
   return {
     id: row.id,

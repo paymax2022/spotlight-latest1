@@ -1,4 +1,3 @@
-// ── Paymax Invest · Onboarding — Draft (in-flight onboarding state) ──────────
 // A small module singleton the multi-step KYC + suitability flow reads/writes as
 // the user progresses. Reset on entry (index). Kept out of React Query because
 // it's transient client-only form state, not server data. Mirrors the fx
@@ -28,8 +27,6 @@ export function resetKycDraft(accountType: AccountType = 'individual') {
   kycDraft.current = emptyKycDraft();
   kycDraft.current.accountType = accountType;
 }
-
-// ─── Suitability draft ────────────────────────────────────────────────────────
 
 export const suitabilityDraft: { current: Partial<SuitabilityAnswers> } = { current: {} };
 

@@ -1,4 +1,3 @@
-// ── Estate Meetings API surface (Block 30) ───────────────────────────────────
 // Dual path: USE_MOCK in-memory store, else live HTTP to the resident-scoped
 // /api/v1/estate/meetings handlers (estate resolved server-side; see constants).
 // Signatures/types/hooks are identical for both.

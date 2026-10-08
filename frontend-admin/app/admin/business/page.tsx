@@ -4,7 +4,6 @@
 // Mirrors the Commission & Stays admin inline-style pattern (no new UI kit). Lists
 // business profiles with status/mode filters, a detail drawer (proprietors + CAC
 // refs + fee), and Approve / Reject (reason prompt) actions. Approve is a manual
-// override to a success terminal state; Reject requires a reason. Money is shown in
 // ₦ (feeKobo/100). All state-changes are audit-logged server-side.
 
 import { useEffect, useMemo, useState } from 'react';
@@ -237,7 +236,6 @@ export default function BusinessRegistryPage() {
   );
 }
 
-// ── Detail drawer ─────────────────────────────────────────────────────────────
 function Row({ k, v }: { k: string; v: ReactNode }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '0.5rem', padding: '0.4rem 0', borderBottom: `1px solid ${colors.border}`, fontSize: '0.85rem' }}>

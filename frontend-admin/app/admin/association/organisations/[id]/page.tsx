@@ -1,15 +1,11 @@
 'use client';
 
 // Organisation detail + management.
-//
 // assoc_organisations was write-once before the admin routes behind this page
-// landed: name, branding, group type, approval rule, registration fee, verified
 // and published were all permanently immutable after creation, and its chapters,
 // committees, dues tiers and rules had no editor anywhere. Everything on this
 // page is org-scoped server-side (requireOrgAdmin) and written to the immutable
 // audit log (NL-12).
-//
-// Money: registrationFeeKobo and duesKobo are INTEGER KOBO. The naira the
 // operator types is converted once, at the form boundary, by nairaToKobo().
 
 import Link from 'next/link';
@@ -75,7 +71,6 @@ export default function AssociationOrganisationDetailPage({ params }: { params: 
   }, [id]);
   useEffect(() => { void load(); }, [load]);
 
-  // ── Identity form ──
   const [form, setForm] = useState<Record<string, string>>({});
   const [flags, setFlags] = useState({ disableVoting: false, disableEvents: false, disableChat: false, disableCard: false });
   useEffect(() => {
@@ -148,7 +143,6 @@ export default function AssociationOrganisationDetailPage({ params }: { params: 
     } finally { setBusy(false); }
   }
 
-  // ── Lifecycle flags ──
   const [confirming, setConfirming] = useState<OrgFlagAction | null>(null);
   async function runFlag(action: OrgFlagAction) {
     setBusy(true); setError(null); setMsg(null);
@@ -161,7 +155,6 @@ export default function AssociationOrganisationDetailPage({ params }: { params: 
     finally { setBusy(false); }
   }
 
-  // ── Child entity editors (chapters / committees / categories / rules) ──
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
 

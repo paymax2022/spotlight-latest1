@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   icon:  LucideIcon;
@@ -17,7 +17,6 @@ interface Props {
 
 // New component (Z): a reputation metric tile (icon + value + label + optional
 // hint). StatCard renders icon/value/label but has no hint sub-line and uses a
-// shadow card; the rating dashboard needs a flat tile with an optional hint
 // (peer median / weight), so this mirrors the existing inline `Metric` helper
 // in reviews/index.tsx as a reusable component.
 export default function MetricTile({ icon: Icon, label, value, hint, color = Colors.primary, bg = Colors.iconBgPurple }: Props) {

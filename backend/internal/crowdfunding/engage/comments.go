@@ -1,12 +1,10 @@
 package engage
 
 // Campaign comments and Q&A.
-//
 // The mobile screen and its API client existed long before any of this: it called
 // four endpoints that were never built, so the page 404'd on load and the only
 // comments anyone saw came from a mock array. The contract below is the one the
 // client already expects (CampaignComment / CommentReply), not a new one.
-//
 // Two rules are enforced here rather than in the database, because both need to
 // know about the campaign and neither is expressible as a column constraint:
 //   - a reply may not itself be replied to (depth is capped at one, which is what
@@ -17,11 +15,14 @@ package engage
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/timeutil"
 )
 
 const maxCommentBody = 2000
@@ -92,14 +93,12 @@ func cleanBody(s string) (string, error) {
 
 // ListComments returns a campaign's top-level comments, newest first, each with
 // its replies oldest-first (a conversation reads down).
-//
 // viewerID may be empty — the service tolerates it and returns the feed with
 // `reported` false throughout. Note this is NOT the same as the endpoint being
 // anonymous: these routes hang off the authenticated finance group, which rejects
 // a request with no bearer token before the handler runs, exactly as the campaign
 // detail does. The tolerance is here so the service stays usable if that ever
 // changes, and so tests can exercise the viewer-less shape.
-//
 // `reported` means "YOU reported this", not "somebody did" — the screen uses it to
 // show the flag as already pulled, and a global flag would leak one user's
 // moderation action to everyone.
@@ -174,14 +173,14 @@ func (s *Service) ListComments(ctx context.Context, campaignID, viewerID string)
 	// newest-first for the top level, but a reply thread reads in the order it
 	// was written.
 	repliesOf := map[string][]CommentReply{}
-	for i := len(all) - 1; i >= 0; i-- {
-		x := all[i]
+	for _, x := range slices.Backward(all) {
+
 		if x.parentID == "" {
 			continue
 		}
 		repliesOf[x.parentID] = append(repliesOf[x.parentID], CommentReply{
 			ID: x.id, AuthorName: x.name, Body: x.body,
-			CreatedAt: rfc3339(x.createdAt), IsCreator: isCreator(x.authorID),
+			CreatedAt: timeutil.RFC3339(x.createdAt), IsCreator: isCreator(x.authorID),
 		})
 	}
 
@@ -197,7 +196,7 @@ func (s *Service) ListComments(ctx context.Context, campaignID, viewerID string)
 		}
 		out = append(out, CampaignComment{
 			ID: x.id, CampaignID: campaignID, AuthorName: x.name, AvatarURL: x.avatar,
-			Body: x.body, CreatedAt: rfc3339(x.createdAt), IsQuestion: x.isQuestion,
+			Body: x.body, CreatedAt: timeutil.RFC3339(x.createdAt), IsQuestion: x.isQuestion,
 			IsCreator: isCreator(x.authorID), Reported: x.reported, Replies: replies,
 		})
 	}
@@ -241,13 +240,12 @@ func (s *Service) PostComment(ctx context.Context, campaignID, authorID string, 
 	name, avatar := s.authorIdentity(ctx, authorID)
 	return &CampaignComment{
 		ID: id, CampaignID: campaignID, AuthorName: name, AvatarURL: avatar,
-		Body: body, CreatedAt: rfc3339(createdAt), IsQuestion: in.IsQuestion,
+		Body: body, CreatedAt: timeutil.RFC3339(createdAt), IsQuestion: in.IsQuestion,
 		IsCreator: authorID == creatorID, Reported: false, Replies: []CommentReply{},
 	}, nil
 }
 
 // ReplyComment appends a creator reply to a comment.
-//
 // Only the campaign's creator may reply. The screen renders replies with a
 // "Creator" badge and no other affordance, so allowing anyone to reply would put
 // a stranger's words behind the campaign owner's identity.
@@ -294,7 +292,7 @@ func (s *Service) ReplyComment(ctx context.Context, commentID, authorID string, 
 		return nil, err
 	}
 	name, _ := s.authorIdentity(ctx, authorID)
-	return &CommentReply{ID: id, AuthorName: name, Body: body, CreatedAt: rfc3339(createdAt), IsCreator: true}, nil
+	return &CommentReply{ID: id, AuthorName: name, Body: body, CreatedAt: timeutil.RFC3339(createdAt), IsCreator: true}, nil
 }
 
 // ReportComment flags a comment for moderation. Idempotent: reporting twice is

@@ -1,4 +1,3 @@
-// ── The applicant's own details, as the ACCOUNT already holds them ────────────
 // One source of truth for every form that would otherwise ask a signed-in user
 // to retype what they gave at sign-up. Mirrors the server's
 // `features/registration/account-prefill` so web and mobile agree on what

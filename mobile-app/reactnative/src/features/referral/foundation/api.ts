@@ -1,4 +1,3 @@
-// ── Referral foundation API ──────────────────────────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`.
 // §7A: a blank/invalid code NEVER loses the signup — it silently routes the
 // referrer side to the house/Super-Admin default. Money is ALWAYS kobo.
@@ -26,7 +25,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── Backend (gin.H) DTOs ──────────────────────────────────────────────────────
 // Bare JSON shapes returned by the Go referral service. Money is integer kobo.
 interface BackendAttribution {
   id: string;
@@ -121,7 +119,6 @@ function houseDefaultAttribution(): AttributionState {
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_VALID_CODES: Record<string, string> = {
   'AMARA10': 'Amara Eze',
   'TUNDE-PAY': 'Tunde Bakare',
@@ -179,7 +176,6 @@ const MOCK_CONSENT: ConsentState = {
   nudgesConsentAt: null,
 };
 
-// ── Attribution / codes ──────────────────────────────────────────────────────
 export async function resolveCode(code: string): Promise<CodeResolution> {
   const trimmed = code.trim().toUpperCase();
   if (USE_MOCK) {
@@ -287,7 +283,6 @@ export async function claimCode(code: string): Promise<ClaimCodeResult> {
     return { ok: true, attribution: mapAttribution(unwrap<BackendAttribution>(res)) };
   } catch (err: unknown) {
     const res = (err as { response?: { status?: number; data?: { reason?: string } } })?.response;
-    // The backend sends a machine-readable `reason`; status alone cannot
     // separate a closed grace window from an existing referrer from having no
     // attribution at all — all three answer 409.
     const REASONS: Record<string, ClaimCodeResult['error']> = {
@@ -309,7 +304,6 @@ export async function claimCode(code: string): Promise<ClaimCodeResult> {
   }
 }
 
-// ── Roles / context ──────────────────────────────────────────────────────────
 export async function getRoleContext(): Promise<RoleContext> {
   if (USE_MOCK) {
     await delay(200);
@@ -330,7 +324,6 @@ export async function setActiveRole(role: RoleContext['active']): Promise<RoleCo
   return { available: ['referrer'], active: role, lockedUntilVerified: [] };
 }
 
-// ── Notifications ────────────────────────────────────────────────────────────
 export async function getNotifications(): Promise<ReferralNotification[]> {
   if (USE_MOCK) {
     await delay(260);
@@ -378,7 +371,6 @@ export async function updateNotificationPrefs(prefs: NotificationPrefs): Promise
   return { ...prefs, channels: { ...prefs.channels } };
 }
 
-// ── Account / fraud standing ─────────────────────────────────────────────────
 export async function getStanding(): Promise<AccountStanding> {
   if (USE_MOCK) {
     await delay(240);
@@ -451,7 +443,6 @@ export function isNoReferrerToReport(err: unknown): boolean {
   return res?.status === 409 && res?.data?.reason === 'no_referrer';
 }
 
-// ── Consent ──────────────────────────────────────────────────────────────────
 export async function getConsent(): Promise<ConsentState> {
   if (USE_MOCK) {
     await delay(160);
@@ -484,13 +475,10 @@ const CONSENT_TYPE: Record<ConsentKind, string> = {
 };
 
 function consentStateFromList(consents: BackendConsent[]): ConsentState {
-  // The table is append-only: a withdrawal is a NEW row with granted=false, not
   // an edit of the grant. So "is this consent currently held?" is the granted
   // flag on the MOST RECENT row for the type — not "does any granted row
   // exist". Scanning only granted rows would find the older grant after a
   // withdrawal and leave the toggle stuck on.
-  //
-  // The backend returns rows newest-first (ordered by seq, which is monotonic;
   // created_at ties because now() is transaction-constant), so the first match
   // is the current one.
   const latest = (type: string): string | null => {
@@ -519,9 +507,7 @@ export async function recordConsent(kind: ConsentKind, granted: boolean): Promis
   // POST /compliance/consents body { consent_type, disclosure_id, granted,
   // version, source } → { consent: Consent }. We POST the single toggled record,
   // then re-derive the full ConsentState (the write only returns one consent).
-  //
   // 'terms' is the app's name for the backend's long-standing 'earnings_terms'
-  // purpose; 'contacts' and 'nudges' are their own purposes server-side and are
   // deliberately NOT folded into 'marketing'.
   await api.post(
     `${REFERRAL_API_BASE}/compliance/consents`,

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/server';
+import { ApiError } from '@/src/lib/api/responses';
 import { hasUsableSupabaseConfig } from '@/lib/supabase/runtime';
 import {
   addStemContestCategory as addStemContestCategoryMemory,
@@ -780,7 +781,12 @@ export async function createSchoolJoinRequest(input: Omit<StemSchoolJoinRequest,
       })
       .select('*')
       .single();
-    if (error) throw error;
+    if (error) {
+      if ((error as { code?: string }).code === '23503') {
+        throw new ApiError('School not found', 400);
+      }
+      throw error;
+    }
     return mapJoinRequestRow(data);
   } catch (error) {
     if (!shouldFallback(error)) throw error;

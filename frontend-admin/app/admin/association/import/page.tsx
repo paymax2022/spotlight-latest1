@@ -48,7 +48,6 @@ export default function AssociationImportPage() {
   }
 
   // Alternate one-shot path some org admins prefer: skip the preview/confirm
-  // two-step and post the CSV straight to /admin/import/members. Kept as a
   // secondary action since the preview flow is the safer default (lets the
   // admin see duplicates/invalid rows before anything persists).
   async function doBulkImportDirect() {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import type maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
 import MapView from './MapView';
 import { mapsClient, type MapPoint } from '@/services/mapsClient';
 
@@ -67,7 +67,7 @@ export default function LiveTrackingMap({ gpsTrace, className }: LiveTrackingMap
         if (snapped.encoded) coords = decodePolyline(snapped.encoded);
         else if (snapped.points) coords = snapped.points.map((p) => [p.lng, p.lat]);
       } catch {
-        coords = gpsTrace.map((p) => [p.lng, p.lat]); // graceful: show raw trace
+        coords = gpsTrace.map((p) => [p.lng, p.lat]);
       }
       if (cancelled || coords.length === 0) return;
 

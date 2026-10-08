@@ -1,6 +1,4 @@
-// ── Restaurant & Delivery — Cart store (takeaway-package model) ───────────────
 // The TAKEAWAY PACKAGE is the "mother" container. The user adds a package, then
-// puts food into it; an order is the set of packages and the food in each. Rules:
 //   • At most MAX_SAME_FOOD_PER_PACKAGE (2) portions of the SAME food per package
 //     — a 3rd portion needs another package.
 //   • The user can add extra packages; packaging fee is charged per package.
@@ -240,8 +238,6 @@ export const useCartStore = create<CartState>((set) => ({
   clear: () => set({ restaurantId: null, restaurantName: null, packages: [], activePackageId: null }),
 }));
 
-// ─── Derived selectors (operate on the package list) ──────────────────────────
-
 /** Subtotal across every package (kobo). */
 export function cartSubtotalKobo(packages: CartPackage[]): number {
   return packages.reduce((sum, p) => sum + p.lines.reduce((s, l) => s + l.priceKobo * l.qty, 0), 0);
@@ -274,7 +270,6 @@ export function aggregateCartLines(packages: CartPackage[]): CartLine[] {
   }
   return Array.from(byId.values());
 }
-
 
 /** Per-package payload (non-empty packages only) for the order request. */
 export function cartPackagesPayload(packages: CartPackage[]): { items: { itemId: string; qty: number }[] }[] {

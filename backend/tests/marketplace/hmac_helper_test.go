@@ -1,6 +1,5 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // hmacSHA512Hex is a test-only helper that computes an HMAC-SHA512 hex digest,
 // used ONLY to produce a correctly-signed webhook body so
 // chaos_error_taxonomy_test.go can assert mkt.VerifyHMAC ACCEPTS a valid
@@ -8,7 +7,6 @@ package marketplace_test
 // algorithm in webhooks.go's VerifyHMAC doc comment ("HMAC-SHA512 hex
 // signature") — it is testing the documented contract of the exported
 // VerifyHMAC function, not reaching into unexported package internals.
-// ---------------------------------------------------------------------------
 
 import (
 	"crypto/hmac"

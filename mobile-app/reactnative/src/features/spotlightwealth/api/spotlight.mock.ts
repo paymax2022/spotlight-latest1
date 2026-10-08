@@ -1,9 +1,8 @@
-// ── Spotlight Wealth — Mock data ─────────────────────────────────────────────
 // Rich, education-first fixtures the screens render in mock mode. Money is in
 // major units (display reward credit). No profit numbers, no buy-signals — all
 // content teaches or rewards learning (docs/crypto/product.md → strict rules).
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { DEFAULT_CURRENCY } from '../constants/spotlight.constants';
 import type {
   Campaign,
@@ -31,8 +30,6 @@ export const MOCK_VIDEOS: FinanceVideo[] = [
   { id: 'vid_9', title: 'Stablecoins explained without the hype',        creator: 'ChainSimple',      thumbnailColor: Colors.gold,           durationMins: 13, topic: 'crypto' },
   { id: 'vid_10', title: 'Dividends, splits & what corporate actions mean', creator: 'Market Mornings', thumbnailColor: Colors.teal,          durationMins: 15, topic: 'stocks' },
 ];
-
-// ─── Challenges (learn-and-earn; rewards are wallet credit, never returns) ─────
 
 export const MOCK_CHALLENGES: Challenge[] = [
   {
@@ -73,8 +70,6 @@ export const MOCK_CHALLENGES: Challenge[] = [
   },
 ];
 
-// ─── Learning leaderboard (POINTS from lessons/quizzes — NOT profit) ───────────
-
 export const MOCK_LEADERBOARD: LeaderboardEntry[] = [
   { rank: 1, displayName: 'Chidinma O.',  points: 4_820 },
   { rank: 2, displayName: 'Emeka N.',     points: 4_510 },
@@ -88,8 +83,6 @@ export const MOCK_LEADERBOARD: LeaderboardEntry[] = [
   { rank: 10, displayName: 'Halima S.',   points: 2_410 },
 ];
 
-// ─── Reward wallet (credit earned from learning, plus history) ─────────────────
-
 export const MOCK_REWARD_WALLET: RewardWallet = {
   balance: ngn(6_500),
   history: [
@@ -100,8 +93,6 @@ export const MOCK_REWARD_WALLET: RewardWallet = {
     { id: 'rw_5', label: 'Welcome bonus — finished onboarding', amount: ngn(3_500), at: daysAgo(9) },
   ],
 };
-
-// ─── Campaigns (creator / event-led education & referral programmes) ───────────
 
 export const MOCK_CAMPAIGNS: Campaign[] = [
   {

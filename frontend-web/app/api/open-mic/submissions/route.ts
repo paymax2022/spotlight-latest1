@@ -21,7 +21,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as any;
+    const body = (await request.json().catch(() => null)) as any;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.contestSlug) return errorResponse('contestSlug is required', 400);
     if (!body.stageName) return errorResponse('stageName is required', 400);
     for (const key of ['country', 'state', 'lga']) {
@@ -81,12 +82,6 @@ export async function POST(request: Request) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    const message =
-      (error instanceof Error ? error.message : undefined) ||
-      (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'
-        ? (error as any).message
-        : undefined) ||
-      'Failed to create song submission';
-    return handleApiError(new Error(message), message);
+    return handleApiError(error, 'Failed to create song submission');
   }
 }

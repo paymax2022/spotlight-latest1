@@ -30,23 +30,24 @@ export async function getKycProfile(): Promise<KycProfile> {
   return mapProfile(data);
 }
 
-/** POST /api/finance/kyc/initiate — submit a document to begin verification. */
+/**
+ * POST /api/v1/kyc/initiate — submit a document to begin verification.
+ * Go's /api/finance/kyc group has no /initiate route; the BFF handler does.
+ */
 export async function initiateKyc(payload: {
   documentType: KycDocumentType;
   documentNumber: string;
   requestedTier?: number;
 }): Promise<{ status: KycStatus; requestedTier: number | null; submittedAt: string | null }> {
-  const res  = await api.post('/api/finance/kyc/initiate', {
-    requested_tier: payload.requestedTier ?? 1,
-    document_type:  payload.documentType,
-    document_ref:   payload.documentNumber,
-    bvn:            payload.documentType === 'BVN' ? payload.documentNumber : undefined,
-    nin:            payload.documentType === 'NIN' ? payload.documentNumber : undefined,
+  const res  = await api.post('/api/v1/kyc/initiate', {
+    requested_tier:  payload.requestedTier ?? 1,
+    document_type:   payload.documentType,
+    document_number: payload.documentNumber,
   });
   const data = (res.data?.data ?? res.data) as Record<string, unknown>;
   return {
     status:        String(data.kyc_status ?? 'pending') as KycStatus,
-    requestedTier: data.requested_tier != null ? Number(data.requested_tier) : null,
-    submittedAt:   data.kyc_submitted_at != null ? String(data.kyc_submitted_at) : null,
+    requestedTier: (data.kyc_requested_tier ?? data.requested_tier) != null ? Number(data.kyc_requested_tier ?? data.requested_tier) : null,
+    submittedAt:   (data.submitted_at ?? data.kyc_submitted_at) != null ? String(data.submitted_at ?? data.kyc_submitted_at) : null,
   };
 }

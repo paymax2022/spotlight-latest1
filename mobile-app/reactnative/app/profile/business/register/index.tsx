@@ -1,12 +1,10 @@
 import React from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
-  View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Pressable, ActivityIndicator, Linking,
+  View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Pressable, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-// Aliased: this screen already has a local `goBack` that steps back through
-// the wizard. Without the alias my call sites resolved to THAT function and
 // recursed into it with an argument it does not take.
 import { goBack as leaveScreen } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,11 +15,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
@@ -39,9 +37,8 @@ import { statusChip, toneColors } from '@/features/business/statusDisplay';
 import { CertificateAction } from '@/features/business/CertificateAction';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { formatNaira } from '@/utils/money';
+import { useGatewayCheckout } from '@/features/payments';
 import type { BusinessEntityType, BusinessProfile, BusinessProprietor } from '@/types/business';
-
-// ── Constants ─────────────────────────────────────────────────────────────────
 
 const ENTITY_OPTIONS: { value: BusinessEntityType; label: string }[] = [
   { value: 'business_name',        label: 'Business name' },
@@ -69,7 +66,6 @@ const LINE_OF_BUSINESS = [
   'Mining & Solid Minerals', 'General Merchandise', 'Other',
 ];
 
-// Single-select proprietor roles. Labels are shown; the backend receives the
 // lowercased slug (e.g. "Company Secretary" → "company_secretary").
 const ROLE_OPTIONS = [
   'Proprietor', 'Partner', 'Director', 'Trustee', 'Shareholder', 'Company Secretary', 'Signatory',
@@ -82,8 +78,6 @@ function roleSlug(label: string): string {
 const POLLING_STATUSES = new Set<BusinessProfile['status']>([
   'registration_submitted', 'under_review', 'name_reserved', 'submitted',
 ]);
-
-// ── Validation schemas ──────────────────────────────────────────────────────
 
 const nameSchema = z.object({
   proposedName:   z.string().trim().min(2, 'Enter a proposed business name').max(120, 'Name is too long'),
@@ -126,9 +120,12 @@ export default function RegisterBusinessScreen() {
   const [pin, setPin] = React.useState('');
   const [pinError, setPinError] = React.useState('');
   const [paymentMethod, setPaymentMethod] = React.useState<PaymentMethod>('WALLET');
-  const [paystackRef, setPaystackRef] = React.useState<string | null>(null);
   const [paystackLoading, setPaystackLoading] = React.useState(false);
   const [paystackError, setPaystackError] = React.useState('');
+  const paystackCheckout = useGatewayCheckout();
+  React.useEffect(() => {
+    if (paystackCheckout.error) setPaystackError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
 
   const { data: wallet } = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet });
   const feeNaira = TOTAL_FEE_KOBO / 100;
@@ -158,7 +155,6 @@ export default function RegisterBusinessScreen() {
     }
   }, [resumeQuery.data, business]);
 
-  // ── Forms ───────────────────────────────────────────────────────────────────
   const nameForm = useForm<NameForm>({
     resolver: zodResolver(nameSchema),
     defaultValues: { proposedName: '', lineOfBusiness: [] },
@@ -170,7 +166,6 @@ export default function RegisterBusinessScreen() {
   });
   const fieldArray = useFieldArray({ control: propForm.control, name: 'proprietors' });
 
-  // ── Step 1: name availability check ──────────────────────────────────────────
   // (Register + reserve are deferred to step 2 so the single POST /register call
   //  carries the proprietors — the only endpoint that accepts them.)
   const nameMutation = useMutation({
@@ -188,7 +183,6 @@ export default function RegisterBusinessScreen() {
     },
   });
 
-  // ── Step 2: register draft (with proprietors) → reserve name ─────────────────
   const registerMutation = useMutation({
     mutationFn: async (proprietors: BusinessProprietor[]) => {
       const name = nameData ?? nameForm.getValues();
@@ -214,7 +208,6 @@ export default function RegisterBusinessScreen() {
     },
   });
 
-  // ── Step 3: pay fee → submit ─────────────────────────────────────────────────
   const feeMutation = useMutation({
     mutationFn: async () => {
       if (!business) throw new Error('No business to submit');
@@ -228,7 +221,6 @@ export default function RegisterBusinessScreen() {
     },
   });
 
-  // ── Step 4: poll status ──────────────────────────────────────────────────────
   const statusQuery = useQuery({
     queryKey: ['business', business?.id, 'status'],
     queryFn: () => getStatus(business!.id),
@@ -242,7 +234,6 @@ export default function RegisterBusinessScreen() {
     if (statusQuery.data) setBusiness(statusQuery.data);
   }, [statusQuery.data]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────────
   const onCheckName = nameForm.handleSubmit((values) => {
     setNameCheck(null);
     nameMutation.mutate(values);
@@ -270,36 +261,39 @@ export default function RegisterBusinessScreen() {
     feeMutation.mutate();
   };
 
-  // ── Paystack (payment-gateway) fee flow ──────────────────────────────────────
-  // Start a checkout, open the authorization URL, then confirm on return via verify.
+  // In-app SDK checkout only — no external-browser redirect. initiateFeePaystack
+  // is called up front (not inside the hook's initialize) because `alreadyPaid`
+  // needs to short-circuit straight to completion without ever opening the
+  // gateway at all.
+  const completePaystackFee = async (reference: string) => {
+    if (!business) return;
+    try {
+      await verifyFeePaystack(business.id, reference);   // marks the fee paid (fails closed)
+      const submitted = await submit(business.id);
+      setBusiness(submitted);
+      qc.invalidateQueries({ queryKey: ['business', 'me'] });
+      setStep(3);
+    } catch (err) {
+      setPaystackError(getErrorMessage(err));
+    }
+  };
+
   const onStartPaystack = async () => {
     if (!business) return;
     setPaystackError('');
     setPaystackLoading(true);
     try {
       const { authorizationUrl, reference, alreadyPaid } = await initiateFeePaystack(business.id, '');
-      if (alreadyPaid) { setPaystackRef(reference); return; }
+      if (alreadyPaid) {
+        await completePaystackFee(reference);
+        return;
+      }
       if (!authorizationUrl) throw new Error('Paystack did not return a payment URL.');
-      setPaystackRef(reference);
-      await Linking.openURL(authorizationUrl); // gateway URL supplied by our backend
-    } catch (err) {
-      setPaystackError(getErrorMessage(err));
-    } finally {
-      setPaystackLoading(false);
-    }
-  };
-
-  // After the user completes payment on the gateway, verify the reference then submit.
-  const onVerifyPaystack = async () => {
-    if (!business || !paystackRef) return;
-    setPaystackError('');
-    setPaystackLoading(true);
-    try {
-      await verifyFeePaystack(business.id, paystackRef);   // marks the fee paid (fails closed)
-      const submitted = await submit(business.id);
-      setBusiness(submitted);
-      qc.invalidateQueries({ queryKey: ['business', 'me'] });
-      setStep(3);
+      await paystackCheckout.start({
+        domain: 'business_registration',
+        initialize: async () => ({ authorizationUrl, reference }),
+        onResolved: (res) => completePaystackFee(res.reference),
+      });
     } catch (err) {
       setPaystackError(getErrorMessage(err));
     } finally {
@@ -312,7 +306,6 @@ export default function RegisterBusinessScreen() {
     setStep((s) => Math.max(0, s - 1));
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   if (resumeId && resumeQuery.isLoading && !business) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -629,30 +622,17 @@ export default function RegisterBusinessScreen() {
               ) : (
                 <>
                   <Text style={styles.stepDesc}>
-                    You'll be taken to Paystack to pay {formatNaira(TOTAL_FEE_KOBO)} securely. Return here and tap
-                    verify to submit your registration.
+                    Pay {formatNaira(TOTAL_FEE_KOBO)} securely via card, bank transfer, or USSD. Your registration
+                    submits automatically once payment completes.
                   </Text>
 
                   {paystackError ? <Text style={styles.apiError}>{paystackError}</Text> : null}
 
-                  {!paystackRef ? (
-                    <PrimaryButton
-                      label={paystackLoading ? 'Opening Paystack…' : `Pay ${formatNaira(TOTAL_FEE_KOBO)} with Paystack`}
-                      onPress={onStartPaystack}
-                      loading={paystackLoading}
-                    />
-                  ) : (
-                    <>
-                      <PrimaryButton
-                        label={paystackLoading ? 'Verifying…' : "I've paid — verify & submit"}
-                        onPress={onVerifyPaystack}
-                        loading={paystackLoading}
-                      />
-                      <Pressable onPress={onStartPaystack} disabled={paystackLoading} style={styles.reopenLink}>
-                        <Text style={styles.reopenLinkText}>Re-open Paystack payment</Text>
-                      </Pressable>
-                    </>
-                  )}
+                  <PrimaryButton
+                    label={paystackLoading ? 'Processing…' : `Pay ${formatNaira(TOTAL_FEE_KOBO)} with Paystack`}
+                    onPress={onStartPaystack}
+                    loading={paystackLoading}
+                  />
                 </>
               )}
             </>
@@ -663,11 +643,12 @@ export default function RegisterBusinessScreen() {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+      {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }
 
-// ── Status step ────────────────────────────────────────────────────────────────
 function StatusStep({ business, isPolling, onDone }: { business: BusinessProfile; isPolling: boolean; onDone: () => void }) {
   const chip = statusChip(business.status);
   const tc = toneColors(chip.tone);
@@ -785,8 +766,6 @@ const styles = StyleSheet.create({
   suggestionChip:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.full, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, alignSelf: 'flex-start' },
   suggestionText:{ ...Typography.labelMd, color: Colors.primary },
   apiError:    { ...Typography.labelSm, color: Colors.error, marginBottom: Spacing.md, textAlign: 'center' },
-  reopenLink:  { alignSelf: 'center', paddingVertical: Spacing.sm, marginTop: Spacing.sm },
-  reopenLinkText: { ...Typography.labelMd, color: Colors.primary, fontWeight: '600' },
   propCard:    { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.md },
   propHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
   propHeaderTitle:{ ...Typography.labelLg, color: Colors.onSurface },

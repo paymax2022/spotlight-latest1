@@ -3,16 +3,16 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Vote, CheckCircle2, Lock, ChevronRight, CreditCard } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useDashboard, useElections } from '@/features/association/hooks/useAssociation';
-import { formatDateTime } from '@/features/association/utils/associationFormatters';
+import { useDashboard, useElections } from '@/features/association/hooks';
+import { formatDateTime } from '@/features/association/utils';
 import type { ElectionSummary } from '@/features/association/types/association.types';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -24,7 +24,6 @@ export default function GovernanceLanding() {
   const dash = useDashboard();
   const elections = useElections();
 
-  // Voter eligibility is payment-gated: members in good standing can vote;
   // overdue / restricted members are blocked until they settle dues.
   const standing = dash.data?.card.paymentStanding;
   const restricted = Boolean(dash.data?.restriction) || standing === 'OVERDUE';

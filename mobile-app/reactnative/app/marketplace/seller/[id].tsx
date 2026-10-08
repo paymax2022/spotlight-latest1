@@ -1,4 +1,3 @@
-// ── Screen 7 — Seller Profile ────────────────────────────────────────────────
 // Deeper trust verification before a buyer commits. Avatar, ungameable tenure
 // badge (server-computed), verification tier icons, response stats, active
 // listings grid, reviews section GATED to real completed-order reviewers — a
@@ -11,10 +10,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, MessageCircle, Star, ShieldCheck, BadgeCheck, PackageCheck, Flag } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSellerProfile, useSellerListings, useSellerReviews } from '@/features/marketplace/hooks';

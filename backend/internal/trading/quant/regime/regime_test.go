@@ -1,8 +1,9 @@
 package regime
 
-import "math"
-
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // helper: build a series and its returns.
 func seriesReturns(prices []float64) []float64 {

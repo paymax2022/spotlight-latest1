@@ -1,13 +1,9 @@
-// ── CBT exam live-response adapters (Go exam API → mobile) ───────────────────
 // The Go exam engine (begin → serve questions → submit → server-side grade)
-// returns snake_case shapes; the CBT simulator codes against ExamAttempt /
 // ExamResult. These pure adapters bridge them so the live branch matches the mock
 // shape. Grading is server-authoritative — the client never sees the answer key
 // and never grades locally on the live path.
 
 import type { ExamAttempt, ExamResult, Question, ExamArena, ExamBlueprint, ExamSlug } from './types';
-
-// ── Go wire shapes ───────────────────────────────────────────────────────────
 
 export interface GoExamAttempt {
   id: string;
@@ -45,8 +41,6 @@ export interface GoScoredAttempt extends GoExamAttempt {
 export interface GoExamResultProjection extends GoExamScore {
   readiness?: number | null;
 }
-
-// ── Arena / blueprint catalogue shapes (the exam entry flow) ─────────────────
 
 export interface GoArena {
   id: string;
@@ -131,8 +125,6 @@ export function adaptBlueprints(rows: GoBlueprint[] | undefined): ExamBlueprint[
   return (rows ?? []).map(adaptBlueprint);
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 /** Seconds between two RFC3339 timestamps; 0 when either is missing/invalid. */
 function durationSeconds(start?: string | null, end?: string | null): number {
   if (!start || !end) return 0;
@@ -147,8 +139,6 @@ function durationSeconds(start?: string | null, end?: string | null): number {
 export function examPoints(scorePct: number): number {
   return Math.round(Math.max(0, Math.min(100, scorePct)) * 3);
 }
-
-// ── Adapters ─────────────────────────────────────────────────────────────────
 
 /**
  * Compose a client ExamAttempt from the Go attempt row + the separately-served

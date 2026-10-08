@@ -3,6 +3,14 @@ export interface Wallet {
   currency: string;
   ledgerBalance?: number;
   pendingBalance?: number;
+  /**
+   * True when NO balance source could produce a figure — `balance` is then a
+   * placeholder (0) and must not be rendered as the user's real balance
+   * (₦0.00 would mask money they actually have). Spend-path checks treat it
+   * as 0, which fails closed; display surfaces should show an unavailable
+   * state instead.
+   */
+  balanceUnavailable?: boolean;
 }
 
 export interface TransferRecipient {

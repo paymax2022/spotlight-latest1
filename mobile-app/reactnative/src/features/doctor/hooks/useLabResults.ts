@@ -1,9 +1,7 @@
-// ── Doctor — Batch 3 · Section N · lab result review hooks ─────────────────────
 // Results inbox (+ new/critical flags, pending/ready/delayed states), rich result
 // (PDF report ref, structured values with abnormal/critical flags, compare-with-
 // previous timeseries, doctor interpretation + recommendation, audit trail) and
 // the interpretation / repeat-test / share-explanation / report-suspicious
-// mutations. Reads use the DEMO_* exports as placeholderData; mutations
 // auto-generate the Idempotency-Key.
 // REUSES Phase 1 `useLabResult`, `useMarkLabResultReviewed` (from `useClinical`)
 // for the base result + mark-reviewed — those are NOT re-declared here.
@@ -27,8 +25,6 @@ import type {
   ShareResultExplanationInput,
   ReportSuspiciousResultInput,
 } from '@/types/doctor.batch3';
-
-// ─── Reads ───────────────────────────────────────────────────────────────────
 
 export function useResultInbox() {
   return useQuery({
@@ -57,8 +53,6 @@ export function useLabValueComparisons(resultId: string) {
     staleTime: 30_000,
   });
 }
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useAddInterpretation() {
   const qc = useQueryClient();

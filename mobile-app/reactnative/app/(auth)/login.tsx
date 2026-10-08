@@ -8,15 +8,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import AuthScreenWrapper from '@/components/AuthScreenWrapper';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
 import { EmailNotConfirmedError, MfaRequiredError } from '@/api/auth.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 
 // Sign in with EITHER an email or a phone number. The field is validated loosely on
-// purpose: the server decides what resolves to an account, and a strict client-side
 // phone regex would reject valid formats users type (+234…, 0803…, spaces, dashes).
 const schema = z.object({
   identifier: z.string().trim().min(3, 'Enter your email or phone number'),
@@ -54,13 +53,11 @@ export default function LoginScreen() {
         return;
       }
       // The password was CORRECT and a second factor is now required. Same code
-      // screen, different redemption endpoint — mode=login makes it redeem the
       // sign-in code (which returns a session) rather than a sign-up code.
       if (err instanceof MfaRequiredError) {
         router.push({ pathname: '/(auth)/verify-otp', params: { email: err.email, mode: 'login' } });
         return;
       }
-      // authAttempt: a 401 HERE means the credentials were rejected. Without it
       // the shared mapper returns 'Your session has expired. Please sign in
       // again.' — which is what a lapsed token means, and is nonsense on the
       // sign-in screen where there is no session yet.

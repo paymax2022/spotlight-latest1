@@ -1,25 +1,19 @@
 'use client';
 
-// ── Admin — Film Academy ─────────────────────────────────────────────────────
 // The working console for the Spotlight Film Academy, replacing the BRIDGE that
 // used to sit here.
-//
 // The bridge shipped four links to /admin/film-academy on the web app. Those
 // pages were removed when the admin portal was consolidated into this console,
 // so every link went to a login redirect and then nowhere — the section looked
 // present and did nothing. The API behind them was never removed, so the screens
 // belong here now, against that same API.
-//
 // EVERY tab below drives the exact data plane the mobile app reads at
 // http://localhost:8083/film-academy:
-//
 //   Batches / Areas / Settings  → mobile GET /api/academy/apply       (hub, apply)
 //   Applications (decide)       → mobile GET /api/academy/application (status)
 //   Tuition plans               → mobile GET /api/academy/installments(tuition)
 //   Curriculum                  → mobile GET /api/academy/learning    (learn)
 //   Submissions (grade)         → mobile GET /api/academy/assignments (assignments)
-//
-// MONEY: academy tables are in NAIRA, not kobo (they predate the kobo
 // convention). So `formatNaira` from ../_ui is deliberately NOT used here — it
 // divides by 100 and would render ₦150,000 as ₦1,500. `naira()` below formats
 // the values as stored.
@@ -118,8 +112,6 @@ export default function FilmAcademyAdminPage() {
 }
 
 type NoticeProp = { onNotice: (s: string | null) => void };
-
-// ─── Batches ────────────────────────────────────────────────────────────────
 
 const EMPTY_BATCH: svc.BatchInput = {
   batch_name: '', status: 'draft', start_date: '', end_date: '', application_deadline: '',
@@ -312,8 +304,6 @@ function Field({ label: l, children }: { label: string; children: React.ReactNod
   return <div><span style={label()}>{l}</span>{children}</div>;
 }
 
-// ─── Applications ───────────────────────────────────────────────────────────
-
 const APP_STATUSES = ['submitted', 'under_review', 'approved', 'rejected', 'waitlisted'];
 
 function ApplicationsTab({ onNotice }: NoticeProp) {
@@ -419,8 +409,6 @@ function ApplicationsTab({ onNotice }: NoticeProp) {
   );
 }
 
-// ─── Tuition ────────────────────────────────────────────────────────────────
-
 function TuitionTab({ onNotice }: NoticeProp) {
   const batches = useAsync(() => svc.listBatches(), []);
   const [batchId, setBatchId] = useState('');
@@ -503,8 +491,6 @@ function TuitionTab({ onNotice }: NoticeProp) {
     </Card>
   );
 }
-
-// ─── Curriculum ─────────────────────────────────────────────────────────────
 
 function CurriculumTab({ onNotice }: NoticeProp) {
   const cur = useAsync(() => svc.getCurriculum(), []);
@@ -671,8 +657,6 @@ function CurriculumTab({ onNotice }: NoticeProp) {
   );
 }
 
-// ─── Submissions ────────────────────────────────────────────────────────────
-
 function SubmissionsTab({ onNotice }: NoticeProp) {
   const [status, setStatus] = useState('');
   const subs = useAsync(() => svc.listSubmissions(status || undefined), [status]);
@@ -765,8 +749,6 @@ function SubmissionsTab({ onNotice }: NoticeProp) {
   );
 }
 
-// ─── Assignment parts editor (the week 1-4 timeline) ────────────────────────
-//
 // Adding parts is what turns a single-shot assignment into a staged one. An
 // assignment with NO parts keeps submitting whole, so this is opt-in per brief
 // rather than a change to how every existing assignment behaves.
@@ -894,8 +876,6 @@ function PartsEditor({ assignments, onNotice }: NoticeProp & { assignments: svc.
     </Card>
   );
 }
-
-// ─── Progress ───────────────────────────────────────────────────────────────
 
 function ProgressTab({ onNotice }: NoticeProp) {
   const batches = useAsync(() => svc.listBatches(), []);
@@ -1031,8 +1011,6 @@ function ProgressTab({ onNotice }: NoticeProp) {
     </>
   );
 }
-
-// ─── Settings & interest areas ──────────────────────────────────────────────
 
 function SettingsTab({ onNotice }: NoticeProp) {
   const settings = useAsync(() => svc.getSettings(), []);

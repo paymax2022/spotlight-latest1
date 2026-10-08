@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
-import { requireRequestUser, getRequestUserRole } from '@/src/lib/auth/request';
+import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
+import { getUserRbacRoleSlugs } from '@/src/server/admin/auth';
+import { adminRoleFromRbacSlug } from '@/src/server/admin/rbac';
 
 /**
  * GET /api/v1/admin/contests — the contest list for the admin console.
@@ -22,15 +24,30 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
  * The role check is explicit here because requireRequestUser answers "who are
  * you", not "may you" — the same gap that left /api/crowdfunding/admin
  * authenticated but unauthorized until e7945b3d.
+ *
+ * E2E-SEC-053: the check reads public.user_roles → roles.slug — the
+ * authoritative store the Go backend's RBAC enforces — never
+ * user_profiles.role, which PUT /api/me/profile used to let any user
+ * self-assign ('admin' passed the old check verbatim). Fail closed: an
+ * unresolvable role lookup denies.
  */
-const ADMIN_ROLES = new Set(['admin', 'super-admin', 'system-admin', 'superadmin']);
+const ADMIN_SLUGS = new Set(['super-admin', 'system-admin', 'admin', 'superadmin']);
 
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
 
-    const role = (await getRequestUserRole(user.id)) ?? '';
-    if (!ADMIN_ROLES.has(role.toLowerCase())) {
+    let slugs: string[];
+    try {
+      slugs = await getUserRbacRoleSlugs(user.id);
+    } catch {
+      return errorResponse('Admin access required.', 403);
+    }
+    const isAdmin = slugs.some((slug) => {
+      const normalized = slug.trim().toLowerCase().replace(/_/g, '-');
+      return ADMIN_SLUGS.has(normalized) || adminRoleFromRbacSlug(slug) === 'super_admin';
+    });
+    if (!isAdmin) {
       return errorResponse('Admin access required.', 403);
     }
 

@@ -1,15 +1,14 @@
-// ── Paymax · Admin — ApprovalCard ────────────────────────────────────────────
 // A maker-checker approval: summary + maker + approve/reject actions. Actions are
 // only rendered when `canAct` (the screen passes can(role,'approval.act')). Once
 // acted on (status !== 'pending') it shows the resolved status + checker instead.
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import StatusPill from './StatusPill';
 import { APPROVAL_STATUS_STYLE, relativeTime } from '../constants/admin.constants';

@@ -3,9 +3,9 @@ import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
@@ -72,7 +72,6 @@ export default function PlacementScreen() {
     );
   }
 
-  // ── Result view ─────────────────────────────────────────────────────────────
   if (result) {
     return (
       <Shell subtitle="Your starting point">
@@ -103,7 +102,6 @@ export default function PlacementScreen() {
     );
   }
 
-  // ── Quiz view ───────────────────────────────────────────────────────────────
   return (
     <Shell subtitle="Quick placement check">
       {loadError ? (

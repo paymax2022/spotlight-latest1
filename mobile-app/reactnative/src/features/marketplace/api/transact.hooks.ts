@@ -1,5 +1,3 @@
-// ── Marketplace — Deal Room React Query hooks (connect model) ────────────────
-//
 // The connect surface's data hooks: chat threads, structured (non-binding)
 // offers, meetup safe-spots, and the optional self-reported review. There is no
 // escrow / order / dispute money-path any more — the deal is arranged
@@ -14,10 +12,7 @@ import type { CreateOfferInput, Offer } from '../types';
 
 // Near-real-time polling for live chat (no websocket infra). Only polls when
 // pointed at the real backend and only while the app is foregrounded (react-query
-// default refetchIntervalInBackground=false) to spare battery. Mock mode is local,
 // so nothing to poll.
-//
-// When SSE realtime is enabled (EXPO_PUBLIC_REALTIME_ENABLED=true, see
 // realtime/useMarketplaceRealtime.ts) push handles the fast path, so we relax the
 // message poll to 20s — polling STAYS as the safety net (reconnect gaps, dropped
 // frames), it just runs less often. With realtime off, the tighter 6s poll stands.
@@ -25,15 +20,12 @@ const REALTIME_ENABLED = (process.env.EXPO_PUBLIC_REALTIME_ENABLED ?? 'false') =
 const MESSAGE_POLL_MS = MKT_USE_MOCK ? (false as const) : REALTIME_ENABLED ? 20_000 : 6_000;
 const THREADS_POLL_MS = MKT_USE_MOCK ? (false as const) : 15_000;
 
-// ── Current user id (for own-vs-counterparty bubble rendering in live mode) ────
 // Sourced from the Supabase-backed auth store (same source useCurrentSellerId in
-// sell.hooks.ts uses). Null when signed-out; the Deal Room falls back to MOCK_ME
 // so mock/offline mode still renders own bubbles correctly.
 export function useCurrentUserId(): string | null {
   return useAuthStore((s) => s.user?.id ?? null);
 }
 
-// ── Query keys ────────────────────────────────────────────────────────────────
 export const TX_KEYS = {
   threads: ['mkt', 'transact', 'threads'] as const,
   thread: (id: string) => ['mkt', 'transact', 'thread', id] as const,
@@ -43,7 +35,6 @@ export const TX_KEYS = {
   safeSpots: ['mkt', 'transact', 'safe-spots'] as const,
 };
 
-// ── Chat inbox / Deal Room ────────────────────────────────────────────────────
 export const useThreads = () =>
   useQuery({ queryKey: TX_KEYS.threads, queryFn: offersApi.listThreads, refetchInterval: THREADS_POLL_MS });
 
@@ -66,7 +57,6 @@ export function useSendMessage(threadId: string) {
   });
 }
 
-// ── Offers (first-class, NON-BINDING price proposals) ─────────────────────────
 // An offer is just a structured price suggestion. Accepting one agrees a number
 // for the meetup — it creates no order and holds no funds.
 export const useOffers = (listingId: string) =>
@@ -104,7 +94,6 @@ export function useDeclineOffer(listingId: string) {
   });
 }
 
-// ── Reviews — optional, self-reported after a deal is marked complete ─────────
 export const useReviewForDeal = (dealId: string) =>
   useQuery({ queryKey: TX_KEYS.review(dealId), queryFn: () => meetupApi.getReviewForDeal(dealId), enabled: !!dealId });
 
@@ -130,7 +119,6 @@ export function useMarkDealMet(dealId: string) {
   });
 }
 
-// ── Meetup ────────────────────────────────────────────────────────────────────
 export const useSafeSpots = () =>
   useQuery({ queryKey: TX_KEYS.safeSpots, queryFn: meetupApi.getSafeSpots, staleTime: 5 * 60_000 });
 

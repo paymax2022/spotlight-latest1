@@ -19,7 +19,7 @@ export function useLongPress(
   ref: React.RefObject<HTMLElement>,
   options: {
     onLongPress: () => void;
-    duration?: number; // Default: 500ms
+    duration?: number;
     onPressStart?: () => void;
     onPressEnd?: () => void;
   }
@@ -104,8 +104,8 @@ export function usePinchZoom(
   ref: React.RefObject<HTMLElement>,
   options?: {
     onZoom?: (scale: number) => void;
-    minScale?: number; // Default: 1
-    maxScale?: number; // Default: 3
+    minScale?: number;
+    maxScale?: number;
     onZoomStart?: () => void;
     onZoomEnd?: () => void;
   }
@@ -191,7 +191,7 @@ export function useTwoFingerTap(
   ref: React.RefObject<HTMLElement>,
   options: {
     onTap: () => void;
-    maxDelay?: number; // Default: 200ms between touches
+    maxDelay?: number;
   }
 ) {
   const firstTouchRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -326,7 +326,6 @@ export function useTouchPressure(ref: React.RefObject<HTMLElement>) {
     if (!ref.current) return;
 
     const handleTouchStart = (e: TouchEvent) => {
-      // Check if force is available
       if (e.touches[0].force !== undefined) {
         setIsSupported(true);
       }

@@ -2,13 +2,11 @@
 // marketplace on every listing state change that affects search — see §2.1 of
 // Paymax_Marketplace_CLAUDE_BUILD_CONTRACT.md) and applies the corresponding
 // upsert/delete to Elasticsearch, via search.Indexer.RunOnce.
-//
 // House pattern: a plain ticker-goroutine-style loop (this repo has no
 // pg_cron and no asynq periodic scheduler — see
 // internal/fractionalre/autoinvest_runner.go for the established convention),
 // run here as its own process rather than a goroutine so it can be deployed,
 // scaled, and restarted independently of the API server.
-//
 // Run with: `go run ./cmd/marketplace-indexer` (sources DATABASE_URL, ES_URL
 // from env). Exits non-zero only on unrecoverable startup failure (bad
 // DATABASE_URL); a down Elasticsearch is logged per-tick and retried, never

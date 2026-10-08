@@ -3,10 +3,10 @@ import { View, Text, FlatList, StyleSheet, Platform, KeyboardAvoidingView, Press
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Users, FileText, ChevronDown, ChevronUp } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, ChatComposer, SectionCard, InfoRow } from '@/features/doctor/components';
 import { useCareTeamThread, useSendCareTeamMessage, useSharedCaseSummary } from '@/features/doctor/hooks';
@@ -14,7 +14,6 @@ import type { CareTeamMessage } from '@/types/doctor.batch4';
 
 // Section P (P14, P15) — care-team multi-clinician chat with the shared case
 // summary surfaced as a collapsible header (STATE of this screen). Reuses
-// ChatComposer; the team bubble is inline (CareTeamMessage author shape differs
 // from the Phase 1 ChatMessage MessageBubble expects).
 export default function CareTeamScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

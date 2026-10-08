@@ -1,4 +1,3 @@
-// ── Fractional Real Estate — Formatters & calc helpers ───────────────────────
 // All money is integer kobo. Display helpers convert to ₦. Calculator output is
 // a CLIENT PREVIEW only — the backend is authoritative for fees, limits & payouts.
 

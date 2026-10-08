@@ -1,6 +1,4 @@
-// ── Doctor module — Section A (Onboarding) constants ─────────────────────────
 // Static option lists / labels for the splash, onboarding & authentication
-// funnel. Pure data only — no money math. ADDITIVE; re-exported from
 // constants/index.ts via a single new line.
 
 import type {
@@ -10,13 +8,10 @@ import type {
   OnboardingSlide,
 } from '@/types/doctor.onboarding';
 
-// Re-export the static intro-carousel content from the api so a screen can pull
 // either the demo data or this constant — single source of truth lives in the api.
 export { DEMO_ONBOARDING_SLIDES as ONBOARDING_SLIDES } from '@/api/doctor.onboarding.api';
 
-// ─── Entry 4 — provider type choices ─────────────────────────────────────────
 // `routesTo` documents which existing builder each choice opens (Frontend uses
-// it to navigate): doctor & specialist → Section B builder; veterinarian →
 // Section C / Batch 1 builder.
 
 export const PROVIDER_TYPE_OPTIONS: ProviderTypeOption[] = [
@@ -37,8 +32,6 @@ export const PROVIDER_TYPE_OPTIONS: ProviderTypeOption[] = [
   },
 ];
 
-// ─── Entries 8–12 — legal document labels ────────────────────────────────────
-
 export const LEGAL_DOC_LABELS: Record<LegalDocKind, string> = {
   terms_of_service:      'Terms of Service',
   medical_privacy:       'Medical Privacy Notice',
@@ -56,7 +49,6 @@ export const LEGAL_DOC_ORDER: LegalDocKind[] = [
   'telemedicine_policy',
 ];
 
-// ─── Entries 13–16 — permission labels + rationale copy ──────────────────────
 // `rationale` is the pre-prompt explanation the Frontend shows before triggering
 // the OS permission dialog. `required` mirrors the api's required flag.
 

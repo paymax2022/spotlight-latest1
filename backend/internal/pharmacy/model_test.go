@@ -95,5 +95,5 @@ func TestPharmacyProductPriceKoboIsInteger(t *testing.T) {
 	}
 	// Confirm no precision loss — if this were float64, 125000.0 would still pass,
 	// but the type system prevents float assignment here.
-	var _ int64 = p.PriceKobo
+	var _ = p.PriceKobo
 }

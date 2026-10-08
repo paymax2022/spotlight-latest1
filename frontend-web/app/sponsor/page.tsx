@@ -269,7 +269,6 @@ export default function SponsorPage() {
               <h1 className="font-display mt-4 text-[4rem] leading-[0.9] md:text-[6.8rem] lg:text-[7rem] text-[#06391f] max-w-3xl">
                 Partner with Us
               </h1>
-              {/* <div className="mt-5 h-px w-full max-w-xl bg-[#c99a2e]" /> */}
               <p className="mt-5 font-display italic text-2xl md:text-3xl leading-tight text-[#123e2a] max-w-2xl">
                 Powering The Next Generation of Stars.
               </p>
@@ -277,9 +276,6 @@ export default function SponsorPage() {
                 Spotlight is a proven creative-economy platform that discovers and elevates Nigerian talent, driving youth empowerment, national visibility, premium content production, and lasting cultural impact.
               </p>
               <div className="mt-9 flex flex-col sm:flex-row gap-4">
-                {/* <Link href="/media-room" className="inline-flex items-center justify-center rounded-md border border-[#c99a2e] bg-[#064024] px-6 py-4 text-sm font-bold text-[#f3cf72] shadow-[0_12px_28px_rgba(6,64,36,0.22)]">
-                  Request Sponsorship Deck
-                </Link> */}
                 <SponsorMeetingBookingModal className="inline-flex items-center justify-center rounded-md border border-[#c99a2e] bg-white/55 px-6 py-4 text-sm font-bold text-[#b07617]">
                   Become a Strategic Sponsor
                 </SponsorMeetingBookingModal>

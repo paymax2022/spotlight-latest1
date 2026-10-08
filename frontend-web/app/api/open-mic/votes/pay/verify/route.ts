@@ -1,35 +1,72 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { verifyVotePayment, resolveIdempotency } from '@/src/server/voting/core';
-import { castVote } from '@/src/server/openmic/persistence';
+import { castVote, getContestById } from '@/src/server/openmic/persistence';
+import {
+  getOpenMicVoteIntentByReference,
+  markOpenMicVoteIntent,
+} from '@/src/server/payments/openmic-vote-intents';
 import { createAdminClient } from '@/lib/supabase/server';
 
 type OpenMicVerifyCached = { success: true; alreadyProcessed: true; newCount: number };
+
+// contests.id / competition_entries.id are uuid columns — a malformed id fed
+// into .eq() surfaces as a Postgres 22P02 (500) inside getContestById and
+// castVote, so shape-check the resolved ids before touching the store.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       reference?: string;
       contestId?: string;
       submissionId?: string;
       votes?: number;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.reference)    return errorResponse('reference is required', 400);
     if (!body.contestId)    return errorResponse('contestId is required', 400);
     if (!body.submissionId) return errorResponse('submissionId is required', 400);
     if (!body.votes || body.votes <= 0) return errorResponse('votes must be > 0', 400);
 
+    // If initiate recorded a charge intent for this reference it is
+    // authoritative: the frozen params and server-quoted amount win over the
+    // request body (AUD-FE-009). Intents are also payer-scoped — a reference
+    // initiated by someone else cannot be claimed here.
+    const intent = await getOpenMicVoteIntentByReference(body.reference);
+    if (intent && intent.voter_user_id !== user.id) {
+      return errorResponse('This payment reference belongs to a different account', 403);
+    }
+    const contestId = intent?.contest_id ?? body.contestId;
+    const submissionId = intent?.submission_id ?? body.submissionId;
+    const votes = intent?.votes ?? body.votes;
+    // Resolved ids (body, or the intent's frozen values when one exists) feed
+    // uuid columns below — refuse malformed shapes with a 400 before the
+    // first store read rather than letting PostgREST 22P02 surface as a 500.
+    if (!UUID_RE.test(contestId) || !UUID_RE.test(submissionId)) {
+      return errorResponse('contestId and submissionId must be valid UUIDs', 400);
+    }
+    if (!Number.isInteger(votes) || votes <= 0 || votes > Number.MAX_SAFE_INTEGER) {
+      return errorResponse('votes must be a positive integer', 400);
+    }
+    let expectedKobo = intent?.amount_kobo ?? 0;
+    if (!expectedKobo) {
+      // Pre-intent in-flight reference: derive the quote server-side anyway
+      // rather than trusting the body.
+      const contest = await getContestById(contestId);
+      const price = contest?.votingConfig?.votePrice ?? 0;
+      expectedKobo = Math.round(votes * price * 100);
+    }
+
     // Idempotency (shared core) — the durable dedup anchor is the Paystack
     // payment_reference, which is unique per payment and already persisted on
     // competition_entry_votes. The webhook path (and a redirect retry) can both
-    // arrive for the same payment; keying off payment_reference makes whichever
     // lands first the winner and any later call a safe no-op. Same helper that
     // v1/v2 use — only the storage table differs.
     const supabase = createAdminClient();
-    const submissionId = body.submissionId;
     const idem = await resolveIdempotency<OpenMicVerifyCached>(body.reference, {
       lookupCached: async (reference) => {
         const { data: existing } = await supabase
@@ -52,7 +89,9 @@ export async function POST(request: Request) {
     });
 
     if (idem.status === 'cached') {
-      // Already credited for this reference — return 200 with the current count
+      if (intent && intent.status === 'pending') {
+        await markOpenMicVoteIntent(body.reference, 'confirmed');
+      }
       // instead of 409 so retries (and races with the webhook) are idempotent.
       return successResponse(idem.value);
     }
@@ -63,19 +102,31 @@ export async function POST(request: Request) {
       return errorResponse('Payment not confirmed — please contact support if funds were deducted', 402);
     }
 
+    // AUD-FE-009: reconcile what Paystack actually collected against the
+    // server-side quote. An under-collected charge must not mint votes.
+    if (expectedKobo > 0 && result.amountKobo < expectedKobo) {
+      if (intent && intent.status === 'pending') {
+        await markOpenMicVoteIntent(
+          body.reference,
+          'amount_mismatch',
+          `Paystack collected ${result.amountKobo} kobo, below the ${expectedKobo} kobo quote`,
+        );
+      }
+      return errorResponse('Payment amount is below the required vote price', 402);
+    }
+
     // Cast the vote. castVote inserts into competition_entry_votes keyed by
-    // payment_reference; if the webhook processed this same payment in the
     // window between our check and here, the recompute-from-source-of-truth in
     // castVote keeps the count correct, and a duplicate-reference insert is
     // handled below as an already-processed result.
     let updated: { voteCount: number };
     try {
       updated = await castVote({
-        contestId: body.contestId,
-        submissionId: body.submissionId,
+        contestId,
+        submissionId,
         voterUserId: user.id,
         source: 'paid',
-        votes: body.votes,
+        votes,
         paymentReference: body.reference,
       });
     } catch (castErr) {
@@ -90,7 +141,7 @@ export async function POST(request: Request) {
         const { data: entry } = await supabase
           .from('competition_entries')
           .select('public_vote_count')
-          .eq('id', (raced as { entry_id?: string }).entry_id ?? body.submissionId)
+          .eq('id', (raced as { entry_id?: string }).entry_id ?? submissionId)
           .maybeSingle();
         return successResponse({
           success: true,
@@ -99,6 +150,10 @@ export async function POST(request: Request) {
         });
       }
       throw castErr;
+    }
+
+    if (intent && intent.status === 'pending') {
+      await markOpenMicVoteIntent(body.reference, 'confirmed');
     }
 
     return successResponse({ success: true, alreadyProcessed: false, newCount: updated.voteCount });

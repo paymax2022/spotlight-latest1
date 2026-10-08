@@ -10,7 +10,7 @@ type fakeGranter struct {
 	grants map[string]int64
 }
 
-func (f *fakeGranter) Grant(_ context.Context, _ , creditType, _ string, amount int64, _ string) error {
+func (f *fakeGranter) Grant(_ context.Context, _, creditType, _ string, amount int64, _ string) error {
 	if f.grants == nil {
 		f.grants = map[string]int64{}
 	}

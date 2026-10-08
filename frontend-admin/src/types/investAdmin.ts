@@ -1,4 +1,3 @@
-// ── Admin — Paymax Invest types (mirror of backend/internal/invest) ───────────
 
 export interface InvestOverview {
   assets_total: number;

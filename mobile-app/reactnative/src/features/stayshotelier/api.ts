@@ -1,13 +1,10 @@
-// ── Stays hotelier extranet — API wrapper ────────────────────────────────────
 // Owner/manager-facing property & room management against the Go backend
 // (BASE /api/v1/stays/extranet, proxied to Go's /api/stays/extranet). Talks
-// LIVE by default; set EXPO_PUBLIC_STAYS_HOTELIER_USE_MOCK=true for an offline
 // in-memory stub. Mirrors the restaurant merchant module's shape (property ≈
 // store, room type ≈ menu category, rate plan ≈ menu item) since the domains
 // match closely and that module's self-serve pattern is what this reuses:
 // no RBAC role to be granted first — creating a property stamps the caller as
 // OWNER server-side, and every subsequent call is checked against that grant.
-//
 // Backend contract (mapped snake_case → camelCase here):
 //   GET  /me/properties                                → my properties (id/name/city/status/role)
 //   POST /properties                                    → create property, caller becomes OWNER
@@ -98,7 +95,6 @@ function mapReservation(r: any): HotelierReservation {
   };
 }
 
-// ── Offline stub (only when USE_MOCK) ─────────────────────────────────────────
 let mockProperties: PropertyDetail[] = [];
 let mockRoomTypes: Record<string, RoomType[]> = {};
 let mockRatePlans: Record<string, RatePlan[]> = {};
@@ -107,7 +103,6 @@ let seq = 0;
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
 const delay = (ms = 220) => new Promise<void>((r) => setTimeout(r, ms));
 
-// ── Properties ─────────────────────────────────────────────────────────────
 export async function myProperties(): Promise<HotelierProperty[]> {
   if (USE_MOCK) {
     await delay();
@@ -180,7 +175,6 @@ export async function updatePropertyDetails(propertyId: string, input: UpdatePro
   });
 }
 
-// ── Photos ─────────────────────────────────────────────────────────────────
 // Upload is presign → PUT the picked bytes straight to R2 → confirm (persist the
 // row). Mirrors the marketplace Sell composer's image upload exactly
 // (src/features/marketplace/api/sell.api.ts uploadListingImage).
@@ -252,7 +246,6 @@ export async function deletePhoto(propertyId: string, photoId: string): Promise<
   await api.delete(`${BASE}/properties/${propertyId}/photos/${photoId}`);
 }
 
-// ── Room types ─────────────────────────────────────────────────────────────
 export async function listRoomTypes(propertyId: string): Promise<RoomType[]> {
   if (USE_MOCK) {
     await delay();
@@ -278,7 +271,6 @@ export async function createRoomType(propertyId: string, input: CreateRoomTypeIn
   return unwrap<{ id: string }>(res);
 }
 
-// ── Rate plans ─────────────────────────────────────────────────────────────
 export async function listRatePlans(propertyId: string): Promise<RatePlan[]> {
   if (USE_MOCK) {
     await delay();
@@ -309,7 +301,6 @@ export async function createRatePlan(propertyId: string, input: CreateRatePlanIn
   return unwrap<{ id: string }>(res);
 }
 
-// ── Reservations ───────────────────────────────────────────────────────────
 export async function listReservations(propertyId: string): Promise<HotelierReservation[]> {
   if (USE_MOCK) {
     await delay();
@@ -319,7 +310,6 @@ export async function listReservations(propertyId: string): Promise<HotelierRese
   return (unwrap<any[]>(res) ?? []).map(mapReservation);
 }
 
-// ── Go-live verification ──────────────────────────────────────────────────
 // Not property-scoped: the backend resolves "the caller's primary property"
 // (ResolvePrimaryProperty) rather than taking a :propertyId — a hotelier is
 // assumed to be onboarding one property at a time.

@@ -1,17 +1,13 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // Agent F (QA) — API-contract / frozen-shape tests.
-//
 // These lock the FROZEN interface from SWARM_INTEGRATION_CONTRACT.md: enum
 // string values (mirror SQL ENUMs exactly — a typo here breaks the DB CHECK/
 // ENUM round-trip AND every other agent's switch-on-string-value code), the
 // error code taxonomy (§3, rendered verbatim by mobile/admin), and the money
 // math helper Order.TotalPayableKobo (§3.1 checkout total).
-//
 // All assertions here run with NO DB, NO Redis, and NO network — pure Go value
 // checks against the exported package surface, so this file always runs in CI.
-//
 // ADR-023 SCOPE NOTE: the OrderStatus / DisputeStatus enum subtests and
 // Order.TotalPayableKobo below lock RETAINED-BUT-UNUSED types. The escrow order /
 // dispute money-path was removed in the listings-and-connect pivot (ADR-023), but
@@ -20,7 +16,6 @@ package marketplace_test
 // So these remain valid shape-locks for the retained code — they are NOT testing
 // live behavior. The FSM-behavior mirrors for order/dispute (which DID test deleted
 // code) live in fsm_invariant_test.go and are now t.Skip'd (see ADR-023 there).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"

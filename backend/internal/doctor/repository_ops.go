@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"spotlight/backend/go-common/jsonx"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,7 +13,6 @@ import (
 // repository_ops.go — pgx data access for the Wave 4 (operational) endpoint groups:
 // chat persistence, call sessions, schedule management, appointment queue, HMO claim
 // submission/dispute, and the multi-clinic portfolio.
-//
 // Every read is scoped to the owning doctor's user_id (defence-in-depth on top of RLS).
 // Mutations on tables carrying a UNIQUE idempotency_key (doctor_chat_messages,
 // doctor_hmo_claims) create rows with ON CONFLICT (idempotency_key) DO NOTHING + replay
@@ -20,8 +20,6 @@ import (
 // pre-existing rows (call session start/end, appointment request accept/reject) and the
 // schedule-settings UPSERTs are scoped, status-guarded and naturally idempotent. None of
 // these post ledger entries — they are CRUD / state transitions / aggregation.
-
-// ══ CHAT ════════════════════════════════════════════════════════════════════
 
 func (r *Repository) ListChatThreads(ctx context.Context, userID string) ([]ChatThread, error) {
 	const q = `
@@ -140,8 +138,6 @@ func (r *Repository) getChatMessageByIdem(ctx context.Context, userID, idemKey s
 	return m, err
 }
 
-// ══ CALL SESSIONS ═══════════════════════════════════════════════════════════
-
 // GetCallSessionForAppointment returns the latest call session for an appointment (scoped).
 func (r *Repository) GetCallSessionForAppointment(ctx context.Context, userID, appointmentID string) (*CallSession, error) {
 	const q = `
@@ -190,7 +186,7 @@ func (r *Repository) StartCallSession(ctx context.Context, userID, appointmentID
 	const q = `
 		INSERT INTO doctor_call_sessions (id, user_id, appointment_id, mode, status, provider, room_token, started_at, detail)
 		VALUES ($1,$2,$3,$4,'live',$5,$6,now(),$7)`
-	if _, err := r.db.Exec(ctx, q, id, userID, appointmentID, mode, provider, roomToken, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, appointmentID, mode, provider, roomToken, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return r.getCallSessionByID(ctx, userID, id)
@@ -212,7 +208,7 @@ func (r *Repository) EndCallSession(ctx context.Context, userID, sessionID, stat
 		    detail = detail || $4::jsonb,
 		    updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, sessionID, userID, status, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, sessionID, userID, status, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -221,10 +217,6 @@ func (r *Repository) EndCallSession(ctx context.Context, userID, sessionID, stat
 	}
 	return r.getCallSessionByID(ctx, userID, sessionID)
 }
-
-// ══ SCHEDULE MANAGEMENT (Section E) ═════════════════════════════════════════
-
-// ── Blocked dates ────────────────────────────────────────────────────────────
 
 func (r *Repository) ListBlockedDates(ctx context.Context, userID string) ([]BlockedDate, error) {
 	const q = `
@@ -260,8 +252,6 @@ func (r *Repository) InsertBlockedDate(ctx context.Context, userID string, block
 	return &BlockedDate{ID: id, UserID: userID, BlockedDate: blockedDate, Reason: reason,
 		AllDay: allDay, StartTime: startTime, EndTime: endTime, CreatedAt: time.Now()}, nil
 }
-
-// ── Vacation ─────────────────────────────────────────────────────────────────
 
 // GetVacation returns the doctor's current (most recent) vacation, or ErrNotFound.
 func (r *Repository) GetVacation(ctx context.Context, userID string) (*Vacation, error) {
@@ -304,8 +294,6 @@ func (r *Repository) SetVacation(ctx context.Context, userID string, startDate, 
 	return r.GetVacation(ctx, userID)
 }
 
-// ── Recurring rules ──────────────────────────────────────────────────────────
-
 func (r *Repository) ListRecurringRules(ctx context.Context, userID string) ([]RecurringRule, error) {
 	const q = `
 		SELECT id, user_id, rule, active, created_at, updated_at
@@ -332,7 +320,7 @@ func (r *Repository) SaveRecurringRule(ctx context.Context, userID string, rule 
 	const q = `
 		INSERT INTO doctor_recurring_rules (id, user_id, rule)
 		VALUES ($1,$2,$3)`
-	if _, err := r.db.Exec(ctx, q, id, userID, jsonOrEmptyObject(rule)); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, jsonx.RawOrEmptyObject(rule)); err != nil {
 		return nil, err
 	}
 	return r.getRecurringRuleByID(ctx, userID, id)
@@ -349,8 +337,6 @@ func (r *Repository) getRecurringRuleByID(ctx context.Context, userID, id string
 	}
 	return rr, err
 }
-
-// ── Reminders ────────────────────────────────────────────────────────────────
 
 func (r *Repository) ListReminders(ctx context.Context, userID string) ([]Reminder, error) {
 	const q = `
@@ -390,7 +376,7 @@ func (r *Repository) SaveReminder(ctx context.Context, userID, reminderType stri
 		const upd = `
 			UPDATE doctor_reminders SET settings = $2, enabled = $3, updated_at = now()
 			WHERE id = $1`
-		if _, err := r.db.Exec(ctx, upd, existingID, jsonOrEmptyObject(settings), enabled); err != nil {
+		if _, err := r.db.Exec(ctx, upd, existingID, jsonx.RawOrEmptyObject(settings), enabled); err != nil {
 			return nil, err
 		}
 		return r.getReminderByID(ctx, userID, existingID)
@@ -399,7 +385,7 @@ func (r *Repository) SaveReminder(ctx context.Context, userID, reminderType stri
 	const ins = `
 		INSERT INTO doctor_reminders (id, user_id, reminder_type, settings, enabled)
 		VALUES ($1,$2,$3,$4,$5)`
-	if _, err := r.db.Exec(ctx, ins, id, userID, reminderType, jsonOrEmptyObject(settings), enabled); err != nil {
+	if _, err := r.db.Exec(ctx, ins, id, userID, reminderType, jsonx.RawOrEmptyObject(settings), enabled); err != nil {
 		return nil, err
 	}
 	return r.getReminderByID(ctx, userID, id)
@@ -418,8 +404,6 @@ func (r *Repository) getReminderByID(ctx context.Context, userID, id string) (*R
 	return rm, err
 }
 
-// ── Timezone / schedule settings (doctor_profiles) ───────────────────────────
-
 // SetTimezone updates the doctor's timezone (scoped). Idempotent overwrite.
 func (r *Repository) SetTimezone(ctx context.Context, userID, tz string) (*Profile, error) {
 	const q = `UPDATE doctor_profiles SET timezone = $2, updated_at = now() WHERE user_id = $1`
@@ -432,8 +416,6 @@ func (r *Repository) SetTimezone(ctx context.Context, userID, tz string) (*Profi
 	}
 	return r.GetProfile(ctx, userID)
 }
-
-// ══ APPOINTMENT QUEUE (Section F) ═══════════════════════════════════════════
 
 func (r *Repository) ListConsultQueue(ctx context.Context, userID string) ([]ConsultQueueEntry, error) {
 	const q = `
@@ -522,11 +504,9 @@ func (r *Repository) TransitionAppointment(ctx context.Context, userID, appointm
 		`UPDATE doctor_appointment_requests
 		 SET status = $3, requested_slot = COALESCE($4, requested_slot), detail = detail || $5::jsonb, updated_at = now()
 		 WHERE appointment_id = $1 AND user_id = $2`,
-		appointmentID, userID, reqStatus, requestedSlot, jsonOrEmptyObject(detail))
+		appointmentID, userID, reqStatus, requestedSlot, jsonx.RawOrEmptyObject(detail))
 	return r.GetAppointment(ctx, userID, appointmentID)
 }
-
-// ══ HMO CLAIMS (submit / dispute) ═══════════════════════════════════════════
 
 // InsertHMOClaim submits a claim idempotently (UNIQUE idempotency_key). amountKobo is
 // an int64 minor-unit field carried for reporting only — NO ledger posting (claims settle
@@ -537,7 +517,7 @@ func (r *Repository) InsertHMOClaim(ctx context.Context, userID string, ref, pat
 		INSERT INTO doctor_hmo_claims (id, user_id, ref, patient_id, appointment_id, status, amount_kobo, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,'submitted',$6,$7,$8)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, ref, patientID, appointmentID, amountKobo, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, ref, patientID, appointmentID, amountKobo, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -567,7 +547,7 @@ func (r *Repository) DisputeHMOClaim(ctx context.Context, userID, claimID string
 		UPDATE doctor_hmo_claims
 		SET status = 'disputed', detail = detail || $3::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, claimID, userID, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, claimID, userID, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -576,8 +556,6 @@ func (r *Repository) DisputeHMOClaim(ctx context.Context, userID, claimID string
 	}
 	return r.GetHMOClaim(ctx, userID, claimID)
 }
-
-// ══ MULTI-CLINIC PORTFOLIO (doctor_profiles) ════════════════════════════════
 
 // GetClinicPortfolio returns the doctor's clinic memberships (profile_draft->'clinics')
 // and the active clinic id. There is no clinics table — they live in the profile builder.
@@ -621,7 +599,7 @@ func (r *Repository) UpdateClinicSchedule(ctx context.Context, userID, clinicID 
 		        true),
 		    updated_at = now()
 		WHERE user_id = $1`
-	tag, err := r.db.Exec(ctx, q, userID, clinicID, jsonOrEmptyObject(schedule))
+	tag, err := r.db.Exec(ctx, q, userID, clinicID, jsonx.RawOrEmptyObject(schedule))
 	if err != nil {
 		return nil, err
 	}

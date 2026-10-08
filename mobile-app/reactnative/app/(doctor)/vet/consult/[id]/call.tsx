@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, NotebookPen, AlertTriangle, RefreshCw, VideoOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { StatusBadge, CallStageView, CallControlBar, StateView } from '@/features/doctor/components';
 import { useVetCallSession } from '@/features/doctor/hooks';
@@ -16,7 +16,6 @@ import type { CallControls, NetworkQuality } from '@/types/doctor.batch2';
 
 // Vet audio (S.13) + video (S.14) call — mirrors the human consult call, REUSING
 // CallStageView / CallControlBar and the Batch 2 CallSessionRich via the
-// VetCallSession wrapper. Audio vs video is session.base.mode; every
 // reconnect/dropped/poor-network state is already modelled on CallSessionRich.
 const toBadgeTone = (q: NetworkQuality) => {
   const t = NETWORK_QUALITY_LABELS[q].tone;

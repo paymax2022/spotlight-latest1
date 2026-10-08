@@ -2,14 +2,11 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// ── Admin — Film Academy areas of interest ───────────────────────────────────
 // Each area carries a NAIRA fee that is ADDED to academy_settings.application_fee
 // when an applicant selects it. The applicant-facing total is computed
 // server-side in /api/academy/apply from these same rows, so editing a fee here
 // changes what the next applicant pays — nothing is cached client-side.
-//
 // `slug` is written into academy_applications.areas_of_interest, so it must stay
-// stable once applications reference it. Renaming an area's LABEL is safe;
 // changing its slug orphans historic rows, which is why slug is only accepted on
 // create and ignored on update.
 
@@ -32,10 +29,22 @@ function parseFee(v: unknown): number | null {
   return Math.round(n * 100) / 100;
 }
 
-function slugify(v: string): string {
-  return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+/** Trims leading/trailing `ch` runs by index scan — NOT `.replace(/^_+|_+$/g, '')`,
+ *  which is quadratic on adversarial input: an end-anchored alternative under
+ *  a global search still tries every start position, and greedily consuming a
+ *  long run before backtracking to check the anchor is O(run length) at each
+ *  of those positions. This is unconditionally O(n). */
+function trimChar(s: string, ch: string): string {
+  let start = 0;
+  let end = s.length;
+  while (start < end && s[start] === ch) start += 1;
+  while (end > start && s[end - 1] === ch) end -= 1;
+  return s.slice(start, end);
 }
 
+function slugify(v: string): string {
+  return trimChar(v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_'), '_');
+}
 
 /**
  * Log the underlying Postgres error, return a clean message to the client.
@@ -81,7 +90,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await assertAdminPermission(request, PERMISSION);
-    const body = (await request.json()) as AreaBody;
+    const body = (await request.json().catch(() => null)) as AreaBody;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const label = String(body.label ?? '').trim();
     if (!label) return errorResponse('Label is required', 400);
 
@@ -122,7 +132,8 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     await assertAdminPermission(request, PERMISSION);
-    const body = (await request.json()) as AreaBody;
+    const body = (await request.json().catch(() => null)) as AreaBody;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const id = String(body.id ?? '').trim();
     if (!id) return errorResponse('id is required', 400);
 

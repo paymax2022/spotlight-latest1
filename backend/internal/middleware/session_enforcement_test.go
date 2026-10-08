@@ -1,15 +1,17 @@
 package middleware
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // fakeSessionSvc lets us control ValidateAccess for the middleware test.
@@ -21,9 +23,9 @@ func (f fakeSessionSvc) IssueSession(string, services.IssuedTokens, services.Log
 func (f fakeSessionSvc) RotateRefresh(string, services.IssuedTokens, services.LoginContext) (*domain.Session, error) {
 	return nil, nil
 }
-func (f fakeSessionSvc) ValidateAccess(string) (*domain.Session, error) {
+func (f fakeSessionSvc) ValidateAccess(context.Context, string) (*services.Session, error) {
 	if f.revoked {
-		return nil, fmt.Errorf("session revoked or expired")
+		return nil, errors.New("session revoked or expired")
 	}
 	return &domain.Session{ID: "s1"}, nil
 }
@@ -55,7 +57,7 @@ func TestSessionEnforcementRejectsRevoked(t *testing.T) {
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer validtoken")
 	r.ServeHTTP(w, req)
 
@@ -75,7 +77,7 @@ func TestSessionEnforcementAllowsActive(t *testing.T) {
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer validtoken")
 	r.ServeHTTP(w, req)
 
@@ -97,7 +99,7 @@ func TestSessionEnforcementNoOpWhenDisabled(t *testing.T) {
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer validtoken")
 	r.ServeHTTP(w, req)
 

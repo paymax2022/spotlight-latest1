@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Target, RefreshCw, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StatusBadge from './StatusBadge';
 
 interface Props {
@@ -18,7 +18,6 @@ interface Props {
 }
 
 // New component: a long-term care-plan summary card (Section Q). EditableListCard
-// is a single-line edit/remove row and SectionCard is an untitled wrapper;
 // neither composes condition + goal + review cadence + milestone count + active
 // badge, so this read card keeps the care-plan list legible.
 export default function CarePlanCard({ condition, goal, reviewEvery, patientName, milestoneCount, active, onPress }: Props) {

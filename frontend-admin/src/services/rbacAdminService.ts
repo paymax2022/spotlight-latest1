@@ -20,9 +20,7 @@ function adminApiBase(): string {
 
 function authHeaders(json = false): Record<string, string> {
   if (typeof window === 'undefined') return json ? { 'Content-Type': 'application/json' } : {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
   const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
   if (json) headers['Content-Type'] = 'application/json';
   return headers;
 }

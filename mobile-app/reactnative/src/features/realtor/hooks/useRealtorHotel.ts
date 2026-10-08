@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Hotel + channel sync hooks (V3) ──────────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as h from '../api/realtorHotel.api';
 import type { HotelBookingDraft, RoomBoardItem, ChannelKey } from '../types/realtor.hotel.types';

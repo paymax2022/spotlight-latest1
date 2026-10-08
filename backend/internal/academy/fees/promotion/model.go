@@ -9,21 +9,17 @@ import (
 
 // Package feespromotion owns the end-of-session Promotion engine of the EdTech
 // School-Fees module (build-spec §3.3, invariant SF-3 — a RELEASE BLOCKER).
-//
 // It builds against public.academy_promotion_records + public.academy_students +
 // public.academy_fee_classes + public.academy_fee_schedules (migration
 // 20260918000000_academy_fees_edtech.sql) and REUSES the pure guard logic in
 // feesstatemachine (promotion.go). No promotion state is ever written with a raw
 // UPDATE … SET state=; every state change goes through PromotionTransition.
-//
 // Lifecycle (the ONLY legal path — see feesstatemachine/promotion.go):
-//
 //	session_active     → results_finalized   (all required scores present)
 //	results_finalized  → promotion_computed  (engine PROPOSES a decision — never auto-applies)
 //	promotion_computed → promotion_reviewed  (teacher_approval, approver #1)
 //	promotion_reviewed → promotion_approved  (admin_approval, approver #2)
 //	promotion_approved → applied             (rollover: Class + FeeSchedule reassignment)
-//
 // SF-3 (release blocker): there is NO path from promotion_computed straight to
 // `applied`, and none from promotion_reviewed to `applied`. The ONLY predecessor
 // of `applied` is promotion_approved, reached only after TWO distinct human
@@ -101,15 +97,11 @@ type Student struct {
 	Status   StudentStatus `json:"status"`
 }
 
-// ── Score import ─────────────────────────────────────────────────────────────
-
 // StudentScore is one per-student exam score for a class+session.
 type StudentScore struct {
 	StudentID string  `json:"studentId"`
 	Score     float64 `json:"score"`
 }
-
-// ── Request DTOs ─────────────────────────────────────────────────────────────
 
 // ImportScoresRequest carries per-student exam scores for a class+session. When
 // every required (rostered) student has a score, the class rolls session_active →
@@ -145,8 +137,6 @@ type ApproveRequest struct {
 	ApproverID string `json:"approverId"`
 }
 
-// ── Sentinel errors ──────────────────────────────────────────────────────────
-
 var (
 	ErrNotFound        = errors.New("not_found")
 	ErrForbidden       = errors.New("forbidden")
@@ -158,8 +148,6 @@ var (
 	ErrScoresIncomplete = errors.New("scores_incomplete")
 	// ErrInvalidDecision: a computed decision is not one of promoted/repeated/conditional.
 	ErrInvalidDecision = errors.New("invalid_decision")
-
-	// ── SF-3 guards (re-exported so callers/tests use one identity) ──────────────
 
 	// ErrApprovalRequired is the SF-3 signal, forwarded from feesstatemachine: an
 	// attempt to reach `applied` (or otherwise advance) without the required human

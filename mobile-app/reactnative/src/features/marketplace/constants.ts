@@ -1,7 +1,6 @@
-// ── Marketplace — shared UI constants & formatting ───────────────────────────
 // Built on the base design tokens (never hardcode hex). Imported across the
 // Discover screens and shared with sibling agents so money reads identically.
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { ListingCondition } from './types';
 
 export const MarketColors = {

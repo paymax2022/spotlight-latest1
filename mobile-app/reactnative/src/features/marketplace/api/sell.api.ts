@@ -1,12 +1,8 @@
-// ── Marketplace — Sell API (mock/live dispatch) ──────────────────────────────
-//
-// The Sell group's data layer (screens 10–17). Every function switches on
 // MKT_USE_MOCK:
 //   • mock  → ./sell.mock fixtures + in-memory store (offline-first, camelCase)
 //   • live  → the shared client (mktGet/mktPost/…) which normalizes snake→camel
 //             for responses and camel→snake for request bodies. Money POSTs
 //             (boosts) carry an Idempotency-Key.
-//
 // Write everything camelCase — the client converts bodies to snake_case on the
 // wire. Endpoints (base /api/v1/marketplace, proxied to Go /v1/marketplace):
 //   POST /listings                 create draft
@@ -20,7 +16,6 @@
 //   GET  /sellers/:id/listings     (my listings, current user id)
 //   POST /listings/media/presign   { uploadUrl, fileUrl }   (image upload)
 //   GET  /boosts/tiers             (public)
-//   POST /boosts                   (money — wallet debit; Idempotency-Key)
 //   GET  /boosts/:id
 
 import { MKT_USE_MOCK, mktGet, mktPost, mktPut, mktDelete, arr } from './client';
@@ -39,8 +34,6 @@ import type {
 export type { AiPrefillResult, AttributeField, AttributeFieldOption, AttributeSchema } from './sell.mock';
 export { mockIsEscrowEligibleCategory as isEscrowEligibleCategory, MOCK_SELF_SELLER_ID } from './sell.mock';
 
-// ─── Categories (attribute schema for the Attribute form) ────────────────────
-
 export async function getCategories(): Promise<Category[]> {
   if (MKT_USE_MOCK) return S.mockSellCategories();
   return mktGet<Category[]>('/categories');
@@ -51,7 +44,6 @@ export async function getCategory(id: string): Promise<Category> {
   return mktGet<Category>(`/categories/${id}`);
 }
 
-// ─── AI prefill (client-side heuristic stand-in) ─────────────────────────────
 // Mock-only today. In live mode there is no dedicated vision endpoint owned by
 // this agent yet, so we degrade to the same heuristic (kept graceful — a failure
 // resolves to a low-confidence "no guess" result the composer can ignore).
@@ -61,13 +53,10 @@ export async function aiPrefill(photoHint: string): Promise<S.AiPrefillResult> {
   return S.mockAiPrefill(photoHint);
 }
 
-// ─── Fair-price band (client estimate when the server has none) ──────────────
-
 export function estimateFairPriceBand(categoryId: string | null | undefined) {
   return S.mockFairPriceBand(categoryId);
 }
 
-// ─── Image upload (presign → PUT → return fileUrl) ───────────────────────────
 // Backend endpoint (Go marketplace): POST /media/presign { fileName, mimeType }
 //   → { uploadUrl, fileUrl }. NOTE: it's mounted at /media/presign (NOT
 //   /listings/media/presign) because Gin's radix router conflicts a static
@@ -108,8 +97,6 @@ export async function uploadListingImage(file: { uri: string; name: string; mime
   return file.uri;
 }
 
-// ─── Listing lifecycle ────────────────────────────────────────────────────────
-
 export async function createListing(input: CreateListingInput): Promise<Listing> {
   if (MKT_USE_MOCK) return S.mockCreateListing(input);
   return mktPost<Listing>('/listings', input);
@@ -120,7 +107,6 @@ export async function updateListing(id: string, input: UpdateListingInput): Prom
   return mktPut<Listing>(`/listings/${id}`, input);
 }
 
-// ─── Photo management on an existing listing (edit screen) ──────────────────
 // The compose wizard sets photos once at create time via CreateListingInput.
 // mediaIds. The edit screen (LM-002) needs to add/remove/reorder photos on a
 // listing that already exists — three endpoints, same ownership + re-moderation
@@ -192,8 +178,6 @@ export async function getMyListings(sellerId: string | null): Promise<Listing[]>
   if (!sellerId) return [];
   return arr(await mktGet<Listing[]>('/my-listings'));
 }
-
-// ─── Boosts (money path — POST /boosts carries an Idempotency-Key) ───────────
 
 export async function getBoostTiers(): Promise<BoostTier[]> {
   if (MKT_USE_MOCK) return S.mockBoostTiers();
@@ -280,13 +264,10 @@ export async function cancelBoost(id: string): Promise<Boost> {
   return mktPost<Boost>(`/boosts/${id}/cancel`);
 }
 
-// ── Seller contact reveal ────────────────────────────────────────────────────
 // POST /listings/:id/contact — any signed-in user, budgeted at 10 distinct
 // listings per hour and recorded per reveal. Re-revealing the same listing is
 // free, so a screen remount does not cost the viewer their quota.
-//
 // The listing screen's "Tap to reveal seller phone" used to flip a local boolean
-// and relabel itself; no number was ever fetched, because nothing in the stack
 // had one to give.
 
 export interface SellerContact {

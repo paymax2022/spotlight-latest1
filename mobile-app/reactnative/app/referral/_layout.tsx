@@ -1,7 +1,6 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
-// Referral (Earn hub) stack. The (tabs) group is the home of the 5-tab nav;
 // onboarding/account/invite live as pushed screens over it. Other referral
 // agents (RM2/RM3) add their screens to the matching subfolders.
 export default function ReferralLayout() {

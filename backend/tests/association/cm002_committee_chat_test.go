@@ -1,7 +1,6 @@
 package association_test
 
 // CM-002: committee / executive chat isolation (live-DB).
-//
 // After the org-scope IDOR sweep, chat threads are organisation-isolated but not
 // sub-group-isolated. These tests prove scope-aware access: EXECUTIVE threads are
 // limited to org admins/execs, COMMITTEE threads (linked via committee_id) to that

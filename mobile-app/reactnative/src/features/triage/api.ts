@@ -1,4 +1,3 @@
-// ── Paymax AI Symptom Checker — Triage API layer (mock-first) ────────────────
 // Self-contained, mock-first data layer. Reuses USE_MOCK + HEALTH_API_BASE.
 // SAFETY (encoded here, surfaced in UI):
 //   SC-1  output framed as "possible causes / guidance", never "diagnosis".
@@ -34,7 +33,6 @@ import type {
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
-// ── Backend wire shapes (raw JSON as returned by Go) ──────────────────────────
 // Every route wraps its payload as {success, <key>: ...} (never a bare body),
 // keys are snake_case (Go's json tags), and several structures don't match the
 // app's domain types at all — a nested Disposition object instead of flat
@@ -120,7 +118,6 @@ function mapSessionState(s: string): SessionState {
   return s.toUpperCase() as SessionState;
 }
 
-// Go's CareReferral/Disposition route values use "telemed"; the app's
 // CareRoute union + CARE_ROUTE_META key off "telemedicine". Every other value
 // (emergency/pharmacy/lab/self_care) lines up 1:1.
 function mapCareRoute(route: string): CareRoute {
@@ -142,13 +139,11 @@ function mapEmergencyInfo(e: GoEmergencyInfo): EmergencyInfo {
   return {
     erName: e.facility_name,
     erAddress: e.facility_address,
-    // Go returns the bare dial digits (NigeriaAmbulanceNumber = "112"); the app
     // always treats `ambulance` as a tel: URI (emergency.tsx Linking.openURL).
     ambulance: e.ambulance_number.startsWith('tel:') ? e.ambulance_number : `tel:${e.ambulance_number}`,
     // Go returns one first-aid paragraph, not a step list — wrap it so
     // data.firstAid.map(...) in emergency.tsx still renders correctly.
     firstAid: e.first_aid ? [e.first_aid] : [],
-    // Go's care.EmergencyInfo carries no coordinates; emergency.tsx already
     // falls back to an address-only maps query when lat/lng are absent.
   };
 }
@@ -173,7 +168,6 @@ function mapInterviewStep(view: GoSessionView): InterviewStep {
     id: view.session.id,
     state: mapSessionState(view.session.state),
     question: view.next_question ? mapQuestion(view.next_question) : undefined,
-    // SubmitIntake/Answer only ever return with next_question XOR disposition
     // set (core/service.go's runEngineLoop) — absence of a next question means
     // the engine (or the red-flag layer) has finalised a disposition.
     done: !view.next_question,
@@ -214,7 +208,6 @@ function mapReferral(res: GoReferResult): Referral {
   };
 }
 
-// ── Mock state (in-memory; resets on reload) ─────────────────────────────────
 const MOCK_PROFILES: Profile[] = [
   { id: 'prof_self', kind: 'self', name: 'You', dob: '1994-05-12', sex: 'female' },
   { id: 'prof_child', kind: 'child', name: 'Ada (daughter)', dob: '2019-09-01', sex: 'female' },
@@ -291,7 +284,6 @@ function nextQuestion(s: MockSession): InterviewStep['question'] | undefined {
   return QUESTION_BANK.find((q) => q && !s.asked.includes(q.code));
 }
 
-// ── Profiles ─────────────────────────────────────────────────────────────────
 export async function getProfiles(): Promise<Profile[]> {
   if (USE_MOCK) {
     await delay();
@@ -325,7 +317,6 @@ export async function createProfile(input: CreateProfileInput): Promise<Profile>
   return mapProfile(data.profile);
 }
 
-// ── Sessions ─────────────────────────────────────────────────────────────────
 export async function createSession(input: CreateSessionInput): Promise<TriageSession> {
   if (USE_MOCK) {
     await delay();
@@ -472,7 +463,6 @@ function buildMockResult(id: string, level: DispositionLevel, redFlag: boolean):
   };
 }
 
-// ── Referral + payment (money-path) ──────────────────────────────────────────
 export async function createReferral(sessionId: string, input: ReferInput): Promise<Referral> {
   if (USE_MOCK) {
     await delay();
@@ -521,7 +511,6 @@ export async function payReferral(input: PayReferralInput): Promise<PayReferralR
   // paid→fulfilled in the same call (the booking already exists) — so a
   // successful charge almost always comes back as "fulfilled", never "paid".
   // A retry after that (idempotent re-apply) returns whatever terminal state
-  // is already on the row. Anything at/after "paid" means the charge landed;
   // only "created"/"routed" means it didn't.
   const { data } = await api.post<{ referral: GoCareReferral }>(
     `${TRIAGE_API_BASE}/referrals/${input.referralId}/pay`,
@@ -535,7 +524,6 @@ export async function payReferral(input: PayReferralInput): Promise<PayReferralR
   return { state: 'PAID' };
 }
 
-// ── Emergency lookup (SC-8) ──────────────────────────────────────────────────
 const MOCK_EMERGENCY: EmergencyInfo = {
   erName: 'Lagos State Emergency / LASUTH A&E',
   erAddress: '1-5 Oba Akinjobi Way, Ikeja, Lagos',
@@ -564,12 +552,9 @@ export async function getNearestEmergency(lat?: number, lng?: number): Promise<E
   return mapEmergencyInfo(data.emergency);
 }
 
-// ── Records + feedback (mock no-ops) ─────────────────────────────────────────
 // NOTE: unlike every other function above, these two do NOT have a matching
 // Go route at all — there is no /sessions/:id/save or /sessions/:id/feedback
 // handler anywhere in backend/internal/health/triage (core, care, or
-// governance). USE_MOCK=false will 404 here regardless of the response
-// envelope; this is a missing-endpoint gap, not something an envelope fix can
 // address, and is out of scope for this change — flagged separately.
 export async function saveSessionToRecords(sessionId: string): Promise<{ recordId: string }> {
   if (USE_MOCK) {

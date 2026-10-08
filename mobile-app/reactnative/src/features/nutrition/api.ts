@@ -1,11 +1,7 @@
-// ── Nutrition Resolution Engine — API wrapper (v2) ───────────────────────────
 // Typed data layer the nutrition screens code against. Mirrors food/api.ts:
 // mock-flagged, shared axios `api` client, unwrap() envelope, BASE under the
 // Next proxy which forwards /api/v1/nutrition/* → Go /api/finance/nutrition/*.
-//
-// v2 (onboarding-first): estimates auto-publish at menu upload; vendors APPROVE
 // or lightly EDIT (portion + macro nudge only). Ingredient entry is an optional
-// hidden recipe path. Flip EXPO_PUBLIC_NUTRITION_USE_MOCK=false when the Go
 // endpoints are reachable.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -38,7 +34,6 @@ const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res
 
 const enc = encodeURIComponent;
 
-// ─── Buyer reads ──────────────────────────────────────────────────────────────
 export async function getDishNutrition(dishId: string): Promise<DishNutritionProfile> {
   if (USE_MOCK) {
     await delay();
@@ -57,7 +52,6 @@ export async function getCartSummary(ids: string[]): Promise<CartSummary> {
   );
 }
 
-// ─── Vendor menu review (auto-suggest is the engine's job; this lists output) ──
 /**
  * Dishes for a menu with their (already auto-published) nutrition profiles.
  * The mock derives this from its in-memory store keyed by a menu id.
@@ -95,7 +89,6 @@ export async function approveAll(menuId: string): Promise<DishNutritionProfile[]
   );
 }
 
-// ─── Vendor writes (per dish) ───────────────────────────────────────────────
 /** Approve the AI estimate → RESTAURANT_CONFIRMED (still labelled an estimate). */
 export async function approveNutrition(dishId: string): Promise<DishNutritionProfile> {
   if (USE_MOCK) {
@@ -138,7 +131,6 @@ export async function attestAllergen(
   );
 }
 
-// ─── Hidden power-user path (ingredients) ────────────────────────────────────
 // Optional, never required, never shown during onboarding.
 export async function declareRecipe(
   dishId: string,

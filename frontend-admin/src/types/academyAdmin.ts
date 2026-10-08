@@ -1,5 +1,3 @@
-// ── Types for the Spotlight Academy admin console (Phase 0+1) ─────────────────
-// Shapes are intentionally pragmatic; the live Go backend may extend them. All
 // monetary amounts are integers in minor units (kobo). Times are ISO-8601.
 
 export type ActivityKind =
@@ -17,7 +15,6 @@ export type ActivityItem = {
 
 export type TrendPoint = { date: string; value: number };
 
-// ── Executive dashboard ───────────────────────────────────────────────────────
 export type AcademyDashboard = {
   active_learners: number;
   active_learners_30d: number;
@@ -35,7 +32,6 @@ export type AcademyDashboard = {
   activity: ActivityItem[];
 };
 
-// ── Curriculum ────────────────────────────────────────────────────────────────
 export type CurriculumVersion = {
   id: string;
   name: string;
@@ -57,7 +53,6 @@ export type CurriculumTree = {
 
 export type CurriculumVersionInput = { name: string; effective_date: string; status?: CurriculumVersion['status'] };
 
-// ── Question bank ─────────────────────────────────────────────────────────────
 export type QuestionDifficulty = 'easy' | 'medium' | 'hard';
 export type QuestionReviewStatus = 'draft' | 'in_review' | 'approved' | 'rejected' | 'duplicate';
 
@@ -91,7 +86,6 @@ export type QuestionItemInput = {
 
 export type QuestionReviewInput = { action: 'approve' | 'reject' | 'flag_duplicate'; notes?: string };
 
-// ── Exams ─────────────────────────────────────────────────────────────────────
 export type ExamArena = {
   id: string;
   exam_code: 'CCE' | 'BECE' | 'WASSCE' | 'NECO' | 'UTME' | 'NABTEB';
@@ -130,7 +124,6 @@ export type ExamBlueprintInput = {
   subjects: string[];
 };
 
-// ── Gamification ──────────────────────────────────────────────────────────────
 export type XpLevel = { level: number; xp_required: number };
 export type StreakConfig = { daily_xp: number; freeze_tokens_per_month: number; grace_hours: number };
 export type Badge = {
@@ -163,7 +156,6 @@ export type GamificationConfig = {
   leaderboards: LeaderboardConfig[];
 };
 
-// ── Rewards ───────────────────────────────────────────────────────────────────
 // Invariant: no reward without a funded pool. balance_kobo must cover redemptions.
 export type RewardPool = {
   id: string;
@@ -201,7 +193,6 @@ export type RewardLedgerEntry = {
 export type RewardPoolInput = { name: string; per_user_cap_kobo: number; sponsor?: string | null };
 export type RewardFundInput = { pool_id: string; amount_kobo: number };
 
-// ── Commerce ──────────────────────────────────────────────────────────────────
 export type Plan = {
   id: string;
   name: string;
@@ -244,7 +235,6 @@ export type AccessCardGenerateInput = { plan_id: string; quantity: number; label
 export type AccessCardAllocateInput = { batch_id: string; agent: string; quantity: number };
 export type RefundInput = { txn_ref: string; amount_kobo: number; reason: string };
 
-// ── Identity (admin user lookup) ──────────────────────────────────────────────
 export type AcademyUser = {
   id: string;
   display_name: string;
@@ -256,7 +246,6 @@ export type AcademyUser = {
   joined_at: string;
 };
 
-// ── Sponsors ──────────────────────────────────────────────────────────────────
 export type Sponsor = {
   id: string;
   name: string;
@@ -277,13 +266,9 @@ export type SponsorCampaign = {
   signups_attributed: number;
 };
 
-// ════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — Content/CMS · Content production · Bundles · Curriculum (deep) ·
 //           EduPay · Notifications. (Additive — Phase 0+1 shapes untouched.)
-// ════════════════════════════════════════════════════════════════════════════
 
-// ── Content management (CMS) ──────────────────────────────────────────────────
-// RBAC: academy.content. Publish workflow is a forward-only state machine:
 // draft → review → approved → live → archived (archive is terminal).
 export type ContentStatus = 'draft' | 'review' | 'approved' | 'live' | 'archived';
 export type ContentKind = 'lesson' | 'bundle' | 'series_episode';
@@ -323,7 +308,6 @@ export type Localization = {
   updated_at: string;
 };
 
-// ── Content production tracker (Spotlight pipeline) ───────────────────────────
 // RBAC: academy.content. Board stages: script → storyboard → shoot → edit → qa → publish.
 export type ProductionStage = 'script' | 'storyboard' | 'shoot' | 'edit' | 'qa' | 'publish';
 
@@ -343,8 +327,6 @@ export type ProductionCard = {
 export type ProductionAdvanceInput = { id: string };
 export type ProductionBlockInput = { id: string; blocked: boolean; reason?: string };
 
-// ── Offline bundle builder ────────────────────────────────────────────────────
-// RBAC: academy.content. Compose offline-distributable bundles from lessons,
 // budget the total size, and map to an access-card plan for agent distribution.
 export type OfflineBundle = {
   id: string;
@@ -366,7 +348,6 @@ export type BundleBuildInput = {
   access_card_plan_id?: string | null;
 };
 
-// ── Curriculum (deep) ─────────────────────────────────────────────────────────
 // Extends the Phase-1 tree shapes with objectives + exam-relevance alignment.
 export type ObjectiveExamRelevance = {
   exam_code: string;              // 'UTME' | 'WASSCE' …
@@ -392,8 +373,6 @@ export type CurriculumObjectiveInput = {
   bloom_level: CurriculumObjective['bloom_level'];
 };
 
-// ── EduPay / school fees ──────────────────────────────────────────────────────
-// RBAC: academy.edupay. Disbursement state machine:
 // fee_due → funding → collected → disbursed → reconciled.
 export type School = {
   id: string;
@@ -458,8 +437,6 @@ export type Scholarship = {
 export type ScholarshipInput = { name: string; sponsor: string; pool_kobo: number; slots: number };
 export type ScholarshipAwardInput = { scholarship_id: string; learner_id: string; amount_kobo: number };
 
-// ── Notifications & messaging ─────────────────────────────────────────────────
-// RBAC: academy.notifications.
 export type NotificationChannel = 'push' | 'sms' | 'in_app' | 'email';
 
 export type NotificationTemplate = {
@@ -483,16 +460,11 @@ export type NotificationTemplateInput = {
   schedule: NotificationTemplate['schedule'];
 };
 
-// ════════════════════════════════════════════════════════════════════════════
-// PHASE 3 — Trust, learning-ops & support (admin-console.md §7)
 //   · Credential & earning bridge  (RBAC academy.credentials)
 //   · Live & events management     (RBAC academy.live)
 //   · Moderation & trust/safety    (RBAC academy.moderation)
 // (Additive — Phase 0/1/2 shapes untouched.)
-// ════════════════════════════════════════════════════════════════════════════
 
-// ── Credential & earning bridge ───────────────────────────────────────────────
-// RBAC: academy.credentials. Certificate templates → issuance → verification
 // registry → revocation. A "trade track" credential maps to a Paymax earning
 // role + eligibility rule; learners apply and are routed once eligible.
 export type CredentialTemplate = {
@@ -500,7 +472,7 @@ export type CredentialTemplate = {
   name: string;                   // 'WASSCE Science Certificate'
   track: 'academic' | 'trade' | 'professional';
   issuer: string;                 // 'Spotlight Academy'
-  validity_months: number | null; // null = lifetime
+  validity_months: number | null;
   signature_authority: string;    // signing officer / body
   status: 'draft' | 'active' | 'retired';
   issued_count: number;
@@ -571,7 +543,6 @@ export type EarningApplication = {
   submitted_at: string;
 };
 
-// ── Live & events management ──────────────────────────────────────────────────
 // RBAC: academy.live. Schedule live sessions, configure streaming, manage replays.
 export type LiveSession = {
   id: string;
@@ -612,7 +583,6 @@ export type LiveReplay = {
 
 // ── Moderation & trust/safety ─────────────────────────────────────────────────
 // RBAC: academy.moderation. Reports queue with triage + decision; child-safety
-// controls; escalation.
 export type ReportEntityType = 'content' | 'comment' | 'profile' | 'live_chat' | 'question';
 export type ReportState = 'open' | 'triaged' | 'actioned' | 'dismissed' | 'escalated';
 export type ModerationDecision = 'hide' | 'warn' | 'ban' | 'dismiss';
@@ -639,16 +609,11 @@ export type ModerationTriageInput = { id: string; assignee?: string };
 export type ModerationDecisionInput = { id: string; decision: ModerationDecision; notes?: string };
 export type ModerationEscalateInput = { id: string; reason: string };
 
-// ════════════════════════════════════════════════════════════════════════════
-// PHASE 4 — Partnerships, marketplace ops & BI depth (admin-console.md §6/§7)
 //   · School & institution mgmt    (RBAC academy.schools)
 //   · Tutor & marketplace ops      (RBAC academy.tutor)
 //   · Analytics & BI depth         (RBAC academy.analyst)
 // (Additive — Phase 0/1/2/3 shapes untouched.)
-// ════════════════════════════════════════════════════════════════════════════
 
-// ── School & institution management (B2B2C) ───────────────────────────────────
-// RBAC: academy.schools. Institutions onboard, take seat-based licences, organise
 // learners into class groups, bulk-enrol (seat-capped), configure white-label, and
 // are billed per usage. Licence state machine: trial → active → suspended (and back).
 export type LicenceStatus = 'trial' | 'active' | 'suspended' | 'expired';
@@ -696,7 +661,6 @@ export type LicenceIssueInput = {
   expires_on: string;
 };
 
-// action: suspend | reactivate | set_seats (set_seats requires seats_total)
 export type LicenceManageInput = {
   id: string;
   action: 'suspend' | 'reactivate' | 'set_seats';
@@ -793,10 +757,6 @@ export type SchoolsOverview = {
   outstanding_kobo: number;       // unpaid invoices
 };
 
-// ── Tutor & marketplace ops ───────────────────────────────────────────────────
-// RBAC: academy.tutor. Tutor vetting (verify/suspend) with KYC state, payouts and
-// ratings/disputes. Vetting state machine: applied → in_review → verified | rejected;
-// verified ↔ suspended.
 export type TutorVetting = 'applied' | 'in_review' | 'verified' | 'suspended' | 'rejected';
 export type TutorKyc = 'tier0' | 'tier1' | 'tier2' | 'tier3';
 
@@ -815,7 +775,6 @@ export type Tutor = {
   updated_at: string;
 };
 
-// action: verify | suspend | reactivate | reject
 export type TutorVetInput = {
   id: string;
   action: 'verify' | 'suspend' | 'reactivate' | 'reject';
@@ -854,8 +813,6 @@ export type TutorDisputeNoteInput = {
   note: string;
 };
 
-// ── Analytics & BI depth ──────────────────────────────────────────────────────
-// RBAC: academy.analyst (or academy.admin). Aggregate dashboards across outcome,
 // engagement, retention, funnel, revenue and exam; cohort analysis; CSV export.
 export type BiSeriesPoint = { label: string; value: number };
 

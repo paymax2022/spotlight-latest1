@@ -14,7 +14,6 @@ import (
 // against all five real test-mode policies on the live account: the payload keys
 // are activation_date, expiration_date, is_active, policy_number, certificate_url,
 // total_premium … and no status of any kind.
-//
 // Payloads below are the real shape with PII removed.
 func TestPolicyFromData_StatusComesFromIsActive(t *testing.T) {
 	c := &Client{}

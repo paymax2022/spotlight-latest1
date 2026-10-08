@@ -4,20 +4,15 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { errorResponse, successResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Cross-device cart persistence for the mobile food module.
-//
 // GET  /api/v1/food/cart → the caller's saved cart (null when none)
 // POST /api/v1/food/cart → upsert the caller's cart
-//
 // Backed directly by the `food_carts` table (migration
 // 20261112000000_food_cart_persistence.sql), NOT proxied to Go: the cart is a
 // draft, not a money path. Nothing here is trusted at checkout — Go's PlaceOrder
 // re-prices every line from the live menu, so a tampered cart cannot move money.
 // That is also why this route does no price validation.
-//
-// The table's RLS scopes rows to auth.uid(); this handler uses the service-role
 // client and constrains every query by the token-verified user id itself, so the
 // isolation guarantee is preserved without depending on a user-session client.
-//
 // Prior to this file the mobile client's saveCartToServer/loadCartFromServer
 // always failed (no such route anywhere) and swallowed the error, silently
 // degrading to local-storage-only.
@@ -28,6 +23,17 @@ type SavedCart = {
   packages: unknown[];
   activePackageId: string | null;
 };
+
+// snake_case twins some clients post — camelCase wins when both arrive.
+type SavedCartWire = SavedCart & {
+  restaurant_id?: string | null;
+  restaurant_name?: string | null;
+  active_package_id?: string | null;
+};
+
+// restaurants.id is a UUID PK; food_carts.restaurant_id is TEXT, so shape-check
+// here — a non-UUID value can never resolve to a row.
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 export async function GET(request: Request) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);
@@ -60,22 +66,58 @@ export async function POST(request: Request) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json().catch(() => null)) as Partial<SavedCart> | null;
+    const body = (await request.json().catch(() => null)) as Partial<SavedCartWire> | null;
     if (!body || typeof body !== 'object') return errorResponse('Invalid cart payload.', 400);
     if (body.packages !== undefined && !Array.isArray(body.packages)) {
       return errorResponse('`packages` must be an array.', 400);
     }
 
+    // Normalize: accept both camelCase (canonical, what the RN client sends)
+    // and snake_case wire fields. Previously a snake_case `restaurant_id` was
+    // silently dropped — the cart saved with restaurantId:null and the
+    // customer's cart lost its store on every sync.
+    const rawId = body.restaurantId ?? body.restaurant_id;
+    const rawName = body.restaurantName ?? body.restaurant_name;
+    const rawActive = body.activePackageId ?? body.active_package_id;
+
+    // Existence check (P2): the cart used to accept ANY restaurantId — including
+    // ids of restaurants that never existed — and persisted it. A cart pinned to
+    // a phantom restaurant can only fail later at checkout, so refuse it here.
+    // Empty/whitespace means "no restaurant selected" and normalizes to null.
+    let restaurantId: string | null = null;
+    if (rawId !== undefined && rawId !== null) {
+      if (typeof rawId !== 'string') {
+        return errorResponse('`restaurantId` must be a string.', 422);
+      }
+      const trimmed = rawId.trim();
+      if (trimmed !== '') {
+        if (!UUID_RE.test(trimmed)) {
+          return errorResponse('`restaurantId` must be a valid restaurant id.', 422);
+        }
+        restaurantId = trimmed;
+      }
+    }
+
     const supabase = createAdminClient();
+    if (restaurantId !== null) {
+      const { data: restaurant, error: restaurantError } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('id', restaurantId)
+        .maybeSingle();
+      if (restaurantError) throw restaurantError;
+      if (!restaurant) return errorResponse('Restaurant not found.', 404);
+    }
+
     const { error } = await supabase
       .from('food_carts')
       .upsert(
         {
           customer_id: user.id,
-          restaurant_id: body.restaurantId ?? null,
-          restaurant_name: body.restaurantName ?? null,
+          restaurant_id: restaurantId,
+          restaurant_name: rawName ?? null,
           packages: body.packages ?? [],
-          active_package_id: body.activePackageId ?? null,
+          active_package_id: rawActive ?? null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'customer_id' }, // one active cart per customer (UNIQUE)
@@ -87,7 +129,6 @@ export async function POST(request: Request) {
 }
 
 // Clearing the cart after a successful order. The mobile client's
-// clearPersistedCart() currently only wipes local storage; this gives it a
 // server-side counterpart to call.
 export async function DELETE(request: Request) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);

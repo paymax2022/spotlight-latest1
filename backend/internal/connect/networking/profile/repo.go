@@ -16,8 +16,6 @@ type Repository struct{ db *pgxpool.Pool }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// ─────────────────────────────── Experience ──────────────────────────────────
-
 // InsertExperience creates an experience row. When idemKey is non-empty a retried
 // create with the same (user, key) returns the existing row (idempotent no-op).
 func (r *Repository) InsertExperience(ctx context.Context, userID string, in ExperienceInput, idemKey string) (*Experience, error) {
@@ -100,8 +98,6 @@ func (r *Repository) HasExperience(ctx context.Context, userID string) (bool, er
 	return n > 0, err
 }
 
-// ─────────────────────────────── Education ───────────────────────────────────
-
 func (r *Repository) InsertEducation(ctx context.Context, userID string, in EducationInput, idemKey string) (*Education, error) {
 	const q = `INSERT INTO connect_education
 			(user_id, institution, degree, field, start_date, end_date, idempotency_key)
@@ -178,8 +174,6 @@ func (r *Repository) HasEducation(ctx context.Context, userID string) (bool, err
 	return n > 0, err
 }
 
-// ─────────────────────────────────── About ───────────────────────────────────
-
 func (r *Repository) UpsertAbout(ctx context.Context, userID, summary string) (*About, error) {
 	const q = `INSERT INTO connect_network_about (user_id, summary)
 		VALUES ($1,$2)
@@ -213,8 +207,6 @@ func (r *Repository) HasAbout(ctx context.Context, userID string) (bool, error) 
 		userID).Scan(&n)
 	return n > 0, err
 }
-
-// ──────────────────────────── Recommendations ────────────────────────────────
 
 // InsertRecommendation creates a recommendation in the given initial state. A
 // retried write for the same (author, subject) pair returns the existing row.
@@ -390,8 +382,6 @@ func (r *Repository) AdminHideRecommendation(ctx context.Context, id string) (*R
 	}
 	return rec, nil
 }
-
-// ──────────────────────── Recommendation requests (RC-04) ────────────────────
 
 func (r *Repository) InsertRecommendationRequest(ctx context.Context, requesterID, targetID, note string) (*RecommendationRequest, error) {
 	const q = `INSERT INTO connect_recommendation_requests (requester_user_id, target_user_id, note)

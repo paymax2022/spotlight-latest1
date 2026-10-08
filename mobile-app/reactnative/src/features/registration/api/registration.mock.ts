@@ -1,4 +1,3 @@
-// ── Registration — mock data (used when EXPO_PUBLIC_REGISTRATION_USE_MOCK !== 'false') ─
 // Mirrors the backend's schema-driven shape: a draft carries ordered `steps`,
 // each with `fields[]`. The mock builds a representative subset of the catalog
 // and the steps the server's buildRegistrationSteps would emit, so the wizard
@@ -83,9 +82,7 @@ export const MOCK_CONTESTS: ContestRegistrationDefinition[] = [
   },
 ];
 
-// ── Mock step schema ──────────────────────────────────────────────────────────
 // Approximates buildRegistrationSteps for an open-mic (paid, voting, audition)
-// contest: account_gate is satisfied by app auth, so the wizard renders the
 // remaining steps. Kept intentionally compact but covers every FieldType.
 
 const contestSelectionFields: RegistrationField[] = [
@@ -111,11 +108,9 @@ const personalFields: RegistrationField[] = [
 ];
 
 const requirementFields: RegistrationField[] = [
-  // ── Media ──────────────────────────────────────────────────────────────────
   { key: 'media.profilePhoto',     label: 'Profile photo',                                    type: 'file',         required: true,  accept: '.jpg,.jpeg,.png,.webp' },
   { key: 'media.rightsConfirmed',  label: 'I confirm I have rights to uploaded materials',    type: 'checkbox',     required: true },
 
-  // ── Talent / category ──────────────────────────────────────────────────────
   { key: 'category.performanceType', label: 'Performance type', type: 'select', required: true,
     options: ['Singing', 'Rap', 'Spoken Word', 'Comedy', 'Instrumental', 'Dance', 'Acting', 'Content Creation', 'Other'] },
   { key: 'category.genre', label: 'Genre / style (select all that apply)', type: 'multi_select', required: true,
@@ -124,22 +119,18 @@ const requirementFields: RegistrationField[] = [
               'Dance', 'Content Creation', 'Spoken Word', 'Other'] },
   { key: 'category.sampleLink',   label: 'Performance sample link (YouTube / Instagram / TikTok)', type: 'url' },
 
-  // ── Social ─────────────────────────────────────────────────────────────────
   { key: 'social.instagram',              label: 'Instagram handle',              type: 'text' },
   { key: 'social.willingToInviteVoting',  label: 'Willing to invite fans to vote?', type: 'checkbox' },
 
-  // ── Compliance ─────────────────────────────────────────────────────────────
   { key: 'compliance.codeOfConductAgreement', label: 'I agree to Spotlight code of conduct', type: 'checkbox', required: true },
   { key: 'compliance.truthDeclaration',        label: 'I confirm submitted information is true', type: 'checkbox', required: true },
 
-  // ── Audition ───────────────────────────────────────────────────────────────
   { key: 'audition.format',     label: 'Preferred audition format',          type: 'select', required: true,
     options: ['Online video submission', 'Live virtual audition', 'Physical audition'] },
   { key: 'audition.venueState', label: 'Preferred audition venue / state',   type: 'select', required: true,
     options: [...MOCK_NIGERIA_STATES],
     helpText: 'Select the state where you would like to attend your audition.' },
 
-  // ── Public profile ─────────────────────────────────────────────────────────
   { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting profile visibility', type: 'checkbox', required: true },
 ];
 

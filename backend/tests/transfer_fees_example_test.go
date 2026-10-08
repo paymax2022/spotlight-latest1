@@ -11,7 +11,6 @@ import (
 //   - one struct slice describing inputs + expected outputs,
 //   - t.Run sub-tests for isolation and readable failure names,
 //   - boundary values explicitly enumerated (fees are tiered, so test the edges).
-//
 // It also pins the real money behavior of the transfer fee schedule
 // (internal/finance/transfers/model.go), which is a pure function and therefore
 // belongs at the fast unit level of the pyramid.

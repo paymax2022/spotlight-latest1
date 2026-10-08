@@ -1,10 +1,6 @@
-// ── Featured Placement — API wrapper ──────────────────────────────────────────
 // Typed data layer the Featured screens code against. Mirrors food/api.ts:
 // mock-flagged, shared axios `api` client, Idempotency-Key on money mutations.
-// Flip EXPO_PUBLIC_FEATURED_USE_MOCK=false once the Go placement endpoints are
 // reachable (Next proxy forwards /api/v1/* → Go).
-//
-// IRON RULES: all money is integer kobo; submit + pay carry an Idempotency-Key;
 // price breakdowns come from the SERVER quote — never computed in the UI.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -42,7 +38,6 @@ const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
 
-// ─── Zones & eligible items ──────────────────────────────────────────────────
 export async function listZones(): Promise<Zone[]> {
   if (USE_MOCK) {
     await delay();
@@ -57,7 +52,6 @@ export async function listEligibleItems(): Promise<EligibleItem[]> {
   return mockEligibleItems();
 }
 
-// ─── Campaigns ───────────────────────────────────────────────────────────────
 export async function listCampaigns(): Promise<Campaign[]> {
   if (USE_MOCK) {
     await delay();
@@ -144,7 +138,6 @@ export async function getAnalytics(id: string): Promise<CampaignAnalytics> {
   return unwrap<CampaignAnalytics>(await api.get(`${BASE}/campaigns/${encodeURIComponent(id)}/analytics`));
 }
 
-// ─── Public landing + event reporting ────────────────────────────────────────
 export async function getLandingPlacements(): Promise<LandingResponse> {
   if (USE_MOCK) {
     await delay(280);

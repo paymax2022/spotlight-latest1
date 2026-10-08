@@ -1,11 +1,7 @@
-// ── Spotlight Academy — EdTech School-Fees module · Constants ────────────────
 // Brownfield EXTENSION of the existing `academy` feature (see REUSE-MAP.md §2/§5).
-// Mock-first: with EXPO_PUBLIC_ACADEMY_FEES_USE_MOCK=true (the default) every
 // PA-/SA- screen renders fully with NO live backend. Flip the flag (or set it to
 // 'false') to hit the live academy-fees routes. Money is ALWAYS integers in
-// minor units (kobo) — never floats; render via formatNaira from the shared
 // academy constants.
-//
 // IRON RULES honoured here:
 //  • SF-6 — installment terms are locked & disclosed BEFORE the first installment
 //    (the disclosure screen at PA-06 gates payFirstInstallment).
@@ -15,10 +11,9 @@
 //    payment status. The competition slice shares no service with the fees slice.
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { InvoiceStatus, InstallmentStatus, HardshipStatus } from './types';
 
-// Flip to false (or set EXPO_PUBLIC_ACADEMY_FEES_USE_MOCK=false) once the live
 // /api/finance/academy/fees + /competition routes are reachable. Mock-first,
 // mirroring the sibling academy / connect / crowdfunding conventions.
 export const USE_MOCK =
@@ -26,8 +21,6 @@ export const USE_MOCK =
 
 // Member REST namespace — the fees + competition endpoints mount under the same
 // academy finance group as the rest of the academy module. Confirmed against
-// REUSE-MAP.md §4: memberAcad := finance.Group("/academy") → wire base is
-// /api/finance/academy/*; RegisterAcademyFees adds fees/* + competition/* under
 // it behind FEATURE_ACADEMY_FEES_ENABLED. The blanket Next.js rewrite
 // (/api/finance/:path* → Go) covers this base directly.
 export const ACADEMY_FEES_API_BASE = '/api/finance/academy';
@@ -53,7 +46,6 @@ export const FeesColors = {
   white: Colors.white,
 } as const;
 
-// ── Invoice status presentation (SF-2: balance derived from payment events) ──
 export const INVOICE_STATUS_META: Record<
   InvoiceStatus,
   { label: string; color: string; bg: string }
@@ -87,14 +79,12 @@ export const HARDSHIP_STATUS_META: Record<
   needs_info: { label: 'Needs info',   color: Colors.onWarning,        bg: Colors.iconBgGold },
 };
 
-// ── Payment methods (PA-05). Wallet + card via the shared provider rail. ─────
 export const PAYMENT_METHODS: { value: 'wallet' | 'card' | 'transfer'; label: string; hint: string; icon: string }[] = [
   { value: 'wallet',   label: 'Paymax wallet',   hint: 'Instant · from your balance',       icon: 'Wallet' },
   { value: 'card',     label: 'Debit card',      hint: 'Paystack secure checkout',           icon: 'CreditCard' },
   { value: 'transfer', label: 'Bank transfer',   hint: 'Dedicated virtual account',          icon: 'Landmark' },
 ];
 
-// ── Installment cadence choices (PA-06). Model A ONLY: guardian pays the school
 // over time — Paymax NEVER fronts fees (SF/§4 receivables-factoring bar). ─────
 export const INSTALLMENT_PLANS: { value: number; label: string; hint: string }[] = [
   { value: 2, label: '2 installments', hint: 'Half now, half mid-term' },

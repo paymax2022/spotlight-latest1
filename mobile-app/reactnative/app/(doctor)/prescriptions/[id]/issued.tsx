@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Share2, History, XCircle, Pill, ChevronRight, X, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, StatusBadge, QrCodeView } from '@/features/doctor/components';
@@ -28,7 +28,6 @@ import {
 import type { RxLifecycleStatus, RxFulfilmentOption } from '@/types/doctor.batch3';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
-// ── Section K — Issued prescription detail ────────────────────────────────────
 // NEW screen: QrCodeView + verification code (K29), share (K34), send-to-pharmacy
 // with fulfilment options (K35/K36), audit-trail sheet (K38), cancel (K32) and
 // expired (K31) states. REUSES useIssuedPrescription / useSharePrescription /

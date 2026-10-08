@@ -1,10 +1,7 @@
 // Pure-logic tests for the transaction-PIN route gate.
-// Run: npm run test:modules
-//
 // The gate used to fire on EVERY route, so a signed-in user without a PIN could
 // not read their contest application, an announcement or a lab result without
 // first creating a payment credential. Two failure directions are pinned here:
-//   • a browse route gating again (the regression this replaced);
 //   • a payment step NOT gating — which is only a worse prompt, never an
 //     unprotected payment, because the server enforces `pin_not_set` on every
 //     wallet debit, but is still the wrong experience.
@@ -88,13 +85,11 @@ describe('transaction-PIN gate: matching rules', () => {
   });
 
   test('a prefix must align on segment boundaries, not substrings', () => {
-    // 'wallet-history' is a different route from 'wallet'; matching on a raw
     // string prefix would wrongly gate it.
     assert.equal(requiresTransactionPin(['wallet-history']), false);
   });
 
   test('Expo route groups are ignored — /wallet is (tabs)/wallet.tsx', () => {
-    // Regression: matching raw segments meant the wallet TAB never gated, which
     // is the most obvious money surface in the app. Caught by loading it.
     assert.equal(requiresTransactionPin(['(tabs)', 'wallet']), true);
   });

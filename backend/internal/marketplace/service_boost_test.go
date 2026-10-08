@@ -8,7 +8,6 @@ package marketplace
 // RejectBoost) against an in-memory fake boostLedger, so it runs in CI with no
 // Postgres, no Redis, and no network — mirroring the house pattern in
 // backend/internal/academy/fees/payment/payment_test.go (fakeLedger).
-//
 // Asserted invariants:
 //   - charge: one BALANCED debit (seller wallet DR, commission account CR) of exactly
 //     the tier price; deterministic idempotency key == ledger reference.
@@ -28,8 +27,6 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 )
-
-// ── fakeBoostLedger: in-memory boostLedger implementing balanced-pair + idempotency ──
 
 type recordedDebit struct {
 	debitAccount  string // the seller wallet (money out)
@@ -86,7 +83,7 @@ func (f *fakeBoostLedger) GetOrCreateUserWallet(_ context.Context, userID string
 	return a, nil
 }
 
-func (f *fakeBoostLedger) Debit(_ context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
+func (f *fakeBoostLedger) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
 	if f.debitErr != nil {
 		return f.debitErr // fail-closed: sufficiency (or other) error, nothing posted
 	}
@@ -94,7 +91,7 @@ func (f *fakeBoostLedger) Debit(_ context.Context, userID, reference, idempotenc
 		return ledger.ErrDuplicate // idempotent replay: no second posting
 	}
 	f.seen[idempotencyKey] = true
-	wallet, _ := f.GetOrCreateUserWallet(context.Background(), userID)
+	wallet, _ := f.GetOrCreateUserWallet(ctx, userID)
 	f.debits = append(f.debits, recordedDebit{
 		debitAccount:  wallet.ID,
 		creditAccount: creditAccountID,
@@ -124,8 +121,6 @@ func (f *fakeBoostLedger) PostReversal(_ context.Context, restoreAccountID, rele
 // / postBoostRefund touch nothing else (no repo, no redis), so this is sufficient and
 // keeps the test a pure unit test.
 func serviceWithLedger(l boostLedger) *Service { return &Service{ledger: l} }
-
-// ── charge ───────────────────────────────────────────────────────────────────────
 
 func TestPostBoostCharge_BalancedDebitIntoCommission(t *testing.T) {
 	f := newFakeBoostLedger()
@@ -203,8 +198,6 @@ func TestPostBoostCharge_FailsClosedOnInsufficientFunds(t *testing.T) {
 	}
 }
 
-// ── auto-refund ────────────────────────────────────────────────────────────────────
-
 func TestPostBoostRefund_BalancedReversal(t *testing.T) {
 	f := newFakeBoostLedger()
 	s := serviceWithLedger(f)
@@ -250,8 +243,6 @@ func TestPostBoostRefund_IdempotentSinglePosting(t *testing.T) {
 		t.Fatalf("duplicate refund must post NOTHING new: want 1 reversal, got %d", len(f.reversals))
 	}
 }
-
-// ── proratedBoostRefund (seller-cancel refund money-math) ─────────────────────
 
 func TestProratedBoostRefund_HalfwayThroughIsHalfThePrice(t *testing.T) {
 	starts := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -322,8 +313,6 @@ func TestProratedBoostRefund_ZeroPriceOrMissingDatesRefundsNothing(t *testing.T)
 	}
 }
 
-// ── customBoostDuration (custom date-range pricing money-math) ────────────────
-
 func TestCustomBoostDuration_RoundsPartDayUp(t *testing.T) {
 	now := time.Date(2027, 1, 1, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -373,8 +362,6 @@ func TestCustomBoostDuration_RejectsOverTheCap(t *testing.T) {
 		t.Errorf("want %s, got %s", CodeInvalidBoostRange, ce.Code)
 	}
 }
-
-// ── boostChargeTierKey (custom-mode idempotency derivation) ───────────────────
 
 func TestBoostChargeTierKey_PackageModeIsTierVerbatim(t *testing.T) {
 	q := &BoostQuote{Mode: "package", Tier: "vip"}

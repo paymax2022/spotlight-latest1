@@ -4,3 +4,8 @@
 # (railway up runs with --no-gitignore, so ignoring it does not exclude it from
 # the upload.)
 BUILD_COMMIT
+
+# Local FX smoke-test binary — a compiled arm64 executable accidentally
+# committed in f7da031c. Platform-specific, useless on Linux prod, bloats the
+# repo. Build locally with `go build -o fxsmoke ./cmd/fxsmoke`; never commit.
+fxsmoke

@@ -6,10 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search, X, SlidersHorizontal } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useContestants } from '@/features/voting/hooks/useContestants';
 import { useVotingRealtime } from '@/features/voting/hooks/useVotingRealtime';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
@@ -21,7 +21,7 @@ export default function ContestantGridScreen() {
   const [search, setSearch] = useState('');
 
   const { data: contest } = useContestDetails(contestId ?? '');
-  const { data, isLoading, refetch, isRefetching } = useContestants(contestId ?? '', { search });
+  const { data, isLoading, isError, refetch, isRefetching } = useContestants(contestId ?? '', { search });
   // Live: an admin approving an entry adds a contestant here without a reload.
   useVotingRealtime(contestId);
 
@@ -58,6 +58,17 @@ export default function ContestantGridScreen() {
 
       {isLoading ? (
         <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
+      ) : isError ? (
+        // Same gap as the contest list: an unreachable roster endpoint used to
+        // render as "no contestants have been added yet", which is wrong and
+        // not retriable from what the voter sees.
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Could not load contestants</Text>
+          <Text style={styles.emptySub}>Check your connection and try again.</Text>
+          <Pressable onPress={() => refetch()} style={styles.backBtn}>
+            <Text style={styles.emptySub}>Retry</Text>
+          </Pressable>
+        </View>
       ) : (
         <FlatList
           data={data ?? []}

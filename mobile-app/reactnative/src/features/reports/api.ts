@@ -47,7 +47,6 @@ export async function getReports(): Promise<ReportsResponse> {
   return { sections: Array.isArray(data?.sections) ? data.sections : [] };
 }
 
-// ── Block 44 analytics (chart-ready, date-filtered) ───────────────────────────
 export type AnalyticsType = 'visitors' | 'gate' | 'payments' | 'repairs' | 'facilities' | 'meetings' | 'elections' | 'security' | 'vendors';
 export interface AnalyticsPoint { label: string; value: number; }
 export interface AnalyticsResult { type: string; from: string; to: string; series: AnalyticsPoint[]; summary: Record<string, number>; }

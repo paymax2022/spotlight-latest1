@@ -2,25 +2,19 @@
 // seam defined in package adapter. Where the mock adapters compute values
 // locally, these call a configurable provider base URL over HTTP and decode the
 // JSON response directly into the shared domain types.
-//
 // One *Client satisfies all three adapter interfaces (MarketData, Liquidity,
 // Custody), so an orchestrator can construct it once and assign the same value
 // to every adapter field.
-//
 // Endpoint contract (relative to the configured base URL):
 //
 //	GET  {base}/assets                              -> []domain.Asset
 //	GET  {base}/assets/{symbol}                     -> domain.Asset      (404 => ok=false)
 //	GET  {base}/assets/{symbol}/chart?range={rng}   -> []domain.CandlePoint
 //	POST {base}/quote                               -> domain.Quote
-//	     body {assetId, side, basis, amount, currency, lock}
 //	POST {base}/swap-quote                          -> domain.SwapQuote
-//	     body {fromAssetId, toAssetId, fromAmount}
 //	GET  {base}/deposit-address?symbol=&network=    -> domain.DepositAddress
 //	POST {base}/withdrawal-quote                    -> domain.WithdrawalQuote
-//	     body {assetId, networkId, amount}
 //	POST {base}/screen-address                      -> domain.AddressScreening
-//	     body {address}
 //
 // Requests carry "Authorization: Bearer <apiKey>" when an API key is configured,
 // and POSTs send "Content-Type: application/json". Any transport error or non-2xx
@@ -75,8 +69,6 @@ func New(baseURL, apiKey string) *Client {
 // CircuitState exposes the breaker state for observability ("closed"/"open"/"half-open").
 func (c *Client) CircuitState() string { return c.cb.State() }
 
-// ── HTTP helpers ─────────────────────────────────────────────────────────────
-
 // getJSON issues a GET to {base}{path} and decodes a 2xx JSON body into out.
 func (c *Client) getJSON(path string, out interface{}) error {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
@@ -103,7 +95,6 @@ func (c *Client) postJSON(path string, body interface{}, out interface{}) error 
 
 // do sets auth, executes the request under the circuit breaker, enforces a 2xx
 // status and decodes the body. It always closes the response body.
-//
 // Breaker accounting: only transport errors and 5xx responses are counted as
 // failures (a provider-down signal). A 4xx (e.g. 404 not-found, 422) means the
 // provider is healthy but the request was client-side, so it does NOT trip the
@@ -140,8 +131,6 @@ func (c *Client) do(req *http.Request, out interface{}) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// ── MarketData ───────────────────────────────────────────────────────────────
-
 // Assets returns the provider's tradable asset catalogue. On error it returns
 // nil (the caller sees an empty catalogue rather than a panic).
 func (c *Client) Assets() []domain.Asset {
@@ -172,8 +161,6 @@ func (c *Client) Chart(symbol, rng string) ([]domain.CandlePoint, bool) {
 	}
 	return out, true
 }
-
-// ── Liquidity ────────────────────────────────────────────────────────────────
 
 // quoteRequest is the POST /quote body.
 type quoteRequest struct {
@@ -222,8 +209,6 @@ func (c *Client) SwapQuote(fromKey, toKey string, fromAmount int64) (domain.Swap
 	}
 	return out, true
 }
-
-// ── Custody ──────────────────────────────────────────────────────────────────
 
 // DepositAddress fetches a custody deposit address for symbol on networkID.
 func (c *Client) DepositAddress(symbol, networkID string) (domain.DepositAddress, bool) {

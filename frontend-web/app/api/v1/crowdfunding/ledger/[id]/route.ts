@@ -3,7 +3,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/crowdfunding/ledger/[id]
 // → Go: GET /api/finance/crowdfunding/campaigns/:id/ledger
 // [id] is the CAMPAIGN id. Returns the projected ledger feed ({ data: LedgerEntry[] }).
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {

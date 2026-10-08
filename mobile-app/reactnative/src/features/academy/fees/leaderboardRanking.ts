@@ -1,5 +1,3 @@
-// ── Competition leaderboard ranking (pure) ───────────────────────────────────
-// The viewer's own score is the single source of truth (their earned points);
 // the board is then re-ranked so a learner who earns points actually moves up.
 // Pure + deterministic (stable tie order) so it is unit-testable and mirrors the
 // server's `RANK() OVER (ORDER BY score DESC)` shape.

@@ -3,19 +3,19 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Switch } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, X, Users, MapPin, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import WizardProgress from '@/features/association/components/WizardProgress';
+import {WizardProgress} from '@/features/association/components';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { APPROVAL_RULE_OPTIONS, STRUCTURE_TYPE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
+import { APPROVAL_RULE_OPTIONS, STRUCTURE_TYPE_OPTIONS } from '@/features/association/constants';
 import { STATE_NAMES } from '@/data/nigeria';
-import type { StructureType } from '@/features/association/types/orgDraft.types';
+import type { StructureType } from '@/features/association/types';
 
 const stateId = (state: string) => `st_${state}`;
 
@@ -69,7 +69,6 @@ export default function WizardStructure() {
   };
 
   // The single-structure chapter is one row, edited in place — not a list to
-  // add to. Typing replaces it; clearing it removes the row entirely so the
   // backend sees "no chapters named" and applies its default, rather than an
   // empty-named chapter.
   const setSingleChapter = (name: string) => {

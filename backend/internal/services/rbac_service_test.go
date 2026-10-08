@@ -1,7 +1,7 @@
 package services
 
 import (
-	"errors"
+	"context"
 	"testing"
 
 	"spotlight/backend/internal/domain"
@@ -19,11 +19,13 @@ type stubRBACRepo struct {
 	updatePermCalled bool
 }
 
-func (s *stubRBACRepo) GetUserStatus(string) (string, error)                        { return "active", nil }
-func (s *stubRBACRepo) GetUserRoles(string) ([]string, error)                       { return s.roles, nil }
-func (s *stubRBACRepo) GetUserScopes(string) ([]domain.UserScope, error)            { return nil, nil }
-func (s *stubRBACRepo) GetUserPermissions(string, string, string) ([]string, error) { return nil, nil }
-func (s *stubRBACRepo) HasPermission(string, string, string, string) (bool, error)  { return false, nil }
+func (s *stubRBACRepo) GetUserStatus(context.Context, string) (string, error)  { return "active", nil }
+func (s *stubRBACRepo) GetUserRoles(context.Context, string) ([]string, error) { return s.roles, nil }
+func (s *stubRBACRepo) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (s *stubRBACRepo) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
+	return nil, nil
+}
+func (s *stubRBACRepo) HasPermission(string, string, string, string) (bool, error) { return false, nil }
 func (s *stubRBACRepo) ListRoles() ([]domain.Role, error) {
 	return []domain.Role{{ID: "r1", Name: "A", Slug: "a"}}, nil
 }
@@ -215,64 +217,4 @@ func TestUpdateNonSystemPermissionAllowed(t *testing.T) {
 	if !repo.updatePermCalled {
 		t.Fatalf("expected repo update call")
 	}
-}
-
-type stubRBACRepoErr struct{}
-
-func (s *stubRBACRepoErr) GetUserStatus(string) (string, error)  { return "", errors.New("x") }
-func (s *stubRBACRepoErr) GetUserRoles(string) ([]string, error) { return nil, errors.New("x") }
-func (s *stubRBACRepoErr) GetUserScopes(string) ([]domain.UserScope, error) {
-	return nil, errors.New("x")
-}
-func (s *stubRBACRepoErr) GetUserPermissions(string, string, string) ([]string, error) {
-	return nil, errors.New("x")
-}
-func (s *stubRBACRepoErr) HasPermission(string, string, string, string) (bool, error) {
-	return false, errors.New("x")
-}
-func (s *stubRBACRepoErr) ListRoles() ([]domain.Role, error) { return nil, errors.New("x") }
-func (s *stubRBACRepoErr) CreateRole(domain.Role) (domain.Role, error) {
-	return domain.Role{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) UpdateRole(string, domain.Role) (domain.Role, error) {
-	return domain.Role{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) CloneRole(string, string, string) (domain.Role, error) {
-	return domain.Role{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) DeleteRole(string) error                       { return errors.New("x") }
-func (s *stubRBACRepoErr) GetRole(string) (domain.Role, error)           { return domain.Role{}, errors.New("x") }
-func (s *stubRBACRepoErr) ListPermissions() ([]domain.Permission, error) { return nil, errors.New("x") }
-func (s *stubRBACRepoErr) CreatePermission(domain.Permission) (domain.Permission, error) {
-	return domain.Permission{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) UpdatePermission(string, domain.Permission) (domain.Permission, error) {
-	return domain.Permission{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) GetPermission(string) (domain.Permission, error) {
-	return domain.Permission{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) ListRolePermissionPairs() (map[string]map[string]bool, error) {
-	return nil, errors.New("x")
-}
-func (s *stubRBACRepoErr) AssignPermissionToRole(string, string) error   { return errors.New("x") }
-func (s *stubRBACRepoErr) RemovePermissionFromRole(string, string) error { return errors.New("x") }
-func (s *stubRBACRepoErr) DeletePermission(string) error                 { return errors.New("x") }
-func (s *stubRBACRepoErr) AssignRoleToUser(string, string, string, string, string) error {
-	return errors.New("x")
-}
-func (s *stubRBACRepoErr) RemoveRoleFromUser(string, string) error { return errors.New("x") }
-func (s *stubRBACRepoErr) CountActiveSuperAdmins() (int, error)    { return 0, errors.New("x") }
-func (s *stubRBACRepoErr) SuspendUser(string) error                { return errors.New("x") }
-func (s *stubRBACRepoErr) UnsuspendUser(string) error              { return errors.New("x") }
-func (s *stubRBACRepoErr) LockUser(string) error                   { return errors.New("x") }
-func (s *stubRBACRepoErr) UnlockUser(string) error                 { return errors.New("x") }
-func (s *stubRBACRepoErr) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) {
-	return nil, errors.New("x")
-}
-func (s *stubRBACRepoErr) GetAdminUser(string) (domain.AdminUser, error) {
-	return domain.AdminUser{}, errors.New("x")
-}
-func (s *stubRBACRepoErr) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error) {
-	return domain.AdminUser{}, errors.New("x")
 }

@@ -11,7 +11,8 @@ export async function POST(request: Request) {
     const user = await requireUtilityUser(request);
     const limited = utilityRateLimit(request, 'paystack-verify', user.id, 20, 60_000);
     if (limited) return limited;
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const result = await verifyUtilityPaystackPayment(String(body.reference || body.payment_reference || ''), user.id);
     return NextResponse.json({
       success: true,

@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/gate/vehicles — gate events that have a captured plate.
+// Gate events that have a captured plate.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

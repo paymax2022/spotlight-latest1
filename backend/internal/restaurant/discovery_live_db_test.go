@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for discovery completeness (Phase 13): dish search,
 // dietary filter, and saved-address CRUD (default invariant). Skipped unless
 // TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

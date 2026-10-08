@@ -1,7 +1,6 @@
-// ── Registration — application status presentation helpers ───────────────────
 
 import type { ApplicationStatus } from '../types/registration.types';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 export function statusLabel(status: ApplicationStatus): string {
   const map: Record<ApplicationStatus, string> = {

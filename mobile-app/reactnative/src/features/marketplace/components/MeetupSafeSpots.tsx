@@ -1,13 +1,12 @@
-// ── Marketplace — MeetupSafeSpots (Screen 27 Meetup Mode) ────────────────────
 // Renders verified-safe-spot suggestions (police forecourts, bank branches,
 // well-lit public spots) as selectable rows. Data comes from /meetup/safe-spots
 // (being added by another agent) with a mock fallback.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Shield, Landmark, Building2, MapPin, Check, BadgeCheck } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 import type { SafeSpot } from '@/features/marketplace/api/meetup.api';
 

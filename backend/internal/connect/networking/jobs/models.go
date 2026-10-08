@@ -1,13 +1,11 @@
 // Package connectjobs implements Paymax Connect Phase 6A + 6D (professional
 // network): the Jobs marketplace, Company Pages (claim flow tied to existing
 // business verification), and single-level Referral Bounties.
-//
 // This package is self-contained: it owns ONLY its own tables + one migration and
 // exposes a single Register(...) entry point. It NEVER mutates a balance — the paid
 // job-posting fee is a wallet debit and the referral bounty payout is a ledger
 // credit, both delegated to the finance ledger/wallet (balanced double-entry,
 // idempotent, tier-checked). Money is integer kobo throughout.
-//
 // Invariants honoured (see PRD §2):
 //   - PN-2  referral bounties are SINGLE-LEVEL — no parent/chain field exists;
 //   - PN-6  a paid job posting is blocked server-side unless the company page is verified;
@@ -20,7 +18,6 @@ package connectjobs
 
 import "time"
 
-// ── Company Page claim FSM ──────────────────────────────────────────────────
 // CLAIM_SUBMITTED → UNDER_REVIEW ⇄ NEEDS_MORE_INFO → VERIFIED | REJECTED
 
 type ClaimState string
@@ -47,7 +44,6 @@ func validClaimTransition(from, to ClaimState) bool {
 	return false
 }
 
-// ── Job posting FSM ─────────────────────────────────────────────────────────
 // draft → pending_review → active → closed ; any non-terminal → rejected (moderation)
 
 type JobStatus string
@@ -73,7 +69,6 @@ func validJobTransition(from, to JobStatus) bool {
 	return false
 }
 
-// ── Job application FSM (§4) ─────────────────────────────────────────────────
 // DRAFT → SUBMITTED → UNDER_REVIEW ⇄ NEEDS_INFO
 // UNDER_REVIEW → SHORTLISTED → INTERVIEW → OFFERED → HIRED
 // UNDER_REVIEW|SHORTLISTED|INTERVIEW → REJECTED
@@ -118,7 +113,6 @@ func validAppTransition(from, to AppState) bool {
 	return false
 }
 
-// ── Referral bounty FSM ─────────────────────────────────────────────────────
 // REFERRED → APPLICATION_LINKED → HIRE_CONFIRMED → BOUNTY_PAYABLE → PAID
 // any pre-HIRE_CONFIRMED state → EXPIRED
 // BOUNTY_PAYABLE → PAID is the ledger-writing transition (idempotency key = bounty id, PN-10).
@@ -148,8 +142,6 @@ func validBountyTransition(from, to BountyState) bool {
 	// paid / expired are terminal.
 	return false
 }
-
-// ── Entities (camelCase json tags — mobile-facing) ──────────────────────────
 
 type CompanyPage struct {
 	ID                 string    `json:"id"`
@@ -212,8 +204,6 @@ type ReferralBounty struct {
 	// NOTE (PN-2): there is intentionally NO parent-bounty / referral-chain field.
 	// A referral-of-referral is not representable in this type or its table.
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────
 
 type ClaimCompanyInput struct {
 	Name               string `json:"name" binding:"required"`

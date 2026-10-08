@@ -50,6 +50,148 @@ components:
       properties:
         success: { type: boolean }
 
+    # ── Property Management Suite ─────────────────────────────────────────────
+    PropertyContextRef:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [estate, property, agency, org] }
+        id: { type: string }
+    PropertyContextEntity:
+      type: object
+      required: [type, id, name, roles]
+      properties:
+        type: { type: string, enum: [estate, property, agency, org] }
+        id: { type: string }
+        name: { type: string }
+        roles:
+          type: array
+          items: { type: string, enum: [resident, estate_admin, landlord, tenant, agency_owner] }
+    PropertyContextResponse:
+      type: object
+      required: [activeContext, contexts]
+      properties:
+        activeContext:
+          type: object
+          allOf: [{ $ref: '#/components/schemas/PropertyContextRef' }]
+          nullable: true
+        contexts:
+          type: array
+          items: { $ref: '#/components/schemas/PropertyContextEntity' }
+    RentRecentPayment:
+      type: object
+      required: [source, amountKobo, category, onTime, paidAt]
+      properties:
+        source: { type: string, enum: [estate, realtor] }
+        amountKobo: { type: integer, format: int64, description: Minor units (kobo) }
+        category: { type: string, enum: [rent, service_charge, lease, other] }
+        onTime: { type: boolean }
+        paidAt: { type: string, format: date-time }
+    RentPassport:
+      type: object
+      required: [userId, score, onTimeRate, totalPaidKobo, paymentsCount, recentPayments]
+      properties:
+        userId: { type: string, format: uuid }
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: >
+            round(onTimeRate*90) + tenure bonus (up to 10, +2 per 6 months
+            tenure), clamped 0-100. 0 when there are zero comparable
+            (due-dated) payments — fail-closed; absence is never treated as
+            good credit.
+        onTimeRate: { type: number, format: double, minimum: 0, maximum: 1, description: On-time payments / comparable (due-dated) payments }
+        totalPaidKobo: { type: integer, format: int64, description: "Lifetime successful payments, minor units (kobo), exact integer sum" }
+        paymentsCount: { type: integer, description: Uncapped count; recentPayments below is capped at 20 }
+        oldestTenancy: { type: string, format: date-time, nullable: true }
+        recentPayments:
+          type: array
+          maxItems: 20
+          description: Most-recent-first, capped at 20.
+          items: { $ref: '#/components/schemas/RentRecentPayment' }
+
+    # ── Realtor admin control plane (backend/internal/realtor) ────────────────
+    # Mounted under /api/realtor/admin, RBAC-gated on realtor.manage, behind
+    # FEATURE_REALTOR_ENABLED. Read + moderation-status-write only — the module
+    # posts no ledger entries itself. See docs/qa/modules/realtor.md.
+    RealtorOverview:
+      type: object
+      properties:
+        listingsLive: { type: integer }
+        pendingModeration: { type: integer }
+        pendingVerification: { type: integer }
+        activeLeases: { type: integer }
+        escrowHeldKobo: { type: integer, format: int64 }
+        payoutsDueKobo: { type: integer, format: int64 }
+        gmvKobo: { type: integer, format: int64, description: "30-day paid GMV, minor units (kobo)" }
+        openDisputes: { type: integer }
+        fraudFlags: { type: integer }
+    RealtorAdminListing:
+      type: object
+      required: [id, title, area, city, mode, priceKobo, verification, ownerName, ownerVerified, riskFlags, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        area: { type: string }
+        city: { type: string }
+        mode: { type: string }
+        priceKobo: { type: integer, format: int64 }
+        verification: { type: string }
+        ownerName: { type: string }
+        ownerVerified: { type: boolean }
+        riskFlags: { type: array, items: { type: string } }
+        submittedAt: { type: string, format: date-time }
+    RealtorVerificationRequest:
+      type: object
+      required: [id, kind, subjectName, documents, status, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        subjectName: { type: string }
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              uploaded: { type: boolean }
+        status: { type: string }
+        submittedAt: { type: string, format: date-time }
+        riskNote: { type: string }
+    RealtorAdminPayment:
+      type: object
+      required: [id, reference, amountKobo, escrowHeldKobo, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        kind: { type: string }
+        amountKobo: { type: integer, format: int64 }
+        escrowHeldKobo: { type: integer, format: int64 }
+        status: { type: string }
+        payer: { type: string }
+        createdAt: { type: string, format: date-time }
+    RealtorEscrowAccount:
+      type: object
+      required: [id, amountKobo, status, heldSince]
+      properties:
+        id: { type: string, format: uuid }
+        leaseOrBooking: { type: string }
+        amountKobo: { type: integer, format: int64 }
+        status: { type: string, enum: [held, release_requested, released, disputed] }
+        heldSince: { type: string, format: date-time }
+
+    RealtorEscrowResolution:
+      type: object
+      required: [id, leaseId, amountKobo, status]
+      properties:
+        id: { type: string, format: uuid }
+        leaseId: { type: string, format: uuid }
+        amountKobo: { type: integer, format: int64 }
+        status: { type: string, enum: [held, release_requested, released, disputed] }
+        resolvedTo: { type: string, enum: [tenant, landlord] }
+        resolutionNote: { type: string }
+
     # ── MapService (provider-agnostic maps abstraction) ───────────────────────
     # Every result carries `provider` + `source`. `source` is the licensing
     # stack ('openstack' | 'google' | 'mapbox' | 'own'); the client may only
@@ -5061,6 +5203,308 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: Report snapshot } }
   # ── END ESTATE SUPER-APP block ────────────────────────────────────────────
+  # ── Property Management Suite (unification umbrella; behind
+  #    FEATURE_PROPERTY_SUITE_ENABLED) ──────────────────────────────────────
+  # Read-mostly aggregation over the estate + realtor money paths. Owns no
+  # ledger mutation itself. See backend/internal/property/{context,handler,
+  # rentpassport}.go and docs/qa/modules/property.md for the full contract
+  # this was derived from.
+  /api/finance/property/context:
+    get:
+      operationId: propertyGetContext
+      summary: Aggregate the caller's role assignments across estates/properties/agencies (self)
+      description: >
+        Reads existing tables only (estate_residents, estates.admin_id,
+        estate_properties, realtor_portfolios) — no writes. Roles are merged
+        per entity. Returns the caller's persisted active context alongside.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Role-context aggregation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PropertyContextResponse' }
+        '401': { description: Authentication required }
+  /api/finance/property/context/switch:
+    post:
+      operationId: propertySwitchContext
+      summary: Switch the caller's active property context (fail-closed membership check)
+      description: >
+        Metadata-only upsert into property_active_context. Membership is
+        re-derived from GetContext on every call, so a contextType/contextId
+        the caller holds no role in is rejected — a forged value can never
+        be persisted.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contextType, contextId]
+              properties:
+                contextType: { type: string, enum: [estate, property, agency, org] }
+                contextId: { type: string }
+      responses:
+        '200':
+          description: Active context switched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  activeContext: { $ref: '#/components/schemas/PropertyContextRef' }
+        '400': { description: Missing/invalid contextType or contextId }
+        '401': { description: Authentication required }
+        '403': { description: Caller has no role in the requested context (fail-closed) }
+  /api/finance/property/rent-passport/me:
+    get:
+      operationId: propertyGetMyRentPassport
+      summary: Get the caller's own portable rent/dues trust profile
+      description: >
+        Computed read-only over successful estate + realtor payments (never
+        mutated). Score 0-100; see RentPassport schema for the formula.
+        Realtor-schema-absent is tolerated (estate-only deployments still get
+        a passport from estate history alone).
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Rent passport
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { description: Authentication required }
+  /api/finance/property/rent-passport/lookup/{userId}:
+    get:
+      operationId: propertyLookupRentPassport
+      summary: Landlord/agency screening lookup of ANY user's rent passport (RBAC-gated)
+      description: >
+        Object-level authz is the top risk on this endpoint: it returns
+        another user's payment history and trust score. Gated on
+        RequirePermission(rbac, "property.manage") — there is no per-target
+        ownership relationship checked, so the permission alone is the
+        boundary. No passport body is returned on the 403 path.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Rent passport of the target user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks property.manage (IDOR guard; no body leaked) }
+  # ── END Property Management Suite block ───────────────────────────────────
+  # ── Realtor admin control plane (backend/internal/realtor, gated on
+  #    FEATURE_REALTOR_ENABLED) ──────────────────────────────────────────────
+  # Mounted at /api/realtor/admin, RBAC-gated on realtor.manage. Read +
+  # moderation-status-write only. See backend/internal/realtor/{admin,
+  # repository,routes}.go and docs/qa/modules/realtor.md.
+  /api/realtor/admin/overview:
+    get:
+      operationId: realtorAdminOverview
+      summary: Headline dashboard counts/aggregates for the realtor admin console
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Overview aggregates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtorOverview' }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/listings/pending:
+    get:
+      operationId: realtorAdminPendingListings
+      summary: Listings moderation queue (status=pending_verification)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Pending listings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorAdminListing' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/listings/{id}/decision:
+    post:
+      operationId: realtorAdminDecideListing
+      summary: Apply an approve/reject/changes_requested moderation decision
+      description: Audited to realtor_admin_audit_log. No money moves here — moderation only.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected, changes_requested] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string }
+        '400': { description: Invalid decision value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Listing not found }
+  /api/realtor/admin/verifications:
+    get:
+      operationId: realtorAdminPendingVerifications
+      summary: Property-verification queue (derived from listings.verification)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Pending verifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorVerificationRequest' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/verifications/{id}/decision:
+    post:
+      operationId: realtorAdminDecideVerification
+      summary: Apply an approve/reject/more_info verification decision
+      description: Audited. No money moves here — trust-and-safety verification only.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [approved, rejected, more_info] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string }
+        '400': { description: Invalid status value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Verification subject not found }
+  /api/realtor/admin/payments:
+    get:
+      operationId: realtorAdminPayments
+      summary: List realtor payments (read-only)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorAdminPayment' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/escrow:
+    get:
+      operationId: realtorAdminEscrow
+      summary: List escrow deposits (read-only)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Escrow deposits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorEscrowAccount' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/escrow/{id}/resolve:
+    post:
+      operationId: realtorAdminResolveEscrow
+      summary: Inspection-gated release/forfeiture/dispute of a refundable lease deposit (PROPMGMT-002)
+      description: >-
+        released_to_tenant and forfeited_to_landlord REQUIRE a submitted
+        realtor_move_outs move-out inspection for the lease (422 otherwise).
+        disputed does not require a move-out submission and does not move
+        money. Money moves via the shared finance ledger (PostReversal /
+        PostJournal against the 'settlement' standing account) — idempotent
+        per deposit id, so a retried call is a safe no-op. Re-resolving an
+        already-released deposit is refused with 409. Audited to
+        realtor_admin_audit_log.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [released_to_tenant, forfeited_to_landlord, disputed] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Escrow deposit resolved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtorEscrowResolution' }
+        '400': { description: Invalid decision value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Escrow deposit not found }
+        '409': { description: Escrow deposit already released }
+        '422': { description: Move-out inspection has not been submitted for this lease }
+  # ── END Realtor admin control plane block ──────────────────────────────────
   # ── MapService (provider-agnostic maps abstraction) ───────────────────────
   # All provider keys are server-side; the client calls ONLY these endpoints.
   # findNearbyOwn (/nearby) and isInZone (/in-zone) run on PostGIS, not a maps API.
@@ -8175,6 +8619,41 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Contribution' }
 
+  /crowdfunding/campaigns/{id}/broadcast:
+    post:
+      operationId: broadcastToContributors
+      summary: Message every backer of a campaign (creator only)
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, body]
+              properties:
+                subject: { type: string, minLength: 4, maxLength: 200 }
+                body: { type: string, minLength: 11, maxLength: 5000 }
+                channelPush: { type: boolean, default: true }
+                channelEmail: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Message delivered in-app to every opted-in backer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      recipients: { type: integer, description: Distinct backers notified in-app }
+        '403':
+          description: Caller is not the campaign's creator
+
   # ── Telemedicine ──────────────────────────────────────────────────────────────
   /telemedicine/doctors:
     get:
@@ -9988,10 +10467,26 @@ paths:
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       responses: { '201': { description: Parcel created }, '422': { description: Prohibited item / invalid } }
     get: { operationId: listParcels, summary: Sender's parcels, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], responses: { '200': { description: Parcels } } }
+  /mobility/parcels/paystack/initiate:
+    post:
+      operationId: initiateParcelPaystack
+      summary: Start a card-direct parcel checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility Parcel]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '409': { description: idempotency_conflict }, '422': { description: Prohibited-items acknowledgement missing } }
+  /mobility/parcels/paystack/{reference}/status:
+    get:
+      operationId: getParcelPaystackStatus
+      summary: Poll + self-heal a card-direct parcel checkout (owner only)
+      tags: [Mobility Parcel]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,parcelId}})' }, '404': { description: unknown_reference } }
   /mobility/parcels/{id}:
     get: { operationId: getParcel, summary: Parcel detail (sender sees PINs), tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Parcel } } }
   /mobility/parcels/{id}/cancel:
-    post: { operationId: cancelParcel, summary: Cancel + refund, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelParcel, summary: Cancel + refund, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' } } }
   /mobility/parcels/{id}/rate:
     post:
       operationId: rateParcel
@@ -10051,6 +10546,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MobilityError' }
+  /mobility/bus/provider/schedules/{id}/cancel:
+    post:
+      operationId: busProviderScheduleCancel
+      summary: Cancel one of the caller's schedules and refund every active ticket
+      description: >-
+        Owner-gated. Marks the schedule cancelled and refunds each active ticket still in escrow
+        through the settlement refund path; legacy already-paid-out tickets are cancelled with
+        refund_status=manual_required (never reported as refunded). Idempotent + resumable.
+        Full schema in contracts/transport.openapi.yaml (BusScheduleCancelResult).
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Schedule cancellation summary }
+        '403': { description: Not your schedule }
+        '404': { description: Schedule not found }
+        '409': { description: Schedule already departed/completed }
+  /mobility/bus/tickets/{id}:
+    get:
+      operationId: busTicketGet
+      summary: Get one of the caller's bus tickets (owner only)
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Ticket (see contracts/transport.openapi.yaml BusTicket) }
+        '403': { description: Not your ticket }
+        '404': { description: Ticket not found }
   /mobility/bus/providers:
     get:
       operationId: busProviders
@@ -10292,6 +10819,22 @@ paths:
     post: { operationId: busValidate, summary: Operator validates QR → boarded, tags: [Mobility Bus], security: [{ bearerAuth: [] }], responses: { '200': { description: Boarded }, '404': { description: Invalid QR } } }
 
   # ── Towing / roadside ─────────────────────────────────────────────────────────
+  /mobility/towing/paystack/initiate:
+    post:
+      operationId: initiateTowingPaystack
+      summary: Start a card-direct towing checkout (server-quoted amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility Towing]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '409': { description: idempotency_conflict } }
+  /mobility/towing/paystack/{reference}/status:
+    get:
+      operationId: getTowingPaystackStatus
+      summary: Poll + self-heal a card-direct towing checkout (owner only)
+      tags: [Mobility Towing]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,towingJobId}})' }, '404': { description: unknown_reference } }
   /mobility/towing/estimate:
     post: { operationId: towingEstimate, summary: Towing estimate (callout + distance), tags: [Mobility Towing], security: [{ bearerAuth: [] }], responses: { '200': { description: Estimate } } }
   /mobility/towing:
@@ -10305,7 +10848,7 @@ paths:
   /mobility/towing/{id}:
     get: { operationId: getTowing, summary: Towing detail, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Job } } }
   /mobility/towing/{id}/cancel:
-    post: { operationId: cancelTowing, summary: Cancel + refund, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelTowing, summary: Cancel + refund, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' } } }
   /mobility/towing/{id}/rate:
     post:
       operationId: rateTowing
@@ -10339,6 +10882,23 @@ paths:
     post: { operationId: towingComplete, summary: Complete + settle, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
 
   # ── Mover trucks (bidding + escrow) ───────────────────────────────────────────
+  /mobility/movers/paystack/initiate:
+    post:
+      operationId: initiateMoverPaystack
+      summary: Start a card-direct checkout for accepting a mover bid (server-read amount, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility Movers]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [job_id, bid_id], properties: { job_id: { type: string, format: uuid }, bid_id: { type: string, format: uuid } } } } } }
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '403': { description: Not your job }, '409': { description: 'job not open / bid not available / idempotency_conflict' } }
+  /mobility/movers/paystack/{reference}/status:
+    get:
+      operationId: getMoverPaystackStatus
+      summary: Poll + self-heal a card-direct mover checkout (owner only)
+      tags: [Mobility Movers]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,moveId}})' }, '404': { description: unknown_reference } }
   /mobility/movers/quote:
     post: { operationId: moverQuote, summary: Request a move (quote_requested), tags: [Mobility Movers], security: [{ bearerAuth: [] }], responses: { '201': { description: Job created } } }
   /mobility/movers/{id}:
@@ -10354,7 +10914,7 @@ paths:
   /mobility/movers/{id}/confirm-completion:
     post: { operationId: confirmMoverCompletion, summary: Confirm completion → release escrow, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Released + settled } } }
   /mobility/movers/{id}/cancel:
-    post: { operationId: cancelMoverJob, summary: Cancel + refund, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelMoverJob, summary: Cancel + refund, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled. refund_status = whether the money is back: none | refunded | pending (card refund not yet complete; retried by re-POSTing cancel and by the reconciler) | failed (wallet refund failed; manual)', content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string }, refund_status: { type: string, enum: [none, refunded, pending, failed] } } } } } }, '503': { description: 'refund_unavailable - card refunds are not wired; NOTHING was cancelled, retry shortly' } } }
   /mobility/movers/{id}/rate:
     post:
       operationId: rateMoverJob
@@ -10384,6 +10944,22 @@ paths:
     post: { operationId: moverComplete, summary: Mark provider-complete (awaits customer confirm), tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Awaiting confirmation } } }
 
   # ── Car hire / chauffeur ──────────────────────────────────────────────────────
+  /mobility/car-hire/paystack/initiate:
+    post:
+      operationId: initiateCarHirePaystack
+      summary: Start a card-direct car-hire checkout (server-quoted fare + deposit as ONE charge, no wallet debit, no KYC-tier gate) — see contracts/transport.openapi.yaml and docs/adr/ADR-PR522-mobility-card-direct.md
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: 'Checkout created ({data:{reference,authorizationUrl,accessCode,amountKobo,status}})' }, '400': { description: invalid_input }, '409': { description: idempotency_conflict } }
+  /mobility/car-hire/paystack/{reference}/status:
+    get:
+      operationId: getCarHirePaystackStatus
+      summary: Poll + self-heal a card-direct car-hire checkout (owner only)
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reference, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: 'Status ({data:{reference,status,amountKobo,bookingId}})' }, '404': { description: unknown_reference } }
   /mobility/car-hire:
     get: { operationId: listCarHire, summary: My car-hire bookings, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
   /mobility/car-hire/quote:
@@ -10391,7 +10967,7 @@ paths:
   /mobility/car-hire/{id}/activate:
     post: { operationId: activateCarHire, summary: Activate a confirmed hire, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Active } } }
   /mobility/car-hire/{id}/cancel:
-    post: { operationId: cancelCarHire, summary: Cancel + refund, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+    post: { operationId: cancelCarHire, summary: 'Cancel + refund (card-funded: refunded to the card, only before activation; 409 CARD_HIRE_ACTIVE_USE_RETURN afterwards)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Cancelled ({ok,status,refund_status: none|refunded|pending|failed})' }, '409': { description: CARD_HIRE_ACTIVE_USE_RETURN } } }
   /mobility/car-hire/book:
     post:
       operationId: bookCarHire
@@ -10403,9 +10979,9 @@ paths:
   /mobility/car-hire/{id}:
     get: { operationId: getCarHire, summary: Booking detail, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Booking } } }
   /mobility/car-hire/{id}/extend:
-    post: { operationId: extendCarHire, summary: Extend (escrow delta), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended } } }
+    post: { operationId: extendCarHire, summary: 'Extend (escrow delta from the wallet; card-funded bookings refused 409 EXTENSION_NOT_AVAILABLE_FOR_CARD)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended }, '409': { description: EXTENSION_NOT_AVAILABLE_FOR_CARD } } }
   /mobility/car-hire/{id}/complete:
-    post: { operationId: completeCarHire, summary: Complete (settle + release deposit), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
+    post: { operationId: completeCarHire, summary: 'Complete (settle + release deposit; card-funded: deposit refunded to the card, re-POSTable)', tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Completed ({ok,status,deposit_refund_status: none|refunded|pending|failed})' }, '409': { description: CARD_HIRE_NO_DRIVER } } }
 
   # ── Business logistics ────────────────────────────────────────────────────────
   /mobility/business/accounts:
@@ -10480,12 +11056,14 @@ paths:
       tags: [AIcare]
       security: [{ bearerAuth: [] }]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [topic]
               properties:
-                topic: { type: string }
+                topic: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '201':
           description: Session opened
@@ -14563,8 +15141,13 @@ paths:
   /api/v1/referrals/attribute:
     post:
       operationId: applyReferralCode
-      summary: Apply a referral code (once, at signup — idempotent per user)
-      description: Creates a permanent referral_attributions row for the caller. Invisible to the referred user by design. No reward is created here.
+      summary: Apply a referral code (at signup, or late claim — idempotent per user)
+      description: >
+        Writes the caller's referral_attributions row. A caller with only the
+        default house placeholder (codeless signup) has it REPLACED by the real
+        referrer while the placeholder is still claimable; a caller already
+        attributed to a real referrer keeps it — first-real-attribution wins.
+        Invisible to the referred user by design. No reward is created here.
       tags: [Referral]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -14576,12 +15159,23 @@ paths:
             schema: { $ref: '#/components/schemas/ReferralAttributeRequest' }
       responses:
         '200':
-          description: Attribution recorded (or idempotent replay)
+          description: >
+            Outcome of the claim. `attributed` is true only when the submitted
+            code is the attribution now in effect; `referrer_id` is the caller's
+            actual current referrer (empty when still house-attributed). An
+            already-attributed caller answers 200 with attributed=false and the
+            EXISTING referrer_id — not an error.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SuccessResponse' }
+              schema:
+                type: object
+                required: [referrer_id, referred_user_id, attributed]
+                properties:
+                  referrer_id: { type: string, description: "Actual current referrer user id (empty when still house-attributed)" }
+                  referred_user_id: { type: string, format: uuid }
+                  attributed: { type: boolean, description: "True only when the submitted code is the attribution now in effect" }
+        '400': { description: "Invalid body, unknown code, or self-referral" }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { description: "Caller already has an attribution (permanent, one per user for life)" }
   /api/finance/referral/withdraw:
     post:
       operationId: withdrawReferralEarnings

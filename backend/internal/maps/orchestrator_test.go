@@ -8,8 +8,6 @@ import (
 
 // orchestrator_test.go — MS-2/MS-3/MS-6/MS-7 invariant tests for the v2 chain.
 
-// --- fakes ---
-
 type fakeGeocoder struct {
 	name      string
 	conf      float64

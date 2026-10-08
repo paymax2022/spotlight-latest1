@@ -1,4 +1,3 @@
-// ── Paymax Health — Symptom search React Query hooks ─────────────────────────
 // Follows the pharmacy hooks style (React Query v5, KEY-scoped query keys).
 // Screens NEVER dead-end: error states surface a retry + pharmacist-chat fallback.
 

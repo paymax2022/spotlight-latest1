@@ -8,7 +8,7 @@
  * way back, so the guard below is the part that matters: this must never become
  * an open redirect.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { isReturnableOrigin, buildWebReturnUrl } from '@/src/server/registration/return-origin';
 
 const ORIGINAL = process.env.CORS_ALLOWED_ORIGINS;
@@ -18,11 +18,19 @@ describe('isReturnableOrigin', () => {
   afterEach(() => {
     if (ORIGINAL === undefined) delete process.env.CORS_ALLOWED_ORIGINS;
     else process.env.CORS_ALLOWED_ORIGINS = ORIGINAL;
+    vi.unstubAllEnvs();
   });
 
   it('allows any loopback port, which is how Expo web runs in dev', () => {
     for (const o of ['http://localhost:8083', 'http://127.0.0.1:8083', 'http://localhost:3000', 'https://localhost:8443']) {
       expect(isReturnableOrigin(o)).toBe(true);
+    }
+  });
+
+  it('REFUSES loopback in a production build — payment refs must not bounce to localhost', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    for (const o of ['http://localhost:8083', 'http://127.0.0.1:8083', 'http://localhost:3000', 'https://localhost:8443']) {
+      expect(isReturnableOrigin(o)).toBe(false);
     }
   });
 

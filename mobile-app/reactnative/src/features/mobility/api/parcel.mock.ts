@@ -1,4 +1,3 @@
-// ── Parcel delivery — mock seed data + deterministic engine ──────────────────
 // All money is integer kobo. The "pricing engine" mimics the SERVER: the client
 // only ever reads the values it returns, never recomputes fares.
 
@@ -127,7 +126,6 @@ export function advanceMockParcel(p: Parcel): Parcel {
   return p;
 }
 
-// ─── Courier-side dispatch feed ────────────────────────────────────────────────
 export function mockCourierRequests(): CourierParcelRequest[] {
   const mk = (id: string, pk: Place, dp: Place, category: ParcelCategory, size: ParcelSize, speed: ParcelSpeed): CourierParcelRequest => {
     const est = mockParcelEstimate({ pickup: pk, dropoff: dp, category, size, speed, declaredValueKobo: 0 });

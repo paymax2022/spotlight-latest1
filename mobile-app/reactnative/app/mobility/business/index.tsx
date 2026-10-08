@@ -3,16 +3,17 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Wallet, PackagePlus, Layers, FileText, ChevronRight, MapPin, BarChart3 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusinessAccount, useDeliveries, useAnalytics } from '@/features/mobility/hooks/useLogistics';
 import { LOGISTICS_ENABLED, DELIVERY_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNaira, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -48,7 +49,7 @@ export default function BusinessDashboardScreen() {
   }
   if (account.isError) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Business logistics" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => account.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Business logistics" /><MobilityEdgeState kind={errKind(account.error)} actionLabel="Retry" onAction={() => account.refetch()} /></SafeAreaView>
     );
   }
 

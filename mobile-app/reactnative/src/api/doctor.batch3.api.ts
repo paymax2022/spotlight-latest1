@@ -1,18 +1,10 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 3 API client ────────────────
-// Batch 3 = spec sections K, L, M, N. Phase A style: every function resolves
 // demo data so screens render without a live API. `DEMO_*` exports double as
 // `placeholderData` in useQuery. ADDITIVE to `@/api/doctor.api`,
 // `@/api/doctor.phase2.api` and the other doctor api files — earlier
 // fns/exports are untouched.
-//
-// Sections: K e-prescription (RxDrugLine + IssuedPrescription + warnings/audit),
-// L pharmacy & drug fulfilment (Pharmacy + stock + messages; REUSES Phase 2
 // pharmacy/delivery/substitute), M lab ordering (LabCatalogueEntry + packages +
-// providers + options; REUSES Phase 1 lab order), N lab result review
 // (LabResultRich + interpretation + compare + inbox; REUSES Phase 1 result).
-//
 // TODO(Phase C): replace each body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/prescriptions/:id'); return res.data.data;
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
 import { DEMO_PATIENT_PROFILE } from '@/api/doctor.api';
@@ -90,9 +82,7 @@ const isoDate = (daysFromNow: number): string =>
 
 const PATIENT = DEMO_PATIENT_PROFILE.patient;
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION K — E-PRESCRIPTION
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Drug catalogue lookups are pure client-side filters (no round-trip) so the rx
 // builder can search/lookup inline. REUSES the richer DRUG_CATALOGUE_RICH.
@@ -322,9 +312,7 @@ export async function requestRefillConsultation(
   return wait({ consultRequestId: `crq-${Date.now()}`, ref: `CRQ-${input.idempotencyKey.slice(-6).toUpperCase()}` }, 500);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION L — PHARMACY & DRUG FULFILMENT
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES Phase 2 `getPharmacyFulfilments` / `getDrugDeliveries` / `reviewSubstitute`
 // (not re-declared here). Adds the pharmacy directory, stock, messages, alerts.
 
@@ -406,9 +394,7 @@ export async function reportPharmacy(input: ReportPharmacyInput): Promise<Report
   return doctorPost<ReportPharmacyResult>(`/pharmacy/${input.pharmacyId}/report`, input, input.idempotencyKey);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION M — LAB TEST ORDERING
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES Phase 1 `createLabOrder` / `getLabOrders` (not re-declared). Adds the
 // richer catalogue, packages, providers, coverage check and rich order view.
 
@@ -531,9 +517,7 @@ export async function cancelLabOrder(input: CancelLabOrderInput): Promise<Cancel
   return doctorPost<CancelLabOrderResult>(`/lab-orders/${input.orderId}/cancel`, input, input.idempotencyKey);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION N — LAB RESULT REVIEW
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES Phase 1 `getLabResult` / `markLabResultReviewed` (not re-declared).
 // Adds the inbox, rich result (PDF + structured values + compare + interpretation
 // + audit) and the interpretation / repeat / share / report mutations.

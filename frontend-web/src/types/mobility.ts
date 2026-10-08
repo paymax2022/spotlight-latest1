@@ -1,4 +1,3 @@
-// ── Admin — Paymax Mobility (ride-hailing) types ─────────────────────────────
 // All monetary amounts are integers in minor units (kobo). Never floats.
 // Mirrors the BUILD-CONTRACT admin endpoints under /api/finance/admin/transport.
 
@@ -36,7 +35,6 @@ export type IncidentSeverity = 'low' | 'medium' | 'high' | 'critical';
 
 export type CommissionTier = 'standard' | 'silver' | 'gold' | 'fleet';
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
 export interface MobilityDashboard {
   totalTrips: number;
   completedTrips: number;
@@ -54,7 +52,6 @@ export interface MobilityDashboard {
   topZones: { zone: string; trips: number; gbvKobo: number }[];
 }
 
-// ─── Drivers ──────────────────────────────────────────────────────────────────
 export interface DriverSummary {
   id: string;
   name: string;
@@ -109,7 +106,6 @@ export interface DriverVerificationDecision {
   reason: string;
 }
 
-// ─── Vehicles ─────────────────────────────────────────────────────────────────
 export interface VehicleComplianceRow {
   id: string;
   driverId: string;
@@ -133,7 +129,6 @@ export interface VehicleStatusPatch {
   reason: string;
 }
 
-// ─── Trips / Dispatch ─────────────────────────────────────────────────────────
 export interface TripRow {
   id: string;
   riderName: string;
@@ -167,7 +162,6 @@ export interface DispatchLive {
   onlineDrivers: OnlineDriver[];
 }
 
-// ─── Pricing & Commission ─────────────────────────────────────────────────────
 export interface PricingConfig {
   zone: string;
   serviceType: string;
@@ -214,7 +208,6 @@ export interface SafetyIncidentPatch {
   resolutionNote?: string;
 }
 
-// ─── Reports ──────────────────────────────────────────────────────────────────
 export interface ReportSummary {
   revenueByZone: { zone: string; gbvKobo: number; revenueKobo: number; trips: number }[];
   commissionByTier: { tier: CommissionTier; driverPayoutKobo: number; platformKobo: number; trips: number }[];
@@ -222,7 +215,6 @@ export interface ReportSummary {
   cancellation: { byRider: number; byDriver: number; bySystem: number; total: number };
 }
 
-// ─── Audit ────────────────────────────────────────────────────────────────────
 export interface MobilityAuditEntry {
   id: string;
   action: string;

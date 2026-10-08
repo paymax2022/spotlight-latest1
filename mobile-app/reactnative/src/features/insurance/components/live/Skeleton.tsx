@@ -1,13 +1,11 @@
-// ── Insurance (live) — loading skeletons ────────────────────────────────────
-// A spinner tells a person "wait"; a skeleton tells them what is about to
 // arrive. The catalog and policy lists are the two places worth the difference,
 // because both are the first thing a user sees on entering the module.
 
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View, type ViewStyle } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 
 /** A single shimmering block. */

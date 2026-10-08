@@ -1,4 +1,3 @@
-// ── Crowdfunding — Mock dataset ──────────────────────────────────────────────
 // Realistic Nigeria-first sample data. All money is in kobo.
 // Flip USE_MOCK in crowdfunding.api.ts to false once real endpoints land.
 
@@ -316,10 +315,8 @@ export const MOCK_CAMPAIGNS: Campaign[] = [
   },
 ];
 
-// ─── Recently viewed (ids, most-recent first) ────────────────────────────────
 export const MOCK_RECENTLY_VIEWED = ['cf3', 'cf1', 'cf4'];
 
-// ─── Contribution history (current user) ─────────────────────────────────────
 // Money follows the DEDUCTED model the settlement actually applies: the
 // contributor is debited the contribution (total == amount) and the platform's
 // 10% comes out of the campaign's payout (net == amount - fee). These rows used

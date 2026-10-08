@@ -1,6 +1,4 @@
-// ── Insurance (live) — category presentation ────────────────────────────────
 // PURE (icon *names* only, no component imports) so it loads under `node --test`.
-//
 // These are the SEVEN real MyCover categories, verified against the live catalog
 // (69 products: Life 15, Auto 15, Health 12, Content 10, Gadget 10, Package 6,
 // Travel 1). Counts are NOT hardcoded anywhere in the UI — they are computed
@@ -19,7 +17,7 @@ export interface CategoryMeta {
   blurb: string;
   /** Longer copy for the category header on the browse screen. */
   description: string;
-  icon: string; // lucide-react-native export name
+  icon: string;
   tone: Tone;
 }
 

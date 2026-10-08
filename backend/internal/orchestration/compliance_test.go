@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// --- default screener ---
-
 func TestAllowAllScreenerAllows(t *testing.T) {
 	allowed, reason, err := (AllowAllScreener{}).Screen(context.Background(), "cus_1", "USD-NGN", 100_00)
 	if err != nil {
@@ -18,8 +16,6 @@ func TestAllowAllScreenerAllows(t *testing.T) {
 		t.Fatalf("AllowAllScreener must allow, got allowed=%v reason=%q", allowed, reason)
 	}
 }
-
-// --- enforcement on the quote path (allowed / blocked / fail-closed) ---
 
 func TestCreateQuoteComplianceEnforcement(t *testing.T) {
 	ctx := context.Background()
@@ -108,8 +104,6 @@ func TestCreateQuoteComplianceEnforcement(t *testing.T) {
 	}
 }
 
-// --- enforcement on the transfer execution path ---
-
 func TestExecuteTransferComplianceBlockHaltsBeforeDebit(t *testing.T) {
 	ctx := context.Background()
 	clock := time.Now()
@@ -173,8 +167,6 @@ func TestExecuteTransferScreenerErrorFailsClosed(t *testing.T) {
 		t.Fatalf("balance must be untouched, got %d", bal)
 	}
 }
-
-// --- default service screens-open (no vendor configured) ---
 
 func TestDefaultServiceAllowsWithoutVendor(t *testing.T) {
 	ctx := context.Background()

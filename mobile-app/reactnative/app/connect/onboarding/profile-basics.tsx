@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import OnboardingStep from '@/features/connect/components/OnboardingStep';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
@@ -21,12 +21,10 @@ import { fetchExtraPrefillSources } from '@/features/connect/lib/fetchPrefillSou
 // ON-07 — Profile wizard, basics. Name, DOB (date widget), gender, location.
 // HARD 18+ AGE GATE (SAFETY INVARIANT §1): DOB is validated; suspected minors are
 // flagged and routed to the underage block screen.
-//
 // PREFILLED from the account: the user gave all four of these when they set up
 // their Paymax profile, so the step opens with them filled in rather than blank.
 // Everything stays EDITABLE — a Connect display name is a chosen name, not a
 // legal one, and someone may well present differently here than on their KYC
-// record. Only values the pickers can actually display are used; see
 // `features/connect/lib/profilePrefill`. The 18+ gate is unaffected: it is
 // decided server-side on submit, whatever the fields were seeded with.
 const GENDERS = ['Female', 'Male'];
@@ -79,7 +77,6 @@ export default function ProfileBasics() {
 
   // The account's own record. Shares the ['profile'] cache with the Profile tab,
   // so arriving from there costs no extra request. A failure is silent by
-  // design: prefill is a convenience, and onboarding must still work for someone
   // whose profile row cannot be read.
   const profileQuery = useQuery({ queryKey: ['profile'], queryFn: getProfile, retry: false });
 

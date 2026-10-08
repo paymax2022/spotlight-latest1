@@ -6,8 +6,6 @@ import "testing"
 // policy: which gated actions each restriction level blocks.
 //
 //	level \ action | visitor | vote  | facility
-//	---------------+---------+-------+---------
-//	"" (none)      | allow   | allow | allow
 //	soft           | allow   | BLOCK | BLOCK
 //	hard           | BLOCK   | BLOCK | BLOCK
 func TestRestrictionMatrix(t *testing.T) {

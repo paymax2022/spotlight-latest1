@@ -15,7 +15,7 @@ function mapProperty(row: any, names: Record<string, string>) {
   };
 }
 
-// GET /api/v1/estate/properties — directory + occupancy summary.
+// Directory + occupancy summary.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

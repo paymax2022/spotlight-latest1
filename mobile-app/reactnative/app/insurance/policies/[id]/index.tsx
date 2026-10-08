@@ -1,4 +1,3 @@
-// ── Protection — one policy ──────────────────────────────────────────────────
 // The single source of truth for a policy the user holds: its insurer, its real
 // reference numbers, what it cost, what it covers, when it runs out, and the two
 // things a person actually comes here to do — get the certificate, and make a
@@ -17,10 +16,10 @@ import {
   XCircle,
 } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { alertAsync, confirmAsync } from '@/lib/confirm';
 import {
   DetailSkeleton,

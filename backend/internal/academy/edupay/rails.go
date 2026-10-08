@@ -7,7 +7,6 @@ import "context"
 // wired at the composition root. No vendor type ever leaks into this package. The rail
 // OWNS the actual value movement; this module only flips LOCAL disbursement state once
 // the rail confirms, and records the returned reference.
-//
 // Every rail op MUST be idempotent on idemKey: the same (idemKey, reference, amount)
 // returns the same provider ref with no second movement.
 
@@ -28,7 +27,6 @@ type BNPLRail interface {
 	StartPlan(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (ref string, err error)
 }
 
-// ── Default no-op / stub implementations (dev) ────────────────────────────────
 // These let the package run end-to-end in dev without binding a vendor. They are
 // deterministic and idempotent (the caller persists the result keyed by idemKey),
 // returning a synthetic reference derived from the idempotency key.

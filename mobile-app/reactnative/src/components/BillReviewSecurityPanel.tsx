@@ -2,10 +2,10 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CheckSquare, Square } from 'lucide-react-native';
 import TextInputField from '@/components/TextInputField';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 
 /** Mandatory convenience fee (Naira) the USER pays on certain bill categories
  * (Cable TV, Electricity). Passed explicitly per screen — 0 for airtime/data. */

@@ -3,10 +3,10 @@ import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Wallet, Info } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -63,7 +63,9 @@ export default function FundWallet() {
         // A 409 means the first attempt already funded the wallet.
         if (isDuplicateReplay(e)) {
           resetIdempotencyKey();
-          router.replace('/connect/wallet');
+          // /connect/wallet has no index route — the wallet home lives at
+          // /connect/wallet/home; navigating to the bare path hits +not-found.
+          router.replace('/connect/wallet/home');
           return;
         }
         Alert.alert('Funding failed', moneyErrorMessage(e));

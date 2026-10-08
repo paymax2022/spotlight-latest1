@@ -1,4 +1,3 @@
-// ── Multi-provider KYC step-up — shared types ────────────────────────────────
 // Mirrors the Go backend contract at /api/finance/kyc. Statuses match the
 // backend enums exactly so screens can branch on them without remapping.
 

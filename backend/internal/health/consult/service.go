@@ -2,15 +2,23 @@ package healthconsult
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
+	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keySuccess = "success"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -42,20 +50,16 @@ const (
 	StateCompleted       State = "COMPLETED"
 )
 
-var allowedTransitions = map[State]map[State]bool{
-	StateScheduled:       {StateIntakePending: true, StateInProgress: true},
-	StateIntakePending:   {StateReadyForConsult: true},
-	StateReadyForConsult: {StateInProgress: true},
-	StateInProgress:      {StateCompleted: true},
-	StateCompleted:       {},
+var allowedTransitions = fsm.Table[State]{
+	StateScheduled:       fsm.Set(StateIntakePending, StateInProgress),
+	StateIntakePending:   fsm.Set(StateReadyForConsult),
+	StateReadyForConsult: fsm.Set(StateInProgress),
+	StateInProgress:      fsm.Set(StateCompleted),
+	StateCompleted:       fsm.Set[State](),
 }
 
 func canTransition(from, to State) bool {
-	next, ok := allowedTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedTransitions.Can(from, to)
 }
 
 type Consult struct {
@@ -110,7 +114,7 @@ func NewService(db *pgxpool.Pool, avKey string, audit Auditor) *Service {
 // Schedule creates a SCHEDULED consult (recording OFF by default).
 func (s *Service) Schedule(ctx context.Context, providerID, patientID string, appointmentID *string) (*Consult, error) {
 	if providerID == "" || patientID == "" {
-		return nil, fmt.Errorf("consult: provider and patient required")
+		return nil, errors.New("consult: provider and patient required")
 	}
 	c := &Consult{
 		ID:            uuid.New().String(),
@@ -139,16 +143,14 @@ func (s *Service) IssueLobbyToken(ctx context.Context, userID, consultID string)
 		return nil, err
 	}
 	if userID != c.PatientID && userID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	exp := time.Now().Add(15 * time.Minute).Unix()
 	room := "consult-" + consultID
-	mac := hmac.New(sha256.New, s.avKey)
-	mac.Write([]byte(fmt.Sprintf("%s|%s|%s|%d", consultID, room, userID, exp)))
 	return &AVToken{
 		ConsultID: consultID,
 		Room:      room,
-		Token:     hex.EncodeToString(mac.Sum(nil)),
+		Token:     cryptox.HMACSHA256Hex(string(s.avKey), consultID, room, userID, strconv.FormatInt(exp, 10)),
 		ExpiresAt: exp,
 		Recording: c.RecordingEnabled, // false by default
 	}, nil
@@ -175,14 +177,14 @@ func (s *Service) Complete(ctx context.Context, providerOwnerID, consultID strin
 	if err != nil {
 		return nil, nil, fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	c, providerOwner, err := lockConsult(ctx, tx, consultID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if providerOwnerID != providerOwner { // only the clinician completes + signs the note
-		return nil, nil, fmt.Errorf("consult: forbidden")
+		return nil, nil, errors.New("consult: forbidden")
 	}
 	if c.State == StateCompleted {
 		return c, nil, nil
@@ -219,10 +221,10 @@ func (s *Service) AddNote(ctx context.Context, providerOwnerID, consultID string
 		return nil, err
 	}
 	if providerOwnerID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	if c.State != StateInProgress && c.State != StateScheduled {
-		return nil, fmt.Errorf("consult: notes only while scheduled/in-progress")
+		return nil, errors.New("consult: notes only while scheduled/in-progress")
 	}
 	note.ID = uuid.New().String()
 	note.ConsultID = consultID
@@ -261,8 +263,8 @@ func (s *Service) LoadByAppointment(ctx context.Context, appointmentID string) (
 	           ORDER BY cs.created_at DESC LIMIT 1`
 	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
 		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("consult: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("consult: not found")
 		}
 		return nil, "", err
 	}
@@ -270,21 +272,19 @@ func (s *Service) LoadByAppointment(ctx context.Context, appointmentID string) (
 	return &c, providerOwner, nil
 }
 
-// --- internals ---
-
 func (s *Service) transition(ctx context.Context, actorID, consultID string, to State, side func(pgx.Tx) error) (*Consult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	c, providerOwner, err := lockConsult(ctx, tx, consultID)
 	if err != nil {
 		return nil, err
 	}
 	if actorID != c.PatientID && actorID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	if c.State == to {
 		return c, nil
@@ -320,8 +320,8 @@ func (s *Service) load(ctx context.Context, consultID string) (*Consult, string,
 	           WHERE cs.id=$1`
 	if err := s.db.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
 		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &c.ParentConsultID, &c.ReferralID, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("consult: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("consult: not found")
 		}
 		return nil, "", err
 	}
@@ -337,8 +337,8 @@ func lockConsult(ctx context.Context, tx pgx.Tx, consultID string) (*Consult, st
 	           LEFT JOIN health_providers p ON p.id = cs.provider_id
 	           WHERE cs.id=$1 FOR UPDATE OF cs`
 	if err := tx.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.ProviderID, &c.PatientID, &state, &c.RecordingEnabled, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("consult: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("consult: not found")
 		}
 		return nil, "", err
 	}
@@ -351,4 +351,73 @@ func (s *Service) audited(actor, target, action, resourceID string, oldV, newV m
 		return
 	}
 	s.audit.LogAction(actor, target, action, "health", "health_consult", resourceID, oldV, newV, "", "", "info")
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// AddNote — Notes — POST /consults/:id/notes  (in-call clinical note while in progress)
+func (h *Handler) AddNote(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var n ClinicalNote
+	if err := c.ShouldBindJSON(&n); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	out, err := h.svc.AddNote(c.Request.Context(), id, c.Param("id"), n)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "note": out})
+}
+
+// Lobby — GET /consults/:id/lobby  (AV join token; provider/patient only)
+func (h *Handler) Lobby(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	tok, err := h.svc.IssueLobbyToken(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "av": tok})
+}
+
+// Start — POST /consults/:id/start
+func (h *Handler) Start(c *gin.Context) {
+	out, err := h.svc.Start(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consult": out})
+}
+
+// Complete — POST /consults/:id/complete  (persists clinical note)
+func (h *Handler) Complete(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var n ClinicalNote
+	if err := c.ShouldBindJSON(&n); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	cs, note, err := h.svc.Complete(c.Request.Context(), id, c.Param("id"), n)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consult": cs, "note": note})
 }

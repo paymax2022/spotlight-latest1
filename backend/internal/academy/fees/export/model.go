@@ -8,22 +8,16 @@ import (
 // Package feesexport owns the EdTech School-Fees ComplianceExport (SF-11 gov/regulator sync)
 // and the school's own full data export (SF-10). It is a brownfield EXTENSION of the academy
 // module (REUSE-MAP.md is source of truth) and writes ONLY to append-only stores:
-//
 //   - SF-11: every regulator export appends one IMMUTABLE row to public.academy_compliance_exports
 //     (migration 20260918000000_academy_fees_edtech.sql). That table has NO UPDATE/DELETE path
 //     in this package (structural append-only) — the Store interface below exposes only
 //     AppendExport + ListExports. This is the immutable audit history of "what was shared with
 //     which regulator, when".
-//
 //   - SF-11 opt-in: an export for a data_category is REJECTED unless the school has opted in for
 //     that category. Opt-in is read through the OptInStore port (see the NOTE on OptInStore).
-//
 //   - SF-10: any VERIFIED school may request its OWN full data export (roster / fees / results).
 //     Eligibility reuses academy_schools.verification_tier via the SchoolVerifier port.
-//
 // This package moves NO money and posts NO ledger entries.
-
-// ── Data categories (SF-11 opt-in granularity) ──────────────────────────────────
 
 // DataCategory is one opt-in-able class of school data that may be shared with a regulator.
 // Opt-in is PER school PER data_category (build-spec §2 ComplianceExport / §4 SF-11).
@@ -36,8 +30,6 @@ const (
 	CategoryAttendance DataCategory = "attendance" // attendance records
 	CategoryStaff      DataCategory = "staff"      // staff / teacher records
 )
-
-// ── ComplianceExport (SF-11 append-only immutable log row) ──────────────────────
 
 // ComplianceExport mirrors one row of public.academy_compliance_exports. Rows are IMMUTABLE
 // once written (append-only): there is no update/delete path. Each row records the report
@@ -64,8 +56,6 @@ type SchoolDataExport struct {
 	GeneratedAt time.Time `json:"generatedAt"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // TriggerExportRequest triggers an SF-11 regulator compliance export. It is REJECTED unless
 // the school has opted in for every requested data category.
 type TriggerExportRequest struct {
@@ -86,8 +76,6 @@ type SchoolDataExportRequest struct {
 	Sections   []string `json:"sections"`
 	PayloadRef string   `json:"payloadRef"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound           = errors.New("not_found")

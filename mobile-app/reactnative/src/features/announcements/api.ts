@@ -1,7 +1,7 @@
 // Estate Announcements (Block 34) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 
 export type AnnouncementKind = 'general' | 'emergency' | 'security' | 'payment' | 'maintenance' | 'meeting' | 'election';

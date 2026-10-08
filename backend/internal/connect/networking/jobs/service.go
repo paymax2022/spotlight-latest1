@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
-// ── Narrow local dependency ports (mirror connect/monetization) ─────────────
 // Each is the minimal slice of a shared service this package needs. The real
 // implementations (finance wallet/ledger, loyalty, connect safety audit) are wired
 // by the orchestrator in Register's caller; this package never imports them.
@@ -43,6 +43,18 @@ type LoyaltyAwarder interface {
 	AwardFor(ctx context.Context, userID, module, trigger, ref string) error
 }
 
+// LedgerConfirmer proves — from the ledger of record, never Redis — that a
+// balanced journal under a namespaced idempotency key carries the exact identity
+// this package intended. It exists because a duplicate-key rejection is NOT proof
+// the caller's journal landed: a stale Redis lock or a foreign claim under the
+// same key both produce ErrDuplicate. ConfirmDebit checks DR user_wallet → CR
+// paymax_revenue (posting fee); ConfirmCredit checks DR referral_reward_expense →
+// CR user_wallet (bounty). Implemented by the app wiring over ledger.EntryByKey.
+type LedgerConfirmer interface {
+	ConfirmDebit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) (bool, error)
+	ConfirmCredit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) (bool, error)
+}
+
 // Auditor writes an immutable audit entry (mirrors connect safety WriteAudit). Every
 // mutation emits one.
 type Auditor interface {
@@ -65,7 +77,6 @@ type CommissionRecorder interface {
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
 }
 
-// ── Sentinel errors ─────────────────────────────────────────────────────────
 var (
 	ErrMissingIdem        = errors.New("connect: Idempotency-Key required")
 	ErrInvalidAmount      = errors.New("connect: amount must be positive kobo")
@@ -87,6 +98,7 @@ type Service struct {
 	loyalty    LoyaltyAwarder
 	audit      Auditor
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	confirmer  LedgerConfirmer    // optional; set via SetLedgerConfirmer
 
 	// Overridable seams so the money/state paths are unit-testable without a live DB
 	// (mirrors connect/monetization's planLookup). Default to the repository.
@@ -112,6 +124,28 @@ func NewService(repo *Repository, wallet WalletDebiter, ledger LedgerCrediter, a
 // SetCommissionRecorder injects the central profit-recording seam (app-wiring,
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// SetLedgerConfirmer wires the durable-ledger replay confirmer used whenever a
+// money call reports a DUPLICATE (Redis lock, foreign claim, or true replay).
+// Nil ⇒ unconfirmed duplicates are NEVER treated as success.
+func (s *Service) SetLedgerConfirmer(c LedgerConfirmer) { s.confirmer = c }
+
+const jobFeeRef = "connect:jobs:posting-fee"
+
+// jobFeeKey namespaces the client-supplied idempotency key per (rail, purpose,
+// caller) before it enters the GLOBAL ledger keyspace: a raw key is unique per
+// journal, so the same key arriving from another rail (or another poster) would
+// collide on ledger_entries.idempotency_key and cross-claim a foreign journal.
+func jobFeeKey(actorID, idemKey string) string {
+	return "connect:jobs:posting-fee:" + actorID + ":" + idemKey
+}
+
+// isDuplicateErr matches the ledger's duplicate-idempotency-key sentinel by
+// substring so this package need not import the ledger (mirrors the monetization
+// package's approach).
+func isDuplicateErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate idempotency key")
+}
 
 // recordCommissionSafe records realized Spotlight profit for a paid job activation.
 // It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
@@ -139,11 +173,9 @@ func (s *Service) writeAudit(ctx context.Context, action, actorID, entityType, e
 
 func (s *Service) award(ctx context.Context, userID, trigger, ref string) {
 	if s.loyalty != nil {
-		_ = s.loyalty.AwardFor(ctx, userID, "connect_networking", trigger, ref) // best-effort (PN-8)
+		_ = s.loyalty.AwardFor(ctx, userID, "connect_networking", trigger, ref)
 	}
 }
-
-// ── Company pages ───────────────────────────────────────────────────────────
 
 // ClaimCompanyPage starts the CompanyPageClaim FSM (CLAIM_SUBMITTED).
 func (s *Service) ClaimCompanyPage(ctx context.Context, actorID string, in ClaimCompanyInput) (*CompanyPage, error) {
@@ -214,8 +246,6 @@ func (s *Service) RevokeCapability(ctx context.Context, actorID, companyPageID, 
 	return nil
 }
 
-// ── Jobs ────────────────────────────────────────────────────────────────────
-
 // CreateJob drafts a job for a company page. Recruiter/admin capability is enforced
 // defence-in-depth (in addition to the RBAC scoped middleware, PN-9).
 func (s *Service) CreateJob(ctx context.Context, actorID, companyPageID string, in CreateJobInput) (*Job, error) {
@@ -249,6 +279,25 @@ func (s *Service) ActivateJob(ctx context.Context, actorID, companyPageID, jobID
 	if job.CompanyPageID != companyPageID {
 		return nil, ErrForbidden
 	}
+	if JobStatus(job.Status) == JobActive {
+		// Retry convergence: the job may already be ACTIVE because a previous
+		// attempt committed but its response was lost. Return it only when the
+		// fee journal provably posted under THIS caller-scoped key (or the job is
+		// free — no money to prove); a foreign or unproven key stays a hard error.
+		if job.FeeKobo == 0 {
+			return job, nil
+		}
+		if idemKey != "" && s.confirmer != nil {
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, actorID, jobFeeRef, jobFeeKey(actorID, idemKey), job.FeeKobo)
+			if cerr != nil {
+				return nil, fmt.Errorf("connect: confirm posting fee replay: %w", cerr)
+			}
+			if ok {
+				return s.repo.GetJob(ctx, jobID)
+			}
+		}
+		return nil, ErrIllegalTransition
+	}
 	if !validJobTransition(JobStatus(job.Status), JobActive) {
 		return nil, ErrIllegalTransition
 	}
@@ -269,8 +318,37 @@ func (s *Service) ActivateJob(ctx context.Context, actorID, companyPageID, jobID
 		if err != nil {
 			return nil, fmt.Errorf("connect: resolve revenue account: %w", err)
 		}
-		if err := s.wallet.Debit(ctx, actorID, "connect:job:fee", idemKey, revAcc, job.FeeKobo); err != nil {
-			return nil, err // insufficient funds / tier / duplicate bubble up
+		feeKey := jobFeeKey(actorID, idemKey)
+		paid := false
+		// Deploy-mid-flight convergence: the pre-namespace code charged under the
+		// RAW client key ("connect:job:fee" ref). If that exact journal is durably
+		// posted, the fee is already paid — never debit again under the new key.
+		if s.confirmer != nil {
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, actorID, "connect:job:fee", idemKey, job.FeeKobo)
+			if cerr != nil {
+				return nil, fmt.Errorf("connect: confirm legacy posting fee: %w", cerr)
+			}
+			paid = ok
+		}
+		if !paid {
+			if derr := s.wallet.Debit(ctx, actorID, jobFeeRef, feeKey, revAcc, job.FeeKobo); derr != nil {
+				if !isDuplicateErr(derr) {
+					return nil, derr // insufficient funds / tier errors bubble up
+				}
+				// A duplicate is a REJECTION of a claimed key — stale Redis lock or
+				// foreign claim — never proof this fee journal landed. Treat it as
+				// paid only when the ledger of record carries this exact journal.
+				if s.confirmer == nil {
+					return nil, derr
+				}
+				ok, cerr := s.confirmer.ConfirmDebit(ctx, actorID, jobFeeRef, feeKey, job.FeeKobo)
+				if cerr != nil {
+					return nil, fmt.Errorf("connect: confirm posting fee: %w", cerr)
+				}
+				if !ok {
+					return nil, derr
+				}
+			}
 		}
 	}
 
@@ -301,8 +379,6 @@ func (s *Service) ListJobs(ctx context.Context, limit int) ([]Job, error) {
 
 // GetJob returns one posting (JB-02).
 func (s *Service) GetJob(ctx context.Context, id string) (*Job, error) { return s.repo.GetJob(ctx, id) }
-
-// ── Applications ────────────────────────────────────────────────────────────
 
 // Apply creates a submitted application (JB-03). One active application per (job,
 // user) is enforced by the unique constraint (a duplicate bubbles up as an error).
@@ -415,8 +491,6 @@ func (s *Service) hire(ctx context.Context, actorID string, app *JobApplication,
 	return s.repo.GetApplication(ctx, app.ID)
 }
 
-// ── Referral bounties (single-level, PN-2) ──────────────────────────────────
-
 // CreateReferral records a single-level referral bounty for one application (JB-08).
 // There is no way to reference a parent bounty — a referral-of-referral is not
 // representable (PN-2).
@@ -451,7 +525,6 @@ func (s *Service) PayReferralBounty(ctx context.Context, actorID, bountyID strin
 	case BountyPaid:
 		return b, nil // already paid — idempotent no-op
 	case BountyHireConfirmed, BountyPayable:
-		// payable — proceed
 	default:
 		return nil, ErrIllegalTransition
 	}
@@ -463,13 +536,43 @@ func (s *Service) PayReferralBounty(ctx context.Context, actorID, bountyID strin
 	if err != nil {
 		return nil, fmt.Errorf("connect: resolve referral expense account: %w", err)
 	}
-	// Ledger credit — money in to the referrer, DR referral_reward_expense. Idempotency
-	// key is the bounty id itself, so this is the single source of double-credit safety.
-	if err := s.ledger.Credit(ctx, b.ReferrerUserID, "connect:referral:bounty", b.ID, expenseAcc, b.AmountKobo); err != nil {
-		return nil, err
+	// Ledger credit — money in to the referrer, DR referral_reward_expense. The key
+	// is namespaced per (rail, purpose) so it can never collide with a foreign
+	// module's key for the same uuid. This is the single source of double-credit
+	// safety.
+	bountyKey := "connect:jobs:bounty:" + b.ID
+	credited := false
+	// Deploy-mid-flight convergence: the pre-namespace code credited under the raw
+	// bounty id ("connect:referral:bounty" ref). If that journal is durably posted,
+	// the bounty is already paid — never credit again under the new key.
+	if s.confirmer != nil {
+		ok, cerr := s.confirmer.ConfirmCredit(ctx, b.ReferrerUserID, "connect:referral:bounty", b.ID, b.AmountKobo)
+		if cerr != nil {
+			return nil, fmt.Errorf("connect: confirm legacy bounty: %w", cerr)
+		}
+		credited = ok
+	}
+	if !credited {
+		if cerr := s.ledger.Credit(ctx, b.ReferrerUserID, "connect:jobs:bounty", bountyKey, expenseAcc, b.AmountKobo); cerr != nil {
+			if !isDuplicateErr(cerr) {
+				return nil, cerr
+			}
+			// Claimed key — not proof of our journal. Treat as paid only when the
+			// ledger of record carries DR expense → CR referrer-wallet under this key.
+			if s.confirmer == nil {
+				return nil, cerr
+			}
+			ok, cerr2 := s.confirmer.ConfirmCredit(ctx, b.ReferrerUserID, "connect:jobs:bounty", bountyKey, b.AmountKobo)
+			if cerr2 != nil {
+				return nil, fmt.Errorf("connect: confirm bounty credit: %w", cerr2)
+			}
+			if !ok {
+				return nil, cerr
+			}
+		}
 	}
 
-	ledgerRef := "connect:referral:bounty:" + b.ID
+	ledgerRef := bountyKey
 	if _, err := s.markBountyPaid(ctx, b.ID, ledgerRef); err != nil {
 		return nil, fmt.Errorf("connect: stamp bounty paid after credit: %w", err)
 	}
@@ -479,8 +582,6 @@ func (s *Service) PayReferralBounty(ctx context.Context, actorID, bountyID strin
 	s.award(ctx, b.ReferrerUserID, "referral_bounty_paid", b.ID)
 	return s.getBountyFn(ctx, b.ID)
 }
-
-// ── Followers & open-to-work ────────────────────────────────────────────────
 
 func (s *Service) Follow(ctx context.Context, userID, companyPageID string) error {
 	return s.repo.Follow(ctx, companyPageID, userID)

@@ -31,8 +31,11 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
     });
     return successResponse({ success: true, stage });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.includes('not found')) return errorResponse(message, 404);
+    // Exact-match the store's domain error — a substring match would echo a
+    // PostgREST message containing "not found" verbatim to the client.
+    if (error instanceof Error && error.message === 'Contest stage not found.') {
+      return errorResponse('Stage not found', 404);
+    }
     return handleApiError(error, 'Failed to update contest stage');
   }
 }
@@ -47,8 +50,9 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ slug: st
     await deleteContestStage(contest.id, params.stageId);
     return successResponse({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.includes('not found')) return errorResponse(message, 404);
+    if (error instanceof Error && error.message === 'Contest stage not found.') {
+      return errorResponse('Stage not found', 404);
+    }
     return handleApiError(error, 'Failed to delete contest stage');
   }
 }

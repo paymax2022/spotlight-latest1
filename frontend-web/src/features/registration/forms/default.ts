@@ -1,15 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Default / fallback registration form.
-//
 // Used ONLY for contest slugs that don't have their own dedicated form module
 // (e.g. a brand-new contest created via the admin before a bespoke form exists).
 // It reads the contest's `derived.*` capability flags from the draft to decide
 // which optional sections to include, so it degrades gracefully.
-//
 // Named contests (reality-tv-show, stem-contest, sme-pitch-contest,
 // open-mic-competition, film-academy) each have their own self-contained file
 // and never touch this one.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES, TALENT_SKILL_OPTIONS, MEDICAL_CONDITION_OPTIONS, ALLERGY_OPTIONS, HEALTH_STATUS_OPTIONS } from '../reference-data';
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from '../types';
 
@@ -68,7 +64,7 @@ const medicalFields: RegistrationField[] = [
 
 const paymentFields: RegistrationField[] = [
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', required: true, readOnly: true, helpText: 'This amount is configured by admin and cannot be edited.' },
-  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'] },  // deliberately not required at wizard time — written by the payment flow; enforced in validation.ts
+  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'] },
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text' },
 ];
 

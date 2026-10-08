@@ -1,7 +1,6 @@
 // Package parent is the Spotlight Academy Phase-2 parent (guardian) layer:
 // child dashboards, parental controls, progress reports, and purchase approvals,
 // plus admin CRUD for notification templates.
-//
 // GOLDEN RULE — child safety (docs/prd/edtech nfr.md child-safety):
 //
 //	A guardian may ONLY act on minors they hold an ACTIVE academy_guardian_links
@@ -17,8 +16,6 @@
 package parent
 
 import "time"
-
-// ── Child / dashboard models ─────────────────────────────────────────────────────
 
 // Child is a minor a guardian is actively linked to.
 type Child struct {
@@ -67,14 +64,12 @@ type MasteryRow struct {
 	Score       float64 `json:"score"`
 }
 
-// ── Parent controls ──────────────────────────────────────────────────────────────
-
 // ParentControls mirrors one academy_parent_controls row.
 type ParentControls struct {
 	ID                string         `json:"id"`
 	GuardianUserID    string         `json:"guardian_user_id"`
 	MinorUserID       string         `json:"minor_user_id"`
-	ScreenTimeMinutes int            `json:"screen_time_minutes"` // 0 = unlimited
+	ScreenTimeMinutes int            `json:"screen_time_minutes"`
 	AllowedHours      map[string]any `json:"allowed_hours"`
 	ContentMaxAge     *int           `json:"content_max_age,omitempty"`
 	UpdatedAt         time.Time      `json:"updated_at"`
@@ -86,8 +81,6 @@ type UpsertControlsRequest struct {
 	AllowedHours      map[string]any `json:"allowed_hours"`
 	ContentMaxAge     *int           `json:"content_max_age,omitempty"`
 }
-
-// ── Progress reports ─────────────────────────────────────────────────────────────
 
 // ProgressReport mirrors one academy_progress_reports row.
 type ProgressReport struct {
@@ -103,8 +96,6 @@ type GenerateReportRequest struct {
 	MinorUserID string `json:"minor_user_id" binding:"required"`
 	Period      string `json:"period" binding:"required"` // weekly | termly | YYYY-Www
 }
-
-// ── Purchase approvals ───────────────────────────────────────────────────────────
 
 // ApprovalState mirrors academy_purchase_approvals.state CHECK.
 type ApprovalState string
@@ -133,8 +124,6 @@ type PurchaseApproval struct {
 type DecideApprovalRequest struct {
 	Decision string `json:"decision" binding:"required"` // approve | reject
 }
-
-// ── Notification templates (admin) ───────────────────────────────────────────────
 
 // NotificationTemplate mirrors one academy_notification_templates row.
 type NotificationTemplate struct {

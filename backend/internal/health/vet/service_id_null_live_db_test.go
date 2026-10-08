@@ -1,6 +1,5 @@
 package healthvet
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: vet_appointment_payments.service_id is a nullable FK to
 // vet_services with ON DELETE SET NULL — deleting a vet_services row (not the
 // existing AdminDeactivateService soft-delete, but a direct row delete) nulls
@@ -9,9 +8,7 @@ package healthvet
 // Confirm/Cancel/...) failed the scan with "cannot scan NULL into *string" —
 // every future read of that appointment 500s. Fixed by making ServiceID a
 // *string, matching EscrowID/ConsultID/DeliveryRef.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

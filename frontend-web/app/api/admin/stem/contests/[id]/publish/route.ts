@@ -4,11 +4,12 @@ import { publishContest } from '@/src/server/stem/persistence';
 
 export async function POST(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { actorId } = await assertStemAdmin(request);
-    const contest = await publishContest(context.params.id, actorId);
+    const { id } = await context.params;
+    const contest = await publishContest(id, actorId);
     return successResponse({ success: true, contest });
   } catch (error) {
     return handleApiError(error, 'Failed to publish STEM contest');

@@ -1,9 +1,6 @@
-// ── Admin — Associations ops console ─────────────────────────────────────────
-// Mock by default. Flip with NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK=false to hit
 // the live Go backend at /api/finance/associations/admin/*. The associations
 // module ships a real admin surface (KPIs, application approvals, finance summary
 // + offline-payment review, member actions, CSV import).
-// Money is BIGINT kobo (minor units). Balances are ledger projections (NL-8);
 // every approval / offline decision / member action is recorded to audit (NL-12).
 
 import { apiRoot } from '@/config/env';
@@ -19,7 +16,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ASSOCIATION_ADMIN
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK';
 
 // Reads may serve fixtures. WRITES MAY NOT.
-//
 // A mutation that mutates an in-memory fixture and returns success tells the
 // operator the action was applied when nothing reached the server. That is worse
 // than a broken button: a broken button gets reported, while one that reports
@@ -29,7 +25,6 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK';
 // approved applications into an array while payouts gated on the real column:
 // 709 outlets trading and unpayable, and a console reporting approvals it never
 // performed is a plausible reason nobody noticed.
-//
 // Every write below has a working live endpoint (verified against the running
 // backend), so fixture mode has nothing to add and refuses loudly instead.
 const NOT_IN_FIXTURE_MODE =
@@ -37,10 +32,7 @@ const NOT_IN_FIXTURE_MODE =
   'Set NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK=false to make this change against the live backend.';
 
 // /api/finance/associations/admin — approvals, finance, offline decisions,
-// member actions, import, audit-log all live under this admin sub-group
-// (routes.go: rg.GET("/admin/kpis") etc., where rg is already the
 // /api/finance/associations group).
-//
 // apiRoot() strips a trailing /api/v1 (if present) before appending the
 // module's absolute path — same shape crowdfundingAdminService uses. This
 // used to REPLACE /api/v1 with the module path directly on env.apiBaseUrl,
@@ -62,28 +54,22 @@ function moduleBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 function authHeadersNoContentType(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 function newIdempotencyKey(): string {
   return `assoc-admin-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
-// ── Org picker ───────────────────────────────────────────────────────────────
 // Every admin read below is scoped to ONE association organisation
 // (backend/internal/association/service.go resolveOrgID). A real per-org
 // officer using the mobile in-app admin surface never needs this — the
 // backend falls back to their own membership when org_id is omitted. The
 // platform console has no such membership, so it must always pass one
-// explicitly; this module-level singleton (backed by localStorage so it
 // survives navigation between the seven association admin pages) is that
 // selection. useSelectedOrg() in _ui.tsx is the React-facing wrapper.
 const ORG_STORAGE_KEY = 'association_admin_selected_org';
@@ -135,7 +121,6 @@ async function failure(res: Response): Promise<Error> {
     const raw = (body?.error ?? body?.message) as unknown;
     if (typeof raw === 'string' && raw.trim()) detail = raw.trim();
   } catch { /* non-JSON body (proxy/gateway error) — status alone is all we have */ }
-  // Backend errors are prefixed "association: " by the service layer; that
   // prefix is noise in a console that is already inside the module.
   detail = detail.replace(/^association:\s*/i, '');
   return new Error(detail ? `${detail} (${res.status})` : `Request failed (${res.status})`);
@@ -159,7 +144,6 @@ async function sendJson<T>(
   // Money-mutating endpoints (offline payment decision, dues-tier create/update)
   // require an Idempotency-Key per house doctrine (CLAUDE.md — every money
   // mutation). The application decision endpoint declares one in the contract too.
-  //
   // A caller-supplied `idempotencyKey` beats the `idempotent` auto-mint. Minting
   // a fresh key inside each call is only replay-safe against a double CLICK, not
   // against a RETRY — retrying with a new key is precisely what double-bills. The
@@ -193,8 +177,6 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 /** One entry in the org picker — see ListAdminOrganisations (routes.go). */
 export interface AdminOrgOption {
   id: string;
@@ -221,7 +203,6 @@ export interface AdminOrgListOpts {
 // Mirrors the real Go AdminKpis struct field-for-field (service.go GetAdminKpis) —
 // scoped to ONE organisation (the org picker's selection), not a platform-wide
 // total. There is no "associations_total" or activity-feed concept at this
-// level; the dashboard page reads recent activity from listAuditLog() instead,
 // which already has a real backend behind it.
 export interface AssociationKpis {
   totalMembers: number;
@@ -251,7 +232,6 @@ export interface ApprovalRecord {
 // (model.go) — the console only offers the two-button approve/reject flow.
 export type ApprovalDecision = 'approve' | 'reject';
 
-// ── KPIs / dashboard ─────────────────────────────────────────────────────────
 const KPIS: AssociationKpis = {
   totalMembers: 12_440,
   activeMembers: 11_680,
@@ -265,7 +245,6 @@ export async function getAssociationKpis(): Promise<AssociationKpis> {
   return getJson<AssociationKpis>(`/kpis?${withOrg(new URLSearchParams())}`);
 }
 
-// ── Approvals ────────────────────────────────────────────────────────────────
 const APPROVALS: ApprovalRecord[] = [
   { id: 'app_551', applicantName: 'Chioma Adeyemi', category: 'Standard', chapter: 'Lagos Chapter', submittedAt: iso(6), status: 'PENDING', jurisdiction: 'LAGOS', paid: true },
   { id: 'app_549', applicantName: 'Tunde Balogun', category: 'Premium', chapter: 'Abuja Chapter', submittedAt: iso(20), status: 'PENDING', jurisdiction: 'ABUJA', paid: false },
@@ -317,7 +296,6 @@ export async function getApproval(id: string): Promise<ApprovalDetail> {
   return getJson<ApprovalDetail>(`/approvals/${id}`);
 }
 
-// ── Finance + offline payments ───────────────────────────────────────────────
 // Mirrors the real Go FinanceSummary / OfflinePayment structs field-for-field
 // (model.go) — scoped to one org, no "association_name" per row.
 export interface AssociationFinance {
@@ -355,7 +333,6 @@ const OFFLINE: OfflinePayment[] = [
   { id: 'off_204', memberName: 'Bola Thompson', memberId: 'LTU-2201', amountKobo: 50_000_00, method: 'bank_transfer', reference: 'TRF-99201', forItem: '2026 Annual Dues', submittedAt: iso(3), status: 'PENDING' },
   { id: 'off_199', memberName: 'Seun Kolawole', memberId: 'TFG-0043', amountKobo: 120_000_00, method: 'cash_deposit', reference: 'DEP-44120', forItem: '2026 Annual Dues', submittedAt: iso(10), status: 'PENDING' },
 ];
-// GetOfflinePayments hardcodes status='PENDING' — there is no status filter
 // to pass (an approved/rejected payment simply stops appearing here).
 export async function listOfflinePayments(): Promise<OfflinePayment[]> {
   if (USE_MOCK) { await delay(); return [...OFFLINE]; }
@@ -370,7 +347,6 @@ export async function decideOfflinePayment(id: string, decision: ApprovalDecisio
   return sendJson<{ ok: boolean }>('POST', `/finance/offline/${id}/decision`, { approve: decision === 'approve' }, { idempotent: true });
 }
 
-// ── Members directory + detail + actions ────────────────────────────────────
 // Mirrors backend internal/association model.go MemberProfileSummary / MemberProfile
 // and handler_actions.go suspend/restore/transfer/role bodies exactly.
 export interface MemberSummary {
@@ -470,9 +446,6 @@ export async function assignMemberRole(id: string, role: string): Promise<Member
   return sendJson<MemberActionResult>('POST', `/members/${id}/role`, { role });
 }
 
-// ── Bulk import (CSV) ────────────────────────────────────────────────────────
-// Backend: model_ext.go ImportRow / ImportPreview / ImportConfirmRequest /
-// ImportResult; handler_ext.go ImportPreview (multipart "file" + org_id query)
 // + ConfirmImport (JSON { sendInvites }).
 export interface ImportRow {
   rowNum: number;
@@ -530,8 +503,6 @@ export async function bulkImportMembers(orgId: string, file: File): Promise<{ ok
   return sendForm<{ ok: boolean; imported: number }>(`/import/members?org_id=${encodeURIComponent(orgId)}`, form);
 }
 
-// ── Audit log (read-only) ────────────────────────────────────────────────────
-// Backend: model_detail.go AuditLogEntry; handler_detail.go GetAuditLog
 // (query param `action`, optional filter).
 export interface AuditLogEntry {
   id: string;
@@ -559,7 +530,6 @@ export async function listAuditLog(action?: string): Promise<AuditLogEntry[]> {
   return getJson<AuditLogEntry[]>(`/audit-log?${qs}`);
 }
 
-// ── Org picker ───────────────────────────────────────────────────────────────
 const MOCK_ORGS: AdminOrgOption[] = [
   { id: 'org_ltu', name: 'Lagos Traders Union', acronym: 'LTU', category: 'Trade', status: 'ACTIVE', published: true, verified: true, memberCount: 4820, createdAt: '2025-03-04T09:00:00Z' },
   { id: 'org_tfg', name: 'Tech Founders Guild', acronym: 'TFG', category: 'Professional', status: 'ACTIVE', published: true, verified: true, memberCount: 1240, createdAt: '2025-06-18T09:00:00Z' },
@@ -598,14 +568,12 @@ export async function listAdminOrganisations(
   if (page?.status) qs.set('status', page.status);
   if (page?.category) qs.set('category', page.category);
   // limit/offset are read by pageParams (handler.go) and clamped service-side to
-  // 200; without them the backend serves a fixed first 100 with no way to reach
   // organisation 101, which is why the picker could only ever see one page.
   if (page?.limit != null) qs.set('limit', String(page.limit));
   if (page?.offset) qs.set('offset', String(page.offset));
   return getJson<AdminOrgOption[]>(`/organisations${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ── Elections (TS-13 / AD-004/005) ───────────────────────────────────────────
 // Officer-facing election administration. Routes live on the MODULE group
 // (/api/finance/associations/elections, base:'module'), not under /admin.
 // Results stay sealed until PUBLISHED (AD-005): during VOTING only turnout is
@@ -636,7 +604,6 @@ export interface ElectionHandoverResult {
   positions: { positionId: string; title: string; role: string; winners: string[]; revoked: number }[];
 }
 
-// ── Mock lifecycle state (USE_MOCK) ──
 const mockElections: AdminElectionDetail[] = [
   {
     id: 'elec_mock_1', title: '2026 National Executive Election',
@@ -714,7 +681,6 @@ export async function publishElectionResults(id: string): Promise<AdminPositionR
 }
 // Not in the audit's flagged list — the checker's heuristic treats ANY throw inside a
 // fixture block as proof the branch is honest, but this one only throws on the
-// not-yet-published guard; the success path below it still fabricated a handover
 // result. Same defect class as restaurantAdminService.ts's old updateMenuItem. Fixed
 // alongside its siblings above rather than left for the checker to eventually catch.
 export async function handoverElection(id: string): Promise<ElectionHandoverResult> {
@@ -722,14 +688,12 @@ export async function handoverElection(id: string): Promise<ElectionHandoverResu
   return sendJson<ElectionHandoverResult>('POST', `/elections/${id}/handover`, {}, { base: 'module' });
 }
 
-// ── Organisation management (admin) ──────────────────────────────────────────
 // backend/internal/association routes.go "Admin: organisation management".
 // assoc_organisations used to be write-once — no UPDATE/DELETE existed against
 // it or its chapters / committees / dues tiers, so every field was immutable
 // after creation and `verified` was dead schema. These are the routes that
 // changed that, and the console pages under
 // app/admin/association/organisations/* are their only consumer.
-//
 // Money rule: duesKobo and registrationFeeKobo are INTEGER KOBO (minor units).
 // Never floats, never strings for math — render with formatNaira().
 
@@ -840,7 +804,6 @@ export interface CommitteeInput { name: string; description?: string | null }
 export interface CategoryInput { label: string; description?: string | null; duesKobo: number; cadence: DuesCadence }
 export interface RuleInput { body: string; position: number }
 
-// ── Mock organisation state (USE_MOCK) ──
 // Mutable so the management pages behave sensibly with the backend switched off
 // (add a chapter, see it appear) instead of silently discarding every write.
 function mockDetailFor(o: AdminOrgOption): AdminOrganisationDetail {
@@ -876,7 +839,7 @@ function mockOrg(id: string): AdminOrganisationDetail {
   if (!d) throw new Error('Organisation not found');
   return d;
 }
-function mockId(prefix: string): string { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
+
 
 export async function getAdminOrganisation(id: string): Promise<AdminOrganisationDetail> {
   if (USE_MOCK) { await delay(); return structuredClone(mockOrg(id)); }
@@ -888,9 +851,7 @@ export async function updateAdminOrganisation(id: string, patch: UpdateOrganisat
   return sendJson<AdminOrganisationDetail>('PATCH', `/organisations/${id}`, patch);
 }
 
-// ── Lifecycle flags ──
 // Six single-purpose POSTs rather than one flag endpoint (routes.go
-// orgFlagHandler). verify/unverify is PLATFORM-super-admin only; the other two
 // pairs are open to an org admin.
 export type OrgFlagAction = 'verify' | 'unverify' | 'publish' | 'unpublish' | 'suspend' | 'restore';
 export async function setOrganisationFlag(id: string, action: OrgFlagAction): Promise<{ ok: boolean }> {
@@ -898,8 +859,6 @@ export async function setOrganisationFlag(id: string, action: OrgFlagAction): Pr
   return sendJson<{ ok: boolean }>('POST', `/organisations/${id}/${action}`, {});
 }
 
-// ── Per-organisation custom settings ──
-// A free-form jsonb object. PUT takes a PARTIAL object and MERGES it server-side;
 // a null value DELETES that key. Sending the whole object is therefore never
 // required — and a key you omit is never lost.
 export async function getOrganisationSettings(id: string): Promise<Record<string, unknown>> {
@@ -914,7 +873,6 @@ export async function updateOrganisationSettings(
   return sendJson<Record<string, unknown>>('PUT', `/organisations/${id}/settings`, patch);
 }
 
-// ── Chapters ──
 export async function createChapter(orgId: string, input: ChapterInput): Promise<{ id: string }> {
   if (USE_MOCK) throw new Error(`Creating a chapter ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/chapters`, input);
@@ -949,7 +907,6 @@ export async function deleteChapter(chapterId: string): Promise<{ ok: boolean }>
   return sendJson<{ ok: boolean }>('DELETE', `/chapters/${chapterId}`, undefined);
 }
 
-// ── Committees ──
 export async function createCommittee(orgId: string, input: CommitteeInput): Promise<{ id: string }> {
   if (USE_MOCK) throw new Error(`Creating a committee ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/committees`, input);
@@ -977,7 +934,6 @@ export async function deleteCommittee(committeeId: string): Promise<{ ok: boolea
   return sendJson<{ ok: boolean }>('DELETE', `/committees/${committeeId}`, undefined);
 }
 
-// ── Membership categories (dues tiers) — MONEY PATH ──
 // Both create and update REQUIRE an Idempotency-Key (service_org_admin.go returns
 // ErrIdempotencyRequired without one): a retried create must not silently mint a
 // second tier at the same price, and a retried re-price must not double-apply.
@@ -1009,7 +965,6 @@ export async function deleteCategory(categoryId: string): Promise<{ ok: boolean 
   return sendJson<{ ok: boolean }>('DELETE', `/categories/${categoryId}`, undefined);
 }
 
-// ── Rules ──
 export async function createRule(orgId: string, input: RuleInput): Promise<{ id: string }> {
   if (USE_MOCK) throw new Error(`Creating a group rule ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/rules`, input);
@@ -1037,7 +992,6 @@ export async function deleteRule(ruleId: string): Promise<{ ok: boolean }> {
   return sendJson<{ ok: boolean }>('DELETE', `/rules/${ruleId}`, undefined);
 }
 
-// ── Naira ⇄ kobo at the form boundary ────────────────────────────────────────
 // Kobo is the ONLY representation that reaches the API. These two exist so a
 // page never does `parseFloat(x) * 100` inline — that is where the rounding
 // bugs live (0.1 * 100 === 10.000000000000002).
@@ -1055,8 +1009,6 @@ export function koboToNairaInput(kobo: number): string {
   return `${Math.trunc(k / 100)}.${String(Math.abs(k % 100)).padStart(2, '0')}`;
 }
 
-// ── Admin content listings + authoring ───────────────────────────────────────
-//
 // Why a separate ADMIN listing exists at all: the member-facing reads
 // (GET /announcements, /meetings, /documents, /events, /tasks) join through the
 // CALLER's own assoc_memberships, which is right for a member and returns an
@@ -1064,13 +1016,9 @@ export function koboToNairaInput(kobo: number): string {
 // the console could author content it could never see. The admin listings take
 // an explicit organisation and authorize against it
 // (service_content_list.go listContent → requireOrgAdmin).
-//
-// Every listing answers the SAME row shape so one table renders all six; the
 // type-specific fields ride in `meta`. The typed *Meta interfaces below mirror
 // each jsonb_build_object in service_content_list.go key-for-key.
-//
 // Money rule (CLAUDE.md): feeKobo / amountKobo / totalKobo are INTEGER kobo.
-// Naira only ever exists as text in an <input>; nairaToKobo() converts once at
 // the form boundary and formatNaira() renders on the way out.
 
 /** One row of any admin content listing (Go AdminContentRow). */
@@ -1133,9 +1081,7 @@ export type EventRow = AdminContentRow<EventMeta>;
 export type TaskRow = AdminContentRow<TaskMeta>;
 export type DuesRunRow = AdminContentRow<DuesRunMeta>;
 
-// ── Enums, mirrored from service_content.go's validity maps ──
 // Hard-coded here rather than fetched because they are compiled-in Go maps with
-// no endpoint; a value outside them is a 400, so the console only ever offers
 // members of the set.
 export type MeetingMode = 'PHYSICAL' | 'VIRTUAL' | 'HYBRID';
 export type MeetingState = 'UPCOMING' | 'LIVE' | 'PAST' | 'CANCELLED';
@@ -1156,7 +1102,6 @@ export const TASK_STATUSES: TaskStatus[] = [
 export const TASK_PRIORITIES: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
 export const INVOICE_SCOPES: InvoiceScope[] = ['NATIONAL', 'STATE', 'LOCAL', 'COMMITTEE'];
 
-// ── Request bodies, mirroring model_content.go field-for-field ──
 export interface AnnouncementInput {
   title: string; body?: string | null; audience?: string | null;
   urgent: boolean; requiresAck: boolean;
@@ -1224,10 +1169,6 @@ export function eventFeeError(paid: boolean, feeKobo: number): string | null {
   return null;
 }
 
-// ── datetime-local ⇄ RFC3339 at the form boundary ──
-// Go parses startsAt/endsAt/dueDate with time.Parse(time.RFC3339) and errors on
-// anything else, while <input type="datetime-local"> yields "2026-09-01T10:00"
-// (no zone) and <input type="date"> yields "2026-09-01". Both are rejected
 // verbatim, so neither value may ever be sent as typed.
 
 /** "2026-09-01T10:00" (browser local time) → RFC3339 UTC. Empty → null. */
@@ -1261,7 +1202,6 @@ export function rfc3339ToDateInput(v: string | null | undefined): string {
 /** Exported so a page can hold ONE key across a retry of the same money action. */
 export { newIdempotencyKey };
 
-// ── Mock content state (USE_MOCK) ──
 // Mutable, like MOCK_ORG_DETAILS above, so the authoring pages behave sensibly
 // with the backend switched off (create a thing, see it in the list) instead of
 // silently discarding every write and rendering a permanent empty state.
@@ -1307,7 +1247,7 @@ function mockList<M>(kind: ContentKind, opts?: ContentListOpts): AdminContentRow
   return structuredClone(MOCK_CONTENT[kind]).slice(off, off + lim) as AdminContentRow<M>[];
 }
 function mockCreate(kind: ContentKind, row: Omit<AdminContentRow, 'id'>): { id: string } {
-  const id = mockId(kind.slice(0, 3));
+  const id = `${kind.slice(0, 3)}_${Math.random().toString(36).slice(2, 10)}`;
   MOCK_CONTENT[kind].unshift({ id, ...row });
   return { id };
 }
@@ -1324,7 +1264,6 @@ function mockRemove(kind: ContentKind, id: string): { ok: boolean } {
   return { ok: true };
 }
 
-// ── Announcements ──
 export async function listAdminAnnouncements(orgId: string, opts?: ContentListOpts): Promise<AnnouncementRow[]> {
   if (USE_MOCK) { await delay(); return mockList<AnnouncementMeta>('announcements', opts); }
   return getJson<AnnouncementRow[]>(`/organisations/${orgId}/announcements${contentQuery(opts)}`);
@@ -1344,7 +1283,6 @@ export async function deleteAnnouncement(id: string): Promise<{ ok: boolean }> {
   return sendJson<{ ok: boolean }>('DELETE', `/announcements/${id}`, undefined);
 }
 
-// ── Meetings ──
 export async function listAdminMeetings(orgId: string, opts?: ContentListOpts): Promise<MeetingRow[]> {
   if (USE_MOCK) { await delay(); return mockList<MeetingMeta>('meetings', opts); }
   return getJson<MeetingRow[]>(`/organisations/${orgId}/meetings${contentQuery(opts)}`);
@@ -1367,7 +1305,6 @@ export async function publishMeetingMinutes(id: string, published: boolean): Pro
   return sendJson<{ ok: boolean }>('POST', `/meetings/${id}/minutes`, { published });
 }
 
-// ── Documents ──
 export async function listAdminDocuments(orgId: string, opts?: ContentListOpts): Promise<DocumentRow[]> {
   if (USE_MOCK) { await delay(); return mockList<DocumentMeta>('documents', opts); }
   return getJson<DocumentRow[]>(`/organisations/${orgId}/documents${contentQuery(opts)}`);
@@ -1385,7 +1322,6 @@ export async function deleteDocument(id: string): Promise<{ ok: boolean }> {
   return sendJson<{ ok: boolean }>('DELETE', `/documents/${id}`, undefined);
 }
 
-// ── Events (MONEY: feeKobo) ──
 export async function listAdminEvents(orgId: string, opts?: ContentListOpts): Promise<EventRow[]> {
   if (USE_MOCK) { await delay(); return mockList<EventMeta>('events', opts); }
   return getJson<EventRow[]>(`/organisations/${orgId}/events${contentQuery(opts)}`);
@@ -1408,7 +1344,6 @@ export async function deleteEvent(id: string): Promise<{ ok: boolean }> {
   return sendJson<{ ok: boolean }>('DELETE', `/events/${id}`, undefined);
 }
 
-// ── Tasks ──
 export async function listAdminTasks(orgId: string, opts?: ContentListOpts): Promise<TaskRow[]> {
   if (USE_MOCK) { await delay(); return mockList<TaskMeta>('tasks', opts); }
   return getJson<TaskRow[]>(`/organisations/${orgId}/tasks${contentQuery(opts)}`);
@@ -1426,7 +1361,6 @@ export async function deleteTask(id: string): Promise<{ ok: boolean }> {
   return sendJson<{ ok: boolean }>('DELETE', `/tasks/${id}`, undefined);
 }
 
-// ── Dues runs + ad-hoc invoices — MONEY PATH ─────────────────────────────────
 export async function listAdminDuesRuns(orgId: string, opts?: ContentListOpts): Promise<DuesRunRow[]> {
   if (USE_MOCK) { await delay(); return mockList<DuesRunMeta>('duesRuns', opts); }
   return getJson<DuesRunRow[]>(`/organisations/${orgId}/dues/runs${contentQuery(opts)}`);

@@ -10,3 +10,22 @@ export async function POST(request: Request) {
     return proxyToGoBackend(request, '/api/finance/events');
   } catch (err) { return handleApiError(err); }
 }
+
+// GET list — Go serves ListEvents at GET /api/finance/events (public discovery,
+// optional identity). The [...path] catch-all only covers ≥1 segment, so
+// without this export the root list 405'd and mobile's listEvents() was dead.
+export async function GET(request: Request) {
+  if (!featureFlags.events()) return errorResponse('Events are not available.', 503);
+  try {
+    await requireRequestUser(request);
+    return proxyToGoBackend(request, '/api/finance/events');
+  } catch (err) { return handleApiError(err); }
+}
+
+export async function HEAD(request: Request) {
+  if (!featureFlags.events()) return errorResponse('Events are not available.', 503);
+  try {
+    await requireRequestUser(request);
+    return proxyToGoBackend(request, '/api/finance/events', { method: 'HEAD' });
+  } catch (err) { return handleApiError(err); }
+}

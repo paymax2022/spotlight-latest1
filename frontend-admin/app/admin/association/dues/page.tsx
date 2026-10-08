@@ -1,16 +1,13 @@
 'use client';
 
 // Dues & finance.
-//
 // WHY THIS PAGE AND NOT content/dues: raising dues is the same subject as the
 // collection summary and the offline-payment review already here — an operator
 // looking at "₦18.9m outstanding" is one click from wanting to bill for it. A
 // second page under Content would have split one job across two tabs and left
 // this one showing a number with no way to act on it. Authoring pages create
 // content; this creates INVOICES, which is finance.
-//
 // MONEY PATH. Two rules govern everything below:
-//   1. Every amount is INTEGER KOBO. Naira exists only as text in an <input>;
 //      nairaToKobo() converts once at the form boundary, formatNaira() renders.
 //   2. The Idempotency-Key belongs to the FORM, not to the request. It is minted
 //      once per intended run and kept across retries, because the backend's
@@ -86,7 +83,6 @@ export default function DuesPage() {
     finally { setBusy(null); }
   }
 
-  // ── Raise dues ────────────────────────────────────────────────────────────
   const [runForm, setRunForm] = useState({
     title: '', scope: 'NATIONAL' as InvoiceScope, dueDate: '',
     categoryId: '', chapterId: '', notify: false,
@@ -135,7 +131,6 @@ export default function DuesPage() {
     setMsg(null); setError(null);
   }
 
-  // ── Ad-hoc single invoice ─────────────────────────────────────────────────
   const [invForm, setInvForm] = useState({
     membershipId: '', title: '', amount: '', description: '',
     cadence: 'ONE_OFF' as DuesCadence, scope: 'NATIONAL' as InvoiceScope, dueDate: '', notify: false,

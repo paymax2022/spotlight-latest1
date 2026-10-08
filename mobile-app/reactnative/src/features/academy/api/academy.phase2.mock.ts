@@ -1,7 +1,5 @@
-// ── Spotlight Academy — Phase 2 mock dataset ─────────────────────────────────
 // Self-contained fixtures for progression, parent/guardian, EduPay, and the new
 // learner surfaces (downloads, bookmarks, notes, search, daily goal). Backs the
-// Phase-2 screens while USE_MOCK is true. Money in kobo; reward points are plain
 // integers. Reuses Phase-1 subject/objective IDs from academy.mock for coherence.
 
 import type {
@@ -34,7 +32,6 @@ const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
 const daysAhead = (d: number) => new Date(now + d * 86_400_000).toISOString();
 const dateOnly = (d: number) => new Date(now - d * 86_400_000).toISOString().slice(0, 10);
 
-// ── Progression ──────────────────────────────────────────────────────────────
 export const MOCK_PATHS: Record<string, LearningPath> = {
   sub_math: {
     id: 'path_math', subjectId: 'sub_math', subjectName: 'Mathematics', progressPct: 48, generatedAt: daysAgo(0),
@@ -61,7 +58,6 @@ export const MOCK_RECOMMENDATIONS: Recommendation[] = [
   { id: 'rec_4', kind: 'review', title: 'Review missed Physics questions', reason: 'From your last practice set', href: '/learn/academy/practice/obj_motion_1', subjectId: 'sub_phy', icon: 'RotateCcw' },
 ];
 
-// ── Parent / Guardian ────────────────────────────────────────────────────────
 export const MOCK_CHILDREN: ChildSummary[] = [
   { minorId: 'usr_self', displayName: 'Chidera A.', classCode: 'SSS2', avatarColorKey: 'iconBgPurple', linked: true, guardianConsent: 'granted', streakDays: 12, minutesToday: 35, dailyCapMinutes: 90, readinessPct: 64, alertCount: 2 },
   { minorId: 'min_emeka', displayName: 'Emeka A.', classCode: 'JSS2', avatarColorKey: 'iconBgTeal', linked: true, guardianConsent: 'granted', streakDays: 4, minutesToday: 80, dailyCapMinutes: 60, readinessPct: 41, alertCount: 1 },
@@ -145,7 +141,6 @@ export const MOCK_APPROVALS: PurchaseApproval[] = [
   { id: 'apr_3', minorId: 'usr_self', childName: 'Chidera A.', itemLabel: 'Scholar plan (monthly)', kind: 'plan', amountKobo: 250000, requestedAt: daysAgo(3), status: 'approved' },
 ];
 
-// ── EduPay ───────────────────────────────────────────────────────────────────
 export const MOCK_SCHOOLS: School[] = [
   { id: 'sch_brightstars', name: 'Bright Stars College', lga: 'Ikeja', state: 'Lagos', logoColorKey: 'iconBgPurple', linked: true, verified: true },
   { id: 'sch_unity', name: 'Unity Secondary School', lga: 'Garki', state: 'FCT Abuja', logoColorKey: 'iconBgBlue', linked: true, verified: true },
@@ -203,7 +198,6 @@ export const MOCK_SCHOLARSHIPS: Scholarship[] = [
   { id: 'sco_3', title: 'Spotlight Streak Bursary', sponsor: 'Spotlight Academy', amountKobo: 5000000, coverage: 'partial', eligibility: '30-day streak + 1 mock completed', deadline: daysAhead(45), applied: true, icon: 'Flame' },
 ];
 
-// ── Billing & subscriptions ──────────────────────────────────────────────────
 export const MOCK_SUBSCRIPTIONS: Subscription[] = [
   { id: 'sub_1', planName: 'Scholar', status: 'active', priceKobo: 250000, period: 'monthly', renewsAt: daysAhead(12), childNames: ['Chidera A.'] },
   { id: 'sub_2', planName: 'Starter', status: 'active', priceKobo: 0, period: 'monthly', renewsAt: daysAhead(20), childNames: ['Emeka A.'] },
@@ -215,7 +209,6 @@ export const MOCK_INVOICES: Invoice[] = [
   { id: 'inv_3', label: 'Scholar plan — July', amountKobo: 250000, status: 'due', ts: daysAhead(12), receiptUrl: 'mock://invoices/inv_3.pdf' },
 ];
 
-// ── Parent notifications (P13) ───────────────────────────────────────────────
 export interface ParentNotification {
   id: string;
   kind: 'report' | 'approval' | 'alert' | 'billing' | 'edupay';
@@ -232,7 +225,6 @@ export const MOCK_PARENT_NOTIFICATIONS: ParentNotification[] = [
   { id: 'pn_5', kind: 'billing', title: 'Scholar plan renews soon', body: 'Renews in 12 days for ₦2,500.', ts: daysAgo(2), read: true },
 ];
 
-// ── Learner — downloads (L17) ────────────────────────────────────────────────
 export const MOCK_DOWNLOADS: DownloadedBundle[] = [
   { id: 'bun_utme_pro', name: 'UTME Pro Pack', examSlug: 'utme', itemCount: 64, sizeMb: 240, status: 'downloaded', progressPct: 100, syncState: 'synced', downloadedAt: daysAgo(6) },
   { id: 'bun_bece_starter', name: 'BECE Starter Pack', examSlug: 'bece', itemCount: 38, sizeMb: 150, status: 'downloaded', progressPct: 100, syncState: 'update_available', downloadedAt: daysAgo(14) },
@@ -241,7 +233,6 @@ export const MOCK_DOWNLOADS: DownloadedBundle[] = [
 
 export const MOCK_STORAGE: StorageInfo = { usedMb: 390, budgetMb: 2048, bundleCount: 2 };
 
-// ── Learner — bookmarks & notes (L15/L16) ────────────────────────────────────
 export const MOCK_BOOKMARKS: Bookmark[] = [
   { id: 'bm_1', kind: 'lesson', title: 'SOHCAHTOA story', subjectName: 'Mathematics', href: '/learn/academy/lesson/les_trig_1', ts: daysAgo(1) },
   { id: 'bm_2', kind: 'topic', title: 'Motion & Kinematics', subjectName: 'Physics', href: '/learn/academy/topic/top_phy_motion', ts: daysAgo(3) },
@@ -253,7 +244,6 @@ export const MOCK_NOTES: LessonNote[] = [
   { id: 'nt_2', lessonId: 'les_motion_1', lessonTitle: 'Equations of motion', subjectName: 'Physics', body: 'v = u + at. s = ut + ½at². v² = u² + 2as. u is initial velocity.', ts: daysAgo(2) },
 ];
 
-// ── Learner — search (L14) ───────────────────────────────────────────────────
 export const MOCK_SEARCH_INDEX: SearchResult[] = [
   { id: 's_les_trig_1', kind: 'lesson', title: 'SOHCAHTOA story', subtitle: 'Mathematics · Trigonometry', href: '/learn/academy/lesson/les_trig_1', icon: 'PlayCircle' },
   { id: 's_les_trig_2', kind: 'lesson', title: 'Angles of elevation & depression', subtitle: 'Mathematics · Trigonometry', href: '/learn/academy/lesson/les_trig_2', icon: 'PlayCircle' },
@@ -266,7 +256,6 @@ export const MOCK_SEARCH_INDEX: SearchResult[] = [
   { id: 's_pq_motion', kind: 'past_question', title: 'WASSCE 2019 — Vectors', subtitle: 'Past question · Physics', href: '/learn/academy/practice/obj_motion_1', icon: 'FileText' },
 ];
 
-// ── Learner — daily goal & streak (L2) ───────────────────────────────────────
 function buildCalendar(): StreakDay[] {
   const cells: StreakDay[] = [];
   // 35 cells (5 weeks); last cell is today.

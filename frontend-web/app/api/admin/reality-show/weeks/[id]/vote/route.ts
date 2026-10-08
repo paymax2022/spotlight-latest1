@@ -44,7 +44,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     if (!week) return errorResponse('Week not found', 404);
     if (week.status !== 'open') return errorResponse('Voting is not open for this week', 400);
 
-    const body = await request.json() as { contestantId?: string; reason?: string; retract?: boolean };
+    const body = await request.json().catch(() => null) as { contestantId?: string; reason?: string; retract?: boolean };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.contestantId) return errorResponse('contestantId is required', 400);
 
     if (!(await getContestant(body.contestantId))) return errorResponse('Contestant not found', 404);

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Maintenance labels / icons / status presentation ─────
 import type { MaintenanceCategory, Urgency, MaintenanceStatus } from '../types/realtor.maintenance.types';
 import type { Tone } from '../components/StatusBadge';
 

@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for scheduled + group orders (Phase 18): the scheduled-slot
 // activation (release-if-open / cancel+refund-if-closed, SG-002/005) and the group
 // order create→add→cap→finalize flow (SG-003/004). Skipped unless the DB env is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -69,7 +67,6 @@ func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 		t.Fatalf("create item: %v", err)
 	}
 
-	// --- Scheduled activation (SG-002/005): a closed restaurant's due slot is cancelled
 	// + refunded; an open restaurant's due slot is released. Seed the orders + escrow directly. ---
 	closedRest := uuid.New().String()
 	_, _ = pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Closed Kitchen','9 St',FALSE)`, closedRest, owner)
@@ -102,7 +99,6 @@ func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 		t.Error("released order should have scheduled_for cleared")
 	}
 
-	// --- Group orders (SG-003/004). ---
 	g, err := svc.CreateGroupOrder(ctx, host, restID, 150000) // ₦1,500 per-person cap
 	if err != nil {
 		t.Fatalf("create group: %v", err)

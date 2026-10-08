@@ -1,7 +1,4 @@
-// ── Featured Placement — Types ────────────────────────────────────────────────
-// Merchants book paid landing-page promotion ("Featured Placement"); consumers
 // see Featured items on the home screen. All money is integer kobo.
-//
 // Mirrors the placement contract: /api/v1/placement/* (member) and
 // /api/v1/landing/* + /api/v1/placement/events (public).
 
@@ -25,7 +22,6 @@ export type CampaignState =
 
 // 'restaurant' promotes a whole store to the top of food discovery, priced by
 // the RESTAURANT_TOP zone. The backend's subject_type is free text and its
-// eligibility check is permissive, so this is a client-side vocabulary addition;
 // the value must stay exactly 'restaurant' because food discovery's ordering
 // filters on that literal (see restaurant/discovery_page.go).
 export type SubjectType = 'listing' | 'product' | 'event' | 'service' | 'profile' | 'restaurant';
@@ -112,7 +108,6 @@ export interface CreateDraftRequest {
   creative: Creative;
 }
 
-// ─── Eligible items the merchant can promote (mock for now) ───────────────────
 export interface EligibleItem {
   subject_type: SubjectType;
   subject_id: string;
@@ -124,7 +119,6 @@ export interface EligibleItem {
   default_cta?: string;
 }
 
-// ─── Public landing resolver ──────────────────────────────────────────────────
 export interface LandingItem {
   campaign_id: string;
   placement_token: string;
@@ -153,7 +147,6 @@ export interface PlacementEvent {
   session_id: string;
 }
 
-// ─── Errors ───────────────────────────────────────────────────────────────────
 export interface FeaturedError extends Error {
   status?: number;
   code?: string;

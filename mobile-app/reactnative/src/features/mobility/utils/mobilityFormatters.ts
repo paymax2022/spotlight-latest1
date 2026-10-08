@@ -1,9 +1,7 @@
-// ── Paymax Mobility — Formatters & helpers ───────────────────────────────────
 // All money is integer kobo. Display helpers convert to major units (NGN).
 
 import type { Kobo, LatLng, MobilityError, MobilityErrorCode } from '../types/mobility.types';
 
-// ─── Money ──────────────────────────────────────────────────────────────────
 /** Format kobo as a Naira string, e.g. 1_581_43 → "₦1,581.43". */
 export function formatNaira(kobo: Kobo, opts?: { decimals?: boolean }): string {
   const major = kobo / 100;
@@ -29,7 +27,6 @@ export function nairaToKobo(naira: number): Kobo {
   return Math.round(naira * 100);
 }
 
-// ─── Distance / duration ───────────────────────────────────────────────────────
 export function formatDistance(meters: number): string {
   if (meters < 1000) return `${Math.round(meters)} m`;
   return `${(meters / 1000).toFixed(1)} km`;
@@ -50,13 +47,11 @@ export function formatEta(seconds: number | null): string {
   return `${mins} min`;
 }
 
-// ─── Idempotency ────────────────────────────────────────────────────────────────
 /** Generate an Idempotency-Key for a money mutation (matches fx pattern). */
 export function newIdempotencyKey(prefix = 'mob'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ─── Geo (deterministic mock estimates — never used for real pricing) ──────────
 const EARTH_RADIUS_M = 6_371_000;
 
 export function haversineMeters(a: LatLng, b: LatLng): number {
@@ -70,7 +65,6 @@ export function haversineMeters(a: LatLng, b: LatLng): number {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-// ─── Error mapping ────────────────────────────────────────────────────────────
 /** Normalise an axios/mock error into a typed MobilityError with a code. */
 export function toMobilityError(err: unknown): MobilityError {
   const e = err as {

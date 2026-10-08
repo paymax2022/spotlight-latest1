@@ -1,4 +1,3 @@
-// ── FX Exchange — Cards mock seed data ───────────────────────────────────────
 // All money is minor units (integer). Sensitive PAN/CVV are mock-only.
 
 import type { Card, CardTransaction, CardSensitive } from '../types/fx.types';

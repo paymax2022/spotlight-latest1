@@ -1,12 +1,9 @@
-// ── Crowdfunding — Identity verification status ──────────────────────────────
 // Crowdfunding has no bespoke KYC of its own: creators go through the platform's
 // shared identity verification (finance/kyc), the same one every other vertical
 // uses. This talks to /api/finance/kyc/me directly rather than through
 // src/api/kyc.api.ts, whose getKycProfile()/initiateKyc() point at /api/v1/kyc/*
 // — routes the backend doesn't register (only /api/v1/kyc/status|limits|tier1-3
-// exist there; /me and /initiate live under /api/finance/kyc). That mismatch is
 // a separate, pre-existing bug affecting other modules too (arena, marketplace,
-// referral, fractionalre, property, PaymentSheet) — out of scope here; flagged
 // separately. This file calls the correct, verified-working path directly.
 
 import { api } from '@/api/client';

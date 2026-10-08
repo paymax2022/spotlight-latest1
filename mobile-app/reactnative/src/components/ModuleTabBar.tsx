@@ -1,5 +1,3 @@
-// ── In-module bottom navigation ──────────────────────────────────────────────
-//
 // A module-scoped footer for the Stack-based modules (association, crowdfunding,
 // film academy, voting, utility payments). Each of those is an expo-router
 // Stack with a deep sub-tree — association alone has ~20 nested route folders —
@@ -8,7 +6,6 @@
 // MarketTabBar documents. This renders as a sibling of <Stack/> in the module
 // layout instead: navigation semantics are untouched, and the bar draws only the
 // destinations it is given.
-//
 // VISIBILITY IS DELIBERATELY NARROW. The bar shows only when the current path is
 // one of its own tabs — never on a pushed detail screen. Those screens are
 // reached with a back affordance and several carry their own bottom CTA (the
@@ -19,16 +16,24 @@ import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 export interface ModuleTab {
   /** Absolute route, e.g. '/association/directory'. Must be a real screen. */
   href: string;
   label: string;
   icon: LucideIcon;
+  /**
+   * Other screens that belong to this tab's section — e.g. a contest's detail
+   * or contestant-list screen, reached by push from the "Contests" landing
+   * tab. The bar still shows on these (with this tab highlighted) rather than
+   * disappearing the moment the user taps into anything, as long as the
+   * destination screen itself has no fixed bottom CTA to collide with.
+   */
+  matchPaths?: readonly string[];
 }
 
 /**
@@ -46,7 +51,9 @@ export default function ModuleTabBar({ tabs }: { tabs: readonly ModuleTab[] }) {
   const current = normalise(pathname ?? '');
 
   const activeHref = useMemo(() => {
-    const exact = tabs.find((t) => normalise(t.href) === current);
+    const exact = tabs.find(
+      (t) => normalise(t.href) === current || (t.matchPaths ?? []).some((p) => normalise(p) === current),
+    );
     return exact?.href ?? null;
   }, [tabs, current]);
 

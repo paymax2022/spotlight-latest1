@@ -8,9 +8,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyIllegalTransition = "illegal_transition"
+
+const keyError = "error"
 
 // Handler exposes the academy live + community + moderation surface over Gin.
 //   - member: list/join live sessions, study groups, Q&A discussions, report content.
@@ -24,10 +36,9 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user. The finance/connect groups mirror the auth
 // user into c.Set("user_id", ...); fall back to the auth context if absent.
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -37,17 +48,17 @@ func uid(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: keyIllegalTransition, keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrChildSafety):
-		c.JSON(http.StatusForbidden, gin.H{"error": "child_safety_blocked", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "child_safety_blocked", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrProvider):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "provider_error", "message": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{keyError: "provider_error", keyMessage: httperr.Msg(c, http.StatusBadGateway, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -63,7 +74,6 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	h := NewHandler(svc)
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 
-	// ── Member ──
 	member.GET("/live/sessions", h.ListSessions)
 	member.GET("/live/sessions/:id", h.GetSession)
 	member.POST("/live/sessions/:id/join", h.JoinSession)
@@ -74,7 +84,6 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	member.POST("/community/discussions", h.PostDiscussion)
 	member.POST("/moderation/report", h.ReportContent)
 
-	// ── Admin: live-session management (academy.live) ──
 	admin.GET("/live/sessions", guard("academy.live"), h.AdminListSessions)
 	admin.GET("/live/replays", guard("academy.live"), h.AdminListReplays)
 	admin.POST("/live/sessions", guard("academy.live"), h.AdminScheduleSession)
@@ -82,14 +91,11 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	admin.POST("/live/sessions/:id/end", guard("academy.live"), h.AdminEndSession)
 	admin.POST("/live/sessions/:id/cancel", guard("academy.live"), h.AdminCancelSession)
 
-	// ── Admin: moderation (academy.moderation) ──
 	admin.GET("/moderation/reports", guard("academy.moderation"), h.AdminListReports)
 	admin.POST("/moderation/reports/:id/decide", guard("academy.moderation"), h.AdminDecideReport)
 	admin.POST("/moderation/reports/:id/triage", guard("academy.moderation"), h.AdminTriageReport)
 	admin.POST("/moderation/reports/:id/escalate", guard("academy.moderation"), h.AdminEscalateReport)
 }
-
-// ── Member handlers ──────────────────────────────────────────────────────────
 
 func (h *Handler) ListSessions(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
@@ -113,9 +119,9 @@ func (h *Handler) GetSession(c *gin.Context) {
 }
 
 func (h *Handler) JoinSession(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	sess, token, err := h.svc.JoinSession(c.Request.Context(), u, c.Param("id"))
@@ -137,14 +143,14 @@ func (h *Handler) ListGroups(c *gin.Context) {
 }
 
 func (h *Handler) CreateGroup(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateGroup(c.Request.Context(), u, req)
@@ -156,9 +162,9 @@ func (h *Handler) CreateGroup(c *gin.Context) {
 }
 
 func (h *Handler) JoinGroup(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	if err := h.svc.JoinGroup(c.Request.Context(), u, c.Param("id")); err != nil {
@@ -179,14 +185,14 @@ func (h *Handler) ListDiscussions(c *gin.Context) {
 }
 
 func (h *Handler) PostDiscussion(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req PostDiscussionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PostDiscussion(c.Request.Context(), u, req)
@@ -198,14 +204,14 @@ func (h *Handler) PostDiscussion(c *gin.Context) {
 }
 
 func (h *Handler) ReportContent(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ReportContentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ReportContent(c.Request.Context(), u, req)
@@ -216,15 +222,13 @@ func (h *Handler) ReportContent(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": out})
 }
 
-// ── Admin handlers ────────────────────────────────────────────────────────────
-
 func (h *Handler) AdminScheduleSession(c *gin.Context) {
 	var req ScheduleSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.ScheduleSession(c.Request.Context(), uid(c), req)
+	out, err := h.svc.ScheduleSession(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -233,7 +237,7 @@ func (h *Handler) AdminScheduleSession(c *gin.Context) {
 }
 
 func (h *Handler) AdminStartSession(c *gin.Context) {
-	out, err := h.svc.StartSession(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.StartSession(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -246,7 +250,7 @@ func (h *Handler) AdminEndSession(c *gin.Context) {
 		ReplayRef string `json:"replay_ref"`
 	}
 	_ = c.ShouldBindJSON(&req) // body optional
-	out, err := h.svc.EndSession(c.Request.Context(), uid(c), c.Param("id"), req.ReplayRef)
+	out, err := h.svc.EndSession(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.ReplayRef)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -255,7 +259,7 @@ func (h *Handler) AdminEndSession(c *gin.Context) {
 }
 
 func (h *Handler) AdminCancelSession(c *gin.Context) {
-	out, err := h.svc.CancelSession(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.CancelSession(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -298,10 +302,10 @@ func (h *Handler) AdminListReports(c *gin.Context) {
 func (h *Handler) AdminDecideReport(c *gin.Context) {
 	var req DecideReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.DecideReport(c.Request.Context(), uid(c), c.Param("id"), req.Action)
+	out, err := h.svc.DecideReport(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.Action)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -311,7 +315,7 @@ func (h *Handler) AdminDecideReport(c *gin.Context) {
 
 // AdminTriageReport moves a report into triaged (guarded transition + audit; sibling of decide).
 func (h *Handler) AdminTriageReport(c *gin.Context) {
-	out, err := h.svc.TriageReport(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.TriageReport(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -321,7 +325,7 @@ func (h *Handler) AdminTriageReport(c *gin.Context) {
 
 // AdminEscalateReport moves a report into escalated (guarded transition + audit; sibling of decide).
 func (h *Handler) AdminEscalateReport(c *gin.Context) {
-	out, err := h.svc.EscalateReport(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.EscalateReport(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

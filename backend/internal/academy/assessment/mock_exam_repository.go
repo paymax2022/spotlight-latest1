@@ -39,7 +39,7 @@ func (r *MockExamRepository) ListTemplates(ctx context.Context, filter MockExamF
 		FROM academy_mock_exam_templates
 		WHERE status = 'approved'
 	`
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if filter.ClassID != "" {
@@ -113,7 +113,7 @@ func (r *MockExamRepository) GetInstancesByTemplate(ctx context.Context, templat
 		WHERE template_id = $1
 		ORDER BY variant
 	`
-	args := []interface{}{templateID}
+	args := []any{templateID}
 	if limit > 0 {
 		query += ` LIMIT $2`
 		args = append(args, limit)
@@ -222,7 +222,7 @@ func (r *MockExamRepository) GetAttempt(ctx context.Context, attemptID string) (
 }
 
 // UpdateAttempt updates an attempt's answers and flagged questions
-func (r *MockExamRepository) UpdateAttempt(ctx context.Context, attemptID string, answers map[string]interface{}, flaggedQuestions []string) error {
+func (r *MockExamRepository) UpdateAttempt(ctx context.Context, attemptID string, answers map[string]any, flaggedQuestions []string) error {
 	answersJSON, _ := json.Marshal(answers)
 
 	const query = `

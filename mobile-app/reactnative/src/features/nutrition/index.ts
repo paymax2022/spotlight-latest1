@@ -1,4 +1,3 @@
-// ── Nutrition Resolution Engine — public surface ─────────────────────────────
 export * from './types';
 export * from './hooks';
 export { USE_MOCK } from './api';

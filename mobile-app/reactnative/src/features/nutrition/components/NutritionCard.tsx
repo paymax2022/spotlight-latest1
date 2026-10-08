@@ -1,11 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Flame, Info } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import type { DishNutritionProfile, NutritionBand } from '../types';
 import {
   STATUS_LABEL,
@@ -19,7 +19,6 @@ import {
 } from '../utils';
 import NutritionBadge from './NutritionBadge';
 
-// ─── Status provenance pill (NEVER omitted next to a number) ──────────────────
 // Drives wording off the honesty STATUS so approval is never shown as exact:
 //   • EXACT                → "from label"  (highest trust, real label)
 //   • RESTAURANT_CONFIRMED → "restaurant-confirmed (estimate)"
@@ -37,7 +36,6 @@ function SourceBadge({ profile }: { profile: DishNutritionProfile }) {
   );
 }
 
-// ─── Light / Balanced / Heavy chip ────────────────────────────────────────────
 const BAND_COLOR: Record<NutritionBand, { bg: string; fg: string }> = {
   Light: { bg: Colors.iconBgGreen, fg: '#16A34A' },
   Balanced: { bg: Colors.iconBgGold, fg: Colors.onWarning },
@@ -53,7 +51,6 @@ function BandChip({ band }: { band: NutritionBand }) {
   );
 }
 
-// ─── Traffic-light strip (sodium / sugar / sat-fat) ───────────────────────────
 function TrafficStrip({ profile }: { profile: DishNutritionProfile }) {
   const tl = profile.display.traffic_lights;
   const items: { key: string; label: string; level: typeof tl.sodium_mg }[] = [

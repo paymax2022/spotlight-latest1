@@ -1,4 +1,3 @@
-// ── FX Exchange — Account hooks (business, notifications, settings) ───────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as acc from '../api/fxAccount.api';

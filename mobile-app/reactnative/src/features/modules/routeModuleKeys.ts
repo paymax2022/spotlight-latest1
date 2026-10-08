@@ -1,14 +1,10 @@
-// ── Route → registry key ─────────────────────────────────────────────────────
-//
 // Closes the deep-link gap. Gating the lists (services tab, property hub, home)
 // stops a module being DISCOVERED, but a saved link, a push notification or a
 // hand-typed URL still lands on the screen. This maps an Expo Router segment path
 // onto the module that owns it, so one guard in the root layout covers every
 // route instead of 36 per-screen checks.
-//
 // Matched LONGEST-FIRST, because the tree nests: ['health','lab'] must beat
 // ['health'], or publishing the health umbrella would silently publish the lab.
-//
 // DELIBERATELY PARTIAL, and conservative. A route with no entry is never gated.
 // Gating a route wrongly locks users out of a working screen — strictly worse
 // than leaving a screen reachable that is merely undiscoverable — so anything
@@ -17,7 +13,6 @@
 //   • 'voting', 'arena', 'academy', 'learn', 'invest*', 'crypto', 'stocks',
 //     'marketplace', 'connect' — no registry module, or the correspondence is
 //     not one-to-one
-//   • 'dues', 'properties' — could belong to estate or association; unresolved
 
 /** Segment path → registry key. Order is irrelevant; matching sorts by depth. */
 const ROUTE_MODULE_KEYS: { segments: string[]; key: string }[] = [

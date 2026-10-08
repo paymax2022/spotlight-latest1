@@ -1,20 +1,19 @@
 package feessession
 
-// ── AcademicSession status machine (build-spec §2; academy_sessions.status CHECK) ─
-//
+import "spotlight/backend/go-common/fsm"
+
 //	active → closed      (session ends; scores/promotions finalized)
 //	closed → archived    (moved to cold storage; read-only)
 //	active → archived    (direct archive, e.g. mistakenly-created session)
 //	Terminal: archived
-//
 // PURE, dependency-free guard (unit-tested in session_test.go), mirroring the shared
 // feesstatemachine per-machine style. Kept in-package because the shared statemachine
 // package (T0.3) defines invoice/vault/promotion/competition machines only and MUST NOT
 // be modified by this task; the session lifecycle is small and lives with its entity.
 
-var sessionTransitions = map[SessionStatus]map[SessionStatus]bool{
-	SessionActive:   {SessionClosed: true, SessionArchived: true},
-	SessionClosed:   {SessionArchived: true},
+var sessionTransitions = fsm.Table[SessionStatus]{
+	SessionActive:   fsm.Set(SessionClosed, SessionArchived),
+	SessionClosed:   fsm.Set(SessionArchived),
 	SessionArchived: {}, // terminal
 }
 
@@ -29,11 +28,7 @@ func validSessionStatus(s SessionStatus) bool {
 
 // SessionCanTransition reports whether from→to is a legal session status move. Pure.
 func SessionCanTransition(from, to SessionStatus) bool {
-	targets, ok := sessionTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return sessionTransitions.Can(from, to)
 }
 
 // SessionTransition validates from→to and returns the target status or a typed error.

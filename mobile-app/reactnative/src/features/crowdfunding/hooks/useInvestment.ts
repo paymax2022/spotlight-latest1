@@ -1,4 +1,3 @@
-// ── Crowdfunding — Investment (Section L) hooks ──────────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -15,7 +14,7 @@ export function useInvestorProfile() {
 export function useCompleteOnboardingStep() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ step, riskProfile }: { step: 'kyc' | 'education' | 'quiz' | 'risk'; riskProfile?: InvestorRiskProfile }) => completeOnboardingStep(step, riskProfile),
+    mutationFn: ({ step, riskProfile }: { step: 'kyc' | 'education' | 'quiz' | 'riskProfile'; riskProfile?: InvestorRiskProfile }) => completeOnboardingStep(step, riskProfile),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'inv', 'profile'] }),
   });
 }

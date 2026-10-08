@@ -67,7 +67,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   login: async (identifier, password) => {
-    // Supabase persists the session automatically via the SecureStore adapter; the
     // backend proxy hands us a real session, which authApi.login adopts.
     const result = await authApi.login({ identifier, password });
     set({ user: result.user });

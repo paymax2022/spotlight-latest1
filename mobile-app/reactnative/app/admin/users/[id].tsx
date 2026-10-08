@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — User detail ─────────────────────────────────────
 // Full profile drill-down: identity, KYC, balances, risk flags + a link to the
 // user's KYC case.
 
@@ -6,10 +5,10 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { AdminHeader, ListCard, DataRow, StatusPill } from '@/features/admin/components';
 import { useAdminUser } from '@/features/admin/hooks/useAdmin';

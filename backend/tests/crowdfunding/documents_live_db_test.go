@@ -1,18 +1,14 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for campaign supporting documents.
-//
 // The odd one out among the campaign's nested data: milestones, budget, reward
 // tiers and the beneficiary were collected by the wizard and discarded by the
 // server, but documents were never collected at all — `documentLabels` on the
 // draft is initialised, reset, and never written by any step. So the work was the
 // whole path, and what these pin is the half that decides what ends up in a list
 // a backer reads as evidence.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Document -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

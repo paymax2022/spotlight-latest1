@@ -1,6 +1,4 @@
-// ── Gamification live-response adapters (Go gamification API → mobile) ───────
 // The Go engine awards XP + streak server-side on assessment/exam completion and
-// stores a profile ({user_id, xp, level, streak_days, freezes}); the mobile UI
 // codes against GamificationProfile ({level, xp, xpToNext, streakDays,
 // freezeTokens, rank?}). This pure adapter bridges them, computing xpToNext from
 // the backend's level curve.
@@ -16,10 +14,7 @@ export interface GoGamificationProfile {
   last_active?: string | null;
 }
 
-// Level curve — MIRRORS academy/gamification DefaultConfig (LevelBaseXP=100,
-// LevelStepXP=150). Cumulative XP threshold to advance FROM `level` to level+1,
 // matching the backend's levelForXP loop: threshold(L) = L*100 + (L-1)*L/2*150.
-// Kept in sync with the server defaults; if the server curve becomes configurable
 // this should move to a server-provided xp_to_next field.
 const LEVEL_BASE_XP = 100;
 const LEVEL_STEP_XP = 150;
@@ -28,8 +23,6 @@ export function xpThresholdForNextLevel(level: number): number {
   const n = Math.max(1, Math.floor(level));
   return n * LEVEL_BASE_XP + ((n - 1) * n) / 2 * LEVEL_STEP_XP;
 }
-
-// ── Class leaderboard ────────────────────────────────────────────────────────
 
 export interface GoClassLeaderboardEntry {
   rank: number;
@@ -62,8 +55,6 @@ export function adaptClassLeaderboard(go: GoClassLeaderboard): ClassLeaderboard 
   };
 }
 
-// ── Badges ───────────────────────────────────────────────────────────────────
-
 export interface GoBadgeView {
   id: string;
   code: string;
@@ -89,8 +80,6 @@ export function adaptBadge(go: GoBadgeView): Badge {
 export function adaptBadges(rows: GoBadgeView[] | undefined): Badge[] {
   return (rows ?? []).map(adaptBadge);
 }
-
-// ── Challenges ───────────────────────────────────────────────────────────────
 
 export interface GoChallenge {
   id: string;

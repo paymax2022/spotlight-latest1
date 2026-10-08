@@ -1,10 +1,9 @@
-// ── Association — created-org runtime store (mock mode) ───────────────────────
 // In mock mode the create wizard's publish returns a fresh id but has no backend
 // to persist to. This in-memory store holds orgs created this session so the
 // organisation detail + discovery list can find them immediately after creation.
 // (No-op once USE_MOCK is false — the real /associations endpoints own storage.)
 
-import type { OrgDraft } from '../types/orgDraft.types';
+import type { OrgDraft } from '../types';
 import type { Organisation } from '../types/association.types';
 
 const created: Organisation[] = [];

@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Trash2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
 import { DRUG_CATALOGUE, ROUTE_OPTIONS, FREQUENCY_OPTIONS, DURATION_OPTIONS } from '@/features/doctor/constants';

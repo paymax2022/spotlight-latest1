@@ -14,8 +14,6 @@ import (
 // all of which are faked here so we can assert exactly-once value movement, the
 // ordered eligibility gate, idempotent replay, and derived balances.
 
-// ── fakes ────────────────────────────────────────────────────────────────────────
-
 // stubTx is a no-op pgx.Tx. The fake store ignores the tx; the service only calls
 // Commit / Rollback on it, which are no-ops here.
 type stubTx struct{}
@@ -170,6 +168,12 @@ func (f *fakeStore) InsertRedemption(_ context.Context, rd Redemption) (*Redempt
 	f.redemptions[rd.IdempotencyKey] = &stored
 	return &stored, nil
 }
+func (f *fakeStore) InsertRedemptionTx(_ context.Context, _ pgx.Tx, rd Redemption) (*Redemption, error) {
+	return f.InsertRedemption(context.Background(), rd)
+}
+func (f *fakeStore) SumUserBalanceTx(ctx context.Context, _ pgx.Tx, userID string) (int64, error) {
+	return f.SumUserBalance(ctx, userID)
+}
 func (f *fakeStore) SetRedemptionState(_ context.Context, id, state string) error {
 	for _, r := range f.redemptions {
 		if r.ID == id {
@@ -226,8 +230,6 @@ func activePool(id string, funded, spent int64) *RewardPool {
 	return &RewardPool{ID: id, Currency: "NGN", FundedMinor: funded, SpentMinor: spent, Status: PoolActive, ConversionRate: 1}
 }
 
-// ── eligibility gate (pure, ordered) ─────────────────────────────────────────────
-
 func TestEvaluateEligibility_Order(t *testing.T) {
 	cases := []struct {
 		name string
@@ -254,8 +256,6 @@ func TestEvaluateEligibility_Order(t *testing.T) {
 		t.Errorf("amount must be the first gate, got %q", got)
 	}
 }
-
-// ── IssueReward flows ────────────────────────────────────────────────────────────
 
 func TestIssueReward_Happy(t *testing.T) {
 	fs := newFakeStore(activePool("pool1", 1000, 0))
@@ -289,7 +289,7 @@ func TestIssueReward_Happy(t *testing.T) {
 }
 
 func TestIssueReward_PoolExhausted(t *testing.T) {
-	fs := newFakeStore(activePool("pool1", 100, 100)) // available = 0
+	fs := newFakeStore(activePool("pool1", 100, 100))
 	w := newFakeWallet()
 	svc := NewService(fs, w, nil, "acct")
 
@@ -393,12 +393,18 @@ func TestBalance_DerivedBySummation(t *testing.T) {
 }
 
 func TestRedeemPoints_WalletKind_Idempotent(t *testing.T) {
-	fs := newFakeStore(activePool("pool1", 0, 0))
+	fs := newFakeStore(activePool("pool1", 1000, 0))
 	fs.catalog["AIR100"] = &CatalogItem{ID: "c1", SKU: "AIR100", Name: "Wallet 100", Kind: "wallet", CostPoints: 100, ValueMinor: 100, Status: "active"}
 	w := newFakeWallet()
 	svc := NewService(fs, w, nil, "acct")
 	ctx := context.Background()
 
+	// Fund the balance first — redemption requires derived balance >= value.
+	if _, err := svc.IssueReward(ctx, IssueInput{UserID: "u1", PoolID: "pool1", AmountMinor: 200, IdempotencyKey: "fund1"}); err != nil {
+		t.Fatalf("fund balance: %v", err)
+	}
+
+	creditsBefore := w.calls
 	r1, err := svc.RedeemPoints(ctx, "u1", "AIR100", "rk1")
 	if err != nil {
 		t.Fatalf("redeem: %v", err)
@@ -406,8 +412,8 @@ func TestRedeemPoints_WalletKind_Idempotent(t *testing.T) {
 	if r1.State != "fulfilled" {
 		t.Errorf("state = %q want fulfilled", r1.State)
 	}
-	if w.calls != 1 {
-		t.Errorf("wallet credits = %d want 1", w.calls)
+	if w.calls != creditsBefore+1 {
+		t.Errorf("wallet credits = %d want %d (one for the redemption)", w.calls, creditsBefore+1)
 	}
 	// Replay returns the same redemption with no second credit.
 	r2, err := svc.RedeemPoints(ctx, "u1", "AIR100", "rk1")
@@ -417,7 +423,7 @@ func TestRedeemPoints_WalletKind_Idempotent(t *testing.T) {
 	if r2.ID != r1.ID {
 		t.Errorf("replay must return original redemption")
 	}
-	if w.calls != 1 {
-		t.Errorf("wallet credits = %d want 1 after replay (single effect)", w.calls)
+	if w.calls != creditsBefore+1 {
+		t.Errorf("wallet credits = %d want %d after replay (single effect)", w.calls, creditsBefore+1)
 	}
 }

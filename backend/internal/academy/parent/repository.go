@@ -24,8 +24,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a scoped row does not exist.
 var ErrNotFound = errors.New("academy.parent: not found")
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -112,8 +110,6 @@ func (r *Repository) ListActiveChildren(ctx context.Context, guardianID string) 
 	return out, rows.Err()
 }
 
-// ── Dashboard aggregation reads ──────────────────────────────────────────────────
-
 // MasteryRowsForMinor returns the minor's mastery records joined to subjects via
 // objective→topic→subject. Optionally scoped to a single subject.
 func (r *Repository) MasteryRowsForMinor(ctx context.Context, minorID, subjectID string) ([]MasteryRow, error) {
@@ -192,8 +188,6 @@ func (r *Repository) LatestReadinessForMinor(ctx context.Context, minorID string
 	return readiness, nil
 }
 
-// ── Parent controls ──────────────────────────────────────────────────────────────
-
 const controlsCols = `id, guardian_user_id, minor_user_id, screen_time_minutes, allowed_hours, content_max_age, updated_at`
 
 func scanControls(row rowScanner) (*ParentControls, error) {
@@ -235,8 +229,6 @@ func (r *Repository) GetControls(ctx context.Context, guardianID, minorID string
 		WHERE guardian_user_id = $1 AND minor_user_id = $2`
 	return scanControls(r.db.QueryRow(ctx, q, guardianID, minorID))
 }
-
-// ── Progress reports ─────────────────────────────────────────────────────────────
 
 // InsertReport writes a generated report row (append-only audit trail).
 func (r *Repository) InsertReport(ctx context.Context, actor, minorID, period string, payload map[string]any) (*ProgressReport, error) {
@@ -296,8 +288,6 @@ func (r *Repository) ListReports(ctx context.Context, minorID string, limit int)
 	return out, rows.Err()
 }
 
-// ── Purchase approvals ───────────────────────────────────────────────────────────
-
 // ListPendingApprovals returns the guardian's pending purchase approvals joined to
 // their orders.
 func (r *Repository) ListPendingApprovals(ctx context.Context, guardianID string) ([]PurchaseApproval, error) {
@@ -354,7 +344,7 @@ func (r *Repository) DecideApproval(ctx context.Context, actor, id string, to Ap
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ApprovalState
 	err = tx.QueryRow(ctx, `SELECT state FROM public.academy_purchase_approvals WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -388,8 +378,6 @@ func (r *Repository) DecideApproval(ctx context.Context, actor, id string, to Ap
 	}
 	return r.GetApproval(ctx, id)
 }
-
-// ── Notification templates (admin) ───────────────────────────────────────────────
 
 const templateCols = `id, key, channel, title, body, status`
 

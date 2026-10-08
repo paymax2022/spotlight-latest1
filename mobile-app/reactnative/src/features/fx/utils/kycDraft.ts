@@ -1,4 +1,3 @@
-// ── FX Exchange — KYC draft (in-flight onboarding state) ─────────────────────
 // A small module singleton the multi-step KYC flow reads/writes as the user
 // progresses. Reset on entry (kyc/index). Kept out of React Query because it's
 // transient client-only form state, not server data.

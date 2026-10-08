@@ -1,9 +1,7 @@
-// ── Protection — product detail ──────────────────────────────────────────────
 // A real plan from the live catalog: what it costs (flat naira or a rate on the
 // value you declare), who underwrites it, how long it runs, what it covers, how
 // it works and how to claim — the last four arriving as provider HTML, rendered
 // as readable blocks rather than raw markup.
-//
 // It also carries the PLAN PICKER. Insurers sell several tiers of one thing as
 // separate products (FlexiCare, FlexiCare Mini, PrimeCare, Seniors and ZenCare
 // are all Bastion health), and someone shopping for health cover wants to
@@ -18,10 +16,10 @@ import * as Icons from 'lucide-react-native';
 import { BadgeCheck, CalendarDays, Check, RefreshCw, ShieldCheck, Wallet } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   DetailSkeleton,
   HtmlContent,
@@ -42,7 +40,6 @@ import type { Product } from '@/features/insurance/live/types';
 export default function ProductDetail() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const product = useLiveProduct(code ?? '');
-  // The full catalog is already cached from browse; it is what lets us find the
   // sibling plans that share this product's purchase form.
   const catalog = useLiveProducts();
 

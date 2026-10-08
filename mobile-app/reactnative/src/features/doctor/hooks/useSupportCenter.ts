@@ -1,7 +1,5 @@
-// ── Doctor — Support Centre hooks (Batch 7, Section AA) ──────────────────────
 // Query keys under ['doctor', 'support', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 1 useSupportTickets / useCreateSupportTicket
-// (useAccount.ts) for the ticket list / create flows; this file adds FAQs, help
 // articles, disputes, the support message thread and the dispute mutations. Hook
 // names are deliberately distinct from useSupportTickets to avoid a barrel
 // collision.
@@ -26,8 +24,6 @@ import type {
   UploadDisputeEvidenceInput,
   SendSupportMessageInput,
 } from '@/types/doctor.batch7';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useFaqs() {
   return useQuery({
@@ -72,8 +68,6 @@ export function useSupportMessages(threadId: string) {
     staleTime: 10_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useCreateDispute() {
   const qc = useQueryClient();

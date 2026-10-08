@@ -6,6 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/ws"
@@ -25,34 +27,34 @@ func (h *Handler) WithRealtime(hub *ws.Hub) *Handler {
 }
 
 func (h *Handler) Create(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateRestaurantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.CreateRestaurant(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, r)
 }
 
 func (h *Handler) PlaceOrder(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req PlaceOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// Idempotency-Key is a HEADER by client convention (every money route). Prefer
 	// the header; fall back to the body field for any legacy caller. Fail closed.
-	if hk := c.GetHeader("Idempotency-Key"); hk != "" {
+	if hk := ginutil.IdempotencyKey(c); hk != "" {
 		req.IdempotencyKey = hk
 	}
 	if req.IdempotencyKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyIdempotencyKeyIsRequired})
 		return
 	}
 	// Normalize each line so the service sees canonical MenuItemID/Quantity
@@ -62,11 +64,11 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 		req.Items[idx].MenuItemID = req.Items[idx].MenuItem()
 		req.Items[idx].Quantity = req.Items[idx].QtyOf()
 		if req.Items[idx].MenuItemID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "each item requires an item_id"})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "each item requires an item_id"})
 			return
 		}
 		if req.Items[idx].Quantity < 1 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "each item requires a quantity >= 1"})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "each item requires a quantity >= 1"})
 			return
 		}
 	}
@@ -78,33 +80,36 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 		// doesn't apply" and let the customer retry without it, instead of the generic
 		// 500 that made every rejection look like an outage.
 		if errors.Is(err, ErrPromoInvalid) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 			return
 		}
 		// A bad modifier selection is a malformed cart — an option that isn't on this
 		// item, a duplicate, or a group's min/max/required rule broken. 400, so the app
 		// can point at the offending line instead of showing a server-error page.
 		if errors.Is(err, ErrInvalidModifierSelection) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
 		// Tier-gate and wallet-state rejections carry their own statuses (402/403/…).
 		if code, ok := escrowErrStatus(err); ok {
-			c.JSON(code, gin.H{"error": err.Error()})
+			c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, order)
 }
 
-// escrowErrStatus maps the fail-closed money-path refusals a wallet-escrowing order
-// placement can return to their HTTP status. It reports ok=false for anything else so
-// each caller keeps its own default (PlaceOrder → 500, group finalize → statusCodeFor).
-//
-// Mirrors withdrawalErrStatus (handler_withdrawal.go) — the two money paths in this
-// module must answer the same refusal with the same code.
+// escrowErrStatus maps the fail-closed refusals order placement can return —
+// the money-path tier/fund gates AND the pricing rejections priceOrder raises
+// before any money moves (closed/not-found restaurant, unavailable item,
+// under-minimum cart, bad slot, malformed line). Without the second group
+// every cart refusal 500'd (prod probe B4): a rejection is never a server
+// fault. It reports ok=false for anything else so each caller keeps its own
+// default (PlaceOrder → 500, group finalize → statusCodeFor).
+// Mirrors withdrawalErrStatus (handler_withdrawal.go) — the two money paths in
+// this module must answer the same refusal with the same code.
 func escrowErrStatus(err error) (int, bool) {
 	switch {
 	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
@@ -118,6 +123,19 @@ func escrowErrStatus(err error) (int, bool) {
 		// Server misconfiguration, not the caller's fault, and retryable once wired.
 		return http.StatusServiceUnavailable, true
 	case errors.Is(err, ErrOrderMissingIdem):
+		return http.StatusBadRequest, true
+	case errors.Is(err, ErrExternalAmountMismatch):
+		// The verified charge no longer matches the recomputed total — the caller
+		// must refund the external payment and retry. Conflict, not a fault.
+		return http.StatusConflict, true
+	case errors.Is(err, ErrRestaurantNotFound), errors.Is(err, ErrMenuItemNotFound):
+		return http.StatusNotFound, true
+	case errors.Is(err, ErrRestaurantClosed), errors.Is(err, ErrMenuItemUnavailable),
+		errors.Is(err, ErrBelowMinOrder):
+		// State-dependent refusals: well-formed request the restaurant cannot
+		// fulfil right now. 422 lets the client surface the reason.
+		return http.StatusUnprocessableEntity, true
+	case errors.Is(err, ErrOrderInvalid), errors.Is(err, ErrScheduledSlotInvalid):
 		return http.StatusBadRequest, true
 	}
 	return 0, false
@@ -133,12 +151,12 @@ func (h *Handler) DeliveryQuote(c *gin.Context) {
 		Weather *bool   `json:"weather,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	q, err := h.svc.QuoteDelivery(c.Request.Context(), c.Param("id"), body.Lat, body.Lng, body.Night, body.Weather)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, q)
@@ -153,7 +171,7 @@ func (h *Handler) GetDeliveryConfig(c *gin.Context) {
 	}
 	row, err := h.svc.GetDeliveryConfig(c.Request.Context(), restaurantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, row)
@@ -170,7 +188,7 @@ func (h *Handler) PutDeliveryConfig(c *gin.Context) {
 		DeliveryFeeConfig
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	active := true
@@ -182,32 +200,32 @@ func (h *Handler) PutDeliveryConfig(c *gin.Context) {
 	}
 	row, err := h.svc.SetDeliveryConfig(c.Request.Context(), body.RestaurantID, body.DeliveryFeeConfig, active)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, row)
 }
 
 func (h *Handler) UpdateStatus(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	var body struct {
 		Status string `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateStatus(c.Request.Context(), c.Param("orderId"), actorID, OrderStatus(body.Status)); err != nil {
-		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
+		c.JSON(statusCodeFor(err), gin.H{keyError: httperr.Msg(c, statusCodeFor(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) CancelOrder(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	if err := h.svc.CancelOrder(c.Request.Context(), c.Param("orderId"), actorID); err != nil {
-		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
+		c.JSON(statusCodeFor(err), gin.H{keyError: httperr.Msg(c, statusCodeFor(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -217,7 +235,7 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 // 403, everything else → 400 (validation/illegal-transition). Keeps object-level authZ
 // denials distinguishable from bad requests.
 func statusCodeFor(err error) int {
-	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) {
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) || errors.Is(err, ErrPickedUpViaPickupCode) {
 		return http.StatusForbidden
 	}
 	return http.StatusBadRequest

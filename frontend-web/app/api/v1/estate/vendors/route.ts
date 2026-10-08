@@ -10,7 +10,6 @@ function mapVendor(row: any) {
   return { id: row.id, estateId: row.estate_id, name: row.name, category: row.category, phone: row.phone ?? undefined, status: row.status, rating: Number(row.rating ?? 0) };
 }
 
-// GET /api/v1/estate/vendors
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

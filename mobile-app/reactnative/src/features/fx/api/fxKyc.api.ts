@@ -1,5 +1,3 @@
-// ── FX Exchange — KYC/KYB API wrapper ────────────────────────────────────────
-// Verification onboarding (spec A, §16). Mock-flagged; flip USE_MOCK=false once
 // POST /v1/customers + verification endpoints land.
 
 import { mockAllowed } from '@/config/mockPolicy';

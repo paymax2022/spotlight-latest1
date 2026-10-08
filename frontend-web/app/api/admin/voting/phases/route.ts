@@ -7,7 +7,6 @@ import { appendAuditLog } from '@/src/server/voting/audit.service';
 // leaderboard / vote count / rank independently of the contest-level flags.
 // The active phase is set via voting_settings.active_phase_key (settings route).
 
-// GET /api/admin/voting/phases?contestId=...
 export async function GET(request: Request) {
   try {
     await assertAdminPermission(request, 'votes:manage');
@@ -33,7 +32,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.phaseKey) return errorResponse('phaseKey is required', 400);
     if (!body.phaseLabel) return errorResponse('phaseLabel is required', 400);
@@ -57,7 +57,10 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/phases POST]', error.message);
+      return errorResponse('Failed to save voting phase', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,
@@ -75,7 +78,6 @@ export async function POST(request: Request) {
   }
 }
 
-// DELETE /api/admin/voting/phases?contestId=...&phaseKey=...
 export async function DELETE(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
@@ -91,7 +93,10 @@ export async function DELETE(request: Request) {
       .eq('contest_id', contestId)
       .eq('phase_key', phaseKey);
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/phases DELETE]', error.message);
+      return errorResponse('Failed to delete voting phase', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

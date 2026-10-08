@@ -1,5 +1,3 @@
-// ── Restaurant & Delivery — live-order WebSocket ticket minting ──────────────
-//
 // WHY A SIGNED-TICKET ENDPOINT INSTEAD OF A RAW WS UPGRADE (decision record):
 //   The RN food app opens a live-tracking socket at
 //     {API_BASE}/api/finance/restaurant/orders/:id/ws
@@ -7,21 +5,16 @@
 //   (src/lib/go-backend.ts → proxyToGoBackend) is `fetch`-based and CANNOT
 //   upgrade a connection to WebSocket. Performing the upgrade in a route handler
 //   ("option a") is not viable in THIS deployment:
-//     • App-Router route handlers run on the Web Request/Response model; the Node
 //       runtime exposes no `WebSocketPair`/upgrade primitive.
 //     • Production runs Next via `frontend-web/server.js` (plain http.createServer
 //       + Next's request handler) on cPanel Passenger, with NO `upgrade` event
 //       wired up — a hand-rolled upgrade would never be reached.
-//
 //   APPROACH (b) — chosen: an authenticated endpoint returns a SHORT-LIVED,
 //   HMAC-SIGNED ws(s):// URL pointing DIRECTLY at the Go backend WS endpoint.
-//   The Go backend natively handles the upgrade; the signed token (carried in
-//   the `?ticket=` query, because browser/RN WebSocket constructors cannot
 //   reliably set Authorization headers across a proxy hop) proves the caller was
 //   authenticated for THIS order. The ticket is opaque and expires quickly, so
 //   it cannot be replayed or shared long-term. The Go backend validates it out
 //   of band using the shared WS_TICKET_SIGNING_SECRET.
-//
 //   This helper is invoked from the existing restaurant orders catch-all proxy
 //   (app/api/v1/restaurant/orders/[...path]/route.ts) when the sub-path is
 //   `<orderId>/ws`. A sibling `[id]/ws` route cannot coexist with the catch-all
@@ -30,7 +23,6 @@
 
 import { createHmac, randomBytes } from 'crypto';
 
-// Direct Go backend WS origin. Prefer an explicit ws(s):// override; otherwise
 // derive it from the HTTP base by swapping the scheme (http→ws, https→wss).
 function goBackendWsBase(): string {
   const explicit = process.env.GO_BACKEND_WS_URL;
@@ -39,7 +31,6 @@ function goBackendWsBase(): string {
   return http.replace(/^http/, 'ws').replace(/\/$/, '');
 }
 
-// Short-lived signed ticket: base64url(payload).hmacSHA256(payload). The Go
 // backend recomputes the HMAC with the same secret and checks `exp`.
 function signTicket(orderId: string, userId: string): { ticket: string; expiresAt: number } {
   const secret = process.env.WS_TICKET_SIGNING_SECRET;

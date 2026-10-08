@@ -4,10 +4,10 @@ import {
   Dimensions, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Check, Search, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { CURRENCIES, CURRENCY_ORDER } from '../constants/fx.constants';
 import { formatMoney } from '../utils/fxFormatters';
 import type { CurrencyCode, WalletBalance } from '../types/fx.types';
@@ -16,7 +16,7 @@ interface Props {
   visible: boolean;
   value?: CurrencyCode;
   options?: CurrencyCode[];
-  balances?: WalletBalance[];     // optional: show balance under each currency
+  balances?: WalletBalance[];
   disabled?: CurrencyCode[];      // e.g. exclude the opposite side of a pair
   title?: string;
   onSelect: (currency: CurrencyCode) => void;

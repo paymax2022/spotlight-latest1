@@ -1019,6 +1019,14 @@ paths:
       responses:
         '204': { description: All marked read }
 
+  /estate/notifications/unread-count:
+    get:
+      operationId: getUnreadNotificationCount
+      summary: Count of unread notifications for the caller
+      tags: [Notifications]
+      responses:
+        '200': { description: Unread count, content: { application/json: { schema: { type: object, properties: { count: { type: integer } } } } } }
+
   # ── Reports (Block 44) ──
   /estate/reports:
     get:

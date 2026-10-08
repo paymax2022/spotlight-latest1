@@ -1,7 +1,6 @@
 // jwks.go adds an RS256 JWT verifier that validates tokens against a JWKS
 // endpoint. Supabase projects can issue RS256 (asymmetric) tokens, in which case
 // the service has no shared secret and must verify with the project's public key.
-//
 // Stdlib-only (crypto/rsa, crypto/x509-free, math/big for n/e decoding), so the
 // dependency-free build keeps working. JWKSVerifier is a drop-in for the HS256
 // Verify path: it produces the same Claims and the same typed errors, so the

@@ -5,9 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
-// ---------------------------------------------------------------------------
 // Mock the service module before importing the component
-// ---------------------------------------------------------------------------
 const mockListAdminUsers = vi.fn()
 const mockGetAdminUser = vi.fn()
 
@@ -23,9 +21,7 @@ vi.mock('@/services/usersService', () => ({
 
 import AdminUsersPage from './page'
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 const makeUser = (overrides: Partial<Record<string, unknown>> = {}) => ({
   id: 'u1',
   firstName: 'Ada',
@@ -41,9 +37,7 @@ const makeUser = (overrides: Partial<Record<string, unknown>> = {}) => ({
   ...overrides,
 })
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 describe('AdminUsersPage', () => {
   beforeEach(() => {
     mockListAdminUsers.mockResolvedValue([])

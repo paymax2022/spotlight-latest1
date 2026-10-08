@@ -3,10 +3,10 @@ import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCompleteOnboardingStep } from '@/features/crowdfunding/hooks/useInvestment';
@@ -46,7 +46,7 @@ export default function RiskProfileScreen() {
 
   const save = () => {
     if (!result) return;
-    complete.mutate({ step: 'risk', riskProfile: result }, { onSuccess: () => goBack('/crowdfunding/investment') });
+    complete.mutate({ step: 'riskProfile', riskProfile: result }, { onSuccess: () => goBack('/crowdfunding/investment') });
   };
 
   return (

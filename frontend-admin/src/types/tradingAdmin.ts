@@ -53,7 +53,6 @@ export interface TradingBypassEntry {
   active: boolean;
 }
 
-// ── §12 Promotion ladder ──────────────────────────────────────────────────────
 // Wire-shape note: the Go promotion handlers serialize their structs WITHOUT json
 // tags, so the API returns PascalCase field names (StrategyID, Stage, …). These
 // types match that wire shape so the live fetch path needs no mapping.

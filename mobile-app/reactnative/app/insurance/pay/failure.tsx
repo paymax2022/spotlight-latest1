@@ -1,9 +1,6 @@
-// ── Protection — purchase failed ─────────────────────────────────────────────
 // A provider-side failure at bind is a FIRST-CLASS state here, not a rare edge.
-// MyCover settles binds against a prefunded distributor float; when that float
 // is empty every bind fails, and the person in front of the screen did nothing
 // wrong.
-//
 // So this screen has three jobs, in order of importance:
 //   1. Say plainly that they have NOT been charged. Nothing frightens someone
 //      more than a failed payment screen that is vague about their money.
@@ -19,10 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LifeBuoy, ShieldOff, WalletMinimal } from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '@/features/insurance/constants/insurance.constants';
 import { getDraft } from '@/features/insurance/live/draft';
 import { nairaFromKobo } from '@/features/insurance/live/money';

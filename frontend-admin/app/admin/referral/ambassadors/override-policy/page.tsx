@@ -6,7 +6,6 @@ import { listOverridePolicies, formatNaira, type OverridePolicyRow } from '@/ser
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 // A-AMB-04 — Override policy config.
-//
 // Reads GET /api/referral/admin/network/override-policies. The page previously
 // also showed four policy-level tiles (activity-based only, max depth,
 // recruitment earnings blocked, house excluded) sourced from mock data — no

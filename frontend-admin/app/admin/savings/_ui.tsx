@@ -6,7 +6,6 @@ import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the Paymax Savings + Social Pay ops consoles.
 // Matches the Vuexy light-theme kit (see @/components/ui/vuexy, app/admin/roles/page.tsx).
-// Both app/admin/savings/* and app/admin/social/* import from this single file via
 // relative path.
 
 export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });

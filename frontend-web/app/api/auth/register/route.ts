@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { forwardRateLimitHeaders } from '../_headers';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 /**
  * POST /api/auth/register — delegates to the Go backend.
@@ -41,7 +43,9 @@ export async function POST(request: Request) {
     try {
       upstream = await fetch(`${GO_BACKEND_URL}/api/auth/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Forward the resolved client IP so Go's signup gate + register limiter
+        // key on the real caller, not this BFF's address (AUD-BE-014).
+        headers: { 'Content-Type': 'application/json', ...clientIpHeaders(request) },
         body: JSON.stringify({
           fullName,
           email,
@@ -63,10 +67,12 @@ export async function POST(request: Request) {
     if (!upstream.ok) {
       // Go answers deliberately generically so a taken address is not
       // distinguishable from a rejected one. Do not enrich it here.
-      return NextResponse.json(
+      const res = NextResponse.json(
         { error: payload?.error ?? 'Registration failed' },
         { status: upstream.status },
       );
+      forwardRateLimitHeaders(upstream, res);
+      return res;
     }
 
     return NextResponse.json({

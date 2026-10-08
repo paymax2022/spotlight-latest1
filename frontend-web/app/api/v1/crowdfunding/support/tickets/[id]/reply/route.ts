@@ -3,7 +3,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// POST /api/v1/crowdfunding/support/tickets/:id/reply — append a reply.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {

@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Dashboard ───────────────────────────────────────
 // Operational snapshot (KPI grid) + the role-gated section menu. The role chip
 // in the header opens a switcher that drives RBAC across the whole console.
 
@@ -8,11 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
 import { Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import { AdminHeader, KpiCard, ListCard, DataRow, RoleBadge } from '@/features/admin/components';

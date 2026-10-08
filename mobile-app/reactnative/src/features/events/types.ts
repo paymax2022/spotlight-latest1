@@ -1,4 +1,3 @@
-// ── Events domain types ──────────────────────────────────────────────────────
 // Money is always integer minor units (kobo). Never floats, never strings for math.
 // Field names mirror the Go backend `backend/internal/top5events/model.go` verbatim
 // (organiser_id, venue, state, tier_id, credential_id, etc.) — do not rename them
@@ -30,7 +29,7 @@ export interface EventSummary {
   ends_at:        string;        // ISO
   state:          EventState;
   category:       EventCategory;
-  min_price_kobo: number | null; // cheapest active tier; null/0 = free
+  min_price_kobo: number | null;
   sold_out:       boolean;
 }
 
@@ -65,7 +64,6 @@ export interface Ticket {
   created_at:      string;
 }
 
-// ── Cashless closed-loop event wallet (NL-3) ─────────────────────────────────
 export type EventWalletState = 'OPEN' | 'SPENDING' | 'CLOSED';
 
 export interface EventWallet {
@@ -113,7 +111,6 @@ export interface PromoCode {
   active:      boolean;
 }
 
-// ── Inputs ───────────────────────────────────────────────────────────────────
 export interface CreateEventInput {
   title:        string;
   description:  string;
@@ -122,7 +119,6 @@ export interface CreateEventInput {
   starts_at:    string;
   ends_at:      string;
   fee_bps?:     number;
-  // Ticket tiers submitted alongside creation; client calls the /tiers endpoint
   // once per tier after the event is created (backend has no bulk-create route).
   tiers:        { name: string; price_kobo: number; capacity: number }[];
 }
@@ -150,8 +146,6 @@ export interface GiftTicketInput {
   ticketId: string;
   cashtag:  string;
 }
-
-// ── Steward scan ─────────────────────────────────────────────────────────────
 
 // The live, server-issued, HMAC-signed rotating token for a ticket's gate-entry
 // credential (mirrors backend/internal/credential.Token's JSON tags exactly —
@@ -184,8 +178,6 @@ export interface ScanResult {
   offline:     boolean;
 }
 
-// ── UI-only display extras ───────────────────────────────────────────────────
-// The real backend does not return cover art, banner colors, city, organiser
 // display name, attendee counts, lat/lng, or address — those fields do not
 // exist on Event/EventSummary. To preserve the existing visual design (colored
 // banner cards with an emoji, etc.) these are derived deterministically on the
@@ -196,7 +188,6 @@ export interface EventDisplayMeta {
   bannerColor: string;
 }
 
-// ── Organiser dashboard ──────────────────────────────────────────────────────
 // NOTE: the backend has no dedicated organiser-stats aggregate endpoint. The
 // dashboard derives these figures client-side from the organiser's own event
 // list (GET /api/finance/events?organiser scoping is not in the route table

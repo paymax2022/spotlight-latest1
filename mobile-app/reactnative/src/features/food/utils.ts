@@ -1,9 +1,7 @@
-// ── Restaurant & Delivery — Formatters & helpers ─────────────────────────────
 // All money is integer kobo. Display helpers convert to major units (NGN).
 
 import type { Kobo, OrderStatus, DispatchStatus, FoodError, FoodErrorCode } from './types';
 
-// ─── Money ──────────────────────────────────────────────────────────────────
 export function formatNaira(kobo: Kobo, opts?: { decimals?: boolean }): string {
   const major = kobo / 100;
   const decimals = opts?.decimals === false ? 0 : 2;
@@ -18,20 +16,17 @@ export function formatNairaWhole(kobo: Kobo): string {
   return formatNaira(Math.round(kobo / 100) * 100, { decimals: false });
 }
 
-// ─── Distance ─────────────────────────────────────────────────────────────────
 export function formatDistance(meters?: number): string {
   if (meters == null) return '—';
   if (meters < 1000) return `${Math.round(meters)} m`;
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-// ─── Idempotency ────────────────────────────────────────────────────────────────
 /** Generate an Idempotency-Key for a money mutation (matches mobility pattern). */
 export function newIdempotencyKey(prefix = 'food'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ─── Order status presentation ─────────────────────────────────────────────────
 export const STATUS_LABEL: Record<OrderStatus, string> = {
   placed: 'Payment confirmed',
   pending: 'Payment confirmed',
@@ -105,7 +100,6 @@ export function isLiveTrackable(status: OrderStatus): boolean {
   return status === 'assigned' || status === 'picked_up';
 }
 
-// ─── Dispatch presentation ──────────────────────────────────────────────────
 /** Customer/owner-facing label for the server-side dispatch lifecycle. */
 export const DISPATCH_LABEL: Record<DispatchStatus, string> = {
   none: 'Not dispatched yet',
@@ -114,7 +108,6 @@ export const DISPATCH_LABEL: Record<DispatchStatus, string> = {
   delivered: 'Delivered',
 };
 
-// ─── Error mapping ────────────────────────────────────────────────────────────
 export function toFoodError(err: unknown): FoodError {
   const e = err as {
     response?: { status?: number; data?: { error?: string; code?: FoodErrorCode } };

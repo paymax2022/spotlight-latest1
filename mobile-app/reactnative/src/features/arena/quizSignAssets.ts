@@ -1,4 +1,3 @@
-// ── Quiz sign assets — bundled, on-device road-sign SVGs ─────────────────────
 // The Naija Driver bank flags 17 road-sign questions whose image_url is a
 // 'sign:<key>' sentinel (see supabase/migrations/20260922003000). Rather than
 // fetch an image over the network, we inline the SVG XML STRING of ONLY the

@@ -8,9 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler exposes the academy commerce surface over Gin.
 //   - member: catalog reads, order purchase (pay-now / BNPL), access-card redeem,
@@ -24,53 +32,49 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user. finance/connect groups mirror the auth user
 // into c.Set("user_id", ...); fall back to the auth context if absent.
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
 	return ""
 }
 
-// idemKey reads the Idempotency-Key header (required for money-path mutations).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 // fail maps sentinel errors to stable snake_case codes + HTTP statuses.
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrApprovalRequired):
-		c.JSON(http.StatusForbidden, gin.H{"error": "approval_required", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "approval_required", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyKeyReused):
-		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "idempotency_key_reused", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrCatalogItemInactive):
-		c.JSON(http.StatusConflict, gin.H{"error": "catalog_item_inactive", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "catalog_item_inactive", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrRefundNotEligible):
-		c.JSON(http.StatusConflict, gin.H{"error": "refund_not_eligible", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "refund_not_eligible", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrAccessCardInvalid):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "access_card_invalid", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "access_card_invalid", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrAccessCardConsumed):
-		c.JSON(http.StatusConflict, gin.H{"error": "access_card_consumed", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "access_card_consumed", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrEntitlementAlreadyGrant):
-		c.JSON(http.StatusConflict, gin.H{"error": "entitlement_already_granted", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "entitlement_already_granted", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
 		return "", false
 	}
 	return u, true
@@ -127,8 +131,6 @@ func RegisterAcademyCommerce(member, admin *gin.RouterGroup, pool *pgxpool.Pool,
 	}
 }
 
-// ── Member handlers ─────────────────────────────────────────────────────────────
-
 func (h *Handler) ListPlans(c *gin.Context) {
 	out, err := h.svc.ListPlans(c.Request.Context())
 	if err != nil {
@@ -174,7 +176,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}
 	var req CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateOrder(c.Request.Context(), u, req)
@@ -190,7 +192,7 @@ func (h *Handler) PayNow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.PayNow(c.Request.Context(), u, c.Param("id"), idemKey(c))
+	out, err := h.svc.PayNow(c.Request.Context(), u, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -203,7 +205,7 @@ func (h *Handler) StartBNPL(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.StartBNPL(c.Request.Context(), u, c.Param("id"), idemKey(c))
+	out, err := h.svc.StartBNPL(c.Request.Context(), u, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -218,10 +220,10 @@ func (h *Handler) ActivateCard(c *gin.Context) {
 	}
 	var req ActivateCardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	ent, err := h.svc.Activate(c.Request.Context(), u, req.Serial, req.PIN, idemKey(c))
+	ent, err := h.svc.Activate(c.Request.Context(), u, req.Serial, req.PIN, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -236,10 +238,10 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 	var req SubscribeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.Subscribe(c.Request.Context(), u, req.PlanID, idemKey(c))
+	out, err := h.svc.Subscribe(c.Request.Context(), u, req.PlanID, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -254,7 +256,7 @@ func (h *Handler) Sync(c *gin.Context) {
 	}
 	var req SyncRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Sync(c.Request.Context(), u, req)
@@ -265,10 +267,8 @@ func (h *Handler) Sync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers (RBAC academy.commerce) ──────────────────────────────────────
-
 func (h *Handler) AdminRefund(c *gin.Context) {
-	out, err := h.svc.Refund(c.Request.Context(), uid(c), c.Param("id"), idemKey(c))
+	out, err := h.svc.Refund(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -279,10 +279,10 @@ func (h *Handler) AdminRefund(c *gin.Context) {
 func (h *Handler) AdminGenerateCards(c *gin.Context) {
 	var req GenerateCardsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.GenerateBatch(c.Request.Context(), uid(c), req)
+	out, err := h.svc.GenerateBatch(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -315,10 +315,10 @@ func (h *Handler) AdminPaymentsOverview(c *gin.Context) {
 func (h *Handler) AdminAllocateCards(c *gin.Context) {
 	var req AllocateCardsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	n, err := h.svc.AllocateToAgent(c.Request.Context(), uid(c), req)
+	n, err := h.svc.AllocateToAgent(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return

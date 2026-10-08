@@ -1,4 +1,3 @@
-// ── Referral Campaigns API (M-CMP-01..03) ────────────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`. Money is
 // ALWAYS integer kobo. Rewards tie to a referred friend's verified activity (§7).
 
@@ -6,7 +5,6 @@ import { api } from '@/api/client';
 import { USE_MOCK, REFERRAL_API_BASE } from '../constants/referral.constants';
 import type { CampaignSummary, CampaignDetail, CampaignStatus, CampaignReward } from './types';
 
-// ── Backend (bare gin.H) Campaign shape ──────────────────────────────────────
 interface BackendCampaign {
   id: string;
   name: string;

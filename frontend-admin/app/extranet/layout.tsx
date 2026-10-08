@@ -1,18 +1,18 @@
 'use client';
 
 import { useEffect, useState, type PropsWithChildren } from 'react';
-import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminSession';
+import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminAuth';
 
 /**
- * Keeps the hotelier extranet's Bearer token fresh.
+ * Keeps the hotelier extranet's session cookie fresh.
  *
- * WHY THIS EXISTS: staysExtranetService reads the same one-shot
- * localStorage['spotlight_admin_access_token'] the admin console does, but these
- * pages live OUTSIDE app/admin/ and had no layout of their own — so they
- * inherited only the bare root layout and never met AdminRouteGuard, where the
- * token refresh lives. Supabase access tokens last 3600s and nothing else
- * rewrites that key, so an hour after sign-in every live extranet call would
- * 401, exactly as the crowdfunding console did.
+ * WHY THIS EXISTS: staysExtranetService relies on the same HttpOnly session
+ * cookie the admin console does (the proxies attach its token as the upstream
+ * Bearer), but these pages live OUTSIDE app/admin/ and had no layout of their
+ * own — so they inherited only the bare root layout and never met
+ * AdminRouteGuard, where the refresh lives. Supabase access tokens last 3600s
+ * and nothing else re-mirrors the cookie, so an hour after sign-in every live
+ * extranet call would 401, exactly as the crowdfunding console did.
  *
  * The gap is latent today: NEXT_PUBLIC_STAYS_USE_MOCK is unset and the service
  * uses the legacy mock-by-default pattern, so extranet serves fixtures and never
@@ -33,7 +33,6 @@ export default function ExtranetLayout({ children }: PropsWithChildren) {
   useEffect(() => {
     let cancelled = false;
     // Resolve the session BEFORE first render. Rendering children while the
-    // refresh is still in flight would let their on-mount fetches go out under
     // the stale token — reproducing the very 401 this prevents.
     void syncAdminSession().finally(() => {
       if (!cancelled) setChecked(true);

@@ -2,20 +2,23 @@ package loyalty
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/credential"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"spotlight/backend/internal/credential"
 )
 
 // Phase-3 Paymax Black extension. ADDITIVE to the P2 loyalty engine: Black is the
 // top tier ABOVE TIER3. It does NOT rewrite the P2 tier engine — it adds a separate
 // Black membership table, configurable perks, perk redemption via the shared
 // credential primitive (single-use at an event gate), and partner-offer settlement.
-//
 // Perks are NON-CASH (NL-4 / NL-5): a Black perk delivers access/content/discount
 // (early tickets, lounge), never a financial return or cash-out.
 
@@ -90,7 +93,7 @@ func NewBlackService(base *Service, cred *credential.Service) *BlackService {
 // the route layer (loyalty.black.manage). Idempotent on (user_id) ACTIVE.
 func (b *BlackService) Enroll(ctx context.Context, userID string, expiresAt *time.Time) (*BlackMember, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("loyalty: user required")
+		return nil, errors.New("loyalty: user required")
 	}
 	const ins = `
 		INSERT INTO loyalty_black_members (user_id, state, granted_at, expires_at)
@@ -111,7 +114,7 @@ func (b *BlackService) Cancel(ctx context.Context, userID string) error {
 		return fmt.Errorf("loyalty: cancel black: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("loyalty: not an active black member")
+		return errors.New("loyalty: not an active black member")
 	}
 	b.base.log(userID, "loyalty.black.cancel", userID, nil)
 	return nil
@@ -122,7 +125,7 @@ func (b *BlackService) GetMember(ctx context.Context, userID string) (*BlackMemb
 	const q = `SELECT user_id, state, granted_at, expires_at, cancelled_at FROM loyalty_black_members WHERE user_id=$1`
 	var m BlackMember
 	if err := b.base.db.QueryRow(ctx, q, userID).Scan(&m.UserID, &m.State, &m.GrantedAt, &m.ExpiresAt, &m.CancelledAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotBlack
 		}
 		return nil, err
@@ -133,7 +136,7 @@ func (b *BlackService) GetMember(ctx context.Context, userID string) (*BlackMemb
 // isActiveBlack returns true only for an ACTIVE, unexpired Black member.
 func (b *BlackService) isActiveBlack(ctx context.Context, userID string) (bool, error) {
 	m, err := b.GetMember(ctx, userID)
-	if err == ErrNotBlack {
+	if errors.Is(err, ErrNotBlack) {
 		return false, nil
 	}
 	if err != nil {
@@ -186,13 +189,13 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 	var maxPerMonth int
 	var active bool
 	if err := b.base.db.QueryRow(ctx, pq, perkCode).Scan(&code, &redeemVia, &maxPerMonth, &active); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("loyalty: perk %s not found", perkCode)
 		}
 		return nil, err
 	}
 	if !active {
-		return nil, fmt.Errorf("loyalty: perk inactive")
+		return nil, errors.New("loyalty: perk inactive")
 	}
 
 	// Monthly cap (fail-closed): never over-grant a capped perk.
@@ -244,7 +247,7 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 // Paymax, not Paymax ↔ member.
 func (b *BlackService) RecordPartnerSettlement(ctx context.Context, partnerID, offerID string, amountKobo int64) (*PartnerSettlement, error) {
 	if amountKobo < 0 {
-		return nil, fmt.Errorf("loyalty: settlement amount must be non-negative kobo")
+		return nil, errors.New("loyalty: settlement amount must be non-negative kobo")
 	}
 	ps := &PartnerSettlement{
 		ID:         uuid.New().String(),
@@ -264,6 +267,156 @@ func (b *BlackService) RecordPartnerSettlement(ctx context.Context, partnerID, o
 
 // Sentinel errors.
 var (
-	ErrNotBlack       = fmt.Errorf("loyalty: not an active Paymax Black member")
-	ErrPerkCapReached = fmt.Errorf("loyalty: monthly perk redemption cap reached")
+	ErrNotBlack       = errors.New("loyalty: not an active Paymax Black member")
+	ErrPerkCapReached = errors.New("loyalty: monthly perk redemption cap reached")
 )
+
+// BlackHandler exposes Paymax Black member + admin endpoints. Member endpoints let
+// a Black member view standing + perks and redeem a perk; enrolment, partner and
+// settlement management are RBAC-gated admin actions (loyalty.black.manage).
+type BlackHandler struct {
+	svc *BlackService
+}
+
+func NewBlackHandler(svc *BlackService) *BlackHandler { return &BlackHandler{svc: svc} }
+
+// Register mounts Black routes. The caller passes member = finance.Group("/loyalty")
+// (base already "/loyalty" — only "/black" must be added here) and
+// admin = adminGroupTop5(r, "/api/loyalty/admin/black") (base already includes
+// "/black" — neither "/loyalty" nor "/black" may be re-added here, or Gin will
+// double the segment, e.g. /api/finance/loyalty/loyalty/black/me).
+//
+//	member: /api/finance/loyalty/black/*
+//	admin : /api/loyalty/admin/black/*  (RBAC loyalty.black.*)
+func (h *BlackHandler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
+	member.GET("/black/me", h.Me)
+	member.GET("/black/perks", h.Perks)
+	member.POST("/black/redeem", h.Redeem)
+
+	admin.POST("/enroll", guard("loyalty.black.manage"), h.AdminEnroll)
+	admin.POST("/cancel", guard("loyalty.black.manage"), h.AdminCancel)
+	admin.POST("/partner-settlement", guard("loyalty.black.manage"), h.AdminPartnerSettlement)
+}
+
+func (h *BlackHandler) Me(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	m, err := h.svc.GetMember(c.Request.Context(), userID)
+	if err != nil {
+		if errors.Is(err, ErrNotBlack) {
+			c.JSON(http.StatusOK, gin.H{"success": true, "is_black": false})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "is_black": true, "member": m})
+}
+
+func (h *BlackHandler) Perks(c *gin.Context) {
+	perks, err := h.svc.ListPerks(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "perks": perks})
+}
+
+type redeemPerkRequest struct {
+	PerkCode   string `json:"perk_code" binding:"required"`
+	ContextRef string `json:"context_ref" binding:"required"`
+}
+
+func (h *BlackHandler) Redeem(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var req redeemPerkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	red, err := h.svc.RedeemPerk(c.Request.Context(), userID, req.PerkCode, req.ContextRef)
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrNotBlack):
+			status = http.StatusForbidden
+		case errors.Is(err, ErrPerkCapReached):
+			status = http.StatusTooManyRequests
+		}
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "redemption": red})
+}
+
+type enrollRequest struct {
+	UserID    string  `json:"user_id" binding:"required"`
+	ExpiresAt *string `json:"expires_at,omitempty"` // RFC3339
+}
+
+func (h *BlackHandler) AdminEnroll(c *gin.Context) {
+	var req enrollRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	var exp *time.Time
+	if req.ExpiresAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.ExpiresAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "expires_at must be RFC3339"})
+			return
+		}
+		exp = &t
+	}
+	m, err := h.svc.Enroll(c.Request.Context(), req.UserID, exp)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "member": m})
+}
+
+type cancelRequest struct {
+	UserID string `json:"user_id" binding:"required"`
+}
+
+func (h *BlackHandler) AdminCancel(c *gin.Context) {
+	var req cancelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.Cancel(c.Request.Context(), req.UserID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+type partnerSettlementRequest struct {
+	PartnerID  string `json:"partner_id" binding:"required"`
+	OfferID    string `json:"offer_id" binding:"required"`
+	AmountKobo int64  `json:"amount_kobo"`
+}
+
+func (h *BlackHandler) AdminPartnerSettlement(c *gin.Context) {
+	var req partnerSettlementRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	ps, err := h.svc.RecordPartnerSettlement(c.Request.Context(), req.PartnerID, req.OfferID, req.AmountKobo)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "settlement": ps})
+}

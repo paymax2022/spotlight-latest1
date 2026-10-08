@@ -1,6 +1,4 @@
 // Pure-logic unit tests for how a delivery quote becomes a displayed fee.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/food/*.spec.ts"
-//
 // The defect: checkout trusted a quote only when `flat_fallback` was false, and
 // otherwise fell back to `restaurant.deliveryFeeKobo` — a field with no database
 // column and no DTO behind it, so the fallback was always 0. The server returns

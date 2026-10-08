@@ -1,4 +1,3 @@
-// ── Doctor — pharmacy fulfilment, drug delivery & refill hooks ────────────────
 // Phase 2. Mirrors Phase 1 TanStack Query patterns: query keys under
 // ['doctor', …], DEMO_* placeholderData, mutations auto-generate idempotencyKey
 // and invalidate the affected keys.
@@ -23,8 +22,6 @@ import type {
   ReviewSubstituteInput,
   ReviewRefillInput,
 } from '@/types/doctor.phase2';
-
-// ─── Pharmacy fulfilment / substitution ──────────────────────────────────────
 
 export function usePharmacyFulfilments() {
   return useQuery({
@@ -56,8 +53,6 @@ export function useReviewSubstitute() {
   });
 }
 
-// ─── Drug delivery tracking ──────────────────────────────────────────────────
-
 export function useDrugDeliveries() {
   return useQuery({
     queryKey:        ['doctor', 'drug-deliveries'],
@@ -75,8 +70,6 @@ export function useDrugDelivery(fulfilmentId: string) {
     staleTime: 10_000,
   });
 }
-
-// ─── Refill approval ─────────────────────────────────────────────────────────
 
 export function useRefillRequests(status?: RefillStatus) {
   return useQuery({

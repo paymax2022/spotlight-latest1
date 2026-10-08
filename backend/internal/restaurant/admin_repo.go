@@ -2,21 +2,18 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin (ops-console) READ models + service methods.
-//
 // These power the platform admin console surfaces (dispatch board, onboarding
 // review, payout reconciliation) under /api/restaurant/admin/*. They are thin
 // reads over the SAME tables the member/owner/rider flows already use — no new
 // money movement is introduced here. Mutations (onboarding decision, manual
 // assign) drive the EXISTING idempotent state transitions.
-//
 // All monetary amounts are integer minor units (kobo).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AdminRider is a row in the platform rider roster. It reads the shared transport
 // `drivers` pool (the same pool auto-dispatch offers deliveries to), plus the
@@ -70,14 +67,18 @@ type AdminDispatchOrder struct {
 // status is derived from is_open (no separate KYC column exists on `restaurants`
 // yet — see report; a richer KYC record would live on onb_application).
 type AdminApplication struct {
-	ID             string    `json:"id"`
-	RestaurantName string    `json:"restaurant_name"`
-	OwnerID        string    `json:"owner_id"`
-	Address        string    `json:"address,omitempty"`
-	Status         string    `json:"status"`    // pending|approved (derived from is_open)
-	Documents      []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
-	SubmittedAt    time.Time `json:"submitted_at"`
-	ReviewNote     *string   `json:"review_note,omitempty"`
+	ID             string `json:"id"`
+	RestaurantName string `json:"restaurant_name"`
+	OwnerID        string `json:"owner_id"`
+	Address        string `json:"address,omitempty"`
+	Status         string `json:"status"` // pending|in_review|approved|rejected (FOOD-010: derived from the REAL restaurant_kyb state, not is_open)
+	// KYBStatus is the raw restaurants.kyb_status (E2E-PROV-020): Status alone
+	// maps both "never submitted" (NULL) and "submitted, awaiting review" to
+	// 'pending', which made them indistinguishable in the queue.
+	KYBStatus   *string   `json:"kyb_status,omitempty"`
+	Documents   []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
+	SubmittedAt time.Time `json:"submitted_at"`
+	ReviewNote  *string   `json:"review_note,omitempty"`
 }
 
 // AdminPayoutRun is a READ-ONLY reconciliation view of settled food-delivery
@@ -98,14 +99,11 @@ type AdminPayoutRun struct {
 	Reconciled        bool      `json:"reconciled"`
 }
 
-// ── Riders roster ─────────────────────────────────────────────────────────────
-
 // AdminListRiders returns the platform rider roster from the shared transport
 // `drivers` pool, mapping transport status/verification to the console's rider
 // status and attaching the rider's currently-active food order if any.
 // mapRiderStatus maps the transport driver status + verification onto the ops
 // console's rider status vocabulary (available|on_delivery|offline|suspended).
-//
 // NOT called in production any more (ADR-050) — the roster computes status in SQL, because
 // it now filters, counts and pages on it and none of that can be done to a value
 // derived after the rows come back. This is kept deliberately as the executable
@@ -130,19 +128,44 @@ func mapRiderStatus(transportStatus, verification string, onDelivery bool) strin
 	}
 }
 
-// ── Dispatch queue ────────────────────────────────────────────────────────────
-
 // AdminDispatchQueue lists orders awaiting or in dispatch (ready/searching for a
 // rider, assigned, or picked_up but not delivered), newest first. waiting_minutes
 // is time since the order became ready (from ready_at when set, else created_at).
-// ── Onboarding review queue ───────────────────────────────────────────────────
 
 // AdminListApplications lists restaurant merchant records for the onboarding/KYC
 // review queue. status filters the derived onboarding status: an open restaurant
 // is 'approved', a closed one is 'pending'. Empty status returns all.
+// kybStatusToApplicationStatus maps the real restaurant_kyb/restaurants.kyb_status
+// vocabulary to the admin console's expected application-status vocabulary
+// (FOOD-010). A restaurant with no formal KYB row at all (kybStatus == nil) is
+// "pending" — awaiting either an owner submission or a direct console decision,
+// matching AdminDecideApplication's own "no row = the console decision IS the
+// verification" precedent (see FOOD-003).
+func kybStatusToApplicationStatus(kybStatus *string) string {
+	if kybStatus == nil {
+		return "pending"
+	}
+	switch KYBStatus(*kybStatus) {
+	case KYBApproved:
+		return "approved"
+	case KYBRejected:
+		return "rejected"
+	case KYBUnderReview, KYBNeedsInfo:
+		return "in_review"
+	default: // KYBDraft, KYBSubmitted, or an unrecognized value
+		return "pending"
+	}
+}
+
 func (s *Service) AdminListApplications(ctx context.Context, status string) ([]AdminApplication, error) {
+	// FOOD-010: this used to derive Status purely from restaurants.is_open, which
+	// any owner can flip via SetAvailability — so a restaurant with a real KYB
+	// submission sitting unreviewed showed as "approved" the moment its owner
+	// opened it, and the frontend's in_review/rejected filters never matched
+	// anything since this backend never emitted those values. Status is now
+	// derived from the real kyb_status snapshot.
 	const q = `
-		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.is_open, r.created_at
+		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.kyb_status, r.created_at
 		FROM restaurants r
 		ORDER BY r.created_at DESC`
 	rows, err := s.db.Query(ctx, q)
@@ -153,15 +176,12 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	var out []AdminApplication
 	for rows.Next() {
 		var a AdminApplication
-		var isOpen bool
-		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &isOpen, &a.SubmittedAt); err != nil {
+		var kybStatus *string
+		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &kybStatus, &a.SubmittedAt); err != nil {
 			return nil, err
 		}
-		if isOpen {
-			a.Status = "approved"
-		} else {
-			a.Status = "pending"
-		}
+		a.Status = kybStatusToApplicationStatus(kybStatus)
+		a.KYBStatus = kybStatus
 		// No KYC review-note column exists on `restaurants` yet (see report); the
 		// review note supplied on reject is delivered to the owner, not persisted.
 		a.Documents = []any{}
@@ -175,7 +195,10 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 
 // AdminDecideApplication approves or rejects a restaurant onboarding application.
 // Idempotent: approve opens the restaurant (is_open=true), reject closes it
-// (is_open=false). Drives only the existing `restaurants.is_open` gate — no money
+// (is_open=false). It ALSO drives the `restaurants.kyb_status` snapshot the payout
+// gate reads (see FOOD-003) — either through the real restaurant_kyb state machine
+// when the owner has submitted one, or directly when they have not, since a console
+// approve/reject is itself the verification decision in that case. No money
 // movement. `note` is the reviewer's KYC note (recorded on the restaurant
 // description-adjacent audit; required by the caller on reject).
 func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, adminID, decision, note string) error {
@@ -184,7 +207,7 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 		return fmt.Errorf("restaurant: application lookup: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("restaurant: application not found")
+		return errors.New("restaurant: application not found")
 	}
 	var target KYBStatus
 	switch decision {
@@ -223,7 +246,23 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 			return err
 		}
 	} else if decision == "needs_info" {
-		return fmt.Errorf("restaurant: no KYB submission to request more info on")
+		return errors.New("restaurant: no KYB submission to request more info on")
+	} else {
+		// No formal restaurant_kyb row exists (the common case today — see FOOD-003:
+		// the owner-facing KYB submission routes were never wired, so no restaurant
+		// could create one). The admin console's approve/reject IS the verification
+		// decision in that case — there is no separate KYB record to defer to — so the
+		// kyb_status snapshot the payout gate reads (payout.go: `res.kyb_status =
+		// 'approved'`) must still move here. Leaving it unset (the previous behavior)
+		// let a console "approve" open the restaurant for orders while permanently
+		// blocking its payouts with no way to ever clear "Business verification not
+		// started". This also repairs any restaurant already stuck in that state by
+		// simply re-running the decision.
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurants SET kyb_status=$2, updated_at=now() WHERE id=$1`,
+			restaurantID, string(target)); err != nil {
+			return err
+		}
 	}
 
 	switch decision {
@@ -258,8 +297,6 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	return nil
 }
 
-// ── Manual (ops) rider assignment ─────────────────────────────────────────────
-
 // AdminAssignRider is the ops-console manual assignment. It reuses the exact same
 // offer mechanics as the owner-facing AssignRider (sets rider_candidate_id +
 // notifies the rider), but authorizes the actor as the restaurant owner so a
@@ -273,8 +310,6 @@ func (s *Service) AdminAssignRider(ctx context.Context, orderID, candidateID str
 	// Drive the existing owner-authorized transition with the owner as actor.
 	return s.AssignRider(ctx, orderID, owner, candidateID)
 }
-
-// ── Payout reconciliation (READ-ONLY) ─────────────────────────────────────────
 
 // AdminPayoutRuns returns a READ-ONLY reconciliation view of settled food-delivery
 // escrows grouped by ISO week. Derived from the immutable `settlements` rows

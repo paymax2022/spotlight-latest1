@@ -1,8 +1,6 @@
-// ── Admin — Fractional Real Estate / Land Crowd-Investing control-plane types ──
 // All money is integer minor units (kobo). Mirrors estateAdmin.ts / investAdmin.ts.
 // Status unions track the asset lifecycle Draft → … → Closed.
 
-// ─── Dashboard (9.A.2) ──────────────────────────────────────────────────────
 export interface FractionalReKpis {
   aumKobo: number;              // assets under management
   totalRaisedKobo: number;      // cumulative across all rounds
@@ -28,7 +26,6 @@ export interface FractionalReDashboard {
   alerts: FractionalReAlert[];
 }
 
-// ─── Assets (9.B) ───────────────────────────────────────────────────────────
 // Lifecycle states for an asset / opportunity.
 export type AssetStatus =
   | 'Draft'
@@ -131,7 +128,6 @@ export interface AssetTransitionInput {
   reason: string;
 }
 
-// ─── Funding rounds (9.C) ────────────────────────────────────────────────────
 export type RoundStatus =
   | 'Draft'
   | 'Open'
@@ -189,7 +185,6 @@ export interface MakerCheckerResult {
   checker?: string;
 }
 
-// ─── Cap table (9.D) ──────────────────────────────────────────────────────────
 export interface CapTableEntry {
   id: string;
   investorId: string;
@@ -218,7 +213,6 @@ export interface TransferUnitsInput {
   source: 'secondary' | 'correction';
 }
 
-// ─── Investors (9.E) ──────────────────────────────────────────────────────────
 export type KycStatus = 'unverified' | 'pending' | 'verified' | 'rejected' | 'expired';
 export type InvestorClassification = 'retail' | 'qualified' | 'hni' | 'institutional';
 
@@ -264,7 +258,6 @@ export interface ClassifyInvestorInput {
   reason: string;
 }
 
-// ─── KYC & Compliance (9.F) ───────────────────────────────────────────────────
 export interface KycQueueItem {
   userId: string;
   name: string;
@@ -292,7 +285,6 @@ export interface ComplianceDashboard {
   overrides: { investorId: string; investorName: string; reason: string; by: string; at: string }[];
 }
 
-// ─── Distributions (9.G) ──────────────────────────────────────────────────────
 export type DistributionStatus =
   | 'Draft'
   | 'Calculated'
@@ -350,7 +342,6 @@ export interface DistributionDecisionInput {
   reason: string;
 }
 
-// ─── Secondary market (9.H) ───────────────────────────────────────────────────
 export type ListingStatus = 'active' | 'halted' | 'matched' | 'cancelled';
 export interface SecondaryListing {
   id: string;
@@ -373,7 +364,6 @@ export interface MarketControls {
   pausedAssetIds: string[];
 }
 
-// ─── Sponsors (9.I) ───────────────────────────────────────────────────────────
 export type SponsorKybStatus = 'pending' | 'verified' | 'rejected' | 'suspended';
 export interface AdminSponsor {
   id: string;
@@ -396,7 +386,6 @@ export interface CreateSponsorInput {
   trackRecord?: string;
 }
 
-// ─── Finance / Treasury (9.J) ─────────────────────────────────────────────────
 export interface EscrowAccount {
   roundId: string;
   assetName: string;
@@ -426,7 +415,6 @@ export interface RefundResult {
   pendingApproval: boolean;
 }
 
-// ─── Documents (9.K) ──────────────────────────────────────────────────────────
 export interface DocumentRecord {
   id: string;
   kind: AssetDocument['kind'] | 'template';
@@ -444,7 +432,6 @@ export interface PresignResult {
   expiresAt: string;
 }
 
-// ─── Audit (9.O.1) ────────────────────────────────────────────────────────────
 export interface AuditEntry {
   id: string;
   actorId: string;

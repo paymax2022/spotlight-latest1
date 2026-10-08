@@ -1,31 +1,25 @@
 package spray
 
 // PURE money-path invariant tests — no live DB.
-//
 // The spray Service is pgx-backed and drives wallet.Debit + ledger.Credit
 // (service.go), so the actual money move, the AML velocity SUM/COUNT query and the
 // idempotent spray_transfers insert cannot run without Postgres (see the DOC note at
 // the bottom for what needs an integration test). What IS exercised here is every
 // PURE piece:
-//
 //   - describeAnimation (model.go): the deterministic amount->tier presentation map,
 //     asserted to be monotone in amount and to carry NO money authority.
 //   - AMLConfig.withDefaults (service.go): zero/negative fields fall back to the
 //     documented conservative caps, and non-zero admin overrides are preserved.
 //   - the per-side idempotency-key discipline (:debit on the wallet leg, :credit on
 //     the ledger leg) that keeps the two legs distinct yet replay-safe on one key.
-//
 // NOTE on "split math": a spray is a single 1:1 wallet->wallet transfer, NOT a
 // one-to-many split, so amountKobo debited == amountKobo credited (conservation),
 // pinned below. There is no per-recipient split to sum.
-//
 // Symbols under test are unexported, so this file is in-package (package spray).
 
 import "testing"
 
-// ---------------------------------------------------------------------------
 // describeAnimation — deterministic, money-authority-free presentation tiers
-// ---------------------------------------------------------------------------
 
 // TestDescribeAnimation_Tiers pins the exact tier boundaries in model.go.
 func TestDescribeAnimation_Tiers(t *testing.T) {
@@ -88,9 +82,7 @@ func TestDescribeAnimation_Deterministic(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // AMLConfig.withDefaults — conservative fallbacks, admin overrides preserved
-// ---------------------------------------------------------------------------
 
 // TestAMLDefaults_FillZeroFields verifies an empty config gets the documented
 // conservative caps (these are the velocity limits the engine fails closed on).
@@ -135,15 +127,12 @@ func TestAMLDefaults_PreservesOverrides(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Conservation + per-side idempotency discipline
-//
 // A spray posts wallet.Debit(from, ..., idemKey+":debit", clearing, amount) then
 // ledger.Credit(to, ..., idemKey+":credit", clearing, amount) — SAME amount both
 // legs, so nothing is minted or burned (NL-1: pure peer-to-peer). The two legs use
 // DISTINCT suffixed keys off one base idemKey so the whole spray is one logical
 // no-op on replay.
-// ---------------------------------------------------------------------------
 
 func TestSprayConservationAndIdempotencySuffixes(t *testing.T) {
 	base := "spray:live99:txn7"
@@ -167,9 +156,7 @@ func TestSprayConservationAndIdempotencySuffixes(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DOC — needs a live-DB integration test (no injectable seam here):
-//
 //   - Spray end-to-end (service.go Spray): wallet.Debit enforces tier limits + fails
 //     closed on low balance; the ledger.Credit from the spray-clearing standing
 //     account balances the debit; the spray_transfers row + leaderboard upsert are
@@ -181,4 +168,3 @@ func TestSprayConservationAndIdempotencySuffixes(t *testing.T) {
 //     if the query errors. Assert a spray that would breach MaxDailyKobo /
 //     MaxDailyCount is rejected, and that a query error blocks the spray.
 //   - Self-spray rejection and the leaderboard total == SUM(spray_transfers) truth.
-// ---------------------------------------------------------------------------

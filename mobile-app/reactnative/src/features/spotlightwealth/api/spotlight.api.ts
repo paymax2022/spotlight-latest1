@@ -1,6 +1,4 @@
-// ── Spotlight Wealth — API wrapper ───────────────────────────────────────────
 // Typed data layer the screens code against. Mock-flagged like crypto.api.ts.
-//
 // GO-LIVE (2026-07): the real backend module now EXISTS —
 // backend/internal/spotlightwealth (service+handler+routes) is registered on the
 // Go router under /api/v1/spotlight/* (see
@@ -9,13 +7,9 @@
 // mock fixtures. Challenge completion (POST /challenges/:id/complete, not yet
 // surfaced in this wrapper) pays WALLET CREDIT via the finance ledger under an
 // Idempotency-Key — never a guaranteed return.
-//
-// REMAINING DEPENDENCY before flipping EXPO_PUBLIC_SPOTLIGHT_USE_MOCK=false: the
-// Next gateway only rewrites /api/finance/* to Go; /api/v1/* needs a frontend-web
 // proxy. Add frontend-web/app/api/v1/spotlight/[...path]/route.ts (mirror the
 // app/api/v1/invest proxy) forwarding to the Go backend's /api/v1/spotlight/*.
 // Once it lands, flip the flag — the live paths below already match the Go routes.
-//
 // STRICT RULES honoured here (docs/crypto/product.md → strict rules):
 //  • Leaderboard returns LEARNING points, never profit.
 //  • Challenge rewards are wallet credit, never guaranteed returns.
@@ -39,7 +33,6 @@ import type {
   SpotlightTopic,
 } from '../types/spotlight.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_SPOTLIGHT_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
@@ -49,8 +42,6 @@ const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res
 // Mock challenges are mutable so joinChallenge persists `joined` within a session.
 const mockChallenges: Challenge[] = MOCK_CHALLENGES.map((c) => ({ ...c }));
 
-// ─── Finance videos (creator education — never recommendations) ───────────────
-
 export async function getVideos(topic?: SpotlightTopic): Promise<FinanceVideo[]> {
   if (USE_MOCK) {
     await delay();
@@ -58,8 +49,6 @@ export async function getVideos(topic?: SpotlightTopic): Promise<FinanceVideo[]>
   }
   return unwrap<FinanceVideo[]>(await api.get('/api/v1/spotlight/videos', { params: { topic } }));
 }
-
-// ─── Challenges (learn-and-earn; reward = wallet credit) ──────────────────────
 
 export async function getChallenges(): Promise<Challenge[]> {
   if (USE_MOCK) {
@@ -90,8 +79,6 @@ export async function joinChallenge(id: string): Promise<Challenge> {
   return unwrap<Challenge>(await api.post(`/api/v1/spotlight/challenges/${id}/join`, {}));
 }
 
-// ─── Learning leaderboard (LEARNING points — explicitly NOT profit) ───────────
-
 export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   if (USE_MOCK) {
     await delay();
@@ -99,8 +86,6 @@ export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   }
   return unwrap<LeaderboardEntry[]>(await api.get('/api/v1/spotlight/leaderboard', { params: { metric: 'learning_points' } }));
 }
-
-// ─── Reward wallet (credit earned from learning) ──────────────────────────────
 
 export async function getRewardWallet(): Promise<RewardWallet> {
   if (USE_MOCK) {
@@ -112,8 +97,6 @@ export async function getRewardWallet(): Promise<RewardWallet> {
   }
   return unwrap<RewardWallet>(await api.get('/api/v1/spotlight/reward-wallet'));
 }
-
-// ─── Campaigns (creator / event-led education programmes) ─────────────────────
 
 export async function getCampaigns(): Promise<Campaign[]> {
   if (USE_MOCK) {

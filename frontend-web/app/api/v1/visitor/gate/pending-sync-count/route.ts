@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/gate/pending-sync-count — events with sync_status='pending'.
+// Events with sync_status='pending'.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

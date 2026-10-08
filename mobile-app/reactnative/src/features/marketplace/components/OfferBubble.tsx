@@ -1,16 +1,14 @@
-// ── Marketplace — OfferBubble (Screen 19 Deal Room) ──────────────────────────
 // An offer is a structured, NON-BINDING price proposal — a bubble with a price
 // and a status, never a free-text message that could be misread. Buyer-authored
-// offers align right; the counterparty's counters align left. Actions (accept/
 // counter/decline) surface only for a live 'pending' offer the current user can
 // act on. Accepting just agrees a number for the off-platform meetup — it holds
 // no funds and creates no order.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Tag, Check, X, Repeat } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import type { Offer, OfferStatus } from '@/features/marketplace';
 

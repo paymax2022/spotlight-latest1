@@ -12,3 +12,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ path: strin
     return proxyToGoBackend(request, `/api/finance/placement/${target}`);
   } catch (err) { return handleApiError(err); }
 }
+
+// HEAD rides the same handler — proxyToGoBackend takes the upstream method from
+// request.method, so a probe goes out as HEAD (headers only, no body) and stays
+// unauthenticated like GET.
+export const HEAD = GET;

@@ -7,8 +7,6 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-// ── Injected collaborators (adapter, not SDK leak) ──────────────────────────────────
-//
 // Every collaborator is a SMALL locally-declared interface so payment_test.go can inject
 // in-memory fakes (no live gateway / DB / ledger) and ASSERT the money-path invariants:
 // end-to-end idempotency, SF-2 (record a payment, never write a balance), and the balanced
@@ -28,7 +26,6 @@ type Gateway interface {
 // transfer of the guardian wallet → the school settlement account. It is idempotent on
 // idempotencyKey (a replayed confirmation posts nothing). It NEVER exposes or mutates a balance
 // column — it only appends balanced ledger entries.
-//
 // The concrete shim resolves the school settlement standing account and calls
 // ledger.Service.Debit(guardianUserID → settlementAccountID) (TOCTOU-safe, fail-closed on
 // insufficient funds), returning the ledger reference actually posted so the invoice record and
@@ -119,13 +116,10 @@ func referenceFor(idempotencyKey string) string {
 	return "feespay:" + idempotencyKey
 }
 
-// ── 1) Payment intent ───────────────────────────────────────────────────────────────
-
 // CreatePaymentIntent starts a full-invoice checkout session. It calls the injected Gateway to
 // InitializePayment and returns the authorization URL + reference to the caller (parent app). It
 // persists ONLY the thin pending-intent mapping (never anything that duplicates the ledger); the
 // actual money capture reconciles later via OnChargeSuccess (webhook/verify).
-//
 // Idempotent (money path, required): idempotencyKey is mandatory. The reference is derived from
 // the key, and PutIntent is idempotent on the key — a replay returns the same reference/intent,
 // and re-initializing the gateway with the same reference is a safe no-op session.
@@ -145,13 +139,10 @@ func (s *Service) CreatePaymentIntent(ctx context.Context, guardianUserID string
 	return s.startIntent(ctx, guardianUserID, req.InvoiceID, req.AmountMinor, req.Email, req.CallbackURL, idempotencyKey, false /*installment*/, false /*acknowledged*/)
 }
 
-// ── 3) Installments (SF-6) ────────────────────────────────────────────────────────
-
 // PayInstallment starts a checkout session for a PARTIAL payment against an invoice whose
 // immutable fee schedule carries an installment_policy. The terms were locked/disclosed at
 // issuance (SF-1); here we only accept the partial amount and drive the same intent flow. The
 // invoice will derive partially_paid on confirmation (SF-2).
-//
 // SF-6 disclosure: if this is the FIRST payment on a policy-bearing invoice and the guardian has
 // not acknowledged the locked terms, we return an intent with DisclosureRequired=true and DO NOT
 // start the gateway session — the UI must surface the disclosure and re-call with Acknowledged.
@@ -255,12 +246,9 @@ func (s *Service) startIntent(ctx context.Context, guardianUserID, invoiceID str
 	return out, nil
 }
 
-// ── 2) Confirmation path (confirm-and-record; SF-2; end-to-end idempotent) ───────────
-
 // OnChargeSuccess is the confirmation entry point. It is called by the EXISTING academy webhook
 // pipeline on a charge.success for a fees reference (the integration task hooks it there — no new
 // receiver). Flow:
-//
 //  1. Resolve the pending intent from the gateway reference (unknown reference ⇒ benign no-op).
 //  2. VERIFY the charge via provider.VerifyPayment (fail-closed: not-success ⇒ no money moves).
 //  3. Cross-check the verified amount against the intent amount (mismatch ⇒ abort, no move).

@@ -1,15 +1,10 @@
-// ── Doctor (Telemedicine, provider-side) — Domain Types ──────────────────────
 // Phase A (mobile UI/UX). Money amounts are integers in minor units (kobo).
-// Mirrors the patient-side shapes in `@/types/telemedicine`; reuse those where
 // they already fit instead of duplicating.
 
 import type { ConsultType, ConsultStatus } from '@/types/telemedicine';
 
-// Re-export patient-side primitives so doctor screens can import everything
 // telemedicine-related from one place.
 export type { ConsultType, ConsultStatus } from '@/types/telemedicine';
-
-// ─── Doctor profile & verification ───────────────────────────────────────────
 
 export type VerificationStatus =
   | 'unsubmitted'  // doctor has not yet submitted documents
@@ -68,8 +63,6 @@ export interface VerificationSubmission {
   notes?:       string;          // reviewer note
 }
 
-// ─── Appointments (doctor's queue) ───────────────────────────────────────────
-
 export interface PatientSummary {
   id:          string;
   name:        string;
@@ -94,8 +87,6 @@ export interface DoctorAppointment {
   hmoProvider?: string;           // display label when isHmo
 }
 
-// ─── Patient medical profile (read access during a consult) ───────────────────
-
 export interface PatientVital {
   label: string;   // "Blood Pressure"
   value: string;   // "120/80 mmHg"
@@ -118,8 +109,6 @@ export interface PatientMedicalProfile {
   vitals:             PatientVital[];
   history:            PatientHistoryItem[];
 }
-
-// ─── Chat consultation ───────────────────────────────────────────────────────
 
 export type ChatAuthor = 'doctor' | 'patient';
 
@@ -144,8 +133,6 @@ export interface ChatThread {
   status:        ConsultStatus;
 }
 
-// ─── Audio / video call session ──────────────────────────────────────────────
-
 export type CallStatus = 'connecting' | 'ringing' | 'live' | 'ended' | 'failed';
 
 export interface CallSession {
@@ -159,8 +146,6 @@ export interface CallSession {
   roomToken?:    string;            // Phase C: provider room/access token
 }
 
-// ─── Consultation (SOAP) notes ───────────────────────────────────────────────
-
 export interface SoapNote {
   id:            string;
   appointmentId: string;
@@ -173,8 +158,6 @@ export interface SoapNote {
   createdAt:     string;            // ISO datetime
   updatedAt:     string;            // ISO datetime
 }
-
-// ─── Prescriptions (doctor authored) ─────────────────────────────────────────
 
 export interface PrescriptionDrugItem {
   name:      string;
@@ -196,8 +179,6 @@ export interface DoctorPrescription {
   issuedAt:      string;            // ISO datetime
   status:        'draft' | 'issued' | 'dispensed';
 }
-
-// ─── Lab orders & results ────────────────────────────────────────────────────
 
 export interface LabTest {
   id:       string;
@@ -239,8 +220,6 @@ export interface LabResult {
   reviewed:   boolean;
 }
 
-// ─── HMO coverage / eligibility ──────────────────────────────────────────────
-
 export type EligibilityStatus = 'eligible' | 'ineligible' | 'pending';
 
 export interface HmoCoverage {
@@ -260,8 +239,6 @@ export interface HmoEligibility {
   authCode?:     string;            // pre-authorisation code when eligible
   checkedAt:     string;            // ISO datetime
 }
-
-// ─── Availability schedule ───────────────────────────────────────────────────
 
 export type Weekday =
   | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -290,8 +267,6 @@ export interface AvailabilitySchedule {
   acceptsInstant:      boolean;      // accept on-demand consults
 }
 
-// ─── Earnings & payouts ──────────────────────────────────────────────────────
-
 export interface PayoutItem {
   id:           string;
   ref:          string;            // e.g. "PO-2026-014"
@@ -311,8 +286,6 @@ export interface EarningsSummary {
   payouts:           PayoutItem[];
 }
 
-// ─── Notifications ───────────────────────────────────────────────────────────
-
 export type DoctorNotificationType =
   | 'appointment'
   | 'message'
@@ -330,8 +303,6 @@ export interface DoctorNotification {
   read:      boolean;
 }
 
-// ─── Support ─────────────────────────────────────────────────────────────────
-
 export type SupportTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 
 export interface SupportTicket {
@@ -344,8 +315,6 @@ export interface SupportTicket {
   updatedAt:  string;            // ISO datetime
   lastReply?: string;
 }
-
-// ─── Settings ────────────────────────────────────────────────────────────────
 
 export interface DoctorSettings {
   doctorId:             string;
@@ -362,7 +331,6 @@ export interface DoctorSettings {
   preferredCurrency:    string;     // "NGN"
 }
 
-// ─── Mutation inputs ─────────────────────────────────────────────────────────
 // `idempotencyKey` is required on money / state-changing mutations.
 
 export interface SubmitVerificationInput {

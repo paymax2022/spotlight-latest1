@@ -1,27 +1,20 @@
 package connect_test
 
-// ---------------------------------------------------------------------------
 // My votes, and who voted for a contestant.
-//
 // WHY THIS EXISTS
-// ---------------
 // The My Votes screen called GET /voting/my-votes, which nothing served — it
 // answered 404 with an HTML body, and with mock mode off the list could never
 // render a row. The votes were in connect_votes the whole time.
-//
 // "Who voted for me" is new, and it hands out something the rest of this module
 // deliberately never has. voting_settings publishes show_public_vote_count,
 // show_public_leaderboard and show_public_rank — AGGREGATES — and has no flag
 // for publishing identities. So the read is contestant-private, and the two
 // properties worth pinning are both about who is allowed to see what:
-//
 //   • only the contestant themselves may read their supporters
 //   • a free vote cast under allow_anonymous_free_vote is COUNTED but NEVER
 //     NAMED, and the name is dropped in SQL rather than shipped to a client
 //     that is trusted to hide it
-//
 // Live-DB: skipped without TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -76,12 +69,12 @@ func TestVotingSupporters_ContestantOnlyAndAnonymityHonoured(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
-		_, _ = pool.Exec(ctx, `DELETE FROM voting_settings WHERE contest_id=$1`, contestID)
-		_, _ = pool.Exec(ctx, `DELETE FROM contestants WHERE id=$1`, contestantID)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_contests WHERE id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM voting_settings WHERE contest_id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contestants WHERE id=$1`, contestantID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_contests WHERE id=$1`, contestID)
 		for _, u := range []string{owner, voter, stranger} {
-			_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, u)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, u)
 		}
 	})
 
@@ -170,11 +163,11 @@ func TestVotingMyVotes_ReturnsOnlyTheCallersOwnVotes(t *testing.T) {
 		t.Fatalf("seed votes: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
-		_, _ = pool.Exec(ctx, `DELETE FROM contestants WHERE id=$1`, contestantID)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_contests WHERE id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contestants WHERE id=$1`, contestantID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_contests WHERE id=$1`, contestID)
 		for _, u := range []string{mine, theirs} {
-			_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, u)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, u)
 		}
 	})
 

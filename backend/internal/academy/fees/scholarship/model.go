@@ -11,7 +11,6 @@ import (
 // pledge is a sponsor-funded scholarship targeted at a specific student, and an award is applied
 // toward that student's INVOICE via the existing feesinvoice.RecordPayment (SF-2 derived-balance
 // discipline preserved — this package NEVER writes a balance).
-//
 // Fund flow (fully auditable):
 //   1. CreatePledge      — a sponsor pledges an amount for a target student (state=pledged).
 //   2. FundPledge        — the pledged amount is moved into the scholarship fund via the INJECTED
@@ -20,11 +19,8 @@ import (
 //                          package's RecordPayment (idempotent, records an invoice payment; the
 //                          real guardian-side ledger move is E3's concern — here the funded
 //                          scholarship is the payment source). state=applied.
-//
 // Money moves ONLY through the injected LedgerPoster (fund) and the invoice payment record
 // (apply). This package posts no ledger entry of its own and writes no balance column.
-
-// ── Pledge / Award state machines ───────────────────────────────────────────────
 
 // PledgeState is the sponsor pledge lifecycle: pledged → funded → applied (or → cancelled).
 type PledgeState string
@@ -44,8 +40,6 @@ const (
 	AwardReversed AwardState = "reversed"
 )
 
-// ── Entities ─────────────────────────────────────────────────────────────────────
-
 // Pledge is a Sponsor-a-Student pledge. It EXTENDS the edupay scholarship concept with a
 // concrete target student. SponsorIdentityID is the sponsor's academy identity;
 // TargetStudentID references public.academy_students(id).
@@ -63,19 +57,20 @@ type Pledge struct {
 
 // Award is one application of a funded pledge toward a specific invoice. It carries the invoice
 // payment reference produced by feesinvoice.RecordPayment so the fund flow is traceable.
+// UserID is the auth.users party persisted to user_id (an auth.users FK) — the
+// guardian-of-record, falling back to the applying actor.
 type Award struct {
 	ID               string     `json:"id"`
 	PledgeID         string     `json:"pledgeId"`
 	InvoiceID        string     `json:"invoiceId"`
 	StudentID        string     `json:"studentId"`
+	UserID           string     `json:"userId"`
 	AmountMinor      int64      `json:"amountMinor"`
 	InvoicePaymentID *string    `json:"invoicePaymentId,omitempty"`
 	State            AwardState `json:"state"`
 	IdempotencyKey   string     `json:"-"`
 	CreatedAt        time.Time  `json:"createdAt"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // CreatePledgeRequest creates a Sponsor-a-Student pledge.
 type CreatePledgeRequest struct {
@@ -94,8 +89,6 @@ type ApplyAwardRequest struct {
 	GuardianUserID string `json:"guardianUserId"`
 	AmountMinor    int64  `json:"amountMinor" binding:"required"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound            = errors.New("not_found")

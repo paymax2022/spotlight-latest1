@@ -1,6 +1,4 @@
-// ── Doctor — Vet Consultation hooks (Batch 5, Section S) ─────────────────────
 // Query keys under ['doctor', 'vet', …]. Mutations auto-generate the
-// idempotencyKey. Vet chat/audio/video/SOAP REUSE the Batch 2 rich shapes;
 // follow-up REUSES the Phase 2 FollowUpPlan via the existing follow-up hooks.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -35,8 +33,6 @@ import type {
   SaveVetSoapNoteInput,
   CreateVetReferralInput,
 } from '@/types/doctor.batch5';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useVetAppointments() {
   return useQuery({
@@ -133,8 +129,6 @@ export function useVetConsultHistory() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useRespondToPetRequest() {
   const qc = useQueryClient();

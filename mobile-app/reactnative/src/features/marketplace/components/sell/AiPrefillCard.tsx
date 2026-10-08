@@ -1,14 +1,12 @@
-// ── Sell — AI prefill suggestion card (Smart Composer, screen 11) ────────────
 // Shows the mocked vision-model guess as an *editable suggestion* the seller
-// confirms rather than a blank form. Loading = skeleton row (not a spinner on
 // content). Failure is handled upstream: the composer simply doesn't render this
 // card and shows the blank form (graceful AI degradation, per spec §11).
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Sparkles, Check, Pencil } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 

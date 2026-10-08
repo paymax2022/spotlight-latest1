@@ -23,7 +23,6 @@ export function AssociationTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/association/dashboard', label: 'Overview', key: 'overview' },
     // The organisation register. Every other tab below is scoped to ONE org via
-    // <OrgPicker/>; this is the only surface that lists them all and the only
     // place an organisation's own record can be edited.
     { href: '/admin/association/organisations', label: 'Organisations', key: 'organisations' },
     { href: '/admin/association/approvals', label: 'Approvals', key: 'approvals' },
@@ -52,11 +51,9 @@ export function AssociationTabs({ active }: { active: string }) {
   );
 }
 
-// ── Org picker ────────────────────────────────────────────────────────────
 // Every admin read/write in this console is scoped to ONE association
 // organisation (backend resolveOrgID). Selection lives in
 // associationAdminService's module-level singleton (localStorage-backed, so
-// it survives navigation between these seven pages); this hook just makes
 // that reactive for React, and <OrgPicker/> is the UI to change it.
 export function useSelectedOrg(): string | null {
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -116,7 +113,6 @@ export function OrgPicker() {
   );
 }
 
-// ── RBAC ──────────────────────────────────────────────────────────────────
 // Associations reuses the "savings" RBAC group per AdminSidebar.tsx (the
 // association console was seeded against the same permission slugs — there is
 // no dedicated `association.admin.*` slug family yet). Server RBAC on the Go

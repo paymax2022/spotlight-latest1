@@ -1,10 +1,12 @@
-// ── Property Management — domain types ───────────────────────────────────────
 // The Property Management super-module spans four pillars (Marketplace, Stays,
 // Rent & Tenancy, Estate & Visitor Access). A user may hold roles across several
-// contexts (estates, owned properties, agencies, orgs); the active context scopes
 // what they see. Types here are shared by the mock + live API paths.
 
 export type ContextType = 'estate' | 'property' | 'agency' | 'org';
+
+/** Context entity types the server may return. 'role' entities are read-only:
+ *  the server refuses to switch into them, so SwitchContextInput excludes it. */
+export type ContextEntityType = ContextType | 'role';
 
 export type PropertyRole =
   | 'tenant'
@@ -17,11 +19,17 @@ export type PropertyRole =
   | 'vendor'
   | 'resident';
 
+/** Registrable marketplace roles carried by read-only 'role' context entities. */
+export type ProfessionalContextRole = 'estate_manager' | 'developer' | 'agent';
+
+/** Any role slug a context entity may carry. */
+export type ContextRole = PropertyRole | ProfessionalContextRole;
+
 export interface PropertyContext {
-  type:  ContextType;
+  type:  ContextEntityType;
   id:    string;
   name:  string;
-  roles: PropertyRole[];
+  roles: ContextRole[];
 }
 
 export interface ActiveContextRef {
@@ -39,7 +47,6 @@ export interface SwitchContextInput {
   contextId:   string;
 }
 
-// ── Rent Passport (M-RTN-05) — portable, cross-landlord tenancy reputation ────
 export interface RentPassportPayment {
   id:         string;
   paidAt:     string;  // ISO date
@@ -57,7 +64,6 @@ export interface RentPassport {
   recentPayments: RentPassportPayment[];
 }
 
-// ── Stay gate pass — auto-issued visitor pass for a confirmed stay ────────────
 export interface StayGatePass {
   bookingId:  string;
   guestName:  string;

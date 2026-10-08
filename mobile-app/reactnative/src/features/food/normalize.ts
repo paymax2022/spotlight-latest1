@@ -1,28 +1,20 @@
-// ── Restaurant & Delivery — live-payload normalizer ──────────────────────────
-//
 // The Go DTO and the `Restaurant` interface the screens are written against are
 // NOT the same shape, and the live path used to cast one to the other. Because a
 // cast is compile-time only, `tags` arrived `undefined` and `RestaurantCard` died
 // on `item.tags.map` the moment the list actually loaded — TypeScript could not
 // catch it, since the interface declares `tags` required and so claims the field
 // is always there.
-//
 // What the server actually sends (backend/internal/restaurant/model.go):
-//
 //   id, owner_id, name, description, address, logo_url, is_open, rating,
 //   cuisine, distance_meters, created_at, min_order_kobo, packaging_fee_kobo,
 //   prep_time_minutes, geo_lat, geo_lng
-//
 // Absent from it entirely: `tags`, `etaLabel`, and the icon triple. Those are
 // PRESENTATION fields that only ever existed in mock.ts, which is why swapping
 // the mock for the live fetch broke the card. They are derived here from real
 // server data (cuisine, prep_time_minutes) rather than invented per-render.
-//
-// Every function is total: a required field on `Restaurant` is never left
 // undefined, whatever the payload does. That is the point — the screens do
 // `.map`, `.some` and `.toFixed` on these values without guarding, and one
 // missing field crashes the whole tree through the error boundary.
-//
 // Deliberately dependency-free (types only) so it is unit-testable under
 // `node --test` without pulling in the RN runtime.
 
@@ -57,8 +49,6 @@ const num = (v: unknown, fallback = 0): number =>
 const kobo = (v: unknown): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0;
 
-// ── Presentation derived from server data ────────────────────────────────────
-
 /** Visual identity per cuisine, matching the palette the mock established. */
 const CUISINE_VISUAL: Record<string, { icon: string; color: string; label: string }> = {
   local:   { icon: 'UtensilsCrossed', color: '#EF4444', label: 'Local' },
@@ -90,8 +80,6 @@ function etaLabelFrom(prepMinutes: number): string {
   return `${p}–${p + 10} min`;
 }
 
-// ── Restaurant ───────────────────────────────────────────────────────────────
-
 export function mapRestaurant(input: unknown): Restaurant {
   const raw = asRaw(input);
 
@@ -110,7 +98,6 @@ export function mapRestaurant(input: unknown): Restaurant {
     name: str(pick(raw, 'name')),
     cuisine,
 
-    // The server has no tag list; the cuisine is the one real classification it
     // does send. Empty (never undefined) when it sends none — the search filter
     // calls .some() on this directly.
     tags: visual.label ? [visual.label] : [],
@@ -122,7 +109,6 @@ export function mapRestaurant(input: unknown): Restaurant {
     packagingFeeKobo: kobo(pick(raw, 'packagingFeeKobo', 'packaging_fee_kobo')),
 
     // deliveryFeeKobo is deliberately NOT set. It is absent from the discovery
-    // DTO and from `restaurants` altogether; the real fee is distance-based and
     // comes from the delivery-quote endpoint. Emitting 0 here made an unknown
     // fee look like free delivery on both the store page and checkout — leaving
     // it undefined forces callers to treat it as unknown.
@@ -137,7 +123,6 @@ export function mapRestaurant(input: unknown): Restaurant {
     iconColor: visual.color,
     iconBg: tint(visual.color),
 
-    // Discovery serves ListOpenRestaurants, so absence means open; an explicit
     // false is still honoured. Defaulting the other way would stamp "Closed"
     // across a working storefront on any payload change.
     isOpen: bool(pick(raw, 'isOpen', 'is_open'), true),
@@ -215,7 +200,6 @@ export function mapOrder(input: unknown): Order {
   const deliveryCode = pick(raw, 'deliveryCode', 'delivery_code');
   const pickupCode = pick(raw, 'pickupCode', 'pickup_code');
   const riderId = pick(raw, 'riderId', 'rider_id');
-  // The order endpoint does NOT return a restaurant name (verified against
   // /api/finance/restaurant/orders/:id). Defaulting it to '' would be worse
   // than leaving it alone: app/food/orders/[orderId]/rate.tsx reads
   // `order?.restaurantName ?? 'the restaurant'`, and ?? does not catch an empty
@@ -247,8 +231,6 @@ export function mapOrderList(input: unknown): unknown[] {
   return Array.isArray(rows) ? rows : [];
 }
 
-// ── Menu ─────────────────────────────────────────────────────────────────────
-
 export function mapMenuItem(input: unknown): MenuItem {
   const raw = asRaw(input);
   return {
@@ -262,7 +244,6 @@ export function mapMenuItem(input: unknown): MenuItem {
     // something the kitchen has turned off.
     available: bool(pick(raw, 'available', 'is_available'), false),
 
-    // No food_type on the wire yet; `undefined` means 'regular' per the type,
     // which is the packing rule already applied elsewhere.
     foodType: undefined,
   };

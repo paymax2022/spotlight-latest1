@@ -7,37 +7,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/fsm"
 )
 
-// ─── Business logistics ──────────────────────────────────────────────────────
-//
 // Business owner = a Paymax user with a business_accounts row (UNIQUE owner_id).
 // Billing modes:
 //   - prepaid_wallet: escrow per delivery on create; settle the courier split on
 //     proof-of-delivery (dropoff PIN and/or proof_url required).
 //   - monthly_invoice: no escrow; the delivery fare accrues to an open invoice on
 //     create and is rolled up at delivery time. Admin issues / marks-paid invoices.
-//
 // Delivery state: created → assigned → picked_up → delivered · (failed/cancelled).
 // Batch state:    created → dispatched → in_progress → completed/partially_failed
 //                 · (cancelled).
 
 // deliveryTransitions is the guarded delivery state machine.
-var deliveryTransitions = map[string]map[string]bool{
+var deliveryTransitions = fsm.Table[string]{
 	"created":   {"assigned": true, "cancelled": true},
 	"assigned":  {"picked_up": true, "failed": true, "cancelled": true},
 	"picked_up": {"delivered": true, "failed": true},
 }
 
 func canTransitionDelivery(from, to string) bool {
-	if from == to {
-		return false
-	}
-	m, ok := deliveryTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return deliveryTransitions.Can(from, to)
 }
 
 // deliverySizeMultiplier scales fare by declared parcel size.
@@ -75,8 +68,6 @@ type businessDeliveryRow struct {
 	DropoffPin   *string
 	SettlementID *string
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // BusinessAccountRequest is POST /mobility/business/accounts.
 type BusinessAccountRequest struct {
@@ -125,15 +116,10 @@ type FailRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 // deliveryFare computes a delivery fare from distance × duration × size, floored.
 func deliveryFare(distanceM, durationS int, size string, cfg *PricingConfig) int64 {
 	raw := SystemFare(distanceM, durationS, cfg)
-	scaled := int64(float64(raw) * deliverySizeMultiplier(size))
-	if scaled < cfg.MinFareKobo {
-		scaled = cfg.MinFareKobo
-	}
+	scaled := max(int64(float64(raw)*deliverySizeMultiplier(size)), cfg.MinFareKobo)
 	return scaled
 }
 
@@ -185,8 +171,6 @@ func (s *Service) accrueInvoice(ctx context.Context, businessID string, fareKobo
 	return err
 }
 
-// ─── Business account ────────────────────────────────────────────────────────
-
 // CreateBusinessAccount registers a business account for the owner (one per user).
 func (s *Service) CreateBusinessAccount(ctx context.Context, ownerID string, req BusinessAccountRequest) (map[string]any, error) {
 	accountType := req.AccountType
@@ -221,8 +205,6 @@ func (s *Service) BusinessAccountMe(ctx context.Context, ownerID string) (map[st
 		"billingMode": b.BillingMode, "codEnabled": b.CODEnabled, "status": b.Status,
 	}, nil
 }
-
-// ─── Single delivery ─────────────────────────────────────────────────────────
 
 // insertDelivery inserts one delivery row and applies the billing-mode rule:
 // prepaid_wallet → escrow (caller passes idemKey); monthly_invoice → accrue.
@@ -280,10 +262,10 @@ func (s *Service) insertDelivery(ctx context.Context, b *businessAccountRow, sto
 	if _, err := s.db.Exec(ctx, q,
 		deliveryID, batchID, b.ID, sequence, stop.Pickup.Address, stop.Pickup.Lat, stop.Pickup.Lng,
 		stop.Dropoff.Address, stop.Dropoff.Lat, stop.Dropoff.Lng, stop.ReceiverName, stop.ReceiverPhone, size,
-		stop.CODKobo, fare, dropoffPin, settlementID, nullStr(idempotencyKey),
+		stop.CODKobo, fare, dropoffPin, settlementID, dbutil.NullStr(idempotencyKey),
 	); err != nil {
 		if settlementID != nil {
-			s.settlement.Refund(ctx, settlementID.(string), "delivery_insert_failed")
+			_ = s.settlement.Refund(ctx, settlementID.(string), "delivery_insert_failed")
 		}
 		return "", fmt.Errorf("transport: insert delivery: %w", err)
 	}
@@ -360,8 +342,6 @@ func (s *Service) CreateBatch(ctx context.Context, ownerID string, req BusinessB
 	return s.BatchDetail(ctx, batchID, ownerID)
 }
 
-// ─── Reads (owner-scoped) ────────────────────────────────────────────────────
-
 // DeliveryDetail returns a delivery; owner sees PIN, assigned courier does not.
 func (s *Service) DeliveryDetail(ctx context.Context, id, callerID string) (map[string]any, error) {
 	const q = `
@@ -393,7 +373,7 @@ func (s *Service) DeliveryDetail(ctx context.Context, id, callerID string) (map[
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *courierID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *courierID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -569,12 +549,12 @@ func (s *Service) BusinessAnalytics(ctx context.Context, ownerID string) (map[st
 	}
 	var total, delivered, failed, cancelled int
 	var codDelivered, fareDelivered int64
-	s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1`, b.ID).Scan(&total)
-	s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1 AND status='delivered'`, b.ID).Scan(&delivered)
-	s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1 AND status='failed'`, b.ID).Scan(&failed)
-	s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1 AND status='cancelled'`, b.ID).Scan(&cancelled)
-	s.db.QueryRow(ctx, `SELECT COALESCE(SUM(cod_kobo),0) FROM business_deliveries WHERE business_id=$1 AND status='delivered'`, b.ID).Scan(&codDelivered)
-	s.db.QueryRow(ctx, `SELECT COALESCE(SUM(fare_kobo),0) FROM business_deliveries WHERE business_id=$1 AND status='delivered'`, b.ID).Scan(&fareDelivered)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1`, b.ID).Scan(&total)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1 AND status='delivered'`, b.ID).Scan(&delivered)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1 AND status='failed'`, b.ID).Scan(&failed)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE business_id=$1 AND status='cancelled'`, b.ID).Scan(&cancelled)
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(cod_kobo),0) FROM business_deliveries WHERE business_id=$1 AND status='delivered'`, b.ID).Scan(&codDelivered)
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(fare_kobo),0) FROM business_deliveries WHERE business_id=$1 AND status='delivered'`, b.ID).Scan(&fareDelivered)
 	successRate := 0.0
 	if total > 0 {
 		successRate = float64(delivered) / float64(total)
@@ -591,8 +571,6 @@ func (s *Service) BusinessAnalytics(ctx context.Context, ownerID string) (map[st
 	}, nil
 }
 
-// ─── Cancel (owner) ──────────────────────────────────────────────────────────
-
 // CancelDelivery refunds escrow (prepaid) or voids accrual (invoice), then
 // moves the delivery to cancelled. Owner only.
 func (s *Service) CancelDelivery(ctx context.Context, id, ownerID, reason string) error {
@@ -608,19 +586,19 @@ func (s *Service) CancelDelivery(ctx context.Context, id, ownerID, reason string
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your delivery")
 	}
 	if !canTransitionDelivery(d.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", d.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+d.Status)
 	}
 	if err := s.deliverySetStatus(ctx, id, d.Status, "cancelled"); err != nil {
 		return err
 	}
 	// Refund escrow (prepaid). For monthly_invoice, void the accrued fare.
 	if d.SettlementID != nil {
-		s.settlement.Refund(ctx, *d.SettlementID, "delivery_cancelled:"+reason)
+		_ = s.settlement.Refund(ctx, *d.SettlementID, "delivery_cancelled:"+reason)
 	} else {
 		s.voidAccrual(ctx, d.BusinessID, d.FareKobo)
 	}
 	if d.CourierID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *d.CourierID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *d.CourierID)
 	}
 	s.recordModeEvent(ctx, ownerID, "business.delivery_cancelled", "business_delivery", id, d.Status, "cancelled",
 		map[string]any{"reason": reason})
@@ -629,7 +607,7 @@ func (s *Service) CancelDelivery(ctx context.Context, id, ownerID, reason string
 
 // voidAccrual reverses an accrued fare on the open invoice (best-effort).
 func (s *Service) voidAccrual(ctx context.Context, businessID string, fareKobo int64) {
-	s.db.Exec(ctx,
+	_, _ = s.db.Exec(ctx,
 		`UPDATE business_invoices SET delivery_count=GREATEST(delivery_count-1,0), total_kobo=GREATEST(total_kobo-$2,0)
 		 WHERE business_id=$1 AND status='open'`,
 		businessID, fareKobo)
@@ -663,8 +641,6 @@ func (s *Service) deliverySetStatus(ctx context.Context, id, from, to string) er
 	}
 	return nil
 }
-
-// ─── Courier (driver) flows ──────────────────────────────────────────────────
 
 // OpenDeliveryRequests returns unassigned, created deliveries for couriers.
 func (s *Service) OpenDeliveryRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {
@@ -719,7 +695,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, id, driverUserID string) (
 	if tag.RowsAffected() == 0 {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "delivery already taken")
 	}
-	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, courierID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, courierID)
 	if d.BatchID != nil {
 		s.advanceBatchOnDispatch(ctx, *d.BatchID)
 	}
@@ -731,7 +707,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, id, driverUserID string) (
 // advanceBatchOnDispatch moves a batch created → dispatched → in_progress once a
 // stop is picked up by a courier (best-effort, idempotent).
 func (s *Service) advanceBatchOnDispatch(ctx context.Context, batchID string) {
-	s.db.Exec(ctx, `UPDATE delivery_batches SET status='dispatched' WHERE id=$1 AND status='created'`, batchID)
+	_, _ = s.db.Exec(ctx, `UPDATE delivery_batches SET status='dispatched' WHERE id=$1 AND status='created'`, batchID)
 }
 
 // MarkDeliveryPickedUp: assigned → picked_up (courier only).
@@ -747,7 +723,7 @@ func (s *Service) MarkDeliveryPickedUp(ctx context.Context, id, driverUserID str
 		return err
 	}
 	if d.BatchID != nil {
-		s.db.Exec(ctx, `UPDATE delivery_batches SET status='in_progress' WHERE id=$1 AND status IN ('created','dispatched')`, *d.BatchID)
+		_, _ = s.db.Exec(ctx, `UPDATE delivery_batches SET status='in_progress' WHERE id=$1 AND status IN ('created','dispatched')`, *d.BatchID)
 	}
 	s.recordModeEvent(ctx, driverUserID, "business.delivery_picked_up", "business_delivery", id, "assigned", "picked_up", nil)
 	return nil
@@ -776,7 +752,7 @@ func (s *Service) DeliverDelivery(ctx context.Context, id, driverUserID, dropoff
 	if err := s.deliverySetStatus(ctx, id, "picked_up", "delivered"); err != nil {
 		return err
 	}
-	s.db.Exec(ctx, `UPDATE business_deliveries SET proof_url=$1, updated_at=NOW() WHERE id=$2`, proofURL, id)
+	_, _ = s.db.Exec(ctx, `UPDATE business_deliveries SET proof_url=$1, updated_at=NOW() WHERE id=$2`, proofURL, id)
 
 	// Settle the courier split on prepaid escrow. Invoice-billed deliveries accrue
 	// (no per-delivery escrow), so settlement happens at invoice close.
@@ -786,7 +762,7 @@ func (s *Service) DeliverDelivery(ctx context.Context, id, driverUserID, dropoff
 		}
 	}
 	if d.CourierID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *d.CourierID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *d.CourierID)
 	}
 	s.recordModeEvent(ctx, driverUserID, "business.delivery_delivered", "business_delivery", id, "picked_up", "delivered",
 		map[string]any{"proof_url": proofURL})
@@ -804,20 +780,20 @@ func (s *Service) FailDelivery(ctx context.Context, id, driverUserID, reason str
 		return err
 	}
 	if !canTransitionDelivery(d.Status, "failed") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot fail from status %s", d.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot fail from status "+d.Status)
 	}
 	if err := s.deliverySetStatus(ctx, id, d.Status, "failed"); err != nil {
 		return err
 	}
-	s.db.Exec(ctx, `UPDATE business_deliveries SET failure_reason=$1, updated_at=NOW() WHERE id=$2`, reason, id)
+	_, _ = s.db.Exec(ctx, `UPDATE business_deliveries SET failure_reason=$1, updated_at=NOW() WHERE id=$2`, reason, id)
 	// No delivery → refund the escrow (prepaid) or void the accrual (invoice).
 	if d.SettlementID != nil {
-		s.settlement.Refund(ctx, *d.SettlementID, "delivery_failed:"+reason)
+		_ = s.settlement.Refund(ctx, *d.SettlementID, "delivery_failed:"+reason)
 	} else {
 		s.voidAccrual(ctx, d.BusinessID, d.FareKobo)
 	}
 	if d.CourierID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', updated_at=NOW() WHERE id=$1`, *d.CourierID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', updated_at=NOW() WHERE id=$1`, *d.CourierID)
 	}
 	s.recordModeEvent(ctx, driverUserID, "business.delivery_failed", "business_delivery", id, d.Status, "failed",
 		map[string]any{"failure_reason": reason})
@@ -831,11 +807,11 @@ func (s *Service) FailDelivery(ctx context.Context, id, driverUserID, reason str
 // any failed → partially_failed, else completed.
 func (s *Service) rollupBatch(ctx context.Context, batchID string) {
 	var total, terminal, failed int
-	s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE batch_id=$1`, batchID).Scan(&total)
-	s.db.QueryRow(ctx,
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE batch_id=$1`, batchID).Scan(&total)
+	_ = s.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM business_deliveries WHERE batch_id=$1 AND status IN ('delivered','failed','cancelled')`,
 		batchID).Scan(&terminal)
-	s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE batch_id=$1 AND status='failed'`, batchID).Scan(&failed)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM business_deliveries WHERE batch_id=$1 AND status='failed'`, batchID).Scan(&failed)
 	if total == 0 || terminal < total {
 		return // batch still in progress
 	}
@@ -843,7 +819,7 @@ func (s *Service) rollupBatch(ctx context.Context, batchID string) {
 	if failed > 0 {
 		final = "partially_failed"
 	}
-	s.db.Exec(ctx,
+	_, _ = s.db.Exec(ctx,
 		`UPDATE delivery_batches SET status=$1 WHERE id=$2 AND status NOT IN ('completed','partially_failed','cancelled')`,
 		final, batchID)
 }

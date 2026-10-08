@@ -1,8 +1,7 @@
-// ── Insurance (live) — tone → design token mapping ──────────────────────────
 // Categories carry an abstract `tone`, never a colour. This is the ONE place a
 // tone becomes a token, so no screen in the module ever hardcodes a hex value.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { Tone } from '../../live/catalog';
 
 export interface ToneTokens {

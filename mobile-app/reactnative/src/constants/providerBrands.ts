@@ -13,7 +13,6 @@ export type ProviderBrand = {
 };
 
 const BRANDS: { match: string[]; brand: ProviderBrand }[] = [
-  // ── Electricity DISCOs ──
   { match: ['eko'],                                   brand: { abbr: 'EKO',  color: '#5B2A86', domain: 'ekedp.com' } },
   { match: ['ikeja'],                                 brand: { abbr: 'IKE',  color: '#C81E2D', domain: 'ikejaelectric.com' } },
   { match: ['abuja'],                                 brand: { abbr: 'ABJ',  color: '#0F5BA8', domain: 'abujaelectricity.com' } },
@@ -27,7 +26,6 @@ const BRANDS: { match: string[]; brand: ProviderBrand }[] = [
   { match: ['aba'],                                   brand: { abbr: 'ABA',  color: '#1565C0' } },
   { match: ['yola', 'yedc'],                          brand: { abbr: 'YOL',  color: '#00897B' } },
 
-  // ── Telco (airtime + data) ──
   { match: ['mtn'],                                   brand: { abbr: 'MTN',  color: '#B8860B', domain: 'mtn.ng' } },
   { match: ['airtel'],                                brand: { abbr: 'AIR',  color: '#E40000', domain: 'airtel.com.ng' } },
   { match: ['glo'],                                   brand: { abbr: 'GLO',  color: '#00A651', domain: 'gloworld.com' } },
@@ -35,13 +33,11 @@ const BRANDS: { match: string[]; brand: ProviderBrand }[] = [
   { match: ['smile'],                                 brand: { abbr: 'SML',  color: '#00B5E2', domain: 'smile.com.ng' } },
   { match: ['spectranet'],                            brand: { abbr: 'SPE',  color: '#ED1C24', domain: 'spectranet.com.ng' } },
 
-  // ── Cable TV ──
   { match: ['dstv'],                                  brand: { abbr: 'DTV',  color: '#0072CE', domain: 'dstv.com' } },
   { match: ['gotv'],                                  brand: { abbr: 'GO',   color: '#E20A17', domain: 'gotvafrica.com' } },
   { match: ['startime'],                              brand: { abbr: 'ST',   color: '#E2231A', domain: 'startimestv.com' } },
   { match: ['showmax'],                               brand: { abbr: 'SHW',  color: '#E50914', domain: 'showmax.com' } },
 
-  // ── Education ──
   { match: ['waec'],                                  brand: { abbr: 'WAEC', color: '#1B5E20', domain: 'waecnigeria.org' } },
   { match: ['jamb'],                                  brand: { abbr: 'JAMB', color: '#0D47A1', domain: 'jamb.gov.ng' } },
   { match: ['neco'],                                  brand: { abbr: 'NECO', color: '#4A148C', domain: 'neco.gov.ng' } },
@@ -62,14 +58,12 @@ export function getProviderBrand(code: string, name: string): ProviderBrand {
 // External logo sources for a provider domain, tried in order by <ProviderLogo />
 // (after the authoritative VTPass `logoUri`) and falling back to the branded
 // colour badge only if all fail.
-//
 // We use DuckDuckGo's icon service, which returns the site's real favicon — or a
 // neutral fallback — with a 200. This is the key difference from Google's
 // s2/gstatic faviconV2 services (used previously), which HARD-404 for any domain
 // without an indexed icon (e.g. mtn.ng), flooding the browser console with
 // `GET …/faviconV2… 404`. DuckDuckGo never 404s, so real logos show with zero
 // console noise. (Clearbit was already removed here — it was discontinued.)
-//
 // For pixel-perfect brand logos, prefer bundling local assets over any remote
 // service; this remote path is the zero-config fallback that works everywhere.
 export function providerLogoSources(domain?: string): string[] {

@@ -56,7 +56,8 @@ export async function POST(request: Request) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return errorResponse('AI assistant is not configured', 503);
 
-    const body = (await request.json()) as Body;
+    const body = (await request.json().catch(() => null)) as Body;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const aiRes = await fetch(ANTHROPIC_URL, {
       method: 'POST',

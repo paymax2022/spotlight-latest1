@@ -1,11 +1,7 @@
-// ── K15 — reusable step-up gate ──────────────────────────────────────────────
 // Drop this in front of any sensitive action (large transfer, card issue, etc.).
 // It reads the user's current KYC tier and, if it's below `requiredTier`, routes
 // into the kyc-verify flow targeting exactly that tier. Otherwise `ensure()`
 // resolves true and the caller proceeds.
-//
-//   const stepUp = useKycStepUp(2);
-//   const onSend = async () => { if (!(await stepUp.ensure())) return; doSend(); };
 
 import { useCallback } from 'react';
 import { router, usePathname, useGlobalSearchParams } from 'expo-router';

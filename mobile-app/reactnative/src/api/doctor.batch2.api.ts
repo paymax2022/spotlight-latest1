@@ -1,20 +1,14 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 2 API client ────────────────
-// Batch 2 = spec sections G, H, I, J. Phase A style: every function resolves
 // demo data so screens render without a live API. `DEMO_*` exports double as
 // `placeholderData` in useQuery. ADDITIVE to `@/api/doctor.api`,
 // `@/api/doctor.phase2.api`, `@/api/doctor.profile.api`, `@/api/doctor.phase3.api`
 // and `@/api/doctor.batch1.api` — earlier fns/exports are untouched.
-//
-// Sections: G patient profile review (PatientFullProfile), H chat consultation
 // (ChatMessageRich + presence + transcript), I audio/video call (CallSessionRich
 // + device check + feedback + dispute), J clinical notes & diagnosis
 // (ClinicalNote + DiagnosisCode catalogue).
-//
 // TODO(Phase C): replace each body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/patients/:id/full'); return res.data.data;
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import {
   DEMO_PATIENT_PROFILE,
   DEMO_CHAT_MESSAGES,
@@ -79,9 +73,7 @@ const wait = <T>(value: T, ms = 350): Promise<T> =>
 
 const iso = (offsetMs = 0): string => new Date(Date.now() + offsetMs).toISOString();
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION G — PATIENT PROFILE REVIEW
-// ═══════════════════════════════════════════════════════════════════════════
 
 // The full profile COMPOSES the Phase 1 `DEMO_PATIENT_PROFILE` (reused as
 // `base`) and adds the richer Section G review data on top.
@@ -204,9 +196,7 @@ export async function getPatientFullProfile(patientId: string): Promise<PatientF
   return doctorGet<PatientFullProfile>(`/patients/${patientId}/full-profile`);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION H — CHAT CONSULTATION
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Rich messages COMPOSE the Phase 1 `DEMO_CHAT_MESSAGES` (reused as `base`) and
 // add kind/delivery metadata. Extra Batch 2 message kinds (voice, image, shared)
@@ -347,9 +337,7 @@ export async function endChat(input: EndChatInput): Promise<EndChatResult> {
   return doctorPost<EndChatResult>(`/chat/${input.threadId}/end`, input, input.idempotencyKey);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION I — AUDIO & VIDEO CONSULTATION
-// ═══════════════════════════════════════════════════════════════════════════
 
 const DEMO_DEVICE_CHECK = {
   cameraOk: true, micOk: true, networkOk: true,
@@ -364,7 +352,7 @@ export const DEMO_CALL_SESSION_RICH: CallSessionRich = {
     roomToken: 'demo-room-token',
   },
   phase: 'live',
-  provider: 'agora',
+  provider: 'videosdk',
   providerFailed: false,
   networkQuality: 'good',
   device: DEMO_DEVICE_CHECK,
@@ -419,7 +407,7 @@ export async function runDeviceCheck(input: RunDeviceCheckInput): Promise<RunDev
 export async function joinCall(input: JoinCallInput): Promise<JoinCallResult> {
   if (DOCTOR_USE_MOCK) {
     return wait({
-      callId: `call-${Date.now()}`, provider: 'agora' as const, phase: 'live' as const,
+      callId: `call-${Date.now()}`, provider: 'videosdk' as const, phase: 'live' as const,
       roomToken: `room-${input.idempotencyKey.slice(-8)}`,
     }, 600);
   }
@@ -432,7 +420,7 @@ export async function leaveCall(input: LeaveCallInput): Promise<LeaveCallResult>
     const summary: CallDurationSummary = {
       appointmentId: input.appointmentId,
       patient: DEMO_PATIENT_PROFILE.patient,
-      provider: 'agora', mode: 'video', durationSecs: 1320,
+      provider: 'videosdk', mode: 'video', durationSecs: 1320,
       startedAt: iso(-1320 * 1000), endedAt, endedReason: 'completed',
     };
     return wait({ appointmentId: input.appointmentId, phase: 'ended' as const, summary }, 500);
@@ -442,7 +430,7 @@ export async function leaveCall(input: LeaveCallInput): Promise<LeaveCallResult>
 
 export async function switchProvider(input: SwitchProviderInput): Promise<SwitchProviderResult> {
   if (DOCTOR_USE_MOCK) {
-    // Models the Agora → VideoSDK fallback. Phase transitions reconnecting → live.
+    // Re-joins the call on VideoSDK (the only provider). Phase transitions reconnecting → live.
     return wait({ appointmentId: input.appointmentId, provider: input.to, phase: 'live' as const }, 700);
   }
   return doctorPost<SwitchProviderResult>(`/calls/${input.appointmentId}/switch-provider`, input, input.idempotencyKey);
@@ -478,11 +466,8 @@ export const DEMO_CALL_FEEDBACK: CallQualityFeedback = {
   comment: 'Clear audio and video throughout.', submittedAt: iso(-2 * 86400000),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION J — CONSULTATION NOTES & DIAGNOSIS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// The ICD-lite catalogue lives in constants/batch2 (`ICD_CODES`); the diagnosis
 // search is a pure client-side filter so the UI can search without a round-trip.
 export function searchDiagnosisCodes(query: string): DiagnosisCode[] {
   const q = query.trim().toLowerCase();

@@ -6,14 +6,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
-// ─── Admin: business logistics + event transport (audited) ───────────────────
-//
 // Generic, audited list/status helpers for business accounts, deliveries,
 // invoices, event offers and event bookings. Every mutation calls writeAudit.
-
-// ── Business accounts ────────────────────────────────────────────────────────
 
 // ListBusinessAccounts (admin) lists business accounts filtered by status.
 func (a *AdminService) ListBusinessAccounts(ctx context.Context, status string) ([]map[string]any, error) {
@@ -60,8 +59,6 @@ func (a *AdminService) SetBusinessAccountStatus(ctx context.Context, adminID, id
 		map[string]any{"status": oldStatus}, map[string]any{"status": req.Status}, req.Reason)
 }
 
-// ── Deliveries ───────────────────────────────────────────────────────────────
-
 // ListBusinessDeliveries (admin) lists deliveries filtered by status.
 func (a *AdminService) ListBusinessDeliveries(ctx context.Context, status string) ([]map[string]any, error) {
 	db := a.svc.db
@@ -107,8 +104,6 @@ func (a *AdminService) SetDeliveryStatus(ctx context.Context, adminID, id string
 	return writeAudit(ctx, db, adminID, "business_delivery.status", "business_delivery", id,
 		map[string]any{"status": oldStatus}, map[string]any{"status": req.Status}, req.Reason)
 }
-
-// ── Invoices ─────────────────────────────────────────────────────────────────
 
 // ListBusinessInvoices (admin) lists invoices filtered by status.
 func (a *AdminService) ListBusinessInvoices(ctx context.Context, status string) ([]map[string]any, error) {
@@ -173,8 +168,6 @@ func (a *AdminService) transitionInvoice(ctx context.Context, adminID, id, from,
 		map[string]any{"status": oldStatus}, map[string]any{"status": to}, reason)
 }
 
-// ── Event offers / bookings ──────────────────────────────────────────────────
-
 // ListEventOffersAdmin (admin) lists event offers filtered by status.
 func (a *AdminService) ListEventOffersAdmin(ctx context.Context, status string) ([]map[string]any, error) {
 	db := a.svc.db
@@ -238,7 +231,7 @@ func (a *AdminService) ListEventBookingsAdmin(ctx context.Context, status string
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, offerID, uid, status string
 		var ticketRef *string
@@ -256,8 +249,6 @@ func (a *AdminService) ListEventBookingsAdmin(ctx context.Context, status string
 	return out, nil
 }
 
-// ─── Admin handlers ──────────────────────────────────────────────────────────
-
 func (h *AdminHandler) AdminBusinessAccountsList(c *gin.Context) {
 	accts, err := h.svc.ListBusinessAccounts(c.Request.Context(), c.Query("status"))
 	if err != nil {
@@ -268,10 +259,10 @@ func (h *AdminHandler) AdminBusinessAccountsList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminBusinessAccountStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetBusinessAccountStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -291,10 +282,10 @@ func (h *AdminHandler) AdminBusinessDeliveriesList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminBusinessDeliveryStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetDeliveryStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -314,8 +305,8 @@ func (h *AdminHandler) AdminBusinessInvoicesList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminBusinessInvoiceIssue(c *gin.Context) {
-	adminID := c.GetString("user_id")
-	var req CancelRequest // reuse {reason}
+	adminID := ginutil.UserID(c)
+	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.IssueInvoice(c.Request.Context(), adminID, c.Param("id"), req.Reason); err != nil {
 		respondErr(c, err)
@@ -325,8 +316,8 @@ func (h *AdminHandler) AdminBusinessInvoiceIssue(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminBusinessInvoiceMarkPaid(c *gin.Context) {
-	adminID := c.GetString("user_id")
-	var req CancelRequest // reuse {reason}
+	adminID := ginutil.UserID(c)
+	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.MarkInvoicePaid(c.Request.Context(), adminID, c.Param("id"), req.Reason); err != nil {
 		respondErr(c, err)
@@ -345,10 +336,10 @@ func (h *AdminHandler) AdminEventOffersList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminEventOfferStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetEventOfferStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {

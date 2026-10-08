@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -175,7 +175,6 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.containerMargin, gap: Spacing.md, paddingBottom: Spacing.xxl },
   intro:   { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
 
-  // ── Paid badge ──────────────────────────────────────────────────────────────
   paidBadge: {
     flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm,
     backgroundColor: Colors.iconBgTeal, borderRadius: Radius.xl,
@@ -185,7 +184,6 @@ const styles = StyleSheet.create({
   paidRef:    { ...Typography.labelSm, color: Colors.onSurface, marginTop: 2 },
   paidMethod: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 1 },
 
-  // ── Unpaid / payment required badge ────────────────────────────────────────
   unpaidBadge: {
     backgroundColor: Colors.iconBgGold, borderRadius: Radius.xl,
     padding: Spacing.md, borderWidth: 1, borderColor: Colors.gold, gap: 4,
@@ -193,7 +191,6 @@ const styles = StyleSheet.create({
   unpaidTitle: { ...Typography.labelMd, color: Colors.onSurface },
   unpaidBody:  { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20 },
 
-  // ── Section cards ───────────────────────────────────────────────────────────
   section: {
     backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl,
     padding: Spacing.lg, borderWidth: 1, borderColor: Colors.outlineVariant, gap: Spacing.sm,
@@ -203,7 +200,6 @@ const styles = StyleSheet.create({
   rowLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant, flex: 1 },
   rowValue: { ...Typography.labelMd, color: Colors.onSurface, flex: 1, textAlign: 'right' },
 
-  // ── File/image preview row ────────────────────────────────────────────────
   fileRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.md, paddingVertical: 4 },
   previewWrap: { alignItems: 'flex-end', gap: 4, flexShrink: 1 },
   preview:     { width: 96, height: 96, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerHigh, borderWidth: 1, borderColor: Colors.outlineVariant },

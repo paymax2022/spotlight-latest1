@@ -1,6 +1,4 @@
 // Pure-logic unit tests for bookmark list operations.
-// Run: npm run test:academy
-//
 // Bug this supports: there was no addBookmark at all (only get/remove), and the
 // transcript screen's bookmark toggle was local useState — nothing persisted, and
 // nothing prevented duplicate bookmarks for the same lesson. upsertBookmark dedups

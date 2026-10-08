@@ -1,4 +1,3 @@
-// ── Paymax Invest · Settings — Mock dataset ──────────────────────────────────
 // In-memory fixtures the mock API mutates so add/remove/revoke/create flows feel
 // live. Mirrors crypto.mock.ts: plain exported arrays + a few seed records.
 

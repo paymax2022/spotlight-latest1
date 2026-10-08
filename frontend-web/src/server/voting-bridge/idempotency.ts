@@ -3,8 +3,39 @@
  * Prevents duplicate votes from concurrent requests
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
+import { createHash } from 'node:crypto';
+
+/**
+ * Bind a caller-supplied idempotency key to the authenticated user and the
+ * operation's material parameters before it touches any store.
+ *
+ * The raw client key is attacker/user-controlled and nothing scopes it: two
+ * users submitting the same key would collide on the same claim row, and the
+ * second could receive the FIRST user's cached vote result — or be absorbed by
+ * a claim describing a different purchase entirely. Binding key = scope + user
+ * + hash(contest/contestant/votes/amount…) means a replay only dedupes the
+ * operation it actually described; a key reused across users or payloads gets
+ * its own claim and executes as the distinct operation it is.
+ */
+export function boundClaimKey(
+  scope: string,
+  userId: string,
+  clientKey: string,
+  fingerprint: Record<string, string | number>,
+): string {
+  const fp = createHash('sha256')
+    .update(
+      Object.keys(fingerprint)
+        .sort()
+        .map((k) => `${k}=${fingerprint[k]}`)
+        .join('|'),
+    )
+    .digest('hex')
+    .slice(0, 16);
+  return `${scope}:${userId}:${clientKey}:${fp}`;
+}
 
 /**
  * How long a duplicate waits for the in-flight original to publish its result.
@@ -13,6 +44,15 @@ import { ApiError } from '@/src/lib/api/responses';
  */
 const CLAIM_WAIT_ATTEMPTS = 10;
 const CLAIM_WAIT_INTERVAL_MS = 100;
+
+/**
+ * A claim row whose owner died before publishing a result stays '{}' forever —
+ * and without this, the wait-then-409 path below would refuse that key
+ * permanently (cleanupExpiredKeys has no live caller). Claims older than this
+ * are treated as dead and reclaimed by the next attempt with the same key.
+ * 5 minutes is far beyond a normal vote round-trip.
+ */
+const CLAIM_STALE_MS = 5 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -24,7 +64,6 @@ export async function checkAndClaimIdempotencyKey(key: string) {
 
   try {
     // Try to insert the key with an empty response
-    // If it already exists, return the existing result
     const { data, error } = await supabase
       .from('bridge_idempotency_keys')
       .insert({
@@ -39,13 +78,12 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       if (error.code === '23505') {
         // The winner publishes its response only AFTER the vote completes, so a
         // duplicate arriving concurrently used to read the placeholder `{}`, fall
-        // through to `return null`, and cast a SECOND vote. The dedupe was real
         // for sequential retries and absent for concurrent ones — exactly the
         // case an idempotency key exists to cover. Wait for the winner instead.
         for (let attempt = 0; attempt < CLAIM_WAIT_ATTEMPTS; attempt++) {
           const { data: existing } = await supabase
             .from('bridge_idempotency_keys')
-            .select('response')
+            .select('response, created_at')
             .eq('key', key)
             .single();
 
@@ -55,10 +93,25 @@ export async function checkAndClaimIdempotencyKey(key: string) {
           await sleep(CLAIM_WAIT_INTERVAL_MS);
         }
 
-        // Still nothing: the original is wedged or died before publishing. Refuse
-        // rather than proceed — proceeding is precisely the double-vote this
-        // guards. This is recoverable: a fresh submission mints a new key (see
-        // VoteModal), so only a retry reusing THIS key is refused.
+        // Still nothing. If the claim is recent the original may be wedged —
+        // refuse rather than double-vote. If it is STALE the owner is dead and
+        // the placeholder is garbage: reclaim it so the key isn't bricked
+        // forever (the atomic vote RPCs still bound any true duplicate).
+        const { data: stale } = await supabase
+          .from('bridge_idempotency_keys')
+          .select('created_at')
+          .eq('key', key)
+          .single();
+
+        if (stale?.created_at && Date.now() - new Date(stale.created_at).getTime() > CLAIM_STALE_MS) {
+          await supabase.from('bridge_idempotency_keys').delete().eq('key', key);
+          const { error: retryErr } = await supabase
+            .from('bridge_idempotency_keys')
+            .insert({ key, response: {} });
+          if (!retryErr) return null;
+          // Lost the reclaim race or insert still failing → fall through to 409.
+        }
+
         throw new ApiError(
           'This vote is already being processed. Please try again.',
           409,
@@ -68,11 +121,9 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       return null;
     }
 
-    // Key was inserted successfully — continue to call the function
     return null;
   } catch (error) {
     // The 409 above is a DECISION, not a failure. This catch's fail-open policy
-    // (below) would swallow it back into `return null` and let the duplicate
     // vote — reinstating the exact hole the wait closes. Let it through.
     if (error instanceof ApiError) throw error;
     console.error('[Idempotency] checkAndClaimIdempotencyKey error:', error);

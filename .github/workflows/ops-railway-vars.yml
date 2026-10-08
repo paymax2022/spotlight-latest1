@@ -1,0 +1,203 @@
+name: Ops - set Railway variables
+
+# Generic, guarded writer for Railway service variables. workflow_dispatch ONLY —
+# nothing here runs on push.
+#
+# WHY THIS EXISTS
+# Every hand-set variable so far has been a source of silent failure: wrong
+# service, wrong environment, a trailing newline, or a value that "took" but was
+# never picked up because the process was never restarted. This workflow removes
+# the dashboard from the loop: one dispatch writes N variables to ONE service in
+# ONE environment, verifies each key landed (names + hashes, never values), and
+# redeploys so the process actually reads them.
+#
+# ── SECRET DISCIPLINE ─────────────────────────────────────────────────────────
+# - Each value is piped via `railway variable set KEY --stdin`, so it never
+#   appears in a command line or process list, and `::add-mask::` is emitted for
+#   each value first so an echoed CLI error cannot leak it.
+# - Verification prints only the key NAME plus length and a short sha256 prefix —
+#   enough to prove the intended value landed without printing it. This is the
+#   doctrine staging-inspect.yml established after `railway variable list --kv`
+#   leaked ADMIN_API_KEY into a job log (run 32545670584).
+# - CAVEAT: workflow_dispatch inputs are visible in the run's input pane to
+#   anyone with repo access. Treat every value pasted here as disclosed to repo
+#   collaborators; for high-sensitivity credentials prefer writing from a repo
+#   secret (see set-insurance-key in staging-module-flags.yml) or rotate after.
+#
+# ── WHAT A WRITE DOES NOT DO ──────────────────────────────────────────────────
+# - NEXT_PUBLIC_* / build-time vars: Next inlines them at BUILD time. The
+#   redeploy below restarts the SAME image, so the new value only reaches the
+#   bundle after a `railway up` rebuild (ci.yml deploy, or the pattern in
+#   staging-module-flags.yml's fix-proxy job). The verify step warns when a
+#   NEXT_PUBLIC_* key was written.
+# - A variable write does nothing until the service restarts — that is what the
+#   `restart` input (default on) is for.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Railway environment to write to'
+        required: true
+        type: choice
+        options: [production, staging, development]
+      service:
+        description: 'Railway service to write to'
+        required: true
+        type: choice
+        options: [backend, frontend-web, frontend-admin]
+      vars:
+        description: 'KEY=VALUE, one per line (# comments and blank lines allowed). Values are never echoed.'
+        required: true
+        type: string
+      confirm:
+        description: 'Type SET to confirm the write'
+        required: true
+        type: string
+      restart:
+        description: 'Redeploy the service afterwards so the new variables take effect'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # One writer per service+environment at a time — concurrent writes to the same
+  # target race the redeploy and make the read-back verification unreliable.
+  group: ops-railway-vars-${{ inputs.environment }}-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  set-vars:
+    name: set variables on ${{ inputs.service }} (${{ inputs.environment }})
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: ${{ inputs.service }}
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      # The token is selected per-environment with an explicit case, not a
+      # chained &&/|| expression: a missing secret in a ternary falls THROUGH to
+      # the next branch, which would write to this environment authenticated as
+      # a different one. A case has no silent default.
+      - name: Resolve the per-environment Railway token
+        env:
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            production)  tok="$TOK_PRODUCTION" ;;
+            staging)     tok="$TOK_STAGING" ;;
+            development) tok="$TOK_DEVELOPMENT" ;;
+            *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
+          esac
+          if [ -z "$tok" ]; then
+            echo "::error::missing repo secret RAILWAY_TOKEN_$(printf '%s' "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')"
+            exit 1
+          fi
+          printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          unset tok
+          echo "  token resolved for $ENVIRONMENT (value never printed)"
+
+      # Pinned to the same version ci.yml deploys with, so the CLI that writes
+      # configuration and the CLI that ships code cannot disagree.
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # The input arrives via env, not script interpolation — a value containing
+      # shell metacharacters must be data, never code. Validation rejects
+      # malformed lines BEFORE anything is written so a bad line cannot leave
+      # the target half-updated.
+      - name: Write each KEY=VALUE (values piped via --stdin, never echoed)
+        env:
+          VARS_INPUT: ${{ inputs.vars }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VARS_INPUT" > vars.txt
+          # Pass 1: validate every line before writing anything.
+          count=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            key="${line%%=*}"
+            if [ "$key" = "$line" ]; then
+              echo "::error::line has no '=': ${line:0:32}..."
+              exit 1
+            fi
+            if ! printf '%s' "$key" | grep -qE '^[A-Z_][A-Z0-9_]{0,127}$'; then
+              echo "::error::invalid variable name: $key"
+              exit 1
+            fi
+            value="${line#*=}"
+            if [ -z "$value" ]; then
+              echo "::error::$key has an empty value (delete is a separate deliberate act)"
+              exit 1
+            fi
+            count=$((count + 1))
+          done < vars.txt
+          echo "  $count variable(s) validated for $SERVICE/$ENVIRONMENT"
+          # Pass 2: write. --stdin keeps the value out of argv; add-mask keeps an
+          # echoed CLI error from printing it.
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            key="${line%%=*}"
+            value="${line#*=}"
+            echo "::add-mask::$value"
+            printf '%s' "$value" | railway variable set "$key" --stdin \
+              --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+              --skip-deploys
+            echo "  wrote $key"
+          done < vars.txt
+
+      # Read-back proof. --json ONLY, never --kv (prints raw values — that is how
+      # ADMIN_API_KEY leaked before). For each key we report presence, length and
+      # a short sha256 prefix so the dispatcher can compare against a locally
+      # computed digest of the intended value. Values themselves never print.
+      - name: Verify every key landed (names + hashes only)
+        env:
+          VARS_INPUT: ${{ inputs.vars }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VARS_INPUT" | grep -vE '^\s*(#|$)' | cut -d= -f1 | tr -d '\r' > keys.txt
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            let vars;
+            try { vars = JSON.parse(fs.readFileSync("vars.json", "utf8")); }
+            catch { console.error("Unparseable variable list - refusing to print it (it holds every variable in the clear)."); process.exit(1); }
+            const keys = fs.readFileSync("keys.txt", "utf8").split("\n").map((k) => k.trim()).filter(Boolean);
+            const bad = [];
+            let sawPublic = false;
+            for (const k of keys) {
+              const v = vars[k];
+              if (v === undefined) { console.log(`  BAD  ${k}: NOT SET`); bad.push(k); continue; }
+              const s = String(v);
+              const dig = crypto.createHash("sha256").update(s).digest("hex").slice(0, 8);
+              console.log(`  OK   ${k}: set (len ${s.length}, sha256 ${dig})`);
+              if (k.startsWith("NEXT_PUBLIC_")) sawPublic = true;
+            }
+            if (bad.length) { console.error(`\n${bad.length} variable(s) did not land: ${bad.join(", ")}`); process.exit(1); }
+            if (sawPublic) {
+              console.log("\n  NOTE: NEXT_PUBLIC_* values are inlined at BUILD time.");
+              console.log("  The restart below does NOT ship them — a `railway up` rebuild is required.");
+            }
+          '
+
+      # Variables only reach the process on restart. A plain redeploy reuses the
+      # image (correct for runtime vars); NEXT_PUBLIC_* still needs a source
+      # rebuild, which the verify step already warned about.
+      - name: Redeploy so the new variables take effect
+        if: ${{ inputs.restart }}
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+          echo "  redeploy TRIGGERED - verify with the ops-railway-vars-list or"
+          echo "  staging-inspect workflow once the deployment reaches SUCCESS."

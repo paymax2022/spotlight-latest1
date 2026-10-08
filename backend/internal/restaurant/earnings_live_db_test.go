@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for payouts completeness (Phase 17): the KYB-verified
 // payout gate (PY-007), refunded settlements excluded (PY-005), and the earnings
 // statement (PY-008). Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

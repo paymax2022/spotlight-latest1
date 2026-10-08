@@ -1,4 +1,3 @@
-// ── Doctor module — Phase 3 constants ────────────────────────────────────────
 // Static option lists for the Phase 3 provider-side screens (veterinary mode,
 // AI assistance, practice management). Pure data only — no money math. Money is
 // always integers in kobo. ADDITIVE to `@/features/doctor/constants`
@@ -17,8 +16,6 @@ import type {
   AnalyticsPeriod,
   ClinicRole,
 } from '@/types/doctor.phase3';
-
-// ─── Pet species & breeds ────────────────────────────────────────────────────
 
 export const PET_SPECIES_OPTIONS: { value: PetSpecies; label: string }[] = [
   { value: 'dog',       label: 'Dog' },
@@ -48,8 +45,6 @@ export const PET_BREED_OPTIONS: Record<PetSpecies, string[]> = {
   other:     ['Unspecified'],
 };
 
-// ─── Pet drug catalogue (weight-based dosing) ────────────────────────────────
-
 export const PET_DRUG_CATEGORY_LABELS: Record<PetDrugCategory, string> = {
   antibiotic:     'Antibiotic',
   antiparasitic:  'Antiparasitic',
@@ -71,8 +66,6 @@ export const PET_DRUG_CATALOGUE: PetDrug[] = [
   { id: 'pd-gluco',  name: 'Glucosamine',       category: 'supplement',    dosePerKgMgLow: 8,  dosePerKgMgHigh: 10, defaultFrequency: 'Once daily',   contraindicatedSpecies: [],                   warnings: [] },
 ];
 
-// ─── Pet lab tests ───────────────────────────────────────────────────────────
-
 export const PET_LAB_CATEGORY_LABELS: Record<string, string> = {
   blood:   'Blood',
   stool:   'Stool',
@@ -92,8 +85,6 @@ export const PET_LAB_TESTS: PetLabTest[] = [
   { id: 'plt-us',    name: 'Abdominal Ultrasound', code: 'US',   category: 'imaging' },
   { id: 'plt-skin',  name: 'Skin Scrape (Cytology)', code: 'SKN', category: 'skin' },
 ];
-
-// ─── Pet store product categories ────────────────────────────────────────────
 
 export const PET_PRODUCT_CATEGORIES: { value: PetProductCategory; label: string }[] = [
   { value: 'food',       label: 'Food' },
@@ -116,8 +107,6 @@ export const PET_WARNING_SEVERITY_TONES: Record<PetWarningSeverity, string> = {
   caution: '#F59E0B',
   danger:  '#EF4444',
 };
-
-// ─── AI — status, severity & finding-kind labels/tones ───────────────────────
 
 export const AI_STATUS_LABELS: Record<AiStatus, string> = {
   idle:       'Not generated',
@@ -154,16 +143,12 @@ export const AI_FINDING_KIND_LABELS: Record<AiFindingKind, string> = {
   allergy:          'Allergy',
 };
 
-// ─── Analytics periods ───────────────────────────────────────────────────────
-
 export const ANALYTICS_PERIOD_OPTIONS: { value: AnalyticsPeriod; label: string }[] = [
   { value: '7d',  label: 'Last 7 days' },
   { value: '30d', label: 'Last 30 days' },
   { value: '90d', label: 'Last 90 days' },
   { value: '12m', label: 'Last 12 months' },
 ];
-
-// ─── Clinic roles ────────────────────────────────────────────────────────────
 
 export const CLINIC_ROLE_OPTIONS: { value: ClinicRole; label: string }[] = [
   { value: 'owner',      label: 'Owner' },

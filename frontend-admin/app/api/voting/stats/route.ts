@@ -1,18 +1,28 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminSession } from '../../_lib/require-admin-session';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+let _supabase: SupabaseClient | null = null;
+function supabase(): SupabaseClient {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+  }
+  return _supabase;
+}
 
 export async function GET(req: NextRequest) {
   try {
+    if (!(await requireAdminSession(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { searchParams } = new URL(req.url);
     const contestantId = searchParams.get('contestantId');
     const competitionId = searchParams.get('competitionId');
 
-    let query = supabase.from('contestant_vote_stats').select('*');
+    let query = supabase().from('contestant_vote_stats').select('*');
 
     if (contestantId) {
       query = query.eq('contestant_id', contestantId);

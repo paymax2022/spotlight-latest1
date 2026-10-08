@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/timeutil"
 )
 
 // WebhookEmitter delivers signed, normalized Paymax events to a caller endpoint
@@ -41,25 +43,25 @@ func (e *WebhookEmitter) OutboundEndpoint() string {
 // SignPayload returns the hex HMAC-SHA256 of `t.payload` under secret.
 func SignPayload(secret string, t int64, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d.", t)))
+	_, _ = fmt.Fprintf(mac, "%d.", t)
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // Event is the normalized outbound webhook envelope (spec §5.7).
 type Event struct {
-	ID      string      `json:"id"`
-	Type    string      `json:"type"`
-	Created string      `json:"created"`
-	Data    interface{} `json:"data"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Created string `json:"created"`
+	Data    any    `json:"data"`
 }
 
 // Emit signs and POSTs a normalized event. No-op when unconfigured.
-func (e *WebhookEmitter) Emit(ctx context.Context, eventType string, data interface{}) error {
+func (e *WebhookEmitter) Emit(ctx context.Context, eventType string, data any) error {
 	if e == nil || e.endpoint == "" || e.secret == "" {
 		return nil
 	}
-	evt := Event{ID: newID("evt"), Type: eventType, Created: time.Now().UTC().Format(time.RFC3339), Data: data}
+	evt := Event{ID: newID("evt"), Type: eventType, Created: timeutil.RFC3339(time.Now()), Data: data}
 	payload, err := json.Marshal(evt)
 	if err != nil {
 		return err
@@ -76,7 +78,7 @@ func (e *WebhookEmitter) Emit(ctx context.Context, eventType string, data interf
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("orchestration: webhook delivery to %s returned %d", e.endpoint, resp.StatusCode)
 	}
@@ -153,12 +155,20 @@ func (s *Service) HandleProviderEvent(ctx context.Context, providerName string, 
 	isTransfer := strings.HasPrefix(ref, "PMX-TR") || ev.Data.Type == "transfer"
 	if isTransfer {
 		canon := canonTransferStatus(raw)
-		_ = s.store.UpdateTransferStatus(ctx, ref, canon)
-		s.emit(ctx, "transfer."+canon, map[string]interface{}{"reference": ref, "status": canon, "provider": providerName})
+		if canon == string(TransferFailed) || canon == string(TransferReversed) {
+			// Terminal non-success: unwind the source debit — status flip, wallet
+			// credit, and reversal legs commit atomically inside RefundTransfer.
+			if _, err := s.store.RefundTransfer(ctx, ref, canon); err != nil {
+				return err // transient store errors surface so the provider redelivers
+			}
+		} else {
+			_ = s.store.UpdateTransferStatus(ctx, ref, canon)
+		}
+		s.emit(ctx, "transfer."+canon, map[string]any{"reference": ref, "status": canon, "provider": providerName})
 	} else {
 		canon := canonConversionStatus(raw)
 		_ = s.store.UpdateConversionStatus(ctx, ref, canon)
-		s.emit(ctx, "conversion."+canon, map[string]interface{}{"reference": ref, "status": canon, "provider": providerName})
+		s.emit(ctx, "conversion."+canon, map[string]any{"reference": ref, "status": canon, "provider": providerName})
 	}
 	return nil
 }
@@ -167,14 +177,12 @@ func (s *Service) HandleProviderEvent(ctx context.Context, providerName string, 
 func (s *Service) SetEmitter(e *WebhookEmitter) { s.emitter = e }
 
 // emit is an internal helper that fans out an event if an emitter is configured.
-func (s *Service) emit(ctx context.Context, eventType string, data interface{}) {
+func (s *Service) emit(ctx context.Context, eventType string, data any) {
 	if s.emitter != nil {
 		_ = s.emitter.Emit(ctx, eventType, data)
 	}
 }
 
-// ─── Inbound collections (deposits into a provisioned virtual account) ───────
-//
 // This is the last link of the Maplerad/Eversend collections rail. Everything
 // ahead of it already existed — live adapters, credential-gated wiring,
 // Service.CreateCollection provisioning the account, the mobile Receive screen,
@@ -204,7 +212,6 @@ func isCollectionEvent(name string) bool {
 
 // applyCollectionEvent matches a deposit to the account it was paid into and
 // credits the owner.
-//
 // Fail-closed in three places, because every one of them is a way to invent
 // money that nobody sent:
 //   - a non-positive amount is refused;

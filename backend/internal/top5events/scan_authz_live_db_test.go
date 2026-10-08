@@ -16,6 +16,7 @@ package top5events_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -99,7 +100,7 @@ func TestLiveDB_ScanTicket_RandomUserForbidden(t *testing.T) {
 
 	credentialID := ticketCredentialID(t, ctx, pool, ticketID)
 	_, err := scanToken(t, ctx, svc, cred, stranger, credentialID)
-	if err != top5events.ErrForbidden {
+	if !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("got err=%v, want ErrForbidden for a caller who is neither organiser nor steward", err)
 	}
 }
@@ -124,7 +125,7 @@ func TestLiveDB_ScanTicket_StewardOfOtherEventForbidden(t *testing.T) {
 	credentialB := ticketCredentialID(t, ctx, pool, ticketB)
 
 	_, err := scanToken(t, ctx, svc, cred, stewardOfA, credentialB)
-	if err != top5events.ErrForbidden {
+	if !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("got err=%v, want ErrForbidden — event A's steward has no grant on event B", err)
 	}
 }
@@ -149,7 +150,7 @@ func TestLiveDB_ScanTicket_RemovedStewardForbidden(t *testing.T) {
 
 	credentialID := ticketCredentialID(t, ctx, pool, ticketID)
 	_, err := scanToken(t, ctx, svc, cred, steward, credentialID)
-	if err != top5events.ErrForbidden {
+	if !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("got err=%v, want ErrForbidden — grant was revoked before the scan", err)
 	}
 }

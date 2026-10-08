@@ -1,13 +1,11 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB behavioral test for edit-after-approve RE-MODERATION (marketplace trust
 // backbone: LM-002 / MOD-010 / EC-010). Per the test plan §0.4, a trust/moderation
 // case requires an EXECUTED assertion — so this drives the real Service against a
 // live Postgres (the first wired marketplace live-DB test; the older sequence_flow
 // tests only skip). Skipped unless MARKETPLACE_TEST_DATABASE_URL or
 // TEST_DATABASE_URL is set — never DATABASE_URL, which is the production pooler.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -124,7 +122,6 @@ func TestLiveDB_EditAfterApprove_ReModeration(t *testing.T) {
 	seller := uuid.New().String()
 	admin := uuid.New().String()
 
-	// --- Content edit (title) on a LIVE listing must re-enter moderation (LM-002). ---
 	l := activate(t, ctx, svc, seller, admin, cat, "Clean Toyota Corolla 2015 Lagos", 500000000)
 	bait := "FREE giveaway message my whatsapp 08000000000 now"
 	edited, err := svc.UpdateListing(ctx, seller, l.ID, mkt.UpdateListingInput{Title: &bait})
@@ -147,7 +144,6 @@ func TestLiveDB_EditAfterApprove_ReModeration(t *testing.T) {
 		t.Error("re-moderation must write an audit event")
 	}
 
-	// --- Price-only edit on a LIVE listing must NOT re-moderate (normal seller action). ---
 	l2 := activate(t, ctx, svc, seller, admin, cat, "Another Clean Corolla 2016 Lagos", 600000000)
 	newPrice := int64(550000000)
 	edited2, err := svc.UpdateListing(ctx, seller, l2.ID, mkt.UpdateListingInput{PriceKobo: &newPrice})
@@ -158,7 +154,6 @@ func TestLiveDB_EditAfterApprove_ReModeration(t *testing.T) {
 		t.Errorf("price-only edit = status %s, want still active (must not re-moderate)", edited2.Status)
 	}
 
-	// --- A non-owner cannot edit the listing (IDOR, LM-009). ---
 	stranger := uuid.New().String()
 	if _, err := svc.UpdateListing(ctx, stranger, l2.ID, mkt.UpdateListingInput{Title: &bait}); err == nil {
 		t.Error("a non-owner editing the listing must be forbidden")
@@ -226,7 +221,6 @@ func seedActiveBoost(t *testing.T, ctx context.Context, pool *pgxpool.Pool, list
 		// the tier. A seed that omits it takes the DEFAULT 0, so the listing would
 		// index as unboosted and this test would assert against its own gap rather
 		// than the behaviour.
-		//
 		// Deliberately NOT wrapped in COALESCE(..., 0): the package row is a
 		// precondition (migration 20270168000000 seeds all five tiers), so if it is
 		// missing this must fail LOUDLY at seed time on the NOT NULL weight column.

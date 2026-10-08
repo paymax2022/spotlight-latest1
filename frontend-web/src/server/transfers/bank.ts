@@ -20,13 +20,12 @@ import { ApiError } from '@/src/lib/api/responses';
 import { getOrCreateAccount } from '@/src/server/wallet/service';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
 import { autoSaveBeneficiary, touchLastUsed } from '@/src/server/transfers/beneficiaries';
+import { requireTransactionPin } from '@/src/server/transfers/pin-guard';
 
 const PAYSTACK_API = 'https://api.paystack.co';
 const MIN_BANK_TRANSFER_KOBO = 100_000; // ₦1,000 minimum
 
-// ---------------------------------------------------------------------------
 // Fee schedule (PRD §18.2)
-// ---------------------------------------------------------------------------
 
 export function calculateBankTransferFee(amountKobo: number): number {
   if (amountKobo <= 500_000)   return 1_000;  // ₦0–₦5,000:  ₦10
@@ -34,9 +33,7 @@ export function calculateBankTransferFee(amountKobo: number): number {
   return 5_000;                                // > ₦50,000: ₦50
 }
 
-// ---------------------------------------------------------------------------
 // Paystack helper
-// ---------------------------------------------------------------------------
 
 async function paystackRequest<T>(
   path: string,
@@ -56,15 +53,17 @@ async function paystackRequest<T>(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new ApiError(`Paystack error ${res.status}: ${body}`, res.status >= 500 ? 502 : res.status);
+    console.error('[bank-transfer] Paystack request failed', path, res.status, body);
+    throw new ApiError(
+      "We couldn't reach our banking partner right now. Please try again in a moment.",
+      res.status >= 500 ? 502 : res.status,
+    );
   }
 
   return res.json() as Promise<T>;
 }
 
-// ---------------------------------------------------------------------------
 // listBanks
-// ---------------------------------------------------------------------------
 
 export interface BankItem {
   code: string;
@@ -88,9 +87,7 @@ export async function listBanks(): Promise<BankItem[]> {
   }));
 }
 
-// ---------------------------------------------------------------------------
 // resolveBankAccount
-// ---------------------------------------------------------------------------
 
 export interface ResolvedAccount {
   accountName: string;
@@ -121,9 +118,7 @@ export async function resolveBankAccount(
   };
 }
 
-// ---------------------------------------------------------------------------
 // getOrCreateRecipient
-// ---------------------------------------------------------------------------
 
 async function getOrCreateRecipient(input: {
   userId: string;
@@ -134,7 +129,6 @@ async function getOrCreateRecipient(input: {
 }): Promise<{ recipientId: string | null; recipientCode: string }> {
   const supabase = createAdminClient();
 
-  // Check if we already have a stored recipient for this user+bank+account
   const { data: existing } = await supabase
     .from('bank_transfer_recipients')
     .select('id, paystack_recipient_code')
@@ -150,7 +144,6 @@ async function getOrCreateRecipient(input: {
     };
   }
 
-  // Create new Paystack recipient
   const json = await paystackRequest<{
     status: boolean;
     data?: { recipient_code?: string };
@@ -192,9 +185,7 @@ async function getOrCreateRecipient(input: {
   };
 }
 
-// ---------------------------------------------------------------------------
 // initiateWalletToBank
-// ---------------------------------------------------------------------------
 
 export interface WalletToBankInput {
   userId: string;
@@ -206,6 +197,10 @@ export interface WalletToBankInput {
   idempotencyKey: string;
   narration?: string;
   saveBeneficiary?: boolean;
+  /** Raw transaction PIN, verified via requireTransactionPin() before any debit. */
+  pin: string;
+  /** Original request's Authorization header, forwarded to the Go PIN-verify endpoint. */
+  authHeader: string | null;
 }
 
 export interface BankTransferResult {
@@ -224,7 +219,7 @@ export interface BankTransferResult {
 export async function initiateWalletToBank(
   input: WalletToBankInput,
 ): Promise<BankTransferResult> {
-  if (!Number.isInteger(input.amountKobo) || input.amountKobo < MIN_BANK_TRANSFER_KOBO) {
+  if (!Number.isSafeInteger(input.amountKobo) || input.amountKobo < MIN_BANK_TRANSFER_KOBO) {
     throw new ApiError(
       `Minimum bank transfer is ${MIN_BANK_TRANSFER_KOBO} kobo (₦${MIN_BANK_TRANSFER_KOBO / 100})`,
       400,
@@ -235,10 +230,9 @@ export async function initiateWalletToBank(
 
   const supabase = createAdminClient();
 
-  // Idempotency: return existing transfer if key already used
   const { data: existing } = await supabase
     .from('bank_transfers')
-    .select('id, reference, amount_kobo, fee_kobo, account_number_last4, bank_name, account_name, status, created_at')
+    .select('id, reference, amount_kobo, fee_kobo, account_number_last4, bank_name, account_name, status, created_at, user_id')
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle();
 
@@ -246,8 +240,14 @@ export async function initiateWalletToBank(
     const row = existing as {
       id: string; reference: string; amount_kobo: number; fee_kobo: number;
       account_number_last4: string; bank_name: string; account_name: string;
-      status: string; created_at: string;
+      status: string; created_at: string; user_id: string;
     };
+    // The key exists but belongs to a DIFFERENT user — returning that row
+    // would leak another user's transfer (account name/last4, bank, amount).
+    // Mirror the Go rail: foreign key collisions are a 409, not a replay.
+    if (row.user_id !== input.userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
     return {
       alreadyProcessed: true,
       transferId: row.id,
@@ -262,6 +262,11 @@ export async function initiateWalletToBank(
     };
   }
 
+  // Transaction PIN — fail-closed, before any money movement (WAL-001 fix).
+  // See wallet-to-wallet.ts for why this calls the Go backend rather than
+  // re-implementing the bcrypt/lockout check here.
+  await requireTransactionPin(input.authHeader, input.pin);
+
   const narration = (input.narration ?? '').slice(0, 100) || `Transfer to ${input.accountName}`;
 
   // Get/create Paystack recipient
@@ -273,7 +278,6 @@ export async function initiateWalletToBank(
     accountName: input.accountName,
   });
 
-  // Get sender ledger account + enforce tier limit
   const accountId = await getOrCreateAccount(input.userId);
   const { dailyLimitKobo } = await enforceWalletLimit(input.userId, input.amountKobo + feeKobo);
 
@@ -314,7 +318,8 @@ export async function initiateWalletToBank(
     if (rpcError.message?.includes('TIER_LIMIT_EXCEEDED')) {
       throw new ApiError('Daily wallet limit for your KYC tier has been reached', 403);
     }
-    throw new ApiError(`Failed to reserve funds: ${rpcError.message}`, 500);
+    console.error('[bank-transfer] wallet_transfer_initiate failed:', rpcError);
+    throw new ApiError('Failed to reserve funds', 500);
   }
 
   const rpcRow = (rpcRows as Array<{ entry_id: string; transfer_id: string }>)[0];

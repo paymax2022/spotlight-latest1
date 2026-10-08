@@ -5,10 +5,10 @@ import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
 import { Camera, X, TriangleAlert, Sparkles } from 'lucide-react-native';
 import { useMutation } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -31,7 +31,6 @@ export default function ReportIssueScreen() {
     onSuccess: (r) => { setCategory(r.suggestedCategory); setUrgency(r.suggestedUrgency); },
   });
 
-  // Real uploads use the existing R2 presigned flow; here we attach a placeholder
   // to keep the flow runnable without native permission prompts in the sandbox.
   const addPhoto = () => setMedia((m) => [...m, `https://picsum.photos/seed/maint${m.length}${Date.now() % 1000}/600/450`]);
 

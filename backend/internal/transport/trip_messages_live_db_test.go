@@ -1,13 +1,12 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for trip chat: object-level authz (only the rider
 // and the assigned driver may read/post), role derivation, and a stranger
 // being rejected. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -76,7 +75,6 @@ func TestLiveDB_TripChatIsScopedToParticipants(t *testing.T) {
 		t.Errorf("rider message sender_role = %q, want rider", riderMsg.SenderRole)
 	}
 
-	// Driver sends.
 	driverMsg, err := svc.SendMessage(ctx, tripID, driver, SendTripMessageRequest{Body: "On my way, 2 mins"})
 	if err != nil {
 		t.Fatalf("SendMessage (driver): %v", err)
@@ -88,12 +86,12 @@ func TestLiveDB_TripChatIsScopedToParticipants(t *testing.T) {
 	// A stranger may neither read nor post.
 	if _, err := svc.ListMessages(ctx, tripID, stranger); err == nil {
 		t.Error("expected a stranger to be rejected from ListMessages")
-	} else if ce, ok := err.(*CodedError); !ok || ce.Code != CodeForbidden {
+	} else if ce := new(CodedError); !errors.As(err, &ce) || ce.Code != CodeForbidden {
 		t.Errorf("expected CodeForbidden, got %v", err)
 	}
 	if _, err := svc.SendMessage(ctx, tripID, stranger, SendTripMessageRequest{Body: "hi"}); err == nil {
 		t.Error("expected a stranger to be rejected from SendMessage")
-	} else if ce, ok := err.(*CodedError); !ok || ce.Code != CodeForbidden {
+	} else if ce := new(CodedError); !errors.As(err, &ce) || ce.Code != CodeForbidden {
 		t.Errorf("expected CodeForbidden, got %v", err)
 	}
 

@@ -3,7 +3,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/crowdfunding/campaigns — discovery list (query params forwarded by proxy).
+// Discovery list (query params forwarded by proxy).
 export async function GET(request: Request) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {
@@ -12,7 +12,6 @@ export async function GET(request: Request) {
   } catch (err) { return handleApiError(err); }
 }
 
-// POST /api/v1/crowdfunding/campaigns — create / submit for review.
 export async function POST(request: Request) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {

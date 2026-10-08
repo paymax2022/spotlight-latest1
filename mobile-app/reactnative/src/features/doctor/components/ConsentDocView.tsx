@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { LegalDocumentSection } from '@/types/doctor.onboarding';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   summary:       string;
@@ -16,7 +16,6 @@ interface Props {
 
 // New component (Section A · entries 8–12): renders a versioned legal document's
 // summary + structured sections inside a card. SectionCard is a single titled
-// block; a legal doc has many headed sections plus a version/effective-date
 // footer, so a dedicated renderer is justified. Non-interactive (the accept
 // affordance lives on the host screen).
 export default function ConsentDocView({ summary, sections, bodyMarkdown, version, effectiveDate }: Props) {

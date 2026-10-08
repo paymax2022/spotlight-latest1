@@ -1,15 +1,13 @@
-// ── Paymax · Admin Console — Fee config ──────────────────────────────────────
 // Pricing config. Each fee shows label/kind/bps. With `fee.config` the bps value
-// is editable inline behind a required reason; the change may route through
 // maker-checker before it goes live (noted in the editor). Read-only otherwise.
 
 import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';

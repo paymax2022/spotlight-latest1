@@ -6,17 +6,13 @@ import (
 )
 
 // model_clinical.go — Wave 3a (human-side CLINICAL) request & response shapes.
-//
 // As with model_account.go, the OpenAPI (contracts/doctor.openapi.yaml) types these
 // endpoints as the free-form `Generic` schema, so request bodies are captured as
 // json.RawMessage and merged/stored into the doctor_* JSONB columns, while responses
 // mirror the underlying tables (camelCase JSON to match the mobile contracts in
 // mobile-app/reactnative/src/types/doctor.phase2.ts / .batch3.ts / .batch4.ts).
-//
 // None of these are money movements — they are clinical state transitions / document
 // writes. Monetary columns surface as int64 kobo only (no floats, no stored balances).
-
-// ── Pharmacy ─────────────────────────────────────────────────────────────────
 
 // PharmacyFulfilment mirrors public.doctor_pharmacy_fulfilments.
 type PharmacyFulfilment struct {
@@ -84,8 +80,6 @@ type PharmacyMessage struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
-// ── Labs (extended beyond MVP) ───────────────────────────────────────────────
-
 // LabResultInbox mirrors public.doctor_lab_results for the inbox list projection.
 type LabResultInbox struct {
 	ID         string          `json:"id"`
@@ -111,8 +105,6 @@ type LabInterpretation struct {
 	CreatedAt      time.Time       `json:"createdAt"`
 	UpdatedAt      time.Time       `json:"updatedAt"`
 }
-
-// ── Referrals & collaboration ────────────────────────────────────────────────
 
 // Referral mirrors public.doctor_referrals (outgoing — direction='outgoing').
 type Referral struct {
@@ -162,8 +154,6 @@ type CareTeamMessage struct {
 	Body      *string   `json:"body,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
-
-// ── Follow-up care ───────────────────────────────────────────────────────────
 
 // FollowUpPlan mirrors public.doctor_follow_up_plans.
 type FollowUpPlan struct {
@@ -215,8 +205,6 @@ type AdherenceCheck struct {
 	Detail         json.RawMessage `json:"detail,omitempty"`
 	CreatedAt      time.Time       `json:"createdAt"`
 }
-
-// ── HMO ──────────────────────────────────────────────────────────────────────
 
 // HMOPlanCoverage mirrors public.doctor_hmo_plan_coverage.
 type HMOPlanCoverage struct {
@@ -292,8 +280,6 @@ type HMOFraudWarning struct {
 	Detail         json.RawMessage `json:"detail,omitempty"`
 	CreatedAt      time.Time       `json:"createdAt"`
 }
-
-// ── Medical records ──────────────────────────────────────────────────────────
 
 // RecordRestriction mirrors public.doctor_record_restrictions.
 type RecordRestriction struct {

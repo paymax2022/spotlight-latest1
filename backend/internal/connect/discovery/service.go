@@ -2,7 +2,10 @@ package connectdiscovery
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -53,8 +56,8 @@ type rawCandidate struct {
 func (s *Service) viewer(ctx context.Context, userID string) (profileID string, lat, lng *float64, err error) {
 	const q = `SELECT id, geo_lat, geo_lng FROM connect_profiles WHERE user_id = $1`
 	err = s.db.QueryRow(ctx, q, userID).Scan(&profileID, &lat, &lng)
-	if err == pgx.ErrNoRows {
-		return "", nil, nil, fmt.Errorf("connect: no profile for user")
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, nil, errors.New("connect: no profile for user")
 	}
 	return profileID, lat, lng, err
 }
@@ -278,4 +281,165 @@ func intersect(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// Candidate is a discovery/search result. Exact coordinates are NEVER returned —
+// only a coarse, bucketed distance label preserves location privacy (invariant 3).
+type Candidate struct {
+	ProfileID     string       `json:"profile_id"`
+	DisplayName   *string      `json:"display_name,omitempty"`
+	City          *string      `json:"city,omitempty"`
+	Verified      bool         `json:"verified"`
+	IntentTags    []string     `json:"intent_tags"`
+	DistanceLabel string       `json:"distance_label,omitempty"` // e.g. "within 25 km"
+	MatchReason   *MatchReason `json:"match_reason,omitempty"`   // present on curated discovery
+}
+
+// MatchReason is the "match-reason card" surfaced with curated daily matches.
+type MatchReason struct {
+	Headline string   `json:"headline"` // short human reason
+	Factors  []string `json:"factors"`  // e.g. ["shared intent: hiking", "verified", "within 25 km"]
+	Score    float64  `json:"score"`
+}
+
+// DiscoveryResponse wraps the curated daily set plus the anti-fatigue limit applied.
+type DiscoveryResponse struct {
+	Mode       string      `json:"mode"`
+	DailyLimit int         `json:"daily_limit"` // from connect_config, not hard-coded
+	Candidates []Candidate `json:"candidates"`
+}
+
+// SearchFilters captures the privacy-preserving search query.
+type SearchFilters struct {
+	Mode         string
+	VerifiedOnly bool
+	Intent       string // single intent tag to match
+	MaxDistKm    int    // requested cap; snapped to a configured bucket
+	Limit        int
+}
+
+// haversineKm returns the great-circle distance in km between two lat/lng points.
+func haversineKm(lat1, lng1, lat2, lng2 float64) float64 {
+	const earthKm = 6371.0
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLng := (lng2 - lng1) * math.Pi / 180
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
+			math.Sin(dLng/2)*math.Sin(dLng/2)
+	return earthKm * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+// bucketKm snaps a precise distance to the smallest configured bucket that
+// contains it, preserving privacy by never exposing the exact value. Buckets must
+// be ascending. A distance beyond the largest bucket returns (lastBucket, false).
+func bucketKm(distKm float64, buckets []int) (int, bool) {
+	for _, b := range buckets {
+		if distKm <= float64(b) {
+			return b, true
+		}
+	}
+	if len(buckets) > 0 {
+		return buckets[len(buckets)-1], false
+	}
+	return 0, false
+}
+
+// distanceLabel renders a privacy-preserving, bucketed distance string.
+// withinBucket=false means the candidate is farther than the largest bucket.
+func distanceLabel(bucket int, withinBucket bool) string {
+	if bucket <= 0 {
+		return ""
+	}
+	if withinBucket {
+		return fmt.Sprintf("within %d km", bucket)
+	}
+	return fmt.Sprintf("over %d km", bucket)
+}
+
+// snapMaxDistance returns the smallest configured bucket >= the requested cap so a
+// search radius is itself coarse (no exact-radius probing). 0/absent → largest bucket.
+func snapMaxDistance(requestedKm int, buckets []int) int {
+	if len(buckets) == 0 {
+		return requestedKm
+	}
+	if requestedKm <= 0 {
+		return buckets[len(buckets)-1]
+	}
+	for _, b := range buckets {
+		if requestedKm <= b {
+			return b
+		}
+	}
+	return buckets[len(buckets)-1]
+}
+
+// configReader pulls backend-owned tunables from connect_config so that limits,
+// weights and distance buckets are NEVER hard-coded in this package. Missing keys
+// fall back to conservative defaults rather than failing discovery.
+type configReader struct{ db *pgxpool.Pool }
+
+func newConfigReader(db *pgxpool.Pool) *configReader { return &configReader{db: db} }
+
+// NewConfigReader is the exported constructor used by the route wiring to build the
+// backend-owned config reader the boost service reads price/duration from. It shares
+// the same connect_config source as discovery ranking (no new config surface).
+func NewConfigReader(db *pgxpool.Pool) *configReader { return newConfigReader(db) }
+
+func (r *configReader) raw(ctx context.Context, key string) (json.RawMessage, bool) {
+	if r.db == nil {
+		// No pool (e.g. a unit-test config reader) → fall back to the caller's
+		// conservative default rather than dereferencing a nil pool.
+		return nil, false
+	}
+	var b []byte
+	err := r.db.QueryRow(ctx, `SELECT value FROM connect_config WHERE key = $1`, key).Scan(&b)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false
+		}
+		return nil, false
+	}
+	return json.RawMessage(b), true
+}
+
+// intVal reads an integer config value, returning def when absent/unparseable.
+func (r *configReader) intVal(ctx context.Context, key string, def int) int {
+	v, ok := r.raw(ctx, key)
+	if !ok {
+		return def
+	}
+	var n int
+	if err := json.Unmarshal(v, &n); err != nil {
+		return def
+	}
+	return n
+}
+
+// distanceBuckets reads search.distance_buckets_km (ascending km), default set.
+func (r *configReader) distanceBuckets(ctx context.Context) []int {
+	def := []int{5, 10, 25, 50, 100}
+	v, ok := r.raw(ctx, "search.distance_buckets_km")
+	if !ok {
+		return def
+	}
+	var b []int
+	if err := json.Unmarshal(v, &b); err != nil || len(b) == 0 {
+		return def
+	}
+	sort.Ints(b)
+	return b
+}
+
+// reasonWeights reads discovery.match_reason_weights (internal, never to mobile).
+func (r *configReader) reasonWeights(ctx context.Context) map[string]float64 {
+	def := map[string]float64{"shared_intent": 0.4, "distance": 0.3, "verification": 0.3}
+	v, ok := r.raw(ctx, "discovery.match_reason_weights")
+	if !ok {
+		return def
+	}
+	var w map[string]float64
+	if err := json.Unmarshal(v, &w); err != nil || len(w) == 0 {
+		return def
+	}
+	return w
 }

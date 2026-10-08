@@ -1,8 +1,6 @@
-// ── Doctor (Telemedicine, provider-side) — Section B Domain Types ─────────────
 // Section B: the full Doctor Profile & Verification flow (31 screens) — a
 // multi-step profile builder that produces a draft (`DoctorProfileDraft`) which
 // maps onto the published `DoctorProfile` plus a richer verification submission.
-//
 // ADDITIVE to `@/types/doctor` and `@/types/doctor.phase2` — those shapes are
 // imported/reused, never duplicated. Money amounts are integers in minor units
 // (kobo). Use `import type` for type-only imports.
@@ -17,7 +15,6 @@ import type {
 } from '@/types/doctor';
 import type { LicenceStatus } from '@/types/doctor.phase2';
 
-// Re-export the Phase 1 / Phase 2 primitives Section B leans on, so a screen can
 // pull everything it needs from one import site.
 export type {
   DoctorProfile,
@@ -29,7 +26,6 @@ export type {
 } from '@/types/doctor';
 export type { LicenceStatus } from '@/types/doctor.phase2';
 
-// ─── Extended verification document types ────────────────────────────────────
 // Phase 1 `VerificationDocType` already covers MDCN cert, medical license,
 // degree cert, government ID, passport photo and CV. Section B adds a few more
 // document categories collected during the profile builder. These extend the
@@ -40,14 +36,12 @@ export type ProfileDocType =
   | 'certificate'             // additional professional certificate
   | 'association_membership'; // professional association proof
 
-// ─── Uploaded files (photos, licences, certificates, etc.) ───────────────────
 // A lightweight client-side handle for a picked / uploaded file. `uri` is the
-// local file URI (Expo ImagePicker / DocumentPicker); Phase C swaps it for the
 // uploaded R2/object-storage URL after upload.
 
 export interface UploadedFile {
   id:          string;
-  uri:         string;          // local URI now; remote URL after Phase C upload
+  uri:         string;
   fileName:    string;
   mimeType?:   string;          // "application/pdf", "image/jpeg"
   sizeBytes?:  number;
@@ -61,8 +55,6 @@ export interface ProfileDocumentSlot {
   required:  boolean;
   file?:     UploadedFile;      // present once the doctor uploads it
 }
-
-// ─── Personal information (screen 2) ─────────────────────────────────────────
 
 export type GenderOption = 'male' | 'female' | 'other' | 'prefer_not_to_say';
 
@@ -79,7 +71,6 @@ export interface PersonalInfo {
   address?:     string;
 }
 
-// ─── Licence info (screens 9, 29, 30) ────────────────────────────────────────
 // NOTE: Phase 2 already exports a `LicenceInfo` (compliance view, derived from
 // the register). Section B's editable licence metadata is a distinct shape, so
 // it is namespaced as `ProfileLicenceInfo` to avoid a name collision.
@@ -111,8 +102,6 @@ export interface LicenceRenewal {
   status:        VerificationStatus; // renewal goes through verification again
 }
 
-// ─── Education & work history (screens 15, 16) ───────────────────────────────
-
 export interface EducationEntry {
   id:           string;
   institution:  string;          // "University of Lagos"
@@ -134,8 +123,6 @@ export interface WorkExperienceEntry {
   description?: string;
 }
 
-// ─── Clinic / hospital affiliation (screen 14) ───────────────────────────────
-
 export interface ClinicAffiliation {
   id:        string;
   name:      string;             // "Lagoon Medical Centre"
@@ -144,8 +131,6 @@ export interface ClinicAffiliation {
   city?:     string;
   isPrimary: boolean;            // the doctor's main place of practice
 }
-
-// ─── Consultation pricing & free follow-up policy (screens 17, 18) ───────────
 
 export interface ConsultationPricing {
   videoFeeKobo:    number;       // per-consult fee in kobo
@@ -161,8 +146,6 @@ export interface FreeFollowUpPolicy {
   maxFreeVisits: number;         // number of free follow-ups per consult
   note?:         string;         // policy note shown to patients
 }
-
-// ─── Bank account & tax info (screens 20, 21) ────────────────────────────────
 
 export interface BankAccount {
   bankName:        string;       // "GTBank"
@@ -180,7 +163,6 @@ export interface TaxInfo {
   businessName?: string;         // registered business / practice name
 }
 
-// ─── Profile builder draft (screens 1–22) ────────────────────────────────────
 // All editable fields collected across the wizard. A partial draft is saved as
 // the doctor progresses; `step`/`completedSteps` drive the hub (screen 1).
 
@@ -233,7 +215,6 @@ export interface DoctorProfileDraft {
   isPublished:      boolean;               // screen 31 — live & discoverable
 }
 
-// ─── Verification lifecycle (screens 22–31) ──────────────────────────────────
 // Reuses Phase 1 `VerificationStatus` ('unsubmitted'|'pending'|'approved'|
 // 'rejected'). The four lifecycle states map as:
 //   submitted/pending → 'pending', approved → 'approved',
@@ -257,7 +238,6 @@ export interface VerificationDecision {
   notes?:       string;
 }
 
-// ─── Mutation inputs / results ───────────────────────────────────────────────
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
 

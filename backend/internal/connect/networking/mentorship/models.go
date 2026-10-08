@@ -1,6 +1,5 @@
 // Package connectmentor implements Paymax Connect Phase 6G/6H: professional
 // mentorship matching + Paymax Black loyalty wiring.
-//
 // Design invariants mirrored from the Phase-6 PRD (§4/§6.6/§8):
 //   - PN-7 (mode-privacy): mentorship discovery is an explicit opt-in capability
 //     and its projection exposes ONLY mentorship + professional fields. It never
@@ -74,7 +73,6 @@ type MentorshipMatch struct {
 }
 
 // SafeMentorProfile is the PN-7 SAFE DISCOVERY PROJECTION.
-//
 // It carries ONLY mentorship fields (userId, role, domains, capacity) plus the
 // professional display name sourced from connect_professional_profiles. It has NO
 // Dating-mode field of any kind (no photos, orientation, interested_in, location,
@@ -109,8 +107,6 @@ var datingModeFieldDenylist = []string{
 	"datingBio", "dating_bio", "relationshipGoal", "relationship_goal", "gender",
 }
 
-// --- Request DTOs (camelCase JSON) ---
-
 // OptInInput is the MN-01 mentor/mentee opt-in payload.
 type OptInInput struct {
 	Role     string   `json:"role" binding:"required"` // mentor | mentee | both
@@ -133,8 +129,6 @@ type StateTransitionInput struct {
 	State string `json:"state" binding:"required"`
 }
 
-// --- Result DTOs ---
-
 // TestimonialPrompt is one side of the mutual-testimonial hint (MN-06 → RC-01).
 type TestimonialPrompt struct {
 	AuthorID  string `json:"authorId"`
@@ -144,7 +138,7 @@ type TestimonialPrompt struct {
 // TestimonialHint tells the FE to route both parties into the recommendation flow
 // (RC-01) after a completed mentorship. No cross-package call is made server-side.
 type TestimonialHint struct {
-	Flow    string              `json:"flow"` // RecommendationFlow (RC-01)
+	Flow    string              `json:"flow"`
 	Prompts []TestimonialPrompt `json:"prompts"`
 }
 
@@ -171,7 +165,7 @@ type LoyaltyLogEntry struct {
 //
 //	REQUESTED → ACCEPTED | DECLINED
 //	ACCEPTED  → ACTIVE
-//	ACTIVE   ⇄ PAUSED
+//	⇄ PAUSED
 //	ACTIVE/PAUSED → COMPLETED | ENDED_EARLY
 //
 // declined/completed/ended_early are terminal.

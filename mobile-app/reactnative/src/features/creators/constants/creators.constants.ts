@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Flip to false once the live /api/v1/creators endpoints are reachable
 // (or set EXPO_PUBLIC_CREATORS_USE_MOCK=false). Mock-first convention.
@@ -8,7 +8,6 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CREATORS_USE_MOCK, t
 // Creators REST namespace. Served directly by the Go backend (Gin) under the
 // authenticated finance member group — NOT the frontend-web /api/v1 proxy.
 // Confirmed against backend/internal/app/top5_p3_routes.go (RegisterCreators
-// mounts finance.Group("/creators")) + backend/internal/creators/handler.go
 // Register, which re-adds "/creators/..." itself onto that group (so the full
 // path is /api/finance/creators/creators/...).
 export const API_BASE = '/api/finance/creators/creators';
@@ -32,7 +31,6 @@ export const CreatorsColors = {
   border:     Colors.outlineVariant,
 } as const;
 
-// ── NL-5 — Creator income is content/perks, NOT a financial return. ───────────
 // Surfaced verbatim on become-a-creator, subscribe, tip and earnings screens so
 // supporters are never led to believe a subscription is an investment.
 export const NL5_DISCLOSURE =
@@ -40,12 +38,10 @@ export const NL5_DISCLOSURE =
   'carries no financial return. Tips and subscriptions are non-refundable ' +
   'purchases of access, not deposits.';
 
-// ── NL-11 — Adult / mature content must be age-gated. ─────────────────────────
 export const NL11_AGE_GATE_NOTICE =
   'This content is marked 18+. By continuing you confirm you are at least 18 ' +
   'years old. Mature content is restricted and may be reported.';
 
-// ── Payout KYC gate (creators must complete KYC before withdrawing earnings). ─
 export const PAYOUT_KYC_NOTICE =
   'To withdraw earnings you must complete identity verification (KYC). This ' +
   'keeps payouts compliant and protects your account.';

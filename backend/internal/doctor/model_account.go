@@ -6,13 +6,10 @@ import (
 )
 
 // model_account.go — Wave 2 (account / provider / admin) request & response shapes.
-//
 // The OpenAPI (contracts/doctor.openapi.yaml) types most of these endpoints as the
 // free-form `Generic` schema (additionalProperties: true), so request bodies are
 // captured as json.RawMessage and merged/stored into the doctor_* JSONB columns,
 // while responses mirror the per-batch mobile contracts (camelCase JSON).
-
-// ── Onboarding ───────────────────────────────────────────────────────────────
 
 // LegalConsent mirrors public.doctor_legal_consents.
 type LegalConsent struct {
@@ -58,12 +55,12 @@ type MerchantUpgrade struct {
 	// not a column on this table — it is read from the profile draft, which is
 	// where SetProviderType writes it. Kept as a projection rather than a second
 	// copy so the two cannot drift when a user changes their choice.
-	SelectedType *string    `json:"selectedType,omitempty"`
-	RequestedAt  *time.Time `json:"requestedAt,omitempty"`
-	CompletedAt *time.Time      `json:"completedAt,omitempty"`
-	Detail      json.RawMessage `json:"detail,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	SelectedType *string         `json:"selectedType,omitempty"`
+	RequestedAt  *time.Time      `json:"requestedAt,omitempty"`
+	CompletedAt  *time.Time      `json:"completedAt,omitempty"`
+	Detail       json.RawMessage `json:"detail,omitempty"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
 // SetProviderTypeRequest is the body for POST /onboarding/provider-type.
@@ -98,8 +95,6 @@ type AuditEntry struct {
 	CreatedAt  time.Time       `json:"createdAt"`
 }
 
-// ── Notifications (batch6) ───────────────────────────────────────────────────
-
 // NotificationGroup is a derived group of notifications by group_key.
 type NotificationGroup struct {
 	GroupKey string         `json:"groupKey"`
@@ -125,8 +120,6 @@ type UpdateNotificationPreferenceRequest struct {
 	Category string `json:"category" binding:"required"`
 	Enabled  *bool  `json:"enabled,omitempty"`
 }
-
-// ── Support (batch7) ─────────────────────────────────────────────────────────
 
 // SupportTicket mirrors public.doctor_support_tickets.
 type SupportTicket struct {
@@ -247,8 +240,6 @@ type Device struct {
 	Detail      json.RawMessage `json:"detail,omitempty"`
 	CreatedAt   time.Time       `json:"createdAt"`
 }
-
-// ── Reputation / reviews (phase2 + batch6) ───────────────────────────────────
 
 // QualityScore mirrors public.doctor_quality_scores.
 type QualityScore struct {

@@ -1,15 +1,12 @@
-// ── Paymax Health — Pharmacy types (Phase 1) ─────────────────────────────────
 // Vertical types for the Pharmacy module, built on the shared health platform
 // (src/features/health/types.ts). IRON RULES:
 //  • All monetary amounts are integers in minor units (kobo). Never floats.
 //  • HL-3 prescription discipline: POM (Rx-required) needs a pharmacist-verified
-//    e-prescription; dispense-once is terminal.
 //  • HL-5 NAFDAC-only catalog: every product carries a NAFDAC registration ref.
 //  • HL-9 money held → released → refunded (escrow), idempotent on order/checkout.
 
 import type { CredentialStatus, ProviderCredential } from '../types';
 
-// ── Catalog (HL-5 NAFDAC-gated, HL-3 Rx flag) ────────────────────────────────
 export type ProductCategory =
   | 'prescription'
   | 'otc'
@@ -51,7 +48,6 @@ export interface PharmacyProduct {
   storage?: string;
 }
 
-// ── Cart ──────────────────────────────────────────────────────────────────────
 export interface CartLine {
   productId: string;
   name: string;
@@ -73,7 +69,6 @@ export interface Cart {
   requiresRx: boolean;
 }
 
-// ── Prescriptions (HL-3) ─────────────────────────────────────────────────────
 // VERIFYING → VERIFIED → (consumed once dispensed); VERIFYING → REJECTED.
 export type RxStatus = 'verifying' | 'verified' | 'rejected' | 'clarification' | 'dispensed';
 
@@ -106,7 +101,6 @@ export interface Prescription {
   fulfilled?: boolean;
 }
 
-// ── Pharmacies (HL-2 PCN+premises verified) ──────────────────────────────────
 export interface PharmacyVendor {
   id: string;
   name: string;
@@ -125,12 +119,10 @@ export interface PharmacyVendor {
   open: boolean;
 }
 
-// ── Orders (HL-9 payment HELD → RELEASED → REFUNDED) ─────────────────────────
 export type FulfilmentType = 'delivery' | 'pickup';
 
 // PharmacyOrder state machine (HEALTH-BUILD §5):
 // CREATED → [RX_PENDING] → CONFIRMED → DISPENSED → IN_DELIVERY|READY_FOR_PICKUP
-//   → DELIVERED|COLLECTED → CLOSED ; (any pre-DISPENSED) → CANCELLED → REFUNDED
 export type OrderStatus =
   | 'created'
   | 'rx_pending'
@@ -201,7 +193,6 @@ export interface CreateOrderInput {
   deliveryLng?: number;
 }
 
-// ── Refills & medication list ────────────────────────────────────────────────
 export interface MedicationItem {
   id: string;
   name: string;
@@ -229,7 +220,6 @@ export interface Refill {
   productId?: string;
 }
 
-// ── Ratings ───────────────────────────────────────────────────────────────────
 export interface PharmacyReview {
   id: string;
   author: string;
@@ -246,7 +236,6 @@ export interface SubmitReviewInput {
   body: string;
 }
 
-// ── Pharmacist consult ────────────────────────────────────────────────────────
 export interface PharmacistConsultMessage {
   id: string;
   fromPharmacist: boolean;
@@ -255,7 +244,6 @@ export interface PharmacistConsultMessage {
   at: string;
 }
 
-// ── Provider side ─────────────────────────────────────────────────────────────
 export type ProviderOnboardingStep =
   | 'business'
   | 'pcn'

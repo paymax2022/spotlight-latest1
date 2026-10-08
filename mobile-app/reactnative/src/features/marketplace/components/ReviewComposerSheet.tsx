@@ -1,14 +1,13 @@
-// ── Marketplace — ReviewComposerSheet (Screen 26 Review Composer) ────────────
 // Star rating + structured tags + optional free-text. Shown as a modal, opened
 // manually after a user marks a deal complete in Meetup Mode. The review is
 // OPTIONAL and self-reported — Skip is always allowed.
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, TextInput } from 'react-native';
 import { X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';
 import StarRating from './StarRating';

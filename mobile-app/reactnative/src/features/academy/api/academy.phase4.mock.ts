@@ -1,7 +1,4 @@
-// ── Spotlight Academy — Phase 4 mock dataset ─────────────────────────────────
 // Self-contained fixtures for Tutor & School (T1–T8) and ECCE / Little Learners
-// (E1–E3). Backs the Phase-4 screens while USE_MOCK is true. Money in kobo;
-// reward points are plain integers. Tutor verify mirrors the KYC ladder; tutor
 // payouts reuse the payout-rail concept (settle T+1). ECCE is parent-gated.
 
 import type {
@@ -21,8 +18,6 @@ const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
 const daysAhead = (d: number) => new Date(now + d * 86_400_000).toISOString();
 const hoursAgo = (h: number) => new Date(now - h * 3_600_000).toISOString();
 
-// ── Tutor profile (T1, T2) ────────────────────────────────────────────────────
-// Starts unverified with onboarding incomplete; T1 flips verifyState → pending
 // (KYC) and sets onboardingComplete, T2 reads the populated profile.
 export const MOCK_TUTOR_PROFILE: TutorProfile = {
   id: 'tut_self',
@@ -45,7 +40,6 @@ export const MOCK_TUTOR_PROFILE: TutorProfile = {
   onboardingComplete: false,
 };
 
-// ── Tutor marketplace listings (GET /tutors?subject=) ─────────────────────────
 export const MOCK_TUTOR_LISTINGS: TutorListing[] = [
   { id: 'tut_001', displayName: 'Mrs. Aisha Lawal', headline: 'Maths & Further Maths · 10 yrs', subjects: ['Mathematics', 'Further Mathematics'], rating: 4.9, ratingCount: 210, hourlyRateKobo: 400_000, verifyState: 'verified', avatarColorKey: 'iconBgTeal' },
   { id: 'tut_002', displayName: 'Mr. Emeka Obi', headline: 'Physics & Chemistry · 6 yrs', subjects: ['Physics', 'Chemistry'], rating: 4.7, ratingCount: 88, hourlyRateKobo: 320_000, verifyState: 'verified', avatarColorKey: 'iconBgBlue' },
@@ -54,7 +48,6 @@ export const MOCK_TUTOR_LISTINGS: TutorListing[] = [
   { id: 'tut_005', displayName: 'Mrs. Ngozi Eze', headline: 'Biology & Agric · 7 yrs', subjects: ['Biology', 'Agricultural Science'], rating: 4.6, ratingCount: 64, hourlyRateKobo: 280_000, verifyState: 'verified', avatarColorKey: 'iconBgGreen' },
 ];
 
-// ── Cohorts & roster (T3) ─────────────────────────────────────────────────────
 export const MOCK_COHORTS: Cohort[] = [
   {
     id: 'coh_sss2_maths', name: 'SSS2 Maths — Evening', subjectOrTrade: 'Mathematics', studentCount: 4,
@@ -75,7 +68,6 @@ export const MOCK_COHORTS: Cohort[] = [
   },
 ];
 
-// ── Assignments (T4) ──────────────────────────────────────────────────────────
 export const MOCK_ASSIGNMENTS: Assignment[] = [
   {
     id: 'asg_1', cohortId: 'coh_sss2_maths', cohortName: 'SSS2 Maths — Evening', kind: 'homework',
@@ -94,7 +86,6 @@ export const MOCK_ASSIGNMENTS: Assignment[] = [
   },
 ];
 
-// ── Submissions awaiting / done grading (T5) ──────────────────────────────────
 export const MOCK_SUBMISSIONS: Submission[] = [
   {
     id: 'sub_1', assignmentId: 'asg_1', assignmentTitle: 'Quadratic equations — exercise 4',
@@ -118,7 +109,6 @@ export const MOCK_SUBMISSIONS: Submission[] = [
   },
 ];
 
-// ── Tutor earnings & payouts (T7) ─────────────────────────────────────────────
 export const MOCK_TUTOR_EARNINGS: TutorEarnings = {
   availableKobo: 4_850_000,   // ₦48,500
   pendingKobo: 1_200_000,     // ₦12,000
@@ -134,7 +124,6 @@ export const MOCK_TUTOR_EARNINGS: TutorEarnings = {
   ],
 };
 
-// ── School admin (lite) (T8) ──────────────────────────────────────────────────
 export const MOCK_MANAGED_SCHOOLS: ManagedSchool[] = [
   {
     id: 'sch_brightfield', name: 'Brightfield Secondary', lga: 'Ikeja', state: 'Lagos',
@@ -177,7 +166,6 @@ export const MOCK_SCHOOL_OVERVIEWS: Record<string, SchoolOverview> = {
   },
 };
 
-// ── ECCE / Little Learners (E1, E2) ───────────────────────────────────────────
 export const MOCK_ECCE_HOME: EcceHome = {
   childName: 'Zara',
   dailyLimitReached: false,

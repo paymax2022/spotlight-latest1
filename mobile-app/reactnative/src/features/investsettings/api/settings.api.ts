@@ -1,11 +1,7 @@
-// ── Paymax Invest · Settings — API wrapper ───────────────────────────────────
 // Typed data layer the invest-settings screens code against (Backend role owns
 // this file). Mirrors crypto.api.ts: mock-flagged behind EXPO_PUBLIC_SETTINGS_USE_MOCK.
 // Flip to false once the real Paymax /api/v1/* endpoints land.
-//
 // Conventions honoured here:
-//  • account numbers are never stored in full client-side — banks expose a mask;
-//  • PIN changes never echo the PIN back; the server validates the old PIN;
 //  • support threads are append-only from the client's perspective.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -30,7 +26,6 @@ import type {
 import { FEE_SCHEDULE } from '../constants/settings.constants';
 import type { FeeScheduleItem } from '../types/settings.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_SETTINGS_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
@@ -44,14 +39,10 @@ function toSettingsError(err: unknown): Error {
   return new Error(msg);
 }
 
-// ─── Profile (GET /api/v1/invest/profile) ─────────────────────────────────────
-
 export async function getProfile(): Promise<InvestProfile> {
   if (USE_MOCK) { await delay(220); return { ...MOCK_PROFILE }; }
   return unwrap<InvestProfile>(await api.get('/api/v1/invest/profile'));
 }
-
-// ─── Linked banks (GET/POST/DELETE /api/v1/invest/banks) ──────────────────────
 
 export async function getLinkedBanks(): Promise<LinkedBank[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_BANKS]; }
@@ -92,14 +83,10 @@ export async function removeBank(id: string): Promise<void> {
   await api.delete(`/api/v1/invest/banks/${id}`);
 }
 
-// ─── Fee schedule (GET /api/v1/invest/fees) ───────────────────────────────────
-
 export async function getFeeSchedule(): Promise<FeeScheduleItem[]> {
   if (USE_MOCK) { await delay(180); return [...FEE_SCHEDULE]; }
   return unwrap<FeeScheduleItem[]>(await api.get('/api/v1/invest/fees'));
 }
-
-// ─── Statements (GET /api/v1/invest/statements, POST …/export) ────────────────
 
 export async function getStatements(): Promise<Statement[]> {
   if (USE_MOCK) {
@@ -124,8 +111,6 @@ export async function exportStatement(id: string): Promise<StatementExport> {
     throw toSettingsError(err);
   }
 }
-
-// ─── Devices / sessions (GET /api/v1/invest/devices, DELETE …/:id) ────────────
 
 export async function getDevices(): Promise<Device[]> {
   if (USE_MOCK) {
@@ -161,8 +146,6 @@ export async function changePin(oldPin: string, newPin: string): Promise<void> {
     throw toSettingsError(err);
   }
 }
-
-// ─── Support tickets (GET/POST /api/v1/invest/support/tickets[/:id]) ──────────
 
 export async function getTickets(): Promise<SupportTicket[]> {
   if (USE_MOCK) {

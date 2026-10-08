@@ -2,7 +2,8 @@
  * PATCH  /api/v1/beneficiaries/:id  — update nickname
  * DELETE /api/v1/beneficiaries/:id  — remove from saved list (is_favorite=false)
  *
- * Requires: FEATURE_BENEFICIARIES_ENABLED, authenticated user
+ * Requires: FEATURE_BANK_TRANSFERS_ENABLED (see app/api/v1/beneficiaries/route.ts
+ * — beneficiaries ride the bank-transfer rail on every layer), authenticated user
  */
 import { NextResponse } from 'next/server';
 import { handleApiError, ApiError } from '@/src/lib/api/responses';

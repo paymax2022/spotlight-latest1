@@ -1,10 +1,8 @@
-// ── Insurance — Agent data layer (IM2) ───────────────────────────────────────
 // Assisted-sales for the informal market (PRD §14.6 / §15.2 / §16). The agent
 // looks up a CUSTOMER, recommends a product, runs an assisted quote, binds, and
 // captures cash → agent float → customer wallet. CRITICAL: the policy attaches to
 // the CUSTOMER identity, never the agent's. Agent sees only their own book + own
 // commission (object-level authZ, PRD §16). ADDITIVE to IM1. Money is kobo.
-//
 // GAP (whole file): no `/agent/*` routes exist anywhere on the Go insurance
 // surface (grepped backend/internal/insurance/** and backend/internal/app/
 // insurance*_routes.go — zero matches for "agent"). Every live-mode call here
@@ -28,7 +26,6 @@ function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// ── Customer (assisted-sale subject) ──────────────────────────────────────────
 export interface AgentCustomer {
   id: string;
   fullName: string;
@@ -61,7 +58,6 @@ export interface AgentCommissionSummary {
   entries: { policyId: string; productName: string; commissionKobo: number; status: 'pending' | 'paid'; at: string }[];
 }
 
-// ── Mock store ───────────────────────────────────────────────────────────────
 const MOCK_CUSTOMERS: AgentCustomer[] = [
   { id: 'cus-001', fullName: 'Chinedu Eze', phone: '+2348021112233', walletKobo: 12_500_00, kycTier: 'TIER_1', location: 'Onitsha, Anambra' },
   { id: 'cus-002', fullName: 'Fatima Bello', phone: '+2347039998877', walletKobo: 3_200_00, kycTier: 'TIER_1', location: 'Kano, Kano' },
@@ -132,7 +128,6 @@ export async function createAssistedQuote(args: {
   return createQuote({ productCode: args.productCode, inputs: args.inputs });
 }
 
-// ── Cash-to-wallet capture (cash → agent float → CUSTOMER wallet) ─────────────
 export async function captureCashToWallet(args: {
   customerId: string;
   amountKobo: number;
@@ -153,7 +148,6 @@ export async function captureCashToWallet(args: {
   return data;
 }
 
-// ── Assisted bind — policy attaches to the CUSTOMER (PRD §14.6) ────────────────
 export interface AssistedBindResult {
   ok: boolean;
   bookEntry?: AgentBookEntry;
@@ -238,7 +232,6 @@ export async function getAgentCommission(): Promise<AgentCommissionSummary> {
   return data;
 }
 
-// ── React Query hooks ─────────────────────────────────────────────────────────
 const KEY = 'insurance-agent';
 
 export function useCustomerLookup(query: string) {

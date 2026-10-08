@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { ScanLine, CheckCircle2, XCircle, WifiOff, Camera, CameraOff, Keyboard } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -31,7 +31,6 @@ export default function StewardScan() {
   const [permission, requestPermission] = useCameraPermissions();
   const scanning = useRef(false);
 
-  // v1: one default gate per event. Multi-gate management (named gates an
   // organiser configures) is a further feature, not built here.
   const gate: Gate = { id: `${eventId ?? 'unknown'}:main`, name: 'Main Entrance' };
 

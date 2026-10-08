@@ -118,8 +118,6 @@ func ids(routes []Route) []string {
 	return out
 }
 
-// ── ProviderAnswered ────────────────────────────────────────────────────────
-//
 // This is the single most consequential predicate in the module. True means "the
 // provider refused, nothing exists upstream" → safe to fail over or auto-reverse.
 // False means "we do not know" → lock the key, park as pending, never reverse.
@@ -155,8 +153,6 @@ func TestProviderAnswered_NilIsNotAnAnswer(t *testing.T) {
 	}
 }
 
-// ── billOutcome ─────────────────────────────────────────────────────────────
-
 func TestBillOutcome(t *testing.T) {
 	cases := []struct {
 		status string
@@ -178,8 +174,6 @@ func TestBillOutcome(t *testing.T) {
 		t.Fatalf("nil bill: got %s want failed", got)
 	}
 }
-
-// ── ProviderRegistry ────────────────────────────────────────────────────────
 
 type stubBills struct{ name string }
 
@@ -241,8 +235,6 @@ func TestProviderRegistry_AdapterCodesAreSorted(t *testing.T) {
 	}
 }
 
-// ── ReceiptNumber / ParseCategory ───────────────────────────────────────────
-
 func TestReceiptNumber(t *testing.T) {
 	at := time.Date(2026, 9, 15, 13, 45, 0, 0, time.UTC)
 	got := ReceiptNumber("9f3c1a2b-4d5e-6f70-8192-a3b4c5d6e7f8", at)
@@ -267,8 +259,6 @@ func TestParseCategory(t *testing.T) {
 		}
 	}
 }
-
-// ── ProviderRow.TimeoutMs ───────────────────────────────────────────────────
 
 func TestProviderRowTimeoutMs(t *testing.T) {
 	cases := []struct {

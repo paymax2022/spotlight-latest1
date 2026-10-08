@@ -2,6 +2,7 @@ package cashtag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -54,7 +55,7 @@ func Normalize(h string) string {
 func Validate(h string) error {
 	n := Normalize(h)
 	if !handlePattern.MatchString(n) {
-		return fmt.Errorf("cashtag: handle must be 3-30 chars, start alphanumeric, [a-z0-9_] only")
+		return errors.New("cashtag: handle must be 3-30 chars, start alphanumeric, [a-z0-9_] only")
 	}
 	if _, bad := reserved[n]; bad {
 		return ErrReserved
@@ -74,7 +75,7 @@ func Validate(h string) error {
 // user per handle (UNIQUE handle) — both enforced in schema and surfaced here.
 func (s *Service) Claim(ctx context.Context, userID, handle string) (*Handle, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("cashtag: user required")
+		return nil, errors.New("cashtag: user required")
 	}
 	if err := Validate(handle); err != nil {
 		return nil, err
@@ -105,7 +106,7 @@ func (s *Service) Resolve(ctx context.Context, handle string) (string, error) {
 	const q = `SELECT user_id FROM cashtag_handles WHERE handle=$1`
 	var userID string
 	if err := s.db.QueryRow(ctx, q, n).Scan(&userID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
 		return "", fmt.Errorf("cashtag: resolve: %w", err)
@@ -118,7 +119,7 @@ func (s *Service) HandleFor(ctx context.Context, userID string) (*Handle, error)
 	const q = `SELECT id, user_id, handle, created_at FROM cashtag_handles WHERE user_id=$1`
 	var h Handle
 	if err := s.db.QueryRow(ctx, q, userID).Scan(&h.ID, &h.UserID, &h.Handle, &h.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -128,9 +129,9 @@ func (s *Service) HandleFor(ctx context.Context, userID string) (*Handle, error)
 
 // Sentinel errors.
 var (
-	ErrReserved       = fmt.Errorf("cashtag: handle is reserved")
-	ErrImpersonation  = fmt.Errorf("cashtag: handle impersonates a protected name")
-	ErrTaken          = fmt.Errorf("cashtag: handle already taken")
-	ErrAlreadyClaimed = fmt.Errorf("cashtag: user already has a handle")
-	ErrNotFound       = fmt.Errorf("cashtag: handle not found")
+	ErrReserved       = errors.New("cashtag: handle is reserved")
+	ErrImpersonation  = errors.New("cashtag: handle impersonates a protected name")
+	ErrTaken          = errors.New("cashtag: handle already taken")
+	ErrAlreadyClaimed = errors.New("cashtag: user already has a handle")
+	ErrNotFound       = errors.New("cashtag: handle not found")
 )

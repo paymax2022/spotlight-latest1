@@ -4,7 +4,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 
-// POST /api/v1/visitor/gate/sync — mark all pending events as synced.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

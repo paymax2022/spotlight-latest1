@@ -1,14 +1,13 @@
-// ── Paymax · Admin — ToggleRow ───────────────────────────────────────────────
 // Label (+ optional sublabel) with a controlled switch built from Pressable so
 // styling stays inside the design system (no platform Switch chrome). Animation-
 // free; the track/knob colours come from design tokens.
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   label: string;

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Text, StyleSheet, TextStyle } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatKobo } from '../constants/format';
 
 interface Props {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"time"
 
@@ -69,12 +70,17 @@ var (
 	ErrNotEntitled       = errors.New("exam: not entitled to this arena")
 	ErrPauseNotAllowed   = errors.New("exam: blueprint does not permit pausing")
 	ErrAlreadyFinal      = errors.New("exam: attempt already submitted")
+	ErrConflict          = errors.New("exam: conflicts with an existing row")
 )
 
-// ── Arena / blueprint / combination admin ───────────────────────────────────────
+// arenaCodes mirrors the academy_exam_arenas.code CHECK enum — validating here
+// turns the 23514 violation into a deterministic ErrInvalidInput.
+var arenaCodes = map[string]bool{
+	"CCE": true, "BECE": true, "WASSCE": true, "NECO": true, "UTME": true, "NABTEB": true,
+}
 
 func (s *Service) CreateArena(ctx context.Context, actor string, req CreateArenaRequest) (*Arena, error) {
-	if req.Code == "" || req.Name == "" {
+	if req.Code == "" || req.Name == "" || !arenaCodes[req.Code] {
 		return nil, ErrInvalidInput
 	}
 	return s.repo.InsertArena(ctx, actor, req)
@@ -134,8 +140,6 @@ func (s *Service) DeleteCombination(ctx context.Context, actor, id string) error
 func (s *Service) GetCombinations(ctx context.Context, arenaID, course string) ([]SubjectCombinationRule, error) {
 	return s.repo.GetCombinations(ctx, arenaID, course)
 }
-
-// ── CBT attempt engine ───────────────────────────────────────────────────────────
 
 // Begin runs created→started: entitlement check, then create a started attempt with
 // a SERVER-AUTHORITATIVE deadline = now + blueprint.total_seconds. Idempotent on
@@ -291,10 +295,7 @@ func (s *Service) Submit(ctx context.Context, userID, attemptID string, response
 	}
 
 	now := s.now().UTC()
-	late := false
-	if att.ServerDeadline != nil && now.After(*att.ServerDeadline) {
-		late = true // accept but mark late — integrity signal, not punitive
-	}
+	late := att.ServerDeadline != nil && now.After(*att.ServerDeadline)
 
 	if integrity == nil {
 		integrity = map[string]any{}
@@ -437,9 +438,8 @@ func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string
 		return nil, ErrNotFound // not yet submitted → no result projection
 	}
 	res := map[string]any{}
-	for k, v := range att.Score { // subjects, overall, grade, late
-		res[k] = v
-	}
+	// subjects, overall, grade, late
+	maps.Copy(res, att.Score)
 	if att.Readiness != nil {
 		res["readiness"] = *att.Readiness
 	}
@@ -530,10 +530,7 @@ func (s *Service) attachSubjectNames(ctx context.Context, subjects []SubjectScor
 	}
 }
 
-// ── Pure scoring core ────────────────────────────────────────────────────────────
-
 // score is the PURE scoring + readiness function. No DB, no ctx → unit-testable.
-//
 //   - Per-subject raw = correct count; total = items in subject.
 //   - Overall: when scoring_rules.scale == "400" (UTME/JAMB), overall is mapped onto
 //     the 400-point scale (fraction-correct × 400). Otherwise grade-band scoring:

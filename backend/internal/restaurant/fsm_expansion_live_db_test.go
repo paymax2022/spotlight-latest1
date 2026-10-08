@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the expanded order lifecycle (Phase 14): restaurant
 // reject→refund, dispatch-failed→refund, delivery-failed marker (no refund), and the
 // authz on each. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -86,7 +84,6 @@ func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 
-	// --- Reject (RM-003): owner rejects a pending order → refund. ---
 	oid, settID := seedOrderWithEscrow(t, ctx, pool, restID, customer, nil, "pending", "none", nil)
 	if err := svc.RejectOrder(ctx, oid, stranger, "x"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("stranger reject: want ErrForbidden, got %v", err)
@@ -104,7 +101,6 @@ func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 		t.Errorf("settlement = %s, want refunded", st)
 	}
 
-	// --- Dispatch failed (DP-003): a ready+searching order with no rider → refund. ---
 	oid2, settID2 := seedOrderWithEscrow(t, ctx, pool, restID, customer, nil, "ready", "searching", nil)
 	if err := svc.MarkDispatchFailed(ctx, oid2, "no_rider_available"); err != nil {
 		t.Fatalf("mark dispatch failed: %v", err)
@@ -116,7 +112,6 @@ func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 		t.Errorf("settlement = %s, want refunded", st)
 	}
 
-	// --- Stalled-dispatch sweeper: a ready+searching order that went stale is swept. ---
 	stale := time.Now().Add(-(dispatchStaleMinutes + 5) * time.Minute)
 	oid3, settID3 := seedOrderWithEscrow(t, ctx, pool, restID, customer, nil, "ready", "searching", &stale)
 	swept, err := svc.SweepStalledDispatch(ctx, time.Now())
@@ -130,7 +125,6 @@ func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 		t.Errorf("swept order %s settlement = %s, want refunded", oid3, st)
 	}
 
-	// --- Delivery failed (DL): assigned rider marks a picked-up order failed; NO refund. ---
 	oid4, settID4 := seedOrderWithEscrow(t, ctx, pool, restID, customer, &rider, "picked_up", "assigned", nil)
 	if err := svc.MarkDeliveryFailed(ctx, oid4, stranger, "x"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("stranger delivery-failed: want ErrForbidden, got %v", err)

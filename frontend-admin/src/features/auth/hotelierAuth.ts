@@ -11,7 +11,7 @@ import { getSupabaseClient } from '@/services/supabaseClient';
  * referral attribution and lockout bookkeeping — none of which apply to a
  * hotelier signing up with a work email for Stays. Going direct also means
  * the session this produces IS the supabase-js client's own persisted
- * session, so adminSession.ts's existing startAdminSessionSync()
+ * session, so adminAuth.ts's existing startAdminSessionSync()
  * (onAuthStateChange) picks it up and keeps it refreshed with zero extra
  * wiring — the whole reason that module exists is to avoid a second,
  * divergent copy of the token.

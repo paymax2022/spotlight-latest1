@@ -14,9 +14,7 @@ export interface VirtualAccountRow {
   provisioned_at: string;
 }
 
-// ---------------------------------------------------------------------------
 // Read
-// ---------------------------------------------------------------------------
 
 export async function getVirtualAccount(userId: string): Promise<VirtualAccountRow | null> {
   const supabase = createAdminClient();
@@ -33,9 +31,7 @@ export async function getVirtualAccount(userId: string): Promise<VirtualAccountR
   return data ? (data as unknown as VirtualAccountRow) : null;
 }
 
-// ---------------------------------------------------------------------------
 // Provision
-// ---------------------------------------------------------------------------
 
 /**
  * Provision-on-read: fetch the user's virtual account, auto-provisioning it
@@ -94,17 +90,13 @@ export async function provisionVirtualAccount(
   firstName: string,
   lastName: string,
 ): Promise<VirtualAccountRow> {
-  // Idempotency — return existing account
   const existing = await getVirtualAccount(userId);
   if (existing) return existing;
 
-  // Step 1: Create or find the Paystack customer
   const customerCode = await ensurePaystackCustomer(userEmail, firstName, lastName);
 
-  // Step 2: Create the Dedicated Virtual Account
   const dvaData = await createPaystackDva(customerCode);
 
-  // Step 3: Persist to DB
   // Generate id client-side so we can return the row without a post-insert SELECT.
   const supabase = createAdminClient();
   const newId = crypto.randomUUID();
@@ -124,12 +116,12 @@ export async function provisionVirtualAccount(
   });
 
   if (error) {
-    // Race: another request provisioned concurrently — re-fetch
     if (error.code === '23505') {
       const raced = await getVirtualAccount(userId);
       if (raced) return raced;
     }
-    throw new ApiError(`Failed to save virtual account: ${error.message}`, 500);
+    console.error('[virtual-accounts] Failed to save virtual account:', error.message);
+    throw new ApiError("We couldn't set up your virtual account right now. Please try again.", 500);
   }
 
   return {
@@ -146,9 +138,7 @@ export async function provisionVirtualAccount(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Lookup by account number (for DVA inbound transfer webhook)
-// ---------------------------------------------------------------------------
 
 export async function getVirtualAccountByNumber(
   accountNumber: string,
@@ -165,9 +155,7 @@ export async function getVirtualAccountByNumber(
   return data ? (data as unknown as VirtualAccountRow) : null;
 }
 
-// ---------------------------------------------------------------------------
 // Paystack API helpers (DVA-owned, independent of voting module)
-// ---------------------------------------------------------------------------
 
 function getPaystackSecretKey(): string {
   const key = process.env.PAYSTACK_SECRET_KEY;
@@ -187,7 +175,8 @@ async function paystackPost<T>(path: string, body: Record<string, unknown>): Pro
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(`Paystack API error (${path}): ${text}`, 502);
+    console.error(`[virtual-accounts] Paystack request failed (${path}) [${res.status}]:`, text);
+    throw new ApiError("We couldn't reach our banking partner right now. Please try again in a moment.", 502);
   }
 
   return res.json() as Promise<T>;

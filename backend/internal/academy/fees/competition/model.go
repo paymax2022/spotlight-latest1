@@ -1,7 +1,6 @@
 // Package feescompetition is the EdTech School-Fees cross-school Competition +
 // leaderboard-scope-extension + minor-safe serializer sub-package (build-spec
 // §2 Competition/LeaderboardEntry, §3.4 Competition state machine, §4 SF-7).
-//
 // BROWNFIELD EXTENSION — this package REUSES, it does not replace:
 //   - Competition lifecycle is driven ENTIRELY by the shared, pure state machine
 //     in academy/fees/statemachine (feesstatemachine.CompetitionTransition +
@@ -18,7 +17,6 @@
 // rewards, if any, route exclusively through the sibling academy/rewards service
 // (rewards.IssueReward) — a reward is NEVER represented as a leaderboard entry or
 // a score. Nothing in this package touches the wallet ledger.
-//
 // SF-7 (RELEASE BLOCKER): the public leaderboard serializer DEFAULT-STRIPS PII
 // for any student with minor_flag=true — first name + school only — and only
 // widens to full identity/photo when an explicit, recorded guardian consent
@@ -30,8 +28,6 @@ import (
 
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
-
-// ── Competition (mirrors public.academy_competitions, §2/§3.4) ──────────────────
 
 // Competition is a cross-school contest. status is the string form of a
 // feesstatemachine.CompetitionState; all mutations go through the state machine.
@@ -56,8 +52,6 @@ type CompetitionRegistration struct {
 	SchoolID      string    `json:"school_id"`
 	RegisteredAt  time.Time `json:"registered_at"`
 }
-
-// ── Leaderboard scope (§2 LeaderboardEntry: class/school/city/state/national) ────
 
 // Scope is the geographic/organisational rollup dimension for a cross-school
 // leaderboard. These MUST match the widened academy_leaderboards.scope CHECK
@@ -91,7 +85,6 @@ func ValidScope(s Scope) bool { return validScopes[s] }
 // gamification row carries (leaderboard_id, user_id, period_key, score) and the
 // competition dimension (student, school, scope, subject) is carried alongside so
 // the serializer can apply SF-7. student_user_id is the gamification user_id.
-//
 // This struct is the RAW, un-serialized entry — it holds full identity fields.
 // It must NEVER be returned directly on a public endpoint; run it through
 // Serializer.SerializeEntry (serializer.go) first so SF-7 stripping applies.
@@ -116,8 +109,6 @@ type LeaderboardEntry struct {
 	Score         int64  `json:"score"`
 	Rank          int    `json:"rank,omitempty"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // CreateCompetitionRequest is the body for POST /competitions.
 type CreateCompetitionRequest struct {

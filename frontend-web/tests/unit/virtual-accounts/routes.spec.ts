@@ -26,6 +26,12 @@ vi.mock('@/src/server/virtual-accounts/service', () => ({
   getOrProvisionVirtualAccount: vi.fn(),
 }));
 
+// AUD-FE-004 residual: the route now reconciles recent inbound DVA payments on
+// read (webhook self-heal). Mocked here — its own spec covers the behaviour.
+vi.mock('@/src/server/virtual-accounts/reconcile', () => ({
+  reconcileDvaInboundTransfers: vi.fn(async () => ({ checked: 0, credited: 0 })),
+}));
+
 import { GET } from '../../../app/api/v1/virtual-accounts/me/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { requireKycTier } from '@/src/server/kyc/gate';

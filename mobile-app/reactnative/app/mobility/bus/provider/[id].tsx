@@ -3,22 +3,21 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Star, ShieldCheck, MapPin, ArrowRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusProviderDetail } from '@/features/mobility/hooks/useBusMarketplace';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusProviderRoute } from '@/features/mobility/types/busProvider.types';
 
 const time = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 export default function BusProviderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

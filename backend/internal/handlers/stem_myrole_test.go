@@ -1,13 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // erroringRBACService reports a GetUserRoles failure — embeds RBACService as
@@ -15,7 +17,7 @@ import (
 // would nil-panic, which MyRole never makes.
 type erroringRBACService struct{ services.RBACService }
 
-func (erroringRBACService) GetUserRoles(string) ([]string, error) {
+func (erroringRBACService) GetUserRoles(context.Context, string) ([]string, error) {
 	return nil, &stemMyRoleTestErr{"lookup failed"}
 }
 
@@ -41,7 +43,7 @@ func TestStemMyRole_NoVerifiedIdentity(t *testing.T) {
 	r := myRoleRouter(t, h, false, "")
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/my-role", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/my-role", nil))
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d (body: %s)", w.Code, w.Body.String())
@@ -53,7 +55,7 @@ func TestStemMyRole_NoRBACWired(t *testing.T) {
 	r := myRoleRouter(t, h, true, "user-1")
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/my-role", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/my-role", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -68,7 +70,7 @@ func TestStemMyRole_NoRolesHeld(t *testing.T) {
 	r := myRoleRouter(t, h, true, "user-1")
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/my-role", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/my-role", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -83,7 +85,7 @@ func TestStemMyRole_ResolvesRealStemRole(t *testing.T) {
 	r := myRoleRouter(t, h, true, "user-judge")
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/my-role", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/my-role", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -103,7 +105,7 @@ func TestStemMyRole_SystemAdminAliasesToAdmin(t *testing.T) {
 	r := myRoleRouter(t, h, true, "user-admin")
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/my-role", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/my-role", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -119,7 +121,7 @@ func TestStemMyRole_FailsClosedOnRoleLookupError(t *testing.T) {
 	r := myRoleRouter(t, h, true, "user-1")
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/my-role", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/my-role", nil))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)

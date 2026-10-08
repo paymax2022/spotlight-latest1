@@ -63,6 +63,26 @@ const ENFORCE = resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE);
 // cookie name instead of re-deriving it.
 export const SESSION_COOKIE = 'sb-admin-token';
 
+// Pulls the admin session token out of a raw Cookie header. Route handlers that
+// receive a plain Request (not NextRequest) can't use the req.cookies helper, so
+// they share this pure, unit-testable parser instead of re-deriving it. A route
+// file (route.ts) may only export HTTP handlers under Next 15's type check, so
+// this lives here alongside SESSION_COOKIE rather than in a route module.
+export function extractSessionToken(cookieHeader: string | null): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() !== SESSION_COOKIE) continue;
+    try {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    } catch {
+      return part.slice(idx + 1).trim();
+    }
+  }
+  return undefined;
+}
+
 // Paths under /admin reachable without a session (login + terminal states).
 export function isPublicAdminPath(pathname: string): boolean {
   return (

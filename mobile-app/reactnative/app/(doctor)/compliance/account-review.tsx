@@ -3,17 +3,16 @@ import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Eye, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, StatusBadge } from '@/features/doctor/components';
 import { useAccountReviewNotice } from '@/features/doctor/hooks';
 import { ACCOUNT_REVIEW_REASON_LABELS } from '@/features/doctor/constants';
 
-// ── Section AB — Account review notice (AB.15, also AD account-review) ──────────
 // NEW screen: surfaces an active account-review notice (reason / restriction /
 // expected-by) or a reassuring empty state when none is active. Reuses
 // SectionCard / InfoRow / StatusBadge.

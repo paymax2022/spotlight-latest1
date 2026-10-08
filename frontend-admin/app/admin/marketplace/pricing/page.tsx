@@ -31,10 +31,25 @@ export default function PricingPage() {
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try {
-      const [pk, dr, cm, dc, sl] = await Promise.all([listBoostPackages(), getBoostDailyRate(), getCommissionConfig(), listDiscountCodes(), listFeaturedSlots()]);
-      setPackages(pk); setDailyRateState(dr); setCommission(cm); setDiscounts(dc); setSlots(sl);
-    } catch (e) { setError(String(e)); } finally { setLoading(false); }
+    // allSettled, not all: boost packages + daily rate are backed by REAL routes
+    // (/admin/pricing/boosts, /admin/pricing/boosts/daily-rate) while commission,
+    // discounts, and featured-slots have no backend route yet (404 — see
+    // marketplace_routes.go, only pricing/boosts* is registered). Promise.all made
+    // one unimplemented sub-feature's rejection wipe out the other four results,
+    // so the whole page (including the two LIVE sections) rendered nothing but a
+    // red error banner. Each section now loads independently and only the
+    // sections still lacking a backend route show as unavailable.
+    const [pk, dr, cm, dc, sl] = await Promise.allSettled([
+      listBoostPackages(), getBoostDailyRate(), getCommissionConfig(), listDiscountCodes(), listFeaturedSlots(),
+    ]);
+    const errors: string[] = [];
+    if (pk.status === 'fulfilled') setPackages(pk.value); else errors.push(`Boost packages: ${pk.reason}`);
+    if (dr.status === 'fulfilled') setDailyRateState(dr.value); else errors.push(`Daily rate: ${dr.reason}`);
+    if (cm.status === 'fulfilled') setCommission(cm.value); else errors.push(`Commission: ${cm.reason}`);
+    if (dc.status === 'fulfilled') setDiscounts(dc.value); else errors.push(`Discount codes: ${dc.reason}`);
+    if (sl.status === 'fulfilled') setSlots(sl.value); else errors.push(`Featured slots: ${sl.reason}`);
+    setError(errors.length ? errors.join(' · ') : null);
+    setLoading(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -88,7 +103,6 @@ export default function PricingPage() {
   );
 }
 
-// ── Boost packages ───────────────────────────────────────────────────────────
 function BoostPackagesCard({ packages, canEdit, busy, onSave }: { packages: MktBoostPackage[]; canEdit: boolean; busy: string | null; onSave: (pkg: MktBoostPackage, reason: string) => void }) {
   const [draft, setDraft] = useState<Record<string, { price: string; duration: string; weight: string; active: boolean; reason: string }>>({});
   const rowOf = (p: MktBoostPackage) => draft[p.tier] ?? { price: String(p.price_kobo / 100), duration: String(p.duration_days), weight: String(p.weight), active: p.is_active, reason: '' };
@@ -125,7 +139,6 @@ function BoostPackagesCard({ packages, canEdit, busy, onSave }: { packages: MktB
   );
 }
 
-// ── Custom-range daily rate (start date+time / end date+time boosts) ─────────
 function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRate; canEdit: boolean; busy: boolean; onSave: (dailyRateKobo: number, reason: string) => void }) {
   const [naira, setNaira] = useState(String(rate.daily_rate_kobo / 100));
   const [reason, setReason] = useState('');
@@ -156,7 +169,6 @@ function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRat
   );
 }
 
-// ── Commission ───────────────────────────────────────────────────────────────
 function CommissionCard({ config, canEdit, busy, onSave }: { config: MktCommissionConfig; canEdit: boolean; busy: boolean; onSave: (bps: number, reason: string) => void }) {
   const [bps, setBps] = useState(String(config.default_bps));
   const [reason, setReason] = useState('');
@@ -179,7 +191,6 @@ function CommissionCard({ config, canEdit, busy, onSave }: { config: MktCommissi
   );
 }
 
-// ── Discount codes ───────────────────────────────────────────────────────────
 function DiscountsCard({ discounts, canEdit, busy, onCreate, onToggle }: {
   discounts: MktDiscountCode[]; canEdit: boolean; busy: string | null;
   onCreate: (inp: { code: string; kind: MktDiscountKind; value: number; applies_to: 'boost' | 'listing_fee'; max_redemptions: number | null; valid_until: string | null; reason_code: string }) => void;
@@ -246,7 +257,6 @@ function DiscountsCard({ discounts, canEdit, busy, onCreate, onToggle }: {
   );
 }
 
-// ── Featured slots ───────────────────────────────────────────────────────────
 function FeaturedSlotsCard({ slots, canEdit, busy, onSave }: { slots: MktFeaturedSlotConfig[]; canEdit: boolean; busy: string | null; onSave: (surface: string, max: number, reason: string) => void }) {
   const [draft, setDraft] = useState<Record<string, { max: string; reason: string }>>({});
   const rowOf = (s: MktFeaturedSlotConfig) => draft[s.surface] ?? { max: String(s.max_slots), reason: '' };

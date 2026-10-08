@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Spotlight Academy (K-12 EdTech) learner stack. Mock-first; the whole surface
@@ -18,10 +18,8 @@ export default function AcademyLayout() {
       {/* Home */}
       <Stack.Screen name="index" />
 
-      {/* Onboarding (A5–A9) */}
+      {/* Onboarding (A5, A9) — age check + guardian consent (A6/A7) removed */}
       <Stack.Screen name="onboarding/role" />
-      <Stack.Screen name="onboarding/age" />
-      <Stack.Screen name="onboarding/consent" />
       <Stack.Screen name="onboarding/class" />
 
       {/* Learning loop (L3–L13) */}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,16 +12,16 @@ import (
 
 // Notification represents a marketplace notification
 type Notification struct {
-	ID        string                 `json:"id"`
-	UserID    string                 `json:"user_id"`
-	Type      string                 `json:"type"` // 'new_offer','price_dropped',etc
-	Title     string                 `json:"title"`
-	Body      string                 `json:"body,omitempty"`
-	Data      map[string]interface{} `json:"data,omitempty"`
-	RelatedID string                 `json:"related_id,omitempty"`
-	IsRead    bool                   `json:"is_read"`
-	ReadAt    *time.Time             `json:"read_at,omitempty"`
-	CreatedAt time.Time              `json:"created_at"`
+	ID        string         `json:"id"`
+	UserID    string         `json:"user_id"`
+	Type      string         `json:"type"` // 'new_offer','price_dropped',etc
+	Title     string         `json:"title"`
+	Body      string         `json:"body,omitempty"`
+	Data      map[string]any `json:"data,omitempty"`
+	RelatedID string         `json:"related_id,omitempty"`
+	IsRead    bool           `json:"is_read"`
+	ReadAt    *time.Time     `json:"read_at,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // ListNotifications retrieves user's notification feed (newest first, with pagination)
@@ -57,13 +57,12 @@ func (s *Service) ListNotifications(ctx context.Context, userID string, limit, o
 			return nil, err
 		}
 
-		// Parse JSON data
 		if dataStr != "" {
 			if err := json.Unmarshal([]byte(dataStr), &n.Data); err != nil {
-				n.Data = make(map[string]interface{})
+				n.Data = make(map[string]any)
 			}
 		} else {
-			n.Data = make(map[string]interface{})
+			n.Data = make(map[string]any)
 		}
 
 		n.ReadAt = readAt
@@ -92,19 +91,18 @@ func (s *Service) MarkNotificationRead(ctx context.Context, userID, notification
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("notification not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFoundCoded("notification")
 		}
 		return nil, err
 	}
 
-	// Parse JSON data
 	if dataStr != "" {
 		if err := json.Unmarshal([]byte(dataStr), &n.Data); err != nil {
-			n.Data = make(map[string]interface{})
+			n.Data = make(map[string]any)
 		}
 	} else {
-		n.Data = make(map[string]interface{})
+		n.Data = make(map[string]any)
 	}
 
 	return &n, nil
@@ -137,7 +135,7 @@ func (s *Service) DeleteNotification(ctx context.Context, userID, notificationID
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("notification not found")
+		return ErrNotFoundCoded("notification")
 	}
 
 	return nil
@@ -153,11 +151,10 @@ func (s *Service) GetUnreadNotificationCount(ctx context.Context, userID string)
 }
 
 // CreateNotification creates a notification for a user (internal use)
-func (s *Service) CreateNotification(ctx context.Context, userID, notificationType, title, body string, data map[string]interface{}, relatedID string) (*Notification, error) {
+func (s *Service) CreateNotification(ctx context.Context, userID, notificationType, title, body string, data map[string]any, relatedID string) (*Notification, error) {
 	id := uuid.New().String()
 	now := time.Now()
 
-	// Convert data to JSON
 	dataJSON, _ := json.Marshal(data)
 
 	query := `
@@ -177,21 +174,19 @@ func (s *Service) CreateNotification(ctx context.Context, userID, notificationTy
 		return nil, err
 	}
 
-	// Parse JSON data
 	if err := json.Unmarshal([]byte(dataStr), &n.Data); err != nil {
-		n.Data = make(map[string]interface{})
+		n.Data = make(map[string]any)
 	}
 
 	return &n, nil
 }
 
 // BroadcastNotification sends notifications to multiple users (e.g., price drop alert)
-func (s *Service) BroadcastNotification(ctx context.Context, userIDs []string, notificationType, title, body string, data map[string]interface{}, relatedID string) error {
+func (s *Service) BroadcastNotification(ctx context.Context, userIDs []string, notificationType, title, body string, data map[string]any, relatedID string) error {
 	if len(userIDs) == 0 {
 		return nil
 	}
 
-	// Convert data to JSON
 	dataJSON, _ := json.Marshal(data)
 
 	query := `

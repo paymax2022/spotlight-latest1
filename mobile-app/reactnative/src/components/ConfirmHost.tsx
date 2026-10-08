@@ -1,4 +1,3 @@
-// ── ConfirmHost — web renderer for confirmAsync / alertAsync ─────────────────
 // Mounted once at the app root. Subscribes to the confirm request store and
 // renders pending requests as an in-app modal styled with the app design tokens
 // (mirrors VoteConfirmationSheet). On native, Alert.alert handles everything, so
@@ -6,11 +5,11 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, Platform } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow3 } from '@/constants/tokens';
 import { subscribeConfirm, resolveConfirm, type ConfirmRequest } from '@/lib/confirm';
 
 export default function ConfirmHost() {

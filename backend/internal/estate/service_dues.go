@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // LedgerPoster is the subset of the finance ledger the estate dues money path
@@ -21,6 +24,11 @@ type LedgerPoster interface {
 	// Credit posts a balanced entry that increases the user's wallet, debiting the
 	// given standing account. Used for vendor payouts (Block 42).
 	Credit(ctx context.Context, userID, reference, idempotencyKey, debitAccountID string, amountKobo int64) error
+	// PostJournal posts an arbitrary balanced DEBIT/CREDIT pair between two
+	// standing accounts — used ONLY by payDues' external-funding branch to move
+	// money DR provider-clearing / CR settlement with NO wallet leg at all (see
+	// PayDuesPaystackFunded). The wallet-funded branch keeps using Debit.
+	PostJournal(ctx context.Context, j ledger.JournalEntry) error
 }
 
 // TierEnforcer fail-closes a wallet debit against the payer's KYC tier limit.
@@ -45,15 +53,13 @@ func (s *Service) WithTiers(t TierEnforcer) *Service {
 	return s
 }
 
-// ── Block 29: Dues / Rent / Subscriptions ────────────────────────────────────
-
 // CreateInvoice bills a resident (estate admin only).
 func (s *Service) CreateInvoice(ctx context.Context, estateID, adminID string, req CreateInvoiceRequest) (*DuesInvoice, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
 	if req.AmountKobo <= 0 {
-		return nil, fmt.Errorf("estate: invoice amount must be positive kobo")
+		return nil, errors.New("estate: invoice amount must be positive kobo")
 	}
 	inv := &DuesInvoice{
 		ID:         uuid.New().String(),
@@ -115,16 +121,76 @@ func (s *Service) ListInvoices(ctx context.Context, estateID, userID, status str
 	return out, rows.Err()
 }
 
-// PayDues settles a dues invoice from the payer's wallet.
-//
+// ErrDuesExternalAmountMismatch guards the Paystack-funded dues path: the
+// verified charge amount must equal the invoice amount this function
+// independently reloads at payment time. See payDues' external-funding
+// cross-check.
+var ErrDuesExternalAmountMismatch = errors.New("estate: verified payment amount no longer matches the invoice amount")
+
+// resolveDuesInvoiceAmount loads and validates an invoice the same way
+// payDues does (scoped to estate + payer, not paid/waived), without moving
+// any money. Shared by payDues itself and QuoteDuesInvoice (a pre-payment
+// amount check for the Paystack-checkout initiate step) so the two can never
+// disagree about what an invoice costs.
+// alreadyPaid is non-nil when the invoice is already settled — the canonical
+// receipt for it — so a caller (payDues) can treat that as its own idempotent
+// success instead of an error; QuoteDuesInvoice surfaces it as a plain error
+// since there is nothing to quote for an already-paid invoice.
+func (s *Service) resolveDuesInvoiceAmount(ctx context.Context, estateID, payerID, invoiceID string) (amount int64, alreadyPaid *DuesPayment, err error) {
+	var status, ownerID string
+	const qInv = `SELECT amount_kobo, status, resident_id FROM estate_dues_invoices WHERE id=$1 AND estate_id=$2`
+	if err := s.db.QueryRow(ctx, qInv, invoiceID, estateID).Scan(&amount, &status, &ownerID); err != nil {
+		return 0, nil, errors.New("estate: invoice not found in this estate")
+	}
+	if ownerID != payerID {
+		return 0, nil, errors.New("estate: cannot pay another resident's invoice")
+	}
+	if status == "paid" {
+		receipt, rerr := s.existingReceipt(ctx, estateID, invoiceID)
+		if rerr != nil {
+			return 0, nil, rerr
+		}
+		return amount, receipt, nil
+	}
+	if status == "waived" {
+		return 0, nil, errors.New("estate: invoice has been waived")
+	}
+	return amount, nil, nil
+}
+
+// QuoteDuesInvoice returns the exact amount owed on invoiceID, running the
+// SAME validation payDues itself runs (ownership, not paid/waived) — used
+// ONLY to decide the amount to ask Paystack for. Never trusted as final:
+// PayDuesPaystackFunded independently reloads and cross-checks it at
+// confirmation time (see ErrDuesExternalAmountMismatch).
+func (s *Service) QuoteDuesInvoice(ctx context.Context, estateID, payerID, invoiceID string) (int64, error) {
+	amount, alreadyPaid, err := s.resolveDuesInvoiceAmount(ctx, estateID, payerID, invoiceID)
+	if err != nil {
+		return 0, err
+	}
+	if alreadyPaid != nil {
+		return 0, errors.New("estate: invoice already paid")
+	}
+	return amount, nil
+}
+
+// payDues is the shared implementation behind PayDues (wallet-funded,
+// KYC-tier-gated) and PayDuesPaystackFunded (funded by an ALREADY-VERIFIED
+// external Paystack charge, never wallet-gated — see that function's doc
+// comment for why). `external` and `verifiedAmountKobo` are NEVER settable
+// by client input on any HTTP-facing request DTO — see the two exported
+// wrappers below.
 // Iron rules enforced here:
 //   - Idempotency-Key required (fail-closed) — ErrIdempotencyRequired otherwise.
-//   - Tier-limit check fail-closed before any money moves.
-//   - Balanced double-entry: DEBIT payer wallet → CREDIT estate settlement account.
+//   - Tier-limit check fail-closed before any money moves (skipped when external).
+//   - Balanced double-entry: DEBIT payer wallet → CREDIT estate settlement account
+//     (wallet-funded), or DR provider-clearing → CR settlement, no wallet leg at
+//     all (externally-funded — see settlement's EscrowExternal for the sibling
+//     pattern this mirrors).
 //   - Immutable receipt: estate_payments row keyed on idempotency_key (unique).
 //   - Audit event written in the same tx as the receipt.
 //   - On success any active dues restriction for the resident is lifted.
-func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req PayDuesRequest) (*DuesPayment, error) {
+func (s *Service) payDues(ctx context.Context, estateID, payerID string, req PayDuesRequest, external bool, verifiedAmountKobo int64) (*DuesPayment, error) {
 	// 1. Fail closed if no Idempotency-Key (runs before touching the ledger).
 	if req.IdempotencyKey == "" {
 		return nil, ErrIdempotencyRequired
@@ -139,24 +205,13 @@ func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req Pay
 	}
 
 	// 3. Load invoice (scoped to estate + payer; immutable amount source of truth).
-	var (
-		amount  int64
-		status  string
-		ownerID string
-	)
-	const qInv = `SELECT amount_kobo, status, resident_id FROM estate_dues_invoices WHERE id=$1 AND estate_id=$2`
-	if err := s.db.QueryRow(ctx, qInv, req.InvoiceID, estateID).Scan(&amount, &status, &ownerID); err != nil {
-		return nil, fmt.Errorf("estate: invoice not found in this estate")
+	amount, alreadyPaid, err := s.resolveDuesInvoiceAmount(ctx, estateID, payerID, req.InvoiceID)
+	if err != nil {
+		return nil, err
 	}
-	if ownerID != payerID {
-		return nil, fmt.Errorf("estate: cannot pay another resident's invoice")
-	}
-	if status == "paid" {
+	if alreadyPaid != nil {
 		// Idempotent: already settled — return the canonical receipt.
-		return s.existingReceipt(ctx, estateID, req.InvoiceID)
-	}
-	if status == "waived" {
-		return nil, fmt.Errorf("estate: invoice has been waived")
+		return alreadyPaid, nil
 	}
 	// Amount is the invoice amount; an override may only match (never under/over-pay).
 	if req.AmountKobo != 0 && req.AmountKobo != amount {
@@ -166,46 +221,132 @@ func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req Pay
 	if method == "" {
 		method = "wallet"
 	}
+	// Recorded distinctly from any client-settable value, mirroring
+	// transport.paymentMethodPaystackExternal — lets any future consumer of
+	// estate_payments.method tell a Paystack-funded receipt apart from a
+	// wallet-funded one at a glance.
+	if external {
+		method = "paystack"
+	}
 
-	// 4. Tier-limit check, fail-closed, before any money moves.
-	if s.tiers != nil {
+	// External-funding amount cross-check — BEFORE anything writes. The caller
+	// already verified Paystack collected verifiedAmountKobo at intent-creation
+	// time, from a quote against the invoice at THAT moment. The invoice amount
+	// is immutable once created, so this should never actually drift — but this
+	// function never trusts the caller's claim regardless, and re-validates
+	// against the SAME reload payDues itself just did.
+	if external && amount != verifiedAmountKobo {
+		return nil, ErrDuesExternalAmountMismatch
+	}
+
+	// 4. Tier-limit check, fail-closed, before any money moves. Skipped entirely
+	// when external is true: an externally-funded payment is collected by an
+	// ALREADY-VERIFIED Paystack charge that never touches the payer's wallet,
+	// so there is no wallet debit for this gate to price against.
+	if !external && s.tiers != nil {
 		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, payerID, amount); err != nil {
 			return nil, fmt.Errorf("estate: dues payment blocked by tier limit: %w", err)
 		}
 	}
 
-	// 5. Estate collection account = settlement standing account (estate operator
+	// 5. Claim the invoice under a row lock, THEN move money, THEN write the
+	//    receipt — all inside one transaction. Two concurrent payDues for the
+	//    same invoice with DIFFERENT idempotency keys previously both passed the
+	//    unpaid check and both debited the wallet (only the receipt insert was
+	//    deduped). The FOR UPDATE serializes them: the loser blocks until the
+	//    winner commits status='paid', then takes the already-paid branch below.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("estate: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var invStatus string
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM estate_dues_invoices WHERE id=$1 AND estate_id=$2 FOR UPDATE`,
+		req.InvoiceID, estateID).Scan(&invStatus); err != nil {
+		return nil, errors.New("estate: invoice not found in this estate")
+	}
+	if invStatus == "paid" {
+		return s.existingReceipt(ctx, estateID, req.InvoiceID)
+	}
+	if invStatus == "waived" {
+		return nil, errors.New("estate: invoice has been waived")
+	}
+
+	// 6. Estate collection account = settlement standing account (estate operator
 	//    settles out-of-band; the estate_id is recorded on the receipt + ref).
 	settle, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return nil, fmt.Errorf("estate: settlement account: %w", err)
 	}
 
-	// 6. Balanced double-entry: DEBIT payer wallet, CREDIT settlement.
-	//    Idempotent on req.IdempotencyKey (ledger unique constraint + redis lock).
+	// 7. Balanced double-entry. Wallet-funded: DEBIT payer wallet, CREDIT
+	//    settlement. Externally-funded: DR provider-clearing, CR settlement —
+	//    the money already left the payer via an already-verified Paystack
+	//    charge, so there is no wallet leg to post here (mirrors
+	//    settlement.Service.EscrowExternal's DR-clearing/CR-escrow shape,
+	//    adapted to dues' immediate-settle model — there is no hold/release
+	//    step for dues to mirror). Both branches are idempotent on
+	//    req.IdempotencyKey (ledger unique constraint + redis lock) — a retry
+	//    after a later failure here replays the money leg as a no-op before
+	//    re-acquiring the invoice lock.
 	ref := "estate_dues:" + estateID + ":" + req.InvoiceID
-	if err := s.ledger.Debit(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
+	if external {
+		clearingAcc, cerr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+		if cerr != nil {
+			return nil, fmt.Errorf("estate: provider clearing account: %w", cerr)
+		}
+		jerr := s.ledger.PostJournal(ctx, ledger.JournalEntry{
+			Reference:       ref,
+			IdempotencyKey:  req.IdempotencyKey,
+			AmountKobo:      amount,
+			DebitAccountID:  clearingAcc.ID,
+			CreditAccountID: settle.ID,
+			Description:     "Paystack-funded estate dues payment (external payment, no wallet debit)",
+		})
+		if jerr != nil && !errors.Is(jerr, ledger.ErrDuplicate) {
+			return nil, fmt.Errorf("estate: dues external post: %w", jerr)
+		}
+	} else if err := s.ledger.Debit(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
 		return nil, fmt.Errorf("estate: dues debit: %w", err)
 	}
 
-	// 7. Immutable receipt + mark invoice paid + lift restriction + audit, one tx.
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("estate: begin tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
+	// 8. Immutable receipt + mark invoice paid + lift restriction + audit.
 	pay := &DuesPayment{
 		ID: uuid.New().String(), EstateID: estateID, InvoiceID: &req.InvoiceID,
 		PayerID: payerID, AmountKobo: amount, Method: method, Status: "successful",
 		Reference: ref, CreatedAt: time.Now(),
 	}
+	// ON CONFLICT's inference target must match uidx_estate_payments_idem
+	// EXACTLY, including its WHERE predicate — it is a PARTIAL unique index
+	// (idempotency_key IS NOT NULL), so a plain "ON CONFLICT (idempotency_key)"
+	// cannot be resolved to it and Postgres raises 42P10 on every insert, not
+	// just duplicates (caught live: even the very first, non-replayed PayDues
+	// call errored). req.IdempotencyKey is always non-empty here (guarded by
+	// ErrIdempotencyRequired above), so the predicate is trivially satisfied.
 	const insPay = `
 		INSERT INTO estate_payments (id, estate_id, invoice_id, payer_id, amount_kobo, method, status, reference, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,'successful',$7,$8)
-		ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := tx.Exec(ctx, insPay, pay.ID, estateID, req.InvoiceID, payerID, amount, method, ref, req.IdempotencyKey); err != nil {
+		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	res, err := tx.Exec(ctx, insPay, pay.ID, estateID, req.InvoiceID, payerID, amount, method, ref, req.IdempotencyKey)
+	if err != nil {
 		return nil, fmt.Errorf("estate: insert payment: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		// Lost a race: a concurrent call with the SAME Idempotency-Key already
+		// inserted the canonical row. Because idempotency_key carries a unique
+		// index, that insert either already committed (this insert's conflict
+		// is only detectable after it did) or is impossible to interleave any
+		// other way — so the winner's row, invoice update, restriction lift,
+		// and audit entry are already durably committed. Do not repeat them
+		// (in particular, do not write a second DUES_PAY audit row) and do not
+		// return this LOCALLY-CONSTRUCTED pay struct: pay.ID is a freshly
+		// generated UUID that was never persisted, so returning it here would
+		// hand the caller a phantom receipt id with no backing estate_payments
+		// row. Return the real, persisted receipt instead — mirrors vendor.go
+		// RequestPayout's identical "lost a race" handling.
+		return s.existingReceipt(ctx, estateID, req.InvoiceID)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE estate_dues_invoices SET status='paid' WHERE id=$1 AND estate_id=$2`, req.InvoiceID, estateID); err != nil {
 		return nil, fmt.Errorf("estate: mark invoice paid: %w", err)
@@ -228,6 +369,34 @@ func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req Pay
 	return pay, nil
 }
 
+// PayDues settles a dues invoice from the payer's wallet. This is the only
+// path reachable from client-controlled input — no HTTP request DTO has a
+// field that can select the external path below.
+func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req PayDuesRequest) (*DuesPayment, error) {
+	return s.payDues(ctx, estateID, payerID, req, false, 0)
+}
+
+// PayDuesPaystackFunded settles a dues invoice funded by an external payment
+// rail (Paystack card/bank-transfer) instead of the payer's wallet — no
+// KYC-tier gate applies, because no wallet debit occurs (see payDues'
+// tier-gate skip and its DR-provider-clearing/CR-settlement journal post).
+// The caller MUST have already verified, server-side, that a completed
+// Paystack charge exists covering exactly verifiedAmountKobo — this function
+// trusts that verification unconditionally and performs none of its own
+// against the gateway. It DOES independently reload the invoice amount and
+// requires it to equal verifiedAmountKobo (see payDues' cross-check) — it
+// never trusts a caller's claim about what the invoice costs, only about
+// what was actually collected. On ErrDuesExternalAmountMismatch, no money
+// was moved and no receipt was written; the caller must reverse the
+// external charge.
+// Must only ever be invoked from a server-initiated flow (a Paystack
+// initiate/verify/webhook handler) that itself carries no client-settable
+// "skip KYC" switch — never from a handler that lets request input choose
+// between this and PayDues.
+func (s *Service) PayDuesPaystackFunded(ctx context.Context, estateID, payerID string, req PayDuesRequest, verifiedAmountKobo int64) (*DuesPayment, error) {
+	return s.payDues(ctx, estateID, payerID, req, true, verifiedAmountKobo)
+}
+
 // existingReceipt returns the canonical successful payment for a settled invoice.
 func (s *Service) existingReceipt(ctx context.Context, estateID, invoiceID string) (*DuesPayment, error) {
 	pay := &DuesPayment{}
@@ -239,7 +408,7 @@ func (s *Service) existingReceipt(ctx context.Context, estateID, invoiceID strin
 		&pay.ID, &pay.EstateID, &pay.InvoiceID, &pay.PayerID, &pay.AmountKobo,
 		&pay.Method, &pay.Status, &pay.Reference, &pay.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: invoice already paid (receipt unavailable)")
+		return nil, errors.New("estate: invoice already paid (receipt unavailable)")
 	}
 	return pay, nil
 }
@@ -300,7 +469,7 @@ func (s *Service) activeRestriction(ctx context.Context, estateID, residentID st
 		`SELECT level FROM estate_dues_restrictions WHERE estate_id=$1 AND resident_id=$2 AND active LIMIT 1`,
 		estateID, residentID,
 	).Scan(&level)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return level, err
@@ -308,7 +477,6 @@ func (s *Service) activeRestriction(ctx context.Context, estateID, residentID st
 
 // restrictionBlocks reports whether an active dues restriction at the given
 // level blocks the named action. This is the Block 30 soft/hard matrix:
-//
 //   - "hard": blocks every gated estate action (visitor codes, voting,
 //     facility booking) — a fully banned defaulter.
 //   - "soft": blocks voting and facility booking, but visitor codes STILL work
@@ -348,15 +516,13 @@ func (s *Service) enforceNotRestricted(ctx context.Context, estateID, residentID
 	return nil
 }
 
-// ── Audit helpers (immutable estate_audit_log) ───────────────────────────────
-
 func (s *Service) auditTx(ctx context.Context, tx pgx.Tx, estateID, actorID, action, subjectType, subjectID string, meta map[string]any) error {
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("estate: audit marshal: %w", err)
 	}
 	const ins = `INSERT INTO estate_audit_log (id, estate_id, actor_id, action, subject_type, subject_id, metadata) VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	if _, err := tx.Exec(ctx, ins, uuid.New().String(), nilUUID(estateID), actorID, action, subjectType, subjectID, metaJSON); err != nil {
+	if _, err := tx.Exec(ctx, ins, uuid.New().String(), dbutil.NullUUID(estateID), actorID, action, subjectType, subjectID, metaJSON); err != nil {
 		return fmt.Errorf("estate: audit: %w", err)
 	}
 	return nil
@@ -365,13 +531,6 @@ func (s *Service) auditTx(ctx context.Context, tx pgx.Tx, estateID, actorID, act
 func (s *Service) audit(ctx context.Context, estateID, actorID, action, subjectType, subjectID string, meta map[string]any) error {
 	metaJSON, _ := json.Marshal(meta)
 	const ins = `INSERT INTO estate_audit_log (id, estate_id, actor_id, action, subject_type, subject_id, metadata) VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := s.db.Exec(ctx, ins, uuid.New().String(), nilUUID(estateID), actorID, action, subjectType, subjectID, metaJSON)
+	_, err := s.db.Exec(ctx, ins, uuid.New().String(), dbutil.NullUUID(estateID), actorID, action, subjectType, subjectID, metaJSON)
 	return err
-}
-
-func nilUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

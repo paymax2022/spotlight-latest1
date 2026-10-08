@@ -1,6 +1,4 @@
-// ── Admin — Paymax Health · Pharmacy (HEALTH-BUILD Phase 1 ADM) ────────────────
 // Mock by default (mirrors stays / savings / events admin services). Flip with
-// NEXT_PUBLIC_HEALTH_USE_MOCK=false to hit the live Go backend at
 // /api/health/pharmacy/admin/*. RBAC: health.pharmacy.* gates wired on the sidebar.
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces HEALTH invariants: HL-2 credential-gated supply (PCN/premises),
@@ -37,7 +35,6 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
 // Verified against backend/internal/app/finance_routes.go:
 //   RegisterHealthPharmacy(finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), ...)
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/pharmacy/admin')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/dashboard instead of
@@ -47,10 +44,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,7 +61,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -80,9 +73,7 @@ const NO_BACKEND_YET =
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: PharmacyDashboard = {
   generated_at: iso(0.1),
   orders_today: 1_840,
@@ -126,14 +117,61 @@ const DASHBOARD: PharmacyDashboard = {
     { id: 'h7', kind: 'controlled_blocked', label: 'Controlled-substance listing attempt blocked — excluded at MVP (HL-4)', ref: 'cat_5560', created_at: iso(9.0) },
   ],
 };
-export async function getPharmacyDashboard(): Promise<PharmacyDashboard> {
-  if (USE_MOCK) { await delay(); return { ...DASHBOARD, order_mix: [...DASHBOARD.order_mix], gmv_trend: [...DASHBOARD.gmv_trend], activity: [...DASHBOARD.activity] }; }
-  return getJson<PharmacyDashboard>('/dashboard');
+/** Raw shape of GET /api/health/pharmacy/admin/dashboard's `data`
+ *  (healthpharmacy.AdminDashboard, backend/internal/health/pharmacy/admin_model.go). */
+interface RawAdminDashboard {
+  total_orders: number;
+  orders_by_state: Record<string, number>;
+  platform_revenue_kobo_week: number;
+  total_pharmacies: number;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+export async function getPharmacyDashboard(): Promise<PharmacyDashboard> {
+  if (USE_MOCK) { await delay(); return { ...DASHBOARD, order_mix: [...DASHBOARD.order_mix], gmv_trend: [...DASHBOARD.gmv_trend], activity: [...DASHBOARD.activity] }; }
+  const raw = await getJson<RawAdminDashboard>('/dashboard');
+  return {
+    generated_at: new Date().toISOString(),
+    // Real, PHARMACY-001-scoped fields — see admin_model.go's AdminDashboard
+    // doc comment for exactly what each one is and, for platform revenue, why
+    // it is a direct read of commission_earnings rather than a recomputed %.
+    orders_total: raw.total_orders,
+    orders_by_state: raw.orders_by_state,
+    platform_revenue_kobo_week: raw.platform_revenue_kobo_week,
+    pharmacies_active: raw.total_pharmacies,
+    // Everything below this line is NOT computed by the real backend yet —
+    // PHARMACY-001 scoped only the order-state aggregate, trailing-7-day
+    // platform revenue, and APPROVED-pharmacy count (see the dashboard page's
+    // DisclosureNote for the same list). Left at 0/empty rather than
+    // fabricated, matching Telemedicine's (TELEMEDICINE-004) and
+    // Marketplace's analytics-endpoint honesty precedent.
+    orders_today: 0,
+    orders_30d: 0,
+    gmv_today_kobo: 0,
+    gmv_30d_kobo: 0,
+    net_revenue_30d_kobo: 0,
+    take_rate: 0,
+    avg_order_value_kobo: 0,
+    rx_pending_verification: 0,
+    rx_verify_sla_minutes: 0,
+    rx_verify_sla_target_minutes: 0,
+    rx_verify_breaches: 0,
+    pcn_pending_review: 0,
+    catalog_pending_governance: 0,
+    catalog_unregistered_blocked: 0,
+    controlled_attempts_blocked: 0,
+    recalls_open: 0,
+    payouts_kyc_hold: 0,
+    held_balance_kobo: 0,
+    released_30d_kobo: 0,
+    refunded_30d_kobo: 0,
+    pharmacies_suspended: 0,
+    order_mix: [],
+    gmv_trend: [],
+    activity: [],
+  };
+}
+
 // B · PCN / premises verification audit queue (HL-2)
-// ════════════════════════════════════════════════════════════════════════════
 const PCN_APPS: PcnApplication[] = [
   { id: 'pcn_4471', pharmacy_name: 'HealthPlus Ikeja', superintendent_masked: 'Pharm. A. Okafor•••', pcn_premises_no: 'PCN/PR/LA/2024/03318', pcn_pharmacist_no: 'PCN/RP/2017/14820', cac_rc_no: 'RC-1442087', state: 'Lagos', lga: 'Ikeja', status: 'submitted', premises_verified: false, pharmacist_verified: true, licence_expires_at: dateStr(-330), docs: [{ kind: 'PCN_premises_licence', reference: 'PCN/PR/LA/2024/03318', expires_at: dateStr(-330), verified: false }, { kind: 'superintendent_pharmacist', reference: 'PCN/RP/2017/14820', expires_at: dateStr(-210), verified: true }, { kind: 'CAC', reference: 'RC-1442087', verified: true }], submitted_at: iso(6), created_at: iso(48) },
   { id: 'pcn_4472', pharmacy_name: 'MedPlus Wuse 2', superintendent_masked: 'Pharm. C. Bello•••', pcn_premises_no: 'PCN/PR/FC/2023/01190', pcn_pharmacist_no: 'PCN/RP/2015/09931', cac_rc_no: 'RC-0998120', state: 'FCT', lga: 'Abuja Municipal', status: 'under_review', premises_verified: true, pharmacist_verified: true, licence_expires_at: dateStr(-120), docs: [{ kind: 'PCN_premises_licence', reference: 'PCN/PR/FC/2023/01190', expires_at: dateStr(-120), verified: true }, { kind: 'superintendent_pharmacist', reference: 'PCN/RP/2015/09931', expires_at: dateStr(-90), verified: true }], submitted_at: iso(30), created_at: iso(96) },
@@ -166,9 +204,7 @@ export async function decidePcn(id: string, decision: PcnDecision, note?: string
   return sendJson<PcnDecisionResult>('POST', `/pcn/applications/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Catalog / NAFDAC governance (HL-5)
-// ════════════════════════════════════════════════════════════════════════════
 const CATALOG: CatalogItem[] = [
   { id: 'cat_5501', product_name: 'Paracetamol 500mg', brand: 'Emzor', pharmacy_masked: 'HealthPlus Ikeja•••', nafdac_reg_no: 'A4-0100', nafdac_valid: true, form: 'tablet', strength: '500mg', pom: false, controlled: false, price_kobo: 350_00, stock: 4_200, status: 'approved', flagged_reason: null, created_at: dateStr(30) },
   { id: 'cat_5510', product_name: 'Amoxicillin 500mg', brand: 'Fidson', pharmacy_masked: 'MedPlus Wuse 2•••', nafdac_reg_no: 'A4-7782', nafdac_valid: true, form: 'capsule', strength: '500mg', pom: true, controlled: false, price_kobo: 1_800_00, stock: 980, status: 'pending', flagged_reason: null, created_at: dateStr(2) },
@@ -197,15 +233,12 @@ export async function listCatalog(opts?: { status?: string; pom?: string; q?: st
   return getJson<CatalogItem[]>(`/catalog${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governCatalogItem(id: string, action: CatalogGovernanceAction, note?: string): Promise<CatalogGovernanceResult> {
-  // NAFDAC gating (HL-5) is enforced inline at write time in the backend;
   // there is no separate governance entity or /catalog/:id/govern route.
   if (USE_MOCK) throw new Error(`Governing a catalog item ${NO_BACKEND_YET}`);
   return sendJson<CatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Rx & controlled-substance audit (HL-3 / HL-4)
-// ════════════════════════════════════════════════════════════════════════════
 const RX_AUDIT: RxAuditItem[] = [
   { id: 'rx_9920', patient_masked: 'pt Chioma•••', prescriber_masked: 'Dr. K. Adeyemi•••', pharmacy_masked: 'HealthPlus Ikeja•••', pharmacist_masked: 'Pharm. A. Okafor•••', status: 'verified', pom_items: 2, controlled_items: 0, dispense_once_ok: true, verify_minutes: 9, order_ref: 'ord_8810', issued_at: iso(5), verified_at: iso(4.5), dispensed_at: null },
   { id: 'rx_9921', patient_masked: 'pt Emeka•••', prescriber_masked: 'Dr. F. Bello•••', pharmacy_masked: 'MedPlus Wuse 2•••', pharmacist_masked: 'Pharm. C. Bello•••', status: 'dispensed', pom_items: 1, controlled_items: 0, dispense_once_ok: true, verify_minutes: 12, order_ref: 'ord_8812', issued_at: iso(26), verified_at: iso(25), dispensed_at: iso(20) },
@@ -249,9 +282,7 @@ export async function listControlledLog(opts?: { q?: string }): Promise<Controll
   return getJson<ControlledLogEntry[]>(`/controlled-log${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Order / delivery oversight
-// ════════════════════════════════════════════════════════════════════════════
 const ORDERS: PharmacyOrderSummary[] = [
   { id: 'ord_8810', patient_masked: 'pt Chioma•••', pharmacy_masked: 'HealthPlus Ikeja•••', status: 'in_delivery', fulfilment: 'delivery', has_pom: true, amount_kobo: 12_400_00, payment_status: 'held', delivery_ref: 'dsp_77120', created_at: iso(4) },
   { id: 'ord_8812', patient_masked: 'pt Emeka•••', pharmacy_masked: 'MedPlus Wuse 2•••', status: 'delivered', fulfilment: 'delivery', has_pom: true, amount_kobo: 8_800_00, payment_status: 'released', delivery_ref: 'dsp_77105', created_at: iso(20) },
@@ -260,6 +291,102 @@ const ORDERS: PharmacyOrderSummary[] = [
   { id: 'ord_8818', patient_masked: 'pt Tunde•••', pharmacy_masked: 'HealthPlus Ikeja•••', status: 'collected', fulfilment: 'pickup', has_pom: false, amount_kobo: 2_100_00, payment_status: 'released', delivery_ref: null, created_at: iso(50) },
   { id: 'ord_8800', patient_masked: 'pt Ngozi•••', pharmacy_masked: 'HealthPlus Ikeja•••', status: 'closed', fulfilment: 'delivery', has_pom: true, amount_kobo: 9_900_00, payment_status: 'released', delivery_ref: 'dsp_76980', created_at: iso(120) },
 ];
+/** Raw shape of one row in GET /api/health/pharmacy/admin/orders's `data`
+ *  (healthpharmacy.Service.AdminListOrders, backend/internal/health/pharmacy/admin.go). */
+interface RawAdminOrder {
+  id: string;
+  patient_id: string;
+  pharmacy_provider_id: string;
+  pharmacy_name: string | null; // health_providers.display_name, LEFT JOINed
+  prescription_id: string | null;
+  state: string; // upper-case OrderState, e.g. "RX_PENDING_VERIFICATION"
+  fulfilment_method: string; // "DELIVERY" | "PICKUP"
+  total_kobo: number;
+  escrow_id: string | null;
+  delivery_ref: string | null;
+  created_at: string;
+}
+
+/** Raw shape of one line in an admin order-detail read (healthpharmacy.OrderLine). */
+interface RawOrderLine {
+  id: string;
+  order_id: string;
+  product_id: string;
+  product_name: string;
+  rx_required: boolean;
+  quantity: number;
+  unit_price_kobo: number;
+  line_total_kobo: number;
+}
+
+/** Raw shape of GET /api/health/pharmacy/admin/orders/:id's `data`
+ *  (healthpharmacy.Order, backend/internal/health/pharmacy/model.go). */
+interface RawAdminOrderDetail {
+  id: string;
+  patient_id: string;
+  pharmacy_provider_id: string;
+  prescription_id: string | null;
+  state: string;
+  fulfilment_method: string;
+  total_kobo: number;
+  escrow_id: string | null;
+  delivery_ref: string | null;
+  pickup_code: string | null; // always null here — Get() redacts it for every non-patient reader (HL-9 counter credential)
+  lines?: RawOrderLine[];
+  created_at: string;
+}
+
+/** NDPA masking (HL-8) for a raw patient uuid the backend never resolves to a
+ * display name — mirrors telemedicineAdminService.ts's maskPatientId. */
+function maskPersonId(id: string): string {
+  return id ? `pt ${id.slice(0, 8)}…` : 'Unknown';
+}
+
+/** Direct case transform: OrderState values (model.go) are exactly the
+ * PharmacyOrderStatus union's values upper-cased — no fabrication involved. */
+function mapOrderStatus(state: string): PharmacyOrderSummary['status'] {
+  return state.toLowerCase() as PharmacyOrderSummary['status'];
+}
+function mapFulfilment(method: string): PharmacyOrderSummary['fulfilment'] {
+  return method.toLowerCase() as PharmacyOrderSummary['fulfilment'];
+}
+
+/**
+ * The pharmacy admin read has no payment_status column to select — HL-9 only
+ * ever writes the order's `state`, never a separate hold/release/refund flag.
+ * This derives the display value from the documented state machine
+ * (model.go's OrderState header comment / Complete+Cancel's own comments):
+ * escrow is HELD from CREATED, RELEASED at the DELIVERED/COLLECTED/CLOSED
+ * transition (Complete releases BEFORE closing), REFUNDED at REFUNDED. The one
+ * inaccuracy this can produce: if escrow.Release/Refund itself errors AFTER
+ * the state transition already landed (Complete/Cancel call transition()
+ * first, release/refund second — see service.go), the row would read
+ * "released"/"refunded" a moment before the escrow call actually lands. A
+ * byte-accurate value would need a live escrow lookup this endpoint doesn't
+ * do; this derivation is disclosed, not silently guessed.
+ */
+function derivePaymentStatus(state: string): PharmacyOrderSummary['payment_status'] {
+  const s = state.toUpperCase();
+  if (s === 'REFUNDED') return 'refunded';
+  if (s === 'DELIVERED' || s === 'COLLECTED' || s === 'CLOSED') return 'released';
+  return 'held';
+}
+
+function mapRawOrder(r: RawAdminOrder): PharmacyOrderSummary {
+  return {
+    id: r.id,
+    patient_masked: maskPersonId(r.patient_id),
+    pharmacy_masked: r.pharmacy_name ?? maskPersonId(r.pharmacy_provider_id),
+    status: mapOrderStatus(r.state),
+    fulfilment: mapFulfilment(r.fulfilment_method),
+    has_pom: r.prescription_id != null,
+    amount_kobo: r.total_kobo,
+    payment_status: derivePaymentStatus(r.state),
+    delivery_ref: r.delivery_ref,
+    created_at: r.created_at,
+  };
+}
+
 export async function listOrders(opts?: { status?: string; fulfilment?: string; q?: string }): Promise<PharmacyOrderSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -272,11 +399,21 @@ export async function listOrders(opts?: { status?: string; fulfilment?: string; 
     }
     return rows;
   }
+  // PHARMACY-001: `status`/`fulfilment` are exactly what the backend now reads
+  // (AdminListOrders, admin.go) — it used to only read `state`/
+  // `pharmacy_provider_id`, so these silently no-op'd. Backend was changed to
+  // match this frontend's contract (see the PR description for why that side
+  // has no backend support — filtered client-side below, same as before.
   const qs = new URLSearchParams();
   if (opts?.status) qs.set('status', opts.status);
   if (opts?.fulfilment) qs.set('fulfilment', opts.fulfilment);
-  if (opts?.q) qs.set('q', opts.q);
-  return getJson<PharmacyOrderSummary[]>(`/orders${qs.toString() ? `?${qs}` : ''}`);
+  const raw = await getJson<RawAdminOrder[]>(`/orders${qs.toString() ? `?${qs}` : ''}`);
+  let rows = (raw ?? []).map(mapRawOrder);
+  if (opts?.q) {
+    const q = opts.q.toLowerCase();
+    rows = rows.filter((r) => r.patient_masked.toLowerCase().includes(q) || r.pharmacy_masked.toLowerCase().includes(q) || r.id.includes(q));
+  }
+  return rows;
 }
 export async function getOrder(id: string): Promise<PharmacyOrderDetail> {
   if (USE_MOCK) {
@@ -308,12 +445,49 @@ export async function getOrder(id: string): Promise<PharmacyOrderDetail> {
       ],
     };
   }
-  return getJson<PharmacyOrderDetail>(`/orders/${id}`);
+  // PHARMACY-001: GET /orders/:id is a new route — this call used to 404.
+  const raw = await getJson<RawAdminOrderDetail>(`/orders/${id}`);
+  const lines: PharmacyOrderDetail['lines'] = (raw.lines ?? []).map((l) => ({
+    product_name: l.product_name,
+    // The admin order-detail read doesn't join pharmacy_products for a NAFDAC
+    // ref (only owner/patient product reads do) — null, not fabricated.
+    nafdac_reg_no: null,
+    pom: l.rx_required,
+    qty: l.quantity,
+    unit_price_kobo: l.unit_price_kobo,
+    line_total_kobo: l.line_total_kobo,
+  }));
+  const subtotal = lines.reduce((s, l) => s + l.line_total_kobo, 0);
+  // delivery_fee_kobo is a REAL arithmetic derivation (order total minus the
+  // sum of its real line totals), not an estimate — pharmacy_orders has no
+  // separate delivery-fee column to read directly.
+  const deliveryFee = Math.max(0, raw.total_kobo - subtotal);
+  return {
+    id: raw.id,
+    patient_masked: maskPersonId(raw.patient_id),
+    pharmacy_masked: maskPersonId(raw.pharmacy_provider_id),
+    status: mapOrderStatus(raw.state),
+    fulfilment: mapFulfilment(raw.fulfilment_method),
+    has_pom: raw.prescription_id != null,
+    amount_kobo: raw.total_kobo,
+    payment_status: derivePaymentStatus(raw.state),
+    delivery_ref: raw.delivery_ref,
+    created_at: raw.created_at,
+    lines,
+    subtotal_kobo: subtotal,
+    delivery_fee_kobo: deliveryFee,
+    total_kobo: raw.total_kobo,
+    rx_ref: raw.prescription_id,
+    // Always null from this endpoint — Get()'s admin-bypass path (service.go)
+    // never needs the counter credential.
+    pickup_code: raw.pickup_code,
+    // No per-order audit timeline read exists yet on the backend — empty, not
+    // fabricated (matching Telemedicine/Marketplace precedent).
+    timeline: [],
+  };
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Pharmacovigilance / recall
-// ════════════════════════════════════════════════════════════════════════════
 const RECALLS: RecallRecord[] = [
   { id: 'rcl_2207', product_name: 'Cough Syrup (Batch X)', nafdac_reg_no: 'A4-3380', batch_no: 'BX-2026-014', pharmacy_masked: 'multiple•••', severity: 'high', status: 'open', reason: 'NAFDAC alert — possible contamination; batch quarantined', units_affected: 1_240, patients_notified: 318, created_at: iso(5) },
   { id: 'rcl_2208', product_name: 'Antihypertensive (Batch L)', nafdac_reg_no: 'A4-5521', batch_no: 'BL-2025-220', pharmacy_masked: 'Greenlife PH•••', severity: 'medium', status: 'investigating', reason: 'Reported sub-potency complaints under pharmacovigilance review', units_affected: 410, patients_notified: 96, created_at: iso(48) },
@@ -345,9 +519,7 @@ export async function createRecall(input: CreateRecallInput): Promise<CreateReca
   return sendJson<CreateRecallResult>('POST', '/recalls', input);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Payouts (KYC-gated — HL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const PAYOUTS: PayoutRecord[] = [
   { id: 'pay_5501', pharmacy_masked: 'HealthPlus Ikeja•••', kyc_tier: 'tier3', kyc_verified: true, collected_kobo: 18_400_000_00, fees_kobo: 1_288_000_00, net_payable_kobo: 17_112_000_00, payout_status: 'approved', aml_flag: false, created_at: dateStr(2) },
   { id: 'pay_5521', pharmacy_masked: 'QuickMeds•••', kyc_tier: 'tier0', kyc_verified: false, collected_kobo: 6_200_000_00, fees_kobo: 434_000_00, net_payable_kobo: 5_766_000_00, payout_status: 'kyc_hold', aml_flag: false, created_at: dateStr(1) },
@@ -371,16 +543,13 @@ export async function listPayouts(opts?: { payout_status?: string; q?: string })
   return getJson<PayoutRecord[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: PayoutDecision, note?: string): Promise<PayoutDecisionResult> {
-  // No payout-decision route exists; payout is fully automatic on order
   // completion in backend/internal/health/pharmacy — there is no
   // admin-reviewable pending state to approve/reject.
   if (USE_MOCK) throw new Error(`Deciding a payout ${NO_BACKEND_YET}`);
   return sendJson<PayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // H · Reporting
-// ════════════════════════════════════════════════════════════════════════════
 const REPORTING: ReportingData = {
   generated_at: iso(0.2),
   period_label: 'Last 30 days',

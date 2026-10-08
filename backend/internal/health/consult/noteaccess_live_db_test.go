@@ -13,9 +13,7 @@ import (
 
 // TM-006 live-DB integration test: a consult's clinical notes are readable only by
 // the participants (patient / provider owner) or an admin; anyone else is forbidden.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset. Bring-up:
-//
 //	supabase start
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/consult/ -run TestNoteRead_LiveDB

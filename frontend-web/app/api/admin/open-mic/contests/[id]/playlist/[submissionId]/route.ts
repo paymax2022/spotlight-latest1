@@ -1,4 +1,4 @@
-import { handleApiError, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertOpenMicScoreAdmin } from '@/src/server/openmic/auth';
 import { updateFinalePlaybackItem } from '@/src/server/openmic/persistence';
 import { addAuditEvent } from '@/src/server/admin/audit';
@@ -10,12 +10,13 @@ export async function PATCH(
   const params = await context.params;
   try {
     const identity = await assertOpenMicScoreAdmin(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       played?: boolean;
       djCueNote?: string;
       judgeScore?: number;
       audienceReactionScore?: number;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const item = await updateFinalePlaybackItem(params.id, params.submissionId, {
       played: body.played,
       djCueNote: body.djCueNote,

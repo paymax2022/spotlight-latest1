@@ -83,7 +83,6 @@ func TestBuildDiscoveryWhere_ExcludesPaused(t *testing.T) {
 	}
 }
 
-// ...but an ADMIN listing by explicit status must STILL see paused campaigns —
 // an operator who cannot see a paused campaign cannot moderate it.
 func TestBuildDiscoveryWhere_AdminSeesPaused(t *testing.T) {
 	where, _ := buildDiscoveryWhere(CampaignQuery{Status: "ACTIVE"}, 1)

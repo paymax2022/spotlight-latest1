@@ -4,8 +4,8 @@ import "testing"
 
 func cfg() Config {
 	return Config{
-		Weights:           map[string]int64{"technical": 2, "macro": 1, "sentiment": 1},
-		QuorumBps:         6000, MinConfidenceBps: 6000, RequireSupervisor: true,
+		Weights:   map[string]int64{"technical": 2, "macro": 1, "sentiment": 1},
+		QuorumBps: 6000, MinConfidenceBps: 6000, RequireSupervisor: true,
 	}
 }
 

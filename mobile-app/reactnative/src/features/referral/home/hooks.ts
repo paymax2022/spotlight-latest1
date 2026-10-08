@@ -1,4 +1,3 @@
-// ── Referral Home React Query hooks (v5) ─────────────────────────────────────
 
 import { useQuery } from '@tanstack/react-query';
 import * as homeApi from './api';

@@ -37,7 +37,6 @@ func TestLevelFor(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := levelFor(tc.totalXP); got != tc.want {
@@ -82,7 +81,6 @@ func TestAwardXPValidation(t *testing.T) {
 		{"empty key and zero xp", AwardInput{EventKey: "", XP: 0}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			awarded, err := svc.AwardXP(context.Background(), "user-1", tc.in)
@@ -112,7 +110,6 @@ func TestUpsertMissionValidation(t *testing.T) {
 		{"missing both", UpsertMissionInput{}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m, err := svc.UpsertMission(context.Background(), "admin-1", tc.in)
@@ -141,7 +138,6 @@ func TestUpsertSeasonValidation(t *testing.T) {
 		{"missing both", UpsertSeasonInput{}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			se, err := svc.UpsertSeason(context.Background(), "admin-1", tc.in)

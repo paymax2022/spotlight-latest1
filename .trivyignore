@@ -14,11 +14,37 @@
 # FROM, and as the very last line, with both `DS-0002` and `AVD-DS-0002`
 # spellings — likely because DS-0002 reports against the image as a whole
 # rather than a single instruction, so it has no AST node for a Dockerfile
-# inline comment to attach to; DS-0026 in the same file, which IS
-# instruction-scoped, suppresses correctly via its own inline comment). This
+# inline comment to attach to). This
 # file's default-discovery (`--ignorefile` defaults to ".trivyignore" at cwd,
 # and `trivy fs .` runs from the repo root) is the actual suppression
 # mechanism. If a future Dockerfile is added without a USER directive, this
 # entry will ALSO silence its finding — re-verify per-file before assuming
 # it's still only .devcontainer/Dockerfile affected.
 DS-0002
+
+# DS-0026 ("No HEALTHCHECK defined") — accepted for
+# .devcontainer/Dockerfile (interactively opened dev image; no orchestrator
+# ever polls it) and mobile-app/reactnative/backend/Dockerfile (distroless:
+# no shell, so HEALTHCHECK CMD cannot run; the service exposes /healthz and
+# is probed by the orchestrator instead). Same scoping caveat as DS-0002:
+# .trivyignore cannot scope a rule to a path, so a future Dockerfile without
+# a HEALTHCHECK is also silenced — re-verify before assuming the set is
+# still only these two. Re-verified 2026-10-02 on trivy v0.70.0 (the CI-pinned
+# version): DS-0026 reports at file scope (startLine 1, no instruction node),
+# so the inline `# trivy:ignore:DS-0026` comments both files used to carry do
+# NOT suppress it under trivy >= 0.70 — the earlier comment below claiming
+# otherwise was validated on an older trivy and is wrong now.
+DS-0026
+
+# -- Vulnerabilities ------------------------------------------------------
+# CVE-2025-71329 / CVE-2025-71330 — HIGH DoS in image-size@1.2.1, reached
+# only as a transitive dependency of metro (metro -> image-size@^1.0.2) in
+# mobile-app/reactnative/package-lock.json. image-size runs at bundle/build
+# time on the app's own checked-in assets, never on attacker-controlled
+# input, so the crafted-ICNS crash vector is not reachable in production.
+# The fix (image-size@2.x) is a major bump metro's range does not accept and
+# metro@latest has dropped the dependency entirely — the override path
+# resolves on the next react-native/metro upgrade rather than forcing an
+# incompatible metro bump in this repo.
+CVE-2025-71329
+CVE-2025-71330

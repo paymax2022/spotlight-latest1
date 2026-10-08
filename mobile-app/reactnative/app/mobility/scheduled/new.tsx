@@ -3,16 +3,17 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check, AlertTriangle, MapPin, LocateFixed } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useScheduledEstimate, useCreateScheduled } from '@/features/mobility/hooks/useScheduled';
 import { useBusSchedules } from '@/features/mobility/hooks/useModes';
 import { SCHEDULED_MODE_META, SCHEDULED_ENABLED, VEHICLE_CLASSES } from '@/features/mobility/constants/modes.constants';
@@ -73,7 +74,7 @@ export default function ScheduleNewTripScreen() {
 
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Pickup/dropoff — reuse the shared AddressEntry flow (via destination.tsx)
+  // Pickup/dropoff — reuse the shared address picker (via destination.tsx)
   // exactly like the mobility home planner: values round-trip through URL params.
   const pickup: ScheduledPlace = useMemo(
     () => (params.pickupAddress
@@ -115,7 +116,6 @@ export default function ScheduleNewTripScreen() {
     return { scheduleId: busScheduleId, seatNumber: busSeat } as BusModePayload;
   }, [mode, vehicleClass, dimensions, weightKg, flightNumber, arrivalTime, terminal, busScheduleId, busSeat]);
 
-  // Airport: when an arrival time is set, the pickup time is derived (+45m),
   // matching the backend rule, but stays adjustable here.
   useEffect(() => {
     if (mode === 'airport_pickup' && arrivalTime) {
@@ -248,7 +248,7 @@ export default function ScheduleNewTripScreen() {
               busSchedules.isLoading ? (
                 <ActivityIndicator color={Colors.primary} />
               ) : busSchedules.isError ? (
-                <MobilityEdgeState kind="offline" compact actionLabel="Retry" onAction={() => busSchedules.refetch()} />
+                <MobilityEdgeState kind={errKind(busSchedules.error)} compact actionLabel="Retry" onAction={() => busSchedules.refetch()} />
               ) : (busSchedules.data?.length ?? 0) === 0 ? (
                 <Text style={styles.hint}>No departures found for that route/date.</Text>
               ) : (
@@ -281,7 +281,7 @@ export default function ScheduleNewTripScreen() {
             showTrustNote
           />
         ) : estimate.isError ? (
-          <MobilityEdgeState kind="offline" compact actionLabel="Retry" onAction={() => estimate.mutate({ mode, scheduledPickupAt, pickup, dropoff, modePayload })} />
+          <MobilityEdgeState kind={errKind(estimate.error)} compact actionLabel="Retry" onAction={() => estimate.mutate({ mode, scheduledPickupAt, pickup, dropoff, modePayload })} />
         ) : null}
 
         <View style={styles.noteCard}>

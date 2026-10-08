@@ -1,9 +1,6 @@
-// ── Pharmacy merchant — API wrapper ──────────────────────────────────────────
-//
 // The pharmacist's side of the health pharmacy module: the order inbox and the
 // fulfilment lifecycle. Distinct from src/features/health/pharmacy, which is the
 // CUSTOMER side (browse, cart, checkout, track).
-//
 // Live by default, like the other merchant modules. Money moves on these calls —
 // completing an order releases the pharmacy's payment out of escrow — so every
 // mutation carries an Idempotency-Key.
@@ -122,8 +119,6 @@ export async function getEarnings(): Promise<PharmacyEarnings> {
     orders_paid: Number.isFinite(e.orders_paid) ? Number(e.orders_paid) : 0,
   };
 }
-
-// ── Catalogue ────────────────────────────────────────────────────────────────
 
 export interface PharmacyProduct {
   id: string;

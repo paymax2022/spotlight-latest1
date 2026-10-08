@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the pgx data-access layer for the exam module. Arena / blueprint /
@@ -27,7 +29,20 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("exam: not found")
 
-// ── helpers ────────────────────────────────────────────────────────────────────
+// mapErr folds Postgres SQLSTATEs into package sentinels: 23505 → ErrConflict;
+// 23514 / 23503 / 22P02 → ErrInvalidInput.
+func mapErr(err error) error {
+	switch {
+	case err == nil, errors.Is(err, ErrNotFound):
+		return err
+	case dbutil.IsUniqueViolation(err):
+		return ErrConflict
+	case dbutil.IsCheckViolation(err), dbutil.SQLState(err) == "23503", dbutil.SQLState(err) == "22P02":
+		return ErrInvalidInput
+	default:
+		return err
+	}
+}
 
 func toJSONB(v any) []byte {
 	if v == nil {
@@ -88,8 +103,6 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 	return err
 }
 
-// ── Arenas ──────────────────────────────────────────────────────────────────────
-
 const arenaCols = `id, code, name, subject_set, scoring_rules, calendar, countdown_at, status`
 
 func scanArena(row rowScanner) (*Arena, error) {
@@ -120,7 +133,7 @@ func (r *Repository) InsertArena(ctx context.Context, actor string, req CreateAr
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'active')`
 	if _, err := r.db.Exec(ctx, q, id, req.Code, req.Name, subjects,
 		toJSONB(req.ScoringRules), toJSONB(req.Calendar), req.CountdownAt); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	_ = r.insertAudit(ctx, actor, "exam_arena.created", "academy_exam_arena", id,
 		map[string]any{"code": req.Code}, "info")
@@ -130,7 +143,8 @@ func (r *Repository) InsertArena(ctx context.Context, actor string, req CreateAr
 // GetArena reads one arena by id.
 func (r *Repository) GetArena(ctx context.Context, id string) (*Arena, error) {
 	q := `SELECT ` + arenaCols + ` FROM public.academy_exam_arenas WHERE id = $1`
-	return scanArena(r.db.QueryRow(ctx, q, id))
+	a, err := scanArena(r.db.QueryRow(ctx, q, id))
+	return a, mapErr(err)
 }
 
 // ListArenas reads all arenas.
@@ -175,7 +189,7 @@ func (r *Repository) UpdateArena(ctx context.Context, actor, id string, req Upda
 	}
 	tag, err := r.db.Exec(ctx, q, id, req.Name, subjArg, scoreArg, calArg, req.CountdownAt, req.Status)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
@@ -183,8 +197,6 @@ func (r *Repository) UpdateArena(ctx context.Context, actor, id string, req Upda
 	_ = r.insertAudit(ctx, actor, "exam_arena.updated", "academy_exam_arena", id, nil, "info")
 	return r.GetArena(ctx, id)
 }
-
-// ── Blueprints ────────────────────────────────────────────────────────────────
 
 const blueprintCols = `id, arena_id, name, variant, sections, total_items, total_seconds, navigation, tools, shuffle, pause_policy, status`
 
@@ -228,7 +240,7 @@ func (r *Repository) InsertBlueprint(ctx context.Context, actor, arenaID string,
 	if _, err := r.db.Exec(ctx, q, id, arenaID, req.Name, variant, toJSONBArray(req.Sections),
 		req.TotalItems, req.TotalSeconds, toJSONB(req.Navigation), toJSONB(req.Tools),
 		shuffle, pausePolicy); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	_ = r.insertAudit(ctx, actor, "cbt_blueprint.created", "academy_cbt_blueprint", id,
 		map[string]any{"arena_id": arenaID, "total_seconds": req.TotalSeconds}, "info")
@@ -238,7 +250,8 @@ func (r *Repository) InsertBlueprint(ctx context.Context, actor, arenaID string,
 // GetBlueprint reads one blueprint by id.
 func (r *Repository) GetBlueprint(ctx context.Context, id string) (*CBTBlueprint, error) {
 	q := `SELECT ` + blueprintCols + ` FROM public.academy_cbt_blueprints WHERE id = $1`
-	return scanBlueprint(r.db.QueryRow(ctx, q, id))
+	b, err := scanBlueprint(r.db.QueryRow(ctx, q, id))
+	return b, mapErr(err)
 }
 
 // ListBlueprintsForArena reads all blueprints for an arena.
@@ -246,7 +259,7 @@ func (r *Repository) ListBlueprintsForArena(ctx context.Context, arenaID string)
 	q := `SELECT ` + blueprintCols + ` FROM public.academy_cbt_blueprints WHERE arena_id = $1 ORDER BY name`
 	rows, err := r.db.Query(ctx, q, arenaID)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	defer rows.Close()
 	out := []CBTBlueprint{}
@@ -308,7 +321,7 @@ func (r *Repository) UpdateBlueprint(ctx context.Context, actor, id string, req 
 	tag, err := r.db.Exec(ctx, q, id, req.Name, req.Variant, sectArg, req.TotalItems, req.TotalSeconds,
 		navArg, toolArg, req.Shuffle, req.PausePolicy, req.Status)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
@@ -316,8 +329,6 @@ func (r *Repository) UpdateBlueprint(ctx context.Context, actor, id string, req 
 	_ = r.insertAudit(ctx, actor, "cbt_blueprint.updated", "academy_cbt_blueprint", id, nil, "info")
 	return r.GetBlueprint(ctx, id)
 }
-
-// ── Subject-combination rules ────────────────────────────────────────────────────
 
 const combinationCols = `id, arena_id, course, required_subjects, guidance`
 
@@ -345,7 +356,7 @@ func (r *Repository) InsertCombination(ctx context.Context, actor string, req Co
 			(id, arena_id, course, required_subjects, guidance)
 		VALUES ($1,$2,$3,$4,$5)`
 	if _, err := r.db.Exec(ctx, q, id, req.ArenaID, req.Course, subjects, req.Guidance); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	_ = r.insertAudit(ctx, actor, "combination_rule.created", "academy_subject_combination_rule", id,
 		map[string]any{"arena_id": req.ArenaID, "course": req.Course}, "info")
@@ -355,7 +366,8 @@ func (r *Repository) InsertCombination(ctx context.Context, actor string, req Co
 // GetCombination reads one rule by id.
 func (r *Repository) GetCombination(ctx context.Context, id string) (*SubjectCombinationRule, error) {
 	q := `SELECT ` + combinationCols + ` FROM public.academy_subject_combination_rules WHERE id = $1`
-	return scanCombination(r.db.QueryRow(ctx, q, id))
+	c, err := scanCombination(r.db.QueryRow(ctx, q, id))
+	return c, mapErr(err)
 }
 
 // UpdateCombination partial-updates a rule (admin).
@@ -379,7 +391,7 @@ func (r *Repository) UpdateCombination(ctx context.Context, actor, id string, re
 	}
 	tag, err := r.db.Exec(ctx, q, id, arenaArg, courseArg, subjArg, req.Guidance)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
@@ -392,7 +404,7 @@ func (r *Repository) UpdateCombination(ctx context.Context, actor, id string, re
 func (r *Repository) DeleteCombination(ctx context.Context, actor, id string) error {
 	tag, err := r.db.Exec(ctx, `DELETE FROM public.academy_subject_combination_rules WHERE id = $1`, id)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -408,16 +420,16 @@ func (r *Repository) GetCombinations(ctx context.Context, arenaID, course string
 	args := []any{}
 	if arenaID != "" {
 		args = append(args, arenaID)
-		sb.WriteString(fmt.Sprintf(" AND arena_id = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND arena_id = $%d", len(args))
 	}
 	if course != "" {
 		args = append(args, course)
-		sb.WriteString(fmt.Sprintf(" AND course = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND course = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY course")
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	defer rows.Close()
 	out := []SubjectCombinationRule{}
@@ -430,8 +442,6 @@ func (r *Repository) GetCombinations(ctx context.Context, arenaID, course string
 	}
 	return out, rows.Err()
 }
-
-// ── Attempts ──────────────────────────────────────────────────────────────────
 
 const attemptCols = `id, user_id, blueprint_id, arena_id, state, started_at, server_deadline,
 	paused_at, submitted_at, score, readiness, predicted, integrity, offline_origin,
@@ -467,7 +477,7 @@ func (r *Repository) CreateAttempt(ctx context.Context, userID, blueprintID stri
 		VALUES ($1,$2,$3,$4,'started',$5,$6,$7,$8)`
 	if _, err := r.db.Exec(ctx, q, id, userID, blueprintID, arenaID, startedAt, serverDeadline,
 		offlineOrigin, idemKey); err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
 	_ = r.insertAudit(ctx, userID, "exam_attempt.started", "academy_attempt", id,
 		map[string]any{"blueprint_id": blueprintID, "server_deadline": serverDeadline.UTC().Format(time.RFC3339)}, "info")
@@ -477,7 +487,8 @@ func (r *Repository) CreateAttempt(ctx context.Context, userID, blueprintID stri
 // GetAttempt reads one attempt by id.
 func (r *Repository) GetAttempt(ctx context.Context, id string) (*Attempt, error) {
 	q := `SELECT ` + attemptCols + ` FROM public.academy_attempts WHERE id = $1`
-	return scanAttempt(r.db.QueryRow(ctx, q, id))
+	a, err := scanAttempt(r.db.QueryRow(ctx, q, id))
+	return a, mapErr(err)
 }
 
 // GetAttemptByIdempotencyKey returns the existing attempt for a reused key, or
@@ -522,7 +533,7 @@ func (r *Repository) UpdateAttemptState(ctx context.Context, actor, id string, f
 		strings.Join(sets, ", "))
 	tag, err := r.db.Exec(ctx, q, args...)
 	if err != nil {
-		return nil, false, err
+		return nil, false, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		// Guard failed: either missing or already in a different state (idempotent replay).
@@ -552,8 +563,6 @@ func orderedFieldKeys(fields map[string]any) []string {
 	return out
 }
 
-// ── Responses ──────────────────────────────────────────────────────────────────
-
 // InsertResponses writes the frozen response set for an attempt in one tx. Called
 // exactly once at submit time; responses are immutable thereafter. correctByID
 // supplies the server-scored correctness per question item.
@@ -565,7 +574,7 @@ func (r *Repository) InsertResponses(ctx context.Context, attemptID string, inpu
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO public.academy_responses
@@ -578,7 +587,7 @@ func (r *Repository) InsertResponses(ctx context.Context, attemptID string, inpu
 		}
 		if _, err := tx.Exec(ctx, q, attemptID, in.QuestionItemID, toJSONB(in.Selected),
 			correctArg, in.TimeMS, in.Flagged); err != nil {
-			return err
+			return mapErr(err)
 		}
 	}
 	return tx.Commit(ctx)

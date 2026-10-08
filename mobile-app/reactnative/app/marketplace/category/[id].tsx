@@ -1,4 +1,3 @@
-// ── Screen 5 — Category Landing ──────────────────────────────────────────────
 // Category-specific browsing with schema-driven quick filters relevant only to
 // this category (bedrooms for Property, mileage for Vehicles). Category hero,
 // quick-filter chip row (config-driven from the category attribute schema),
@@ -9,10 +8,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';
 import type { CategoryQuickFilter } from '@/features/marketplace';
@@ -40,7 +39,6 @@ export default function CategoryLanding() {
     if (f.type === 'enum' && value) p.set(f.key, value);
     router.push(`/marketplace/results?${p.toString()}` as never);
   };
-
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

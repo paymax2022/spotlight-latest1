@@ -1,5 +1,4 @@
 // Paymax Connect — GAMIFICATION types (PRD §6.5, §10.10 GM-*).
-//
 // CRITICAL SAFETY INVARIANT (§6.5 "Two-currency clarity"):
 //   XP and Coins are NON-CASH engagement currency. They are NOT Naira, are NOT
 //   withdrawable, and NEVER silently convert to money. Any value here is points,

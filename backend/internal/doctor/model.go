@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// ── Profile & verification ──────────────────────────────────────────────────
-
 // Profile mirrors public.doctor_profiles (the columns the MVP reads).
 type Profile struct {
 	ID              string          `json:"id"`
@@ -64,8 +62,6 @@ type SubmitVerificationRequest struct {
 	Documents  json.RawMessage `json:"documents,omitempty"`
 }
 
-// ── Availability ────────────────────────────────────────────────────────────
-
 // Availability mirrors public.doctor_availability.
 type Availability struct {
 	ID                  string          `json:"id"`
@@ -95,8 +91,6 @@ type UpdateAvailabilityRequest struct {
 	Timezone            *string         `json:"timezone,omitempty"`
 	ReminderSettings    json.RawMessage `json:"reminderSettings,omitempty"`
 }
-
-// ── Appointments ────────────────────────────────────────────────────────────
 
 // Appointment mirrors public.doctor_appointments.
 type Appointment struct {
@@ -154,8 +148,6 @@ type SaveNoteRequest struct {
 	Status     string          `json:"status,omitempty"` // draft|finalized|shared
 }
 
-// ── Prescriptions ───────────────────────────────────────────────────────────
-
 // Prescription mirrors public.doctor_prescriptions.
 type Prescription struct {
 	ID            string             `json:"id"`
@@ -191,8 +183,6 @@ type CreatePrescriptionRequest struct {
 	Status        string             `json:"status,omitempty"` // draft|issued
 	Items         []PrescriptionItem `json:"items"`
 }
-
-// ── Lab orders / results ────────────────────────────────────────────────────
 
 // LabOrder mirrors public.doctor_lab_orders.
 type LabOrder struct {
@@ -262,8 +252,6 @@ type ReviewLabResultRequest struct {
 	Detail         json.RawMessage `json:"detail,omitempty"`
 }
 
-// ── Earnings (ledger projection) ────────────────────────────────────────────
-
 // Earnings is a projection computed from the ledger — never a stored balance.
 type Earnings struct {
 	AvailableKobo int64  `json:"availableKobo"`
@@ -271,8 +259,6 @@ type Earnings struct {
 	LifetimeKobo  int64  `json:"lifetimeKobo"`
 	Currency      string `json:"currency"`
 }
-
-// ── Payouts (money path) ────────────────────────────────────────────────────
 
 // Payout mirrors public.doctor_payouts. NO balance column — amount + status only.
 type Payout struct {
@@ -302,8 +288,6 @@ type RequestPayoutResult struct {
 	Ref      string `json:"ref"`
 	Status   string `json:"status"`
 }
-
-// ── Notifications & settings ────────────────────────────────────────────────
 
 // Notification mirrors public.doctor_notifications.
 type Notification struct {

@@ -1,7 +1,5 @@
 import { randomUUID } from 'crypto';
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 export type ShowPhase = 'pre_audition' | 'audition' | 'bootcamp' | 'finale' | 'completed';
 export type SeasonStatus = 'draft' | 'active' | 'completed';
 export type PhaseStatus = 'audition' | 'bootcamp' | 'evicted' | 'finalist' | 'winner';
@@ -86,8 +84,6 @@ export interface Eviction {
   evictedAt: string;
 }
 
-// ── In-memory store ───────────────────────────────────────────────────────────
-
 interface RealityShowStore {
   seasons: Map<string, ShowSeason>;
   contestants: Map<string, ShowContestant>;
@@ -114,8 +110,6 @@ function getStore(): RealityShowStore {
 function now(): string {
   return new Date().toISOString();
 }
-
-// ── Seasons ───────────────────────────────────────────────────────────────────
 
 export function listSeasons(): ShowSeason[] {
   return Array.from(getStore().seasons.values()).sort((a, b) => b.seasonNumber - a.seasonNumber);
@@ -164,8 +158,6 @@ export function updateSeason(id: string, patch: Partial<Omit<ShowSeason, 'id' | 
   store.seasons.set(id, updated);
   return updated;
 }
-
-// ── Contestants ───────────────────────────────────────────────────────────────
 
 export function listContestants(seasonId: string, phaseStatus?: PhaseStatus): ShowContestant[] {
   return Array.from(getStore().contestants.values())
@@ -248,8 +240,6 @@ export function failAudition(contestantId: string): ShowContestant {
   });
 }
 
-// ── Weekly rounds ─────────────────────────────────────────────────────────────
-
 export function listWeeks(seasonId: string): EvictionWeek[] {
   return Array.from(getStore().weeks.values())
     .filter((w) => w.seasonId === seasonId)
@@ -312,8 +302,6 @@ export function closeVoting(weekId: string): EvictionWeek {
   return updateWeek(weekId, { status: 'closed' });
 }
 
-// ── Votes ─────────────────────────────────────────────────────────────────────
-
 export function getVotesForWeek(weekId: string): EvictionVote[] {
   return Array.from(getStore().votes.values()).filter((v) => v.weekId === weekId);
 }
@@ -339,7 +327,6 @@ export function castVote(input: {
 }): EvictionVote {
   const store = getStore();
 
-  // Idempotent: same voter, same week, same contestant
   const existing = Array.from(store.votes.values()).find(
     (v) => v.weekId === input.weekId && v.voterId === input.voterId && v.contestantId === input.contestantId
   );
@@ -368,8 +355,6 @@ export function retractVote(weekId: string, voterId: string, contestantId: strin
   store.votes.delete(vote.id);
   return true;
 }
-
-// ── Eviction finalization ─────────────────────────────────────────────────────
 
 export interface FinalizeEvictionResult {
   week: EvictionWeek;

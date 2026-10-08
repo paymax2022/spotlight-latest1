@@ -2,9 +2,8 @@ import { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
-// ── Guard: no standalone telemedicine auth ───────────────────────────────────
 // Auth is handled by the app-wide AuthGate in _layout.tsx.
 // Unauthenticated users → global login; authenticated users → provider intro.
 export default function DoctorOnboardingEntry() {

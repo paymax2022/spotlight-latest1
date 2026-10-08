@@ -3,18 +3,18 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MapPin, Video, Users } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import DatePickerField from '@/components/DatePickerField';
 import TimePickerField from '@/components/TimePickerField';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useProposeMeeting } from '@/features/association/hooks/useEngagement';
+import { useProposeMeeting } from '@/features/association/hooks';
 import { alertAsync } from '@/lib/confirm';
-import type { MeetingMode } from '@/features/association/types/engagement.types';
+import type { MeetingMode } from '@/features/association/types';
 
 const MODES: { value: MeetingMode; label: string; Icon: typeof MapPin }[] = [
   { value: 'PHYSICAL', label: 'In person', Icon: MapPin },

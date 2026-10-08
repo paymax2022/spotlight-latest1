@@ -37,9 +37,7 @@ const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 export async function getAdminSummary(): Promise<AdminSummary> {
   if (USE_MOCK) { await latency(); return JSON.parse(JSON.stringify(mock)); }
-  // Live: GET /api/v1/estate/admin/summary — camelCase envelope
   // { residents, properties, attention: {...}, upcomingMeetings } (see
-  // frontend-web/app/api/v1/estate/admin/summary/route.ts). This route exists;
   // /dashboard does not (that shape belonged to the Go handler, unreachable from
   // mobile today).
   const { data } = await api.get(`${ADMIN_API_BASE}/summary`);
@@ -57,7 +55,6 @@ export async function getAdminSummary(): Promise<AdminSummary> {
   };
 }
 
-// ── Block 41 admin management ─────────────────────────────────────────────────
 export interface AdminResident { id: string; userId: string; unit: string; role: string; banned: boolean; deleted: boolean; createdAt: string; }
 export interface EstateConfig { estateId: string; rules: Record<string, unknown>; subscriptionPlan: Record<string, unknown>; }
 export interface AuditEntry { id: string; actorId?: string | null; action: string; subjectType: string; subjectId: string; createdAt: string; }

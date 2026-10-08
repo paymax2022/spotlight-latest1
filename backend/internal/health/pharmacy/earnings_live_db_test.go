@@ -1,19 +1,16 @@
 package healthpharmacy_test
 
 // LIVE-DB tests for the pharmacy owner's earnings.
-//
 // A pharmacy is paid by escrow RELEASE on completion — Service.Complete calls
 // escrow.Release, which credits the owner the FULL held amount (commission is
 // recorded separately in the profit registry, not deducted from that credit).
 // So the money is real and already in their wallet, but there was no
 // business-level view of it: a pharmacist saw undifferentiated wallet credits
 // with no attribution to orders, and no idea how much was still held.
-//
 // The numbers come from escrow_holds — the money table — rather than being
 // inferred from order workflow states. An order can reach a "finished-looking"
 // state by a path that never released funds (cancelled, refunded), and money
 // shown to a merchant must not be a guess about a lifecycle.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -43,8 +40,8 @@ func seedEarnings(t *testing.T, ctx context.Context, f inboxFixture, pharmacyID,
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		f.pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id=$1`, orderID)
-		f.pool.Exec(bg, `DELETE FROM escrow_holds WHERE id=$1`, escrowID)
+		_, _ = f.pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id=$1`, orderID)
+		_, _ = f.pool.Exec(bg, `DELETE FROM escrow_holds WHERE id=$1`, escrowID)
 	})
 	return orderID
 }

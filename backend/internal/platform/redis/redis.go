@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -41,7 +42,6 @@ func Del(ctx context.Context, c *redis.Client, keys ...string) error {
 	return c.Del(ctx, keys...).Err()
 }
 
-// --- Redlock (single-node advisory lock) ---
 // For true distributed Redlock across multiple Redis nodes, use a dedicated
 // library. This single-node implementation covers the MVP where one Redis
 // instance is used.
@@ -51,7 +51,7 @@ const lockTTL = 10 * time.Second
 // AcquireLock attempts to acquire a distributed lock for the given key.
 // Returns (true, lockValue, nil) on success; (false, "", nil) if already held.
 func AcquireLock(ctx context.Context, c *redis.Client, key string, ttl time.Duration) (bool, string, error) {
-	val := fmt.Sprintf("%d", time.Now().UnixNano())
+	val := strconv.FormatInt(time.Now().UnixNano(), 10)
 	if ttl == 0 {
 		ttl = lockTTL
 	}

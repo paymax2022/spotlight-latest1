@@ -113,7 +113,7 @@ func TestRoundingResidueReconciles(t *testing.T) {
 	const per = 100_00 // $100 each
 	rate := 157.37     // USD->JPY-ish, produces rounding at each step
 	var summed int64
-	for i := 0; i < n; i++ {
+	for range n {
 		summed += convertMinor(per, "USD", "JPY", rate)
 	}
 	bulk := convertMinor(int64(n)*per, "USD", "JPY", rate)

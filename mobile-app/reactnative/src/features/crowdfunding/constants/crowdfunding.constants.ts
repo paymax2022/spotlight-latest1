@@ -1,4 +1,3 @@
-// ── Crowdfunding — Constants ─────────────────────────────────────────────────
 
 import type {
   CampaignCategory,

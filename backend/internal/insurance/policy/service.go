@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"time"
-
+	"regexp"
+	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/insurance/catalog"
 	"spotlight/backend/internal/insurance/consent"
 	"spotlight/backend/internal/insurance/gateway"
+	"strings"
+	"time"
 )
 
 // Notifier emits user-facing notifications (bind success / auto-refund). Kept as
@@ -45,6 +47,23 @@ type Service struct {
 	// binds is the OUTBOUND idempotency register. MyCover offers no idempotency
 	// of its own, so this is what stops a retry buying a second policy.
 	binds *BindRegistry
+	// commission records the domain-level commission entry the admin
+	// reconciliation workbench (confirm/reverse/list) reads. Optional
+	// (nil-safe): when nil the ledger posting still happens (that is the
+	// money-safe part), only the workbench row is skipped.
+	commission CommissionRecorder
+}
+
+// CommissionRecorder records the domain-level commission entry for a bound
+// policy, alongside the ledger posting. Declared locally so policy does not
+// depend on reconciliation (app wiring adapts its repository to this).
+// WHY: the bind saga posts the real commission money via the ledger, but
+// insurance_commission_entry — the table the admin commission workbench reads —
+// got no row, so confirm/reverse 404'd for every real policy and the list
+// showed a false zero. UpsertCommission is idempotent on idempotency_key, so a
+// bind replay never double-records.
+type CommissionRecorder interface {
+	RecordCommission(ctx context.Context, policyID, provider string, amountKobo int64, ledgerRef, idempotencyKey string) error
 }
 
 // Deps bundles the service dependencies.
@@ -65,6 +84,9 @@ type Deps struct {
 	// NOT optional in effect: without it a retried bind can double-purchase, so
 	// the saga refuses to call the provider when it is absent.
 	Binds *BindRegistry
+	// Commission records the domain-level commission-entry row the admin
+	// reconciliation workbench reads (confirm/reverse/list). Optional (nil-safe).
+	Commission CommissionRecorder
 }
 
 // NewService constructs the policy service.
@@ -74,17 +96,18 @@ func NewService(d Deps) *Service {
 		ttl = 15 * time.Minute
 	}
 	return &Service{
-		repo:     d.Repo,
-		router:   d.Router,
-		catalog:  d.Catalog,
-		consent:  d.Consent,
-		wallet:   d.Wallet,
-		ledger:   d.Ledger,
-		notify:   d.Notifier,
-		audit:    d.Auditor,
-		quoteTTL: ttl,
-		float:    d.Float,
-		binds:    d.Binds,
+		repo:       d.Repo,
+		router:     d.Router,
+		catalog:    d.Catalog,
+		consent:    d.Consent,
+		wallet:     d.Wallet,
+		ledger:     d.Ledger,
+		notify:     d.Notifier,
+		audit:      d.Auditor,
+		quoteTTL:   ttl,
+		float:      d.Float,
+		binds:      d.Binds,
+		commission: d.Commission,
 	}
 }
 
@@ -191,7 +214,6 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 }
 
 // BindFromQuote runs the premium-debit→bind SAGA with MANDATORY auto-reverse.
-//
 //  1. Create policy QUOTED → PENDING_PAYMENT.
 //  2. NDPA consent gate (provider data-share happens at bind).
 //  3. Idempotent wallet.Debit(premium) → credits AccountProviderClearing
@@ -210,7 +232,7 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 // whole saga is replay-safe.
 func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (*Policy, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("policy: Idempotency-Key required for bind")
+		return nil, errors.New("policy: Idempotency-Key required for bind")
 	}
 	qr, ownerID, err := s.repo.getQuote(ctx, quoteID)
 	if err != nil {
@@ -249,14 +271,12 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	}
 
 	// (2b) PROVIDER FLOAT BREAKER — checked BEFORE any money moves.
-	//
 	// MyCover settles binds against a PREFUNDED distributor wallet, not a
 	// per-transaction charge. When that float empties, every bind fails at once.
 	// The auto-reverse below would still make each individual member whole, but
 	// debiting and reversing every member in the queue is an incident, not a
 	// recovery — each one watches money leave their wallet for cover that was
 	// never going to be issued.
-	//
 	// So once the provider has told us the float is empty, refuse here, before
 	// the debit, until an operator tops it up. No money moves and the member gets
 	// a truthful "temporarily unavailable" instead of a debit-and-refund.
@@ -303,12 +323,10 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	if err != nil {
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, err)
 	}
-	// ── OUTBOUND IDEMPOTENCY ──────────────────────────────────────────────
 	// MyCover documents no idempotency mechanism on its purchase endpoint, so a
 	// retry would create a SECOND policy and debit our float twice. Claim the key
 	// before the call: the claim is an INSERT on a unique key, so a replay or a
 	// concurrent attempt cannot reach the provider at all.
-	//
 	// This fails CLOSED. A refused purchase is recoverable; a duplicate one is
 	// not, so the saga will not call the provider without the guard in place.
 	claim, claimErr := s.binds.Claim(ctx, idempotencyKey, qr.Provider, qr.ProductCode, p.ID)
@@ -316,10 +334,32 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, claimErr)
 	}
 	if !claim.Fresh {
-		// This exact purchase already went through. Return the SAME policy rather
-		// than buying a second one — that is what idempotency means here.
+		// This exact purchase already went through. Return the ORIGINAL policy
+		// (the one the FIRST attempt bound) rather than buying — or persisting —
+		// a second one. p above is a FRESH row this replay created before the
+		// claim check could run; it must never be stamped with the same
+		// provider_policy_ref as the original (uq_insurance_policy_provider_ref
+		// would reject it — two rows can never share one provider policy) and it
+		// must not be left dangling in BINDING, an interior state the FSM never
+		// resolves on its own.
 		log.Printf("[insurance] bind replay for key %s — returning the existing provider policy %s",
 			idempotencyKey, claim.ProviderPolicyRef)
+		if claim.PolicyID != "" && claim.PolicyID != p.ID {
+			// Retire the throwaway row with a plain state transition — no wallet
+			// reversal. The premium debit above was itself deduped by the SAME
+			// idempotency key (":premium"), so nothing was ever actually taken
+			// against this row; reversing it would wrongly credit the user extra
+			// money for a charge that never happened.
+			if vErr := s.transition(ctx, p, StateBindFailed); vErr == nil {
+				_ = s.transition(ctx, p, StateVoid)
+			}
+			s.auditSafe(ctx, userID, "insurance.bind_replay_discarded", map[string]any{
+				"discarded_policy_id": p.ID, "original_policy_id": claim.PolicyID,
+			})
+			return s.repo.Get(ctx, claim.PolicyID)
+		}
+		// No original policy_id on record (older row predating this field) —
+		// fall back to the previous best-effort behaviour.
 		if err := s.repo.SetBound(ctx, p.ID, claim.ProviderPolicyRef, qr.Underwriter, qr.CommissionKobo, nil, nil, nil, p.Version); err != nil {
 			return nil, fmt.Errorf("policy: bind replay persist: %w", err)
 		}
@@ -341,7 +381,6 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	})
 	if bindErr != nil {
 		// Release or lock the idempotency key according to WHAT WE KNOW.
-		//
 		// A provider REJECTION (validation, empty float) is a definite negative:
 		// nothing was created, so the key is released and a retry is safe. A
 		// TRANSPORT error is not — the request may or may not have been
@@ -412,6 +451,18 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 			if postErr != nil && !errors.Is(postErr, ledger.ErrDuplicate) {
 				log.Printf("[insurance] WARN: commission post failed for policy %s: %v", p.ID, postErr)
 			}
+			// Record the domain-level entry the admin reconciliation workbench
+			// (confirm/reverse/list) reads. Idempotent on idempotency_key, so a
+			// bind replay never double-records; a failure here never blocks the
+			// bind — the ledger money already moved, which is the part that
+			// matters — it only means the workbench row is missing until a
+			// reconciliation sweep or manual backfill catches it up.
+			if s.commission != nil {
+				if recErr := s.commission.RecordCommission(ctx, p.ID, p.Provider, commission,
+					"insurance:commission:"+p.ID, idempotencyKey+":commission"); recErr != nil {
+					log.Printf("[insurance] WARN: commission entry record failed for policy %s: %v", p.ID, recErr)
+				}
+			}
 		}
 	}
 
@@ -444,7 +495,7 @@ func (s *Service) autoReverse(ctx context.Context, p *Policy, idempotencyKey, pr
 			s.auditSafe(ctx, p.PolicyholderID, "insurance.auto_reverse_failed", map[string]any{
 				"policy_id": p.ID, "err": revErr.Error(),
 			})
-			return p, fmt.Errorf("policy: bind failed AND auto-reverse failed: bind=%v reverse=%v", cause, revErr)
+			return p, fmt.Errorf("policy: bind failed AND auto-reverse failed: bind=%w reverse=%w", cause, revErr)
 		}
 		_ = s.repo.InsertPremiumTx(ctx, PremiumTx{
 			PolicyID:        p.ID,
@@ -478,8 +529,6 @@ func (s *Service) transition(ctx context.Context, p *Policy, to State) error {
 	p.Version++
 	return nil
 }
-
-// --- queries + lifecycle ops ---
 
 // GetPolicy returns a policy with object-level authZ enforced.
 func (s *Service) GetPolicy(ctx context.Context, userID, policyID string) (*Policy, error) {
@@ -532,7 +581,7 @@ func (s *Service) CertificateRef(ctx context.Context, userID, policyID string) (
 		return "", err
 	}
 	if p.CertificateRef == nil || *p.CertificateRef == "" {
-		return "", fmt.Errorf("policy: certificate not yet issued")
+		return "", errors.New("policy: certificate not yet issued")
 	}
 	return *p.CertificateRef, nil
 }
@@ -554,14 +603,10 @@ func (s *Service) ListBeneficiaries(ctx context.Context, userID, policyID string
 	return s.repo.ListBeneficiaries(ctx, policyID)
 }
 
-// --- admin ---
-
 // SearchAdmin returns policies across users (admin; RBAC gated at the route).
 func (s *Service) SearchAdmin(ctx context.Context, state, productCode string, limit, offset int) ([]Policy, error) {
 	return s.repo.SearchAdmin(ctx, state, productCode, limit, offset)
 }
-
-// --- safe side-effect helpers (never fail the saga) ---
 
 func (s *Service) auditSafe(ctx context.Context, userID, action string, detail map[string]any) {
 	if s.audit != nil {
@@ -578,7 +623,6 @@ func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) 
 // providerAnswered reports whether a bind error represents a DEFINITE provider
 // rejection (the provider replied and refused) as opposed to a transport failure
 // where the outcome is genuinely unknown.
-//
 // This distinction decides whether a retry is safe, so it is deliberately
 // conservative: only errors we can positively identify as provider replies count
 // as answered. Anything unrecognised — a timeout, a reset connection, a context
@@ -589,13 +633,9 @@ func providerAnswered(err error) bool {
 		return false
 	}
 	// Adapters wrap ErrProviderRejected around every error they KNOW was a reply
-	// — a validation 4xx, an empty float, an unsupported operation — and around
-	// their own pre-flight refusals, which never reached the provider at all.
-	// Either way nothing was created, so a retry is safe.
-	//
-	// Everything else (timeout, reset connection, context deadline) falls
-	// through to false and is treated as an UNKNOWN outcome. Silence is never
-	// read as success or as failure.
+	// (and their own pre-flight refusals, which never reached the provider) —
+	// either way nothing was created, so a retry is safe. Everything else falls
+	// through to false = UNKNOWN outcome; silence is never read as success.
 	if errors.Is(err, gateway.ErrProviderRejected) {
 		return true
 	}
@@ -603,4 +643,160 @@ func providerAnswered(err error) bool {
 		return true
 	}
 	return false
+}
+
+// State is the guarded policy lifecycle state (PRD §10 / build-plan §4).
+//
+//	QUOTED → PENDING_PAYMENT → BINDING → ACTIVE → {RENEWAL_DUE, CANCELLED, EXPIRED}
+//	BINDING        → BIND_FAILED    → (auto-reverse premium) → VOID
+//	PENDING_PAYMENT→ PAYMENT_FAILED → VOID
+//	QUOTED         → EXPIRED (ttl)
+type State string
+
+const (
+	StateQuoted         State = "QUOTED"
+	StatePendingPayment State = "PENDING_PAYMENT"
+	StateBinding        State = "BINDING"
+	StateActive         State = "ACTIVE"
+	StateRenewalDue     State = "RENEWAL_DUE"
+	StateCancelled      State = "CANCELLED"
+	StateExpired        State = "EXPIRED"
+	StateBindFailed     State = "BIND_FAILED"
+	StatePaymentFailed  State = "PAYMENT_FAILED"
+	StateVoid           State = "VOID"
+)
+
+// transitions is the guarded adjacency map. A transition not listed here is
+// rejected by guard() — the state machine is closed. Terminal states
+// (CANCELLED, EXPIRED, VOID) simply have no entry.
+var transitions = fsm.Table[State]{
+	StateQuoted:         fsm.Set(StatePendingPayment, StateExpired),
+	StatePendingPayment: fsm.Set(StateBinding, StatePaymentFailed),
+	StateBinding:        fsm.Set(StateActive, StateBindFailed),
+	StateActive:         fsm.Set(StateRenewalDue, StateCancelled, StateExpired),
+	StateRenewalDue:     fsm.Set(StateActive, StateExpired, StateCancelled), // renewed | lapsed | cancelled
+	StateBindFailed:     fsm.Set(StateVoid),                                 // after auto-reverse
+	StatePaymentFailed:  fsm.Set(StateVoid),
+}
+
+// canTransition reports whether from→to is a permitted guarded transition.
+func canTransition(from, to State) bool { return transitions.Can(from, to) }
+
+// Policy is the normalised, Paymax-owned policy record (a projection over the
+// provider plus our lifecycle state). Money fields are kobo BIGINT.
+type Policy struct {
+	ID                string     `json:"id"`
+	PolicyholderID    string     `json:"policyholder_user_id"`
+	ProductCode       string     `json:"product_code"`
+	Provider          string     `json:"provider"`            // aggregator
+	ProviderPolicyRef *string    `json:"provider_policy_ref"` // set after bind
+	Underwriter       string     `json:"underwriter"`         // disclosed from provider
+	BindingMode       string     `json:"binding_mode"`
+	State             State      `json:"state"`
+	SumInsuredKobo    int64      `json:"sum_insured_kobo"`
+	PremiumKobo       int64      `json:"premium_amount_kobo"`
+	Currency          string     `json:"currency"`
+	CommissionKobo    int64      `json:"commission_kobo"`
+	CertificateRef    *string    `json:"certificate_ref"`
+	EffectiveAt       *time.Time `json:"effective_at"`
+	ExpiresAt         *time.Time `json:"expires_at"`
+	SourceEventID     *string    `json:"source_event_id"` // embedded binds only
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	Version           int        `json:"version"`
+}
+
+// Beneficiary is a named beneficiary on a policy.
+type Beneficiary struct {
+	ID           string  `json:"id"`
+	PolicyID     string  `json:"policy_id"`
+	FullName     string  `json:"full_name"`
+	Relationship string  `json:"relationship"`
+	SharePercent int     `json:"share_percent"`
+	Phone        *string `json:"phone,omitempty"`
+}
+
+// validationFields turns an insurer's validation complaints into a per-field map
+// the applicant's form can highlight.
+// WHY THIS EXISTS
+// A rejected application is only fixable if the person can see WHICH answer is
+// wrong. The client attributes a message to a field by its leading token, which
+// works for MyCover's per-field shape but not for its summary shape:
+//	per-field : "email must be an email"                        -> attributable
+//	summary   : "missing required fields: email, phone_number"  -> starts with
+//	                                                               prose, so the
+//	                                                               client
+//	                                                               highlights
+//	                                                               nothing
+// Expanding the summary here is what turns "something is wrong" into "these
+// three inputs are wrong". Both shapes are real; both were observed live.
+// ⚠️ It never GUESSES. Prose that names no field yields no entry, because a
+// wrong highlight is worse than none — it sends someone to edit an answer that
+// was already correct, and they cannot tell that we are the ones confused.
+// Unattributable messages still reach the client in the message list, so nothing
+// is hidden; they simply appear as a form-level error instead of a field one.
+
+// "…missing required fields: a, b, c" — the trailing list is what we want.
+var missingFieldsRe = regexp.MustCompile(`(?i)missing required fields?\s*:\s*(.+)$`)
+
+// A leading snake_case token followed by the complaint. Mirrors the client's
+// attributeMessage so the two agree about what counts as a field name.
+var leadingFieldRe = regexp.MustCompile(`^([a-z][a-z0-9_]{1,60})(?:\.\d+)?\s+(.+)$`)
+
+// looksLikeFieldName keeps prose out. Provider field names in this integration
+// are lower-case identifiers; an English word that happens to be lower-case is
+// filtered by requiring it to appear in a field-list context or carry the
+// complaint suffix, which the two call sites below enforce.
+func looksLikeFieldName(s string) bool {
+	if s == "" || len(s) > 60 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9' && i > 0:
+		case r == '_' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validationFields(messages []string) map[string]string {
+	out := map[string]string{}
+
+	for _, raw := range messages {
+		m := strings.TrimSpace(raw)
+		if m == "" {
+			continue
+		}
+
+		// Summary shape: expand the trailing list into one entry per field. The
+		// provider does not say WHY each is wrong beyond being absent, so the
+		// message is ours — the only honest thing to say is that it is required.
+		if g := missingFieldsRe.FindStringSubmatch(m); g != nil {
+			for part := range strings.SplitSeq(g[1], ",") {
+				f := strings.Trim(strings.TrimSpace(part), ".;")
+				if looksLikeFieldName(f) {
+					if _, exists := out[f]; !exists {
+						out[f] = "This is required."
+					}
+				}
+			}
+			continue
+		}
+
+		// Per-field shape: keep the insurer's wording, minus the field name that
+		// prefixes it. Their wording is the rule the applicant has to satisfy, so
+		// rewriting it would be us paraphrasing a requirement we do not own.
+		if g := leadingFieldRe.FindStringSubmatch(m); g != nil && looksLikeFieldName(g[1]) {
+			if _, exists := out[g[1]]; !exists {
+				rest := g[2]
+				out[g[1]] = strings.ToUpper(rest[:1]) + rest[1:]
+			}
+		}
+	}
+
+	return out
 }

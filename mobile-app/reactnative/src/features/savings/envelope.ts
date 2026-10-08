@@ -1,19 +1,14 @@
 // Response-envelope helpers for the Go savings API.
-//
 // Every success response from `backend/internal/savings/handler.go` is an
 // envelope keyed by entity name, never a bare payload:
-//
 //   GET  /vaults          → { success: true, vaults: [...] }
 //   GET  /vaults/:id      → { success: true, vault: {...}, balance_kobo: 1234 }
 //   GET  /circles/:id     → { success: true, circle: {...}, members: [...] }
 //   GET  /targets/:id     → { success: true, target: {...}, members: [...], balance_kobo: 1234 }
 //   POST /vaults/:id/deposit → { success: true, balance_kobo: 1234 }
-//
 // `body()` deliberately returns that envelope UNTOUCHED, because the mutation
 // callers read `balance_kobo` straight off it. Anything that wants the entity
 // or the list must therefore pull it out BY KEY.
-//
-// Skipping that step does not fail loudly: `Array.isArray(envelope)` is false,
 // so a list read degrades to `[]` and the screen renders empty with no error —
 // which is exactly how the live savings path stayed silently broken. Prefer
 // these helpers over hand-rolled property access at call sites.

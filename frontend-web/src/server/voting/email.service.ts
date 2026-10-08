@@ -35,11 +35,26 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
     return;
   }
 
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from, to, subject, html }),
-  });
+  // AUD-REL-001: the response must be checked — a Resend 4xx/5xx previously
+  // resolved normally and the failure was invisible to every caller. The
+  // request is also bounded so a hung provider can't pin the detached task.
+  let res: Response;
+  try {
+    res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, subject, html }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    console.error('[email] resend request failed:', err);
+    throw err;
+  }
+  if (!res.ok) {
+    const body = (await res.text().catch(() => '')).slice(0, 200);
+    console.error(`[email] resend rejected: ${res.status} ${body}`);
+    throw new Error(`resend failed: ${res.status}`);
+  }
 }
 
 export async function sendVoteReceiptEmail(input: VoteReceiptEmailInput): Promise<void> {

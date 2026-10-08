@@ -1,4 +1,3 @@
-// ── Marketplace — StarRating ─────────────────────────────────────────────────
 import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Star } from 'lucide-react-native';

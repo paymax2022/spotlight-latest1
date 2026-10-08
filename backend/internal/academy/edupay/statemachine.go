@@ -1,17 +1,16 @@
 package edupay
 
-import "errors"
+import (
+	"errors"
+	"spotlight/backend/go-common/fsm"
+)
 
-// ── Disbursement state machine (state-machines.md §5 EduPay) ──────────────────
-//
 // States: fee_due → funding → collected → disbursed → reconciled
-//
 //   - fee_due    : disbursement created, nothing collected yet.
 //   - funding    : collection initiated on the rail (collect / bnpl / pot draw).
 //   - collected  : funds confirmed received from the payer.
 //   - disbursed  : funds paid out to the school's virtual account.
 //   - reconciled : admin-confirmed against the payout (golden rule 6: reconcile + audit).
-//
 // Only the transitions below are legal. Illegal transitions are rejected with
 // ErrIllegalTransition and audit-logged by the service. canDisb is PURE so it is
 // unit-testable with no DB (edupay_test.go).
@@ -29,21 +28,17 @@ const (
 )
 
 // disbTransitions is the legal adjacency set for the disbursement SM.
-var disbTransitions = map[DisbState]map[DisbState]bool{
-	DisbFeeDue:     {DisbFunding: true},
-	DisbFunding:    {DisbCollected: true},
-	DisbCollected:  {DisbDisbursed: true},
-	DisbDisbursed:  {DisbReconciled: true},
+var disbTransitions = fsm.Table[DisbState]{
+	DisbFeeDue:     fsm.Set(DisbFunding),
+	DisbFunding:    fsm.Set(DisbCollected),
+	DisbCollected:  fsm.Set(DisbDisbursed),
+	DisbDisbursed:  fsm.Set(DisbReconciled),
 	DisbReconciled: {}, // terminal
 }
 
 // canDisb reports whether from→to is a legal disbursement-SM transition. Pure.
 func canDisb(from, to DisbState) bool {
-	targets, ok := disbTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return disbTransitions.Can(from, to)
 }
 
 // Sentinel errors mapped to stable snake_case codes / HTTP statuses by the handler.

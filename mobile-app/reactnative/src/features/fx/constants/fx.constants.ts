@@ -1,8 +1,7 @@
-// ── FX Exchange — Constants ──────────────────────────────────────────────────
 // Currency catalogue, corridor catalogue, fee/spread config and UI option lists.
 // All money is kobo/cents (integer minor units).
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   CurrencyCode,
   CurrencyMeta,
@@ -14,8 +13,6 @@ import type {
 } from '../types/fx.types';
 
 export const FX_FEATURE_FLAG = 'fx_exchange';
-
-// ─── Currency catalogue ───────────────────────────────────────────────────────
 
 export const CURRENCIES: Record<CurrencyCode, CurrencyMeta> = {
   NGN:  { code: 'NGN',  name: 'Nigerian Naira',  symbol: '₦',  flag: '🇳🇬', decimals: 2, kind: 'fiat' },
@@ -38,8 +35,6 @@ export const CURRENCY_ORDER: CurrencyCode[] = [
 /** Currencies a user can hold a wallet in (excludes stablecoin display wallets at V1). */
 export const WALLET_CURRENCIES: CurrencyCode[] = ['NGN', 'USD', 'EUR', 'GBP', 'GHS', 'KES'];
 
-// ─── Rails ────────────────────────────────────────────────────────────────────
-
 export const RAILS: { value: Rail; label: string; icon: string; scheme: BeneficiaryScheme }[] = [
   { value: 'bank_transfer', label: 'Bank account',   icon: 'Landmark',    scheme: 'BANK' },
   { value: 'mobile_money',  label: 'Mobile money',    icon: 'Smartphone',  scheme: 'MOBILEMONEY' },
@@ -56,8 +51,6 @@ export const RAIL_LABEL: Record<Rail, string> = {
   stablecoin: 'Stablecoin',
 };
 
-// ─── Suggested convert amounts, per source currency (minor units) ─────────────
-
 export const SUGGESTED_AMOUNTS: Partial<Record<CurrencyCode, number[]>> = {
   NGN: [1_000_00, 5_000_00, 10_000_00, 50_000_00],   // ₦1k, ₦5k, ₦10k, ₦50k
   USD: [50_00, 100_00, 500_00, 1_000_00],            // $50, $100, $500, $1,000
@@ -65,7 +58,6 @@ export const SUGGESTED_AMOUNTS: Partial<Record<CurrencyCode, number[]>> = {
   GBP: [50_00, 100_00, 500_00, 1_000_00],
 };
 
-// ─── Fee / spread config (transparency line in quotes) ────────────────────────
 // Paymax spread is a markup in basis points over the provider all-in rate.
 
 export const PAYMAX_SPREAD_BPS = 105;       // 1.05% default spread (corridor-configurable)
@@ -85,8 +77,6 @@ export const RATE_LOCK_SECONDS = 90;
 export const MIN_CONVERT_USD_CENTS = 1_00;          // $1
 export const MAX_CONVERT_USD_CENTS = 100_000_00;    // $100,000
 
-// ─── Rate history ranges ──────────────────────────────────────────────────────
-
 export const RATE_RANGES: { value: RateRange; label: string }[] = [
   { value: '1D', label: '1D' },
   { value: '1W', label: '1W' },
@@ -95,7 +85,6 @@ export const RATE_RANGES: { value: RateRange; label: string }[] = [
   { value: '1Y', label: '1Y' },
 ];
 
-// ─── Status → chip styling (pill chips per DESIGN-Mobile.md) ──────────────────
 // fg/bg use design tokens only — no hardcoded colors.
 
 export const TX_STATUS_STYLE: Record<
@@ -119,8 +108,6 @@ export const TX_STATUS_STYLE: Record<
   declined:   { label: 'Declined',   fg: Colors.error,                 bg: Colors.iconBgRed },
   refunded:   { label: 'Refunded',   fg: Colors.secondary,             bg: Colors.iconBgBlue },
 };
-
-// ─── Cards (spec F) ──────────────────────────────────────────────────────────
 
 export const CARD_CURRENCIES: CurrencyCode[] = ['USD', 'NGN', 'EUR', 'GBP'];
 
@@ -149,8 +136,6 @@ export const CARD_FUND_PRESETS: Partial<Record<CurrencyCode, number[]>> = {
   GBP: [50_00, 100_00, 250_00, 500_00],
 };
 
-// ─── KYC / KYB (spec A) ──────────────────────────────────────────────────────
-
 export const ID_DOC_TYPES: { value: string; label: string }[] = [
   { value: 'nin', label: 'National ID (NIN)' },
   { value: 'passport', label: 'International Passport' },
@@ -173,8 +158,6 @@ export const TIER_LABELS: Record<number, string> = {
   2: 'Tier 2 — Enhanced',
   3: 'Tier 3 — Full',
 };
-
-// ─── Global edge / error states (spec L) ─────────────────────────────────────
 
 export type EdgeAction = 'retry' | 'login' | 'kyc' | 'home' | 'support' | 'update' | 'status';
 
@@ -243,8 +226,6 @@ export const EDGE_STATES: Record<string, EdgeStateDef> = {
   },
 };
 
-// ─── Announcements (Home, spec B) ─────────────────────────────────────────────
-
 export interface FxAnnouncement {
   id: string;
   title: string;
@@ -258,8 +239,6 @@ export const FX_ANNOUNCEMENTS: FxAnnouncement[] = [
   { id: 'an2', title: 'Lower spreads for business tier', body: 'Verified businesses now get reduced spreads on USD-NGN.', icon: 'TrendingDown', tint: 'blue' },
   { id: 'an3', title: 'Schedule recurring payouts', body: 'Automate vendor and payroll transfers on a weekly or monthly cycle.', icon: 'CalendarClock', tint: 'purple' },
 ];
-
-// ─── Quote fee labels ─────────────────────────────────────────────────────────
 
 export const FEE_LABEL: Record<string, string> = {
   provider_fee: 'Provider fee',

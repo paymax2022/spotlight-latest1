@@ -1,8 +1,6 @@
-// ── Insurance — Claims data layer (IM2) ──────────────────────────────────────
 // Self-contained mock-backed claims CRUD/FNOL/evidence/status, plus React Query
 // hooks. ADDITIVE to IM1 — never edits api.ts/hooks.ts/types.ts. Provider JSON
 // never leaks past this layer (PRD §7). Money is kobo (PRD §11).
-//
 // Claim lifecycle (PRD §10.2):
 //   DRAFT → FNOL_SUBMITTED → UNDER_ASSESSMENT
 //             ├─ NEEDS_MORE_INFO ↔ UNDER_ASSESSMENT
@@ -24,7 +22,6 @@ function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// ── Claim domain (normalised, provider-agnostic) ─────────────────────────────
 export type ClaimState =
   | 'DRAFT'
   | 'FNOL_SUBMITTED'
@@ -60,7 +57,7 @@ export interface ClaimTimelineEntry {
   state: ClaimState;
   label: string;
   note?: string;
-  at: string | null;      // null = not reached yet
+  at: string | null;
 }
 
 export interface Claim {
@@ -96,7 +93,6 @@ export interface ClaimType {
   fieldsSchema: ClaimFieldSchema[];
 }
 
-// ── Friendly labels / ordering for the status tracker ─────────────────────────
 export const CLAIM_STATE_LABEL: Record<ClaimState, string> = {
   DRAFT: 'Draft',
   FNOL_SUBMITTED: 'Reported',
@@ -117,7 +113,6 @@ export const CLAIM_TRACKER_ORDER: ClaimState[] = [
   'SETTLED',
 ];
 
-// ── Claim types (peril → schema-driven FNOL form) ─────────────────────────────
 export const CLAIM_TYPES: ClaimType[] = [
   {
     perilCode: 'health.admission',
@@ -194,7 +189,6 @@ export function claimTypesForLine(line: ProductLine): ClaimType[] {
   return matches.length > 0 ? matches : CLAIM_TYPES.filter((t) => t.perilCode === 'general.loss');
 }
 
-// ── Mock store ───────────────────────────────────────────────────────────────
 function timelineFor(state: ClaimState, base: string): ClaimTimelineEntry[] {
   const order: { state: ClaimState; label: string; note?: string }[] = [
     { state: 'FNOL_SUBMITTED', label: 'Claim reported', note: 'We received your first notice of loss.' },
@@ -264,7 +258,6 @@ const MOCK_CLAIMS: Claim[] = [
 
 let mockClaims: Claim[] = [...MOCK_CLAIMS];
 
-// ── Read ──────────────────────────────────────────────────────────────────────
 export async function getClaims(): Promise<Claim[]> {
   if (USE_MOCK) {
     await delay();
@@ -291,7 +284,6 @@ export async function getClaimablePolicies(): Promise<Policy[]> {
   return policies.filter((p) => p.state === 'ACTIVE' || p.state === 'RENEWAL_DUE');
 }
 
-// ── FNOL (first notice of loss) — Idempotency-Key REQUIRED (PRD §12.1) ─────────
 export interface FnolInput {
   policyId: string;
   perilCode: string;
@@ -341,7 +333,6 @@ export async function submitFnol(input: FnolInput): Promise<Claim> {
   return data;
 }
 
-// ── Evidence (signed-url placeholder) ────────────────────────────────────────
 export interface EvidenceUploadInput {
   claimId: string;
   kind: ClaimEvidence['kind'];
@@ -374,10 +365,7 @@ export async function uploadEvidence(input: EvidenceUploadInput): Promise<ClaimE
   return data;
 }
 
-// ── Settle (payout to wallet; PRD §10.2 PAYOUT_PENDING → SETTLED) ─────────────
-// GAP: claims/register.go exposes no member-callable POST /claims/:id/settle —
 // settlement/payout is admin-only (AdminDecision). This 404s in live mode until
-// a member-facing endpoint (or an admin-triggered async payout the member polls
 // for via GET /claims/:id) exists. Left correctly structured (Idempotency-Key
 // attached) for when it lands.
 // Idempotent on the claim's idempotency key in live. Mock advances the state
@@ -411,7 +399,6 @@ export async function settleClaim(args: { claimId: string; idempotencyKey: strin
   return data;
 }
 
-// ── React Query hooks ─────────────────────────────────────────────────────────
 const KEY = 'insurance-claims';
 
 export function useClaims() {

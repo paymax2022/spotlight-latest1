@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // ErrNotFound is returned when a business profile does not exist.
@@ -20,11 +23,6 @@ var ErrNotFound = errors.New("business: not found")
 type Repository struct{ db *pgxpool.Pool }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
 
 const profileCols = `
 	id, user_id, entity_type, mode, COALESCE(legal_name,''), COALESCE(proposed_name,''),
@@ -69,17 +67,24 @@ func (r *Repository) InsertProfile(ctx context.Context, userID string, entityTyp
 	var id string
 	err := r.db.QueryRow(ctx, q, userID, string(entityType), string(mode), proposedName, legalName, lineOfBusiness, string(status), raw).Scan(&id)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return "", ErrDuplicate
 		}
 		return "", err
 	}
-	// Seed a creation event (append-only).
 	_ = r.insertEvent(ctx, id, "profile.created", "", string(status), userID, map[string]any{"mode": mode})
 	return id, nil
 }
 
 func (r *Repository) GetProfile(ctx context.Context, id string) (*BusinessProfile, error) {
+	// UUID-shape gate: business_profiles.id is uuid — a malformed id can never
+	// resolve, so answer ErrNotFound (the same as a missing row) instead of
+	// letting Postgres's 22P02 syntax error surface as a 500 through every
+	// :id entry point (GetOne/status/certificate/submit/pay-fee/admin) — this
+	// repository method is the funnel they all reach (E2E wave-6 prod probe).
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrNotFound
+	}
 	p, err := scanProfile(r.db.QueryRow(ctx, `SELECT `+profileCols+` FROM business_profiles WHERE id = $1`, id))
 	if err != nil {
 		return nil, err
@@ -128,10 +133,19 @@ func (r *Repository) ListByUser(ctx context.Context, userID string) ([]BusinessP
 	return out, rows.Err()
 }
 
-// HasVerified reports whether the user has at least one verified/registered business.
-func (r *Repository) HasVerified(ctx context.Context, userID string) (bool, error) {
+// HasVerified reports whether the user has at least one verified/registered
+// business. When allowSandboxSource is false (production), rows stamped
+// verification_source='cac-sandbox' do NOT count — the deterministic sandbox
+// fabricates identities, so a sandbox-verified row must never satisfy the
+// merchant-upgrade gate (w9 prod probe: POST /business/verify minted terminal
+// 'verified' rows for any fabricated RC/BN string). Static SQL — no interpolation.
+func (r *Repository) HasVerified(ctx context.Context, userID string, allowSandboxSource bool) (bool, error) {
 	var exists bool
-	const q = `SELECT EXISTS (SELECT 1 FROM business_profiles WHERE user_id = $1 AND status IN ('verified','registered'))`
+	q := `SELECT EXISTS (SELECT 1 FROM business_profiles WHERE user_id = $1 AND status IN ('verified','registered')`
+	if !allowSandboxSource {
+		q += ` AND COALESCE(verification_source,'') <> 'cac-sandbox'`
+	}
+	q += `)`
 	err := r.db.QueryRow(ctx, q, userID).Scan(&exists)
 	return exists, err
 }
@@ -144,7 +158,7 @@ func (r *Repository) transition(ctx context.Context, id string, to Status, from 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Read current status under the row (FOR UPDATE serialises concurrent transitions).
 	var cur Status
@@ -164,16 +178,18 @@ func (r *Repository) transition(ctx context.Context, id string, to Status, from 
 	setSQL := "status = $1, updated_at = now()"
 	args := []any{string(to)}
 	i := 2
+	var setSQLSb162 strings.Builder
 	for _, col := range setterOrder {
 		if v, ok := setters[col]; ok {
-			setSQL += ", " + col + " = $" + strconv.Itoa(i)
+			setSQLSb162.WriteString(", " + col + " = $" + strconv.Itoa(i))
 			args = append(args, v)
 			i++
 		}
 	}
+	setSQL += setSQLSb162.String()
 	args = append(args, id)
 	if _, err := tx.Exec(ctx, `UPDATE business_profiles SET `+setSQL+` WHERE id = $`+strconv.Itoa(i), args...); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -200,7 +216,7 @@ func (r *Repository) updateFields(ctx context.Context, id, actor, event string, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var cur Status
 	if err := tx.QueryRow(ctx, `SELECT status FROM business_profiles WHERE id = $1 FOR UPDATE`, id).Scan(&cur); err != nil {
@@ -212,13 +228,15 @@ func (r *Repository) updateFields(ctx context.Context, id, actor, event string, 
 	setSQL := "updated_at = now()"
 	args := []any{}
 	i := 1
+	var setSQLSb210 strings.Builder
 	for _, col := range setterOrder {
 		if v, ok := setters[col]; ok {
-			setSQL += ", " + col + " = $" + strconv.Itoa(i)
+			setSQLSb210.WriteString(", " + col + " = $" + strconv.Itoa(i))
 			args = append(args, v)
 			i++
 		}
 	}
+	setSQL += setSQLSb210.String()
 	args = append(args, id)
 	if _, err := tx.Exec(ctx, `UPDATE business_profiles SET `+setSQL+` WHERE id = $`+strconv.Itoa(i), args...); err != nil {
 		return err
@@ -228,8 +246,6 @@ func (r *Repository) updateFields(ctx context.Context, id, actor, event string, 
 	}
 	return tx.Commit(ctx)
 }
-
-// ── Proprietors ───────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertProprietors(ctx context.Context, businessID string, props []Proprietor) error {
 	if len(props) == 0 {
@@ -272,8 +288,6 @@ func (r *Repository) ListProprietors(ctx context.Context, businessID string) ([]
 	return out, rows.Err()
 }
 
-// ── Events (append-only) ──────────────────────────────────────────────────────
-
 func (r *Repository) insertEvent(ctx context.Context, businessID, event, from, to, actor string, detail map[string]any) error {
 	if detail == nil {
 		detail = map[string]any{}
@@ -297,8 +311,6 @@ func insertEventTx(ctx context.Context, tx pgx.Tx, businessID, event, from, to, 
 	_, err := tx.Exec(ctx, q, businessID, event, from, to, actor, raw)
 	return err
 }
-
-// ── Admin queries ─────────────────────────────────────────────────────────────
 
 func (r *Repository) AdminList(ctx context.Context, status, mode string, limit int) ([]BusinessProfile, error) {
 	q := `SELECT ` + profileCols + ` FROM business_profiles WHERE 1=1`

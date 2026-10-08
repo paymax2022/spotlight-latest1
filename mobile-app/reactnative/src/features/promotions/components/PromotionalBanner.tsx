@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { ChevronRight, X } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import type { PromotionalBanner } from '../types';
 
 interface PromotionalBannerProps {

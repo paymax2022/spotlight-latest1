@@ -4,7 +4,6 @@
 // arena.admin.manage (Competition Admin). Onboard sponsors, configure branded
 // challenges/badges + placement slots (home, driver profiles, finale overlays),
 // schedule, monitor delivery/impressions. Reuses paid-promotion mechanics.
-//
 // NDC-1: the Sponsor rail can NEVER bind to Merit awards — sponsors weight
 // engagement rewards only, walled off from the crown. Onboarding + scheduling
 // forms are a later build; the slot listing is wired to the backend contract.

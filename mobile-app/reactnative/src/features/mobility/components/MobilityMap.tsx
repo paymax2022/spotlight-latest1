@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { NativeModules, StyleSheet, View, ViewStyle } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import MapView, { type MapMarker } from './MapView';
 import MapPlaceholder from './MapPlaceholder';
 import type { LatLng } from '../types/mobility.types';

@@ -3,15 +3,16 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, ChevronRight, CalendarClock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import ScheduledStatusChip from '@/features/mobility/components/ScheduledStatusChip';
 import { useScheduledList } from '@/features/mobility/hooks/useScheduled';
 import { SCHEDULED_MODE_META, SCHEDULED_ENABLED } from '@/features/mobility/constants/modes.constants';
@@ -23,8 +24,6 @@ const TABS: { value: ScheduledFilter; label: string }[] = [
   { value: 'past', label: 'Past' },
 ];
 
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 function modeLabel(mode: ScheduledBooking['mode']): string {
   return SCHEDULED_MODE_META.find((m) => m.value === mode)?.label ?? mode;

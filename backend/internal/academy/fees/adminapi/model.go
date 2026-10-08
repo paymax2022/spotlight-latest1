@@ -1,10 +1,10 @@
 package feesadminapi
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"time"
+
+	"spotlight/backend/go-common/strutil"
 )
 
 // DTOs mirror the school-admin console's expected shapes (frontend-admin/src/types/
@@ -68,8 +68,8 @@ type FeeSchedule struct {
 func (f FeeSchedule) MarshalJSON() ([]byte, error) {
 	type alias FeeSchedule
 	a := alias(f)
-	a.FeeItems = json.RawMessage(orDefault(f.FeeItemsRaw, "[]"))
-	a.InstallmentPolicy = json.RawMessage(orDefault(f.InstallmentPolicyRaw, "{}"))
+	a.FeeItems = json.RawMessage(strutil.FirstNonEmpty(f.FeeItemsRaw, "[]"))
+	a.InstallmentPolicy = json.RawMessage(strutil.FirstNonEmpty(f.InstallmentPolicyRaw, "{}"))
 	return json.Marshal(a)
 }
 
@@ -166,8 +166,6 @@ type RoleGrant struct {
 	Status    string    `json:"status"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreateFeeScheduleRequest is the console's FeeScheduleInput. fee_items carry kobo amounts.
 type CreateFeeScheduleRequest struct {
 	SchoolID          string          `json:"school_id" binding:"required"`
@@ -199,7 +197,6 @@ type SetGovOptInRequest struct {
 	OptedIn  bool   `json:"opted_in"`
 }
 
-// ── Admin create requests (flat setup-wizard surface, SC-29) ──────────────────────
 // These POSTs create rows in the EXISTING fees tables by REUSING the domain services
 // (feesschool / feessession) — which own the guarded state machines + audit — so no
 // parallel insert logic and no schema is added here.
@@ -257,9 +254,4 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
-}
-
-func shortHash(s string) string {
-	sum := sha1.Sum([]byte(s))
-	return hex.EncodeToString(sum[:6])
 }

@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldCheck, Lock, Wallet, CreditCard } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useInitiatePaidVote } from '@/features/voting/hooks/useVote';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
@@ -35,7 +35,6 @@ export default function PaymentMethodScreen() {
 
   // Block purchases when the contest is not actively accepting votes. Shares the
   // deadline-aware window with the rest of the voting flow — a status-only check
-  // let a contest past its end date take a payment the server would then refuse,
   // which is the worst place to discover it. An unloaded contest still counts as
   // open, so a slow query does not lock out a paying voter.
   const votingWindow = getVotingWindow(contest);
@@ -63,7 +62,6 @@ export default function PaymentMethodScreen() {
 
   const handlePay = () => {
     if (votingClosed) return;
-    // Open the two-option modal: Wallet pays from balance; Card/Transfer charges
     // on the Paystack gateway. Either way the votes are credited on confirmation.
     checkout.start({
       amountKobo: totalAmount,
@@ -73,11 +71,9 @@ export default function PaymentMethodScreen() {
       // this purchase: it opens a wallet TOP-UP, waits for the webhook to credit
       // it, and only then calls charge() — so by the time we get here the money
       // is already in the wallet (same shape as ADR-041's card rail).
-      //
       // This used to pass 'CARD', which opened a SECOND Paystack transaction that
       // nobody ever paid — no authorizationUrl is opened anywhere in the app — and
       // then sent the voter to payment-processing to poll it. Paystack reported it
-      // unpaid, the row went payment_status='failed', and /votes/paid/verify
       // answered 400 "This payment was not successful". The voter had paid, their
       // wallet was funded, and they got no votes.
       charge: () => initiate.mutateAsync({

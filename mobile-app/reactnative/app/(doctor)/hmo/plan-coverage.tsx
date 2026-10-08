@@ -3,17 +3,16 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ShieldCheck, Check, X, FileCheck, MessageSquare } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatKobo } from '@/api/doctor.batch4.api';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, CoverageBar, AlertCard } from '@/features/doctor/components';
 import { useHmoPlanCoverage } from '@/features/doctor/hooks';
 
 // Section O (O3, O5) — NEW screen: plan coverage summary (benefits / limits /
-// co-pay). REUSES the consult HMO eligibility flow; this adds the plan-level
 // benefit lines + annual cap bar + co-pay notice banner.
 export default function HmoPlanCoverageScreen() {
   const { patientId } = useLocalSearchParams<{ patientId?: string }>();

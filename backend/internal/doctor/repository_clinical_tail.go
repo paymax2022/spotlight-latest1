@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"spotlight/backend/go-common/jsonx"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -11,7 +12,6 @@ import (
 // repository_clinical_tail.go — pgx data access for the "clinical tail" endpoint
 // groups (rich clinical notes, prescription lifecycle, call disputes/feedback,
 // chat state/annotations, emergency cases/escalations, HMO eligibility).
-//
 // Every read is scoped to the owning doctor's user_id (defence-in-depth on top of
 // RLS). Mutations on tables carrying a UNIQUE idempotency_key (doctor_clinical_notes,
 // doctor_prescriptions, doctor_refill_requests, doctor_emergency_cases,
@@ -21,8 +21,6 @@ import (
 // call provider switch, chat status) are scoped and status-guarded. The append-only
 // audit/feedback/dispute tables have NO idempotency_key column, so their inserts are
 // best-effort appends (documented inline at each call site). None post ledger entries.
-
-// ══ CLINICAL NOTES ══════════════════════════════════════════════════════════
 
 // GetLatestNote returns the most-recent clinical note for an appointment (scoped),
 // or ErrNotFound when none exists.
@@ -76,8 +74,6 @@ func (r *Repository) TransitionNote(ctx context.Context, userID, noteID, status 
 	return r.getNoteByID(ctx, userID, noteID)
 }
 
-// ══ PRESCRIPTIONS (lifecycle) ═══════════════════════════════════════════════
-
 // TransitionPrescription moves a prescription to a new status (issued|cancelled),
 // stamping issued_at when transitioning to 'issued'. Scoped; ErrNotFound when no row.
 func (r *Repository) TransitionPrescription(ctx context.Context, userID, prescriptionID, status string) (*Prescription, error) {
@@ -114,7 +110,7 @@ func (r *Repository) RecordPrescriptionAudit(ctx context.Context, userID, prescr
 	const q = `
 		INSERT INTO doctor_prescription_audit (id, prescription_id, user_id, action, new_status, detail)
 		VALUES ($1,$2,$3,$4,$5,$6)`
-	if _, err := r.db.Exec(ctx, q, id, prescriptionID, userID, action, rx.Status, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, prescriptionID, userID, action, rx.Status, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return rx, nil
@@ -132,7 +128,7 @@ func (r *Repository) InsertRefillConsultation(ctx context.Context, userID, presc
 		INSERT INTO doctor_refill_requests (id, user_id, prescription_id, status, detail, idempotency_key)
 		VALUES ($1,$2,$3,'consultation_required',$4,$5)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, prescriptionID, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, prescriptionID, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -154,8 +150,6 @@ func (r *Repository) getRefillConsultByIdem(ctx context.Context, userID, idemKey
 	}
 	return r.GetRefillRequest(ctx, userID, id)
 }
-
-// ══ CALLS (disputes / feedback / provider switch) ═══════════════════════════
 
 // resolveCallSessionID returns the latest call-session id for an appointment (scoped),
 // or "" (no error) when none exists — disputes/feedback can be raised without a session.
@@ -189,7 +183,7 @@ func (r *Repository) InsertCallDispute(ctx context.Context, userID, appointmentI
 		VALUES ($1,$2,$3,$4,'open',$5,$6)
 		RETURNING id, user_id, call_session_id, appointment_id, status, reason, detail, created_at, updated_at`
 	d := &CallDispute{}
-	if err := r.db.QueryRow(ctx, q, id, userID, sessionPtr, appointmentID, reason, jsonOrEmptyObject(detail)).Scan(
+	if err := r.db.QueryRow(ctx, q, id, userID, sessionPtr, appointmentID, reason, jsonx.RawOrEmptyObject(detail)).Scan(
 		&d.ID, &d.UserID, &d.CallSessionID, &d.AppointmentID, &d.Status, &d.Reason, &d.Detail,
 		&d.CreatedAt, &d.UpdatedAt); err != nil {
 		return nil, err
@@ -207,7 +201,7 @@ func (r *Repository) InsertCallFeedback(ctx context.Context, userID, appointment
 		VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING id, user_id, appointment_id, rating, comment, detail, created_at`
 	f := &ConsultationFeedback{}
-	if err := r.db.QueryRow(ctx, q, id, userID, appointmentID, rating, comment, jsonOrEmptyObject(detail)).Scan(
+	if err := r.db.QueryRow(ctx, q, id, userID, appointmentID, rating, comment, jsonx.RawOrEmptyObject(detail)).Scan(
 		&f.ID, &f.UserID, &f.AppointmentID, &f.Rating, &f.Comment, &f.Detail, &f.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -228,13 +222,11 @@ func (r *Repository) SwitchCallProvider(ctx context.Context, userID, appointment
 		UPDATE doctor_call_sessions
 		SET provider = $3, detail = detail || $4::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	if _, err := r.db.Exec(ctx, q, sessionID, userID, provider, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, sessionID, userID, provider, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return r.getCallSessionByID(ctx, userID, sessionID)
 }
-
-// ══ CHAT (state / annotations / status) ═════════════════════════════════════
 
 // GetChatThreadProjection re-uses getChatThread so the handlers can build
 // presence/state projections. Scoped; ErrNotFound when the thread is foreign.
@@ -249,7 +241,7 @@ func (r *Repository) SetChatThreadStatus(ctx context.Context, userID, threadID, 
 		UPDATE doctor_chat_threads
 		SET status = $3, state = state || $4::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, threadID, userID, status, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, threadID, userID, status, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +269,7 @@ func (r *Repository) ReportChatMessage(ctx context.Context, userID, messageID st
 // doctor. ErrNotFound when the message is foreign.
 func (r *Repository) AnnotateChatMessage(ctx context.Context, userID, messageID string, annotations []byte) (*ChatMessage, error) {
 	const q = `UPDATE doctor_chat_messages SET annotations = $3::jsonb WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, messageID, userID, jsonOrEmptyObject(annotations))
+	tag, err := r.db.Exec(ctx, q, messageID, userID, jsonx.RawOrEmptyObject(annotations))
 	if err != nil {
 		return nil, err
 	}
@@ -286,8 +278,6 @@ func (r *Repository) AnnotateChatMessage(ctx context.Context, userID, messageID 
 	}
 	return r.getChatMessageByID(ctx, userID, messageID)
 }
-
-// ══ EMERGENCY ═══════════════════════════════════════════════════════════════
 
 // GetEmergencyCase fetches one emergency case scoped to the doctor.
 func (r *Repository) GetEmergencyCase(ctx context.Context, userID, id string) (*EmergencyCase, error) {
@@ -310,7 +300,7 @@ func (r *Repository) InsertEmergencyCase(ctx context.Context, userID string, pat
 		INSERT INTO doctor_emergency_cases (id, user_id, patient_id, status, summary, detail, idempotency_key)
 		VALUES ($1,$2,$3,'open',$4,$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, summary, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, summary, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +331,7 @@ func (r *Repository) InsertEmergencyEscalation(ctx context.Context, userID strin
 		INSERT INTO doctor_emergency_escalations (id, user_id, patient_id, escalation_type, status, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'initiated',$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, escalationType, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, escalationType, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}

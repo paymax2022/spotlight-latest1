@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ArrowDownToLine, ArrowUpFromLine, HandCoins, Split, Users } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { SocialColors, formatNaira } from '../constants/social.constants';
 import type { ActivityItem, ActivityKind } from '../types';
 

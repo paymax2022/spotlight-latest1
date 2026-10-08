@@ -1,18 +1,16 @@
 // Shared "View / Download Certificate" action for the Business Registry surfaces
 // (register wizard status step + business hub). For a registered/verified business
-// with a `certificateUrl` we open it directly; otherwise we fetch it on demand via
 // GET /:id/certificate and handle the "not available yet" 404 gracefully.
-//
 // The URL is a CAC certificate link our own backend supplied — safe to open as an
 // external web link via Linking.openURL.
 
 import React from 'react';
 import { Pressable, Text, StyleSheet, ActivityIndicator, Linking, Alert } from 'react-native';
 import { FileDown } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getCertificate } from '@/api/business.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import type { BusinessProfile } from '@/types/business';

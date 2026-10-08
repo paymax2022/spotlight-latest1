@@ -1,28 +1,17 @@
 package utilitybills
 
-// This file ports frontend-web/src/server/utility/credentials.ts (90 lines)
-// BIT-FOR-BIT. It is not a "reimplementation with the same idea": rows already
-// sitting in public.utility_providers.credentials were encrypted by the Node
-// code, and if this port derives the key even slightly differently they stop
-// decrypting — silently, at the first live provider call, with a generic
-// "message authentication failed" that says nothing about why.
-//
-// Two places where a naive Go port WOULD diverge, handled explicitly below:
-//
-//  1. Key derivation is a 3-way guess at what the operator put in
-//     UTILITY_PROVIDER_CREDENTIALS_KEY (64-char hex → base64-of-32-bytes →
-//     sha256-of-the-raw-string). The base64 branch is the trap: Node's
-//     Buffer.from(s, 'base64') is LENIENT (it skips characters outside the
-//     alphabet, accepts the URL-safe alphabet, and tolerates missing padding),
-//     whereas Go's encoding/base64 is strict and errors. A passphrase that Node
-//     happens to decode into exactly 32 bytes takes the base64 branch there and
-//     would take the sha256 branch here — producing a different key and a dead
-//     credential row. nodeBase64Decode below reproduces Node's leniency.
-//
-//  2. Node's crypto splits the GCM auth tag out of the ciphertext
-//     (cipher.getAuthTag()); Go's cipher.AEAD expects ciphertext||tag as one
-//     slice. The envelope's `tag` field is therefore appended on decrypt and
-//     split off on encrypt.
+// BIT-FOR-BIT port of frontend-web/src/server/utility/credentials.ts. Rows in
+// utility_providers.credentials were encrypted by the Node code — if this
+// derives the key even slightly differently they stop decrypting, silently, at
+// the first live provider call. The two divergence traps:
+//  1. Key derivation guesses the operator's UTILITY_PROVIDER_CREDENTIALS_KEY
+//     format (hex → base64 → sha256). Node's base64 is LENIENT (URL-safe
+//     alphabet, missing padding, stray chars) while Go's is strict — a
+//     passphrase Node decodes to 32 bytes takes different branches in each.
+//     nodeBase64Decode reproduces Node's leniency.
+//  2. Node splits the GCM auth tag from ciphertext; Go AEAD wants
+//     ciphertext||tag as one slice — `tag` is appended on decrypt, split on
+//     encrypt.
 
 import (
 	"crypto/aes"
@@ -72,7 +61,7 @@ func isHex64(raw string) bool {
 	if len(raw) != 64 {
 		return false
 	}
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		c := raw[i]
 		switch {
 		case c >= '0' && c <= '9':
@@ -87,7 +76,6 @@ func isHex64(raw string) bool {
 
 // nodeBase64Decode reproduces Node's Buffer.from(s, 'base64') decoding, which is
 // deliberately forgiving where Go's encoding/base64 is strict:
-//
 //   - characters outside the base64 alphabet (including '=', whitespace and
 //     punctuation) are SKIPPED rather than treated as an error;
 //   - the URL-safe alphabet is accepted in the same pass ('-' → '+', '_' → '/');
@@ -100,7 +88,7 @@ func isHex64(raw string) bool {
 func nodeBase64Decode(raw string) []byte {
 	// Collect only alphabet characters, normalising the URL-safe variants.
 	filtered := make([]byte, 0, len(raw))
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		c := raw[i]
 		switch {
 		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '+', c == '/':
@@ -152,7 +140,6 @@ func nodeBase64Decode(raw string) []byte {
 // hashed with sha256. The ambiguity is inherited from the TS source and MUST be
 // preserved — an existing deployment's key could be any of the three shapes, and
 // only reproducing the same order picks the same 32 bytes it did.
-//
 // Takes the key material as an argument rather than reading os.Getenv, so it is
 // unit-testable with zero environment coupling (the env read happens once at
 // wiring time — see app/utilitybills_routes.go).

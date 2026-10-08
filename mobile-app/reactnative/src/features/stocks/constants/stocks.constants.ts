@@ -1,9 +1,8 @@
-// ── Paymax Invest · Stocks — Constants ───────────────────────────────────────
 // Display catalogue + illustrative fee config + UI option lists.
 // All money is integer minor units. Fees here are MOCK defaults only — in
 // production every value comes from the server asset/estimate payload.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   ChartRange,
   FiatCurrency,
@@ -25,7 +24,6 @@ export const FIAT_META: Record<FiatCurrency, { symbol: string; decimals: number;
   USD: { symbol: '$', decimals: 2, flag: '🇺🇸' },
 };
 
-// ─── Fee config (transparency line in the order breakdown) ────────────────────
 // Illustrative basis-point markup — server overrides per asset/tier. The
 // per-asset `feeBps` on a StockAsset takes priority over this default.
 
@@ -44,8 +42,6 @@ export const SUGGESTED_AMOUNTS: Record<FiatCurrency, number[]> = {
   USD: [50_00, 100_00, 500_00, 1_000_00],               // $50, $100, $500, $1,000
 };
 
-// ─── Chart ranges ─────────────────────────────────────────────────────────────
-
 export const CHART_RANGES: { value: ChartRange; label: string }[] = [
   { value: '1D', label: '1D' },
   { value: '1W', label: '1W' },
@@ -54,15 +50,12 @@ export const CHART_RANGES: { value: ChartRange; label: string }[] = [
   { value: '1Y', label: '1Y' },
 ];
 
-// ─── Risk rating → chip styling (design tokens only) ──────────────────────────
-
 export const RISK_STYLE: Record<RiskRating, { label: string; fg: string; bg: string }> = {
   low:    { label: 'Lower risk',  fg: Colors.tertiaryContainer, bg: Colors.iconBgTeal },
   medium: { label: 'Medium risk', fg: Colors.onWarning,         bg: Colors.iconBgGold },
   high:   { label: 'Higher risk', fg: Colors.error,             bg: Colors.iconBgRed },
 };
 
-// ─── Order status → chip styling (stock state machine) ────────────────────────
 // Teal = completed/settled · Purple = in-flight · Gold = action/hold · Red = terminal-bad.
 
 export const STOCK_STATUS_STYLE: Record<
@@ -86,8 +79,6 @@ export const STOCK_STATUS_STYLE: Record<
   Reversed:                 { label: 'Reversed',      fg: Colors.error,                 bg: Colors.iconBgRed },
 };
 
-// ─── Market status → chip styling ─────────────────────────────────────────────
-
 export const MARKET_STATUS_STYLE: Record<MarketStatus, { label: string; fg: string; bg: string }> = {
   open:   { label: 'Market open',    fg: Colors.tertiaryContainer,     bg: Colors.iconBgTeal },
   closed: { label: 'Market closed',  fg: Colors.onSurfaceVariant,      bg: Colors.surfaceContainerHigh },
@@ -95,15 +86,11 @@ export const MARKET_STATUS_STYLE: Record<MarketStatus, { label: string; fg: stri
   post:   { label: 'After-hours',    fg: Colors.onPrimaryFixedVariant, bg: Colors.iconBgPurple },
 };
 
-// ─── Exchange labels ──────────────────────────────────────────────────────────
-
 export const EXCHANGE_LABEL: Record<StockExchange, string> = {
   NGX: 'Nigerian Exchange',
   NASDAQ: 'NASDAQ',
   NYSE: 'New York Stock Exchange',
 };
-
-// ─── Sector taxonomy (filter chips) ───────────────────────────────────────────
 
 export const SECTORS: string[] = [
   'Banking',
@@ -116,14 +103,10 @@ export const SECTORS: string[] = [
   'ETF',
 ];
 
-// ─── Order side display ───────────────────────────────────────────────────────
-
 export const SIDE_LABEL: Record<OrderSide, string> = {
   buy: 'Buy',
   sell: 'Sell',
 };
-
-// ─── Risk / education copy (education-first) ──────────────────────────────────
 
 export const NO_ADVICE_DISCLOSURE =
   'This is general information, not financial advice. Paymax does not recommend specific stocks.';

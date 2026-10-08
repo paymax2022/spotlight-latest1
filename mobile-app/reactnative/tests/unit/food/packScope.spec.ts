@@ -1,10 +1,7 @@
 // Pure-logic unit tests for deciding which cart packs a restaurant page shows.
-// Run: npm run test:food
-//
 // The defect: the page picked packs with `cartRestaurantId === id`. That field
 // holds whichever restaurant was added FIRST, so on any other restaurant's page
 // the answer was "none" — including for a pack created a moment earlier by the
-// Add pack button. The button worked; its result was filtered out of view, and
 // each click left another invisible empty pack in the cart.
 
 import { describe, it } from 'node:test';

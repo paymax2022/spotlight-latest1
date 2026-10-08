@@ -106,16 +106,13 @@ func TestCurrencyWalletMinorUnits(t *testing.T) {
 	_ = w.BalanceMinor / 100 // integer division — no fractional cents possible
 }
 
-// ---------------------------------------------------------------------------
 // FX Convert money-path invariants (QA pass).
-//
 // fx.Service is pgx-backed (service.go: db *pgxpool.Pool), so Convert's write
 // paths cannot run without a live Postgres. These tests transcribe the exact
 // arithmetic/branches from service.go and lock the invariants; they also encode
 // the discipline that the following documented RISKS violate (see
 // docs/qa/money-paths.md), so a future fix that closes a risk will change the
 // production shape these mirror and prompt an update here:
-//
 //   RISK-FX-1 (HIGH, no-direct-balance-mutation): creditCurrencyWallet
 //     (service.go:223-227) does `UPDATE currency_wallets SET balance_minor =
 //     balance_minor + $3` — the target-currency leg is a DIRECT stored-balance
@@ -132,7 +129,6 @@ func TestCurrencyWalletMinorUnits(t *testing.T) {
 //     crash after creditCurrencyWallet but before the fx_conversions insert
 //     leaves the target credited with no conversion record and no idempotency
 //     key persisted — a later replay re-runs and double-credits.
-// ---------------------------------------------------------------------------
 
 // TestFXConvert_TotalDebitIncludesFee locks the source-debit computation
 // (service.go:114 `totalDebitKobo := q.SourceAmountKobo + q.FeeKobo`): the user is
@@ -163,7 +159,6 @@ func TestFXConvert_TotalDebitIncludesFee(t *testing.T) {
 // Convert MUST carry an Idempotency-Key. It is enforced at the binding layer
 // (model.go: `IdempotencyKey string binding:"required"`); this test asserts the
 // struct-level intent so a future removal of the binding tag is caught.
-//
 // NOTE: this guard only makes the REQUEST carry a key; RISK-FX-2 above is that the
 // key is not used to protect the target-wallet credit against replay. This test
 // deliberately documents the boundary of the current protection.

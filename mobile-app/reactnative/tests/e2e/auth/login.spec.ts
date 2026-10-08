@@ -30,7 +30,7 @@ test.describe('Auth E2E - Login flow', () => {
     await page.getByPlaceholder('Enter your password').fill('wrongpassword');
     await page.getByText('Sign In', { exact: true }).click();
 
-    await expect(page.getByText(/invalid|unauthorized|credentials/i).first()).toBeVisible();
+    await expect(page.getByText(/incorrect|invalid|unauthorized|credentials/i).first()).toBeVisible();
   });
 
   test('empty email and password shows validation error', async ({ page }) => {

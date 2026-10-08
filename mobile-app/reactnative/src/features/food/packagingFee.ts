@@ -1,15 +1,11 @@
-// ── Restaurant & Delivery — takeaway packaging, priced or unknown ─────────────
-//
 // Packaging is MANDATORY and server-charged: PlaceOrder reads packaging_fee_kobo
 // off the restaurant row and adds one fee per pack. The checkout estimate has to
 // mirror that, and it can only do so once the restaurant has loaded.
-//
 // Checkout used to read `restaurant?.packagingFeeKobo ?? 0`, so any time the
 // restaurant had not loaded — still fetching, or a 404/500 — the line rendered
 // "Takeaway packaging (3 packs)  ₦0.00" and the estimated total was short by the
 // real amount, which the server then charged. Every restaurant in the dev
 // database charges ₦200 a pack, so this was never actually free.
-//
 // Same rule delivery already follows in resolveDeliveryFee: a price nobody has
 // quoted is UNKNOWN, and unknown must never be rendered as ₦0.
 

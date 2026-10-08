@@ -14,14 +14,14 @@ export async function POST(request: Request) {
   const unavailable = utilityUnavailableResponse();
   if (unavailable) return unavailable;
 
-  const idempotencyKey = request.headers.get('Idempotency-Key');
-  if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for utility payments.', 400);
-
   try {
     const user = await requireUtilityUser(request);
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for utility payments.', 400);
     const limited = utilityRateLimit(request, 'pay', user.id, 10, 60_000);
     if (limited) return limited;
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const category = parseUtilityCategory(String(body.category || ''));
     if (!category) return errorResponse('category is required.', 400);
 
@@ -42,7 +42,6 @@ export async function POST(request: Request) {
         metadata,
       });
       if (!result.ok) return result.response;
-      // Go's handler always answers 200; this route's own long-standing contract
       // (what mobile/web already call) is 201 for a fresh purchase, 200 for a
       // replayed one — preserve that here rather than leaking Go's status code.
       const alreadyProcessed = Boolean(result.data.already_processed);

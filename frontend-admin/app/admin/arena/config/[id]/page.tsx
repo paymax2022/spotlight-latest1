@@ -3,7 +3,6 @@
 // A1 — Competition config detail. Configure rails (Merit sources, Support params,
 // Play-Along thresholds, Sponsor slots) + award→rail bindings, set schema/rubric
 // versions, validate, publish (immutable version). RBAC: arena.admin.manage.
-//
 // NDC-1 (LOCKED): the NAIJA_DRIVER_CROWN←Merit binding is shown non-editable.
 // Money/engagement rails can NEVER be bound to the crown.
 

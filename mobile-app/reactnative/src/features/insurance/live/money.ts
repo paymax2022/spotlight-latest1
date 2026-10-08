@@ -1,6 +1,4 @@
-// ── Insurance (live) — price presentation ───────────────────────────────────
 // PURE. No `@/` imports, no React — so it unit-tests under plain `node --test`.
-//
 // Two things this file exists to stop:
 //   1. Rendering a PERCENTAGE product as if it were a flat naira price. MyCover's
 //      `base_price` is a RATE for 27 of the 69 products (0.5 → 0.5% of sum insured).

@@ -166,8 +166,7 @@ function webBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 async function getJson<T extends Record<string, unknown>>(path: string, label: string): Promise<T> {

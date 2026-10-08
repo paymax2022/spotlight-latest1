@@ -1,10 +1,8 @@
 package restaurantpayout_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the restaurant merchant WITHDRAWAL money path
 // (backend/internal/restaurant/withdrawal.go: RequestWithdrawal + the webhook
 // status flips MarkWithdrawalPaid / MarkWithdrawalFailed).
-//
 // A withdrawal moves a merchant's EARNED wallet balance (credited by paid
 // restaurant_payout_runs — here seeded directly via ledger.Credit) OUT to a
 // saved settlement bank account. RequestWithdrawal posts ONE balanced ledger
@@ -13,7 +11,6 @@ package restaurantpayout_test
 // a disbursement adapter that — with the default Noop — executes NOTHING (money
 // stays reserved). A later provider webhook flips the row paid (drain suspense →
 // provider_clearing) or failed (reverse suspense → wallet).
-//
 // Iron rules proven here (root CLAUDE.md "Money handling"):
 //   - balanced double-entry: the reserve reference nets to ZERO (DR == CR);
 //   - amounts are integer kobo; the wallet is debited by EXACTLY the amount;
@@ -21,16 +18,13 @@ package restaurantpayout_test
 //   - insufficient balance is fail-closed (no row, no ledger move);
 //   - owner-scoping: a merchant cannot withdraw to another owner's bank account;
 //   - tier limits are enforced fail-closed (Tier 0 wallet disabled → blocked).
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same gate + helpers
 // as payout_live_db_test.go, whose liveDBPool/seedUser/seedRestaurant/balanceOf/
 // newIdemKey/ledgerEntryCount/newLiveLedgerService this file reuses).
-//
 // Bring-up: apply migrations incl. 20261101000100_restaurant_bank_accounts.sql
 // and 20261101000200_restaurant_withdrawals.sql, then:
 //   cd backend && TEST_DATABASE_URL=postgres://postgres:postgres@localhost:54322/postgres?sslmode=disable \
 //     go test ./tests/restaurantpayout/... -run LiveDB_Withdrawal -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -124,7 +118,6 @@ func signedLedgerSum(t *testing.T, ctx context.Context, pool *pgxpool.Pool, refe
 
 // netPostedForReference returns the SIGNED amount posted to ONE account by the
 // balanced pair carrying reference.
-//
 // Prefer this over a before/after balance delta on any standing account.
 // Standing accounts are singletons keyed by type (finance/ledger/service.go):
 // settlement and the failed-transfer suspense account are shared by the entire
@@ -133,7 +126,6 @@ func signedLedgerSum(t *testing.T, ctx context.Context, pool *pgxpool.Pool, refe
 // measures whatever every other suite did in that window — which is exactly how
 // tests/edtechfees came to report "settlement account rose by -4900000 on apply,
 // want 100000" while the transfer under test was perfectly correct.
-//
 // Scoping to this operation's own reference is exact and cannot be perturbed by
 // concurrent work.
 func netPostedForReference(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID, reference string) int64 {
@@ -159,9 +151,7 @@ func withdrawalRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, o
 	return n
 }
 
-// ---------------------------------------------------------------------------
 // 1. Balanced-post invariant + Noop executes nothing.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Withdrawal_RequestPostsOneBalancedReserve_NoopExecutesNothing proves
 // the core money invariant: a withdrawal reserve is ONE balanced ledger post
@@ -231,9 +221,7 @@ func TestLiveDB_Withdrawal_RequestPostsOneBalancedReserve_NoopExecutesNothing(t 
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 2. Idempotent replay — same key posts NO second ledger move.
-// ---------------------------------------------------------------------------
 
 func TestLiveDB_Withdrawal_IdempotentReplay_NoSecondMove(t *testing.T) {
 	pool := liveDBPool(t)
@@ -279,9 +267,7 @@ func TestLiveDB_Withdrawal_IdempotentReplay_NoSecondMove(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 3. Insufficient balance — fail-closed (no row, no ledger move).
-// ---------------------------------------------------------------------------
 
 func TestLiveDB_Withdrawal_InsufficientBalance_FailsClosed(t *testing.T) {
 	pool := liveDBPool(t)
@@ -314,9 +300,7 @@ func TestLiveDB_Withdrawal_InsufficientBalance_FailsClosed(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 4. Owner-scoping — cannot withdraw to another owner's bank account.
-// ---------------------------------------------------------------------------
 
 func TestLiveDB_Withdrawal_OwnerScoped_ForeignBankAccountRejected(t *testing.T) {
 	pool := liveDBPool(t)
@@ -355,9 +339,7 @@ func TestLiveDB_Withdrawal_OwnerScoped_ForeignBankAccountRejected(t *testing.T) 
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 5. Tier-limit — fail-closed (Tier 0 wallet disabled → blocked).
-// ---------------------------------------------------------------------------
 
 func TestLiveDB_Withdrawal_TierLimit_FailsClosed(t *testing.T) {
 	pool := liveDBPool(t)
@@ -393,10 +375,8 @@ func TestLiveDB_Withdrawal_TierLimit_FailsClosed(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 6. Full lifecycle via the webhook flips: paid drains suspense → clearing;
 //    a failed disbursement REVERSES the reserved funds back to the wallet.
-// ---------------------------------------------------------------------------
 
 func TestLiveDB_Withdrawal_WebhookPaid_DrainsSuspenseToClearing(t *testing.T) {
 	pool := liveDBPool(t)

@@ -1,4 +1,3 @@
-// ── Business Logistics — data hooks ──────────────────────────────────────────
 // React Query hooks for the business-logistics mode, mirroring useModes.ts so
 // screens stay declarative and share caching / loading / error contracts. Money
 // mutations attach Idempotency-Keys via newIdempotencyKey.
@@ -14,7 +13,6 @@ import type {
   BatchCreateRequest,
 } from '../types/logistics.types';
 
-// ─── Account ────────────────────────────────────────────────────────────────
 export function useBusinessAccount() {
   return useQuery({
     queryKey: [LOGISTICS_KEY, 'account'],
@@ -32,7 +30,6 @@ export function useCreateBusinessAccount() {
   });
 }
 
-// ─── Deliveries ─────────────────────────────────────────────────────────────
 export function useCreateDelivery() {
   const qc = useQueryClient();
   return useMutation({
@@ -68,7 +65,6 @@ export function useCancelDelivery() {
   });
 }
 
-// ─── Batches ──────────────────────────────────────────────────────────────────
 export function useCreateBatch() {
   const qc = useQueryClient();
   return useMutation({
@@ -94,7 +90,6 @@ export function useBatch(id?: string) {
   });
 }
 
-// ─── Invoices + analytics ──────────────────────────────────────────────────────
 export function useInvoices() {
   return useQuery({ queryKey: [LOGISTICS_KEY, 'invoices'], queryFn: logistics.getInvoices, staleTime: 60_000 });
 }

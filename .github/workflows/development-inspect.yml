@@ -1,0 +1,92 @@
+name: Development inspect
+
+# READ-ONLY diagnostics for the DEVELOPMENT backend: why the latest deployment
+# failed or crashed. Writes nothing and deploys nothing.
+#
+# Why: development-module-flags restarts the backend, and a failed restart keeps
+# the old deployment serving, so the only signal is "deployment ended FAILED".
+# staging-inspect cannot target Development.
+#
+# ── ON PRINTING ──────────────────────────────────────────────────────────────
+# Application logs can contain anything, so nothing is dumped raw: crash
+# signatures are grep-selected, the rest is a short tail passed through a
+# redaction filter (long token-like strings and key=value secrets). Variables are
+# listed by NAME only via --json, never --kv (raw values leaked ADMIN_API_KEY on
+# run 32545670584).
+
+on:
+  workflow_dispatch:
+    inputs:
+      log_lines:
+        description: 'How many recent log lines to scan'
+        required: false
+        default: '400'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: inspect Development backend
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: backend
+      ENVIRONMENT: development
+      LINES: ${{ inputs.log_lines }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_DEVELOPMENT}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Deployment queue
+        run: |
+          set -uo pipefail
+          railway deployment list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --limit 6 --json 2>/dev/null \
+          | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{for(const r of JSON.parse(d))console.log("  "+(r.createdAt||"")+"  "+r.status+"  "+((r.meta&&(r.meta.commitHash||r.meta.cliMessage))||"").slice(0,9)+"  "+((r.meta&&r.meta.branch)||""))}catch{console.log("  (unparseable)")}})'
+
+      - name: Which FEATURE_* flags are set (names + true/false only)
+        run: |
+          set -uo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json 2>/dev/null || true
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("vars.json","utf8")); } catch { console.log("  unparseable - not printing"); process.exit(0); }
+            console.log("  APP_ENV set: " + (typeof v.APP_ENV === "string" && v.APP_ENV !== ""));
+            const on = Object.keys(v).filter(k => /^FEATURE_.*_ENABLED$/.test(k) && v[k] === "true").sort();
+            console.log("  " + on.length + " flags = true");
+            for (const k of on) console.log("    " + k);
+          '
+
+      # --latest: plain `railway logs` targets the last SUCCESSFUL deployment,
+      # i.e. the old one a failed deploy never replaces.
+      - name: Latest deployment - crash signatures
+        run: |
+          set -uo pipefail
+          railway logs --deployment --latest --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines "$LINES" > dep.log 2>&1 || true
+          echo "  scanned $(wc -l < dep.log) lines"
+          grep -aiE "panic:|fatal|startup aborted|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|address already in use|config validation|refusing|exit status|SIGSEGV|out of memory|oom|killed|health ?check|connection refused|too many connections|does not exist" dep.log \
+            | sed -E 's/[A-Za-z0-9+\/_=-]{32,}/[REDACTED]/g; s/((key|secret|token|password|passwd|dsn|url)[a-z_]*=)[^ ]+/\1[REDACTED]/Ig; s#(postgres(ql)?://)[^ ]+#\1[REDACTED]#g' \
+            | tail -60 | sed 's/^/    /' || true
+          echo "  --- last 30 lines (redacted) ---"
+          tail -30 dep.log \
+            | sed -E 's/[A-Za-z0-9+\/_=-]{32,}/[REDACTED]/g; s/((key|secret|token|password|passwd|dsn|url)[a-z_]*=)[^ ]+/\1[REDACTED]/Ig; s#(postgres(ql)?://)[^ ]+#\1[REDACTED]#g' \
+            | sed 's/^/    /'
+
+      - name: Latest build - tail (did it compile?)
+        run: |
+          set -uo pipefail
+          railway logs --build --latest --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines 40 2>&1 \
+            | sed -E 's/[A-Za-z0-9+\/_=-]{32,}/[REDACTED]/g' | tail -25 | sed 's/^/    /' || true

@@ -6,10 +6,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   Check, ClipboardList, FlaskConical, Sparkles, Search, Lock, Eye, Share2, X, Plus, AlertTriangle, Stethoscope,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import { TeleHeader } from '@/features/telemedicine/components';

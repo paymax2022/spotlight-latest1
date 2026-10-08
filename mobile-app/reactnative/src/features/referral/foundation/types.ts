@@ -1,4 +1,3 @@
-// ── Referral foundation types ────────────────────────────────────────────────
 // Self-contained types for the mobile foundation (onboarding, attribution,
 // grace window, roles/context, notification prefs, account/fraud standing).
 // Money is ALWAYS integer kobo. The server is the source of truth.
@@ -7,7 +6,6 @@ import type { EarnStateKey, ReferralRole } from '../constants/referral.constants
 
 export type { EarnStateKey, ReferralRole };
 
-// ── Attribution (§7A) ────────────────────────────────────────────────────────
 export type AttributionType =
   | 'code'
   | 'deeplink'
@@ -53,7 +51,6 @@ export interface ClaimCodeResult {
   error?: 'invalid' | 'window_closed' | 'self_referral' | 'already_claimed' | 'no_attribution';
 }
 
-// ── Role / context (M-ONB-09) ────────────────────────────────────────────────
 export interface RoleContext {
   /** Roles the user currently holds (always includes 'referrer'). */
   available: ReferralRole[];
@@ -62,7 +59,6 @@ export interface RoleContext {
   lockedUntilVerified: ReferralRole[];
 }
 
-// ── Notification preferences (M-NOT-01 / M-ACC-04) ───────────────────────────
 export type NotificationChannel = 'push' | 'email' | 'sms';
 
 export interface NotificationPrefs {
@@ -96,7 +92,6 @@ export interface ReferralNotification {
   amountKobo?: number | null;
 }
 
-// ── Account / fraud standing (M-ACC-01) ──────────────────────────────────────
 export type StandingLevel = 'good' | 'review' | 'restricted' | 'suspended';
 
 export interface FraudFlag {
@@ -118,7 +113,6 @@ export interface AccountStanding {
   withheldKobo: number;
 }
 
-// ── Contacts / disclosure consent (M-ONB-03 / M-ONB-04) ──────────────────────
 export interface ConsentState {
   termsAcceptedAt: string | null;
   contactsConsentAt: string | null;

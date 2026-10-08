@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"spotlight/backend/go-common/fsm"
 )
 
 // OrderState is the PharmacyOrder lifecycle (HEALTH-BUILD §5):
@@ -35,26 +37,22 @@ const (
 // transition not listed is rejected. Money side effects are bound to specific
 // edges in the service (HELD→CREATED, RELEASE on DELIVERED/COLLECTED, REFUND on
 // CANCELLED) — never a raw status write.
-var allowedOrderTransitions = map[OrderState]map[OrderState]bool{
-	StateCreated:        {StateRxPending: true, StateConfirmed: true, StateCancelled: true},
-	StateRxPending:      {StateConfirmed: true, StateCancelled: true},
-	StateConfirmed:      {StateDispensed: true, StateCancelled: true},
-	StateDispensed:      {StateInDelivery: true, StateReadyForPickup: true},
-	StateInDelivery:     {StateDelivered: true},
-	StateReadyForPickup: {StateCollected: true},
-	StateDelivered:      {StateClosed: true},
-	StateCollected:      {StateClosed: true},
-	StateClosed:         {},
-	StateCancelled:      {StateRefunded: true},
-	StateRefunded:       {},
+var allowedOrderTransitions = fsm.Table[OrderState]{
+	StateCreated:        fsm.Set(StateRxPending, StateConfirmed, StateCancelled),
+	StateRxPending:      fsm.Set(StateConfirmed, StateCancelled),
+	StateConfirmed:      fsm.Set(StateDispensed, StateCancelled),
+	StateDispensed:      fsm.Set(StateInDelivery, StateReadyForPickup),
+	StateInDelivery:     fsm.Set(StateDelivered),
+	StateReadyForPickup: fsm.Set(StateCollected),
+	StateDelivered:      fsm.Set(StateClosed),
+	StateCollected:      fsm.Set(StateClosed),
+	StateClosed:         fsm.Set[OrderState](),
+	StateCancelled:      fsm.Set(StateRefunded),
+	StateRefunded:       fsm.Set[OrderState](),
 }
 
 func canTransitionOrder(from, to OrderState) bool {
-	next, ok := allowedOrderTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedOrderTransitions.Can(from, to)
 }
 
 // isPreDispense reports whether an order may still be cancelled (HL-9: refund is
@@ -113,8 +111,8 @@ type Order struct {
 	FulfilmentMethod   FulfilmentMethod `json:"fulfilment_method"`
 	TotalKobo          int64            `json:"total_kobo"`
 	EscrowID           *string          `json:"escrow_id,omitempty"`
-	DeliveryRef        *string          `json:"delivery_ref,omitempty"`    // transport last-mile ref
-	PickupCode         *string          `json:"pickup_code,omitempty"`     // pickup QR/code credential
+	DeliveryRef        *string          `json:"delivery_ref,omitempty"`     // transport last-mile ref
+	PickupCode         *string          `json:"pickup_code,omitempty"`      // pickup QR/code credential
 	DeliveryAddress    *string          `json:"delivery_address,omitempty"` // patient-supplied dropoff (DELIVERY only)
 	DeliveryLat        *float64         `json:"delivery_lat,omitempty"`
 	DeliveryLng        *float64         `json:"delivery_lng,omitempty"`
@@ -135,8 +133,6 @@ type DispenseRecord struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// ─── Multi-pharmacy discovery + ratings (HL-2 gated) ────────────────────────
-//
 // A customer browses ALL APPROVED + discoverable PHARMACY providers and picks
 // one to shop from — by proximity (PostGIS, mirroring the vet vertical's
 // DiscoverVets), by rating, or a plain list. PharmacyProfile is the read model
@@ -208,11 +204,7 @@ func normalizeReviewBody(body string) (string, bool) {
 // reviewableStates are the PharmacyOrder states a completed order must be in
 // before the patient may leave a review — mirrors isPreDispense's terminal-edge
 // reasoning: a review reflects a fulfilled experience, not an in-flight order.
-var reviewableStates = map[OrderState]bool{
-	StateDelivered: true,
-	StateCollected: true,
-	StateClosed:    true,
-}
+var reviewableStates = fsm.Set(StateDelivered, StateCollected, StateClosed)
 
 func isReviewable(s OrderState) bool { return reviewableStates[s] }
 
@@ -256,7 +248,6 @@ type PharmacyReview struct {
 }
 
 // PharmacyEarnings is the owner's money view for their pharmacies.
-//
 // Sourced from escrow_holds, not from order workflow states: an order can look
 // finished by a path that never released funds (cancelled, refunded), and a
 // number shown to a merchant must not be a guess about a lifecycle.

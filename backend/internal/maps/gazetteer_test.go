@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// ── Encryptor tests (DB-free) ─────────────────────────────────────────────────
-
 func TestAESEncryptor_RoundTrip(t *testing.T) {
 	key := make([]byte, 32) // AES-256
 	if _, err := rand.Read(key); err != nil {
@@ -93,8 +91,7 @@ func TestNoopEncryptor_PassThrough(t *testing.T) {
 	}
 }
 
-// ── Gazetteer construction / nil-safety (DB-free) ──────────────────────────────
-
+// Gazetteer construction / nil-safety (DB-free)
 func TestNewGazetteer_DefaultsToNoopEncryptor(t *testing.T) {
 	// nil encryptor must not panic and must yield a working store.
 	g := NewGazetteer(nil, nil)
@@ -130,8 +127,6 @@ func TestGazetteer_ImplementsStore(t *testing.T) {
 	var _ GazetteerStore = (*Gazetteer)(nil)
 	var _ GazetteerStore = NewGazetteer(nil, nil)
 }
-
-// ── PII payload + null helpers ─────────────────────────────────────────────────
 
 func TestGazetteerPII_PacksAddressAndComponents(t *testing.T) {
 	e := GazetteerEntry{NormalizedAddr: "10 awolowo road ikoyi", Components: `{"city":"Lagos"}`}

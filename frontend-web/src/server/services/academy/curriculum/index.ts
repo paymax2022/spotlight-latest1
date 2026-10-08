@@ -1,5 +1,4 @@
 // The Film Academy pathway: five tiers, twenty-six modules.
-//
 // Ordering is deliberate and global: modules are numbered tier by tier, so
 // order_index is continuous across the whole pathway rather than restarting at
 // each tier. The learner sees one sequence.

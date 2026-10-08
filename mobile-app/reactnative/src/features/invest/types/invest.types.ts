@@ -1,4 +1,3 @@
-// ── Paymax Invest (Stocks) — Mobile types ────────────────────────────────────
 // Mirror of the Go backend DTOs (backend/internal/invest/model.go). All money is
 // integer minor units (kobo). Quantities are decimals (numeric(20,4)).
 

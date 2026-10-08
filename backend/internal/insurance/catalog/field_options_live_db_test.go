@@ -1,20 +1,15 @@
 package catalog
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for REMOTE-OPTIONS fields.
-//
 // A synced product schema can point a select at a provider "utility" endpoint
 // via options_url instead of carrying a literal enum. 219 such fields exist
 // across 65 of the 69 products. Nothing served them: the route
 // /products/:code/options/:field did not exist, so every one of those dropdowns
 // answered 404 and the form could not be completed.
-//
 // This runs against the real synced catalog rather than a fixture, because the
 // thing worth pinning is that the resolver finds the URL in the shape the SYNC
 // actually stores — a handwritten schema would prove nothing about that.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

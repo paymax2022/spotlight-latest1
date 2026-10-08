@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PromoBanner from '@/components/PromoBanner';
 import StateView from '@/components/StateView';
@@ -97,7 +97,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.sm, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.sm },
   rank: { ...Typography.titleMd, color: Colors.onSurfaceVariant, width: 26, textAlign: 'center' },
-  rankTop: { color: Colors.gold, fontWeight: '800' as const },
+  rankTop: { color: Colors.onWarning, fontWeight: '800' as const },
   stateIcon: { width: 36, height: 36, borderRadius: Radius.full, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   stateName: { ...Typography.labelLg, color: Colors.onSurface },
   stateMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },

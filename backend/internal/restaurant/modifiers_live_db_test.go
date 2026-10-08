@@ -1,13 +1,11 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for grouped menu-item modifiers (Phase 3): the owner
 // CRUD (CreateModifierGroup / AddModifier), the loader (loadItemModifierGroups),
 // and the pure resolver driven off DB-loaded groups. Skipped unless
 // TEST_DATABASE_URL is set. Requires the restaurant + menu_modifiers
 // migrations. No escrow/wallet is exercised — this covers the catalog + pricing
 // resolution, not the money move.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { Sparkles, ShieldAlert } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   model:        string;            // AI model display label (from the envelope)
@@ -18,7 +18,6 @@ interface Props {
 // New component: shared AI-assist panel chrome (model label + confidence +
 // generating spinner + a content slot) plus the mandatory not-medical-advice
 // disclaimer footer. No existing component renders the AiEnvelope generating /
-// ready framing, so this is genuinely new; the three AI screens compose their
 // output inside it.
 export default function AiPanel({ model, disclaimer, generating, confidence, generatedAt, children }: Props) {
   return (

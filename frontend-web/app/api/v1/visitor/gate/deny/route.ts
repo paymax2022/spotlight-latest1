@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/gate/deny — deny a visitor entry.
+// Deny a visitor entry.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     const guard = await getGuardContext(supabase, user.id);
     if (!guard) throw new ApiError('No active gate session', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const accessCodeId: string | null = body?.accessCodeId ?? null;
     const visitorName: string = String(body?.visitorName ?? '').trim();
     const unitLabel: string = String(body?.unitLabel ?? '').trim();
@@ -37,7 +38,6 @@ export async function POST(request: Request) {
       .single();
     if (evtErr) throw evtErr;
 
-    // Notify the issuer if we have a code.
     if (accessCodeId) {
       const { data: code } = await supabase
         .from('visitor_access_codes')

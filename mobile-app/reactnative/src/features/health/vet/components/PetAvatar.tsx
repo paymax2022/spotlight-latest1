@@ -2,7 +2,7 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import * as Icons from 'lucide-react-native';
 import { SPECIES_META } from '../constants';
-import { Radius } from '@/constants/radius';
+import { Radius } from '@/constants/tokens';
 import type { PetSpecies } from '../types';
 
 /** Round species-tinted avatar used on pet cards, charts and consult headers. */

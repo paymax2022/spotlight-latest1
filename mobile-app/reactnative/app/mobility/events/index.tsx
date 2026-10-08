@@ -4,14 +4,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
 import { Ticket, MapPin, Clock, Users, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useEventOffers } from '@/features/mobility/hooks/useEvent';
 import { EVENT_ENABLED, EVENT_OFFER_TYPES, OFFER_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { DEMO_EVENT_ID, DEMO_EVENT_TITLE } from '@/features/mobility/api/event.mock';
@@ -69,7 +70,7 @@ export default function EventTransportScreen() {
       {offers.isLoading ? (
         <StateView kind="loading" message="Loading transport options…" />
       ) : offers.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => offers.refetch()} />
+        <MobilityEdgeState kind={errKind(offers.error)} actionLabel="Retry" onAction={() => offers.refetch()} />
       ) : list.length === 0 ? (
         <MobilityEdgeState kind="empty" title="No transport offers" message="There are no rides for this event yet." />
       ) : (

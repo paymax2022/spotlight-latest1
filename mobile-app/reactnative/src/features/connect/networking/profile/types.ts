@@ -1,8 +1,6 @@
 // Paymax Connect — Networking PROFILE types (PRD §6.3 PR-*, §6.5 RC-*).
-//
 // Covers Experience (PR-07), Education (PR-08), About (PR-09), Profile Strength
 // (PR-11) and Recommendations (RC-02/RC-03). camelCase to match {data:...}.
-//
 // INVARIANTS:
 //  PN-1 Profile Strength is exposed ONLY as a BAND label + a checklist of missing
 //       items. The raw numeric completion/verification score is NEVER returned to
@@ -11,7 +9,6 @@
 //       (state acceptedVisible). Inbox holds pending (sent) items awaiting the
 //       subject's accept/decline; the public list returns accepted-only.
 
-// ── Experience (PR-07) ───────────────────────────────────────────────────────
 export interface Experience {
   id: string;
   title: string;
@@ -35,7 +32,6 @@ export interface ExperienceInput {
   description?: string;
 }
 
-// ── Education (PR-08) ────────────────────────────────────────────────────────
 export interface Education {
   id: string;
   institution: string;
@@ -55,7 +51,6 @@ export interface EducationInput {
   description?: string;
 }
 
-// ── About (PR-09) ────────────────────────────────────────────────────────────
 export interface About {
   headline?: string;
   summary: string;
@@ -66,7 +61,6 @@ export interface AboutInput {
   summary: string;
 }
 
-// ── Profile Strength (PR-11) — PN-1 band-only, NEVER a raw number ────────────
 export type StrengthBand = 'beginner' | 'intermediate' | 'strong' | 'all_star';
 
 export interface StrengthMissingItem {
@@ -80,7 +74,6 @@ export interface ProfileStrength {
   // NOTE: intentionally no `score`/`percent` field — PN-1 forbids exposing it.
 }
 
-// ── Recommendations (RC-02 inbox / RC-03 public) ─────────────────────────────
 export type RecommendationState =
   | 'drafted'
   | 'sent'                       // awaiting the subject's decision (in inbox)

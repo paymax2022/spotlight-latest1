@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MapPin, Star, Store, Truck, Package, Map, LocateFixed } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
@@ -23,7 +23,6 @@ type SortMode = 'distance' | 'rating';
 export default function PharmacySelectScreen() {
   const { coords, request, requesting, error: locError, available: locAvailable } = useDeviceCoords();
   const [sort, setSort] = useState<SortMode>('distance');
-  // Search by pharmacy name. `search` is the live input; `q` is debounced so we
   // don't refetch on every keystroke (server-side ILIKE via usePharmacies).
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
@@ -35,7 +34,6 @@ export default function PharmacySelectScreen() {
   const [selected, setSelected] = useState<string | null>(null);
   const setPharmacy = useCartStore((s) => s.setPharmacy);
 
-  // Ask for location once on mount so distance sort works out of the box;
   // degrades to rating sort (server-resolved) if denied/unavailable.
   useEffect(() => {
     if (locAvailable && !coords) {

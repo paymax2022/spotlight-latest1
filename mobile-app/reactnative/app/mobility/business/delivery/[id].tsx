@@ -4,16 +4,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { MapPin, User, FileCheck, AlertTriangle, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import TripPinDisplay from '@/features/mobility/components/TripPinDisplay';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDelivery, useCancelDelivery } from '@/features/mobility/hooks/useLogistics';
 import { DELIVERY_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
@@ -42,7 +43,7 @@ export default function DeliveryDetailScreen() {
   }
   if (delivery.isError || !d) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Delivery" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => delivery.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Delivery" /><MobilityEdgeState kind={errKind(delivery.error)} actionLabel="Retry" onAction={() => delivery.refetch()} /></SafeAreaView>
     );
   }
 

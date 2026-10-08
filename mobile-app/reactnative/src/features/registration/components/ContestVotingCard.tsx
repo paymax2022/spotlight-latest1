@@ -1,4 +1,3 @@
-// ── Registration → voting call-to-action ─────────────────────────────────────
 // An approved application becomes a contestant, but the status screen never
 // told the applicant. This is the bridge: once they are on an open contest's
 // roster it offers the three things they actually want — see the contest, vote,
@@ -8,11 +7,11 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { Trophy, Share2, Vote, BarChart3, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import type { RegistrationVoting, RegistrationVotingReason } from '../types/registration.types';
 

@@ -1,6 +1,6 @@
 import { handleApiError, listResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { addAuditEvent, listAuditEvents } from '@/src/server/admin/audit';
+import { addAuditEvent, listAuditEventsDurable } from '@/src/server/admin/audit';
 import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admin/query';
 
 export async function GET(request: Request) {
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
       defaultSortBy: 'timestamp',
       defaultSortOrder: 'desc',
     });
-    const events = listAuditEvents(500);
+    const events = await listAuditEventsDurable(500);
     const sorted = sortItems(events, query);
     const { items, meta } = paginateItems(sorted, query);
 

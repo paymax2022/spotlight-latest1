@@ -3,10 +3,10 @@ import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TIER_LABELS, TIER_LIMITS } from '@/features/kycverify/constants';
 import { kycVerifyDraft, resetKycVerifyDraft, grantKycTier } from '@/features/kycverify/draft';
@@ -31,7 +31,6 @@ export default function KycSuccessScreen() {
     // Draft is spent; clear it so K14 resume doesn't re-offer a finished flow.
     resetKycVerifyDraft(newTier);
     kycVerifyDraft.current.sessionId = null;
-    // Intelligent routing: return to wherever the user was blocked and continue
     // that action; fall back to home when there's nothing to resume.
     resumeOrFallback('/(tabs)/home');
   };

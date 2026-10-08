@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for menu/cart completeness (Phase 12): dietary tags on
 // items, the min-order gate, item price bounds, and special-instructions handling.
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -65,7 +63,7 @@ func TestLiveDB_MenuCart(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT dietary_tags FROM menu_items WHERE id=$1`, it.ID).Scan(&tags); err != nil {
 		t.Fatalf("read tags: %v", err)
 	}
-	if len(tags) != 2 { // vegan (deduped) + gluten_free
+	if len(tags) != 2 {
 		t.Fatalf("dietary tags = %v, want 2 normalized+deduped", tags)
 	}
 

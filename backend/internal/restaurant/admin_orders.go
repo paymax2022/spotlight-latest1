@@ -2,14 +2,13 @@ package restaurant
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // The platform-wide order feed — GET /api/restaurant/admin/orders.
-//
 // WHY THIS EXISTS
 // The ops console had no admin order feed at all. It called the MEMBER route
 // `GET /api/finance/restaurant/orders?role=restaurant`, which is owner-scoped
@@ -17,14 +16,11 @@ import (
 // returned the orders of restaurants the signed-in ADMIN personally owns, which
 // is none. 2,174 orders exist; the console could see zero of them, and its
 // `?status=` was ignored by that handler outright.
-//
 // This is the real thing: every order on the platform, joined to its restaurant
 // and rider, paged, filtered in SQL, fail-closed behind RBAC restaurant.manage.
-//
 // READ-ONLY. It projects money (integer kobo) for display and moves none: no
 // ledger entries, no state transitions, so no Idempotency-Key applies here.
 // Order mutations keep going through the existing member/rider/dispatch routes.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const (
 	defaultAdminOrderLimit = 25
@@ -33,7 +29,6 @@ const (
 
 // AdminOrderStatuses is the authoritative order vocabulary, matching the
 // `orders_status_check` CHECK constraint in the database.
-//
 // It is exported because the console has to filter on it, and the console had
 // invented its own list — `placed`, `accepted`, `assigned`, `refunded`,
 // `no_rider` — none of which are values this column can hold. Five of its ten
@@ -49,19 +44,14 @@ var AdminOrderStatuses = []string{
 var adminOrderActive = []string{"pending", "confirmed", "preparing", "ready", "picked_up"}
 
 func isKnownOrderStatus(s string) bool {
-	for _, v := range AdminOrderStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AdminOrderStatuses, s)
 }
 
 // AdminOrderParams filters the feed. The zero value returns the newest page of
 // every order on the platform.
 type AdminOrderParams struct {
 	Status       string // exact order status; "" = any. An unknown value is rejected, not silently ignored.
-	Dispatch     string // dispatch_status (none|searching|assigned|delivered); "" = any
+	Dispatch     string
 	Query        string // order id prefix, restaurant name, or delivery address
 	RestaurantID string
 	RiderID      string
@@ -142,7 +132,6 @@ type AdminOrderRow struct {
 
 // AdminOrderPage is one page of the feed plus aggregates over the WHOLE filtered
 // set.
-//
 // The aggregates are the point of returning them here rather than letting the
 // console add up what it rendered: the console's KPI tiles used to count the
 // array it held, so once the feed is paged "Active orders" would have meant
@@ -232,7 +221,6 @@ func adminOrderOrderBy(sort string) string {
 // terminalOrderStatuses are the states an order will not move on from. An order
 // in one of these is finished: nothing more will be dispatched, delivered or
 // settled for it.
-//
 // This is the single definition (ADR-050). Two admin reads had drifted to a stale
 // two-value idea of "finished" (`delivered, cancelled`) written before the
 // lifecycle gained rejected / dispatch_failed / delivery_failed, which left 183
@@ -242,7 +230,6 @@ var terminalOrderStatuses = []string{"delivered", "cancelled", "rejected", "disp
 
 // terminalOrderStatusSQL renders terminalOrderStatuses as a SQL IN-list literal,
 // e.g. `'delivered','cancelled',…`.
-//
 // A literal rather than a placeholder because it is a fixed, code-owned set with
 // no caller input in it, and because embedding it lets the several queries that
 // need "is this order finished?" share ONE definition instead of each spelling
@@ -259,19 +246,13 @@ func terminalOrderStatusSQL() string {
 // terminalOrderStatus reports a state the order will not move on from, so age
 // stops accruing.
 func terminalOrderStatus(s string) bool {
-	for _, v := range terminalOrderStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(terminalOrderStatuses, s)
 }
 
 // AdminListOrders returns one page of the platform-wide feed plus aggregates.
 func (s *Service) AdminListOrders(ctx context.Context, params AdminOrderParams) (*AdminOrderPage, error) {
 	p := params.normalized()
 
-	// ── Aggregates, over every status under the OTHER filters ────────────────
 	aggWhere, aggArgs := buildAdminOrderWhere(p, false)
 	counts := map[string]int{}
 	for _, st := range AdminOrderStatuses {
@@ -315,7 +296,6 @@ func (s *Service) AdminListOrders(ctx context.Context, params AdminOrderParams) 
 		}
 	}
 
-	// ── The page itself ──────────────────────────────────────────────────────
 	where, args := buildAdminOrderWhere(p, true)
 	full := append([]any{}, args...)
 	full = append(full, p.Limit, p.Offset)

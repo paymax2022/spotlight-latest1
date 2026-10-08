@@ -16,9 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ---------------------------------------------------------------------------
 // 1. Idempotency guard
-// ---------------------------------------------------------------------------
 describe('core/idempotency', () => {
   it('returns the cached value on a hit and never runs the fresh callback', async () => {
     const { withIdempotency } = await import('../../../src/server/voting/core/idempotency');
@@ -78,9 +76,7 @@ describe('core/idempotency', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 2. Fraud signals
-// ---------------------------------------------------------------------------
 vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
@@ -172,9 +168,7 @@ describe('core/fraud — recordVoteFraudSignals', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 3. Audit emission
-// ---------------------------------------------------------------------------
 vi.mock('../../../src/server/voting/audit.service', () => ({
   appendAuditLog: vi.fn().mockResolvedValue(undefined),
 }));

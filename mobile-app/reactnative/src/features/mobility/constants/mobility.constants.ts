@@ -1,11 +1,9 @@
-// ── Paymax Mobility — Constants ──────────────────────────────────────────────
 // NOTE: pricing floors/ceilings/commission are NEVER hard-coded for *use*. The
 // values below are display labels and feature flags only — every fare bound and
 // commission split is read from backend config at runtime.
 
 import type { ServiceType, CommissionTier, DocType } from '../types/mobility.types';
 
-// ─── Feature flags (city / compliance readiness) ──────────────────────────────
 export const RIDE_NEGOTIATION_ENABLED =
   (process.env.EXPO_PUBLIC_MOBILITY_NEGOTIATION ?? 'true').toLowerCase() !== 'false';
 
@@ -15,7 +13,6 @@ export const DRIVER_MODE_ENABLED =
 // React Query namespace
 export const MOBILITY_KEY = 'mobility';
 
-// ─── Service type display metadata ─────────────────────────────────────────────
 export interface ServiceTypeMeta {
   value: ServiceType;
   label: string;
@@ -38,17 +35,15 @@ export const SERVICE_TYPE_LABEL: Record<ServiceType, string> = {
   xl: 'XL / SUV',
 };
 
-// ─── Quick-tile registry ───────────────────────────────────────────────────────
 // The backend home payload sends quickTiles as plain string keys
 // (e.g. ['ride', 'schedule', 'parcel', 'airport']). The client maps each key to
 // its display metadata + destination here. Unknown keys are skipped by the
-// screen. `route` (when present) is pushed on tap; otherwise the tile opens the
 // ride estimate flow.
 export interface QuickTileMeta {
   id: string;
   label: string;
   icon: string;              // lucide name
-  route?: string;            // explicit destination; falls back to estimate flow
+  route?: string;
   enabled: boolean;
 }
 
@@ -59,7 +54,6 @@ export const QUICK_TILE_REGISTRY: Record<string, QuickTileMeta> = {
   airport:  { id: 'airport',  label: 'Airport',     icon: 'Plane',         enabled: true },
 };
 
-// ─── Trip phase → human label ──────────────────────────────────────────────────
 export const PHASE_LABEL: Record<string, string> = {
   requested: 'Finding your driver',
   fare_negotiating: 'Negotiating fare',
@@ -73,7 +67,6 @@ export const PHASE_LABEL: Record<string, string> = {
   safety_hold: 'Safety hold',
 };
 
-// ─── Commission tier display ───────────────────────────────────────────────────
 export const COMMISSION_TIER_LABEL: Record<CommissionTier, string> = {
   standard: 'Standard',
   silver: 'Silver',
@@ -81,7 +74,6 @@ export const COMMISSION_TIER_LABEL: Record<CommissionTier, string> = {
   platinum: 'Platinum',
 };
 
-// ─── Driver document requirements (display order + labels) ─────────────────────
 export interface DocRequirement {
   docType: DocType;
   label: string;
@@ -97,7 +89,6 @@ export const REQUIRED_DOCUMENTS: DocRequirement[] = [
   { docType: 'roadworthiness',    label: 'Roadworthiness',      hint: 'Vehicle roadworthiness certificate', requiresExpiry: true },
 ];
 
-// ─── Cancellation reasons ──────────────────────────────────────────────────────
 export const CANCEL_REASONS = [
   'Driver taking too long',
   'Booked by mistake',
@@ -107,10 +98,8 @@ export const CANCEL_REASONS = [
   'Other',
 ] as const;
 
-// ─── Rating tip presets (kobo) — display chips; not a fare floor ───────────────
 export const TIP_PRESETS_KOBO = [0, 100_00, 200_00, 500_00, 1_000_00];
 
-// ─── Edge / error state copy (centralised so screens stay consistent) ──────────
 export const STATE_COPY = {
   offline: {
     title: 'You appear to be offline',

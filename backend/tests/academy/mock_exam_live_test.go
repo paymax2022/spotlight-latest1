@@ -1,23 +1,17 @@
 package academy_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the academy mock-exam module (ADR-028).
-//
 // The module's repository/analytics SQL previously referenced columns that
 // never existed on academy_mock_attempt_metadata / academy_attempts and died
 // at runtime with SQLSTATE 42703. This test drives the real repository,
 // service, and analytics queries against a migrated Postgres so the Go code
 // can never silently drift from supabase/migrations again.
-//
 // SKIPPED when TEST_DATABASE_URL is unset. Target the local
 // Supabase instance after a fresh replay:
-//
 //	export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //	cd backend && go test ./tests/academy/... -run LiveDB -v
-//
 // Every row is created by the test with fresh uuids / unique codes — no
 // truncation, no shared fixtures, safe to re-run against the same database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -131,7 +125,7 @@ func TestLiveDB_MockExamAttemptLifecycle(t *testing.T) {
 	// Save progress: answers + flagged land on the metadata table.
 	flagged := []string{uuid.NewString()}
 	if err := repo.UpdateAttempt(ctx, attempt.ID,
-		map[string]interface{}{"q1": "B"}, flagged); err != nil {
+		map[string]any{"q1": "B"}, flagged); err != nil {
 		t.Fatalf("UpdateAttempt: %v", err)
 	}
 
@@ -164,7 +158,7 @@ func TestLiveDB_MockExamAttemptLifecycle(t *testing.T) {
 	}
 
 	// Submit: grades against the marking scheme, flips state to scored.
-	result, err := svc.SubmitExam(ctx, attempt.ID, map[string]interface{}{"q1": "B", "q2": "C"})
+	result, err := svc.SubmitExam(ctx, attempt.ID, map[string]any{"q1": "B", "q2": "C"})
 	if err != nil {
 		t.Fatalf("SubmitExam: %v", err)
 	}
@@ -215,7 +209,6 @@ func TestLiveDB_MockExamAttemptLifecycle(t *testing.T) {
 }
 
 // Regression for the two grading defects found live on 2026-08-12:
-//
 //  1. Integer mark distribution: on an exam whose question count does not
 //     divide 100 (like the seeded 60-question P4-MOCK-V1), a perfect run
 //     could not reach 100% — 45/60 correct returned 45 instead of 75.
@@ -250,7 +243,7 @@ func TestLiveDB_MockExamNonDivisorGradingAndResultsReadBack(t *testing.T) {
 	// 2 of 3 correct: integer division scored this 66/100... as 2×(100/3)=66,
 	// but worse, 3 of 3 could only reach 99. Expect exact fraction math.
 	result, err := svc.SubmitExam(ctx, attempt.ID,
-		map[string]interface{}{"q1": "A", "q2": "B", "q3": "X"})
+		map[string]any{"q1": "A", "q2": "B", "q3": "X"})
 	if err != nil {
 		t.Fatalf("SubmitExam: %v", err)
 	}
@@ -267,7 +260,7 @@ func TestLiveDB_MockExamNonDivisorGradingAndResultsReadBack(t *testing.T) {
 	router.GET("/results/:attempt_id", h.GetResults)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/results/"+attempt.ID, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/results/"+attempt.ID, nil)
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

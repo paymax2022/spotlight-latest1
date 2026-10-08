@@ -1,8 +1,6 @@
-// ── Admin — Paymax Social Pay (P2P / Split / Pools) ops control-plane service ──
 // Mock by default (mirrors stays / savings admin services). Flip with
 // NEXT_PUBLIC_SOCIAL_USE_MOCK=false to hit the live Go backend at /api/social/admin/*.
 // RBAC: social.admin.* gates wired on the sidebar.
-// Money is BIGINT kobo (minor units) throughout. Surfaces NL-8 (money is a ledger;
 // corrections are reversing entries only), NL-10 (KYC gates & AML velocity limits),
 // NL-12 (immutable audit on every state change).
 
@@ -25,7 +23,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/social/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -35,10 +32,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,7 +61,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -76,9 +69,7 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: SocialDashboard = {
   p2p_volume_today_kobo: 184_200_000_00,
   p2p_volume_30d_kobo: 5_104_800_000_00,
@@ -115,9 +106,7 @@ export async function getSocialDashboard(): Promise<SocialDashboard> {
   return getJson<SocialDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Velocity / AML limits (NL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const LIMITS: SocialLimits = {
   updated_at: iso(72),
   limits: [
@@ -142,9 +131,7 @@ export async function updateLimits(limits: VelocityLimit[]): Promise<UpdateLimit
   return sendJson<UpdateLimitsResult>('PUT', '/limits', { limits });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Reversal tooling
-// ════════════════════════════════════════════════════════════════════════════
 const REVERSALS: ReversalRecord[] = [
   { id: 'rev_2201', txn_ref: 'p2p_99120', from_masked: 'Ifeoma C•••', to_masked: 'Wrong R•••', amount_kobo: 45_000_00, reason: 'wrong_recipient', status: 'pending', requested_by_masked: 'agent_kola', requested_at: iso(0.3), resolved_at: null },
   { id: 'rev_2190', txn_ref: 'p2p_98840', from_masked: 'Bisi A•••', to_masked: 'Mule X•••', amount_kobo: 120_000_00, reason: 'fraud', status: 'pending', requested_by_masked: 'risk_team', requested_at: iso(4), resolved_at: null },
@@ -172,9 +159,7 @@ export async function reverseTxn(id: string, reason: string): Promise<ReverseTxn
   return sendJson<ReverseTxnResult>('POST', `/reversals/${id}/reverse`, { reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Disputes (request / payment / split / pool)
-// ════════════════════════════════════════════════════════════════════════════
 const DISPUTES: SocialDispute[] = [
   { id: 'dsp_5510', kind: 'payment', txn_ref: 'p2p_99001', complainant_masked: 'Tola B•••', respondent_masked: 'Seller K•••', amount_kobo: 85_000_00, reason: 'goods_not_received', status: 'open', opened_at: iso(1.4), updated_at: iso(1.4) },
   { id: 'dsp_5490', kind: 'request', txn_ref: 'req_44120', complainant_masked: 'Ada N•••', respondent_masked: 'Chika E•••', amount_kobo: 20_000_00, reason: 'unauthorised_request', status: 'investigating', opened_at: iso(20), updated_at: iso(6) },
@@ -200,9 +185,7 @@ export async function listSocialDisputes(opts?: { status?: string; kind?: string
   return getJson<SocialDispute[]>(`/disputes${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Cashtag directory (handle abuse / impersonation review)
-// ════════════════════════════════════════════════════════════════════════════
 const CASHTAGS: CashtagRecord[] = [
   { id: 'tag_1', handle: '@chioma', owner_masked: 'Chioma A•••', status: 'verified', flag_reason: null, txn_count_30d: 142, volume_30d_kobo: 1_840_000_00, created_at: dateStr(220) },
   { id: 'tag_2', handle: '@gtbank', owner_masked: 'Unknown U•••', status: 'flagged', flag_reason: 'impersonation', txn_count_30d: 9, volume_30d_kobo: 420_000_00, created_at: dateStr(4) },

@@ -2,7 +2,9 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+// E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
+// contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 
 export async function POST(
   request: Request,
@@ -11,7 +13,8 @@ export async function POST(
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
     const { contestId } = await context.params;
-    const body = (await request.json()) as { action: 'freeze' | 'unfreeze'; snapshotLabel?: string };
+    const body = (await request.json().catch(() => null)) as { action: 'freeze' | 'unfreeze'; snapshotLabel?: string };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.action) return errorResponse('action is required', 400);
 

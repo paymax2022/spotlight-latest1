@@ -5,10 +5,10 @@ import { router } from 'expo-router';
 import { Bell, Check, CheckCheck, Settings2, ChevronRight } from 'lucide-react-native';
 import * as Icons from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView } from '@/features/doctor/components';
 import {

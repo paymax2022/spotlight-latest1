@@ -44,7 +44,7 @@ psql toolchain exists; they are designed to pass and run green in the dev contai
 | RAILS_MODE | fake | fake | sandbox | live | config |
 | BNPL_* / PAYOUT_* / DISBURSE_* / BILLING_* | fake | fake | provider sandbox | live | secret mgr |
 | *_WEBHOOK_SECRET | dev-fake-secret | dev-fake-secret | sandbox | live | secret mgr |
-| AGORA_* (RTC) | blank (stub) | blank | sandbox | live | secret mgr |
+| VIDEOSDK_* (RTC) | blank (stub) | blank | key + secret | key + secret | secret mgr |
 | registry / deploy creds | — | OIDC | OIDC | OIDC | cloud IAM |
 
 Never place sandbox/live secrets in the web sandbox or chat. `.env.dev` (fakes only)

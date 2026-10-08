@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/timeutil"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,17 +49,15 @@ func newServiceWithStore(repo Store, billing BillingRail) *Service {
 
 // parseDate parses a YYYY-MM-DD string into *time.Time (nil for empty).
 func parseDate(s string) (*time.Time, error) {
-	if s == "" {
-		return nil, nil
-	}
-	t, err := time.Parse("2006-01-02", s)
+	t, err := timeutil.ParseDate(s)
 	if err != nil {
 		return nil, ErrInvalidInput
 	}
+	if t.IsZero() {
+		return nil, nil
+	}
 	return &t, nil
 }
-
-// ── Institutions ──────────────────────────────────────────────────────────────────
 
 // OnboardInstitution registers a B2B2C institution (admin). whiteLabel is the
 // logo/colors/domain config blob (stored as jsonb).
@@ -92,8 +92,6 @@ func (s *Service) MyInstitutions(ctx context.Context, userID string) ([]Institut
 	}
 	return s.repo.ListInstitutionsByAdmin(ctx, userID)
 }
-
-// ── Admin-wide oversight reads (all institutions) ──────────────────────────────────
 
 // AdminOverview aggregates platform-wide institution/licence/seat/enrolment totals for
 // the admin console (composed from the additive all-institutions oversight queries).
@@ -133,8 +131,6 @@ func (s *Service) AdminListClassGroups(ctx context.Context) ([]ClassGroup, error
 func (s *Service) AdminListBilling(ctx context.Context) ([]Billing, error) {
 	return s.reader.ListAllBilling(ctx)
 }
-
-// ── Licences ──────────────────────────────────────────────────────────────────────
 
 // IssueLicence issues a licence (active) for an institution with a seat cap and price.
 func (s *Service) IssueLicence(ctx context.Context, adminID string, req IssueLicenceRequest) (*Licence, error) {
@@ -212,8 +208,6 @@ func (s *Service) ExpireLicence(ctx context.Context, adminID, licenceID string) 
 	return s.transitionLicence(ctx, adminID, licenceID, lic.State, LicenceExpired, "licence.expired")
 }
 
-// ── Class groups ────────────────────────────────────────────────────────────────
-
 func (s *Service) CreateClassGroup(ctx context.Context, adminID string, req CreateClassGroupRequest) (*ClassGroup, error) {
 	if req.Name == "" {
 		return nil, ErrInvalidInput
@@ -229,8 +223,6 @@ func (s *Service) CreateClassGroup(ctx context.Context, adminID string, req Crea
 		map[string]any{"institutionId": req.InstitutionID, "name": g.Name})
 	return g, nil
 }
-
-// ── Bulk enrolment (seat-capped + idempotent) ─────────────────────────────────────
 
 // BulkEnroll enrols a batch of learners into an institution (optionally a class group).
 // Per learner the enrolment is ATOMIC and:
@@ -256,8 +248,12 @@ func (s *Service) BulkEnroll(ctx context.Context, adminID string, req BulkEnroll
 		if learner == "" {
 			continue
 		}
-		// Per-learner idempotency key keeps each enrol replay-safe within the batch.
-		perKey := scopedKey(idemKey, req.InstitutionID, learner)
+		// Per-learner idempotency key keeps each enrol replay-safe within the batch;
+		// without a batch key fall back to the (institution, learner) natural key.
+		perKey := idemKey + ":" + learner
+		if idemKey == "" {
+			perKey = "enroll:" + req.InstitutionID + ":" + learner
+		}
 		seated, replay, used, seats, e := s.repo.EnrollSeated(ctx, req.InstitutionID, req.ClassGroupID, learner, perKey)
 		res.UsedSeats, res.Seats = used, seats
 		switch {
@@ -299,8 +295,6 @@ func (s *Service) RemoveEnrollment(ctx context.Context, adminID, institutionID, 
 	}
 	return nil
 }
-
-// ── Billing (generate → charge via rail) ──────────────────────────────────────────
 
 // GenerateBilling opens a billing line for a period (admin). amountMinor is the charge
 // that the rail will collect on ChargeBilling.
@@ -368,8 +362,6 @@ func (s *Service) ChargeBilling(ctx context.Context, adminID, billingID, idemKey
 	return paid, nil
 }
 
-// ── Overview ──────────────────────────────────────────────────────────────────────
-
 // GetInstitution returns the institution overview: licences (with seat usage), class
 // groups and enrolment counts by state.
 func (s *Service) GetInstitution(ctx context.Context, institutionID string) (*Overview, error) {
@@ -405,16 +397,4 @@ func (s *Service) GetInstitution(ctx context.Context, institutionID string) (*Ov
 		Institution: inst, Licences: licences, Seats: seats,
 		SeatsTotal: total, SeatsUsed: used, ClassGroups: groups, EnrollmentCount: counts,
 	}, nil
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-// scopedKey derives a stable per-learner idempotency key from the batch key. When no
-// batch key is supplied it falls back to the (institution, learner) pair so the
-// enrolment is still idempotent on the natural unique constraint.
-func scopedKey(idemKey, institutionID, learner string) string {
-	if idemKey == "" {
-		return "enroll:" + institutionID + ":" + learner
-	}
-	return idemKey + ":" + learner
 }

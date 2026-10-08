@@ -1,9 +1,9 @@
 import React from 'react';
 import { router } from 'expo-router';
-import AdminContentList from '@/features/association/components/AdminContentList';
-import { DUES_CAPABILITY } from '@/features/association/utils/authoringAccess';
-import { kobo, num } from '@/features/association/utils/metaFields';
-import { formatNaira } from '@/features/association/utils/associationFormatters';
+import {AdminContentList} from '@/features/association/components';
+import { DUES_CAPABILITY } from '@/features/association/utils';
+import { kobo, num } from '@/features/association/utils';
+import { formatNaira } from '@/features/association/utils';
 
 /**
  * Dues runs already raised for this organisation — the "what has already been

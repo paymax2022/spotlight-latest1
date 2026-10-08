@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — AI listing assistant (V3) ────────────────────────────
 // Mock-flagged. In production this calls the LLM service (Claude) with a clean
 // prompt/tool boundary and returns structured output. The mock mirrors that
 // structured shape so the screen is identical when the real call lands.
@@ -59,7 +58,6 @@ export async function generateListingCopy(req: ListingCopyRequest): Promise<List
   return data;
 }
 
-// ── Maintenance triage ───────────────────────────────────────────────────────
 import type { MaintenanceCategory, Urgency } from '../types/realtor.maintenance.types';
 
 export interface TriageResult {
@@ -92,7 +90,6 @@ export async function triageMaintenance(description: string, fallback: Maintenan
   return (res.data?.data ?? res.data) as TriageResult;
 }
 
-// ── Dynamic shortlet pricing ─────────────────────────────────────────────────
 export interface PricingSuggestion { nightlyLow: Kobo; nightlyHigh: Kobo; rationale: string; }
 
 export async function suggestShortletPrice(area: string, bedrooms: number): Promise<PricingSuggestion> {

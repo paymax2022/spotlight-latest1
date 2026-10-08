@@ -23,13 +23,21 @@ async function tryGetUserId(request: Request): Promise<string | undefined> {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const contestId = searchParams.get('contestId');
     if (!contestId) return errorResponse('contestId is required', 400);
+    // Non-UUID ids can never match the uuid columns the service filters on —
+    // reject here so a malformed id doesn't surface as a Postgres 22P02 → 500.
+    if (!UUID_RE.test(contestId)) return errorResponse('Invalid contestId', 400);
     // Optional: scope the cap to a single contestant (per-contestant free votes).
     const contestantId = searchParams.get('contestantId') || undefined;
+    if (contestantId && !UUID_RE.test(contestantId)) {
+      return errorResponse('Invalid contestantId', 400);
+    }
 
     const userId = await tryGetUserId(request);
     const ip = getIp(request);

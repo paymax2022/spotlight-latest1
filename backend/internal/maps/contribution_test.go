@@ -63,7 +63,6 @@ func TestStripPIIForType_NameOnlyForPublicTypes(t *testing.T) {
 	if out := stripPIIForType(props, "road"); out["name"] != "Allen Avenue" {
 		t.Error("road candidate should keep generic road name")
 	}
-	// area_name / landmark / poi / bus_stop → allowed
 	for _, ty := range []string{"area_name", "landmark", "poi", "bus_stop"} {
 		if out := stripPIIForType(props, ty); out["name"] != "Allen Avenue" {
 			t.Errorf("%s candidate should keep generic name", ty)

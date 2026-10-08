@@ -1,7 +1,6 @@
 'use client';
 
 // Document vault authoring.
-//
 // The file itself is NOT uploaded here. The backend stores only a storage key
 // (assoc_documents.storage_key) and there is no upload route in the association
 // module — so this page registers the vault entry against a key produced by
@@ -22,7 +21,6 @@ import {
 } from '../_content';
 import { Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
-// assoc_documents.category is free text; these are the buckets the member app
 // groups by. Anything else lands in an "other" pile nobody browses.
 const CATEGORIES = ['GOVERNANCE', 'FINANCE', 'MINUTES', 'FORMS', 'POLICY', 'OTHER'];
 

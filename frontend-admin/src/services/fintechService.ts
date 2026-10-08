@@ -1,9 +1,8 @@
 import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
-import type { KycProfile, WalletBalance, TransactionsResponse, Dispute, DisputeResolution } from '@/types/fintech';
+import type { WalletBalance, TransactionsResponse, Dispute, DisputeResolution } from '@/types/fintech';
 
 // Go backend finance admin routes live at /api/finance/admin/... . This used
-// to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin'), which
 // stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
 // every live call 404'd against <proxy>/kyc/pending instead of
@@ -16,39 +15,15 @@ function financeAdminBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
-export async function listPendingKyc(): Promise<KycProfile[]> {
-  const res = await fetch(`${financeAdminBase()}/kyc/pending`, {
-    cache: 'no-store',
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`KYC pending list failed: ${res.status}`);
-  const data = await res.json();
-  return data.profiles ?? [];
-}
-
-export async function approveKyc(userId: string, newTier: number): Promise<KycProfile> {
-  const res = await fetch(`${financeAdminBase()}/kyc/users/${encodeURIComponent(userId)}/approve`, {
-    method: 'POST',
-    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('kyc:approve', userId) },
-    body: JSON.stringify({ new_tier: newTier }),
-  });
-  if (!res.ok) throw new Error(`KYC approve failed: ${res.status}`);
-  return res.json();
-}
-
-export async function rejectKyc(userId: string): Promise<void> {
-  const res = await fetch(`${financeAdminBase()}/kyc/users/${encodeURIComponent(userId)}/reject`, {
-    method: 'POST',
-    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('kyc:reject', userId) },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`KYC reject failed: ${res.status}`);
-}
+// listPendingKyc/approveKyc/rejectKyc used to call /api/finance/admin/kyc/{pending,
+// users/:id/approve,users/:id/reject} — an admin approving a tier with no
+// automated identity check behind it (that endpoint hashed BVN/NIN and stored
+// it, nothing more). Both the endpoints and this page's UI (app/admin/finance/kyc)
+// console at /admin/finance/kyc-verify (finance.admin.kyc), which reviews
+// actual Dojah/Smile ID/Youverify check results, not a bare tier number.
 
 export async function getAdminWalletBalance(userId: string): Promise<WalletBalance> {
   const res = await fetch(`${financeAdminBase()}/wallets/${encodeURIComponent(userId)}/balance`, {

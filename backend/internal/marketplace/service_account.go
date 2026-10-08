@@ -10,8 +10,6 @@ import (
 // metadata (no ledger, no idempotency). OLA is enforced here; the repo carries the
 // SQL. Safe-spots are a static in-code seed (small, slowly-changing partner list).
 
-// ─── Saved items ─────────────────────────────────────────────────────────────
-
 // SaveListing adds a listing to the caller's wishlist, snapshotting the current
 // price so the mobile "price changed" badge can compare later. Idempotent: a repeat
 // save on the same listing returns ALREADY_SAVED (409) rather than duplicating.
@@ -27,7 +25,6 @@ func (s *Service) SaveListing(ctx context.Context, userID, listingID string) (*S
 // adds it (no-op if already saved); when saved=false, removes it (no-op if not saved).
 func (s *Service) ToggleSavedItem(ctx context.Context, userID, listingID string, saved bool) (*SavedItem, error) {
 	if saved {
-		// Add to wishlist
 		l, err := s.repo.GetListing(ctx, listingID)
 		if err != nil {
 			return nil, err
@@ -35,27 +32,21 @@ func (s *Service) ToggleSavedItem(ctx context.Context, userID, listingID string,
 		// InsertSavedItem returns ALREADY_SAVED on conflict; caller may retry or ignore
 		return s.repo.InsertSavedItem(ctx, userID, listingID, l.PriceKobo)
 	} else {
-		// Remove from wishlist
 		if err := s.repo.DeleteSavedItem(ctx, userID, listingID); err != nil {
 			return nil, err
 		}
-		// Return empty SavedItem to indicate deleted
+		// Empty SavedItem signals "deleted" to the caller.
 		return &SavedItem{ListingID: listingID}, nil
 	}
 }
 
-// ─── Permanent deletion ──────────────────────────────────────────────────────
-
 // PurgeListing PERMANENTLY deletes a listing the caller owns. Irreversible, and
 // distinct from DeleteListing, which is a soft status change to removed_user.
-//
 // Refused when the listing carries orders, boosts, offers or buyer threads — see
 // Repository.PurgeListing for why those four and not others.
 func (s *Service) PurgeListing(ctx context.Context, sellerID, listingID string) error {
 	return s.repo.PurgeListing(ctx, sellerID, listingID)
 }
-
-// ─── Listing insights ────────────────────────────────────────────────────────
 
 // RecordListingView bumps a listing's view counter. Best effort: the error is
 // logged and swallowed, because this runs on the listing-detail read path and a
@@ -67,7 +58,6 @@ func (s *Service) RecordListingView(ctx context.Context, listingID, viewerID str
 }
 
 // GetListingInsights returns the seller's performance summary for one listing.
-//
 // Ownership is enforced inside the query rather than by a separate read-then-check
 // here: the counts include standing-offer values, so a foreign id must come back
 // as not-found and never as another seller's numbers.
@@ -87,8 +77,6 @@ func (s *Service) ListSavedItems(ctx context.Context, userID string, limit, offs
 	return s.repo.ListSavedItems(ctx, userID, limit, offset)
 }
 
-// ─── Reports ─────────────────────────────────────────────────────────────────
-
 // CreateReport files a safety report against a listing, seller, or chat. Validates
 // the closed target-type set and a non-empty reason; the row lands in `open` for
 // the admin moderation queue to triage.
@@ -98,7 +86,7 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, in Create
 		return nil, fieldErr(CodeInvalidReportTarget, "target_type must be listing, seller, or chat", "target_type")
 	}
 	if strings.TrimSpace(in.TargetID) == "" {
-		return nil, fieldErr(CodeValidation, "target_id is required", "target_id")
+		return nil, fieldErr(CodeValidation, "target_id is required", colTargetId)
 	}
 	if strings.TrimSpace(in.Reason) == "" {
 		return nil, fieldErr(CodeValidation, "reason is required", "reason")
@@ -113,8 +101,6 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, in Create
 	}
 	return s.repo.InsertReport(ctx, rep)
 }
-
-// ─── Blocks ──────────────────────────────────────────────────────────────────
 
 // BlockUser blocks another user. Rejects self-blocks; a repeat block returns
 // ALREADY_BLOCKED (409).
@@ -147,8 +133,6 @@ func (s *Service) ListBlocks(ctx context.Context, userID string) ([]Block, error
 	return s.repo.ListBlocks(ctx, userID)
 }
 
-// ─── Followed sellers ────────────────────────────────────────────────────────
-
 // FollowSeller follows a seller. Idempotent (see InsertFollow).
 func (s *Service) FollowSeller(ctx context.Context, followerID, sellerID string) error {
 	sellerID = strings.TrimSpace(sellerID)
@@ -172,8 +156,6 @@ func (s *Service) ListFollowedSellers(ctx context.Context, followerID string) ([
 	return s.repo.ListFollows(ctx, followerID)
 }
 
-// ─── Notification preferences ────────────────────────────────────────────────
-
 // GetNotificationPrefs returns the caller's toggles, defaulting to all-on (except
 // promotional) when no row exists yet.
 func (s *Service) GetNotificationPrefs(ctx context.Context, userID string) (*NotificationPrefs, error) {
@@ -185,8 +167,6 @@ func (s *Service) GetNotificationPrefs(ctx context.Context, userID string) (*Not
 func (s *Service) UpdateNotificationPrefs(ctx context.Context, userID string, patch NotificationPrefsPatch) (*NotificationPrefs, error) {
 	return s.repo.UpsertNotificationPrefs(ctx, userID, patch)
 }
-
-// ─── Meetup safe-spots ───────────────────────────────────────────────────────
 
 // MeetupSafeSpots returns curated verified-safe meetup locations, optionally
 // filtered by state / LGA (case-insensitive). Static seed — no DB round-trip.

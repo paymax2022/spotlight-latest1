@@ -1,13 +1,9 @@
-// ── Protection — claims ──────────────────────────────────────────────────────
 // Claims are READ here and FILED elsewhere, and that is not a shortcut — it is
 // the shape of the integration.
-//
 // MyCover has no claim-filing REST endpoint (`POST /claims` is a 404). It runs
 // claims through its own hosted flow and gives the distributor a per-policy link
-// when the policy is issued; progress then arrives over webhooks. So the honest
 // design is: list the claims we know about, and hand a person off to their
 // insurer's flow with the right policy already identified.
-//
 // Building a claim form here that posted nowhere would be the worst of both —
 // it would look like it worked.
 
@@ -18,10 +14,10 @@ import { router } from 'expo-router';
 import { ChevronRight, LifeBuoy, Plus } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   InsuranceErrorState,
   PolicyListSkeleton,

@@ -18,7 +18,6 @@ export const KEYS = {
   attendees: (id: string) => ['events', 'attendees', id] as const,
 };
 
-// ── Reads ──────────────────────────────────────────────────────────────────────
 export const useEvents = (params?: { category?: string; state?: string }) =>
   useQuery({ queryKey: KEYS.events(params), queryFn: () => api.listEvents(params) });
 
@@ -67,7 +66,6 @@ export const useOrganiserEvents = () =>
 export const useAttendees = (eventId: string) =>
   useQuery({ queryKey: KEYS.attendees(eventId), queryFn: () => api.listAttendees(eventId), enabled: !!eventId, refetchInterval: 15_000 });
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 export function usePurchaseTickets() {
   const qc = useQueryClient();
   return useMutation({

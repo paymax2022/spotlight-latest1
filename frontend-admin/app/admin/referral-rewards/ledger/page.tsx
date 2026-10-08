@@ -2,7 +2,6 @@
 
 // A4 — Referral Ledger & Reconciliation. Every referral_rewards row, filterable by
 // status / module / referrer, exportable to CSV for finance reconciliation.
-// RBAC: referral.admin.ledger (Finance).
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';

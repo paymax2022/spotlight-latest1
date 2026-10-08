@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/jsonx"
 )
 
 // sqlStore is the production, Postgres-backed Store. Money moves happen inside a
@@ -23,8 +25,8 @@ type sqlStore struct {
 func NewSQLStore(db *pgxpool.Pool) Store { return &sqlStore{db: db} }
 
 // jsonb columns are written as strings (pgx encodes []byte as bytea, not jsonb).
-func feesJSON(fees []Fee) string         { b, _ := json.Marshal(fees); return string(b) }
-func historyJSON(h []StatusEvent) string { b, _ := json.Marshal(h); return string(b) }
+func feesJSON(fees []Fee) string         { return jsonx.MarshalString(fees) }
+func historyJSON(h []StatusEvent) string { return jsonx.MarshalString(h) }
 
 // Balance reads ONE currency's spendable balance from whichever pot holds it —
 // the main platform ledger for NGN, orch_balances otherwise. All the routing
@@ -40,10 +42,8 @@ func (s *sqlStore) Balances(ctx context.Context, customer string) ([]Money, erro
 }
 
 // OpenWallet makes a currency visible to the customer at a zero balance so the
-// wallet survives a refetch. Previously the endpoint fabricated an
-// {available: 0} response and persisted nothing, so a newly "added" wallet
-// vanished on the next load and there was no way to hold a non-NGN currency.
-//
+// wallet survives a refetch — a fabricated-but-unpersisted {available: 0}
+// response would vanish on the next load.
 // NGN is a no-op: its wallet is the main ledger account, created on demand.
 func (s *sqlStore) OpenWallet(ctx context.Context, customer, currency string) error {
 	cur := strings.ToUpper(strings.TrimSpace(currency))
@@ -69,7 +69,7 @@ func (s *sqlStore) SeedBalance(ctx context.Context, customer, currency string, a
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockCustomerWallet(ctx, tx, customer); err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTot
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// One advisory lock, taken FIRST and before any row lock, so concurrent FX
 	// conversions and wallet transfers for this customer serialise instead of
@@ -148,13 +148,11 @@ func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTot
 
 	// Double-entry, balanced WITHIN EACH CURRENCY (ADR-029). A conversion touches two
 	// Paymax-held customer balances, so both currencies get a full debit/credit pair:
-	//
 	//   source: DR customer_balance sourceTotal
 	//           CR paymax_spread    spread          (FX markup revenue, may be 0)
 	//           CR provider_clearing sourceTotal-spread
 	//   dest:   DR provider_clearing destAmount
 	//           CR customer_balance  destAmount
-	//
 	// provider_clearing carries the resulting FX position (long source / short dest)
 	// until the provider settles. Posting only the two customer_balance legs would
 	// leave each currency single-sided — the pre-ADR-029 bug.
@@ -186,7 +184,7 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err = lockCustomerWallet(ctx, tx, t.CustomerID); err != nil {
 		return err
@@ -200,7 +198,6 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 	// touches ONE Paymax-held balance: the destination amount is paid to an external
 	// beneficiary out of the provider's float, so there is no dest-currency leg here
 	// (that exposure is tracked by the treasury reserve, not orch_ledger_entries).
-	//
 	//   DR customer_balance  sourceTotal
 	//   CR paymax_spread     spread                (FX markup revenue, may be 0)
 	//   CR provider_clearing sourceTotal-spread
@@ -292,7 +289,6 @@ func (s *sqlStore) SaveCollection(ctx context.Context, va *VirtualAccount) error
 
 // VirtualAccountByProviderRef finds the virtual account an inbound deposit was
 // paid into, by the handle the provider quotes back in its webhook.
-//
 // ok=false means the deposit does not match anything we provisioned. The caller
 // MUST NOT credit in that case — an unmatched reference has no owner and no
 // currency, and guessing either is how orphan credits happen (QA WH-INT-003).
@@ -323,7 +319,6 @@ func (s *sqlStore) VirtualAccountByProviderRef(ctx context.Context, provider, re
 
 // ApplyCollection credits an inbound deposit into the customer's wallet and
 // records it, atomically. Returns applied=false for a redelivered webhook.
-//
 // Idempotency is the unique (provider, provider_event_id) index: the event row
 // is inserted FIRST with ON CONFLICT DO NOTHING, and a zero row count means this
 // deposit was already credited, so the transaction commits without moving money.
@@ -337,7 +332,7 @@ func (s *sqlStore) ApplyCollection(ctx context.Context, c *CollectionCredit) (bo
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err = lockCustomerWallet(ctx, tx, c.CustomerID); err != nil {
 		return false, err
@@ -395,7 +390,10 @@ func (s *sqlStore) SaveQuote(ctx context.Context, q *Quote) error {
 }
 
 func (s *sqlStore) Transactions(ctx context.Context, customer string) ([]TxView, error) {
-	var out []TxView
+	// [] not nil: an empty history must marshal as data:[] like the other list
+	// endpoints (ListNotifications does the same) — null breaks clients that
+	// iterate the field.
+	out := make([]TxView, 0)
 
 	cr, err := s.db.Query(ctx, `SELECT id, reference, status, source_currency, source_minor, dest_currency, dest_minor, rate, all_in_rate, provider, corridor, rail, provider_ref, created_at FROM orch_conversions WHERE customer_id=$1`, customer)
 	if err != nil {
@@ -431,16 +429,9 @@ func (s *sqlStore) Transactions(ctx context.Context, customer string) ([]TxView,
 	}
 	tr.Close()
 
-	// Inbound DEPOSITS, from orch_collection_events.
-	//
-	// This used to list orch_collections — one row per virtual ACCOUNT, which is
-	// not a transaction: it had no amount, and it left Destination.Currency as "".
-	// The mobile TransactionRow formats that leg through CURRENCIES[currency], so
-	// an empty code was `undefined.decimals` and the resulting crash blanked the
-	// WHOLE FX screen for any customer who had ever provisioned an account. It
-	// also emitted the account's "active" as a status, which is not a member of
-	// the client's TxStatus union.
-	//
+	// Inbound DEPOSITS, from orch_collection_events — one row per EVENT. (Listing
+	// orch_collections instead would emit per-account rows with no amount and a
+	// blank Destination.Currency, which the client's TxStatus union cannot hold.)
 	// A deposit is money arriving 1:1 — no conversion — so both legs carry the
 	// same amount and currency.
 	col, err := s.db.Query(ctx, `
@@ -535,6 +526,65 @@ func (s *sqlStore) UpdateConversionStatus(ctx context.Context, reference, status
 func (s *sqlStore) UpdateTransferStatus(ctx context.Context, reference, status string) error {
 	_, err := s.db.Exec(ctx, `UPDATE orch_transfers SET status=$2 WHERE reference=$1`, reference, status)
 	return err
+}
+
+// RefundTransfer marks a transfer terminal AND returns the debited source total
+// to the customer's wallet in ONE transaction — the compensating mirror of
+// ApplyTransfer's debit+legs. Previously a provider `failed`/`reversed` webhook
+// flipped the row's status while the customer stayed debited forever.
+// refunded=false means the transfer was already in a compensated state (replay).
+// The refund legs carry ":refund" idem suffixes so a retried call that already
+// committed fails the claim check BEFORE any wallet or ledger write.
+func (s *sqlStore) RefundTransfer(ctx context.Context, reference, status string) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var customerID, srcCur, priorStatus, idemKey string
+	var srcMinor int64
+	var feesB []byte
+	if err := tx.QueryRow(ctx,
+		`SELECT customer_id, source_currency, source_minor, fees, status, idempotency_key
+		 FROM orch_transfers WHERE reference=$1 FOR UPDATE`, reference).
+		Scan(&customerID, &srcCur, &srcMinor, &feesB, &priorStatus, &idemKey); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	switch TransferStatus(priorStatus) {
+	case TransferFailed, TransferReversed:
+		// Already compensated by an earlier delivery — replay-safe.
+		return false, nil
+	}
+
+	var fees []Fee
+	_ = json.Unmarshal(feesB, &fees)
+	sourceTotal := srcMinor + feeAmount(fees, FeeProvider) + feeAmount(fees, FeeRail)
+
+	if err := lockCustomerWallet(ctx, tx, customerID); err != nil {
+		return false, err
+	}
+	if err := creditCustomerWallet(ctx, tx, customerID, srcCur, sourceTotal, reference, idemKey+":refund"); err != nil {
+		return false, err
+	}
+	// Mirror ApplyTransfer's legs: return the spread to the customer too — the
+	// whole source debit is unwound, not just the clearing leg.
+	spread, clearing := splitSpread(feeAmount(fees, FeeSpread), sourceTotal)
+	legs := []entryLeg{
+		{"provider_clearing", srcCur, "DEBIT", clearing, ":refund-clearing"},
+		{"paymax_spread", srcCur, "DEBIT", spread, ":refund-spread"},
+		{"customer_balance", srcCur, "CREDIT", sourceTotal, ":refund"},
+	}
+	if err := postLedgerLegs(ctx, tx, customerID, reference, idemKey, legs); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE orch_transfers SET status=$2 WHERE reference=$1`, reference, status); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (s *sqlStore) Transaction(ctx context.Context, customer, id string) (*TxView, bool, error) {

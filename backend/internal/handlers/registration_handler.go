@@ -2,19 +2,22 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/services"
 )
 
 // RegistrationHandler handles /api/registration/* endpoints for contest registration.
 // All endpoints persist to Supabase and sync with admin dashboard.
 type RegistrationHandler struct {
-	store      *RegistrationStore
-	auditSvc   services.AuditService
+	store    *RegistrationStore
+	auditSvc services.AuditService
 }
 
 func NewRegistrationHandler(store *RegistrationStore, auditSvc services.AuditService) *RegistrationHandler {
@@ -39,7 +42,7 @@ func (h *RegistrationHandler) ListContests(c *gin.Context) {
 // ListApplications — GET /api/registration/applications
 // List user's own registration applications (paginated).
 func (h *RegistrationHandler) ListApplications(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -60,7 +63,7 @@ func (h *RegistrationHandler) ListApplications(c *gin.Context) {
 // CreateApplication — POST /api/registration/applications
 // Start a new registration draft (creates empty application).
 func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -74,7 +77,6 @@ func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
 		return
 	}
 
-	// Generate unique reference
 	reference := fmt.Sprintf("SPOT-%d-%s", time.Now().Unix(), generateShortID())
 
 	app, err := h.store.CreateApplication(c.Request.Context(), userID, body.ContestSlug, reference)
@@ -82,15 +84,13 @@ func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create application"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "create_application", "registration", "application",
 			app.ID, nil, map[string]interface{}{
 				"reference": app.Reference,
 				"contest":   app.ContestSlug,
 				"status":    "draft",
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -102,7 +102,7 @@ func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
 // GetApplication — GET /api/registration/applications/:id
 // Retrieve application draft and schema.
 func (h *RegistrationHandler) GetApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -129,7 +129,7 @@ func (h *RegistrationHandler) GetApplication(c *gin.Context) {
 // SaveStep — PATCH /api/registration/applications/:id
 // Save one step's answers (client-side validation returned).
 func (h *RegistrationHandler) SaveStep(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -146,7 +146,6 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 		return
 	}
 
-	// Calculate completion percent (rough estimate: steps * 20%)
 	stepOrder := []string{"contest_selection", "personal_info", "qualifications", "portfolio", "review_summary"}
 	newPercent := 0
 	for i, step := range stepOrder {
@@ -161,14 +160,12 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save step"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "save_step", "registration", "application",
 			id, nil, map[string]interface{}{
-				"step": body.StepKey,
+				"step":     body.StepKey,
 				"progress": newPercent,
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -185,7 +182,7 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 // SubmitApplication — POST /api/registration/applications/:id/submit
 // Submit application for review (no more edits).
 func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -199,18 +196,15 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 		return
 	}
 
-	// Record status change in timeline
 	if err := h.store.RecordStatusChange(c.Request.Context(), id, "draft", "submitted",
 		"Application submitted for review", "public_user"); err != nil {
 		// Log but don't fail the request
-		fmt.Printf("failed to record status change: %v\n", err)
+		log.Printf("failed to record status change: %v", err)
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "submit_application", "registration", "application",
 			id, map[string]interface{}{"status": "draft"},
-			map[string]interface{}{"status": "submitted"}, getIPAddress(c), c.Request.UserAgent(), "info")
+			map[string]any{"status": "submitted"}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -223,7 +217,7 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 // GetStatus — GET /api/registration/applications/:id/status
 // Get application status and timeline of state changes.
 func (h *RegistrationHandler) GetStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -260,7 +254,7 @@ func (h *RegistrationHandler) GetStatus(c *gin.Context) {
 // WithdrawApplication — POST /api/registration/applications/:id/withdraw
 // Withdraw application (cannot be re-submitted).
 func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -279,18 +273,15 @@ func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
 		return
 	}
 
-	// Record status change in timeline
 	if err := h.store.RecordStatusChange(c.Request.Context(), id, "submitted", "withdrawn",
 		body.Note, "public_user"); err != nil {
-		fmt.Printf("failed to record status change: %v\n", err)
+		log.Printf("failed to record status change: %v", err)
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "withdraw_application", "registration", "application",
 			id, map[string]interface{}{"status": "submitted"},
 			map[string]interface{}{"status": "withdrawn", "note": body.Note},
-			getIPAddress(c), c.Request.UserAgent(), "info")
+			ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -304,8 +295,8 @@ func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
 // InitiatePayment — POST /api/registration/applications/:id/payment/initiate
 // Start payment (Idempotency-Key required).
 func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
+	userID := ginutil.UserID(c)
+	idemKey := ginutil.IdempotencyKey(c)
 
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -329,34 +320,27 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 		return
 	}
 
-	// Generate payment reference
 	reference := fmt.Sprintf("SPT-REG-%d-%s", time.Now().Unix(), generateShortID())
 
-	if body.Method == "WALLET" {
-		// WALLET: Charge from wallet (requires ledger entry)
-		// Phase 2: Post double-entry ledger entry
-		// ledger.Debit(ctx, userID, ref, idemKey, registrationFeesAcct, amountKobo)
-
+	switch body.Method {
+	case "WALLET":
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "WALLET", idemKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create payment"})
 			return
 		}
 
-		// Update payment status to completed
 		if err := h.store.UpdatePaymentStatus(c.Request.Context(), appID, reference, "completed", ""); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update payment"})
 			return
 		}
-
-		// Emit audit event
 		if h.auditSvc != nil {
 			h.auditSvc.LogAction(userID, "", "initiate_payment", "registration", "payment",
 				pt.ID, nil, map[string]interface{}{
 					"method":    "WALLET",
 					"amount":    body.AmountKobo,
 					"reference": reference,
-				}, getIPAddress(c), c.Request.UserAgent(), "warning")
+				}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 		}
 
 		c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -366,23 +350,20 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			"status":        "completed",
 		}})
 
-	} else if body.Method == "PAYSTACK" {
-		// PAYSTACK: Return checkout URL (no ledger entry yet)
-		// Phase 2: Call Paystack provider and get authorization URL
+	case "PAYSTACK":
+		// Checkout URL only — no ledger entry until verification.
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "PAYSTACK", idemKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create payment"})
 			return
 		}
-
-		// Emit audit event
 		if h.auditSvc != nil {
 			h.auditSvc.LogAction(userID, "", "initiate_payment", "registration", "payment",
 				pt.ID, nil, map[string]interface{}{
 					"method":    "PAYSTACK",
 					"amount":    body.AmountKobo,
 					"reference": reference,
-				}, getIPAddress(c), c.Request.UserAgent(), "warning")
+				}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 		}
 
 		c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -390,9 +371,9 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			"transactionId":    pt.ID,
 			"reference":        reference,
 			"status":           "initiated",
-			"authorizationUrl": "https://checkout.paystack.com/" + reference, // Phase 2: real Paystack URL
+			"authorizationUrl": "https://checkout.paystack.com/" + reference, // placeholder URL — real Paystack flow is not wired
 		}})
-	} else {
+	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
 	}
 }
@@ -400,7 +381,7 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 // VerifyPayment — POST /api/registration/applications/:id/payment/verify
 // Verify payment after redirect from Paystack.
 func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -416,15 +397,13 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 		return
 	}
 
-	// Phase 2: Call Paystack to verify payment status
-	// paystack.VerifyTransaction(body.Reference)
-	// For now: assume verified if reference provided
+	// NOTE: no provider verification is wired — a supplied reference marks the
+	// payment verified.
 	if body.Reference == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reference required"})
 		return
 	}
 
-	// Update payment status to completed
 	if err := h.store.UpdatePaymentStatus(c.Request.Context(), appID, body.Reference, "verified", body.Reference); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify payment"})
 		return
@@ -435,14 +414,12 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load application"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "verify_payment", "registration", "payment",
 			appID, nil, map[string]interface{}{
 				"reference": body.Reference,
 				"status":    "verified",
-			}, getIPAddress(c), c.Request.UserAgent(), "warning")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -453,37 +430,30 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 			"id":     app.ID,
 			"status": app.Status,
 			"formData": gin.H{
-				"payment.paymentStatus":      "paid",
+				"payment.paymentStatus":        "paid",
 				"payment.transactionReference": body.Reference,
 			},
 		},
 	}})
 }
 
-// Helper functions
-
 // generateShortID creates a short random ID for references (e.g., "ABC1")
 func generateShortID() string {
 	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	id := ""
 	seed := time.Now().UnixNano()
+	var idSb442 strings.Builder
 	for i := 0; i < 4; i++ {
-		id += string(chars[(seed/int64(i+1))%int64(len(chars))])
+		idSb442.WriteString(string(chars[(seed/int64(i+1))%int64(len(chars))]))
 	}
+	id += idSb442.String()
 	return id
 }
 
-// getIPAddress extracts client IP from request
+// getIPAddress extracts the client IP via Gin's proxy-aware ClientIP, which
+// only honours X-Forwarded-For entries from TRUSTED_PROXY_CIDRS-configured hops.
+// Reading the header directly here would accept a client-controlled leftmost
+// entry verbatim (AUD-SEC-001).
 func getIPAddress(c *gin.Context) string {
-	if ip := c.Request.Header.Get("X-Forwarded-For"); ip != "" {
-		// Take the first IP if there are multiple
-		if idx := strings.Index(ip, ","); idx != -1 {
-			return strings.TrimSpace(ip[:idx])
-		}
-		return strings.TrimSpace(ip)
-	}
-	if ip := c.Request.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
-	}
-	return c.Request.RemoteAddr
+	return ginutil.ClientIP(c)
 }

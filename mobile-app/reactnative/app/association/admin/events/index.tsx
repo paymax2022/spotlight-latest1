@@ -1,9 +1,9 @@
 import React from 'react';
 import { router } from 'expo-router';
-import AdminContentList from '@/features/association/components/AdminContentList';
-import { CONTENT_CAPABILITY } from '@/features/association/utils/authoringAccess';
-import { bool, kobo, num } from '@/features/association/utils/metaFields';
-import { formatNaira } from '@/features/association/utils/associationFormatters';
+import {AdminContentList} from '@/features/association/components';
+import { CONTENT_CAPABILITY } from '@/features/association/utils';
+import { bool, kobo, num } from '@/features/association/utils';
+import { formatNaira } from '@/features/association/utils';
 
 export default function AdminEventsList() {
   return (

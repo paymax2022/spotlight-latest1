@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Camera, X, MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -42,7 +42,8 @@ export default function VendorJobDetailScreen() {
   const meta = MAINT_STATUS_META[r.status];
 
   const doQuote = async () => {
-    const kobo = (Number(amount.replace(/[^0-9.]/g, '')) || 0) * 100;
+    // Rounded: 19.99 * 100 is 1998.9999999999998 as a float, and kobo is an integer.
+    const kobo = Math.round((Number(amount.replace(/[^0-9.]/g, '')) || 0) * 100);
     if (kobo <= 0) return setError('Enter a quote amount.');
     setError(undefined);
     await submitQuote.mutateAsync({ requestId: r.id, amount: kobo, note: note.trim() });

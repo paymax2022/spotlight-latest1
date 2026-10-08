@@ -2,6 +2,7 @@ package association
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestRevenueSplitProportions(t *testing.T) {
 func TestPayInvoiceRequiresIdempotencyKey(t *testing.T) {
 	s := &Service{} // no DB needed: the guard returns before any DB access
 	_, err := s.PayInvoice(context.Background(), "user-1", "inv-1", PayInvoiceRequest{Method: "WALLET"})
-	if err != ErrIdempotencyRequired {
+	if !errors.Is(err, ErrIdempotencyRequired) {
 		t.Fatalf("expected ErrIdempotencyRequired, got %v", err)
 	}
 }

@@ -7,15 +7,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
-// ─── Admin scheduled-booking ops board ───────────────────────────────────────
-//
 // Mounted under `adminTr` → /api/finance/admin/transport/scheduled*. Every
 // mutation requires a reason_code and writes a transport audit row (writeAudit).
 // RBAC is applied at the route (guard("transport.admin.scheduled.*")).
-
-// ─── AdminService methods ────────────────────────────────────────────────────
 
 // AdminScheduledFilter narrows the ops-board list.
 type AdminScheduledFilter struct {
@@ -54,7 +53,7 @@ func (a *AdminService) ListScheduledAdmin(ctx context.Context, f AdminScheduledF
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*ScheduledBooking
+	out := []*ScheduledBooking{}
 	for rows.Next() {
 		b, err := scanScheduled(rows)
 		if err != nil {
@@ -169,8 +168,6 @@ func errStr(err error) string {
 	return err.Error()
 }
 
-// ─── AdminHandler endpoints ──────────────────────────────────────────────────
-
 // AdminScheduledList handles GET /admin/transport/scheduled.
 func (h *AdminHandler) AdminScheduledList(c *gin.Context) {
 	f := AdminScheduledFilter{Status: c.Query("status"), Mode: c.Query("mode")}
@@ -210,10 +207,10 @@ type scheduledAdminReason struct {
 
 // AdminScheduledForceDispatch handles POST /admin/transport/scheduled/:id/force-dispatch.
 func (h *AdminHandler) AdminScheduledForceDispatch(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body scheduledAdminReason
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.ForceDispatchScheduled(c.Request.Context(), adminID, c.Param("id"), body.ReasonCode)
@@ -226,10 +223,10 @@ func (h *AdminHandler) AdminScheduledForceDispatch(c *gin.Context) {
 
 // AdminScheduledReassign handles POST /admin/transport/scheduled/:id/reassign.
 func (h *AdminHandler) AdminScheduledReassign(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body scheduledAdminReason
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.ReassignScheduled(c.Request.Context(), adminID, c.Param("id"), body.DriverID, body.ReasonCode)
@@ -242,10 +239,10 @@ func (h *AdminHandler) AdminScheduledReassign(c *gin.Context) {
 
 // AdminScheduledCancel handles POST /admin/transport/scheduled/:id/cancel.
 func (h *AdminHandler) AdminScheduledCancel(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body scheduledAdminReason
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.CancelScheduledAdmin(c.Request.Context(), adminID, c.Param("id"), body.ReasonCode)

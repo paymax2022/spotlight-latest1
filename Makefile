@@ -1,5 +1,5 @@
 # Paymax / Spotlight — developer + CI entrypoints (ENVIRONMENT-AND-GOLIVE.md).
-# Adapted to the real repo: Go module at backend/ (go 1.25), npm frontends
+# Adapted to the real repo: Go module at backend/ (go 1.27), npm frontends
 # (frontend-web, frontend-admin), additive supabase migrations applied via psql.
 # All targets are runnable inside the dev container and mirrored 1:1 by CI.
 
@@ -59,8 +59,13 @@ build: # go build ./... (backend)
 vet: # go vet ./... (backend static analysis)
 	cd backend && go vet ./...
 
-test: # go test ./... -race (backend; needs Postgres + RAILS_MODE=fake)
-	cd backend && RAILS_MODE=$${RAILS_MODE:-fake} DATABASE_URL="$(DATABASE_URL)" go test ./... -race -count=1
+test: # go test ./... -race -p 1 (backend; needs Postgres + RAILS_MODE=fake)
+	# -p 1: several live-DB suites read a shared standing account's absolute
+	# balance before/after their own action, which races against a DIFFERENT
+	# package's test binary touching the same account concurrently against one
+	# shared Postgres — -race only catches in-process memory races, not this
+	# cross-process race against external DB state, so it needs -p 1 too.
+	cd backend && RAILS_MODE=$${RAILS_MODE:-fake} DATABASE_URL="$(DATABASE_URL)" go test ./... -race -p 1 -count=1
 
 tsc: tsc-web tsc-admin # full TypeScript typecheck (both frontends)
 

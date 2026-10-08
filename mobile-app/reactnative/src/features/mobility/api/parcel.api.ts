@@ -1,10 +1,6 @@
-// ── Parcel delivery — API wrapper ────────────────────────────────────────────
 // Typed data layer the parcel screens code against. Mirrors mobility.api.ts:
 // mock-flagged, BASE = '/api/v1', Idempotency-Key on money mutations.
-// Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false (or EXPO_PUBLIC_PARCEL_USE_MOCK) once
 // the Go endpoints land.
-//
-// IRON RULES: all money is integer kobo; book/cancel carry an Idempotency-Key;
 // fares/insurance come from the SERVER — never computed here.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -16,6 +12,15 @@ import type {
   ParcelBookRequest,
   CourierParcelRequest,
 } from '../types/modes.types';
+import {
+  buildParcelCardDirectBody,
+  normalizeParcelStatus,
+  parcelCardDirectStatusPath,
+  PARCEL_CARD_DIRECT_BASE,
+  type CardDirectIntent,
+  type CardDirectStatus,
+  type ParcelCardDirectInput,
+} from '../utils/cardDirect';
 import {
   mockParcelEstimate,
   makeParcel,
@@ -34,7 +39,6 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
 
-// ─── Estimate ─────────────────────────────────────────────────────────────────
 export async function estimateParcel(req: ParcelEstimateRequest): Promise<ParcelEstimate> {
   if (USE_MOCK) {
     await delay(420);
@@ -52,7 +56,6 @@ export async function estimateParcel(req: ParcelEstimateRequest): Promise<Parcel
   );
 }
 
-// ─── Book (money mutation → escrow → Idempotency-Key) ──────────────────────────
 export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(900);
@@ -94,6 +97,48 @@ export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
   );
 }
 
+// ── Card-direct (pay by debit card, never the wallet KYC-tier gate) ─────────
+// backend/internal/transport/paystackcheckout (parcel domain). Same pattern as
+// initiateRidePaystack/getRidePaystackStatus in mobility.api.ts: the server
+// quotes + freezes the amount, Paystack collects it, the server verifies and
+// books. The wallet rail (bookParcel) keeps its KYC gate unchanged.
+
+export type ParcelCardDirectIntent = CardDirectIntent;
+export type ParcelCardDirectStatus = CardDirectStatus & { parcelId?: string };
+
+export async function initiateParcelPaystack(
+  req: ParcelCardDirectInput & { idempotencyKey: string },
+): Promise<ParcelCardDirectIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      reference: `parcelorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+      status: 'pending',
+    };
+  }
+  return unwrap<ParcelCardDirectIntent>(
+    await api.post(
+      `${BASE}${PARCEL_CARD_DIRECT_BASE}/initiate`,
+      buildParcelCardDirectBody(req),
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getParcelPaystackStatus(reference: string): Promise<ParcelCardDirectStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', amountKobo: 0, parcelId: parcelStore.active?.id ?? 'mock-parcel-1' };
+  }
+  return normalizeParcelStatus(
+    unwrap<{ reference: string; status: CardDirectStatus['status']; amountKobo?: number; parcelId?: string }>(
+      await api.get(`${BASE}${parcelCardDirectStatusPath(reference)}`),
+    ),
+  );
+}
+
 export async function getParcel(id: string): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(260);
@@ -129,7 +174,6 @@ export async function cancelParcel(id: string): Promise<Parcel> {
   return unwrap<Parcel>(await api.post(`${BASE}/mobility/parcels/${id}/cancel`, {}));
 }
 
-// ─── Rating (money mutation when tipping → Idempotency-Key; mirrors rateTrip) ───
 export async function rateParcel(
   id: string,
   stars: number,
@@ -151,9 +195,7 @@ export async function rateParcel(
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // COURIER (driver) endpoints
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getCourierRequests(): Promise<CourierParcelRequest[]> {
   if (USE_MOCK) {
     await delay(360);

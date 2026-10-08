@@ -1,14 +1,9 @@
-// ── Boost — purchase (16) + status (17) in one route ─────────────────────────
-//
 // Registered href:null in the marketplace tabs layout. Two modes on one route so
 // no new tab-level route is added (screen 17 is "reuse: transaction-status"):
 //   • no ?boostId  → Boost purchase: tiered options, Naira prices, inline wallet
 //     balance, select → confirm → POST /boosts (Idempotency-Key) via the shared
 //     PaymentSheet/usePurchasePayment. Insufficient balance → top-up link.
-//   • ?boostId=…   → Boost status: active countdown + performance delta, OR a
 //     reason-coded rejection with instant auto-refund state.
-//
-// Entry: My Listings "Boost" button (purchase); a boost-expiry notification or a
 // just-completed purchase (status, via ?boostId).
 import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
@@ -17,11 +12,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { X, Zap, Wallet, CheckCircle2, AlertTriangle, RefreshCw, ArrowUpRight, TrendingUp, XCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import DatePickerField from '@/components/DatePickerField';
@@ -45,10 +40,8 @@ export default function BoostRoute() {
   return <BoostPurchase listingId={listingId ?? ''} onPurchased={setLocalBoostId} />;
 }
 
-// ── Screen 16 — Boost purchase ──
 // Two ways to buy a boost, picked via the segmented control below:
 //   • Package — a preset tier (unchanged from before: fixed duration/price).
-//   • Custom  — pick an end date+time; starts now, fee = days (rounded up) ×
 //     the admin-set ₦/day rate, previewed live via useBoostQuote before the
 //     user commits (GET /boosts/quote — the SAME computation the purchase
 //     itself uses server-side, so the price shown here is authoritative, not
@@ -60,7 +53,7 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
   const [mode, setMode] = useState<'package' | 'custom'>('package');
   const [selectedTier, setSelectedTier] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | undefined>(); // YYYY-MM-DD
-  const [endTime, setEndTime] = useState<string | undefined>(); // HH:MM (24h)
+  const [endTime, setEndTime] = useState<string | undefined>();
 
   const tier = tiersQuery.data?.find((t) => t.tier === selectedTier);
 
@@ -81,14 +74,11 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
   const canConfirm = mode === 'package' ? !!selectedTier : !!customQuote.data && !customQuote.isError;
 
   // NO pre-flight affordability gate here, deliberately.
-  //
   // usePurchasePayment fetches the wallet balance with `enabled: visible`, so it
   // only runs once the payment sheet opens. A disabled React Query reports
   // isLoading === false, so a `!walletLoading && walletKobo < price` check read a
   // balance of 0 that had never been fetched and declared EVERY tier unaffordable
   // — the button was permanently disabled no matter how much was in the wallet.
-  //
-  // It also hid the card rail: pay.start() passes no `method`, so the sheet offers
   // wallet OR card, and blocking on the wallet balance alone denied a user who
   // intended to pay by card. The sheet knows the real balance, offers both rails,
   // and the server enforces the debit — none of which needs this screen to guess
@@ -214,7 +204,6 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
   );
 }
 
-// ── Screen 17 — Boost status ──
 function BoostStatus({ boostId }: { boostId: string }) {
   const boostQuery = useBoost(boostId);
   const cancelBoost = useCancelBoost();

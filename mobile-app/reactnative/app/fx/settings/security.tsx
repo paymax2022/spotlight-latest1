@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Fingerprint, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import ProfileMenuItem from '@/components/ProfileMenuItem';
@@ -14,7 +14,6 @@ import ToggleRow from '@/features/doctor/components/ToggleRow';
 import { useSettings, useUpdateSettings } from '@/features/fx/hooks/useFxAccount';
 
 // FX security settings — biometric unlock, two-factor and PIN. Toggles persist via
-// the shared FxSettings (useUpdateSettings); the transaction PIN is set on the
 // shared security flow. No money moves here — these are auth preferences.
 export default function FxSecurityScreen() {
   const { data, isLoading } = useSettings();

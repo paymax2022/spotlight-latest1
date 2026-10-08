@@ -1,16 +1,13 @@
 package arenaquiz_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the Arena quiz bank repository (append-only +
 // idempotent attempts). These drive quiz.Repository against a concrete
 // *pgxpool.Pool and the real arena_quiz_question / arena_quiz_attempt tables
 // created by supabase/migrations/20260921000000_arena_quiz_bank.sql.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same pattern as
 // backend/tests/crypto/live_db_integration_test.go). The skip is NOT a stub —
 // every step below drives the real repository against real tables, so it can be
 // un-skipped the moment infra is available.
-//
 // ── Bring-up note (read before running) ────────────────────────────────────
 //  1. Apply the arena migrations, including the quiz bank migration:
 //       supabase db reset   # local, port 54322 — replays all migrations
@@ -21,11 +18,9 @@ package arenaquiz_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/arenaquiz/... -run LiveDB -v
-//
 // arena_quiz_attempt has NO FK on competition_id / taker_id, so these tests seed
 // nothing beyond the attempt row itself (each with a fresh uuid) — no shared
 // fixtures, safe to run repeatedly.
-//
 // NOTE (deliberately scoped): the full SubmitExam state-transition path is NOT
 // exercised here. That path constructs quiz.Service with the real
 // PlayAlongService + ContestantService (many arena repos + a signer gateway) and
@@ -34,7 +29,6 @@ package arenaquiz_test
 // idempotency check warrants; it is captured as a follow-up in the QA report.
 // The pure scoring + contestant-safe view logic is covered by the unit tests in
 // backend/internal/arena/quiz/{scoring_test.go,view_test.go}.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

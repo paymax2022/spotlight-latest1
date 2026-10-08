@@ -1,18 +1,14 @@
-// ── Spotlight Academy — EdTech School-Fees module · API layer ────────────────
 // Typed, mock-first data layer the PA-/SA- screens code against. With USE_MOCK
 // (EXPO_PUBLIC_ACADEMY_FEES_USE_MOCK, default true) the whole surface runs with
 // NO backend. Flip the flag to hit the live member routes on the frontend-web
 // proxy → Go /api/finance/academy/{fees,competition}/*.
-//
 // IRON RULES honoured here:
 //  • Money amounts are integers in minor units (kobo).
 //  • SF-2 — invoice balance is DERIVED from settled payment events, never a
 //    free-standing column: paidKobo accumulates; status recomputes from it.
 //  • SF-6 — an installment plan's first payment is blocked until the disclosure
 //    is acknowledged (acceptInstallmentDisclosure sets disclosureAcceptedAt).
-//  • SF-7 — the competition serializer strips PII by default; only entries with
 //    consentGiven expose a full name/avatar. The mock mirrors that server rule.
-//  • SF-4 — competition reads share no service with fees; nothing here consults
 //    payment status to gate academic/competition access.
 
 import { api } from '@/api/client';
@@ -53,7 +49,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── SF-2 helper: recompute invoice status from its derived balance ───────────
 function statusFromBalance(inv: Invoice): Invoice['status'] {
   if (inv.status === 'waived' || inv.status === 'cancelled' || inv.status === 'draft') return inv.status;
   if (inv.paidKobo >= inv.totalKobo) return 'paid';
@@ -63,9 +58,7 @@ function statusFromBalance(inv: Invoice): Invoice['status'] {
   return new Date(inv.dueDate).getTime() < Date.now() ? 'overdue' : 'issued';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // MOCK FIXTURES — rich enough that every screen is fully populated.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 const MOCK_CHILDREN: FeesChild[] = [
   {
@@ -196,7 +189,6 @@ const MOCK_DIRECTORY: DirectorySchool[] = [
   { id: 'sch_alnoor', name: 'Al-Noor Primary', lga: 'Nassarawa', state: 'Kano', logoColorKey: 'iconBgGreen', verified: false, trustScore: 38, studentCount: 220, linked: false },
 ];
 
-// ── Competition fixtures (SF-7 minor-safe; SF-4 fee-independent) ─────────────
 const MOCK_COMP_PROFILE: CompetitionProfile = {
   studentFirstName: 'Adaeze', schoolName: 'Bright Stars Academy', classLabel: 'JSS 2',
   // totalPoints is the SINGLE source of truth for the viewer's leaderboard score
@@ -207,7 +199,6 @@ const MOCK_COMP_PROFILE: CompetitionProfile = {
   totalPoints: 8510, nationalRank: 214, badgesEarned: 7, tournamentsJoined: 3, consentGiven: false,
 };
 
-// Raw entries carry both the safe + full identity; the serializer chooses which
 // to expose based on consentGiven (SF-7). This mirrors the server serializer.
 const RAW_LEADERBOARD: (CompetitionLeaderboardEntry & { fullName: string })[] = [
   { rank: 1, displayName: 'Chidi', fullName: 'Chidi Nwosu', schoolName: 'Kings College', score: 9820, consentGiven: true,  avatarColorKey: 'iconBgBlue',  isMe: false, delta: 2 },
@@ -278,9 +269,7 @@ let challenges = MOCK_CHALLENGES.map((c) => ({ ...c }));
 const badges = MOCK_BADGES.map((b) => ({ ...b }));
 let compRewards = MOCK_COMP_REWARDS.map((r) => ({ ...r }));
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — reads
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getChildren(): Promise<FeesChild[]> {
   if (USE_MOCK) { await delay(); return children; }
   // TODO(no backend route): the fees backend has no guardian "children" list endpoint.
@@ -321,7 +310,6 @@ export async function getInstallmentPlan(invoiceId: string): Promise<Installment
   return unwrap<InstallmentPlan | null>(res);
 }
 
-// ── PA-01 — link a child by admission number + school ────────────────────────
 export interface LinkChildInput { schoolId: string; admissionNumber: string; firstName: string; }
 export async function linkChild(input: LinkChildInput): Promise<FeesChild> {
   if (USE_MOCK) {
@@ -347,9 +335,6 @@ export async function linkChild(input: LinkChildInput): Promise<FeesChild> {
   return unwrap<FeesChild>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PARENT — payments (SF-2 derived balance; every money mutation is idempotent)
-// ═══════════════════════════════════════════════════════════════════════════════
 function applyPayment(inv: Invoice, amountKobo: number, method: PayMethod): PaymentResult {
   const paidKobo = Math.min(inv.totalKobo, inv.paidKobo + amountKobo);
   const updated: Invoice = { ...inv, paidKobo };
@@ -438,7 +423,6 @@ export async function acceptInstallmentDisclosure(invoiceId: string): Promise<In
     return next;
   }
   // TODO(no backend route): there is no accept-disclosure endpoint. The SF-6 disclosure gate lives
-  // inside POST /payments/installment (returns disclosureRequired=true; re-submit with Acknowledged),
   // not as a standalone plan-acknowledgement call.
   const res = await api.post(`${B}/fees/invoices/${invoiceId}/installment-plan/accept-disclosure`, {});
   return unwrap<InstallmentPlan>(res);
@@ -475,9 +459,7 @@ export async function payInstallment(invoiceId: string, installmentId: string, m
   return unwrap<InstallmentPlan>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — receipts / history (PA-09)
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getReceipts(): Promise<Receipt[]> {
   if (USE_MOCK) { await delay(); return receipts; }
   // TODO(no backend route): there is no receipts endpoint. Payments are listed per-invoice
@@ -486,9 +468,7 @@ export async function getReceipts(): Promise<Receipt[]> {
   return unwrap<Receipt[]>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — Fees Vault (SF-5) + auto-save (PA-07, PA-08)
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getVaults(): Promise<FeesVault[]> {
   if (USE_MOCK) { await delay(); return vaults; }
   // feesvault member: GET /vaults (list my vaults). Envelope {data}.
@@ -555,9 +535,7 @@ export async function updateAutoSave(vaultId: string, rule: Omit<AutoSaveRule, '
   return unwrap<FeesVault>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — hardship (PA-10, SF-9 human review only)
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getHardshipRequests(): Promise<HardshipRequest[]> {
   if (USE_MOCK) { await delay(); return hardship; }
   // TODO(no backend route): the member hardship surface is submit (POST /hardship) + get one
@@ -586,9 +564,7 @@ export async function submitHardship(input: HardshipInput): Promise<HardshipRequ
   return unwrap<HardshipRequest>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — sponsor-a-student (PA-14, extends academy scholarships)
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getSponsorships(): Promise<SponsorshipOpportunity[]> {
   if (USE_MOCK) { await delay(); return sponsorships; }
   // TODO(no backend route): feesscholarship exposes pledge CRUD (POST /scholarship/pledges,
@@ -622,9 +598,7 @@ export async function pledgeSponsorship(opportunityId: string, amountKobo: numbe
   return unwrap<SponsorshipPledge>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — school directory + trust score (PA-16)
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getDirectory(query?: string): Promise<DirectorySchool[]> {
   if (USE_MOCK) {
     await delay();
@@ -638,10 +612,8 @@ export async function getDirectory(query?: string): Promise<DirectorySchool[]> {
   return unwrap<DirectorySchool[]>(res);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // STUDENT — cross-school competition (SA-121 … SA-126)
 // SF-7 serializer: strip PII unless consentGiven. SF-4: never touches fees.
-// ═══════════════════════════════════════════════════════════════════════════════
 function serializeEntries(raw: (CompetitionLeaderboardEntry & { fullName: string })[], viewerConsent: boolean): CompetitionLeaderboardEntry[] {
   return raw.map((e) => {
     // Minor-safe default: first name + school. Full name only with recorded
@@ -675,7 +647,6 @@ export async function getLeaderboard(scope: LeaderboardScope = 'national'): Prom
     };
   }
   // TODO(no backend route as-shaped): the backend leaderboard is keyed by competition id
-  // (GET /competitions/:id/leaderboard?scope=…) and responds with {scope, entries} (no {data}
   // envelope, no scopeLabel/period/myRank/minorSafe). This scope-only call has no competition
   // id and expects a richer CompetitionLeaderboard shape; left mocked.
   const res = await api.get(`${B}/competition/leaderboards/${scope}`);

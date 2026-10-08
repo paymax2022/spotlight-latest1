@@ -5,12 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/jsonx"
+	connectsafety "spotlight/backend/internal/connect/safety"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	connectsafety "spotlight/backend/internal/connect/safety"
 )
+
+const keyError = "error"
 
 // Service owns the date-safety center. All reads/writes are scoped to the owner
 // (object-level authz) so one user can never see or mutate another's contacts or
@@ -27,8 +34,6 @@ func NewService(db *pgxpool.Pool, safety *connectsafety.Service) *Service {
 
 // ErrNotFound is returned when a record does not exist or is not owned by caller.
 var ErrNotFound = errors.New("connect: record not found")
-
-// --- Trusted contacts ---
 
 // AddContact stores a trusted contact for the owner. Phone is sensitive PII and
 // is never logged.
@@ -77,8 +82,6 @@ func (s *Service) DeleteContact(ctx context.Context, userID, contactID string) e
 	}
 	return nil
 }
-
-// --- Date plans ---
 
 // CreatePlan creates a date plan owned by the caller for one of their matches.
 func (s *Service) CreatePlan(ctx context.Context, userID string, req CreateDatePlanRequest) (*DatePlan, error) {
@@ -137,7 +140,7 @@ func (s *Service) Feedback(ctx context.Context, userID, planID string, req Feedb
 	}
 	// Feedback JSON excludes free-text from any log; only stored in the row.
 	fb := map[string]any{"rating": req.Rating, "notes": req.Notes, "safety_report": req.SafetyReport}
-	raw, _ := json.Marshal(fb)
+	raw := jsonx.Marshal(fb)
 	const upd = `UPDATE connect_date_plans
 		SET checkin_state = 'completed', feedback = $3::jsonb
 		WHERE id = $1::uuid AND owner_id = $2::uuid
@@ -205,4 +208,206 @@ func (s *Service) scanPlan(row pgx.Row) (*DatePlan, error) {
 		_ = json.Unmarshal(feedback, &p.Feedback)
 	}
 	return &p, nil
+}
+
+// Check-in lifecycle (mirrors connect_date_plans.checkin_state CHECK).
+const (
+	StatePlanned   = "planned"
+	StateShared    = "shared"
+	StateCheckedIn = "checked_in"
+	StateCompleted = "completed"
+	StateMissed    = "missed"
+)
+
+// allowedTransition encodes the date-plan check-in state machine. Any transition
+// not listed here is rejected (guarded transitions, never ad-hoc status writes).
+var allowedTransition = map[string]map[string]bool{
+	StatePlanned:   {StateShared: true, StateCheckedIn: true, StateCompleted: true, StateMissed: true},
+	StateShared:    {StateCheckedIn: true, StateCompleted: true, StateMissed: true},
+	StateCheckedIn: {StateCompleted: true, StateMissed: true},
+	StateCompleted: {},
+	StateMissed:    {},
+}
+
+// CanTransition reports whether from→to is an allowed check-in transition.
+func CanTransition(from, to string) bool { return allowedTransition[from][to] }
+
+// TrustedContact mirrors a row of public.connect_trusted_contacts.
+type TrustedContact struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Phone        string    `json:"phone"`
+	Relationship string    `json:"relationship,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// TrustedContactRequest is the create body.
+type TrustedContactRequest struct {
+	Name         string `json:"name" binding:"required"`
+	Phone        string `json:"phone" binding:"required"`
+	Relationship string `json:"relationship"`
+}
+
+// DatePlan mirrors a row of public.connect_date_plans.
+type DatePlan struct {
+	ID                string         `json:"id"`
+	MatchID           string         `json:"match_id"`
+	OwnerID           string         `json:"owner_id"`
+	Idea              *string        `json:"idea,omitempty"`
+	Venue             *string        `json:"venue,omitempty"`
+	ScheduledAt       *time.Time     `json:"scheduled_at,omitempty"`
+	SharedWithContact bool           `json:"shared_with_contact"`
+	SharedContactID   *string        `json:"shared_contact_id,omitempty"`
+	CheckinState      string         `json:"checkin_state"`
+	CheckinAt         *time.Time     `json:"checkin_at,omitempty"`
+	Feedback          map[string]any `json:"feedback,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+}
+
+// CreateDatePlanRequest is the create body.
+type CreateDatePlanRequest struct {
+	MatchID     string     `json:"match_id" binding:"required"`
+	Idea        string     `json:"idea"`
+	Venue       string     `json:"venue"`
+	ScheduledAt *time.Time `json:"scheduled_at"`
+}
+
+// ShareRequest shares a plan with a trusted contact.
+type ShareRequest struct {
+	ContactID string `json:"contact_id" binding:"required"`
+}
+
+// FeedbackRequest is post-date feedback; may carry a safety concern that opens a case.
+type FeedbackRequest struct {
+	Rating       int    `json:"rating"`
+	Notes        string `json:"notes"`
+	SafetyReport bool   `json:"safety_report"` // true → also open a connect_case
+}
+
+// Handler exposes the date-safety center endpoints (all member-scoped).
+type Handler struct{ svc *Service }
+
+// NewHandler wires the date-safety handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+var errMap = httperr.New(http.StatusBadRequest,
+	httperr.R(http.StatusNotFound, ErrNotFound),
+)
+
+// AddContact — POST /api/v1/connect/safety/trusted-contacts
+func (h *Handler) AddContact(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	var req TrustedContactRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	t, err := h.svc.AddContact(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "could not add contact"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": t})
+}
+
+// ListContacts — GET /api/v1/connect/safety/trusted-contacts
+func (h *Handler) ListContacts(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	list, err := h.svc.ListContacts(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// DeleteContact — DELETE /api/v1/connect/safety/trusted-contacts/:id
+func (h *Handler) DeleteContact(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteContact(c.Request.Context(), userID, c.Param("id")); err != nil {
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// CreatePlan — POST /api/v1/connect/date-plans
+func (h *Handler) CreatePlan(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	var req CreateDatePlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	p, err := h.svc.CreatePlan(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": p})
+}
+
+// Share — POST /api/v1/connect/date-plans/:id/share
+func (h *Handler) Share(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	var req ShareRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	p, err := h.svc.Share(c.Request.Context(), userID, c.Param("id"), req)
+	if err != nil {
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+// CheckIn — POST /api/v1/connect/date-plans/:id/checkin
+func (h *Handler) CheckIn(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	p, err := h.svc.CheckIn(c.Request.Context(), userID, c.Param("id"))
+	if err != nil {
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+// Feedback — POST /api/v1/connect/date-plans/:id/feedback
+func (h *Handler) Feedback(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	var req FeedbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	p, err := h.svc.Feedback(c.Request.Context(), userID, c.Param("id"), req)
+	if err != nil {
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
 }

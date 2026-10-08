@@ -6,7 +6,8 @@
  *   - 'false'         → live calls through the Next proxy at /api/v1/transfers/*
  *
  * Money endpoints go through the Next proxy (base = EXPO_PUBLIC_API_BASE_URL).
- * Idempotency-Key is attached to every money mutation via generateIdempotencyKey.
+ * Idempotency-Key is attached to every money mutation via withIntentKey, so a
+ * retry of the same transfer after a timeout replays the same key.
  * The PIN is a real gate — it is verified before any transfer is initiated.
  *
  * Wallet → wallet (Paymax P2P) keeps using the existing transfers.api.ts so the
@@ -14,7 +15,7 @@
  */
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { generateIdempotencyKey } from '@/utils/idempotency';
+import { withIntentKey } from '@/utils/intentKey';
 import { transfersMock } from './mock';
 import type {
   Bank,
@@ -31,8 +32,6 @@ type ApiRecord = Record<string, unknown>;
 const unwrap = (res: { data?: ApiRecord }): ApiRecord =>
   (res.data?.data ?? res.data ?? {}) as ApiRecord;
 
-// ── Bank list ────────────────────────────────────────────────────────────────
-
 export async function fetchBanks(): Promise<Bank[]> {
   if (USE_MOCK) return transfersMock.fetchBanks();
   const res = await api.get('/api/v1/transfers/banks');
@@ -44,8 +43,6 @@ export async function fetchBanks(): Promise<Bank[]> {
     slug: String(b.slug ?? ''),
   }));
 }
-
-// ── Account-name resolution ──────────────────────────────────────────────────
 
 export async function resolveAccount(
   bankCode: string,
@@ -65,8 +62,6 @@ export async function resolveAccount(
     bankCode,
   };
 }
-
-// ── Transaction PIN gate ─────────────────────────────────────────────────────
 
 export async function getPinStatus(): Promise<{ hasPin: boolean }> {
   if (USE_MOCK) return transfersMock.getPinStatus();
@@ -98,13 +93,12 @@ export async function verifyPin(pin: string): Promise<void> {
   await api.post('/api/v1/transfers/pin/verify', { pin });
 }
 
-// ── Wallet → Bank ────────────────────────────────────────────────────────────
-
 export async function walletToBankTransfer(
   input: WalletBankTransferInput,
 ): Promise<TransferReceiptData> {
   if (USE_MOCK) return transfersMock.walletToBank(input);
-  const res = await api.post(
+  const { pin: _pin, ...intent } = input;
+  const res = await withIntentKey('transfer:bank', intent, (idempotencyKey) => api.post(
     '/api/v1/transfers/bank',
     {
       bank_code: input.bankCode,
@@ -114,8 +108,8 @@ export async function walletToBankTransfer(
       save_beneficiary: input.saveBeneficiary ?? false,
       pin: input.pin,
     },
-    { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
-  );
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  ));
   const data = unwrap(res);
   const t = (data.transfer ?? data) as ApiRecord;
   return {
@@ -131,13 +125,12 @@ export async function walletToBankTransfer(
   };
 }
 
-// ── Bank → Bank (provider pass-through) ──────────────────────────────────────
-
 export async function bankToBankTransfer(
   input: BankToBankTransferInput,
 ): Promise<TransferReceiptData> {
   if (USE_MOCK) return transfersMock.bankToBank(input);
-  const res = await api.post(
+  const { pin: _pin, ...intent } = input;
+  const res = await withIntentKey('transfer:bank-to-bank', intent, (idempotencyKey) => api.post(
     '/api/v1/transfers/bank-to-bank',
     {
       source_bank_code: input.source.bankCode,
@@ -149,8 +142,8 @@ export async function bankToBankTransfer(
       save_beneficiary: input.saveBeneficiary ?? false,
       pin: input.pin,
     },
-    { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
-  );
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  ));
   const data = unwrap(res);
   const t = (data.transfer ?? data) as ApiRecord;
   return {
@@ -166,8 +159,6 @@ export async function bankToBankTransfer(
     provider: (t.provider as string | undefined) ?? 'Paystack',
   };
 }
-
-// ── Fee schedule (display only; backend is authoritative) ─────────────────────
 
 export function walletBankFee(amountKobo: number): number {
   if (amountKobo <= 500_000) return 1_000;

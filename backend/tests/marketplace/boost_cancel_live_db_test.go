@@ -1,13 +1,11 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // CancelBoost (seller-initiated) — the seller-facing counterpart to admin-only
 // RejectBoost (see TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller in
 // chaos_live_db_test.go). Same "stop it, refund the ledger, never leave the
 // listing looking boosted with money already collected" shape, but PRORATED
 // (only the unused days) rather than a full refund, and reachable by the
 // seller themselves without a policy-violation reason code.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

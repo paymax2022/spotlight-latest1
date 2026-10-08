@@ -1,12 +1,10 @@
 'use client';
 
-// ── Admin — Voting Audit Log ─────────────────────────────────────────────────
 // Read-only explorer for the immutable `vote_audit_logs` trail: settings
 // changes, vote adjustments/reversals, and freeze/unfreeze, all written via
 // appendAuditLog (frontend-web/src/server/voting/audit.service.ts — brownfield-
 // protected, never edited here). Backed by
 // GET /api/admin/voting/{contestId}/audit-log, gated on `votes:manage`.
-//
 // This is a DIFFERENT trail from `frontend-admin/audit-logs` (a generic
 // in-memory admin event log) and the Go backend's own `audit_logs` — neither
 // of those ever recorded a voting admin action. This is the only screen that

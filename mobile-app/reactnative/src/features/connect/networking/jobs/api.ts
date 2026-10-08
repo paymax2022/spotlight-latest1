@@ -28,7 +28,6 @@ function idempotencyKey(): string {
 
 const LOGO = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=200&q=60`;
 
-// ── Mock postings (realistic Nigerian-market jobs) ───────────────────────────
 const MOCK_JOBS: JobPosting[] = [
   {
     id: 'j1',
@@ -283,7 +282,6 @@ export const JOB_EMPLOYMENT_TYPES: { value: EmploymentType; label: string }[] = 
 
 export { MOCK_RESUMES };
 
-// ── Feed (JB-01) ─────────────────────────────────────────────────────────────
 export async function getJobs(filters: JobFilters): Promise<JobPosting[]> {
   if (USE_MOCK) {
     await delay();
@@ -302,7 +300,6 @@ export async function getJobs(filters: JobFilters): Promise<JobPosting[]> {
   return unwrap<JobPosting[]>(res);
 }
 
-// ── Detail (JB-02) ───────────────────────────────────────────────────────────
 export async function getJob(id: string): Promise<JobPosting> {
   if (USE_MOCK) {
     await delay(180);
@@ -312,7 +309,6 @@ export async function getJob(id: string): Promise<JobPosting> {
   return unwrap<JobPosting>(res);
 }
 
-// ── Apply (JB-03) — carries an Idempotency-Key ───────────────────────────────
 export async function applyToJob(input: ApplyInput): Promise<ApplyResult> {
   if (USE_MOCK) {
     await delay(420);
@@ -326,7 +322,6 @@ export async function applyToJob(input: ApplyInput): Promise<ApplyResult> {
   return unwrap<ApplyResult>(res);
 }
 
-// ── My applications (JB-04) ──────────────────────────────────────────────────
 export async function getMyApplications(): Promise<JobApplication[]> {
   if (USE_MOCK) {
     await delay();
@@ -346,7 +341,6 @@ export async function getMyResumes(): Promise<ResumeRef[]> {
   return unwrap<ResumeRef[]>(res);
 }
 
-// ── Open to Work (JB-07) ─────────────────────────────────────────────────────
 export async function getOpenToWork(): Promise<OpenToWork> {
   if (USE_MOCK) {
     await delay(160);

@@ -1,7 +1,5 @@
-// ── Doctor — Batch 3 · Section M · lab test ordering hooks ─────────────────────
 // Rich lab ordering (catalogue with sample type/fasting/price/turnaround, lab
 // packages, lab providers, HMO-coverage check, urgency/collection options,
-// share/cancel). Reads use the DEMO_* exports as placeholderData; mutations
 // auto-generate the Idempotency-Key.
 // REUSES Phase 1 `useCreateLabOrder`, `useLabOrders` (from `useClinical`) for the
 // base order create/list — those are NOT re-declared here. `checkLabCoverage` is
@@ -28,8 +26,6 @@ import type {
 
 // Re-export the pure coverage helper so the UI can import it from the hook module.
 export { checkLabCoverage } from '@/api/doctor.batch3.api';
-
-// ─── Reads ───────────────────────────────────────────────────────────────────
 
 export function useLabCatalogue() {
   return useQuery({
@@ -67,8 +63,6 @@ export function useLabOrderRich(orderId: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useShareLabOrder() {
   return useMutation({

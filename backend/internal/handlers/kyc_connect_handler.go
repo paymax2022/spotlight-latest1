@@ -1,33 +1,71 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/kyc"
+	"spotlight/backend/internal/finance/kycverify"
 	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/services"
 )
 
-// KYCConnectHandler handles /api/v1/kyc/* endpoints for tier progression.
-//
-// Tier state lives in user_profiles.kyc_tier — the single source of truth that
-// finance/tiers enforces limits against and that referrals, virtual accounts,
-// marketplace, and academy all read. Everything here delegates to kyc.Service so
-// submissions land in that column, hash BVN/NIN before storage, and emit a
-// kyc_events audit row.
-type KYCConnectHandler struct {
-	kycSvc   *kyc.Service
-	tiersSvc *tiers.Service
-	auditSvc services.AuditService
+// kycVerifyGateway is the narrow slice of *kycverify.Service that SubmitTier1
+// needs: start a session, record consent, run one check. Declared here (not
+// imported as the concrete type everywhere) so this handler's tier-submission
+// logic is testable with a fake, without a live kycverify Postgres pool — the
+// same reasoning kycverify itself uses for its own TierElevator dependency.
+type kycVerifyGateway interface {
+	StartSession(ctx context.Context, userID string, targetTier int) (*kycverify.Session, error)
+	RecordConsent(ctx context.Context, userID, scope, version, ip string) (*kycverify.Consent, error)
+	RunCheck(ctx context.Context, userID, sessionID string, ct provider.KycCheckType, req provider.KycVerifyRequest) (*kycverify.Check, error)
 }
 
-func NewKYCConnectHandler(kycSvc *kyc.Service, tiersSvc *tiers.Service, auditSvc services.AuditService) *KYCConnectHandler {
-	return &KYCConnectHandler{
+// KYCConnectHandler handles /api/v1/kyc/* endpoints for tier progression.
+// Tier state lives in user_profiles.kyc_tier — the single source of truth that
+// finance/tiers enforces limits against and that referrals, virtual accounts,
+// marketplace, and academy all read.
+// SubmitTier1 delegates to kycVerify (the real Dojah/Smile ID/Youverify-backed
+// verification gateway) when configured — a real BVN/NIN data-match check runs
+// before the tier is ever elevated, and elevation itself happens automatically
+// inside kycverify's orchestrator (kyc.Service.Approve is its tier-write sink,
+// unchanged). SubmitTier2/SubmitTier3 still delegate to kyc.Service.Initiate
+// directly — that write happens with NO automated check — because their
+// kycverify equivalents (liveness/facial/document) need real camera/SDK image
+// capture the mobile app does not have yet (see registerConnectWalletRoutes's
+// comment). GetStatus/GetLimits/GetTierStatus are reads, untouched either way.
+type KYCConnectHandler struct {
+	kycSvc    *kyc.Service
+	tiersSvc  *tiers.Service
+	auditSvc  services.AuditService
+	kycVerify kycVerifyGateway // nil unless FEATURE_KYC_VERIFY_ENABLED — see SubmitTier1
+}
+
+// NewKYCConnectHandler builds the handler. kycVerify may be a nil *kycverify.Service
+// (Go's typed-nil-in-interface case is handled explicitly in SubmitTier1 via the
+// caller-visible kycVerify != nil param check below, not by calling a method on it)
+// when the verification gateway feature flag is off.
+func NewKYCConnectHandler(kycSvc *kyc.Service, tiersSvc *tiers.Service, auditSvc services.AuditService, kycVerify *kycverify.Service) *KYCConnectHandler {
+	h := &KYCConnectHandler{
 		kycSvc:   kycSvc,
 		tiersSvc: tiersSvc,
 		auditSvc: auditSvc,
 	}
+	// A nil *kycverify.Service assigned to the kycVerifyGateway interface field
+	// would be a non-nil interface wrapping a nil pointer — h.kycVerify != nil
+	// would then be true and calling its methods would panic. Keep the interface
+	// field itself nil when the concrete pointer is nil.
+	if kycVerify != nil {
+		h.kycVerify = kycVerify
+	}
+	return h
 }
 
 // kycProfilePayload renders a kyc.Profile for the mobile client.
@@ -60,7 +98,7 @@ func kycProfilePayload(p *kyc.Profile) gin.H {
 // GetStatus — GET /api/v1/kyc/status
 // View KYC verification state.
 func (h *KYCConnectHandler) GetStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -87,13 +125,13 @@ func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
 	}
 
 	data := []gin.H{}
-	for t := 0; t <= 3; t++ {
+	for t := range 4 {
 		cfg := tiers.GetConfig(tiers.Tier(t))
 		data = append(data, gin.H{
 			"tier":              t,
 			"label":             tierLabels[t],
-			"dailyLimitKobo":    cfg.DailyDebitLimitKobo, // 0 = unlimited (T3) / disabled (T0)
-			"maxBalanceKobo":    cfg.MaxBalanceKobo,      // 0 = unlimited
+			"dailyLimitKobo":    cfg.DailyDebitLimitKobo,
+			"maxBalanceKobo":    cfg.MaxBalanceKobo,
 			"walletEnabled":     t > 0,
 			"requiredDocuments": requiredDocs[t],
 		})
@@ -105,11 +143,11 @@ func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
 // requireSubmitContext validates the auth + idempotency preconditions shared by
 // every tier submission. Returns false when it has already written a response.
 func requireSubmitContext(c *gin.Context) bool {
-	if c.GetString("user_id") == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return false
 	}
-	if c.GetHeader("Idempotency-Key") == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return false
 	}
@@ -120,20 +158,24 @@ func requireSubmitContext(c *gin.Context) bool {
 // tier differs only in the payload it validates and what it forwards to
 // kyc.Initiate, which does the hashing, the write, and the audit event.
 func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.InitiateRequest, message string) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 
 	profile, err := h.kycSvc.Initiate(c.Request.Context(), userID, req)
 	if err != nil {
+		if errors.Is(err, kyc.ErrInvalidDocumentType) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported document type"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit kyc"})
 		return
 	}
 
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "user_profile",
-			userID, nil, map[string]interface{}{
+			userID, nil, map[string]any{
 				"targetTier": targetTier,
 				"status":     string(profile.Status),
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -146,39 +188,171 @@ func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.I
 }
 
 // SubmitTier1 — POST /api/v1/kyc/tier1 (Idempotency-Key required)
-// Submit BVN/NIN for Tier 1.
+// Submit BVN/NIN for Tier 1 — runs a REAL data-match check via the KYC
+// verification gateway (Dojah primary, Smile ID/Youverify fallback) before the
+// tier is ever elevated. Tier 1 needs exactly one check (ID_NUMBER, see
+// kycverify.RequiredChecks) and Dojah's BVN/NIN lookup takes an id_number
+// alone — no name/DOB match, no image capture — so this is the one tier
+// submission that can be wired to the real gateway without any mobile-side
+// camera/SDK work. Tiers 2/3 cannot: see registerConnectWalletRoutes's comment.
 func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 	if !requireSubmitContext(c) {
 		return
 	}
+	userID := ginutil.UserID(c)
+	idempotencyKey := ginutil.IdempotencyKey(c)
 
 	var body struct {
 		Identifier     string `json:"identifier"`
 		IdentifierType string `json:"identifierType"`
+		// ConsentVersion acknowledges NDPA/CBN data-processing consent — required,
+		// not optional: kycverify.RunCheck fails closed without a recorded consent
+		// (ErrConsentRequired), and that gate must not be silently satisfied
+		// server-side just to make an old client request shape "work". A client
+		// that omits it gets a clear 403 telling it to collect consent first,
+		// which is the correct failure — not a silent unverified approval.
+		ConsentVersion string `json:"consentVersion"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	if len(body.Identifier) != 11 {
+	if !isElevenDigits(body.Identifier) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enter a valid 11-digit identifier"})
 		return
 	}
 
-	// The identifier is a BVN unless the client says otherwise. kyc.Initiate
-	// hashes it — the raw value is never persisted.
-	req := kyc.InitiateRequest{RequestedTier: 1}
-	if body.IdentifierType == "nin" {
-		req.NIN = &body.Identifier
-	} else {
-		req.BVN = &body.Identifier
+	// Fail closed, not silently degrade: no verification gateway configured
+	// means Tier 1 cannot be safely granted, not "grant it unchecked like before".
+	if h.kycVerify == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "identity verification is temporarily unavailable, please try again shortly",
+			"code":  "kyc_verify_unavailable",
+		})
+		return
+	}
+	if body.ConsentVersion == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "consent required before verification", "code": "consent_required"})
+		return
 	}
 
-	h.submitTier(c, 1, req, "Tier 1 KYC submitted for verification.")
+	idType := "bvn"
+	if body.IdentifierType == "nin" {
+		idType = "nin"
+	}
+
+	ctx := c.Request.Context()
+	if _, err := h.kycVerify.RecordConsent(ctx, userID, "kyc-data-processing", body.ConsentVersion, ginutil.ClientIP(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record consent"})
+		return
+	}
+	sess, err := h.kycVerify.StartSession(ctx, userID, 1)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start verification"})
+		return
+	}
+	check, err := h.kycVerify.RunCheck(ctx, userID, sess.ID, provider.KycIDNumber, provider.KycVerifyRequest{
+		ClientRef: idempotencyKey,
+		IDType:    idType,
+		IDNumber:  body.Identifier,
+	})
+	if err != nil {
+		writeKycVerifyErr(c, err)
+		return
+	}
+
+	// A PASSED check elevates the tier automatically inside kycverify's own
+	// orchestrator (Recompute -> kyc.Service.Approve) — nothing to call here.
+	// Re-read the profile so the response reports what was ACTUALLY persisted,
+	// not an assumed outcome.
+	profile, perr := h.kycSvc.GetProfile(ctx, userID)
+	if perr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "verification ran but failed to load status"})
+		return
+	}
+
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "user_profile",
+			userID, nil, map[string]any{
+				"targetTier":  1,
+				"status":      string(profile.Status),
+				"checkStatus": string(check.Status),
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
+		"ok":          true,
+		"tier":        int(profile.Tier),
+		"status":      string(profile.Status),
+		"targetTier":  1,
+		"checkStatus": string(check.Status),
+		"message":     tier1Message(check.Status),
+	}})
+}
+
+// isElevenDigits reports whether s is exactly 11 ASCII digits — the shape of both
+// a BVN and a NIN. A length-only check let any 11 characters through to the
+// provider call.
+func isElevenDigits(s string) bool {
+	if len(s) != 11 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// tier1Message renders the real check outcome, never a fixed "submitted for
+// verification" claim the old endpoint always sent regardless of what (if
+// anything) actually happened.
+func tier1Message(status provider.KycCheckStatus) string {
+	switch status {
+	case provider.KycPassed:
+		return "Tier 1 verified."
+	case provider.KycFailed:
+		return "We couldn't verify that BVN/NIN. Check the number and try again."
+	case provider.KycReview:
+		return "Your details need a closer look — our team will review shortly."
+	default: // PENDING/INITIATED — provider answers asynchronously via webhook.
+		return "Verification in progress — this can take a few minutes."
+	}
+}
+
+// writeKycVerifyErr maps kycverify's domain sentinels to HTTP status, mirroring
+// kycverify/handler.go's own writeErr (unexported there, so not reused directly).
+func writeKycVerifyErr(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, kycverify.ErrConsentRequired):
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err), "code": "consent_required"})
+	case errors.Is(err, kycverify.ErrForbidden):
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, kycverify.ErrInvalidRequest), errors.Is(err, kycverify.ErrInvalidTier):
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+	case errors.Is(err, kycverify.ErrNoProvider), errors.Is(err, kycverify.ErrProviderUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err), "code": "no_provider"})
+	case errors.Is(err, kycverify.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, kycverify.ErrIllegalTransition):
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
+	default:
+		log.Printf("[kyc_connect] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	}
 }
 
 // SubmitTier2 — POST /api/v1/kyc/tier2 (Idempotency-Key required)
 // Submit ID + address for Tier 2.
+// Intentionally still writes kyc_status='pending' via kyc.Service.Initiate with
+// NO automated check — unlike SubmitTier1. Tier 2 needs a real DOCUMENT and/or
+// LIVENESS/FACIAL check (kycverify.RequiredChecks), both of which require actual
+// captured images: this client sends a pre-uploaded file URI, not the base64
+// bytes kycverify's checks expect, and the app's capture UI for those checks
+// (src/features/kycverify/components/CaptureStub.tsx) is an explicit,
+// commented sandbox stub with no real camera/SDK behind it yet. Wiring this
+// through today would submit fake bytes to a real provider.
 func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 	if !requireSubmitContext(c) {
 		return
@@ -204,10 +378,14 @@ func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 		return
 	}
 
-	docType := "government_id"
+	// DocumentType is left nil: the uploaded photo-ID URI is not one of the
+	// user_profiles_document_type_check enum values (BVN/NIN/PASSPORT/
+	// DRIVERS_LICENSE — 20260613000000_kyc_fields.sql). Passing a label like
+	// 'government_id' violated that CHECK and 500'd every tier-2 submit. The
+	// artifact reference lives in document_ref; the pending profile's
+	// kyc_requested_tier already tells reviewers what is being sought.
 	req := kyc.InitiateRequest{
 		RequestedTier: 2,
-		DocumentType:  &docType,
 		DocumentRef:   &body.IdDocumentUri,
 	}
 
@@ -216,6 +394,8 @@ func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 
 // SubmitTier3 — POST /api/v1/kyc/tier3 (Idempotency-Key required)
 // Submit liveness + EDD (source of funds + occupation) for Tier 3.
+// Same gap as SubmitTier2, same reason: no real biometric capture yet. See the
+// comment there.
 func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 	if !requireSubmitContext(c) {
 		return
@@ -239,10 +419,10 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 		return
 	}
 
-	docType := "liveness"
+	// Same as SubmitTier2: 'liveness' is not a document_type enum value —
+	// nil DocumentType + the artifact URI in document_ref.
 	req := kyc.InitiateRequest{
 		RequestedTier: 3,
-		DocumentType:  &docType,
 		DocumentRef:   &body.LivenessUri,
 	}
 
@@ -252,7 +432,7 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 // GetTierStatus — GET /api/v1/me/tier
 // Get current tier status alongside today's remaining allowance.
 func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -268,19 +448,17 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 	// gate is derived from — so a client pre-check (e.g. the mobile checkout sheet
 	// refusing to open the card gateway for a spend that would be rejected) agrees
 	// with what the server will actually do.
-	//
 	// walletDisabled and dailyUsedKobo are reported explicitly rather than left to be
 	// inferred: without them a client has to decode the (0, -1) / (0, 0) encoding of
 	// "unlimited" vs "disabled" itself, which is exactly the kind of duplicated money
 	// rule that drifts.
-	//
 	// On a usage error the three fields are OMITTED rather than zeroed — a client
 	// must not read a missing allowance as "you have none". Absence means "unknown";
 	// the server-side gate remains the authority.
 	payload := kycProfilePayload(profile)
 	if usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID); err == nil {
 		payload["dailyLimitKobo"] = usage.DailyLimitKobo // 0 = unlimited (T3) or disabled (T0)
-		payload["remainingKobo"] = usage.RemainingKobo   // -1 = unlimited
+		payload["remainingKobo"] = usage.RemainingKobo
 		payload["dailyUsedKobo"] = usage.DailyUsedKobo
 		payload["walletDisabled"] = usage.WalletDisabled
 		// Purchases may still be permitted while the wallet is otherwise disabled

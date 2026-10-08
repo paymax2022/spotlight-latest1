@@ -1,6 +1,7 @@
 package connectnetprofile
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -87,19 +88,19 @@ func TestCheckRespond_SubjectOnly(t *testing.T) {
 		t.Errorf("subject decline: unexpected error %v", err)
 	}
 	// Author trying to accept (self-publish): denied — this is the core PN-4 guard.
-	if err := checkRespond(author, subject, RecoSent, RecoAcceptedVisible); err != ErrNotSubject {
+	if err := checkRespond(author, subject, RecoSent, RecoAcceptedVisible); !errors.Is(err, ErrNotSubject) {
 		t.Errorf("author accept: want ErrNotSubject, got %v", err)
 	}
 	// Stranger trying to accept: denied.
-	if err := checkRespond(stranger, subject, RecoSent, RecoAcceptedVisible); err != ErrNotSubject {
+	if err := checkRespond(stranger, subject, RecoSent, RecoAcceptedVisible); !errors.Is(err, ErrNotSubject) {
 		t.Errorf("stranger accept: want ErrNotSubject, got %v", err)
 	}
 	// Subject accepting a DRAFTED (not yet sent) recommendation: denied by FSM.
-	if err := checkRespond(subject, subject, RecoDrafted, RecoAcceptedVisible); err != ErrBadTransition {
+	if err := checkRespond(subject, subject, RecoDrafted, RecoAcceptedVisible); !errors.Is(err, ErrBadTransition) {
 		t.Errorf("accept from drafted: want ErrBadTransition, got %v", err)
 	}
 	// Subject re-accepting an already-accepted recommendation: denied (terminal).
-	if err := checkRespond(subject, subject, RecoAcceptedVisible, RecoAcceptedVisible); err != ErrBadTransition {
+	if err := checkRespond(subject, subject, RecoAcceptedVisible, RecoAcceptedVisible); !errors.Is(err, ErrBadTransition) {
 		t.Errorf("re-accept: want ErrBadTransition, got %v", err)
 	}
 }
@@ -110,10 +111,10 @@ func TestCheckSend_AuthorOnly(t *testing.T) {
 	if err := checkSend(author, author, RecoDrafted); err != nil {
 		t.Errorf("author send: unexpected error %v", err)
 	}
-	if err := checkSend(subject, author, RecoDrafted); err != ErrNotAuthor {
+	if err := checkSend(subject, author, RecoDrafted); !errors.Is(err, ErrNotAuthor) {
 		t.Errorf("subject send: want ErrNotAuthor, got %v", err)
 	}
-	if err := checkSend(author, author, RecoSent); err != ErrBadTransition {
+	if err := checkSend(author, author, RecoSent); !errors.Is(err, ErrBadTransition) {
 		t.Errorf("send already-sent: want ErrBadTransition, got %v", err)
 	}
 }

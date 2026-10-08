@@ -12,8 +12,6 @@ import (
 // blocks guarantee (single charge per idemKey, single entitlement, reversible refund,
 // replay-safe sync) which the integration suite then asserts end-to-end against pgx.
 
-// ── Purchase state machine: allowed + illegal transitions ───────────────────────
-
 func TestCanOrder_AllowedTransitions(t *testing.T) {
 	allowed := [][2]string{
 		{OrderCart, OrderCheckout},
@@ -48,8 +46,6 @@ func TestCanOrder_IllegalTransitions(t *testing.T) {
 	}
 }
 
-// ── Access-card state machine ────────────────────────────────────────────────────
-
 func TestCanCard_Transitions(t *testing.T) {
 	if !canCard(CardIssued, CardActivated) {
 		t.Error("issued→activated should be allowed (direct member activation)")
@@ -70,8 +66,6 @@ func TestCanCard_Transitions(t *testing.T) {
 		t.Error("activated→allocated must be illegal (no going back)")
 	}
 }
-
-// ── PIN hash / verify (access cards) ────────────────────────────────────────────
 
 func TestPIN_VerifyRoundTrip(t *testing.T) {
 	stored, err := hashPIN("123456")
@@ -125,8 +119,6 @@ func TestRandomPIN_Length(t *testing.T) {
 		t.Errorf("default PIN length should be 6, got %d", len(d))
 	}
 }
-
-// ── Rail idempotency contract (no vendor leak) ──────────────────────────────────
 
 func TestStubPaymentRail_IdempotentRef(t *testing.T) {
 	r := StubPaymentRail{}

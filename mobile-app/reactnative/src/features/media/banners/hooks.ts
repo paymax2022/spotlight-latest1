@@ -1,4 +1,3 @@
-// ── Paymax Media — remote marketing banner hooks ─────────────────────────────
 
 import { useQuery } from '@tanstack/react-query';
 import { getBanner } from './api';

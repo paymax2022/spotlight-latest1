@@ -8,7 +8,7 @@ import (
 // The complaint that started this: the code was 11 characters and unusable when
 // read aloud. Length is the requirement, so it is asserted directly.
 func TestGenerateCode_IsFiveCharactersFromTheSafeAlphabet(t *testing.T) {
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		code, err := GenerateCode()
 		if err != nil {
 			t.Fatalf("generate: %v", err)
@@ -27,7 +27,7 @@ func TestGenerateCode_IsFiveCharactersFromTheSafeAlphabet(t *testing.T) {
 // statistical claim.
 func TestGenerateCode_DoesNotRepeatItself(t *testing.T) {
 	seen := map[string]bool{}
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		c, err := GenerateCode()
 		if err != nil {
 			t.Fatalf("generate: %v", err)
@@ -42,7 +42,7 @@ func TestGenerateCode_DoesNotRepeatItself(t *testing.T) {
 // Codes get read off a screen and typed back in. Characters that are misread as
 // one another must not appear, or support absorbs the difference.
 func TestGenerateCode_OmitsConfusableCharacters(t *testing.T) {
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		c, _ := GenerateCode()
 		if n := strings.IndexAny(c, "OILSZ0152"); n >= 0 {
 			t.Fatalf("code %q contains confusable %q", c, string(c[n]))

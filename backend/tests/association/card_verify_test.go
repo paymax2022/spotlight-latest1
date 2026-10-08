@@ -118,8 +118,6 @@ func TestLiveDB_Card_SuspendedExpiredArrearsFailLiveCheck(t *testing.T) {
 	})
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────
-
 func verifySigned(t *testing.T, ctx context.Context, svc *association.Service, membershipID string) *association.CardVerification {
 	t.Helper()
 	tok := svc.SignCardToken(membershipID, "CODE/0001", "org")

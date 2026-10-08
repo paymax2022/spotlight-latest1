@@ -2,7 +2,6 @@ package parent
 
 // gate.go holds the PURE child-safety decision + report-aggregation helpers (no DB,
 // no ctx) so they are trivially unit-testable.
-//
 // GOLDEN RULE (nfr.md child-safety): a guardian may only act on a minor they hold
 // an ACTIVE guardian link to. canActOnMinor is the single fail-closed decision the
 // service consults on every (guardian, minor) operation: the only input that grants

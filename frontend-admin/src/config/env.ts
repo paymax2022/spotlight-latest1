@@ -11,7 +11,6 @@
  * which throws on a relative base.
  */
 function adminApiBase(): string {
-  // Browser: same origin, so the request carries the session cookie and the key
   // is attached on the server side of the proxy.
   if (typeof window !== 'undefined') return `${window.location.origin}/api/admin-proxy`;
   // Server render: still through the proxy, so there is exactly ONE place that
@@ -61,27 +60,18 @@ export function apiV1(): string {
 export const hasSupabaseConfig = Boolean(env.supabaseUrl && env.supabaseAnonKey);
 
 /**
- * Bearer-token headers for admin API calls made through the same-origin proxy.
+ * Headers for admin API calls made through the same-origin proxy.
  *
- * AUTH-010 tightened the admin-proxy route and the Go backend's
- * `adminGroup`/`overviewGroup` routes to require a REAL verified bearer token
- * via `middleware.RequireAdminConsoleRole` — `credentials: 'include'` (the
- * session cookie) alone no longer satisfies it. That broke every service file
- * that only sent the cookie (AUTH-018).
- *
- * The token is the same one `adminAuth.ts`'s `signInAdmin()` already stores in
- * localStorage under `spotlight_admin_access_token` for the services that got
- * this right from the start (`investAdminService.ts`, `tradingAdminService.ts`,
- * `cryptoAdminService.ts`) — this generalizes that pattern so every admin
- * service can attach it the same way. Callers still keep `credentials: 'include'`
- * on the fetch itself — harmless belt-and-braces once the cookie path is fixed too.
+ * No Authorization header is attached here any more: the session token lives
+ * only in the HttpOnly `sb-admin-token` cookie, and the proxy route handlers
+ * (/api/admin-proxy, /api/web-proxy) attach `Authorization: Bearer <token>`
+ * server-side from that cookie. Keeping the token out of JS-readable storage
+ * is the whole point — see features/auth/adminAuth.ts and the CodeQL
+ * js/clear-text-storage-of-sensitive-data fix. `credentials: 'include'` on
+ * the fetch is what carries the cookie to the proxy; it is not optional.
  */
 export function adminAuthHeaders(extra?: Record<string, string>): Record<string, string> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('spotlight_admin_access_token') || '' : '';
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...extra,
-  };
+  return { ...extra };
 }
 
 /**

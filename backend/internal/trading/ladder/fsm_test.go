@@ -47,33 +47,41 @@ func TestLadder_NoRungSkipping(t *testing.T) {
 // Each gate's evidence is enforced.
 func TestLadder_GatesEnforced(t *testing.T) {
 	// Shadow needs a passing verdict + track record.
-	ev := fullEv(); ev.ValidationPassed = false
+	ev := fullEv()
+	ev.ValidationPassed = false
 	mustDeny(t, StagePaper, StageShadow, ev)
-	ev = fullEv(); ev.TrackRecordDays = 10
+	ev = fullEv()
+	ev.TrackRecordDays = 10
 	mustDeny(t, StagePaper, StageShadow, ev)
 
 	// Canary needs maker≠checker.
-	ev = fullEv(); ev.CheckerID = ev.MakerID
+	ev = fullEv()
+	ev.CheckerID = ev.MakerID
 	mustDeny(t, StageShadow, StageCanary, ev)
-	ev = fullEv(); ev.CheckerID = ""
+	ev = fullEv()
+	ev.CheckerID = ""
 	mustDeny(t, StageShadow, StageCanary, ev)
 
 	// Live needs Risk AND legal sign-off on top of maker-checker.
-	ev = fullEv(); ev.RiskSignedOff = false
+	ev = fullEv()
+	ev.RiskSignedOff = false
 	mustDeny(t, StageCanary, StageLive, ev)
-	ev = fullEv(); ev.LegalSignedOff = false
+	ev = fullEv()
+	ev.LegalSignedOff = false
 	mustDeny(t, StageCanary, StageLive, ev)
-	ev = fullEv(); ev.MakerID = "solo"; ev.CheckerID = "solo"
+	ev = fullEv()
+	ev.MakerID = "solo"
+	ev.CheckerID = "solo"
 	mustDeny(t, StageCanary, StageLive, ev)
 }
 
 // A tripped circuit blocks every forward promotion, even with otherwise-full evidence.
 func TestLadder_CircuitBlocksPromotion(t *testing.T) {
-	ev := fullEv(); ev.CircuitTripped = true
+	ev := fullEv()
+	ev.CircuitTripped = true
 	mustDeny(t, StagePaper, StageShadow, ev)
 	mustDeny(t, StageShadow, StageCanary, ev)
 	mustDeny(t, StageCanary, StageLive, ev)
-	// ...but a tripped circuit must NOT block halting or de-risking.
 	mustAllow(t, StageLive, StageHalted, ev)
 	mustAllow(t, StageLive, StageCanary, ev)
 }

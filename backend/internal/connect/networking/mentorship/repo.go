@@ -138,7 +138,7 @@ func (r *Repository) TransitionMatch(ctx context.Context, matchID string, from, 
 	if err != nil {
 		return false, nil, fmt.Errorf("connect: begin transition: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var cur MatchState
 	if err := tx.QueryRow(ctx,

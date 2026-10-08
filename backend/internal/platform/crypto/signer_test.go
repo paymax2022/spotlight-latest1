@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"testing"
 )
 
@@ -60,7 +61,7 @@ func TestChainHash_TamperEvident(t *testing.T) {
 
 func TestBadSeed(t *testing.T) {
 	short := base64.StdEncoding.EncodeToString(make([]byte, 16))
-	if _, err := NewSignerFromSeed("x", short); err != ErrSeedLength {
+	if _, err := NewSignerFromSeed("x", short); !errors.Is(err, ErrSeedLength) {
 		t.Fatalf("want ErrSeedLength, got %v", err)
 	}
 }

@@ -2,7 +2,6 @@
 // sub-package: per-learner LEARNING PATHS built from a subject's ordered
 // curriculum objectives, ADAPTIVE PRACTICE selection from mastery gaps, and
 // next-best-objective RECOMMENDATIONS.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech/.../state-machines.md §1,
 // curriculum.md, gamification-rewards.md):
 //   - Guarded state machine. Path steps move locked → available → in_progress →
@@ -24,8 +23,6 @@
 package progression
 
 import "time"
-
-// ── Path lifecycle ──────────────────────────────────────────────────────────────
 
 // PathState mirrors academy_learning_paths.state CHECK.
 type PathState string
@@ -95,8 +92,6 @@ type Recommendation struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// ── Curriculum / mastery read projections ──────────────────────────────────────
-
 // Objective is the ordered curriculum read used to build a path: one
 // academy_learning_objectives row joined to its topic ordering.
 type Objective struct {
@@ -125,8 +120,6 @@ type QuestionItemRef struct {
 	Difficulty  float64 `json:"difficulty"` // 0..1
 }
 
-// ── Adaptive config (curriculum-as-data) ───────────────────────────────────────
-
 // AdaptiveConfig is one academy_adaptive_config row (key/value jsonb). Known keys:
 // mastery_threshold, reco_rules, path_rules.
 type AdaptiveConfig struct {
@@ -147,7 +140,6 @@ const (
 // not reached the 'mastered' state) is "weak" on that objective.
 const DefaultMasteryThreshold = 0.7
 
-// ── Progress event types written to academy_progress_events.type ────────────────
 const (
 	EvtStepAvailable  = "step_available"
 	EvtStepStarted    = "step_started"
@@ -156,8 +148,6 @@ const (
 	EvtPathBuilt      = "path_built"
 	EvtPathCompleted  = "path_completed"
 )
-
-// ── Request / response DTOs ─────────────────────────────────────────────────────
 
 // BuildPathRequest — member POST /progression/paths.
 type BuildPathRequest struct {

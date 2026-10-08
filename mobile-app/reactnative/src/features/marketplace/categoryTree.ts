@@ -1,9 +1,7 @@
-// ── Marketplace category tree ────────────────────────────────────────────────
 // The API returns categories as a FLAT list (one row per category, parents and
 // children together, parents first). These helpers give the screens the two
 // shapes they actually render — the 12 mains, and one main's subcategories —
 // without every screen re-deriving the relationship and drifting on the answer.
-//
 // Ordering is the admin's `sortOrder`, then name. The server already sorts, but
 // sorting here too means a client that merges a cached page with a fresh one
 // cannot end up showing Vehicles after Agriculture.
@@ -44,7 +42,6 @@ export function subcategoriesOf(all: Category[] | undefined, parentId: string): 
 export function categoryIdsUnder(all: Category[] | undefined, rootId: string): string[] {
   const list = all ?? [];
   const out = [rootId];
-  // One level is all the taxonomy has today; the loop still handles deeper
   // nesting so adding a third level later does not silently drop listings.
   let frontier = [rootId];
   while (frontier.length > 0) {

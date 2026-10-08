@@ -1,7 +1,5 @@
-// ── Screen 3 — Results ───────────────────────────────────────────────────────
 // Scan + filter a candidate set fast. List/grid toggle, inline facet bar (price,
 // condition, verified-only, escrow-only), "Trusted first" default sort, map
-// toggle top-right, save-search bell. Skeleton grid while loading; zero-results
 // suggests loosening the tightest filter rather than dead-ending.
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ScrollView } from 'react-native';
@@ -9,10 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Map as MapIcon, LayoutGrid, List as ListIcon, Bell, SlidersHorizontal, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
 import type { SearchParams, SearchSort } from '@/features/marketplace';

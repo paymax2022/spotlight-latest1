@@ -1,4 +1,3 @@
-// ── Insurance (live) — one schema field, rendered ───────────────────────────
 // Every one of MyCover's 68 products has its own required-field schema, so no
 // screen may hardcode an input. This component is the whole vocabulary: give it
 // a `Field` and it draws the right control, with the provider's own constraints
@@ -10,10 +9,10 @@ import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, View }
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, FileUp, ImagePlus, Paperclip, Plus, Trash2, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import DatePickerField from '@/components/DatePickerField';
 import MultiSelectField from '@/components/MultiSelectField';
 import SelectField from '@/components/SelectField';
@@ -150,7 +149,6 @@ export default function DynamicField({
   }
 }
 
-// ── Text-family control (text / email / phone / number / money / nin / address)
 function TextControl({
   field,
   label,
@@ -188,7 +186,6 @@ function TextControl({
   );
 }
 
-// ── Select ──────────────────────────────────────────────────────────────────
 function SelectControl({
   field,
   label,
@@ -364,8 +361,6 @@ function FreeTextList({
   );
 }
 
-
-// ── Remote-option dropdowns ─────────────────────────────────────────────────
 /**
  * A dropdown whose options come from a lookup, including the dependent ones.
  *
@@ -478,7 +473,6 @@ function humanizeFieldName(name: string): string {
   return String(name).replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
 }
 
-// ── Nested object block ─────────────────────────────────────────────────────
 /**
  * A nested block of fields — `policy_holder` appears on roughly 65 of the 69
  * products. It is drawn as a titled card of its own children so a person can
@@ -519,7 +513,6 @@ function GroupControl({
   );
 }
 
-// ── Repeating group ─────────────────────────────────────────────────────────
 /**
  * A repeating group — `office_items[]`, `cargo_details[]`, `beneficiaries[]`.
  * 17 products carry one.
@@ -607,7 +600,6 @@ function singularLabel(label: string): string {
   return l;
 }
 
-// ── File / image upload ─────────────────────────────────────────────────────
 /**
  * File / photo field.
  *
@@ -799,7 +791,6 @@ function fileNameOf(uri: string): string {
   return clean.split('/').pop() || 'Attached file';
 }
 
-// ── Help text ───────────────────────────────────────────────────────────────
 /**
  * Below-field guidance. The schema's own `help` wins; otherwise we derive the
  * constraint from the rule the provider will enforce anyway, so a person is told
@@ -841,7 +832,6 @@ function derivedHelp(field: Field, value?: string): string | null {
   return null;
 }
 
-// ── Per-type input behaviour ────────────────────────────────────────────────
 function sanitizeFor(field: Field, raw: string): string {
   switch (field.type) {
     case 'money':

@@ -4,7 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Campaign supporting documents → Go /api/finance/crowdfunding/campaigns/:id/documents.
-//
 // The BYTES do not travel this way: they go to /api/crowdfunding/uploads/documents,
 // which proxies them to R2 and hands back a URL. This endpoint only records what
 // was uploaded, so a document is never half-attached — the object exists before

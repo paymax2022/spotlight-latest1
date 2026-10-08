@@ -1,13 +1,10 @@
-// ── Protection — review & confirm ────────────────────────────────────────────
 // The last screen before money moves. It shows the premium the INSURER returned
 // — never a number this app worked out — alongside the answers that produced it,
 // so a wrong date of birth or declared value is caught here rather than on a
 // certificate.
-//
 // Confirming calls POST /policies with the draft's idempotency key. That key was
 // minted once when the draft was created and is reused verbatim on every retry:
 // a fresh key on retry is how one policy becomes two charges.
-//
 // The result is decided by the POLICY that comes back, not by the payment step.
 // A purchase can fail at the insurer after the payment leg looks fine, so
 // "success" means we are holding a confirmed policy and nothing less.
@@ -20,10 +17,10 @@ import { Pencil, ShieldCheck } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   InsuranceErrorBanner,
   UnderwriterRow,

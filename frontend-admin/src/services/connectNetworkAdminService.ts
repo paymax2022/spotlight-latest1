@@ -1,9 +1,6 @@
-// ── Admin — Paymax Connect Phase 6 (Professional Network) control-plane ───────
 // Mock by default (mirrors connectAdminService). Flip with
-// NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK=false to hit the live Go backend at
 // /api/connect/admin/networking/*. Kept in its OWN file so the money/trust admin
 // service (connectAdminService.ts) stays lean.
-//
 // All money is integer minor units (kobo). PN-1: raw trust/strength numbers are
 // never emitted — only coarse TrustBand labels.
 
@@ -24,7 +21,6 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK);
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -36,10 +32,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 async function getJson<T>(path: string): Promise<T> {
@@ -61,9 +54,7 @@ const reviewOk = (id: string, action: ReviewAction): ReviewResult => ({
   reviewedAt: new Date().toISOString(),
 });
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-JB-01 — Job posting moderation
-// ════════════════════════════════════════════════════════════════════════════
 const JOBS: JobPosting[] = [
   { id: 'job_1', title: 'Senior Backend Engineer', companyName: 'Paystack', companyPageId: 'cp_1', location: 'Lagos (Hybrid)', employmentType: 'full_time', status: 'pending', aiReasonCodes: [], posterTrustBand: 'trusted', submittedAt: iso(2) },
   { id: 'job_2', title: 'Remote Growth Marketer — $$$ fast cash', companyName: 'QuickCash Ltd', companyPageId: 'cp_2', location: 'Remote', employmentType: 'contract', status: 'flagged', aiReasonCodes: ['UPFRONT_FEE', 'SCAM_PATTERN'], posterTrustBand: 'new', submittedAt: iso(4) },
@@ -79,9 +70,7 @@ export async function reviewJob(id: string, action: ReviewAction, reason?: strin
   return postJson<ReviewResult>(`/networking/jobs/${encodeURIComponent(id)}/review`, { action, reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-JB-02 — Referral bounty payout queue (review before ledger release)
-// ════════════════════════════════════════════════════════════════════════════
 const BOUNTIES: BountyPayout[] = [
   { id: 'bty_1', reference: 'RB-9001', referrerId: 'usr_a', referredId: 'usr_h', jobId: 'job_3', jobTitle: 'Product Designer', amountKobo: 50_000_00, state: 'bounty_payable', riskFlags: [], createdAt: iso(3) },
   { id: 'bty_2', reference: 'RB-9002', referrerId: 'usr_d', referredId: 'usr_i', jobId: 'job_1', jobTitle: 'Senior Backend Engineer', amountKobo: 75_000_00, state: 'bounty_payable', riskFlags: ['SAME_DEVICE', 'RAPID_HIRE'], createdAt: iso(6) },
@@ -97,9 +86,7 @@ export async function reviewBounty(id: string, action: ReviewAction, reason?: st
   return postJson<ReviewResult>(`/networking/bounties/${encodeURIComponent(id)}/review`, { action, reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-CN-01 — Content moderation queue (reported posts/comments)
-// ════════════════════════════════════════════════════════════════════════════
 const CONTENT: ContentReport[] = [
   { id: 'rep_1', contentType: 'post', contentId: 'post_a', postId: 'post_a', reason: 'Spam / repeated self-promotion', aiReasonCodes: ['SPAM', 'LINK_FARMING'], reporterId: 'usr_c', authorId: 'usr_d', status: 'open', createdAt: iso(1) },
   { id: 'rep_2', contentType: 'comment', contentId: 'cmt_b', postId: 'post_e', reason: 'Harassment in comment thread', aiReasonCodes: ['HARASSMENT'], reporterId: 'usr_a', authorId: 'usr_b', status: 'reviewing', createdAt: iso(5) },
@@ -116,9 +103,7 @@ export async function moderatePost(postId: string, action: ReviewAction, reason?
   return postJson<ReviewResult>(`/networking/posts/${encodeURIComponent(postId)}/moderation`, { action, reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-CP-01 — Company page claim review
-// ════════════════════════════════════════════════════════════════════════════
 const CLAIMS: CompanyPageClaim[] = [
   { id: 'clm_1', companyName: 'Paystack', companyPageId: 'cp_1', claimantId: 'usr_a', claimantHandle: '@ada_hr', evidenceRef: 'vault://claims/clm_1', domainVerified: true, status: 'claim_submitted', submittedAt: iso(2) },
   { id: 'clm_2', companyName: 'QuickCash Ltd', companyPageId: 'cp_2', claimantId: 'usr_d', claimantHandle: '@chidi_ng', evidenceRef: 'vault://claims/clm_2', domainVerified: false, status: 'under_review', submittedAt: iso(9) },
@@ -134,9 +119,7 @@ export async function reviewCompanyClaim(id: string, action: ReviewAction, reaso
   return postJson<ReviewResult>(`/networking/company-pages/${encodeURIComponent(id)}/review`, { action, reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-SA-01 — Question bank / assessment management (AssessmentReviewer)
-// ════════════════════════════════════════════════════════════════════════════
 const ASSESSMENTS: SkillAssessment[] = [
   { id: 'asm_1', domain: 'Software Engineering', title: 'Backend Fundamentals', version: 'v3', questionCount: 40, passThreshold: 70, status: 'published', updatedAt: iso(48) },
   { id: 'asm_2', domain: 'Product Design', title: 'UX Foundations', version: 'v2', questionCount: 35, passThreshold: 65, status: 'published', updatedAt: iso(120) },
@@ -163,9 +146,7 @@ export async function getAssessment(id: string): Promise<SkillAssessmentDetail> 
   return getJson<SkillAssessmentDetail>(`/networking/assessments/${encodeURIComponent(id)}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-MN-01 — Mentorship safety reports (connect.moderation.manage)
-// ════════════════════════════════════════════════════════════════════════════
 const MENTORSHIP: MentorshipReport[] = [
   { id: 'mnr_1', threadId: 'thr_1', mentorId: 'usr_d', menteeId: 'usr_h', reason: 'Requested off-platform payment', aiReasonCodes: ['FINANCIAL_SOLICITATION', 'OFF_PLATFORM_PRESSURE'], reporterRole: 'mentee', severity: 'critical', status: 'escalated', createdAt: iso(2) },
   { id: 'mnr_2', threadId: 'thr_2', mentorId: 'usr_a', menteeId: 'usr_i', reason: 'Inappropriate messages', aiReasonCodes: ['HARASSMENT'], reporterRole: 'mentee', severity: 'high', status: 'open', createdAt: iso(7) },
@@ -180,9 +161,7 @@ export async function reviewMentorshipReport(id: string, action: ReviewAction, r
   return postJson<ReviewResult>(`/networking/mentorship/reports/${encodeURIComponent(id)}/review`, { action, reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADM-GM-01 — Loyalty event audit (trace Paymax Black grants → Phase-6 source)
-// ════════════════════════════════════════════════════════════════════════════
 const LOYALTY_AUDIT: LoyaltyAuditEntry[] = [
   { id: 'la_1', module: 'connect', subjectId: 'usr_a', eventType: 'connect.event.attended', points: 50, sourceRef: 'networking_event:evt_18', grantedAt: iso(1) },
   { id: 'la_2', module: 'connect', subjectId: 'usr_c', eventType: 'connect.referral.bounty', points: 120, sourceRef: 'bounty:bty_3', grantedAt: iso(4) },

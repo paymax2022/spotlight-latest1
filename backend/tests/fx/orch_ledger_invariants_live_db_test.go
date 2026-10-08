@@ -1,12 +1,9 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB invariant suite for the ORCHESTRATION ledger (orch_ledger_entries).
-//
 // Guards the money-path iron rule from CLAUDE.md — "every money mutation MUST
 // post balanced double-entry ledger entries" — for every writer of
 // orch_ledger_entries, per ADR-029.
-//
 // The invariant under test is PER-CURRENCY balance: within any single currency,
 // SUM(DEBIT) must equal SUM(CREDIT). This is the assertion that the pre-ADR-029
 // code failed. ApplyConversion used to post exactly two legs — DEBIT
@@ -14,20 +11,16 @@ package fx_test
 // DEST currency — so each currency was single-sided: destination currency was
 // created from nothing and the source debit had no counter-leg. ApplyTransfer
 // was worse still: a lone DEBIT leg with no counter-leg at all.
-//
 // Note that a naive "SUM(all debits) == SUM(all credits)" check does NOT catch
 // this — the old two-leg conversion balanced by leg COUNT and would only look
 // unbalanced once the amounts differed, which they always do across an FX rate.
 // Currency must be part of the GROUP BY. TestOrchLedger_LegacyShapeIsRejected
 // pins that distinction so the invariant cannot be weakened back.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
-//
 // Bring-up: apply migrations incl. 20260621000000_fx_orchestration.sql, then:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run OrchLedger -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -113,10 +106,10 @@ func sumByAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cust, a
 func orchCleanup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cust string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_conversions WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_transfers WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_balances WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_conversions WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_transfers WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_balances WHERE customer_id=$1`, cust)
 	})
 }
 

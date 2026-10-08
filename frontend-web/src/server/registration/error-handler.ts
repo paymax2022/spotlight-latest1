@@ -16,7 +16,6 @@ export interface RegistrationErrorContext {
 export function handleRegistrationError(context: RegistrationErrorContext) {
   const { endpoint, applicationId, userId, stepKey, error } = context;
 
-  // Extract error details
   const errorMessage = error instanceof Error ? error.message : 'Unknown error';
   const errorStack = error instanceof Error ? error.stack : undefined;
 
@@ -30,7 +29,6 @@ export function handleRegistrationError(context: RegistrationErrorContext) {
     stack: errorStack,
   });
 
-  // Handle specific error types
   if (errorMessage === 'UNAUTHORIZED') {
     return errorResponse('Authentication required', 401);
   }
@@ -43,18 +41,23 @@ export function handleRegistrationError(context: RegistrationErrorContext) {
     return errorResponse('Forbidden', 403);
   }
 
-  if (
-    errorMessage.includes('Invalid application ID') ||
-    errorMessage.includes('Invalid JSON') ||
-    errorMessage.includes('Step key') ||
-    errorMessage.includes('values are required') ||
-    errorMessage.includes('required')
-  ) {
+  // Exact-match the input-guard strings the store deliberately throws — a
+  // substring match (e.g. includes('required')) could catch a PostgREST
+  // message like "null value … violates not-null constraint" and echo the
+  // raw Postgres text to the client.
+  const CLIENT_ERRORS = new Set([
+    'Invalid application ID',
+    'Step key is required',
+    'Invalid step key.',
+    'Values must be a non-empty object',
+  ]);
+  if (CLIENT_ERRORS.has(errorMessage)) {
     return errorResponse(errorMessage, 400);
   }
 
-  // Default to 500 for unexpected errors
-  return errorResponse(`Failed to process registration request: ${errorMessage}`, 500);
+  // Default to 500 for unexpected errors — fixed text only; errorMessage may
+  // carry PostgREST/fs internals and is already logged above.
+  return errorResponse('Failed to process registration request', 500);
 }
 
 export function validateApplicationId(id: unknown): id is string {

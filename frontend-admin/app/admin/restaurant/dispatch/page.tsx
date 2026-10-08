@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { listRiders, listDispatchQueue, assignRider, redispatchOrder } from '@/services/restaurantAdminService';
+import { listRiders, listDispatchQueue, assignRider, redispatchOrder, activateScheduledOrders } from '@/services/restaurantAdminService';
 import type { DispatchOrder, OrderDispatchStatus, Rider, RiderStatus } from '@/types/restaurantAdmin';
 import { naira, RESTAURANT_PERMS, useRestaurantPermissions, AccessNotice } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
@@ -108,6 +108,7 @@ export default function RiderDispatchPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [activating, setActivating] = useState(false);
   const [assignFor, setAssignFor] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -166,21 +167,17 @@ export default function RiderDispatchPage() {
     return () => clearInterval(t);
   }, [load]);
   // What "needs attention" means on THIS board.
-  //
   // It filtered on `no_rider` (a status orders.status cannot hold), then on
   // `dispatch_failed`. Both read 0 forever, for different reasons: the first is
   // not a real status, and the second IS real but terminal — the queue
   // deliberately excludes closed orders, because an order whose sourcing already
   // gave up needs a refund or a dispute, not a courier. Those used to make up
   // 183 of the board's 345 rows and buried the orders still worth acting on.
-  //
   // The actionable state is an order still SEARCHING past the threshold: auto-
   // dispatch is running and getting nowhere, so a human offering it to a
   // specific rider is the intervention that helps.
-  //
   // Both the count and the threshold come from the SERVER. Counting the rendered
   // array would mean "stalled among the 25 on this page", and hardcoding the
-  // threshold would let the console and the backend disagree about what stalled
   // means.
 
   // Riders this operator can actually hand a job to, out of the roster page in
@@ -230,12 +227,45 @@ export default function RiderDispatchPage() {
     );
   }
 
+  async function onActivateScheduled() {
+    setActivating(true);
+    try {
+      const { activated } = await activateScheduledOrders();
+      setMessage(
+        activated > 0
+          ? `Released ${activated} scheduled order${activated === 1 ? '' : 's'} into the queue.`
+          : 'No scheduled orders were due.',
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not activate scheduled orders');
+    } finally {
+      setActivating(false);
+    }
+  }
+
   return (
     <Page>
       <PageHeader
         title="Rider Dispatch Board"
         subtitle="Assign and track riders against the live delivery queue. Board auto-refreshes every 15s."
-        actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
+        actions={
+          <div style={{ display: 'flex', gap: 8 }}>
+            {/* Releases scheduled orders whose window has arrived into the normal
+                pipeline. Lives here because what it actually does is push orders
+                into rider sourcing — the same queue this board works. Idempotent:
+                an already-activated order is skipped, so it is safe to re-press. */}
+            <Button
+              variant="outline"
+              disabled={activating}
+              title="Release scheduled orders whose time has come into the dispatch queue"
+              onClick={() => void onActivateScheduled()}
+            >
+              {activating ? 'Activating…' : 'Activate scheduled'}
+            </Button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
+          </div>
+        }
       />
 
       {error && <p style={{ color: colors.danger }}>{error}</p>}

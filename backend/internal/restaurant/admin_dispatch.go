@@ -2,23 +2,20 @@ package restaurant
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Paged dispatch-board reads: the rider roster and the courier queue.
-//
 // Both were unbounded — SELECT everything, ORDER BY, hand the console the lot —
 // the last two reads in this module still shaped that way. `orders` and
 // `drivers` are the two tables here that grow with traffic rather than with the
 // merchant estate, so these are the ones that eventually hurt.
-//
 // Filtering moves server-side WITH the page, for the same reason it did on
 // discovery: a board that pages 25 rows and then filters them locally shows
 // "3 stalled" when the truth is 3 among the 25 it happens to be holding.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const (
 	defaultDispatchLimit = 25
@@ -29,7 +26,6 @@ const (
 	// minutes of searching is normal operation, not a problem; past this the
 	// rounds should have found someone and a human offering it to a specific
 	// rider is the intervention that helps.
-	//
 	// Served to the client in the page response so the console renders the
 	// SERVER's threshold instead of keeping its own copy to drift out of sync.
 	StalledAfterMinutes = 10
@@ -39,20 +35,13 @@ const (
 var riderStatuses = []string{"available", "on_delivery", "offline", "suspended"}
 
 func isKnownRiderStatus(s string) bool {
-	for _, v := range riderStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(riderStatuses, s)
 }
 
 // riderStatusSQL is mapRiderStatus expressed as SQL (ADR-050).
-//
 // It has to exist in SQL, not just in Go: the roster now filters, counts and
 // pages on status, and a status computed after the rows come back cannot do any
 // of those — you would be paging one population and filtering another.
-//
 // `act.id` is the rider's current non-terminal order (see the LATERAL join).
 // TestRiderStatusSQLMatchesGo pins this against mapRiderStatus for every
 // combination, so the two cannot drift the way the terminal-status set did.
@@ -69,12 +58,10 @@ const riderStatusSQL = `CASE
 // SQL because the `stalled` filter and its count need it BEFORE the page is cut.
 const waitingMinutesSQL = `GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(o.ready_at, o.created_at))) / 60))::int`
 
-// ── Rider roster ─────────────────────────────────────────────────────────────
-
 // AdminRiderParams filters the roster. The zero value returns the most recently
 // seen page of every rider.
 type AdminRiderParams struct {
-	Status  string // available|on_delivery|offline|suspended; "" = any
+	Status  string
 	Query   string // name or phone
 	Vehicle string // bike|car|foot
 	Sort    string // recent (default) | name | rating
@@ -268,18 +255,11 @@ func (s *Service) riderRoster(ctx context.Context, p AdminRiderParams, withCateg
 	}, nil
 }
 
-// ── Dispatch queue ───────────────────────────────────────────────────────────
-
 // dispatchStatuses mirrors the orders_dispatch_status_check CHECK constraint.
 var dispatchStatuses = []string{"none", "searching", "assigned", "delivered"}
 
 func isKnownDispatchStatus(s string) bool {
-	for _, v := range dispatchStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(dispatchStatuses, s)
 }
 
 // ValidateDispatchStatus reports whether a caller-supplied dispatch status is real.
@@ -290,7 +270,7 @@ func ValidateDispatchStatus(s string) bool {
 
 // AdminDispatchParams filters the queue.
 type AdminDispatchParams struct {
-	Dispatch     string // dispatch_status; "" = any
+	Dispatch     string
 	Query        string // order id prefix, restaurant name, delivery address
 	RestaurantID string
 	StalledOnly  bool   // searching, and waiting past StalledAfterMinutes
@@ -339,7 +319,6 @@ type AdminDispatchPage struct {
 
 // dispatchQueueFrom is the queue's population: OPEN orders that are awaiting or
 // undergoing courier dispatch.
-//
 // The terminal exclusion is the shared set. It used to be a hardcoded
 // ('delivered','cancelled') — written before the lifecycle gained rejected,
 // dispatch_failed and delivery_failed — so a CLOSED order that had been

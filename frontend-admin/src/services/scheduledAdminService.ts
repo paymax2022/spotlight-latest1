@@ -1,8 +1,6 @@
-// ── Admin — Paymax Transport Scheduled Bookings service ─────────────────────
 // Mock-backed (Go backend admin endpoints confirmed live per
 // SWARM_INTEGRATION_CONTRACT but this frontend ships mock-first, matching the
 // house pattern in mobilityAdminService.ts / mobilityModesAdminService.ts).
-// Flip NEXT_PUBLIC_SCHEDULED_ADMIN_USE_MOCK=false to hit the real Go backend:
 // GET  /api/finance/admin/transport/scheduled
 // GET  /api/finance/admin/transport/scheduled/:id
 // POST /api/finance/admin/transport/scheduled/:id/force-dispatch  { reason_code }
@@ -27,8 +25,6 @@ const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SCHEDULED_ADMIN_USE_MOCK
 // ops nested at /scheduled per SWARM_INTEGRATION_CONTRACT — so the caller must
 // spell the full path out. apiRoot() strips any trailing /api/v1 from the proxy
 // base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport') + '/scheduled'`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy
 // path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
 // for the same regression. Every request 404'd against <proxy>/scheduled instead
@@ -38,10 +34,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
@@ -50,8 +43,6 @@ function requireReasonCode(reasonCode: string, action: string): string {
   if (!trimmed) throw new Error(`reason_code is required to ${action}.`);
   return trimmed;
 }
-
-// ─── Mock dataset ─────────────────────────────────────────────────────────────
 
 let BOOKINGS: ScheduledBookingDetail[] = [
   {
@@ -224,7 +215,6 @@ function sortOpsBoard(rows: ScheduledBookingRow[]): ScheduledBookingRow[] {
   });
 }
 
-// ─── Ops board ────────────────────────────────────────────────────────────────
 export async function getScheduledBookings(filter: ScheduledFilter): Promise<ScheduledBookingRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -247,7 +237,6 @@ export async function getScheduledBookings(filter: ScheduledFilter): Promise<Sch
   return sortOpsBoard(data);
 }
 
-// ─── Detail ───────────────────────────────────────────────────────────────────
 export async function getScheduledBooking(id: string): Promise<ScheduledBookingDetail> {
   if (USE_MOCK) {
     await delay();
@@ -260,7 +249,6 @@ export async function getScheduledBooking(id: string): Promise<ScheduledBookingD
   return res.json();
 }
 
-// ─── Mutations — reason_code is MANDATORY on every one (defense-in-depth: ─────
 // throws client-side even if the modal's disabled-submit guard is bypassed).
 export async function forceDispatchScheduled(id: string, payload: ScheduledReasonPayload): Promise<ScheduledBookingDetail> {
   const reasonCode = requireReasonCode(payload.reasonCode, 'force-dispatch a scheduled booking');

@@ -1,10 +1,7 @@
-// ── When to show the standing "Recent addresses" chips ───────────────────────
-//
 // Saved addresses used to be reachable only by focusing an EMPTY address field,
 // which surfaced them as a dropdown. That is invisible unless you already know
 // it is there, and re-picking a place you have delivered to before is the common
 // case — so the chips are a standing affordance under the input instead.
-//
 // Split out of the component (and kept dependency-free) because the interesting
 // part is this predicate, not the markup: it is what decides whether the same
 // list appears twice on screen, or lingers after the user has already chosen.

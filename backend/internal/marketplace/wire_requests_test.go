@@ -14,7 +14,6 @@ import (
 // the app calls `listingId` leaves as `listing_id`. Handlers here previously
 // read the camelCase spellings, which no request could ever carry: offers bound
 // an empty listing and a zero price, and the negotiation-history GET 400'd.
-//
 // Assert on the decoded values, not on the tags, so this fails if anyone
 // reintroduces camelCase request fields.
 
@@ -140,7 +139,7 @@ func TestListingIDQuery_ReadsClientWireName(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodGet, "/offers?"+tc.query, nil)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/offers?"+tc.query, nil)
 			if got := listingIDQuery(c); got != tc.want {
 				t.Errorf("listingIDQuery() = %q, want %q", got, tc.want)
 			}

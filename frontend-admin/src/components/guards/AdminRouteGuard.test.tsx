@@ -7,7 +7,6 @@ import { render, screen } from '@testing-library/react';
 // localStorage rather than from a live session, so the login screen showed the
 // previous operator's email, the whole navigation tree and a Log out button to
 // a signed-out visitor.
-//
 // AdminShell is mocked: what is under test is which shell the guard picks, not
 // what the sidebar renders inside it.
 
@@ -26,7 +25,7 @@ vi.mock('@/components/layouts/AdminShell', () => ({
 }));
 
 const syncAdminSession = vi.fn();
-vi.mock('@/features/auth/adminSession', () => ({
+vi.mock('@/features/auth/adminAuth', () => ({
   syncAdminSession: () => syncAdminSession(),
   startAdminSessionSync: () => () => {},
 }));

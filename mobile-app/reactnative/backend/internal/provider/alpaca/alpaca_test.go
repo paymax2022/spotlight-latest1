@@ -50,7 +50,6 @@ func TestPlace_Success(t *testing.T) {
 	if gotPath != "/v1/trading/accounts/acct-123/orders" {
 		t.Errorf("path = %q, want /v1/trading/accounts/acct-123/orders", gotPath)
 	}
-	// Basic base64("test-key-id:test-secret").
 	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("test-key-id:test-secret"))
 	if gotAuth != wantAuth {
 		t.Errorf("Authorization = %q, want %q", gotAuth, wantAuth)

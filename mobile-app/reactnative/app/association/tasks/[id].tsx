@@ -3,18 +3,18 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { CheckSquare, Square, CalendarClock, Users, User, ScrollText, MessageSquare } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useTask, useUpdateTaskStatus } from '@/features/association/hooks/useEngagement';
-import { dueLabel, relativeTime } from '@/features/association/utils/associationFormatters';
-import { TASK_STATUS_STYLE, TASK_PRIORITY_STYLE } from '@/features/association/constants/engagement.constants';
-import type { TaskStatus } from '@/features/association/types/engagement.types';
+import { useTask, useUpdateTaskStatus } from '@/features/association/hooks';
+import { dueLabel, relativeTime } from '@/features/association/utils';
+import { TASK_STATUS_STYLE, TASK_PRIORITY_STYLE } from '@/features/association/constants';
+import type { TaskStatus } from '@/features/association/types';
 
 // Next status in the simple member-side progression.
 const NEXT_STATUS: Partial<Record<TaskStatus, { to: TaskStatus; label: string }>> = {

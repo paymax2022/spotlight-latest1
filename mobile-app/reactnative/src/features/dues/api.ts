@@ -1,7 +1,7 @@
 // Estate Dues / Payments (Block 29) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 
 export type DuesCategory = 'service_charge' | 'security_levy' | 'waste' | 'water' | 'electricity' | 'rent' | 'facility' | 'penalty' | 'other';

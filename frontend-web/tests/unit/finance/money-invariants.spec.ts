@@ -11,9 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHmac } from 'node:crypto';
 
-// ---------------------------------------------------------------------------
 // 1. Kobo is always an integer; naira<->kobo round-trips losslessly.
-// ---------------------------------------------------------------------------
 describe('kobo integer invariant', () => {
   const nairaToKobo = (naira: number): number => Math.round(naira * 100);
 
@@ -42,12 +40,9 @@ describe('kobo integer invariant', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 2. Payment-amount mismatch must be compared in KOBO (exact), not naira floats.
 //    This is the kobo-correct version of free-vote.spec.ts test #4, which uses
-//    `Math.abs(amountPaidNgn - amountExpected) > 1` on naira floats — a float
 //    money comparison that violates the iron rule. See DRIFT note below.
-// ---------------------------------------------------------------------------
 describe('payment amount verification (kobo-exact)', () => {
   const isMismatch = (expectedKobo: number, paidKobo: number): boolean =>
     expectedKobo !== paidKobo;
@@ -68,9 +63,7 @@ describe('payment amount verification (kobo-exact)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 3. Idempotency-Key presence is mandatory on money mutations.
-// ---------------------------------------------------------------------------
 describe('idempotency key requirement', () => {
   const requireIdempotencyKey = (headers: Record<string, string>): boolean => {
     const k = headers['idempotency-key'] ?? headers['Idempotency-Key'];
@@ -90,9 +83,7 @@ describe('idempotency key requirement', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 4. Paystack webhook HMAC-SHA512 verification (constant-time-style equality).
-// ---------------------------------------------------------------------------
 describe('paystack webhook signature (HMAC-SHA512)', () => {
   const sign = (secret: string, payload: string) =>
     createHmac('sha512', secret).update(payload).digest('hex');
@@ -116,15 +107,11 @@ describe('paystack webhook signature (HMAC-SHA512)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // DRIFT (documented, owner: voting/payments): tests/unit/voting/free-vote.spec.ts
 // "Payment amount mismatch logic" compares naira FLOATS with a ±₦1 tolerance:
-//     Math.abs(amountPaidNgn - amountExpected) > 1
 // On the money path this is unsafe — a 50-kobo underpayment passes, and float
 // subtraction is not exact. The mismatch check should be kobo-integer equality
-// (see test group 2 above). Tracked here; do not weaken the voting test, replace
 // its float comparison with a kobo-exact one when that module is next touched.
-// ---------------------------------------------------------------------------
 describe.skip('TODO(voting/payments): migrate paid-vote mismatch to kobo-exact', () => {
   it('placeholder — see DRIFT note in money-invariants.spec.ts', () => {
     expect(true).toBe(true);

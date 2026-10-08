@@ -2,7 +2,6 @@
 // placement quiz. It composes the curriculum tables (class → core subjects) with
 // the assessment question bank (academy_question_items, status='approved') and
 // produces a per-subject placement snapshot for the learner's selected class.
-//
 // No new tables — it reads the existing curriculum + question bank. The quiz it
 // returns never includes the answer key; scoring happens server-side.
 package placement
@@ -132,8 +131,8 @@ func (s *Service) Score(ctx context.Context, userID, classCode string, answers [
 	}
 
 	type agg struct {
-		name             string
-		correct, total   int
+		name           string
+		correct, total int
 	}
 	bySubject := map[string]*agg{}
 

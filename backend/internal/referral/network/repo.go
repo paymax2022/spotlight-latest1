@@ -2,10 +2,13 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the parameterized data layer for network/override tables. It also
@@ -44,7 +47,7 @@ func scanAmbassador(row pgx.Row) (*Ambassador, error) {
 func (r *Repository) GetAmbassadorByUser(ctx context.Context, userID string) (*Ambassador, error) {
 	q := `SELECT ` + ambCols + ` FROM referral_ambassadors WHERE user_id = $1`
 	a, err := scanAmbassador(r.db.QueryRow(ctx, q, userID))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -79,12 +82,12 @@ func (r *Repository) SetAmbassadorStatus(ctx context.Context, ambID, status, app
 		    approved_at = CASE WHEN $2 = 'approved' THEN now() ELSE approved_at END,
 		    updated_at = now()
 		WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, ambID, status, nullable(approvedBy))
+	tag, err := r.db.Exec(ctx, q, ambID, status, dbutil.NullStr(approvedBy))
 	if err != nil {
 		return fmt.Errorf("network: set ambassador status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("network: ambassador not found")
+		return errors.New("network: ambassador not found")
 	}
 	return nil
 }
@@ -177,7 +180,7 @@ func (r *Repository) GetMember(ctx context.Context, networkID, memberUserID stri
 	var m Member
 	err := r.db.QueryRow(ctx, q, networkID, memberUserID).Scan(
 		&m.ID, &m.NetworkID, &m.MemberUserID, &m.IsHouseAttributed, &m.Status, &m.JoinedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -194,7 +197,7 @@ func (r *Repository) IsHouseAttributed(ctx context.Context, userID string) (bool
 	const q = `SELECT is_house FROM referral_attributions WHERE referred_user_id = $1`
 	var isHouse bool
 	err := r.db.QueryRow(ctx, q, userID).Scan(&isHouse)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return true, nil // no attribution → exclude (fail closed)
 	}
 	if err != nil {
@@ -251,10 +254,10 @@ func (r *Repository) RecordOverride(ctx context.Context, o Override, idemKey str
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q,
-		o.BeneficiaryID, nullable(o.NetworkID), nullable(o.SourceUserID), nullable(o.CampaignID),
+		o.BeneficiaryID, dbutil.NullStr(o.NetworkID), dbutil.NullStr(o.SourceUserID), dbutil.NullStr(o.CampaignID),
 		o.ActivityBaseKobo, o.OverrideBps, o.AmountKobo, o.CapAppliedKobo,
-		nullable(o.RewardLedgerID), idemKey).Scan(&id)
-	if err == pgx.ErrNoRows {
+		dbutil.NullStr(o.RewardLedgerID), idemKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		var existing string
 		if e := r.db.QueryRow(ctx, `SELECT id FROM referral_overrides WHERE idempotency_key = $1`, idemKey).Scan(&existing); e != nil {
 			return "", false, fmt.Errorf("network: record override (dup lookup): %w", e)
@@ -270,7 +273,7 @@ func (r *Repository) RecordOverride(ctx context.Context, o Override, idemKey str
 // SetOverrideLedgerID backfills the reward-ledger id after RB0 accrual.
 func (r *Repository) SetOverrideLedgerID(ctx context.Context, overrideID, ledgerID string) error {
 	_, err := r.db.Exec(ctx,
-		`UPDATE referral_overrides SET reward_ledger_id = $2 WHERE id = $1`, overrideID, nullable(ledgerID))
+		`UPDATE referral_overrides SET reward_ledger_id = $2 WHERE id = $1`, overrideID, dbutil.NullStr(ledgerID))
 	if err != nil {
 		return fmt.Errorf("network: set override ledger id: %w", err)
 	}
@@ -326,7 +329,7 @@ func (r *Repository) GetPolicy(ctx context.Context, tier string) (*OverridePolic
 	var p OverridePolicy
 	err := r.db.QueryRow(ctx, q, tier).Scan(
 		&p.ID, &p.Tier, &p.OverrideBps, &p.PerMemberCapKobo, &p.MonthlyCapKobo, &p.IsActive)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -375,18 +378,12 @@ func (r *Repository) UpsertPolicy(ctx context.Context, in PolicyInput) (*Overrid
 	return &p, nil
 }
 
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 // NetworkSummary is a network with its member count, for the admin directory.
 // The count comes from the same members table the override base draws on, so
 // what an admin sees matches what actually accrues.
 type NetworkSummary struct {
 	Network
+
 	MemberCount int `json:"member_count"`
 	// HouseAttributedCount members are excluded from override chains (§7A.2);
 	// surfacing it lets an admin see how much of a network cannot pay overrides.

@@ -1,4 +1,3 @@
-// ── Doctor — Batch 2 · Section H · chat consultation hooks ─────────────────────
 // Rich chat (voice notes, attachments, image annotation, shared rx/lab/summary,
 // escalation, presence, transcript, report, end-chat). Reads use the DEMO_*
 // exports as placeholderData; mutations auto-generate the Idempotency-Key.
@@ -31,8 +30,6 @@ import type {
   ReportMessageInput,
   EndChatInput,
 } from '@/types/doctor.batch2';
-
-// ─── Reads ───────────────────────────────────────────────────────────────────
 
 export function useRichMessages(threadId: string) {
   return useQuery({
@@ -71,8 +68,6 @@ export function useChatTranscript(threadId: string) {
     staleTime: 30_000,
   });
 }
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useSendVoiceNote() {
   const qc = useQueryClient();

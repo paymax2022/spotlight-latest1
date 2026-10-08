@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Sparkles, AlertTriangle, FileText, BarChart3, Stethoscope, RotateCcw, Share2, History, Flag, X, ChevronRight, Download, CalendarPlus, UserPlus } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, ResultValueRow, BarRow } from '@/features/doctor/components';
@@ -22,7 +22,6 @@ import {
 } from '@/features/doctor/hooks';
 import { RESULT_AUDIT_ACTION_LABELS, SUSPICIOUS_RESULT_REASONS } from '@/features/doctor/constants';
 
-// ── Section N — Lab result review (rich) ──────────────────────────────────────
 // EXTENDS the Phase 1 result screen: ResultValueRow with abnormal/critical flags
 // + reference ranges, critical alert, PDF report ref, compare-with-previous via
 // BarRow, doctor interpretation + recommendation sheet, request repeat/additional

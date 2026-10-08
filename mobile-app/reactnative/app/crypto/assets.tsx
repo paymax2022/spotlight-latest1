@@ -2,14 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import AssetRow from '@/features/crypto/components/AssetRow';
+import { AssetRow } from '@/features/crypto/components';
 import { useAssets } from '@/features/crypto/hooks/useCrypto';
 
 type Filter = 'all' | 'coins' | 'stablecoins' | 'gainers';

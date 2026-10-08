@@ -22,7 +22,10 @@ func TestParseSearchFallback_ReadsMarketID(t *testing.T) {
 // the defect itself, so the parse fails closed onto one market rather than open onto
 // all of them.
 func TestParseSearchFallback_DefaultsMarketWhenAbsent(t *testing.T) {
-	for _, tc := range []struct{ name string; req map[string]any }{
+	for _, tc := range []struct {
+		name string
+		req  map[string]any
+	}{
 		{"key absent", map[string]any{"q": "corolla"}},
 		{"key empty", map[string]any{"market_id": ""}},
 		{"nil map", nil},

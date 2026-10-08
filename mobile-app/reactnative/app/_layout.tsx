@@ -16,7 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ToastHost from '@/components/ToastHost';
 import ConfirmHost from '@/components/ConfirmHost';
 import HomeMenuHost from '@/components/HomeMenu';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
 import { getPinStatus } from '@/features/transfers/api';
 import { requiresTransactionPin } from '@/features/security/moneyRoutes';
@@ -24,6 +24,7 @@ import { rememberResume, toParamMap } from '@/lib/resume';
 import { useBrandFonts } from '@/lib/brandFonts';
 import { createSupabaseClient } from '@/lib/supabase';
 import { usePushNotifications } from '@/lib/push';
+import { resetUserScopedState } from '@/lib/resetUserScopedState';
 import { useVisitorPushBridge } from '@/features/visitor/hooks/useVisitorPushBridge';
 import { useElectionPushBridge } from '@/features/election/hooks/useElectionPushBridge';
 import * as Sentry from '@sentry/react-native';
@@ -44,14 +45,11 @@ Sentry.init({
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // A DEAD SESSION IS HANDLED ONCE, HERE, FOR EVERY SCREEN.
-//
 // 726 screens render the same generic "Couldn't load. Please try again." with a
 // Retry button. When the cause is an expired session that button cannot work —
 // it resends the same dead token — so the user is offered the one action
 // guaranteed to fail and never told the real remedy. Fixing that screen by
-// screen would be 726 edits; the query client sees every one of those failures
 // already.
-//
 // promptSignIn is throttled, so the several queries a screen fires in parallel
 // produce ONE navigation rather than a router.replace storm — a crash this file
 // has met before (see the "Maximum update depth exceeded" note below).
@@ -87,7 +85,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     queryFn: fetchModuleVisibility,
     staleTime: 60_000,
   });
-  // useGlobalSearchParams() returns a NEW object every render; keeping it in the
   // gate effect's deps made the effect re-run on every render and storm router.replace
   // during redirects ("Maximum update depth exceeded"). It's only needed to snapshot
   // the resume target, so hold it in a ref and keep it OUT of the dependency array.
@@ -128,7 +125,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   // session's data. The redirect to login is handled by the effect below.
   const wasSignedIn = useRef(false);
   useEffect(() => {
-    if (wasSignedIn.current && !signedIn) queryClient.clear();
+    if (wasSignedIn.current && !signedIn) {
+      queryClient.clear();
+      void resetUserScopedState();
+    }
     wasSignedIn.current = signedIn;
   }, [signedIn]);
 
@@ -143,7 +143,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (!user && !inAuth) {
       // Pass the current route so login can return the user here after success.
-      //
       // COLD BOOT loses this if we rely on segments alone. Deep-linking to
       // /properties while signed out runs this gate before the router has
       // populated segments, so isModuleRoute is false, the else branch fires and
@@ -167,7 +166,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     // Transaction-PIN block: send a PIN-less user to the set-PIN screen when —
     // and only when — they are heading somewhere money moves.
-    //
     // This used to fire on EVERY route, so a signed-in user could not read their
     // contest application, an announcement or a lab result without first
     // creating a payment credential they had no immediate use for. Enforcement
@@ -184,11 +182,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized, user, segments, router, pinMissing, pathname]);
 
-  // ── Module guard (deep links) ──────────────────────────────────────────────
-  // Gating the module lists stops a module being DISCOVERED; this stops it being
   // REACHED by a saved link, a push notification or a typed URL. One guard here
   // covers every route via the segment map, rather than 36 per-screen checks.
-  //
   // Runs AFTER the auth guard above and skips the auth stack, so the two never
   // fight over navigation. Fails OPEN: while the registry is loading, or if it
   // could not be read, nothing is redirected — the same reasoning as the render

@@ -1,6 +1,5 @@
 // Paymax Connect — Messaging API (PRD §10.5 MS-*).
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/messaging/...`.
-//
 // SAFETY:
 //  §4 sendMessage REJECTS Date-mode threads whose gate !== 'matched'.
 //  §7 reportUser / blockUser ALWAYS resolve with a caseId — never fail silently.
@@ -27,7 +26,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 
 const AV = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=200&q=60`;
 
-// ── Mock inbox ───────────────────────────────────────────────────────────────
 const MOCK_THREADS: InboxThread[] = [
   { id: 'thread_p1', peerId: 'p1', peerName: 'Zainab', peerAvatar: AV('photo-1494790108377-be9c29b29330'), mode: 'date', gate: 'matched', lastMessage: 'That gallery in Ikoyi was unreal 😍', lastAt: new Date(Date.now() - 1800000).toISOString(), unread: 2, peerVerified: true, peerOnline: true },
   { id: 'thread_n3', peerId: 'n3', peerName: 'Aisha Bello', peerAvatar: AV('photo-1573164713988-8665fc963095'), mode: 'network', gate: 'matched', lastMessage: 'Happy to review your roadmap this week.', lastAt: new Date(Date.now() - 7200000).toISOString(), unread: 0, peerVerified: true, peerOnline: false },
@@ -51,7 +49,6 @@ const MOCK_MESSAGES: Record<string, Message[]> = {
   ],
 };
 
-// ── Inbox (MS-01) ────────────────────────────────────────────────────────────
 export async function getInbox(): Promise<InboxThread[]> {
   if (USE_MOCK) {
     await delay();
@@ -61,7 +58,6 @@ export async function getInbox(): Promise<InboxThread[]> {
   return unwrap<InboxThread[]>(res);
 }
 
-// ── Thread (MS-02) ───────────────────────────────────────────────────────────
 export async function getThread(threadId: string): Promise<ThreadDetail> {
   if (USE_MOCK) {
     await delay(200);
@@ -113,7 +109,6 @@ export async function sendMessage(
   return unwrap<Message>(res);
 }
 
-// ── Requests (MS-03) ─────────────────────────────────────────────────────────
 const MOCK_REQUESTS: ConnectionRequest[] = [
   { id: 'rq1', fromId: 'n2', fromName: 'David Mensah', fromAvatar: AV('photo-1519085360753-af0119f7cbe7'), mode: 'network', kind: 'connect', note: "Loved your talk on payments infra — would value your perspective as we scale AgriPay.", createdAt: new Date(Date.now() - 3600000).toISOString(), mutualConnections: 3, verified: true },
   { id: 'rq2', fromId: 'p4', fromName: 'Kelechi', fromAvatar: AV('photo-1463453091185-61582044d556'), mode: 'date', kind: 'message', note: undefined, createdAt: new Date(Date.now() - 12 * 3600000).toISOString(), verified: true },
@@ -138,7 +133,6 @@ export async function respondToRequest(requestId: string, accept: boolean): Prom
   return unwrap<{ ok: true; threadId?: string }>(res);
 }
 
-// ── Icebreakers (MS-04) ──────────────────────────────────────────────────────
 export const ICEBREAKERS: Icebreaker[] = [
   { id: 'ib1', text: 'If you could redesign one everyday app, which one?' },
   { id: 'ib2', text: "What's the best meal you've had in the last month?" },
@@ -209,7 +203,6 @@ export async function unmatch(threadId: string, peerId: string): Promise<SafetyC
   return unwrap<SafetyCaseResult>(res);
 }
 
-// ── Calls (MS-08 / MS-09) ────────────────────────────────────────────────────
 export async function startCall(threadId: string, peerName: string, kind: CallKind, peerAvatar?: string): Promise<CallSession> {
   if (USE_MOCK) {
     await delay(220);

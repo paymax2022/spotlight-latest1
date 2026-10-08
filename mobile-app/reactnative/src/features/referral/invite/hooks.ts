@@ -1,4 +1,3 @@
-// ── Referral Invite & Share React Query hooks (v5) ───────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as inviteApi from './api';

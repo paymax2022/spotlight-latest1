@@ -1,9 +1,6 @@
-// ── Admin — P2P Marketplace ops console ──────────────────────────────────────
-// Mock by default. Flip with NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK=false to hit the
 // live Go backend. NOTE: the p2pmarket admin surface is THIN — the only admin route
 // is POST /api/p2p/admin/p2p/orders/:orderId/arbitrate (RBAC p2p.dispute.arbitrate).
 // Listings + orders are read from member endpoints under /api/finance/p2p/*.
-// Escrow holds funds and never lends (NL-6); arbitration enforces separation of
 // duties (the arbiter must differ from the release approver) and is audited (NL-12).
 // Money is BIGINT kobo (minor units) throughout.
 
@@ -15,44 +12,32 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_P2PMARKET_ADMIN_U
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK';
 
-// Admin (arbitration) lives at /api/p2p/admin/* — confirmed against
-// backend/internal/app/finance_routes.go:
-//   RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), ...)
-// and backend/internal/p2pmarket/handler.go's Register doc comment
-// ("admin : /api/p2p/admin/*"). apiRoot() strips any trailing /api/v1 from the
-// proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin')`,
-// which stopped matching once apiBaseUrl became the same-origin proxy path
-// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
-// every admin call 404'd against <proxy>/p2p/orders/... instead of
-// <proxy>/api/p2p/admin/p2p/orders/....
-function adminBase(): string {
-  return `${apiRoot()}/api/p2p/admin`;
-}
-// Listings + orders are read from the member group at /api/finance/p2p/*
-// (finance := r.Group("/api/finance"); RegisterP2PMarket(finance.Group("/p2p"), ...)).
-// Same historical regex bug as adminBase() above.
-function memberBase(): string {
-  return `${apiRoot()}/api/finance/p2p`;
-}
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Listings + orders are read from the member group at /api/finance/p2p/*
+// (finance := r.Group("/api/finance"); RegisterP2PMarket(finance.Group("/p2p"), ...)).
+// Same historical regex bug as the admin base above.
 async function getMember<T>(path: string): Promise<T> {
-  const res = await fetch(`${memberBase()}${path}`, { headers: authHeaders() });
+  const res = await fetch(`${apiRoot()}/api/finance/p2p${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
+// Admin (arbitration) lives at /api/p2p/admin/* — confirmed against
+// backend/internal/app/finance_routes.go:
+// and backend/internal/p2pmarket/handler.go's Register doc comment
+// ("admin : /api/p2p/admin/*"). apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
+// every admin call 404'd against <proxy>/p2p/orders/... instead of
+// <proxy>/api/p2p/admin/p2p/orders/....
 async function sendAdmin<T>(method: 'POST', path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, {
+  const res = await fetch(`${apiRoot()}/api/p2p/admin${path}`, {
     method,
     headers: { ...authHeaders(), 'Idempotency-Key': operationKey(method, path) },
     body: JSON.stringify(body),
@@ -69,7 +54,6 @@ export function formatNaira(kobo: number): string {
 
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
-// ── Types ────────────────────────────────────────────────────────────────────
 export interface P2PMarketDashboard {
   listings_total: number;
   listings_open: number;
@@ -117,7 +101,6 @@ export interface DisputeRecord {
 export type ArbitrationDecision = 'RELEASE' | 'REFUND';
 export interface ArbitrationResult { order_id: string; decision: ArbitrationDecision; audit_id: string; message: string; }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 const DASHBOARD: P2PMarketDashboard = {
   listings_total: 3_410,
   listings_open: 2_180,
@@ -139,7 +122,6 @@ export async function getP2PMarketDashboard(): Promise<P2PMarketDashboard> {
   return getMember<P2PMarketDashboard>('/admin/dashboard');
 }
 
-// ── Listings ─────────────────────────────────────────────────────────────────
 const LISTINGS: ListingRecord[] = [
   { id: 'lst_9001', title: 'iPhone 13 Pro 256GB', seller_masked: 'Seun K•••', price_kobo: 420_000_00, status: 'open', seller_rating: 4.7, created_at: iso(20) },
   { id: 'lst_8990', title: 'PS5 Disc Edition', seller_masked: 'Dapo F•••', price_kobo: 510_000_00, status: 'open', seller_rating: 4.2, created_at: iso(40) },
@@ -156,7 +138,6 @@ export async function listListings(opts?: { status?: string; q?: string }): Prom
   return getMember<ListingRecord[]>('/p2p/listings');
 }
 
-// ── Orders ───────────────────────────────────────────────────────────────────
 const ORDERS: OrderRecord[] = [
   { id: 'ord_5521', listing_title: 'iPhone 13 Pro 256GB', buyer_masked: 'Funke A•••', seller_masked: 'Seun K•••', amount_kobo: 420_000_00, status: 'completed', created_at: iso(2) },
   { id: 'ord_5510', listing_title: 'PS5 Disc Edition', buyer_masked: 'Musa I•••', seller_masked: 'Dapo F•••', amount_kobo: 510_000_00, status: 'disputed', created_at: iso(6) },
@@ -174,7 +155,6 @@ export async function listOrders(opts?: { status?: string; q?: string }): Promis
   return getMember<OrderRecord[]>('/p2p/orders');
 }
 
-// ── Disputes (real admin arbitration endpoint) ───────────────────────────────
 const DISPUTES: DisputeRecord[] = [
   { order_id: 'ord_5510', listing_title: 'PS5 Disc Edition', buyer_masked: 'Musa I•••', seller_masked: 'Dapo F•••', amount_kobo: 510_000_00, evidence: 'Item not as described — controller missing.', raised_at: iso(5) },
   { order_id: 'ord_5481', listing_title: 'Samsung S22', buyer_masked: 'Yemi S•••', seller_masked: 'Kemi D•••', amount_kobo: 380_000_00, evidence: 'Seller never shipped after 7 days.', raised_at: iso(30) },

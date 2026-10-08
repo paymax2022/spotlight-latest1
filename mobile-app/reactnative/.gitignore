@@ -18,3 +18,6 @@ node_modules/
 .env
 .env.local
 .env.*.local
+
+playwright-report-live/
+test-results-live/

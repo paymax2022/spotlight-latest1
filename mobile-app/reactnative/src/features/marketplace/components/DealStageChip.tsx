@@ -1,10 +1,9 @@
-// ── Marketplace — DealStageChip ──────────────────────────────────────────────
 // The per-conversation deal-stage chip (Chat inbox). Colour-codes by stage so a
 // buyer/seller can read where a conversation stands without opening it.
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 import { DEAL_STAGE_LABEL, type DealStage } from '../transact.constants';
 

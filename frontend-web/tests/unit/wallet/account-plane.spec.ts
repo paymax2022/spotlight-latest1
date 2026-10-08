@@ -29,12 +29,14 @@ const read = (rel: string) => readFileSync(join(root, rel), 'utf8');
 const MUTATION_SITES = [
   'src/server/wallet/service.ts',
   'src/server/tiers/service.ts',
-  'src/server/transfers/bank-webhook.ts',
+  // The bank-transfer reversal legs moved here when the settle was shared with
+  // the verify-on-read fallback (AUD-FE-004 residual) — the account resolution
+  // the guard checks lives in this file now, not the webhook wrapper.
+  'src/server/transfers/bank-settle.ts',
 ];
 
 describe('the wallet plane constant', () => {
   it('is the account type the Go finance ledger creates', () => {
-    // backend/internal/finance/ledger/model.go: AccountUserWallet = "user_wallet".
     // If these ever disagree, the two processes silently mutate different pots
     // again and a card-funded checkout cannot be spent.
     expect(WALLET_ACCOUNT_TYPE).toBe('user_wallet');
@@ -61,7 +63,6 @@ describe('no mutation site re-types the account type', () => {
 
   it('the tier daily-limit projection reads the SAME plane the debit will hit', () => {
     // This one is not cosmetic. enforceWalletLimit projects today's spend from the
-    // account it resolves; pointed at an empty plane it returns a daily total of 0,
     // so the limit never binds and every tier debits without a cap.
     const src = read('src/server/tiers/service.ts');
     const resolved = /\.from\('ledger_accounts'\)[\s\S]{0,240}?\.eq\('type',\s*([A-Za-z_]+|'[a-z_]+')\)/.exec(src);
@@ -84,7 +85,6 @@ describe('the consolidation migration', () => {
   });
 
   it('only moves positive balances', () => {
-    // amount_kobo has CHECK (> 0); a zero or negative balance must be skipped
     // rather than abort the migration.
     expect(sql).toMatch(/available_kobo > 0/);
   });

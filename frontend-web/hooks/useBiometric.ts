@@ -44,7 +44,6 @@ export function useBiometricCapability(): BiometricCapability {
   }, []);
 
   const checkBiometricCapability = async () => {
-    // Check if WebAuthn is available (modern biometric API)
     if (!window.PublicKeyCredential) {
       setCapability({
         isSupported: false,
@@ -72,7 +71,6 @@ export function useBiometricCapability(): BiometricCapability {
       // Detect biometric types
       const types: BiometricType[] = [];
 
-      // iOS: Touch ID or Face ID
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       if (isIOS) {
         // Try to detect Face ID vs Touch ID (Face ID available on iPhone X+)
@@ -83,18 +81,15 @@ export function useBiometricCapability(): BiometricCapability {
           types.push('fingerprint');
         }
       }
-      // Android: Usually fingerprint, some have face unlock
       else if (/Android/.test(navigator.userAgent)) {
         types.push('fingerprint');
         // Some modern Android devices have face unlock
         types.push('face');
       }
-      // Windows: Windows Hello (face or fingerprint)
       else if (/Windows/.test(navigator.userAgent)) {
         types.push('face');
         types.push('fingerprint');
       }
-      // macOS: Touch ID
       else if (/Mac/.test(navigator.userAgent)) {
         types.push('fingerprint');
       }
@@ -147,7 +142,6 @@ export function useBiometricAuth() {
       setError(null);
 
       try {
-        // Get authentication options from server
         const optionsResponse = await fetch('/api/auth/biometric/options', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -4,7 +4,6 @@ package creator
 // every guard and every SQL builder here is a pure function precisely so the
 // rules that matter (ownership, the delete-with-funds refusal, partial-update
 // semantics, pause/resume transitions) are provable without TEST_DATABASE_URL.
-//
 // This matters beyond convenience: a Go package whose live-DB tests all SKIP
 // still prints "ok", so a guard covered only by a gated integration test is a
 // guard nothing actually verifies in CI.
@@ -17,15 +16,16 @@ import (
 	"time"
 )
 
-func strp(s string) *string { return &s }
-func i64p(i int64) *int64   { return &i }
+//go:fix inline
+func strp(s string) *string { return new(s) }
+
+//go:fix inline
+func i64p(i int64) *int64 { return new(i) }
 
 func tsp() *time.Time {
 	t := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	return &t
 }
-
-// ─── Ownership ───────────────────────────────────────────────────────────────
 
 // The single most important test in this file. A campaign id arrives from the
 // client on every one of these routes; if guardOwned ever stops refusing a
@@ -71,8 +71,6 @@ func TestGuardOwned_OwnershipBeatsDeletion(t *testing.T) {
 	}
 }
 
-// ─── Delete guard ────────────────────────────────────────────────────────────
-
 // A campaign that has EVER held money must never be deletable.
 func TestGuardDelete_RefusesWithContributions(t *testing.T) {
 	st := campaignState{CreatorID: "owner-1", ReviewStatus: "ACTIVE"}
@@ -98,13 +96,11 @@ func TestGuardDelete_RefundedStillCountsAsFunded(t *testing.T) {
 	}
 }
 
-// ─── Partial update ──────────────────────────────────────────────────────────
-
 // The whole point of the pointer fields: patching ONE key must not touch the
 // others. A plain-bool/plain-string struct would emit writes for every column
 // and blank the caller's title and story.
 func TestUpdateAssignments_PartialDoesNotClobberSiblings(t *testing.T) {
-	req := CampaignUpdateRequest{CoverImage: strp("https://cdn/x.png")}
+	req := CampaignUpdateRequest{CoverImage: new("https://cdn/x.png")}
 	as := updateAssignments(req)
 
 	if len(as) != 1 {
@@ -132,7 +128,7 @@ func TestUpdateAssignments_PartialDoesNotClobberSiblings(t *testing.T) {
 // An explicit empty string is NOT the same as an absent key: clearing a summary
 // on purpose must still be possible.
 func TestUpdateAssignments_ExplicitEmptyStringIsAWrite(t *testing.T) {
-	as := updateAssignments(CampaignUpdateRequest{Summary: strp("")})
+	as := updateAssignments(CampaignUpdateRequest{Summary: new("")})
 	if len(as) != 1 || as[0].Column != "summary" || as[0].Value != "" {
 		t.Fatalf("an explicit empty summary must still be written: %#v", as)
 	}
@@ -140,8 +136,8 @@ func TestUpdateAssignments_ExplicitEmptyStringIsAWrite(t *testing.T) {
 
 func TestUpdateAssignments_AllFields(t *testing.T) {
 	as := updateAssignments(CampaignUpdateRequest{
-		Title: strp("T"), Summary: strp("S"), Story: strp("St"),
-		Category: strp("medical"), CoverImage: strp("c"), GoalKobo: i64p(500),
+		Title: new("T"), Summary: new("S"), Story: new("St"),
+		Category: new("medical"), CoverImage: new("c"), GoalKobo: new(int64(500)),
 	})
 	want := []string{"title", "summary", "story", "category", "cover_url", "goal_kobo"}
 	if len(as) != len(want) {
@@ -165,7 +161,7 @@ func TestBuildCampaignUpdate_EmptyBodyRefused(t *testing.T) {
 // Defence in depth: the UPDATE's own WHERE must re-assert ownership, so even a
 // refactor that drops the explicit guard cannot produce a cross-tenant write.
 func TestBuildCampaignUpdate_WhereCarriesOwnerAndDeletedGuard(t *testing.T) {
-	sql, _, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: strp("New")})
+	sql, _, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: new("New")})
 	if !ok {
 		t.Fatal("expected a buildable update")
 	}
@@ -183,7 +179,7 @@ func TestBuildCampaignUpdate_WhereCarriesOwnerAndDeletedGuard(t *testing.T) {
 // Column names must be fixed literals, never interpolated caller input.
 func TestBuildCampaignUpdate_ValuesAreBoundNotInlined(t *testing.T) {
 	evil := "x'; DROP TABLE campaigns; --"
-	sql, args, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: strp(evil)})
+	sql, args, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: new(evil)})
 	if !ok {
 		t.Fatal("expected a buildable update")
 	}
@@ -195,8 +191,6 @@ func TestBuildCampaignUpdate_ValuesAreBoundNotInlined(t *testing.T) {
 	}
 }
 
-// ─── Update validation ───────────────────────────────────────────────────────
-
 func TestValidateUpdate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -204,16 +198,16 @@ func TestValidateUpdate(t *testing.T) {
 		want error
 	}{
 		{"empty body is valid (emptiness is caught by the builder)", CampaignUpdateRequest{}, nil},
-		{"title too short", CampaignUpdateRequest{Title: strp("a")}, ErrInvalidTitle},
-		{"title whitespace-only", CampaignUpdateRequest{Title: strp("   ")}, ErrInvalidTitle},
-		{"title too long", CampaignUpdateRequest{Title: strp(strings.Repeat("x", 201))}, ErrInvalidTitle},
-		{"title at max is fine", CampaignUpdateRequest{Title: strp(strings.Repeat("x", 200))}, nil},
-		{"title at min is fine", CampaignUpdateRequest{Title: strp("ab")}, nil},
-		{"goal below the 100 kobo floor", CampaignUpdateRequest{GoalKobo: i64p(99)}, ErrInvalidGoal},
-		{"goal of zero", CampaignUpdateRequest{GoalKobo: i64p(0)}, ErrInvalidGoal},
-		{"negative goal", CampaignUpdateRequest{GoalKobo: i64p(-1)}, ErrInvalidGoal},
-		{"goal at the floor is fine", CampaignUpdateRequest{GoalKobo: i64p(100)}, nil},
-		{"blank category", CampaignUpdateRequest{Category: strp("  ")}, ErrUnknownCategory},
+		{"title too short", CampaignUpdateRequest{Title: new("a")}, ErrInvalidTitle},
+		{"title whitespace-only", CampaignUpdateRequest{Title: new("   ")}, ErrInvalidTitle},
+		{"title too long", CampaignUpdateRequest{Title: new(strings.Repeat("x", 201))}, ErrInvalidTitle},
+		{"title at max is fine", CampaignUpdateRequest{Title: new(strings.Repeat("x", 200))}, nil},
+		{"title at min is fine", CampaignUpdateRequest{Title: new("ab")}, nil},
+		{"goal below the 100 kobo floor", CampaignUpdateRequest{GoalKobo: new(int64(99))}, ErrInvalidGoal},
+		{"goal of zero", CampaignUpdateRequest{GoalKobo: new(int64(0))}, ErrInvalidGoal},
+		{"negative goal", CampaignUpdateRequest{GoalKobo: new(int64(-1))}, ErrInvalidGoal},
+		{"goal at the floor is fine", CampaignUpdateRequest{GoalKobo: new(int64(100))}, nil},
+		{"blank category", CampaignUpdateRequest{Category: new("  ")}, ErrUnknownCategory},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -232,22 +226,20 @@ func TestValidateUpdate(t *testing.T) {
 // campaign permanently over 100% funded — how a stalled campaign is dressed up
 // as a successful one. All comparisons are integer kobo.
 func TestGuardGoalNotBelowRaised(t *testing.T) {
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: i64p(500_00)}, 900_00); !errors.Is(err, ErrGoalBelowRaised) {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: new(int64(500_00))}, 900_00); !errors.Is(err, ErrGoalBelowRaised) {
 		t.Fatalf("lowering the goal under the raised total must be refused, got %v", err)
 	}
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: i64p(900_00)}, 900_00); err != nil {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: new(int64(900_00))}, 900_00); err != nil {
 		t.Fatalf("a goal exactly equal to raised is legal, got %v", err)
 	}
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: i64p(1_000_00)}, 900_00); err != nil {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: new(int64(1_000_00))}, 900_00); err != nil {
 		t.Fatalf("raising the goal is always legal, got %v", err)
 	}
 	// Absent goal key: the raised total is irrelevant.
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{Title: strp("x")}, 900_00); err != nil {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{Title: new("x")}, 900_00); err != nil {
 		t.Fatalf("a body with no goalKobo must not be goal-checked, got %v", err)
 	}
 }
-
-// ─── Pause / resume transitions ──────────────────────────────────────────────
 
 func TestGuardPause(t *testing.T) {
 	cases := []struct {
@@ -326,8 +318,6 @@ func TestPauseResumeCycle(t *testing.T) {
 	}
 }
 
-// ─── Feature request ─────────────────────────────────────────────────────────
-
 // Mirrors the ADMIN promotion guard in adminext/featured.go: only an ACTIVE
 // campaign may be promoted, so only an ACTIVE campaign may ask to be.
 func TestGuardFeatureRequest(t *testing.T) {
@@ -355,8 +345,6 @@ func TestGuardFeatureRequest(t *testing.T) {
 		})
 	}
 }
-
-// ─── Owner payload contract ──────────────────────────────────────────────────
 
 // The mobile client keys off these exact names. paused and featureRequestStatus
 // are both additions to an existing payload, so a rename or an accidental
@@ -395,13 +383,11 @@ func mustJSONSummary(t *testing.T, s CampaignSummary) string {
 	return string(b)
 }
 
-// ─── Audit ───────────────────────────────────────────────────────────────────
-
 // The audit target names the campaign and the columns that moved, so a
 // suspicious edit is greppable — but never mirrors free-text user content.
 func TestAuditUpdateTarget(t *testing.T) {
 	got := auditUpdateTarget("camp-1", CampaignUpdateRequest{
-		Title: strp("New title"), GoalKobo: i64p(100),
+		Title: new("New title"), GoalKobo: new(int64(100)),
 	})
 	if !strings.Contains(got, "camp-1") {
 		t.Errorf("audit target must name the campaign: %q", got)

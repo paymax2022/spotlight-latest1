@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// ── Fee config (server-authoritative; mirrors stocks.constants.ts) ───────────────
 // The per-asset feeBps takes priority over the default; the provider fee is a
 // flat default markup. These mirror PAYMAX_FEE_BPS / PROVIDER_FEE_BPS.
 
@@ -20,7 +19,6 @@ func round(f float64) int64 { return int64(math.Round(f)) }
 // round2 mirrors `+(x).toFixed(2)` — round to 2 decimal places.
 func round2(f float64) float64 { return math.Round(f*100) / 100 }
 
-// ── Estimate engine ──────────────────────────────────────────────────────────--
 // Ported 1:1 from stockFormatters.buildEstimate so the client's live preview and
 // the server's executed order agree to the minor unit.
 //
@@ -81,7 +79,6 @@ func BuildEstimate(s Stock, side, orderType string, quantity int64, limitPrice i
 	}
 }
 
-// ── Chart (deterministic mock generator) ─────────────────────────────────────────
 // Ported 1:1 from stockFormatters.chartFor. Ranges: 1D/1W/1M/3M/1Y.
 
 func Chart(s Stock, rng string) []Candle {

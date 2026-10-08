@@ -3,14 +3,19 @@
  * Ensures users meet tier requirements before voting
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
+import { ApiError } from '@/src/lib/api/responses';
 
-export class KycGateError extends Error {
+// ApiError, not bare Error — routes that let this reach handleApiError were
+// returning 500 for a deliberate 404/403 gate because the handler only reads
+// `.status` on ApiError instances. `statusCode` is kept because bridge.ts's
+// statusOf() reads it first.
+export class KycGateError extends ApiError {
   constructor(
     message: string,
     public statusCode: number = 403
   ) {
-    super(message);
+    super(message, statusCode);
     this.name = 'KycGateError';
   }
 }
@@ -22,9 +27,11 @@ export async function assertKycTier(userId: string, contestantId: string) {
   const supabase = createAdminClient();
 
   try {
-    // Step 1: Fetch user KYC tier
+    // user_profiles is the table the on_auth_user_created trigger populates —
+    // `profiles` is the enterprise RBAC table, a different store that a normal
+    // signup never writes to, so it 404'd every real voter.
     const { data: user, error: userErr } = await supabase
-      .from('profiles')
+      .from('user_profiles')
       .select('kyc_tier')
       .eq('id', userId)
       .single();
@@ -33,10 +40,9 @@ export async function assertKycTier(userId: string, contestantId: string) {
       throw new KycGateError('User not found', 404);
     }
 
-    // Step 2: Fetch contest requirements
     const { data: contestant, error: contestErr } = await supabase
       .from('contestants')
-      .select('competition_id')
+      .select('contest_id')
       .eq('id', contestantId)
       .single();
 
@@ -44,10 +50,13 @@ export async function assertKycTier(userId: string, contestantId: string) {
       throw new KycGateError('Contestant not found', 404);
     }
 
+    // No required_kyc_tier column exists on contests yet — a missing column
+    // errors the select, which is tolerated exactly like a missing row: the
+    // requirement is tier 0 until the schema grows one.
     const { data: competition, error: compErr } = await supabase
-      .from('competitions')
+      .from('contests')
       .select('required_kyc_tier')
-      .eq('id', contestant.competition_id)
+      .eq('id', contestant.contest_id)
       .single();
 
     if (compErr || !competition) {
@@ -55,7 +64,6 @@ export async function assertKycTier(userId: string, contestantId: string) {
       return true;
     }
 
-    // Step 3: Validate tier
     const requiredTier = competition.required_kyc_tier || 0;
     const userTier = user.kyc_tier || 0;
 
@@ -84,7 +92,7 @@ export async function getUserKycTier(userId: string): Promise<number> {
 
   try {
     const { data, error } = await supabase
-      .from('profiles')
+      .from('user_profiles')
       .select('kyc_tier')
       .eq('id', userId)
       .single();
@@ -109,7 +117,7 @@ export async function getContestKycRequirement(contestantId: string): Promise<nu
   try {
     const { data: contestant, error: contestErr } = await supabase
       .from('contestants')
-      .select('competition_id')
+      .select('contest_id')
       .eq('id', contestantId)
       .single();
 
@@ -118,9 +126,9 @@ export async function getContestKycRequirement(contestantId: string): Promise<nu
     }
 
     const { data: competition, error: compErr } = await supabase
-      .from('competitions')
+      .from('contests')
       .select('required_kyc_tier')
-      .eq('id', contestant.competition_id)
+      .eq('id', contestant.contest_id)
       .single();
 
     if (compErr || !competition) {

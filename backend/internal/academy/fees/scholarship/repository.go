@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,7 +17,6 @@ import (
 // Store is the data-access contract for pledges + awards. Defined as an in-package interface so
 // scholarship_test.go can substitute an in-memory fake (no live DB), mirroring feesinvoice /
 // edupay isolation.
-//
 // This package EXTENDS the existing academy scholarship spine: pledges are recorded against a
 // scholarship row and awards against academy_scholarship_awards (reused where possible). There
 // is NO balance column: a pledge's remaining headroom is amount − applied, tracked on the row
@@ -83,7 +84,7 @@ func (r *Repository) InsertPledge(ctx context.Context, p Pledge) (*Pledge, error
 	const q = `INSERT INTO academy_scholarship_pledges
 	    (id, sponsor_identity_id, target_student_id, amount_minor, applied_minor, currency, state, created_at)
 	    VALUES ($1,$2,$3,$4,0,$5,'pledged',$6)`
-	if _, err := r.db.Exec(ctx, q, id, nullStr(p.SponsorIdentityID), p.TargetStudentID, p.AmountMinor, p.Currency, now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, dbutil.NullStr(p.SponsorIdentityID), p.TargetStudentID, p.AmountMinor, p.Currency, now); err != nil {
 		return nil, err
 	}
 	return r.GetPledge(ctx, id)
@@ -121,7 +122,7 @@ func setPledgeState(ctx context.Context, q querier, id string, from, to PledgeSt
 	const upd = `UPDATE academy_scholarship_pledges
 	             SET state = $2, fund_ledger_ref = COALESCE($3, fund_ledger_ref)
 	             WHERE id = $1 AND state = $4`
-	tag, err := q.Exec(ctx, upd, id, string(to), fundRefArg(fundLedgerRef), string(from))
+	tag, err := q.Exec(ctx, upd, id, string(to), dbutil.NullStrP(fundLedgerRef), string(from))
 	if err != nil {
 		return nil, err
 	}
@@ -149,15 +150,19 @@ func (r *Repository) AppendAward(ctx context.Context, a Award) (*Award, bool, er
 func appendAward(ctx context.Context, q querier, a Award) (*Award, bool, error) {
 	id := uuid.New().String()
 	now := time.Now()
+	// uq_academy_scholaward_idem is a partial unique index, so the arbiter must
+	// repeat the index predicate — a bare ON CONFLICT (idempotency_key) matches
+	// no index and raises 42P10.
 	const ins = `INSERT INTO academy_scholarship_awards
-	    (id, pledge_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, created_at)
-	    VALUES ($1,$2,$3,NULL,$4,'applied',$5,$6)
-	    ON CONFLICT (idempotency_key) DO NOTHING`
+	    (id, pledge_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, invoice_payment_id, created_at)
+	    VALUES ($1,$2,$3,NULL,$4,'applied',$5,$6,$7)
+	    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	// pledge_id references the funding pledge (academy_scholarship_pledges). scholarship_id
 	// is left NULL for pledge-funded awards (migration 20260920000500 drops its NOT NULL and
 	// widens the state CHECK to admit 'applied'). user_id carries the invoice's
-	// guardian/student party for traceability.
-	tag, err := q.Exec(ctx, ins, id, a.PledgeID, a.StudentID, a.AmountMinor, a.IdempotencyKey, now)
+	// guardian-of-record — an auth.users FK; invoice_payment_id links the award
+	// to the appended invoice payment.
+	tag, err := q.Exec(ctx, ins, id, a.PledgeID, a.UserID, a.AmountMinor, a.IdempotencyKey, dbutil.NullUUID(dbutil.DerefString(a.InvoicePaymentID)), now)
 	if err != nil {
 		return nil, false, err
 	}
@@ -173,11 +178,11 @@ func appendAward(ctx context.Context, q querier, a Award) (*Award, bool, error) 
 }
 
 func getAwardByIdem(ctx context.Context, q querier, idemKey string) (*Award, error) {
-	const sel = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, created_at
+	const sel = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, invoice_payment_id, created_at
 	             FROM academy_scholarship_awards WHERE idempotency_key = $1`
 	var a Award
 	var state string
-	err := q.QueryRow(ctx, sel, idemKey).Scan(&a.ID, &a.PledgeID, &a.StudentID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.CreatedAt)
+	err := q.QueryRow(ctx, sel, idemKey).Scan(&a.ID, &a.PledgeID, &a.UserID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.InvoicePaymentID, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -189,7 +194,7 @@ func getAwardByIdem(ctx context.Context, q querier, idemKey string) (*Award, err
 }
 
 func (r *Repository) ListAwardsByPledge(ctx context.Context, pledgeID string) ([]Award, error) {
-	const q = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, created_at
+	const q = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, invoice_payment_id, created_at
 	           FROM academy_scholarship_awards WHERE pledge_id = $1 ORDER BY created_at DESC`
 	rows, err := r.db.Query(ctx, q, pledgeID)
 	if err != nil {
@@ -200,7 +205,7 @@ func (r *Repository) ListAwardsByPledge(ctx context.Context, pledgeID string) ([
 	for rows.Next() {
 		var a Award
 		var state string
-		if err := rows.Scan(&a.ID, &a.PledgeID, &a.StudentID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.PledgeID, &a.UserID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.InvoicePaymentID, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		a.State = AwardState(state)
@@ -217,7 +222,7 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO academy_commerce_audit
 	    (actor_id, action, entity_type, entity_id, from_state, to_state, detail, idempotency_key)
 	    VALUES ($1,$2,'academy_scholarship_pledge',$3,$4,$5,$6,NULL)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 
@@ -227,7 +232,7 @@ func (r *Repository) WithTx(ctx context.Context, fn func(tx Tx) error) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(&txAdapter{tx: tx}); err != nil {
 		return err
 	}
@@ -247,29 +252,6 @@ func (t *txAdapter) SetPledgeState(ctx context.Context, id string, from, to Pled
 }
 func (t *txAdapter) WriteAudit(ctx context.Context, actorID, action, entityID, from, to string, detail any) error {
 	return writeAudit(ctx, t.tx, actorID, action, entityID, from, to, detail)
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func fundRefArg(p *string) any {
-	if p == nil || *p == "" {
-		return nil
-	}
-	return *p
 }
 
 func toJSON(v any) []byte {

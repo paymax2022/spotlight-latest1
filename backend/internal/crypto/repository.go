@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,8 +17,6 @@ type Repository struct {
 }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-// ── Assets ────────────────────────────────────────────────────────────────────
 
 // ListAssets returns catalogue assets. activeOnly filters to tradable ones.
 func (r *Repository) ListAssets(ctx context.Context, activeOnly bool) ([]Asset, error) {
@@ -49,7 +48,7 @@ func (r *Repository) GetAsset(ctx context.Context, id string) (*Asset, error) {
 	           FROM crypto_assets WHERE id=$1`
 	var a Asset
 	if err := r.db.QueryRow(ctx, q, id).Scan(&a.ID, &a.Symbol, &a.Name, &a.MinorUnitScale, &a.IsActive, &a.CreatedAt, &a.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -72,8 +71,6 @@ func (r *Repository) UpsertAsset(ctx context.Context, symbol, name string, minor
 	}
 	return &a, nil
 }
-
-// ── Price snapshots ──────────────────────────────────────────────────────────
 
 // InsertSnapshot records a quote used for a fill (audit trail).
 func (r *Repository) InsertSnapshot(ctx context.Context, assetID string, priceKobo int64, source string) error {
@@ -127,7 +124,7 @@ func (r *Repository) GetOrder(ctx context.Context, userID, orderID string) (*Ord
 	var ref *string
 	if err := r.db.QueryRow(ctx, q, orderID, userID).Scan(&o.ID, &o.UserID, &o.AssetID, &o.Symbol,
 		&o.Side, &o.Status, &o.CashKobo, &o.Units, &o.PriceKobo, &ref, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -138,14 +135,12 @@ func (r *Repository) GetOrder(ctx context.Context, userID, orderID string) (*Ord
 	return &o, nil
 }
 
-// ── Orders + holdings (money path) ───────────────────────────────────────────
-
 // HoldingUnits returns the user's current minor-unit position for an asset.
 func (r *Repository) HoldingUnits(ctx context.Context, userID, assetID string) (int64, error) {
 	const q = `SELECT COALESCE(units,0) FROM crypto_holdings WHERE user_id=$1 AND asset_id=$2`
 	var units int64
 	err := r.db.QueryRow(ctx, q, userID, assetID).Scan(&units)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -164,7 +159,7 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `INSERT INTO crypto_orders
 		(user_id, asset_id, side, status, cash_kobo, units, price_kobo, idempotency_key, reference)
@@ -175,7 +170,7 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	err = tx.QueryRow(ctx, insOrder,
 		o.UserID, o.AssetID, o.Side, "filled", o.CashKobo, o.Units, o.PriceKobo, o.IdempotencyKey(), o.Reference,
 	).Scan(&orderID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Duplicate idempotency key → replay; fetch the existing order id.
 		if e := tx.QueryRow(ctx,
 			`SELECT id FROM crypto_orders WHERE idempotency_key=$1`, o.IdempotencyKey()).Scan(&orderID); e != nil {

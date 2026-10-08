@@ -9,12 +9,10 @@ import {
 } from '@/services/contestCategoriesService';
 
 // Competition categories, managed rather than hardcoded. Until this page there
-// was no way to add one: the list lived as a const in three files at once —
 // the ContestCategory union, `allowedCategories` in both admin contest routes
 // (the gate that 400s "Invalid contest category"), and the create page's own
 // CATEGORIES array. contests.category is plain TEXT with no CHECK constraint,
 // so the database never restricted anything; those consts were the whole limit.
-//
 // Deactivate rather than delete is the primary action: it stops new contests
 // using a category while leaving the ones already filed under it untouched and
 // editable. Delete is offered only when nothing uses the category, and the

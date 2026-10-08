@@ -1,11 +1,11 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { BedDouble, Bath, MapPin, ShieldCheck, Heart, TrendingDown } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import VerificationBadge from './VerificationBadge';
 import { MODE_LABEL } from '../constants/realtor.constants';
 import { priceLabel, formatNairaCompact } from '../utils/realtorFormatters';
@@ -14,7 +14,7 @@ import type { ListingCard } from '../types/realtor.types';
 interface Props {
   listing: ListingCard;
   onPress: () => void;
-  variant?: 'feed' | 'rail';      // feed = full-width list card; rail = compact horizontal
+  variant?: 'feed' | 'rail';
   saved?: boolean;
   onToggleSave?: () => void;
 }

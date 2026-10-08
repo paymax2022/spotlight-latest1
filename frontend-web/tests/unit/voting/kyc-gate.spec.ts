@@ -13,9 +13,9 @@ import {
   getContestKycRequirement,
   KycGateError,
 } from '@/server/voting-bridge/kyc-gate';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 
-vi.mock('@/lib/supabase/admin');
+vi.mock('@/lib/supabase/server');
 
 describe('KYC Tier Gate', () => {
   const userId = 'user-123';
@@ -114,7 +114,6 @@ describe('KYC Tier Gate', () => {
         error: null,
       });
 
-      // Get contestant competition
       mockSupabase.single.mockResolvedValueOnce({
         data: { competition_id: '1' },
         error: null,
@@ -274,7 +273,6 @@ describe('KYC Tier Gate', () => {
 
     // Carried over from tests/unit/voting-bridge/kyc-gate.spec.ts, deleted because
   // it targeted assertKycGate/getKycProfile — an API that exists on neither
-  // develop nor main. Its other three cases are covered above; this one is not,
   // because the concept does not exist: nothing in voting-bridge/ or voting/
   // checks account suspension, so a suspended user can currently vote. Left as a
   // todo rather than a failing test, since it describes unbuilt behaviour.
@@ -307,13 +305,11 @@ describe('KYC Tier Gate', () => {
 
       (createAdminClient as any).mockReturnValue(mockSupabase);
 
-      // Get contestant's competition
       mockSupabase.single.mockResolvedValueOnce({
         data: { competition_id: '1' },
         error: null,
       });
 
-      // Get competition requirement
       mockSupabase.single.mockResolvedValueOnce({
         data: { required_kyc_tier: 2 },
         error: null,

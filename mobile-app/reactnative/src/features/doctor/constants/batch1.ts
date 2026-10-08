@@ -1,4 +1,3 @@
-// ── Doctor module — Batch 1 (sections C · D · E · F) constants ───────────────
 // Static option lists for the Batch 1 provider-side screens. Pure data only —
 // no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel). REUSES
@@ -18,9 +17,7 @@ import type {
   TimezoneOption,
 } from '@/types/doctor.batch1';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION C — vet profile & verification
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Veterinary licensing bodies (vet analogue of the human MDCN).
 export const VET_LICENCE_BODIES: { value: VetLicenceBody; label: string }[] = [
@@ -66,9 +63,7 @@ export const VET_PROFILE_BUILDER_STEPS: { step: VetProfileBuilderStep; label: st
   { step: 'availability',   label: 'Availability' },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION D — dashboard
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const PRESENCE_LABELS: Record<DoctorPresence, string> = {
   online:  'Online',
@@ -124,9 +119,7 @@ export const ANNOUNCEMENT_TONE_TONES: Record<AnnouncementTone, string> = {
   warning: '#F59E0B',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION E — availability & schedule
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Reminder offsets (minutes before the appointment) for the reminder picker.
 export const REMINDER_OFFSET_OPTIONS: { value: number; label: string }[] = [
@@ -160,9 +153,7 @@ export const TIMEZONE_OPTIONS: TimezoneOption[] = [
   { value: 'America/New_York', label: 'Eastern Time — New York',       offset: '-05:00' },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION F — appointment & consultation queue
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const QUEUE_PRIORITY_LABELS: Record<QueuePriority, string> = {
   emergency: 'Emergency',

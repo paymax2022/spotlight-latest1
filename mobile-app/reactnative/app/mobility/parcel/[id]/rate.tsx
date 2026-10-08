@@ -3,17 +3,18 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
 import StarRating from '@/features/mobility/components/StarRating';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcel, useRateParcel } from '@/features/mobility/hooks/useModes';
 import { clearMockActiveParcel } from '@/features/mobility/api/parcel.api';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -46,7 +47,7 @@ export default function RateParcelScreen() {
   if (parcel.isError || !p) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => parcel.refetch()} />
+        <MobilityEdgeState kind={errKind(parcel.error)} actionLabel="Retry" onAction={() => parcel.refetch()} />
       </SafeAreaView>
     );
   }

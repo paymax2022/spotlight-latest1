@@ -114,7 +114,7 @@ describe('requestSignUp', () => {
   });
 
   it('throws the proxy error without enrichment', async () => {
-    const fetchImpl = fakeFetch(400, { error: 'Registration failed. Please check your details and try again.' });
+    const fetchImpl = fakeFetch(400, { error: "We couldn't create this account. Try signing in if you have one, or use Forgot Password — otherwise, double-check your details and try again." });
     await expect(
       requestSignUp(fetchImpl, { fullName: 'A B', email: 'a@b.test', password: 'x' }),
     ).rejects.toMatchObject({ status: 400 });

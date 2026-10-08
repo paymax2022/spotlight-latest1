@@ -1,8 +1,8 @@
 import React from 'react';
 import { Pressable, Text, StyleSheet, ViewStyle } from 'react-native';
 import { Droplets } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { SocialColors, formatNaira } from '../constants/social.constants';
 
 interface Props {

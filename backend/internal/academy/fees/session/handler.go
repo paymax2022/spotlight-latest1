@@ -7,9 +7,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyInvalidInput = "invalid_input"
+
+const keyMessage = "message"
 
 // Handler exposes AcademicSession + Class routes over Gin. The router will mount these
 // under /internal/edtech-fees/schools/:schoolId/{sessions,classes} (build-spec §6).
@@ -22,10 +28,9 @@ type Handler struct {
 // NewHandler builds the session/class handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -33,7 +38,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -44,23 +49,23 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidDate):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidStatus):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrSchoolMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -98,8 +103,6 @@ func RegisterFeesSession(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	return h
 }
 
-// ── Session handlers ────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateSession(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -107,7 +110,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	}
 	var req CreateSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateSession(c.Request.Context(), u, c.Param("schoolId"), req)
@@ -143,7 +146,7 @@ func (h *Handler) SetSessionStatus(c *gin.Context) {
 	}
 	var req UpdateSessionStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.SetSessionStatus(c.Request.Context(), u, c.Param("sessionId"), SessionStatus(req.Status))
@@ -154,8 +157,6 @@ func (h *Handler) SetSessionStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Class handlers ──────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateClass(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -163,7 +164,7 @@ func (h *Handler) CreateClass(c *gin.Context) {
 	}
 	var req CreateClassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateClass(c.Request.Context(), u, c.Param("schoolId"), req)
@@ -199,7 +200,7 @@ func (h *Handler) UpdateClass(c *gin.Context) {
 	}
 	var req UpdateClassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateClass(c.Request.Context(), u, c.Param("classId"), req)

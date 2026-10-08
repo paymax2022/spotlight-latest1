@@ -1,4 +1,3 @@
-// ── Featured Placement — Mock data ────────────────────────────────────────────
 // Lets the whole booking + landing flow run offline
 // (EXPO_PUBLIC_FEATURED_USE_MOCK !== 'false'). A tiny in-memory store holds the
 // merchant's campaigns so the wizard, My Promotions list, and detail screen all
@@ -18,7 +17,6 @@ import type {
 const now = () => new Date().toISOString();
 const today = () => new Date().toISOString().slice(0, 10);
 
-// ─── Zones (placement surfaces a merchant can buy) ───────────────────────────
 export const MOCK_ZONES: Zone[] = [
   {
     zone_code: 'home_hero',
@@ -70,7 +68,6 @@ export const MOCK_ZONES: Zone[] = [
   },
 ];
 
-// ─── Eligible items the signed-in merchant can promote ───────────────────────
 export const MOCK_ELIGIBLE_ITEMS: EligibleItem[] = [
   {
     subject_type: 'listing',
@@ -114,7 +111,6 @@ export const MOCK_ELIGIBLE_ITEMS: EligibleItem[] = [
   },
 ];
 
-// ─── In-memory campaign store ────────────────────────────────────────────────
 interface StoreEntry {
   campaign: Campaign;
   /** Wall-clock anchor used to advance analytics on read. */
@@ -163,7 +159,6 @@ function dayCount(startIso: string, endIso: string): number {
   return Math.max(1, Math.round(ms / 86400000) + 1);
 }
 
-// ─── Mock operations ─────────────────────────────────────────────────────────
 export function mockListZones(): Zone[] {
   return MOCK_ZONES;
 }
@@ -287,7 +282,6 @@ export function mockAnalytics(id: string): CampaignAnalytics {
   };
 }
 
-// ─── Public landing resolver ─────────────────────────────────────────────────
 export function mockLanding(): LandingResponse {
   seed();
   const active = Object.values(store)

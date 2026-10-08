@@ -1,12 +1,15 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
+
+	"github.com/gin-gonic/gin"
 )
 
 // AUTH-005: RequireAuthContext's base bearer-token-verification path had only
@@ -17,11 +20,12 @@ import (
 // the no-op mockRBAC already used elsewhere in this package.
 type statusRBAC struct {
 	mockRBAC
+
 	status string
 	err    error
 }
 
-func (s statusRBAC) GetUserStatus(string) (string, error) { return s.status, s.err }
+func (s statusRBAC) GetUserStatus(context.Context, string) (string, error) { return s.status, s.err }
 
 func authUserServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
@@ -37,7 +41,7 @@ func authUserServer(t *testing.T, status int, body string) *httptest.Server {
 
 func doRequest(r *gin.Engine, authHeader string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}
@@ -95,6 +99,45 @@ func TestRequireAuthContext_TokenFailingSupabaseVerificationReturns401(t *testin
 	}
 }
 
+// AUD-AUTH-001: a definitive token rejection is a 401 — but an auth-backend
+// OUTAGE (5xx or unreachable) must not masquerade as "invalid token": every
+// logged-in user would see session-expiry during a Supabase blip. It is a 503.
+func TestRequireAuthContext_AuthBackendOutageReturns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := authUserServer(t, http.StatusInternalServerError, `{"error":"gotrue down"}`)
+	defer srv.Close()
+	sb := integrations.NewSupabaseRestClient(srv.URL, "key")
+
+	r := gin.New()
+	r.Use(RequireAuthContext(sb, statusRBAC{status: "active"}))
+	reached := false
+	r.GET("/x", func(c *gin.Context) { reached = true; c.Status(http.StatusOK) })
+
+	w := doRequest(r, "Bearer good-token")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth backend 5xx: got %d, want 503 (not a user-facing 401)", w.Code)
+	}
+	if reached {
+		t.Error("downstream handler must not run when token verification could not complete")
+	}
+}
+
+func TestRequireAuthContext_AuthBackendUnreachableReturns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := authUserServer(t, http.StatusOK, `{}`)
+	srv.Close() // close immediately: connection refused = transport error, not a rejection
+	sb := integrations.NewSupabaseRestClient(srv.URL, "key")
+
+	r := gin.New()
+	r.Use(RequireAuthContext(sb, statusRBAC{status: "active"}))
+	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := doRequest(r, "Bearer good-token")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth backend unreachable: got %d, want 503 (not a user-facing 401)", w.Code)
+	}
+}
+
 // A verification response with no "id" field must also be rejected — an
 // authenticated-looking payload with no usable subject is not a valid user.
 func TestRequireAuthContext_TokenWithNoSubjectReturns401(t *testing.T) {
@@ -149,8 +192,6 @@ func TestRequireAuthContext_ValidTokenProceedsWithAuthenticatedUserInContext(t *
 	}
 }
 
-// ── platform_users status gate (rbac.GetUserStatus) ─────────────────────
-//
 // Discovery note: GetUserStatus is said to default to "pending" on a missing
 // row. Pinning the middleware's ACTUAL reaction to each status value, not
 // asserting what it "should" do.
@@ -168,9 +209,12 @@ func TestRequireAuthContext_StatusGate(t *testing.T) {
 		// Pinning current behaviour: "pending" (the documented default for a
 		// missing platform_users row) is not in the blocked set, so it passes.
 		{status: "pending", wantCode: http.StatusOK},
-		// An empty status (e.g. GetUserStatus errored and returned "") is also
-		// not in the blocked set, so it passes too — pinning current behaviour.
+		// An empty status with no error is not in the blocked set — it passes.
 		{status: "", wantCode: http.StatusOK},
+		// AUD-BE-002: a lookup ERROR must fail closed — a suspended account must
+		// not slip through during a PostgREST/Supabase outage.
+		{status: "", err: errors.New("postgrest unreachable"), wantCode: http.StatusServiceUnavailable},
+		{status: "pending", err: errors.New("timeout"), wantCode: http.StatusServiceUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run("status="+tc.status, func(t *testing.T) {

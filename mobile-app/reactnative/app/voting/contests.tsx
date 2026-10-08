@@ -6,10 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useContests } from '@/features/voting/hooks/useContests';
 import ContestCard from '@/features/voting/components/ContestCard';
 import type { ContestStatus } from '@/features/voting/types/voting.types';
@@ -26,7 +26,7 @@ export default function ContestListScreen() {
   const [statusFilter, setStatusFilter] = useState<ContestStatus | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
 
-  const { data, isLoading, refetch, isRefetching } = useContests(
+  const { data, isLoading, isError, refetch, isRefetching } = useContests(
     statusFilter !== 'ALL' ? { status: statusFilter } : undefined,
   );
 
@@ -79,6 +79,17 @@ export default function ContestListScreen() {
 
       {isLoading ? (
         <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
+      ) : isError ? (
+        // A fetch failure used to fall straight into ListEmptyComponent, which
+        // reads as "no contests exist yet" rather than "we couldn't reach the
+        // server" — the two need different messages and only one is retriable.
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Could not load contests</Text>
+          <Text style={styles.emptySub}>Check your connection and try again.</Text>
+          <Pressable onPress={() => refetch()} style={styles.filterChip}>
+            <Text style={styles.filterLabel}>Retry</Text>
+          </Pressable>
+        </View>
       ) : (
         <FlatList
           data={filtered}

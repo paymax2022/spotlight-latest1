@@ -3,6 +3,7 @@ import { featureFlags } from '@/src/lib/feature-flags';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { errorResponse } from '@/src/lib/api/responses';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
+import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import type { UtilityCategory } from '@/src/server/utility/types';
 
@@ -24,7 +25,7 @@ export async function requireUtilityReader(request: Request) {
 }
 
 export function utilityRateLimit(request: Request, scope: string, actorId: string, limit = 30, windowMs = 60_000) {
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || '0.0.0.0';
+  const ip = getRequestIp(request);
   const result = checkRateLimit(`utility:${scope}:${actorId}:${ip}`, limit, windowMs);
   return result.allowed ? null : errorResponse('Too many utility requests. Please slow down.', 429);
 }
@@ -54,9 +55,6 @@ export function pagination(request: Request) {
   return { limit, offset };
 }
 
-// ── Go backend cutover (migration Phase 2) ──────────────────────────────────
-//
-// Gated by featureFlags.utilityBillsGoProxy() (off by default). Only pay/
 // validate are cut over — both have a real Go-native equivalent from Phase 1
 // (backend/internal/utilitybills). paystack/initiate and logos have none: the
 // former never touches the wallet/ledger (it only creates a Paystack checkout
@@ -74,7 +72,6 @@ type GoProxyResult =
   | { ok: false; response: Response };
 
 // Calls a Go utilitybills endpoint and returns its parsed JSON body, or a
-// ready-to-return error Response reshaped into this module's own
 // `{ success: false, error }` convention (never the Go backend's raw shape,
 // which callers of this module have never seen).
 export async function callUtilityBillsGo(

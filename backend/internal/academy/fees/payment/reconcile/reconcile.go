@@ -2,12 +2,10 @@
 // SF-8). It walks recent settled money records — academy_invoice_payments and vault
 // contributions — and cross-checks each against the authoritative gateway/ledger state, then
 // returns a DRIFT REPORT and ALERTS on any mismatch.
-//
 // Iron discipline (SF-8): reconciliation NEVER silently auto-corrects money. It is a read-only
 // cross-checker: it detects drift and reports/alerts, leaving corrections to a human via
 // reversing entries (finance/ledger.PostReversal). The job is idempotent and safe to re-run —
 // running it twice over the same window yields the same report and mutates nothing.
-//
 // All collaborators are SMALL locally-declared interfaces so reconcile_test.go can inject
 // in-memory fakes (no live DB / ledger / gateway) and assert that a seeded drift is flagged
 // without any mutation. The concrete adapters are wired at the composition root by the
@@ -20,8 +18,6 @@ import (
 	"sort"
 	"time"
 )
-
-// ── Injected read-only collaborators ────────────────────────────────────────────────
 
 // PaymentSource yields recent invoice-payment records to reconcile. Read-only.
 type PaymentSource interface {
@@ -54,8 +50,6 @@ type GatewayReader interface {
 	VerifyAmount(ctx context.Context, reference string) (status string, amountMinor int64, err error)
 }
 
-// ── Records under reconciliation ─────────────────────────────────────────────────────
-
 // PaymentRecord is a thin, read-only view of an invoice payment row for reconciliation.
 type PaymentRecord struct {
 	PaymentID      string
@@ -74,8 +68,6 @@ type ContributionRecord struct {
 	IdempotencyKey string
 	CreatedAt      time.Time
 }
-
-// ── Drift report ─────────────────────────────────────────────────────────────────────
 
 // DriftKind classifies a detected mismatch.
 type DriftKind string
@@ -131,8 +123,6 @@ type Report struct {
 // HasDrift reports whether the run found any mismatch (the paging signal).
 func (r *Report) HasDrift() bool { return len(r.Drifts) > 0 }
 
-// ── Reconciler ───────────────────────────────────────────────────────────────────────
-
 // Reconciler runs the nightly SF-8 cross-check. It is stateless + read-only.
 type Reconciler struct {
 	payments      PaymentSource
@@ -159,7 +149,6 @@ func (rc *Reconciler) Run(ctx context.Context, since time.Time) (*Report, error)
 		Alerts: []string{},
 	}
 
-	// ── Invoice payments ──
 	pays, err := rc.payments.RecentPayments(ctx, since)
 	if err != nil {
 		return nil, err
@@ -169,7 +158,6 @@ func (rc *Reconciler) Run(ctx context.Context, since time.Time) (*Report, error)
 		rc.checkPayment(ctx, rep, p)
 	}
 
-	// ── Vault contributions ──
 	contribs, err := rc.contributions.RecentContributions(ctx, since)
 	if err != nil {
 		return nil, err

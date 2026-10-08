@@ -1,24 +1,14 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: campaigns.contributor_count stays equal to the number of
 // DISTINCT non-refunded contributors.
-//
 // WHY THIS EXISTS
-// ---------------
-// The column was read in at least six places — the public campaign payload, the
-// "trending" and featured sort orders (ORDER BY c.contributor_count DESC), the
-// featured console, the feature-request queue and the CSR listing — and written
-// by nothing at all. No Go path, no RPC, no trigger. It therefore held its
-// default forever, and production data showed the result: a campaign with two
-// backers and ₦1,050 raised reported 0 backers to every one of those surfaces,
-// and every "sort by popularity" collapsed because all the values were equal.
-//
-// Migration 20270184000000 gives the column an owner (a recount trigger) and
-// backfills. This test pins the behaviour that migration promises, because the
-// failure mode is silent: nothing errors when a counter drifts, the number is
-// just quietly wrong on a public page.
-//
+// contributor_count is read by the public campaign payload, the "trending" and
+// featured sort orders, the featured console, the feature-request queue and the
+// CSR listing, and is owned by the migration-20270184000000 recount trigger.
+// This test pins the behaviour that trigger promises, because the failure mode
+// is silent: nothing errors when a counter drifts, the number is just quietly
+// wrong on a public page.
 // The cases are the ones an increment-based implementation gets wrong, which is
 // why the trigger recounts instead:
 //   - the same person contributing twice must still be ONE backer
@@ -26,16 +16,12 @@ package crowdfunding_test
 //   - a refund stops counting, and reversing the refund counts again
 //   - moving a contribution between campaigns must fix BOTH campaigns
 //   - deleting the rows returns the count to zero
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_ContributorCount -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

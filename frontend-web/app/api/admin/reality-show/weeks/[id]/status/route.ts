@@ -9,7 +9,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     const week = await getWeek(params.id);
     if (!week) return errorResponse('Week not found', 404);
 
-    const body = await request.json() as { status?: string; evictionCount?: number; title?: string; theme?: string };
+    const body = await request.json().catch(() => null) as { status?: string; evictionCount?: number; title?: string; theme?: string };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const { status } = body;
 
     if (status === 'open') return successResponse({ week: await openVoting(params.id) });

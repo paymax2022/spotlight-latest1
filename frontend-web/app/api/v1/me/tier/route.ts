@@ -6,11 +6,9 @@ import { handleApiError } from '@/src/lib/api/responses';
 // Returns the caller's KYC tier alongside TODAY'S remaining wallet-debit allowance
 // (dailyLimitKobo / dailyUsedKobo / remainingKobo / walletDisabled), read from the
 // same finance/tiers.GetUsage that the fail-closed debit gate is derived from.
-//
 // This is deliberately a proxy rather than a Supabase read: the limit table and the
 // "what counts as today's spend" rule are money rules, and a second implementation
 // here would drift from the one the server actually enforces.
-//
 // Consumed by the mobile checkout sheet, which uses it to refuse a spend BEFORE
 // opening the Paystack gateway — without it a Tier 0 customer completes a card
 // charge and only then gets a 403 from the escrow. Advisory only: the server-side

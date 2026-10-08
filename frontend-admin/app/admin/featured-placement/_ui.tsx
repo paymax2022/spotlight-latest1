@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 
-// RBAC helper for the Featured Placement console. Reads the cached admin user
 // (same source as AdminSidebar / AdminRouteGuard) and exposes a permission
 // check so pages can disable sensitive affordances. Server still enforces —
 // this only prevents dead-end UI. Mirrors useMobilityPermissions in

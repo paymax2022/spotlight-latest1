@@ -3,22 +3,29 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/finance/settlement"
 )
 
-// RequestRide creates a ride: computes the system fare from the route, escrows
-// the agreed fare (instant) or the rider's offer (offer mode), records the trip
-// in the right phase, and opens a fare_offers row.
-func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRideRequest, idempotencyKey string) (*tripDetail, error) {
-	if idempotencyKey == "" {
-		idempotencyKey = req.IdempotencyKey
-	}
-	if idempotencyKey == "" {
-		return nil, codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
-	}
+// ridePricing is the read-only fare quote for a ride request: everything
+// requestRide needs to price and book the trip, computed from CURRENT pricing
+// config and route data. Extracted so QuoteRide (a pre-payment price check)
+// and requestRide (the actual booking) always run the EXACT same computation —
+// two copies of this arithmetic would drift, exactly the kind of gap a
+// money-safety review would flag (see restaurant.priceOrder for the sibling
+// pattern this mirrors).
+type ridePricing struct {
+	cfg        *PricingConfig
+	route      RouteResult
+	systemFare int64
+}
+
+func (s *Service) priceRide(ctx context.Context, req RequestRideRequest) (*ridePricing, error) {
 	cfg, err := s.loadPricingConfig(ctx, "default", req.ServiceType)
 	if err != nil {
 		return nil, err
@@ -31,8 +38,61 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 		return nil, err
 	}
 	systemFare := SystemFare(route.DistanceM, route.DurationS, cfg)
+	return &ridePricing{cfg: cfg, route: route, systemFare: systemFare}, nil
+}
 
-	// Determine the escrow amount + initial phase.
+// QuoteRide computes the exact instant-mode system fare for a route from
+// CURRENT pricing config, without booking or moving any money — the same
+// computation requestRide itself uses (see priceRide). Used by a Paystack
+// checkout initiate step that needs to know the amount to charge BEFORE it
+// can collect payment; requestRide (called after payment is verified, via
+// RequestRidePaystackFunded) independently recomputes and cross-checks this
+// same fare, so this quote is advisory to that caller only.
+// Offer-mode has no single quote (the rider proposes their own price against
+// a floor/ceiling band) — which is exactly why the Paystack-funded rail only
+// accepts instant pricing (see RequestRidePaystackFunded).
+func (s *Service) QuoteRide(ctx context.Context, req RequestRideRequest) (int64, error) {
+	pricing, err := s.priceRide(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	return pricing.systemFare, nil
+}
+
+// requestRide is the shared implementation behind RequestRide (wallet-funded,
+// KYC-tier-gated) and RequestRidePaystackFunded (funded by an ALREADY-VERIFIED
+// external Paystack charge, never wallet-gated — see that function's doc
+// comment for why, and settlement.EscrowExternal for the ledger side).
+// `external` and `verifiedAmountKobo` are NEVER settable by client input on
+// any HTTP-facing request DTO — see the two exported wrappers below.
+func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRideRequest, idempotencyKey string, external bool, verifiedAmountKobo int64) (*TripDetailView, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = req.IdempotencyKey
+	}
+	if idempotencyKey == "" {
+		return nil, codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
+	}
+	// The Paystack-funded rail only supports a single, fixed, up-front price:
+	// offer-mode negotiation (RiderOffer/AcceptCounter/adjustEscrow) can raise
+	// the held amount AFTER booking, which has no external-funding counterpart
+	// (there is no live card session left open to charge more from) — and cash
+	// means the rider pays the driver directly, which is not this rail's money
+	// path at all. Both are refused up front, before any pricing/maps call.
+	if external {
+		if req.PricingMode == "offer" {
+			return nil, codedErr(http.StatusBadRequest, CodeInvalidState, "Paystack-funded rides must use instant pricing, not offer mode")
+		}
+		if isCashPayment(req.PaymentMethod) {
+			return nil, codedErr(http.StatusBadRequest, CodeInvalidState, "Paystack-funded rides cannot use cash payment")
+		}
+	}
+
+	pricing, err := s.priceRide(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	cfg, route, systemFare := pricing.cfg, pricing.route, pricing.systemFare
+
 	escrowKobo := systemFare
 	phase := PhaseRequested
 	offerStatus := "pending"
@@ -49,6 +109,19 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 		offerStatus = "rider_offered"
 	}
 
+	// External-funding amount cross-check — BEFORE anything writes. The caller
+	// already verified Paystack collected verifiedAmountKobo at intent-creation
+	// time, from a quote against pricing config at THAT moment. Pricing config
+	// can change between quoting and this call, so this function never trusts
+	// that quote — it recomputes systemFare itself (above) and requires it to
+	// match exactly what was actually collected (offer mode never reaches here
+	// under external — see the guard above). A mismatch aborts with no escrow
+	// and no trip row; the caller's only remaining duty is to reverse the
+	// external charge, since there is no wallet leg here to unwind.
+	if external && systemFare != verifiedAmountKobo {
+		return nil, codedErr(http.StatusConflict, CodeAmountMismatch, "verified payment amount no longer matches the ride fare")
+	}
+
 	serviceType := req.ServiceType
 	if serviceType == "" {
 		serviceType = "ride_hailing"
@@ -57,43 +130,88 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 	if paymentMethod == "" {
 		paymentMethod = "wallet"
 	}
+	// Recorded distinctly from every client-settable value so adjustEscrow can
+	// later refuse to raise the held amount on a trip that has no wallet debit
+	// and no open card session to charge more from (see paymentMethodPaystackExternal).
+	if external {
+		paymentMethod = paymentMethodPaystackExternal
+	}
 
 	tripID := uuid.New().String()
 
 	// Cash rides settle in-vehicle — the rider pays the driver directly, out of
-	// band, so NOTHING is escrowed from the rider's wallet here (that used to
-	// happen unconditionally, silently wallet-debiting "cash" riders with no
-	// visible authorization). The platform instead collects its commission by
+	// band, so NOTHING is escrowed from the rider's wallet here (a wallet debit
+	// on a cash ride would be an unauthorized charge). The platform instead
+	// collects its commission by
 	// debiting the DRIVER's wallet at trip completion (settleCashTrip); a
 	// driver whose balance can't cover that fee is filtered out of the open
 	// requests feed and blocked from accepting (see driverCanCoverCashFee).
 	var settlementID *string
 	if !isCashPayment(paymentMethod) {
-		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow.
-		if err := s.enforceTierLimit(ctx, riderID, escrowKobo); err != nil {
-			return nil, err
+		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow. Skipped
+		// entirely when external is true: an externally-funded ride is paid for
+		// by an ALREADY-VERIFIED Paystack charge that never touches the rider's
+		// wallet (see settlement.EscrowExternal), so there is no wallet debit
+		// for this gate to price against.
+		if !external {
+			if err := s.enforceTierLimit(ctx, riderID, escrowKobo); err != nil {
+				return nil, err
+			}
 		}
 		ref := "trip:" + tripID
-		sett, err := s.settlement.Escrow(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
+		var sett *settlement.Settlement
+		if external {
+			sett, err = s.settlement.EscrowExternal(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
+		} else {
+			sett, err = s.settlement.Escrow(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("transport: escrow fare: %w", err)
 		}
 		settlementID = &sett.ID
 	}
 
+	// refundOnFailure undoes the escrow above if the trip can't be durably
+	// created — e.g. an in-range offer can still trip the DB's absolute
+	// trips_fare_kobo_check, which validateFareInRange doesn't know about.
+	// Without it the trip INSERT fails leaving an 'escrowed' settlement with
+	// no owning trip — no cancel path, outside the reconciler's reach.
+	// NEVER calls settlement.Refund for an externally-funded escrow: Refund
+	// credits the payer's WALLET, which would hand a Tier-0 rider spendable
+	// balance funded by an external card charge. For `external` this is a
+	// no-op; the caller (transport/paystackcheckout, mirroring
+	// restaurant's OnChargeSuccess) issues a real Paystack refund instead.
+	refundOnFailure := func(reason string, err error) error {
+		if settlementID != nil && !external {
+			_ = s.settlement.Refund(ctx, *settlementID, reason)
+		}
+		return err
+	}
+
+	// The trip row and its fare-offer negotiation ledger are created
+	// atomically: a fare_offers failure must not leave a "real" trip row
+	// committed with no negotiation record, and — the reverse — must not
+	// refund an escrow that a trip row DOES durably own. Only if NEITHER
+	// insert survives does the escrow get refunded.
 	pin := generatePin()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, refundOnFailure("trip_tx_begin_failed", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	const q = `
 		INSERT INTO trips
 			(id, rider_id, pickup_address, dest_address, fare_kobo, status, phase,
 			 service_type, pricing_mode, payment_method, pickup_lat, pickup_lng, dest_lat, dest_lng,
 			 distance_m, duration_s, fare_estimate_kobo, route_polyline, trip_pin, idempotency_key, settlement_id)
 		VALUES ($1,$2,$3,$4,$5,'requested',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`
-	if _, err := s.db.Exec(ctx, q,
+	if _, err := tx.Exec(ctx, q,
 		tripID, riderID, req.Pickup.Address, req.Dest.Address, escrowKobo, string(phase),
 		serviceType, req.PricingMode, paymentMethod, req.Pickup.Lat, req.Pickup.Lng, req.Dest.Lat, req.Dest.Lng,
 		route.DistanceM, route.DurationS, systemFare, route.Polyline, pin, idempotencyKey, settlementID,
 	); err != nil {
-		return nil, fmt.Errorf("transport: insert trip: %w", err)
+		return nil, refundOnFailure("trip_insert_failed", fmt.Errorf("transport: insert trip: %w", err))
 	}
 
 	// Open a fare offer record (negotiation ledger for this trip).
@@ -101,16 +219,50 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 	if req.PricingMode == "offer" {
 		riderOffer = &req.OfferKobo
 	}
-	if _, err := s.db.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO fare_offers (trip_id, system_fare_kobo, rider_offer_kobo, status, expires_at)
 		 VALUES ($1,$2,$3,$4,$5)`,
 		tripID, systemFare, riderOffer, offerStatus, time.Now().Add(5*time.Minute),
 	); err != nil {
-		return nil, fmt.Errorf("transport: insert fare offer: %w", err)
+		return nil, refundOnFailure("fare_offer_insert_failed", fmt.Errorf("transport: insert fare offer: %w", err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, refundOnFailure("trip_tx_commit_failed", fmt.Errorf("transport: commit trip: %w", err))
 	}
 
 	s.recordEvent(ctx, tripID, "requested", riderID, "", phase, map[string]any{"escrow_kobo": escrowKobo, "mode": req.PricingMode})
 	return s.TripDetail(ctx, tripID, riderID, true)
+}
+
+// RequestRide creates a ride: computes the system fare from the route, escrows
+// the agreed fare (instant) or the rider's offer (offer mode), records the trip
+// in the right phase, and opens a fare_offers row. This is the only path
+// reachable from client-controlled input — no HTTP request DTO has a field
+// that can select the external path below.
+func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRideRequest, idempotencyKey string) (*TripDetailView, error) {
+	return s.requestRide(ctx, riderID, req, idempotencyKey, false, 0)
+}
+
+// RequestRidePaystackFunded books a ride funded by an external payment rail
+// (Paystack card/bank-transfer) instead of the rider's wallet — no KYC-tier
+// gate applies, because no wallet debit occurs (see settlement.EscrowExternal
+// and requestRide's tier-gate skip). Only instant pricing, non-cash rides are
+// accepted (see requestRide's up-front guard).
+// The caller MUST have already verified, server-side, that a completed
+// Paystack charge exists for reference and that it collected exactly
+// verifiedAmountKobo — this function trusts that verification unconditionally
+// and performs none of its own against the gateway. It DOES independently
+// recompute the fare from current pricing config and requires it to equal
+// verifiedAmountKobo (see requestRide's cross-check) — it never trusts a
+// caller's claim about what the ride should cost, only about what was
+// actually collected. On a CodeAmountMismatch error, no escrow and no trip
+// row were written; the caller must reverse the external charge.
+// Must only ever be invoked from a server-initiated flow (a Paystack
+// initiate/verify/webhook handler) that itself carries no client-settable
+// "skip KYC" switch — never from a handler that lets request input choose
+// between this and RequestRide.
+func (s *Service) RequestRidePaystackFunded(ctx context.Context, riderID string, req RequestRideRequest, idempotencyKey string, verifiedAmountKobo int64) (*TripDetailView, error) {
+	return s.requestRide(ctx, riderID, req, idempotencyKey, true, verifiedAmountKobo)
 }
 
 // RiderOffer records a new rider offer on a trip in negotiation.
@@ -149,10 +301,10 @@ func (s *Service) RiderOffer(ctx context.Context, tripID, riderID string, offer 
 		return nil, err
 	}
 	if t.Phase == PhaseRequested {
-		s.db.Exec(ctx, `UPDATE trips SET phase='fare_negotiating', updated_at=NOW() WHERE id=$1 AND phase='requested'`, tripID)
+		_, _ = s.db.Exec(ctx, `UPDATE trips SET phase='fare_negotiating', updated_at=NOW() WHERE id=$1 AND phase='requested'`, tripID)
 		s.recordEvent(ctx, tripID, "fare_negotiating", riderID, PhaseRequested, PhaseFareNegotiating, nil)
 	}
-	s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1 WHERE id=$2`, offer, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1 WHERE id=$2`, offer, tripID)
 	return s.loadFareOffer(ctx, tripID)
 }
 
@@ -181,7 +333,7 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 	// Re-check profit floor at acceptance (driver tier may have changed).
 	tier := "standard"
 	if t.DriverID != nil {
-		s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&tier)
+		_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&tier)
 	}
 	if err := s.validateAcceptedFare(ctx, accepted, fo.SystemFareKobo, tier, cfg); err != nil {
 		return nil, err
@@ -189,8 +341,8 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 	if err := s.adjustEscrow(ctx, &t, accepted); err != nil {
 		return nil, err
 	}
-	s.db.Exec(ctx, `UPDATE fare_offers SET accepted_fare_kobo=$1, status='accepted', updated_at=NOW() WHERE trip_id=$2`, accepted, tripID)
-	s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1, final_fare_kobo=$1 WHERE id=$2`, accepted, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE fare_offers SET accepted_fare_kobo=$1, status='accepted', updated_at=NOW() WHERE trip_id=$2`, accepted, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1, final_fare_kobo=$1 WHERE id=$2`, accepted, tripID)
 	s.recordEvent(ctx, tripID, "counter_accepted", riderID, t.Phase, t.Phase, map[string]any{"accepted_kobo": accepted})
 	return s.loadFareOffer(ctx, tripID)
 }
@@ -201,12 +353,25 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 // No-op for cash trips: negotiation still moves fare_kobo (the agreed price the
 // rider will hand the driver), but nothing is ever escrowed from a cash rider's
 // wallet — see RequestRide.
+// Refused outright for a Paystack-funded trip if the negotiation would RAISE
+// the held amount: that trip has no wallet debit backing it and no open card
+// session left to charge more from, so there is nothing this function could
+// safely escrow the delta from. Lowering the fare (delta <= 0) is still fine —
+// nothing needs to move. See RequestRidePaystackFunded / paymentMethodPaystackExternal.
 func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) error {
 	if isCashPayment(t.PaymentMethod) {
 		return nil
 	}
+	if isPaystackFunded(t.PaymentMethod) {
+		var held int64
+		_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
+		if newFare > held {
+			return codedErr(http.StatusConflict, CodeInvalidState, "this ride's fare is fixed — a Paystack-funded ride cannot be renegotiated to a higher amount")
+		}
+		return nil
+	}
 	var held int64
-	s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
 	delta := newFare - held
 	if delta <= 0 {
 		return nil
@@ -241,8 +406,7 @@ func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) e
 //     the SAME key (a safe ledger no-op via unique idempotency key), and
 //   - a genuinely higher target fare produces a DIFFERENT key (a distinct escrow).
 //
-// This is the fix for the original double-charge bug (the key used to embed
-// time.Now().UnixNano(), minting a fresh key on every retry). Extracted as a pure
+// A per-retry key (e.g. timestamp-seeded) would double-charge. Extracted as a pure
 // function so the invariant is provable in a unit test without a database.
 func deltaEscrowKey(tripID string, newFare int64) string {
 	return fmt.Sprintf("trip:%s:delta:%d", tripID, newFare)
@@ -264,7 +428,7 @@ func (s *Service) CancelRide(ctx context.Context, tripID, riderID, reason string
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := s.transitionPhase(ctx, tx, tripID, riderID, t.Phase, PhaseCancelled, "cancelled", map[string]any{"reason": reason}); err != nil {
 		return err
 	}
@@ -274,14 +438,21 @@ func (s *Service) CancelRide(ctx context.Context, tripID, riderID, reason string
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	// Refund all escrowed settlements for this trip.
 	s.refundTrip(ctx, &t, "trip_cancelled")
 	if t.DriverID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
 	}
 	return nil
 }
 
+// refundTrip refunds every still-escrowed settlement for a trip. A
+// Paystack-funded trip (see paymentMethodPaystackExternal) is NEVER refunded
+// via settlement.Refund — that credits the rider's WALLET, which for money
+// that never came from the wallet would hand a Tier-0 rider real spendable
+// balance funded by an external charge (see ExternalRefunder's doc comment).
+// Those settlements go through the injected ExternalRefunder instead; with
+// none wired, the refund is logged for manual reconciliation rather than run
+// incorrectly — fail closed, not fail wrong.
 func (s *Service) refundTrip(ctx context.Context, t *tripRow, reason string) {
 	rows, err := s.db.Query(ctx, `SELECT id FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%")
 	if err != nil {
@@ -290,12 +461,23 @@ func (s *Service) refundTrip(ctx context.Context, t *tripRow, reason string) {
 	var ids []string
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		_ = rows.Scan(&id)
 		ids = append(ids, id)
 	}
 	rows.Close()
+	external := isPaystackFunded(t.PaymentMethod)
 	for _, id := range ids {
-		s.settlement.Refund(ctx, id, reason)
+		if external {
+			if s.externalRefunder == nil {
+				log.Printf("[transport] cannot refund Paystack-funded settlement=%s trip=%s (reason=%s): no ExternalRefunder wired — needs manual reconciliation", id, t.ID, reason)
+				continue
+			}
+			if err := s.externalRefunder.RefundExternalSettlement(ctx, t.ID, id, reason); err != nil {
+				log.Printf("[transport] external refund FAILED settlement=%s trip=%s (reason=%s): %v — needs manual reconciliation", id, t.ID, reason, err)
+			}
+			continue
+		}
+		_ = s.settlement.Refund(ctx, id, reason)
 	}
 }
 
@@ -314,8 +496,8 @@ func (s *Service) loadFareOffer(ctx context.Context, tripID string) (*FareOffer,
 	return &fo, nil
 }
 
-// tripDetail is the rider/driver-facing view of a trip.
-type tripDetail struct {
+// TripDetailView is the rider/driver-facing view of a trip.
+type TripDetailView struct {
 	Trip      map[string]any `json:"trip"`
 	Driver    map[string]any `json:"driver,omitempty"`
 	Vehicle   map[string]any `json:"vehicle,omitempty"`
@@ -324,7 +506,7 @@ type tripDetail struct {
 
 // TripDetail returns the full trip view. When includePin is true (rider view),
 // the trip PIN is exposed; the driver view hides it (driver verifies, not reads).
-func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, includePin bool) (*tripDetail, error) {
+func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, includePin bool) (*TripDetailView, error) {
 	const q = `
 		SELECT id, rider_id, driver_id, pickup_address, dest_address, phase, status,
 		       service_type, pricing_mode, payment_method, fare_kobo, fare_estimate_kobo,
@@ -351,7 +533,7 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -368,13 +550,13 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 		trip["tripPin"] = *pin
 	}
 
-	detail := &tripDetail{Trip: trip}
+	detail := &TripDetailView{Trip: trip}
 	if driverID != nil {
 		dm := map[string]any{}
 		var dname string
 		var drating float64
 		var dphone, dphoto *string
-		s.db.QueryRow(ctx, `SELECT name, rating, phone, photo_url FROM drivers WHERE id=$1`, *driverID).Scan(&dname, &drating, &dphone, &dphoto)
+		_ = s.db.QueryRow(ctx, `SELECT name, rating, phone, photo_url FROM drivers WHERE id=$1`, *driverID).Scan(&dname, &drating, &dphone, &dphoto)
 		dm["id"] = *driverID
 		dm["name"] = dname
 		dm["rating"] = drating
@@ -400,7 +582,7 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 }
 
 // ActiveRide returns the rider's current non-terminal trip, if any.
-func (s *Service) ActiveRide(ctx context.Context, riderID string) (*tripDetail, error) {
+func (s *Service) ActiveRide(ctx context.Context, riderID string) (*TripDetailView, error) {
 	var tripID string
 	const q = `
 		SELECT id FROM trips

@@ -1,4 +1,3 @@
-// ── Referral Merchant Zone (lite) React Query hooks (v5) — M-MER-01..03 ──────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchantApi from './api';

@@ -1,13 +1,10 @@
-// ── Insurance (live) — HTTP data layer ──────────────────────────────────────
 // Speaks the internal contract only:
 //   mobile → /api/v1/insurance/*  (frontend-web proxy) → Go /api/finance/insurance/*
-//
 // NO MOCK FALLBACK. This module never substitutes fixtures for a failed call.
 // A screen that quietly shows invented data is the exact failure mode this
 // rebuild removes: nobody goes looking for a bug they cannot see, and a person
 // shown a policy they do not own has been lied to. Every failure surfaces as an
 // `InsuranceError` and the screen renders a real error state.
-//
 // IRON RULE: every money mutation carries an `Idempotency-Key`.
 
 import { api } from '@/api/client';
@@ -57,7 +54,6 @@ export function newIdempotencyKey(scope: string): string {
   return `insurance-${scope}-${rand}`;
 }
 
-// ── Catalog ─────────────────────────────────────────────────────────────────
 export async function fetchProducts(line?: ProductLine | null): Promise<Product[]> {
   return call(async () => {
     const { data } = await api.get(`${INSURANCE_API_BASE}/products`, {
@@ -88,7 +84,6 @@ export async function fetchFormSchema(code: string): Promise<FormSchema> {
   });
 }
 
-// ── Dropdown options ────────────────────────────────────────────────────────
 /**
  * Options for a utility-backed dropdown (109 vehicle makes, 121 colours, 193
  * nationalities, 36 states, the LGAs of one state…).
@@ -117,7 +112,6 @@ export async function fetchFieldOptions(args: {
   });
 }
 
-// ── Uploads ─────────────────────────────────────────────────────────────────
 /**
  * Turn a locally-picked file into the reference the insurer expects.
  *
@@ -142,7 +136,6 @@ export async function uploadInsuranceFile(file: {
 }): Promise<string> {
   return call(async () => {
     const form = new FormData();
-    // React Native's FormData takes this shape; the web build takes a Blob, so
     // fetch the local URI first when we are running in a browser.
     if (file.uri.startsWith('blob:') || file.uri.startsWith('data:')) {
       const blob = await (await fetch(file.uri)).blob();
@@ -196,7 +189,6 @@ function guessMime(name: string): string {
   }
 }
 
-// ── Quote ───────────────────────────────────────────────────────────────────
 /**
  * Price this product for these answers. The premium comes back from the server
  * for BOTH flat and percentage products — the client never computes a binding
@@ -215,12 +207,10 @@ export async function createQuote(args: {
   });
 }
 
-// ── NDPA consent ────────────────────────────────────────────────────────────
 // Nigeria's Data Protection Act requires informed, specific consent BEFORE a
 // person's details are shared with an underwriter. The Go quote endpoint
 // enforces it and answers 428 with `ndpa_consent_required` until it is on
 // record, per product and per NDPA version.
-//
 // ⚠️ This must never be granted automatically on the user's behalf, or from a
 // pre-ticked box. Consent that the person did not knowingly give is not consent,
 // and recording it would make our audit trail a false statement about them. The
@@ -249,7 +239,6 @@ export async function grantConsent(productCode: string): Promise<void> {
   });
 }
 
-// ── Purchase ────────────────────────────────────────────────────────────────
 export async function purchasePolicy(args: {
   quoteRef: string;
   productCode: string;
@@ -270,7 +259,6 @@ export async function purchasePolicy(args: {
   });
 }
 
-// ── Policies ────────────────────────────────────────────────────────────────
 export async function fetchPolicies(): Promise<Policy[]> {
   return call(async () => {
     const { data } = await api.get(`${INSURANCE_API_BASE}/policies`);
@@ -307,7 +295,6 @@ export async function fetchCertificateUrl(id: string): Promise<string | null> {
   });
 }
 
-// ── Claims ──────────────────────────────────────────────────────────────────
 export async function fetchClaims(): Promise<Claim[]> {
   return call(async () => {
     const { data } = await api.get(`${INSURANCE_API_BASE}/claims`);

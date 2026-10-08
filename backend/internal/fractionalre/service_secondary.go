@@ -41,7 +41,7 @@ func (s *Service) ListFraction(ctx context.Context, sellerID, idempotencyKey str
 		return nil, ErrMarketHalted
 	}
 	if req.Units <= 0 {
-		return nil, fmt.Errorf("fractionalre: units must be positive")
+		return nil, errors.New("fractionalre: units must be positive")
 	}
 	holding, err := s.repo.GetHolding(ctx, req.AssetID, sellerID)
 	if err != nil {
@@ -63,7 +63,7 @@ func (s *Service) ListFraction(ctx context.Context, sellerID, idempotencyKey str
 			unitPrice = holding.CostKobo / holding.Units
 		}
 		if unitPrice <= 0 {
-			return nil, fmt.Errorf("fractionalre: unable to derive NAV-anchored unit price; supply unit_price_kobo")
+			return nil, errors.New("fractionalre: unable to derive NAV-anchored unit price; supply unit_price_kobo")
 		}
 	}
 	l := &SecondaryListing{
@@ -99,7 +99,6 @@ type BuyFractionRequest struct {
 
 // BuyFraction is a MONEY PATH on the secondary market. Order of operations
 // (every iron rule, fail-closed before money):
-//
 //  1. Idempotency-Key required; duplicate returns the existing order.
 //  2. Market not halted; listing active with enough units.
 //  3. Buyer 10%-income cap check (compliance engine reused server-side).
@@ -120,7 +119,7 @@ func (s *Service) BuyFraction(ctx context.Context, buyerID, idempotencyKey, list
 		return existing, nil
 	}
 	if req.Units <= 0 {
-		return nil, fmt.Errorf("fractionalre: units must be positive")
+		return nil, errors.New("fractionalre: units must be positive")
 	}
 
 	mc, err := s.repo.GetMarketControls(ctx)
@@ -139,7 +138,7 @@ func (s *Service) BuyFraction(ctx context.Context, buyerID, idempotencyKey, list
 		return nil, ErrInsufficientUnits
 	}
 	if l.SellerID == buyerID {
-		return nil, fmt.Errorf("fractionalre: cannot buy your own listing")
+		return nil, errors.New("fractionalre: cannot buy your own listing")
 	}
 
 	amountKobo := req.Units * l.UnitPriceKobo
@@ -252,15 +251,13 @@ func (s *Service) ListOrdersForUser(ctx context.Context, userID string, limit, o
 	return s.repo.ListOrdersForUser(ctx, userID, limit, offset)
 }
 
-// ── Market controls (admin) ───────────────────────────────────────────────────
-
 func (s *Service) GetMarketControls(ctx context.Context) (*MarketControls, error) {
 	return s.repo.GetMarketControls(ctx)
 }
 
 func (s *Service) UpdateMarketControls(ctx context.Context, adminID string, enabled bool, feeBps int) error {
 	if feeBps < 0 {
-		return fmt.Errorf("fractionalre: fee_bps must be non-negative")
+		return errors.New("fractionalre: fee_bps must be non-negative")
 	}
 	if err := s.repo.UpdateMarketControls(ctx, enabled, feeBps, adminID); err != nil {
 		return err

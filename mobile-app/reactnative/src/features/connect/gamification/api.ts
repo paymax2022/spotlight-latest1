@@ -153,7 +153,6 @@ export async function getSeason(): Promise<Season> {
 
 // Unlock the premium reward track. This is the POST-PAYMENT fulfilment only — the
 // wallet charge (a money surface, with its Idempotency-Key) is handled by the
-// shared checkout layer. Here we merely flip the non-cash unlock flag; the pass
 // still grants cosmetics/coins, never cash.
 export async function unlockSeasonPass(seasonId: string): Promise<Season> {
   if (USE_MOCK) {

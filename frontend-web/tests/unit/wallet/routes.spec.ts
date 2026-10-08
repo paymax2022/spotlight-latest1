@@ -7,8 +7,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makeRequest } from '../golden-path/_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -33,8 +31,6 @@ vi.mock('@/src/server/wallet/service', () => ({
   createTopupIntent: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { GET as getBalance } from '../../../app/api/v1/wallet/balance/route';
 import { GET as getTransactions } from '../../../app/api/v1/wallet/transactions/route';
 import { POST as postTopup } from '../../../app/api/v1/wallet/topup/route';
@@ -42,8 +38,6 @@ import { POST as postTopup } from '../../../app/api/v1/wallet/topup/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { requireKycTier } from '@/src/server/kyc/gate';
 import { getBalance as getBalanceSvc, listTransactions, createTopupIntent } from '@/src/server/wallet/service';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_USER = { id: 'user-001', email: 'wallet@example.com' };
 
@@ -54,8 +48,6 @@ function authAsUser() {
   vi.mocked(requireRequestUser).mockResolvedValue(TEST_USER as any);
   vi.mocked(requireKycTier).mockResolvedValue(undefined);
 }
-
-// ── Tests: GET /api/v1/wallet/balance ─────────────────────────────────────────
 
 describe('GET /api/v1/wallet/balance', () => {
   beforeEach(() => { vi.clearAllMocks(); authAsUser(); enableWalletFlag(); });
@@ -99,8 +91,6 @@ describe('GET /api/v1/wallet/balance', () => {
   });
 });
 
-// ── Tests: GET /api/v1/wallet/transactions ────────────────────────────────────
-
 describe('GET /api/v1/wallet/transactions', () => {
   beforeEach(() => { vi.clearAllMocks(); authAsUser(); enableWalletFlag(); });
   afterEach(disableWalletFlag);
@@ -142,8 +132,6 @@ describe('GET /api/v1/wallet/transactions', () => {
     expect(res.status).toBe(403);
   });
 });
-
-// ── Tests: POST /api/v1/wallet/topup ─────────────────────────────────────────
 
 describe('POST /api/v1/wallet/topup', () => {
   beforeEach(() => { vi.clearAllMocks(); authAsUser(); enableWalletFlag(); });

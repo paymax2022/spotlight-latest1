@@ -1,12 +1,9 @@
 // Paymax Connect — Messaging types (PRD §10.5 MS-*).
-//
 // Self-contained messaging slice. Reuses ConnectColors / USE_MOCK /
 // CONNECT_API_BASE from ../constants/connect.constants.
-//
 // SAFETY INVARIANTS upheld here (docs/prd/dating/CLAUDE.md):
 //  §4 No message before a mutual MATCH in Date mode — a Date thread carries
 //     `gate: 'matched' | 'unmatched'`; the composer is hard-locked unless matched.
-//  §5 Network threads originate from an ACCEPTED connection request; pending
 //     requests live in the requests tab and cannot be messaged yet.
 //  §7 report / block ALWAYS create a case (returns a caseId) and never fail
 //     silently; block also tears the thread down.
@@ -91,7 +88,6 @@ export interface ReportReason {
   label: string;
 }
 
-// ── Calls (MS-08 / MS-09) ────────────────────────────────────────────────────
 export type CallKind = 'voice' | 'video';
 export type CallStatus = 'connecting' | 'ringing' | 'active' | 'ended' | 'failed';
 

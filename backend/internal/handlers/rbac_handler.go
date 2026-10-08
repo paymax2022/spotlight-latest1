@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type RBACHandler struct {
@@ -31,7 +34,8 @@ func (h *RBACHandler) Me(c *gin.Context) {
 func (h *RBACHandler) ListRoles(c *gin.Context) {
 	rows, err := h.svc.ListRoles()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[rbac.list_roles] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "roles": rows})
@@ -50,7 +54,7 @@ func (h *RBACHandler) CreateRole(c *gin.Context) {
 	}
 	created, err := h.svc.CreateRole(in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if actor, ok := middleware.GetAuthenticatedUser(c); ok {
@@ -69,7 +73,7 @@ func (h *RBACHandler) UpdateRole(c *gin.Context) {
 	}
 	updated, err := h.svc.UpdateRole(roleID, in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "role.update", "rbac", "role", roleID, nil, map[string]any{"name": updated.Name, "isActive": updated.IsActive}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -89,7 +93,7 @@ func (h *RBACHandler) CloneRole(c *gin.Context) {
 	}
 	cloned, err := h.svc.CloneRole(sourceRoleID, in.Name, in.Slug)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "role.clone", "rbac", "role", cloned.ID, nil, map[string]any{"sourceRoleId": sourceRoleID, "slug": cloned.Slug}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -99,7 +103,8 @@ func (h *RBACHandler) CloneRole(c *gin.Context) {
 func (h *RBACHandler) ListPermissions(c *gin.Context) {
 	rows, err := h.svc.ListPermissions()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[rbac.list_permissions] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "permissions": rows})
@@ -118,7 +123,7 @@ func (h *RBACHandler) CreatePermission(c *gin.Context) {
 	}
 	created, err := h.svc.CreatePermission(in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "permission.create", "rbac", "permission", created.ID, nil, map[string]any{"slug": created.Slug}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -135,7 +140,7 @@ func (h *RBACHandler) UpdatePermission(c *gin.Context) {
 	}
 	updated, err := h.svc.UpdatePermission(permissionID, in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "permission.update", "rbac", "permission", permissionID, nil, map[string]any{"name": updated.Name}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -145,7 +150,8 @@ func (h *RBACHandler) UpdatePermission(c *gin.Context) {
 func (h *RBACHandler) PermissionMatrix(c *gin.Context) {
 	matrix, err := h.svc.GetPermissionMatrix()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[rbac.permission_matrix] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "matrix": matrix})
@@ -162,7 +168,7 @@ func (h *RBACHandler) AssignPermissionToRole(c *gin.Context) {
 		return
 	}
 	if err := h.svc.AssignPermissionToRole(actor.ID, roleID, in.PermissionID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if actor.ID != "" {
@@ -207,7 +213,7 @@ func (h *RBACHandler) AssignRoleToUser(c *gin.Context) {
 		return
 	}
 	if err := h.svc.AssignRoleToUser(userID, in.RoleID, in.ScopeType, in.ScopeID, actor.ID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.role.assign", "rbac", "user_role", userID, nil, map[string]any{"roleId": in.RoleID, "scopeType": in.ScopeType, "scopeId": in.ScopeID}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -218,7 +224,7 @@ func (h *RBACHandler) DeleteRole(c *gin.Context) {
 	roleID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.DeleteRole(roleID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "role.delete", "rbac", "role", roleID, nil, nil, c.ClientIP(), c.Request.UserAgent(), "critical")
@@ -228,7 +234,7 @@ func (h *RBACHandler) DeletePermission(c *gin.Context) {
 	permissionID := c.Param("permissionId")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.DeletePermission(permissionID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "permission.delete", "rbac", "permission", permissionID, nil, nil, c.ClientIP(), c.Request.UserAgent(), "critical")
@@ -239,7 +245,7 @@ func (h *RBACHandler) RemovePermissionFromRole(c *gin.Context) {
 	permissionID := c.Param("permissionId")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.RemovePermissionFromRole(roleID, permissionID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, "", "role.permission.remove", "rbac", "role_permission", roleID, nil, map[string]any{"permissionId": permissionID}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -250,7 +256,7 @@ func (h *RBACHandler) RemoveRoleFromUser(c *gin.Context) {
 	roleID := c.Param("roleId")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.RemoveRoleFromUser(actor.ID, userID, roleID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.role.remove", "rbac", "user_role", userID, nil, map[string]any{"roleId": roleID}, c.ClientIP(), c.Request.UserAgent(), "critical")
@@ -260,7 +266,7 @@ func (h *RBACHandler) SuspendUser(c *gin.Context) {
 	userID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.SuspendUser(userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.suspend", "users", "user", userID, nil, map[string]any{"status": "suspended"}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -270,7 +276,7 @@ func (h *RBACHandler) UnsuspendUser(c *gin.Context) {
 	userID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.UnsuspendUser(userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.unsuspend", "users", "user", userID, nil, map[string]any{"status": "active"}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -280,7 +286,7 @@ func (h *RBACHandler) LockUser(c *gin.Context) {
 	userID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.LockUser(userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.lock", "users", "user", userID, nil, map[string]any{"status": "locked"}, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -290,7 +296,7 @@ func (h *RBACHandler) UnlockUser(c *gin.Context) {
 	userID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)
 	if err := h.svc.UnlockUser(userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.unlock", "users", "user", userID, nil, map[string]any{"status": "active"}, c.ClientIP(), c.Request.UserAgent(), "high")

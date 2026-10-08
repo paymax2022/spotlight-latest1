@@ -2,23 +2,26 @@ package attribution
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/referral/events"
 	rewardledger "spotlight/backend/internal/referral/ledger"
 )
 
 // Errors returned by the claim / reassignment flows.
 var (
-	ErrWindowClosed   = fmt.Errorf("referral/attribution: grace window closed (locked)")
-	ErrSelfClaim      = fmt.Errorf("referral/attribution: self-referral cannot be claimed")
-	ErrInvalidCode    = fmt.Errorf("referral/attribution: invalid or unknown code")
-	ErrNotHouse       = fmt.Errorf("referral/attribution: late-claim only reassigns house attributions")
-	ErrCosignRequired = fmt.Errorf("referral/attribution: house-benefiting reassignment requires a distinct co-signer")
-	ErrNoAttribution  = fmt.Errorf("referral/attribution: attribution not found")
+	ErrWindowClosed   = errors.New("referral/attribution: grace window closed (locked)")
+	ErrSelfClaim      = errors.New("referral/attribution: self-referral cannot be claimed")
+	ErrInvalidCode    = errors.New("referral/attribution: invalid or unknown code")
+	ErrNotHouse       = errors.New("referral/attribution: late-claim only reassigns house attributions")
+	ErrCosignRequired = errors.New("referral/attribution: house-benefiting reassignment requires a distinct co-signer")
+	ErrNoAttribution  = errors.New("referral/attribution: attribution not found")
 )
 
 // ClaimCode is the §7A.3 late code-claim. Within the grace window, a user who
@@ -28,7 +31,7 @@ var (
 // claim is rejected.
 func (s *Service) ClaimCode(ctx context.Context, referredUserID, code string) (*Attribution, error) {
 	att, err := s.getByReferred(ctx, referredUserID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoAttribution
 	}
 	if err != nil {
@@ -49,7 +52,7 @@ func (s *Service) ClaimCode(ctx context.Context, referredUserID, code string) (*
 		return nil, ErrNotHouse
 	}
 
-	norm := normalizeCode(code)
+	norm := strutil.NormalizeCode(code)
 	referrerID, rerr := s.codes.ResolveCodeToReferrer(ctx, norm)
 	if rerr != nil || referrerID == "" {
 		return nil, ErrInvalidCode
@@ -58,8 +61,12 @@ func (s *Service) ClaimCode(ctx context.Context, referredUserID, code string) (*
 		return nil, ErrSelfClaim
 	}
 
-	// Reverse the house accrual and re-accrue to the real referrer.
-	if err := s.reverseAndReaccrue(ctx, referredUserID, referrerID); err != nil {
+	// Reverse any (pre-2026-09-18) house accrual still on the books — a no-op
+	// for any attribution made after that date, since nothing accrues on
+	// signup anymore. Nothing is re-accrued to the real referrer either: a
+	// late code claim is still a signup-time event, not a purchase, and must
+	// stay just as profit-free as the original signup was.
+	if err := s.reverseAccrual(ctx, referredUserID); err != nil {
 		return nil, err
 	}
 
@@ -111,7 +118,7 @@ type ReassignInput struct {
 // co-signer (cosignedBy != requestedBy) before it is applied.
 func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution, error) {
 	att, err := s.GetByID(ctx, in.AttributionID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoAttribution
 	}
 	if err != nil {
@@ -141,16 +148,7 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 		if herr != nil {
 			return nil, herr
 		}
-		if _, aerr := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-			HouseAccountID: acc.ID,
-			ReferredUserID: att.ReferredUserID,
-			Kind:           rewardledger.KindReferrer,
-			AmountKobo:     HouseReferrerRewardKobo,
-			IsHouse:        true,
-			IdempotencyKey: "ref:reaccrue:" + att.ReferredUserID + ":" + in.AttributionID,
-		}); aerr != nil {
-			return nil, aerr
-		}
+		// No re-accrual — see the comment on ClaimCode above.
 		const upd = `
 			UPDATE referral_attributions
 			SET referrer_id = NULL, house_account_id = $2, attribution_type = 'global_house',
@@ -161,16 +159,7 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 			return nil, fmt.Errorf("referral/attribution: reassign to house: %w", err)
 		}
 	} else {
-		if _, aerr := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-			BeneficiaryID:  in.ToParty,
-			ReferredUserID: att.ReferredUserID,
-			Kind:           rewardledger.KindReferrer,
-			AmountKobo:     HouseReferrerRewardKobo,
-			IsHouse:        false,
-			IdempotencyKey: "ref:reaccrue:" + att.ReferredUserID + ":" + in.AttributionID,
-		}); aerr != nil {
-			return nil, aerr
-		}
+		// No re-accrual — see the comment on ClaimCode above.
 		const upd = `
 			UPDATE referral_attributions
 			SET referrer_id = $2, house_account_id = NULL, attribution_type = 'code',
@@ -194,7 +183,7 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved', now())`
 	if _, err := s.db.Exec(ctx, ins,
 		in.AttributionID, fromParty, in.ToParty, in.Reason,
-		nullable(in.RequestedBy), cosign, benefitsHouse); err != nil {
+		dbutil.NullStr(in.RequestedBy), cosign, benefitsHouse); err != nil {
 		return nil, fmt.Errorf("referral/attribution: reassign record: %w", err)
 	}
 
@@ -208,36 +197,20 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 	return s.GetByID(ctx, in.AttributionID)
 }
 
-// reverseAndReaccrue claws back the house accrual and credits the real referrer.
-func (s *Service) reverseAndReaccrue(ctx context.Context, referredUserID, referrerID string) error {
-	if err := s.reverseAccrual(ctx, referredUserID); err != nil {
-		return err
-	}
-	_, err := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-		BeneficiaryID:  referrerID,
-		ReferredUserID: referredUserID,
-		Kind:           rewardledger.KindReferrer,
-		AmountKobo:     HouseReferrerRewardKobo,
-		IsHouse:        false,
-		IdempotencyKey: "ref:reaccrue:" + referredUserID + ":claim",
-	})
-	return err
-}
-
 // reverseAccrual claws back the original referrer-side accrual for a referred
 // user (matched by the resolver's stable idempotency key).
 func (s *Service) reverseAccrual(ctx context.Context, referredUserID string) error {
 	const q = `SELECT id FROM referral_reward_ledger WHERE idempotency_key = $1`
 	var rewardID string
 	err := s.db.QueryRow(ctx, q, "ref:accrue:"+referredUserID).Scan(&rewardID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // nothing to reverse
 	}
 	if err != nil {
 		return fmt.Errorf("referral/attribution: find accrual: %w", err)
 	}
 	if cberr := s.reward.ClawBack(ctx, rewardID, "ref:clawback:"+referredUserID); cberr != nil {
-		if cberr == rewardledger.ErrIllegalTransition {
+		if errors.Is(cberr, rewardledger.ErrIllegalTransition) {
 			return nil // already terminal — safe
 		}
 		return cberr

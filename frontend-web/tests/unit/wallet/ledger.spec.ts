@@ -12,9 +12,7 @@ import {
   type LedgerEntryRow,
 } from '@/src/server/wallet/ledger';
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function entry(
   type: LedgerEntryRow['type'],
@@ -22,10 +20,6 @@ function entry(
 ): Pick<LedgerEntryRow, 'type' | 'amount_kobo'> {
   return { type, amount_kobo };
 }
-
-// ---------------------------------------------------------------------------
-// computeWalletBalance — balance formula
-// ---------------------------------------------------------------------------
 
 describe('computeWalletBalance — balance formula', () => {
   it('returns 0 for an empty ledger', () => {
@@ -68,7 +62,6 @@ describe('computeWalletBalance — balance formula', () => {
     // -₦300 spend
     // -₦1,000 top-up reversed
     // +₦300 spend refunded
-    // Net = 0
     const entries = [
       entry('CREDIT', 100_000),
       entry('DEBIT', 30_000),
@@ -79,7 +72,6 @@ describe('computeWalletBalance — balance formula', () => {
   });
 
   it('handles multiple credits and debits correctly', () => {
-    // +₦5,000 + +₦2,000 - ₦1,500 - ₦800 = ₦4,700
     const entries = [
       entry('CREDIT', 500_000),
       entry('CREDIT', 200_000),
@@ -90,7 +82,6 @@ describe('computeWalletBalance — balance formula', () => {
   });
 
   it('balance can be negative (overdraft scenario — caller must guard against this)', () => {
-    // The pure function does not enforce non-negative; the service layer does
     const entries = [
       entry('CREDIT', 10_000),
       entry('DEBIT', 50_000),
@@ -133,9 +124,7 @@ describe('computeWalletBalance — balance formula', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // computeWalletBalance — amount validation
-// ---------------------------------------------------------------------------
 
 describe('computeWalletBalance — input validation', () => {
   it('throws when amount_kobo is a float', () => {
@@ -155,9 +144,7 @@ describe('computeWalletBalance — input validation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // validateAmountKobo — standalone
-// ---------------------------------------------------------------------------
 
 describe('validateAmountKobo', () => {
   it('does not throw for valid positive integers', () => {
@@ -188,9 +175,7 @@ describe('validateAmountKobo', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildIdempotencyKey
-// ---------------------------------------------------------------------------
 
 describe('buildIdempotencyKey', () => {
   it('produces a deterministic key from operation, ref, and side', () => {

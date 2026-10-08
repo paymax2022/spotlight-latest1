@@ -1,9 +1,4 @@
-// ── Owner-set packaging price: parsing what they typed ───────────────────────
-//
-// The owner types NAIRA; the wire, the column and every calculation are integer
-// KOBO. That conversion is where money bugs live, so it is a pure function with
 // its own tests rather than an inline `Number(x) * 100` in a screen.
-//
 // The bounds mirror the server exactly (restaurant.UpdateRestaurant rejects
 // < 0 and > ₦10,000/pack). Client-side validation is for the owner's benefit —
 // the server re-validates and is the authority — but matching the bounds means
@@ -62,8 +57,6 @@ export function packagingPriceInput(kobo: number): string {
   return Number.isInteger(naira) ? String(naira) : naira.toFixed(2);
 }
 
-// ── PATCH body for a store update ────────────────────────────────────────────
-
 /**
  * Map a store patch onto the snake_case body the API expects.
  *
@@ -80,5 +73,10 @@ export function buildUpdateStoreBody(patch: UpdateStoreInput): Record<string, un
   if (patch.address !== undefined) body.address = patch.address;
   if (patch.logoUrl !== undefined) body.logo_url = patch.logoUrl;
   if (patch.packagingFeeKobo !== undefined) body.packaging_fee_kobo = patch.packagingFeeKobo;
+  if (patch.geo !== undefined) {
+    body.geo_lat = patch.geo?.lat;
+    body.geo_lng = patch.geo?.lng;
+    body.plus_code = patch.geo?.plusCode;
+  }
   return body;
 }

@@ -130,7 +130,6 @@ export default function InsuranceCommissionPage() {
   const zeroPct = reported.filter((v) => v === 0).length;
 
   const entries = realised?.entries ?? [];
-  // Prefer the API's own total; only fall back to summing the rows we were given,
   // and label that fallback as page-scoped rather than passing it off as a book total.
   const totalFromApi = realised?.total_commission_kobo ?? null;
   const totalFromRows = entries.reduce((s, e) => s + (e.commission_kobo ?? 0), 0);

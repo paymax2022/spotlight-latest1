@@ -1,24 +1,19 @@
 package restaurant
 
 // LIVE-DB tests for the capability ↔ KYB bridge (foodhub A17).
-//
 // Spotlight answers two different questions with two unconnected systems:
 //   • onb_application  — "may this PERSON be a restaurant merchant?" (capability)
 //   • restaurant_kyb   — "may this OUTLET be paid?"  (payout gate, PY-007)
-//
 // Nothing joined them, and the consequence is measurable: 1059 of 1075 outlets
 // have no KYB row at all, and 709 are actively trading while not KYB-approved.
 // payout.go builds runs with `AND res.kyb_status = 'approved'`, so those outlets
 // take orders, settle into provider_kobo, and are then skipped by every payout
 // run — silently. No banner, no admin queue entry, nothing.
-//
 // The bridge does not merge the systems (KYB is per OUTLET, capability is per
 // PERSON — an owner's second outlet can have different banking). It reports the
 // join: per outlet, can it be paid, why not, and how much is already stuck.
-//
 // The readiness rule MUST mirror the payout query exactly. If it drifts, the app
 // tells owners something the payout engine does not honour.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -38,7 +33,7 @@ func readinessPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping payout-readiness live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -94,8 +89,8 @@ func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		}
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2,$3,$4)`, f.approved, f.pending, f.noKyb, f.rival)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2,$3,$4)`, f.approved, f.pending, f.noKyb, f.rival)
 	})
 	return f
 }
@@ -103,7 +98,7 @@ func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 func TestLiveDB_ReadinessMirrorsThePayoutGate(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)
@@ -132,7 +127,7 @@ func TestLiveDB_ReadinessMirrorsThePayoutGate(t *testing.T) {
 func TestLiveDB_ReadinessExplainsWhyAnOutletCannotBePaid(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)
@@ -166,7 +161,7 @@ func TestLiveDB_ReadinessExplainsWhyAnOutletCannotBePaid(t *testing.T) {
 func TestLiveDB_ReadinessIsScopedToTheOwner(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)
@@ -194,7 +189,7 @@ func TestLiveDB_ReadinessIsScopedToTheOwner(t *testing.T) {
 func TestLiveDB_ReadinessReportsMoneyAlreadyStuck(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)

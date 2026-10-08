@@ -1,7 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import Svg, { Polyline, Defs, LinearGradient as SvgGradient, Stop, Polygon } from 'react-native-svg';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { Candle } from '../types/invest.types';
 
 /** Minimal price sparkline from close prices. Green if up over the window. */

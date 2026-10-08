@@ -1,4 +1,3 @@
-// ── Paymax Health — Vet Mode B (assisted) VCN verification status ───────────
 // PRIVACY-CRITICAL (HL-2 / HL-8): this member-facing screen shows ONLY the coarse
 // verification stage. It MUST NEVER render the VCN registration number, matched
 // fields, register data, the reviewer's identity, or any review notes. The status
@@ -10,11 +9,11 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ShieldCheck, Clock, BadgeCheck, RefreshCw } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';

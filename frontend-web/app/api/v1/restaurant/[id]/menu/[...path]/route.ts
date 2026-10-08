@@ -5,16 +5,13 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy: /api/v1/restaurant/:id/menu/<...>
 //                  → Go /api/finance/restaurant/:id/menu/<...>
-//
 // Covers the four menu-management shapes the owner and admin consoles drive:
 //   POST   /menu/categories
 //   DELETE /menu/categories/:categoryId
 //   POST   /menu/items
 //   PATCH  /menu/items/:itemId
 //   DELETE /menu/items/:itemId
-//
 // A catch-all rather than five files because the segment count varies and the
-// Go side already validates the shape. Owner-only; object-level authz lives in
 // the Go service (restaurant/authz.go).
 async function forward(request: Request, id: string, path: string[]) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);
@@ -43,6 +40,10 @@ export async function DELETE(request: Request, ctx: Ctx) {
   return forward(request, id, path);
 }
 export async function GET(request: Request, ctx: Ctx) {
+  const { id, path } = await ctx.params;
+  return forward(request, id, path);
+}
+export async function HEAD(request: Request, ctx: Ctx) {
   const { id, path } = await ctx.params;
   return forward(request, id, path);
 }

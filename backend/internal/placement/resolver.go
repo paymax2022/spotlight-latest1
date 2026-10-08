@@ -25,7 +25,6 @@ type LandingZone struct {
 }
 
 // Landing resolves the consumer-facing featured surface for all active zones.
-//
 //   - Per zone: campaigns with state=ACTIVE and now within [window_start,window_end).
 //     SUSPENDED is structurally excluded by the ServingCandidates query (state=ACTIVE
 //     only), satisfying the "re-check that you'd drop SUSPENDED" requirement.
@@ -157,9 +156,7 @@ func houseFallback(zone *Zone) ServedItem {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Analytics ingest (public events endpoint)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // EventKind discriminates the public analytics events.
 type EventKind string

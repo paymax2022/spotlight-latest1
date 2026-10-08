@@ -6,15 +6,10 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { EstateTabs } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { listOversightFacilities, createFacility } from '@/services/estateAdminService';
+import type { OversightFacility } from '@/types/estateAdmin';
 
-interface Facility {
-  id: string;
-  estateId: string;
-  name: string;
-  kind: string;
-  capacity?: number;
-  feeKobo: number;
-}
+type Facility = OversightFacility;
 
 const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
@@ -35,9 +30,7 @@ export default function FacilitiesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/facilities', { method: 'GET' });
-      if (!res.ok) throw new Error(`Failed to load facilities: ${res.status}`);
-      const data = await res.json();
+      const data = await listOversightFacilities();
       setFacilities(data);
     } catch (e) {
       setError(String(e));
@@ -55,19 +48,12 @@ export default function FacilitiesPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const body = {
+      const newFacility = await createFacility({
         name: formData.name,
         kind: formData.kind,
         capacity: formData.capacity ? parseInt(formData.capacity) : null,
         feeKobo: parseInt(formData.feeKobo || '0'),
-      };
-      const res = await fetch('/api/admin/facilities', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`Failed to create facility: ${res.status}`);
-      const newFacility = await res.json();
       setFacilities([...facilities, newFacility]);
       setFormData({ name: '', kind: '', capacity: '', feeKobo: '' });
       setShowForm(false);

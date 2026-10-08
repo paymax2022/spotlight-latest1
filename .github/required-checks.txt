@@ -1,4 +1,6 @@
-# Required status checks on `develop` (GitHub branch protection).
+# Required status checks on `develop` and `main` (GitHub branch protection).
+# Apply to both: scripts/ci/apply-branch-protection.sh develop && ... main
+# (AUD-TEST-003: main merges previously ran with no required gate at all.)
 #
 # These are CHECK-RUN names, not workflow names — you cannot require "ci.yml".
 # For a job that calls a reusable workflow the name is "<caller job name> / <job

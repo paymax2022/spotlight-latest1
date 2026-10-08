@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ActivityIndicator, Pressable, Animated } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AlertCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useVerifyRegistrationPayment } from '@/features/registration/hooks/useRegistration';
 
 // Bounded backoff — Paystack usually settles within seconds but can take longer.
@@ -48,8 +48,14 @@ export default function RegistrationPaymentProcessingScreen() {
         transactionId: transactionId ?? '',
         reference:     reference ?? '',
       });
-      if (result.status === 'SUCCESSFUL') { goSuccess(); return true; }
-      if (result.status === 'FAILED')     { goFailed(); return true; }
+      // VerifyPayment returns lowercase 'successful' (registration_handler.go)
+      // — a strict-case comparison here only ever matched the mock, so a
+      // real Paystack success from the live API silently fell through every
+      // poll and eventually landed on goFailed() regardless of what Paystack
+      // reported. Normalize case rather than special-casing both strings.
+      const status = result.status?.toUpperCase();
+      if (status === 'SUCCESSFUL') { goSuccess(); return true; }
+      if (status === 'FAILED')     { goFailed(); return true; }
       return false;
     } catch {
       return false; // network hiccup — keep polling

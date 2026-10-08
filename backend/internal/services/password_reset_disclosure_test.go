@@ -40,7 +40,7 @@ func TestRequestPasswordReset_UpstreamStatusHandling(t *testing.T) {
 			defer srv.Close()
 
 			svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "test-key"), nil, config.Config{})
-			err := svc.RequestPasswordReset("someone@example.test")
+			err := svc.RequestPasswordReset(t.Context(), "someone@example.test")
 
 			if tc.wantError && err == nil {
 				t.Errorf("status %d returned nil — %s", tc.status, tc.why)

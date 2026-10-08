@@ -1,4 +1,3 @@
-// ── Restaurant merchant — types ──────────────────────────────────────────────
 // Merchant-side (store owner) shapes, matching the Go backend's core restaurant
 // + menu contract (snake_case on the wire, mapped to camelCase in api.ts). This
 // is deliberately separate from the consumer discovery `Restaurant` shape in
@@ -15,6 +14,10 @@ export interface MerchantStore {
   logoUrl?: string | null;
   isOpen: boolean;
   createdAt?: string;
+  /** Server-held pin, when one has been geocoded or confirmed — seeds the
+   *  address picker's map when editing rather than starting pin-less. */
+  geoLat?: number | null;
+  geoLng?: number | null;
   /**
    * Price of ONE takeaway pack, integer kobo. The platform seeds ₦200; the owner
    * sets their own, and 0 is a legitimate choice meaning "I don't charge for
@@ -46,11 +49,25 @@ export interface MerchantStoreDetail {
   categories: MerchantMenuCategory[];
 }
 
+/**
+ * A pin the owner confirmed with the map-assisted address picker
+ * (AddressAutocompleteInput), alongside the free-text address. Optional — the
+ * server falls back to geocoding the text itself when this is absent — but
+ * when present it is more precise than a best-effort server geocode, since
+ * it's the exact spot the owner picked rather than a rooftop-centroid guess.
+ */
+export interface StoreGeoPoint {
+  lat: number;
+  lng: number;
+  plusCode?: string;
+}
+
 export interface CreateStoreInput {
   name: string;
   description?: string;
   address: string;
   logoUrl?: string;
+  geo?: StoreGeoPoint;
 }
 
 export interface UpdateStoreInput {
@@ -61,6 +78,7 @@ export interface UpdateStoreInput {
   /** Integer kobo per takeaway pack. 0 is a real value, so this is only omitted
    *  when the owner is not changing the price. */
   packagingFeeKobo?: Kobo;
+  geo?: StoreGeoPoint;
 }
 
 export interface EarningsRun {
@@ -96,6 +114,34 @@ export interface OutletPayoutReadiness {
   unpaidKobo: Kobo;
 }
 
+/** Business types the KYB submit gate accepts (mirrors the backend's kybBusinessTypes). */
+export type KYBBusinessType = 'sole_proprietor' | 'limited_company' | 'partnership' | 'ngo';
+
+/**
+ * A restaurant's Know-Your-Business verification record (backend/internal/restaurant/kyb.go).
+ * Closing the store is always allowed; OPENING requires `status === 'approved'` — see
+ * ADR-033's fail-closed gate in SetAvailability. `documents` is the set of uploaded doc
+ * types (e.g. 'cac_certificate'), required for any business_type other than
+ * 'sole_proprietor' before submit.
+ */
+export interface RestaurantKYB {
+  restaurantId: string;
+  legalName: string;
+  businessType: KYBBusinessType | '';
+  /** CAC RC/BN number — required for every business_type except sole_proprietor. */
+  rcNumber: string;
+  tin: string;
+  contactEmail: string;
+  contactPhone: string;
+  /** Settlement (payout) account — the merchant's OWN bank account, not a credential. */
+  bankCode: string;
+  accountNumber: string;
+  accountName: string;
+  status: string; // 'draft' | 'submitted' | 'under_review' | 'needs_more_info' | 'approved' | 'rejected'
+  decisionReason?: string;
+  documents: string[];
+}
+
 /** A member of one outlet's staff. */
 export interface StaffMember {
   userId: string;
@@ -121,8 +167,5 @@ export interface StaffInvite {
 
 // UserLookup used to be declared here too, as { userId, ... } — a second
 // definition of the same name, disagreeing with the one in api.ts ({ user_id,
-// ... }, matching the Go handler's json:"user_id" tag exactly). Nothing ever
-// consumed this copy; useUserLookup's data flows from api.ts's lookupUser(),
-// so this one was dead except for a stray import in staff.tsx that happened
 // to reach for the wrong same-named type. Removed rather than fixed in place,
 // so the mistake can't be made again by importing from here. See api.ts.

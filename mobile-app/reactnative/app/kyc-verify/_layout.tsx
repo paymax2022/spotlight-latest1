@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /** Multi-provider KYC step-up wizard (K1–K15). */
 export default function KycVerifyLayout() {

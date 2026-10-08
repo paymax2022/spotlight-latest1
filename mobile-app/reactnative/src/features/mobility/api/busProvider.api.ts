@@ -1,7 +1,5 @@
-// ── Bus provider marketplace — provider-side API wrapper ─────────────────────
 // The OPERATOR side of the interstate bus marketplace: register/upgrade, manage
 // profile, create routes and departures, and pull per-departure manifests.
-//
 // IRON RULE: creating routes/schedules is FREE — no money moves here. Only the
 // CUSTOMER booking (see bus.api.ts → bookBus) is a money mutation and carries an
 // Idempotency-Key. Requests send snake_case bodies; responses are camelCase.
@@ -135,8 +133,6 @@ export async function createSchedule(routeId: string, req: BusScheduleCreateRequ
     }),
   );
 }
-
-// ─── Recurring departure templates ─────────────────────────────────────────────
 
 // GET /bus/provider/templates → { templates }
 export async function listTemplates(): Promise<BusDepartureTemplate[]> {

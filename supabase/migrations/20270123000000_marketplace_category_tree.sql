@@ -55,39 +55,63 @@ ON CONFLICT (market_id, slug) DO UPDATE
       sort_order = EXCLUDED.sort_order, parent_id = NULL, updated_at = now();
 
 -- ─── 3. Icons + order for the nine existing categories that stay main ───────
-UPDATE mkt_categories AS c SET icon = v.icon, sort_order = v.ord, parent_id = NULL, updated_at = now()
-FROM (VALUES
-  ('property',          'Building2',  2),
-  ('phones-tablets',    'Smartphone', 3),
-  ('electronics',       'Tv',         4),
-  ('home-furniture',    'Sofa',       5),
-  ('fashion',           'Shirt',      6),
-  ('health-beauty',     'Sparkles',   7),
-  ('babies-kids',       'Baby',       8),
-  ('agriculture-food',  'Wheat',      9),
-  ('animals-pets',      'PawPrint',  10)
-) AS v(slug, icon, ord)
-WHERE c.market_id = 'NG' AND c.slug = v.slug;
+--
+-- INSERT ... ON CONFLICT, not a bare UPDATE: the doc comment above assumes these
+-- 9 rows already exist (the informal "19 real NG categories" baseline), but that
+-- baseline was never captured in a migration — grep the tree, there is no
+-- `INSERT INTO mkt_categories` anywhere before this file. On any database that
+-- reaches this point via a full migration replay (a fresh `supabase db reset`,
+-- CI's migration-chain check, or any environment stood up from these migrations
+-- alone rather than copied from a manually-seeded one) the old UPDATE matched
+-- zero rows for every one of these 9 slugs, so they were silently never created.
+-- The visible symptom: only the 3 brand-new mains from step 2 (Vehicles,
+-- Leisure & Hobbies, Jobs & Services) ever showed up, and everything step 5
+-- tries to nest under one of these 9 (Property, Phones & Tablets, Electronics,
+-- etc.) was dropped too, since its parent didn't exist for the JOIN to find.
+-- INSERT ... ON CONFLICT DO UPDATE is exactly equivalent to the old UPDATE on a
+-- database where the row already exists (production, or anywhere the baseline
+-- really was seeded out-of-band) — it changes behavior only where the row was
+-- missing, which is precisely the bug.
+INSERT INTO mkt_categories (market_id, parent_id, slug, name, icon, sort_order, attribute_schema)
+VALUES
+  ('NG', NULL, 'property',          'Property',           'Building2',  2, '{}'::jsonb),
+  ('NG', NULL, 'phones-tablets',    'Phones & Tablets',    'Smartphone', 3, '{}'::jsonb),
+  ('NG', NULL, 'electronics',       'Electronics',         'Tv',         4, '{}'::jsonb),
+  ('NG', NULL, 'home-furniture',    'Home & Furniture',    'Sofa',       5, '{}'::jsonb),
+  ('NG', NULL, 'fashion',           'Fashion',             'Shirt',      6, '{}'::jsonb),
+  ('NG', NULL, 'health-beauty',     'Health & Beauty',     'Sparkles',   7, '{}'::jsonb),
+  ('NG', NULL, 'babies-kids',       'Babies & Kids',       'Baby',       8, '{}'::jsonb),
+  ('NG', NULL, 'agriculture-food',  'Agriculture & Food',  'Wheat',      9, '{}'::jsonb),
+  ('NG', NULL, 'animals-pets',      'Animals & Pets',      'PawPrint',  10, '{}'::jsonb)
+ON CONFLICT (market_id, slug) DO UPDATE
+  SET icon = EXCLUDED.icon, sort_order = EXCLUDED.sort_order,
+      parent_id = NULL, updated_at = now();
 
 -- ─── 4. Re-parent the ten existing categories that become subcategories ─────
--- A parent_id (and icon/order) UPDATE only: the id and slug are untouched, so
--- every listing already filed here stays exactly where it is.
-UPDATE mkt_categories AS c
-SET parent_id = p.id, icon = v.icon, sort_order = v.ord, updated_at = now()
+-- Same fix as step 3, same reason: these 10 slugs were assumed pre-existing and
+-- a bare UPDATE silently no-op'd for every one of them on a database that never
+-- had the informal baseline. INSERT ... ON CONFLICT DO UPDATE is equivalent to
+-- the old UPDATE wherever the row already exists, and creates it (correctly
+-- parented, since step 3 above has already ensured the parent exists in this
+-- same transaction) wherever it doesn't.
+INSERT INTO mkt_categories (market_id, parent_id, slug, name, icon, sort_order, attribute_schema)
+SELECT 'NG', p.id, v.slug, v.name, v.icon, v.ord, '{}'::jsonb
 FROM (VALUES
-  ('cars',                 'vehicles',        'Car',       1),
-  ('motorcycles-scooters', 'vehicles',        'Bike',      2),
-  ('computers-laptops',    'electronics',     'Laptop',    1),
-  ('musical-instruments',  'leisure-hobbies', 'Guitar',    1),
-  ('sports-fitness',       'leisure-hobbies', 'Dumbbell',  2),
-  ('books-games',          'leisure-hobbies', 'BookOpen',  3),
-  ('jobs',                 'jobs-services',   'Briefcase', 1),
-  ('services',             'jobs-services',   'Handshake', 2),
-  ('repair-construction',  'jobs-services',   'Hammer',    3),
-  ('commercial-equipment', 'jobs-services',   'Factory',   4)
-) AS v(slug, parent_slug, icon, ord)
+  ('cars',                 'vehicles',        'Cars',                   'Car',       1),
+  ('motorcycles-scooters', 'vehicles',        'Motorcycles & Scooters', 'Bike',      2),
+  ('computers-laptops',    'electronics',     'Computers & Laptops',    'Laptop',    1),
+  ('musical-instruments',  'leisure-hobbies', 'Musical Instruments',    'Guitar',    1),
+  ('sports-fitness',       'leisure-hobbies', 'Sports & Fitness',       'Dumbbell',  2),
+  ('books-games',          'leisure-hobbies', 'Books & Games',          'BookOpen',  3),
+  ('jobs',                 'jobs-services',   'Jobs',                   'Briefcase', 1),
+  ('services',             'jobs-services',   'Services',               'Handshake', 2),
+  ('repair-construction',  'jobs-services',   'Repair & Construction',  'Hammer',    3),
+  ('commercial-equipment', 'jobs-services',   'Commercial Equipment',   'Factory',   4)
+) AS v(slug, parent_slug, name, icon, ord)
 JOIN mkt_categories p ON p.market_id = 'NG' AND p.slug = v.parent_slug
-WHERE c.market_id = 'NG' AND c.slug = v.slug;
+ON CONFLICT (market_id, slug) DO UPDATE
+  SET parent_id = EXCLUDED.parent_id, icon = EXCLUDED.icon,
+      sort_order = EXCLUDED.sort_order, updated_at = now();
 
 -- ─── 5. New subcategories ───────────────────────────────────────────────────
 -- Slugs are parent-prefixed where a bare name would collide with an existing

@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 
-// POST /api/v1/visitor/gate/checkout — check out a visitor using the original check-in event id.
+// Check out a visitor using the original check-in event id.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -12,12 +12,12 @@ export async function POST(request: Request) {
     const guard = await getGuardContext(supabase, user.id);
     if (!guard) throw new ApiError('No active gate session', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const visitEventId: string = body?.visitEventId;
     const gateId: string = body?.gateId ?? guard.gateId;
     if (!visitEventId) throw new ApiError('visitEventId is required', 400);
 
-    // Load original check-in event for context.
     const { data: checkIn, error: ciErr } = await supabase
       .from('visitor_gate_events')
       .select('*')

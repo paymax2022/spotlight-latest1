@@ -9,7 +9,6 @@ import (
 // leaderboard.go — the cross-school leaderboard EXTENSION (build-spec §2
 // LeaderboardEntry: "Extends Academy's existing leaderboard table with
 // school/scope columns, does not replace it").
-//
 // HOW WE EXTEND WITHOUT EDITING gamification (REUSE-MAP.md §1, §5.3):
 //   - The physical rows live in the SAME academy_leaderboards /
 //     academy_leaderboard_entries tables owned by academy/gamification. We do not
@@ -23,7 +22,6 @@ import (
 //     identity so the SF-7 serializer can act on them.
 //   - The scope value written to academy_leaderboards.scope is exactly one of the
 //     five ValidScope() values — all permitted by the widened CHECK constraint.
-//
 // MONEY-FREE: nothing here credits a wallet or references a ledger account. A
 // score is engagement, not value. Competition rewards go through academy/rewards.
 
@@ -95,7 +93,6 @@ func NewLeaderboardManager(ladder GamificationLadder, identity IdentityResolver)
 var ErrScopeInvalid = feesErr("scope_invalid")
 
 // WriteEntry records a single cross-school leaderboard entry for a competition.
-//
 // SCORING LOCK (build-spec §3.4 / SF): no LeaderboardEntry may be created or
 // edited once the competition is results_pending or later. The instant the
 // competition enters results_pending, feesstatemachine.ScoringLocked(status)

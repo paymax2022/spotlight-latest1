@@ -1,4 +1,3 @@
-// ── Reads the extra prefill sources from Supabase ────────────────────────────
 // Split from ./prefillSources so the merge/mapping logic there stays free of
 // React Native imports and can be unit-tested under plain node.
 

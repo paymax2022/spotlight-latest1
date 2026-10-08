@@ -1,6 +1,4 @@
-// ── Protection — browse the live catalog ─────────────────────────────────────
 // All 68 real MyCover plans, grouped by the 7 real categories.
-//
 // 68 rows in one flat list is a data dump, so: a category filter row, a search
 // that matches plan name / insurer / description, and — when no category is
 // selected — the catalog is presented as sections with counts rather than one
@@ -16,10 +14,10 @@ import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   InsuranceErrorState,
   LiveProductCard,

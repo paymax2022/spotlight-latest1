@@ -1,21 +1,15 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Event invitations.
-//
 // WHY THIS EXISTS
-// ---------------
 // Events could be created and responded to, but nobody could be INVITED to one
 // — the only way a member learned about an event was finding it in the list.
-//
 // An invitation is a REGISTRATION ROW with invited_at set, not a separate
 // table, because assoc_event_registrations already holds the (event, membership)
 // relationship along with the RSVP, ticket and check-in. The tests below pin the
 // consequence that design is for: inviting somebody who has already responded
 // must not disturb their response.
-//
 // Live-DB, same harness as founder_and_scoping_test.go.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -45,8 +39,8 @@ func TestInviteToEvent_InvitesMembersAndIsAdminOnly(t *testing.T) {
 		t.Fatalf("seed event: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_events WHERE id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_events WHERE id=$1`, eventID)
 	})
 
 	var memberMembership string
@@ -105,8 +99,8 @@ func TestInviteToEvent_DoesNotDisturbAnExistingResponse(t *testing.T) {
 		t.Fatalf("seed event: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_events WHERE id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_events WHERE id=$1`, eventID)
 	})
 
 	var membership string
@@ -170,14 +164,14 @@ func TestInviteToEvent_DropsForeignMemberships(t *testing.T) {
 	_, foreignMembership := seedMember(t, ctx, pool, resB.OrganisationID, "@foreign.test")
 
 	var eventID string
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_events (organisation_id, title, starts_at)
 		VALUES ($1, 'Members only', now() + interval '10 days') RETURNING id::text`, orgA).Scan(&eventID); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_events WHERE id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_events WHERE id=$1`, eventID)
 	})
 
 	n, err := svc.InviteToEvent(ctx, adminA, eventID, []string{foreignMembership})

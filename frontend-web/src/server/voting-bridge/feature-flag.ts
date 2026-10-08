@@ -18,11 +18,7 @@ export function isBridgeEnabled(): boolean {
 
   // TODO: Integrate with LaunchDarkly or other feature flag service
   // Example:
-  // const launchDarklyClient = getLaunchDarklyClient();
-  // return launchDarklyClient.variation('votes-bridge-enabled', { key: 'default' }, false);
 
-  // Default: disabled for gradual rollout
-  // Set VOTES_BRIDGE_ENABLED=true in .env.local to enable
   return cachedEnabled ?? false;
 }
 
@@ -56,9 +52,6 @@ export function isBridgeEnabledForUser(userId: string): boolean {
   }
 
   // TODO: Implement user-level feature flags
-  // Example: Use LaunchDarkly user context
-  // const launchDarklyClient = getLaunchDarklyClient();
-  // return launchDarklyClient.variation('votes-bridge-enabled', { key: userId }, false);
 
   return true;
 }
@@ -68,6 +61,5 @@ export function isBridgeEnabledForUser(userId: string): boolean {
  */
 export function getBridgeRolloutPercentage(): number {
   // TODO: Implement percentage-based rollout
-  // Example: Hash the user ID and check against rollout percentage
   return 100; // 100% rollout by default
 }

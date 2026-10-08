@@ -13,8 +13,6 @@ import (
 // building blocks guarantee — counting fake-rail invocations to prove single-collect /
 // single-disburse — which the integration suite then asserts end-to-end against pgx.
 
-// ── Fakes (counting rails — no vendor, no DB) ───────────────────────────────────
-
 type fakeCollectRail struct {
 	calls map[string]int // idemKey → invocation count
 	ref   string
@@ -54,8 +52,6 @@ func (f *fakeBNPLRail) StartPlan(_ context.Context, _, _, idemKey string, _ int6
 	return "bnpl-ref", nil
 }
 
-// ── Disbursement state machine: allowed + illegal ────────────────────────────────
-
 func TestCanDisb_AllowedTransitions(t *testing.T) {
 	allowed := [][2]DisbState{
 		{DisbFeeDue, DisbFunding},
@@ -88,8 +84,6 @@ func TestCanDisb_IllegalTransitions(t *testing.T) {
 	}
 }
 
-// ── PayFees idempotency: double call = one collect + one disburse ────────────────
-//
 // The rail-call count is the load-bearing invariant: the runDisbursement pipeline calls
 // Collect once and Disburse once per idemKey. A replay re-uses the SAME idemKey, and the
 // service's FindIdem short-circuit returns the stored disbursement WITHOUT re-entering
@@ -124,8 +118,6 @@ func TestPayFees_RailIdempotency_SingleCollectSingleDisburse(t *testing.T) {
 	}
 }
 
-// ── Request hash binds the key to the body (rejects reuse, accepts replay) ───────
-
 func TestRequestHash_Deterministic(t *testing.T) {
 	a := requestHash(scopePay, "user-1", "fee-1", "pay")
 	b := requestHash(scopePay, "user-1", "fee-1", "pay")
@@ -143,8 +135,6 @@ func TestRequestHash_Deterministic(t *testing.T) {
 	}
 }
 
-// ── Pot funding: append + DERIVED balance (no shadow column) ─────────────────────
-//
 // saved_minor is ALWAYS the SUM of contributions. We model that here: appending
 // contributions and summing them yields the balance; a duplicate idempotency key must
 // NOT increase the sum (append-only + UNIQUE idem). This mirrors sumContributions over
@@ -167,14 +157,12 @@ func TestPotBalance_DerivedFromAppendOnlyContributions(t *testing.T) {
 			continue // ON CONFLICT (idempotency_key) DO NOTHING
 		}
 		seen[c.idem] = true
-		derived += c.amount // saved_minor = SUM(contributions)
+		derived += c.amount
 	}
 	if derived != 8000 {
 		t.Errorf("derived saved_minor must be SUM of UNIQUE contributions = 8000, got %d", derived)
 	}
 }
-
-// ── PayFromPot: insufficient derived balance → reject ────────────────────────────
 
 func TestPayFromPot_InsufficientBalance_Rejected(t *testing.T) {
 	// Models the service guard: pot.SavedMinor (derived) < fee.AmountMinor ⇒ ErrInsufficientPot.
@@ -194,8 +182,6 @@ func TestPayFromPot_InsufficientBalance_Rejected(t *testing.T) {
 	}
 }
 
-// ── Reconcile transition (disbursed → reconciled) ────────────────────────────────
-
 func TestReconcile_TransitionDisbursedToReconciled(t *testing.T) {
 	if !canDisb(DisbDisbursed, DisbReconciled) {
 		t.Error("disbursed→reconciled must be allowed (golden rule 6: reconcile every disbursement)")
@@ -205,8 +191,6 @@ func TestReconcile_TransitionDisbursedToReconciled(t *testing.T) {
 		t.Error("collected→reconciled must be illegal (must disburse first)")
 	}
 }
-
-// ── Scholarship award idempotent (same idemKey ⇒ one logical movement) ───────────
 
 func TestScholarshipAward_RailIdempotency(t *testing.T) {
 	disburse := newFakeDisburse()
@@ -229,8 +213,6 @@ func TestScholarshipAward_RailIdempotency(t *testing.T) {
 	}
 }
 
-// ── BNPL source routes through the BNPL rail, not Collect ─────────────────────────
-
 func TestPayFees_BNPLSource_UsesBNPLRail(t *testing.T) {
 	collect := newFakeCollect()
 	bnpl := newFakeBNPL()
@@ -245,8 +227,6 @@ func TestPayFees_BNPLSource_UsesBNPLRail(t *testing.T) {
 		t.Error("bnpl source must NOT invoke the collect rail")
 	}
 }
-
-// ── Stub rails are deterministic + idempotent on idemKey (no vendor leak) ─────────
 
 func TestStubRails_IdempotentRefs(t *testing.T) {
 	ctx := context.Background()

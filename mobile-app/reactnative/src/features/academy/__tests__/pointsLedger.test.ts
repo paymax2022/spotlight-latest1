@@ -1,7 +1,5 @@
 // Pure-logic unit tests for the Academy reward-points ledger (points-path).
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs \
 //        --test "src/features/academy/__tests__/*.test.ts"
-//
 // Reward points are non-monetary but earn/redeem is treated with money-path
 // discipline (append-only ledger, idempotent awards). The bug this pins: points
 // were credited with NO dedup key, so re-submitting the same exam attempt (or

@@ -3,16 +3,17 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Package, Wallet } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useCourierRequests, useCourierActions } from '@/features/mobility/hooks/useModes';
 import { formatNairaWhole, formatDistance } from '@/features/mobility/utils/mobilityFormatters';
 import { PARCEL_CATEGORIES, PARCEL_SPEEDS } from '@/features/mobility/constants/modes.constants';
@@ -42,7 +43,7 @@ export default function CourierRequestsScreen() {
       {requests.isLoading ? (
         <StateView kind="loading" message="Looking for jobs near you…" />
       ) : requests.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => requests.refetch()} />
+        <MobilityEdgeState kind={errKind(requests.error)} actionLabel="Retry" onAction={() => requests.refetch()} />
       ) : (requests.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState kind="empty" title="No requests yet" message="New delivery requests near you will appear here." actionLabel="Refresh" onAction={() => requests.refetch()} />
       ) : (

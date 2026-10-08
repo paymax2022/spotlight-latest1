@@ -1,27 +1,26 @@
-// ── Association — Task authoring form (create + edit) ─────────────────────────
 
 import React, { useMemo, useState } from 'react';
 import { Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import { alertAsync, confirmAsync } from '@/lib/confirm';
-import AdminFormScreen from '../AdminFormScreen';
-import { CONTENT_CAPABILITY } from '../../utils/authoringAccess';
+import { AdminFormScreen } from '../index';
+import { CONTENT_CAPABILITY } from '../../utils';
 import {
   FormCard, ChoiceRow, OptionSelect, NotifyToggle, StringListEditor, DateTimeField, FormNotice,
 } from '../AdminFormControls';
 import {
   useCreateTask, useUpdateTask, useDeleteTask, useOrgMembers, useOrgPickerLists, useAdminContent,
 } from '../../hooks/useAuthoring';
-import { useAdminAccess } from '../../hooks/useAdminMembers';
-import { str, strList, oneOf } from '../../utils/metaFields';
+import { useAdminAccess } from '../../hooks';
+import { str, strList, oneOf } from '../../utils';
 import {
   TASK_PRIORITY_OPTIONS, TASK_STATUS_OPTIONS,
   type AdminContentRow, type AdminTaskStatus, type TaskInput,
 } from '../../types/authoring.types';
-import type { TaskPriority } from '../../types/engagement.types';
+import type { TaskPriority } from '../../types';
 
 const STATUSES = TASK_STATUS_OPTIONS.map((o) => o.value);
 const PRIORITIES = TASK_PRIORITY_OPTIONS.map((o) => o.value);

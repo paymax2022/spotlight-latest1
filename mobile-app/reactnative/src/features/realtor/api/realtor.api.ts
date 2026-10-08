@@ -1,9 +1,6 @@
-// ── Spotlight Realtor — API wrapper ──────────────────────────────────────────
 // Typed data layer the funnel screens code against (Backend role owns this).
-// Mock-flagged exactly like fx.api.ts / crowdfunding: flip USE_MOCK=false once
 // the real Spotlight endpoints land. Maps the funnel:
 //   listings → inspection-bookings → rental-applications.
-//
 // Funnel mutations carry an Idempotency-Key (see newIdempotencyKey) so a retried
 // submit can't double-create, mirroring the money-path convention.
 
@@ -32,7 +29,6 @@ import { mapListing, listingToCard, mapInspection, mapApplication, LISTING_SELEC
 import { REALTOR_USE_MOCK } from './realtorEnv';
 import { newIdempotencyKey } from '../utils/realtorFormatters';
 
-// ─── Feature flag (env-driven; default mock for the dev sandbox) ──────────────
 // When false, reads/writes hit Supabase directly (matching how other modules
 // read catalog data), against the tables in
 // supabase/migrations/20260620000000_realtor_property_graph.sql.
@@ -56,8 +52,6 @@ function applySupabaseFilter(q: any, f: ListingFilter): any {
   }
   return q;
 }
-
-// ─── Projections ──────────────────────────────────────────────────────────────
 
 function toCard(l: Listing): ListingCard {
   return {
@@ -121,8 +115,6 @@ function applyFilter(listings: Listing[], f: ListingFilter): Listing[] {
   return out;
 }
 
-// ─── Marketplace home (D) ─────────────────────────────────────────────────────
-
 export async function getMarketplaceHome(): Promise<MarketplaceHome> {
   if (USE_MOCK) {
     await delay();
@@ -156,8 +148,6 @@ export async function getMarketplaceHome(): Promise<MarketplaceHome> {
   };
 }
 
-// ─── Search (E) ───────────────────────────────────────────────────────────────
-
 export async function searchListings(filter: ListingFilter): Promise<ListingCard[]> {
   if (USE_MOCK) {
     await delay();
@@ -179,8 +169,6 @@ export async function searchListings(filter: ListingFilter): Promise<ListingCard
   if (filter.minBedrooms != null) cards = cards.filter((c) => c.bedrooms >= filter.minBedrooms!);
   return cards;
 }
-
-// ─── Listing detail (F) ───────────────────────────────────────────────────────
 
 export async function getListing(id: string): Promise<Listing> {
   if (USE_MOCK) {
@@ -218,8 +206,6 @@ export async function getSimilarListings(id: string): Promise<ListingCard[]> {
   if (error) throw error;
   return (data ?? []).map(mapListing).map(listingToCard);
 }
-
-// ─── Inspection booking (H) ───────────────────────────────────────────────────
 
 export async function getInspectionSlots(listingId: string): Promise<InspectionSlot[]> {
   if (USE_MOCK) {
@@ -285,7 +271,6 @@ export async function createInspection(draft: InspectionDraft): Promise<Inspecti
       attendee_name: draft.attendeeName,
       attendee_phone: draft.attendeePhone,
       note: draft.note ?? null,
-      // idempotency surrogate; backend can also enforce via header
       client_ref: newIdempotencyKey(),
     })
     .select(`*, listing:realtor_listings!listing_id(title, media)`)
@@ -344,8 +329,6 @@ export async function cancelInspection(id: string): Promise<InspectionBooking> {
   if (error) throw error;
   return mapInspection(data);
 }
-
-// ─── Rental application (J) ───────────────────────────────────────────────────
 
 function defaultDocuments(): ApplicationDocument[] {
   return [
@@ -453,4 +436,60 @@ export async function getApplication(id: string): Promise<RentalApplication> {
   if (error) throw error;
   if (!data) throw new Error('Application not found');
   return mapApplication(data);
+}
+
+// Non-monetary per-user bookmark, direct Supabase reads/writes against
+// realtor_saved_listings (RLS scoped to auth.uid(), mirrors realtor_move_outs).
+// Mock mode keeps an in-memory Set so the heart toggle still works without a
+// backend, matching how other mock-mode calls in this file behave.
+const mockSavedListingIds = new Set<string>();
+
+export async function isListingSaved(listingId: string): Promise<boolean> {
+  if (USE_MOCK) {
+    await delay(80);
+    return mockSavedListingIds.has(listingId);
+  }
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { data, error } = await supabase
+    .from('realtor_saved_listings')
+    .select('listing_id')
+    .eq('user_id', user.id)
+    .eq('listing_id', listingId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
+export async function saveListing(listingId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(120);
+    mockSavedListingIds.add(listingId);
+    return;
+  }
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('realtor_saved_listings')
+    .upsert({ user_id: user.id, listing_id: listingId }, { onConflict: 'user_id,listing_id' });
+  if (error) throw error;
+}
+
+export async function unsaveListing(listingId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(120);
+    mockSavedListingIds.delete(listingId);
+    return;
+  }
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('realtor_saved_listings')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('listing_id', listingId);
+  if (error) throw error;
 }

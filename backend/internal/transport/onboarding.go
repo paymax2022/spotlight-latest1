@@ -19,7 +19,6 @@ func (s *Service) SubmitOnboarding(ctx context.Context, userID string, req Onboa
 	var driverID string
 	err := s.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id=$1`, userID).Scan(&driverID)
 	if err != nil {
-		// Create a minimal driver row from the submission.
 		driverID = uuid.New().String()
 		if _, err := s.db.Exec(ctx, `
 			INSERT INTO drivers (id, user_id, name, vehicle_reg, vehicle_type, status, phone, email, photo_url,
@@ -186,14 +185,11 @@ func (s *Service) SetDriverOnline(ctx context.Context, userID string, req Driver
 	return err
 }
 
-// ─── Rider mobility profile ──────────────────────────────────────────────────
-
 func (s *Service) GetProfile(ctx context.Context, userID string) (*MobilityProfile, error) {
 	p, err := s.queryProfile(ctx, userID)
 	if err == nil {
 		return p, nil
 	}
-	// Lazily create a default profile.
 	if _, err := s.db.Exec(ctx, `INSERT INTO mobility_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
 		return nil, err
 	}

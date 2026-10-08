@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -35,7 +35,7 @@ function toReadableAuthError(err: unknown, fallback: string): string {
   return message || fallback;
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -539,6 +539,36 @@ export default function LoginPage() {
         </p>
       </div>
     </main>
+  );
+}
+
+// `useSearchParams` above forces a CSR bailout; without a Suspense boundary the
+// whole route falls out of prerendering and is SSR'd on every request. The
+// boundary lets Next serve a static shell — the search-param read then resolves
+// client-side, which is all the page needs (it only reads ?next/?email hints).
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main
+          style={{
+            minHeight: '100vh',
+            background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+          }}
+        >
+          <span style={{ fontSize: '2rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em' }}>
+            Spotlight
+          </span>
+          <span style={{ fontSize: '2rem', fontWeight: 800, color: '#f59e0b' }}>.</span>
+        </main>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }
 

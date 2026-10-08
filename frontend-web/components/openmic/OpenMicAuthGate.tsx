@@ -42,7 +42,6 @@ export default function OpenMicAuthGate({ nextPath, children }: Props) {
     router.push(`/login?next=${encodeURIComponent(nextPath)}`);
   }
 
-  // ── Loading ───────────────────────────────────────────────────────────────
   if (!ready) {
     return (
       <div style={{ background: '#fff', borderRadius: 8, padding: 20, border: '1px solid #e5e7eb' }}>
@@ -51,7 +50,6 @@ export default function OpenMicAuthGate({ nextPath, children }: Props) {
     );
   }
 
-  // ── Not signed in — redirect is underway; show brief prompt ──────────────
   if (!user) {
     return (
       <div style={{ background: '#fff', borderRadius: 8, padding: 24, border: '1px solid #e5e7eb', textAlign: 'center' }}>
@@ -63,7 +61,6 @@ export default function OpenMicAuthGate({ nextPath, children }: Props) {
     );
   }
 
-  // ── Signed in — show identity banner then render form ────────────────────
   const displayName =
     user.user_metadata?.full_name ||
     user.user_metadata?.name ||

@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { FaqItem } from '@/types/doctor.batch7';
 
 interface Props {
@@ -12,7 +12,6 @@ interface Props {
 }
 
 // New component: an expand/collapse FAQ row for the AA help centre. No existing
-// component models a tap-to-expand question/answer; SectionCard is a static
 // container and ProfileMenuItem navigates away rather than revealing inline body.
 export default function FaqAccordion({ item }: Props) {
   const [open, setOpen] = useState(false);

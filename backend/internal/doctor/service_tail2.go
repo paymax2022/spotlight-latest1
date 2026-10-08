@@ -18,13 +18,10 @@ import (
 //     s.ledger.GetBalance (the same call GetEarnings uses, service.go:115) — it is
 //     never read from a stored balance column;
 //   - NONE of these post to the ledger (money READS only).
-//
 // Optional sub-resources that legitimately may not exist yet (quality score,
 // vacation, commission config) surface as zeroed/empty projections rather than a
 // 404, so the composite dashboard/earnings/schedule reads never fail for a brand-
 // new doctor.
-
-// ── List reads (real tables) ──────────────────────────────────────────────────
 
 func (s *Service) ListCallDisputes(ctx context.Context, userID string) ([]CallDispute, error) {
 	return s.repo.ListCallDisputes(ctx, userID)
@@ -71,8 +68,6 @@ func (s *Service) ListInvoices(ctx context.Context, userID string) ([]Invoice, e
 func (s *Service) ListVetProfileDocuments(ctx context.Context, userID string) ([]VerificationDocument, error) {
 	return s.repo.ListVetProfileDocuments(ctx, userID)
 }
-
-// ── Money projections ─────────────────────────────────────────────────────────
 
 // GetWalletBalance PROJECTS the doctor's wallet balance from the double-entry
 // ledger — it never reads a stored balance column. This reuses the exact same
@@ -126,7 +121,7 @@ func (s *Service) GetCommissionBreakdown(ctx context.Context, userID string) (*C
 	default:
 		return nil, err
 	}
-	gross, commission, _, _, _, err := s.repo.invoiceTotals(ctx, userID)
+	gross, commission, _, _, _, err := s.repo.invoiceTotals(ctx, userID) //nolint:dogsled // tuple: gross+commission only
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +139,6 @@ func (s *Service) GetTaxVatReport(ctx context.Context, userID string) (*TaxVatRe
 	}
 	return &TaxVatReport{Currency: "NGN", GrossKobo: gross, VATKobo: vat, NetKobo: net, InvoiceCount: count}, nil
 }
-
-// ── Composite / derived projections ───────────────────────────────────────────
 
 // GetDashboard composes the landing dashboard from existing scoped reads: the
 // appointment status counts, the unread-notification count, and the ledger wallet
@@ -264,8 +257,6 @@ func (s *Service) GetAppStatus(ctx context.Context, userID string) (*AppStatus, 
 	return &AppStatus{MinSupportedVersion: "1.0.0", Maintenance: false}, nil
 }
 
-// ── Vet reads ─────────────────────────────────────────────────────────────────
-
 // getVetProfileOrFresh has the same rationale as GetProfileDraft (service_account.go):
 // no doctor_vet_profiles row is the STARTING state for a vet who hasn't reached
 // SaveVetProfileDraft's first write yet, not a missing resource. Every vet read
@@ -312,8 +303,6 @@ func (s *Service) GetVetVerification(ctx context.Context, userID string) (*VetPr
 func (s *Service) GetVetProfileDraft(ctx context.Context, userID string) (*VetProfile, error) {
 	return s.getVetProfileOrFresh(ctx, userID)
 }
-
-// ── Static content catalogues (no backing table) ──────────────────────────────
 
 // GetSupportFAQs returns the static support FAQ catalogue.
 func (s *Service) GetSupportFAQs(ctx context.Context, userID string) ([]SupportFAQ, error) {

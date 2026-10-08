@@ -8,7 +8,6 @@ package tuition
 // 20260603200000_academy_payment_preference.sql,
 // 20261220000000_academy_application_tuition_total.sql,
 // 20270210000000_academy_installment_plan_completed_at.sql):
-//
 //   academy_batches               (training_fee_ngn, installments_count, fee_frequency,
 //                                   one_off_discount_pct, fee_start_offset_days, status)
 //   academy_applications          (user_id, batch_id, tuition_total_ngn, application_fee_paid,
@@ -17,13 +16,11 @@ package tuition
 //                                   frequency, status, plan_type, discounted_amount_ngn, completed_at)
 //   academy_installment_payments  (plan_id, installment_number, amount_ngn, due_date, paid_at,
 //                                   payment_reference, status)
-//
 // Neither installment_plans nor installment_payments has a user_id column — ownership is
 // resolved by joining through academy_applications. Money columns are NUMERIC(12,2) in
 // Postgres but always hold whole-naira values by business rule, so every read casts to
 // ::bigint and every write passes an int64 naira value directly (Postgres accepts an
 // integer into a NUMERIC column exactly).
-//
 // Access is via the pgx pool, never the Supabase REST client. All monetary amounts in Go
 // are whole NAIRA (int64), never kobo or floats.
 
@@ -32,23 +29,14 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrNotFound is returned when a requested row does not exist. Handlers map it to 404.
 var ErrNotFound = errors.New("tuition: not found")
-
-// pgUniqueViolation is Postgres's unique_violation SQLSTATE. Used to detect
-// idempotency-key collisions on replay.
-const pgUniqueViolation = "23505"
-
-// isUniqueViolation reports whether err is a Postgres unique-constraint failure.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
-}
 
 // Repository owns all academy tuition table access.
 type Repository struct {
@@ -228,7 +216,7 @@ func (r *Repository) CreateInstallmentPlan(ctx context.Context, appID, batchID s
 		return nil, err
 	}
 	startDate := time.Now()
-	for i := int32(0); i < count; i++ {
+	for i := range count {
 		dueDate := CalculateDueDate(startDate, i, frequency)
 		amount := amountPerInstallment
 		if i == count-1 {
@@ -313,7 +301,6 @@ func (r *Repository) GetPaymentByID(ctx context.Context, paymentID string) (*Ins
 }
 
 // RecordPaymentWithReference marks a payment paid with a ledger reference.
-//
 // LAYER 2 IDEMPOTENCY: the UPDATE is conditioned on status = 'pending', so a
 // replayed call (Redis claim lost, retried request) that reaches this after the
 // first call already succeeded affects zero rows instead of double-posting. The
@@ -327,7 +314,7 @@ func (r *Repository) RecordPaymentWithReference(ctx context.Context, paymentID s
 		WHERE id = $4 AND status = $5
 	`, PaymentStatusPaid, paidAtTime, ledgerRef, paymentID, PaymentStatusPending)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return false, nil
 		}
 		return false, err

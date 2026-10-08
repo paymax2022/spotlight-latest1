@@ -14,7 +14,7 @@ export function mapNotification(row: any) {
   };
 }
 
-// GET /api/v1/estate/notifications — current user's notification feed.
+// Current user's notification feed.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

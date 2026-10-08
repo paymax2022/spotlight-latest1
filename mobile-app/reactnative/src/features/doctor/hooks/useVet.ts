@@ -1,4 +1,3 @@
-// ── Doctor — veterinary mode hooks ───────────────────────────────────────────
 // Phase 3. Vet dashboard / mode toggle, pet profile, pet prescription, pet lab
 // orders & results, and pet store recommendations. Reads use the DEMO_* exports
 // as placeholderData; mutations auto-generate the Idempotency-Key.
@@ -33,8 +32,6 @@ import type {
   RecommendProductsInput,
 } from '@/types/doctor.phase3';
 
-// ─── Vet dashboard / mode ────────────────────────────────────────────────────
-
 export function useVetDashboard() {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'dashboard'],
@@ -55,8 +52,6 @@ export function useToggleVetMode() {
   });
 }
 
-// ─── Pet profile ─────────────────────────────────────────────────────────────
-
 export function usePetProfile(petId: string) {
   return useQuery({
     queryKey:        ['doctor', 'vet', 'pet', petId],
@@ -66,8 +61,6 @@ export function usePetProfile(petId: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Pet prescription ────────────────────────────────────────────────────────
 
 export function usePetPrescription(petId: string) {
   return useQuery({
@@ -89,8 +82,6 @@ export function useCreatePetPrescription() {
     },
   });
 }
-
-// ─── Pet lab orders & results ────────────────────────────────────────────────
 
 export function usePetLabOrders() {
   return useQuery({
@@ -132,8 +123,6 @@ export function useMarkPetLabResultReviewed() {
     },
   });
 }
-
-// ─── Pet store recommendations ───────────────────────────────────────────────
 
 export function usePetProducts(category?: string) {
   return useQuery({

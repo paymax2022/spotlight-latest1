@@ -2,16 +2,15 @@
 // Inline SDK inside a react-native-webview, so iOS/Android get the identical
 // checkout popup as web with no server round-trip. Success/cancel/error are
 // relayed from the page via window.ReactNativeWebView.postMessage.
-//
 // Requires `react-native-webview` (Expo: `npx expo install react-native-webview`).
 // It is required lazily so the web bundle and tsc never hard-depend on it.
 
 import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import {
   PAYSTACK_PUBLIC_KEY,
   buildPaystackMetadata,
@@ -37,7 +36,6 @@ function buildCheckoutHtml(args: {
   metadata: Record<string, unknown>;
   accessCode?: string;
 }): string {
-  // When an access code is present we RESUME the server-initialized transaction;
   // otherwise we open a fresh client-initialized one. Both relay the same
   // success/cancel/error messages back to React Native.
   const launch = args.accessCode
@@ -81,7 +79,6 @@ export function usePaystackGateway(): PaystackGatewayController {
   const argsRef = useRef<PaystackChargeArgs | null>(null);
 
   const open = useCallback((args: PaystackChargeArgs) => {
-    // newTransaction needs the public key; resumeTransaction rides on the
     // server-issued access code and does not.
     if (!args.accessCode && !PAYSTACK_PUBLIC_KEY) {
       args.onError?.('Paystack key missing — set EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY.');

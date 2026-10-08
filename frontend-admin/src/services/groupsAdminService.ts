@@ -1,16 +1,9 @@
-// ── Admin — Groups (group savings / contribution pools) ops console ──────────
-//
 // ⚠️ THIS CONSOLE RUNS ON FIXTURES. There is no groups ADMIN route group in Go
 // at all — only five MEMBER endpoints exist under /api/finance/groups — so
 // /admin/dashboard and the group list below have nothing behind them. Setting
-// NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=false does not produce real data; it
 // produces 404s. The fixtures are kept (they document the intended shape) but
 // the pages now SAY they are samples, via GROUPS_ADMIN_IS_MOCK.
-//
-// This module is NOT the association console. Associations (real members, real
 // dues, a real admin surface) live in associationAdminService + /admin/association/*.
-//
-// Money is BIGINT kobo (minor units) throughout; balances would be projections
 // of the immutable ledger (NL-8).
 
 import { apiRoot } from '@/config/env';
@@ -35,23 +28,17 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK';
 export const GROUPS_ADMIN_IS_MOCK = USE_MOCK;
 
 // Groups live under the finance member group at /api/finance/groups (no admin group).
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/groups')`,
 // which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
 // it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
 // stopped matching, the replace was a no-op, and every call went to the bare
 // proxy root and 404'd. Flipping the mock flag therefore did not switch this
-// console to live data; it switched it to an empty, broken one. Same shape as
 // apiRoot() usage in associationAdminService.
 function readBase(): string {
   return `${apiRoot()}/api/finance/groups`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,7 +57,6 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ── Types ────────────────────────────────────────────────────────────────────
 export interface GroupsDashboard {
   groups_total: number;
   groups_active: number;
@@ -104,7 +90,6 @@ export interface GroupMember {
   joined_at: string;
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 const DASHBOARD: GroupsDashboard = {
   groups_total: 612,
   groups_active: 488,
@@ -123,7 +108,6 @@ export async function getGroupsDashboard(): Promise<GroupsDashboard> {
   return getJson<GroupsDashboard>('/admin/dashboard');
 }
 
-// ── Groups ───────────────────────────────────────────────────────────────────
 const GROUPS: GroupRecord[] = [
   { id: 'grp_4012', name: 'Lagos Foodies Pool', status: 'active', owner_masked: 'Chioma A•••', members_count: 12, due_amount_kobo: 10_000_00, frequency: 'monthly', balance_kobo: 1_440_000_00, created_at: dateStr(120) },
   { id: 'grp_3998', name: 'Office Lunch Club', status: 'active', owner_masked: 'Tunde B•••', members_count: 8, due_amount_kobo: 5_000_00, frequency: 'weekly', balance_kobo: 320_000_00, created_at: dateStr(60) },

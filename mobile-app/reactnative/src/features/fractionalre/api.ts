@@ -1,10 +1,5 @@
-// ── Fractional Real Estate — typed API layer ─────────────────────────────────
-// Mock-flagged. Flip with EXPO_PUBLIC_FRACTIONALRE_USE_MOCK=false to hit the Go
 // backend via the frontend-web proxy /api/v1/fractionalre → Go
 // /api/finance/fractionalre (canonical investor base).
-//
-// IRON RULES honoured: money is integer kobo; every subscribe / market-buy
-// mutation carries an Idempotency-Key header AND a `pin` in the body; the client
 // never computes fees, limits or allowances itself — the server is authoritative.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -27,7 +22,6 @@ export const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_FRACTIONALRE_USE_MOCK, true);
 
 // The Next.js gateway rewrites /api/finance/:path* verbatim to the Go backend
-// (frontend-web/next.config.mjs); the Go fractionalre investor surface is
 // registered at /api/finance/fractionalre (backend/internal/fractionalre/routes.go).
 // Previously this pointed at '/api/v1/fractionalre', which has no Next.js route
 // handler and no rewrite — every live call would 404.
@@ -54,8 +48,6 @@ async function del<T>(path: string): Promise<T> {
   const res = await api.delete(BASE + path);
   return unwrap<T>(res);
 }
-
-// ── Account / onboarding ─────────────────────────────────────────────────────
 
 export async function activate(): Promise<InvestorProfile> {
   if (USE_MOCK) return waitMock({ ...MOCK_PROFILE, status: 'pending_suitability' });
@@ -86,8 +78,6 @@ export async function acknowledgeRisk(scope: 'master' | string): Promise<{ riskA
   if (USE_MOCK) return waitMock({ riskAckId: scope === 'master' ? 'ack-master-mock' : `ack-${scope}-mock` });
   return post<{ riskAckId: string }>('/risk-ack', { scope });
 }
-
-// ── Offerings (marketplace) ──────────────────────────────────────────────────
 
 export async function getOfferings(params?: { kind?: string; risk?: string; q?: string }): Promise<OfferingSummary[]> {
   if (USE_MOCK) {
@@ -121,8 +111,6 @@ export async function getWatchlist(): Promise<OfferingSummary[]> {
   return get<OfferingSummary[]>('/watchlist');
 }
 
-// ── Limit check (server-authoritative) ───────────────────────────────────────
-
 export async function limitCheck(offeringId: string, amountKobo: number): Promise<LimitCheckResult> {
   if (USE_MOCK) {
     const remaining = MOCK_PROFILE.remainingAllowanceKobo;
@@ -136,8 +124,6 @@ export async function limitCheck(offeringId: string, amountKobo: number): Promis
   }
   return post<LimitCheckResult>(`/offerings/${offeringId}/limit-check`, { amountKobo });
 }
-
-// ── Subscription ─────────────────────────────────────────────────────────────
 
 export async function subscribe(offeringId: string, req: SubscribeRequest): Promise<SubscribeResult> {
   if (USE_MOCK) {
@@ -155,8 +141,6 @@ export async function getCertificate(investmentId: string): Promise<Certificate>
   if (USE_MOCK) return waitMock(buildMockCertificate(MOCK_OFFERINGS[0].id, 1, MOCK_OFFERINGS[0].unitPriceKobo));
   return get<Certificate>(`/certificates/${investmentId}`);
 }
-
-// ── Portfolio ────────────────────────────────────────────────────────────────
 
 export async function getPortfolio(): Promise<PortfolioOverview> {
   if (USE_MOCK) return waitMock(MOCK_PORTFOLIO);
@@ -179,8 +163,6 @@ export async function getStatements(): Promise<Statement[]> {
   return get<Statement[]>('/portfolio/statements');
 }
 
-// ── Auto-invest ──────────────────────────────────────────────────────────────
-
 export async function getAutoInvest(): Promise<AutoInvestPlan[]> {
   if (USE_MOCK) return waitMock(MOCK_AUTO_INVEST);
   return get<AutoInvestPlan[]>('/auto-invest');
@@ -198,8 +180,6 @@ export async function pauseAutoInvest(id: string): Promise<AutoInvestPlan> {
   if (USE_MOCK) return waitMock({ ...MOCK_AUTO_INVEST[0], id, status: 'paused' });
   return post<AutoInvestPlan>(`/auto-invest/${id}/pause`);
 }
-
-// ── Secondary market ─────────────────────────────────────────────────────────
 
 export async function getMarket(): Promise<MarketListing[]> {
   if (USE_MOCK) return waitMock(MOCK_MARKET_LISTINGS);
@@ -233,16 +213,12 @@ export async function getMarketOrders(): Promise<MarketOrder[]> {
   return get<MarketOrder[]>('/market/orders');
 }
 
-// ── Documents / certificates vault ───────────────────────────────────────────
-
 export async function getDocuments(): Promise<VaultDocument[]> {
   if (USE_MOCK) return waitMock(MOCK_VAULT_DOCS);
   return get<VaultDocument[]>('/documents');
 }
 
-// ── Beneficiaries ────────────────────────────────────────────────────────────
 // Wire format is snake_case ({ id, name, relationship, share_pct }) per the
-// backend contract. Server enforces Σ share_pct ≤ 100, max 10 rows; violations
 // come back as 422 with a message. Mock mirrors those rules and persists.
 
 export async function getBeneficiaries(): Promise<Beneficiary[]> {
@@ -264,12 +240,9 @@ export async function removeBeneficiary(id: string): Promise<void> {
   await del(`/beneficiaries/${id}`);
 }
 
-// ── Referrals ────────────────────────────────────────────────────────────────
-
 export async function getReferrals(): Promise<Referrals> {
   if (USE_MOCK) return waitMock(MOCK_REFERRALS);
   const res = await get<Referrals | null>('/referrals');
-  // Defensive: a missing/blank payload or one without a code means the
   // programme is not enabled for this user yet.
   if (!res || typeof res !== 'object') return { enabled: false };
   if ('enabled' in res && res.enabled === false) return res;
@@ -277,8 +250,6 @@ export async function getReferrals(): Promise<Referrals> {
     ? res
     : { enabled: false };
 }
-
-// ── Goals ────────────────────────────────────────────────────────────────────
 
 export async function getGoals(): Promise<InvestGoal[]> {
   if (USE_MOCK) return waitMock(MOCK_GOALS);

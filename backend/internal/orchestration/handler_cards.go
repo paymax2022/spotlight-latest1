@@ -5,7 +5,6 @@ package orchestration
 // (h.cards != nil) these are persistence-backed against orch_fx_cards /
 // orch_fx_card_txns; when nil they fall back to the original contract-shaped
 // stubs so a DB-less dev setup still renders without 404s.
-//
 // Card funding is a money movement: the store performs it atomically with an
 // Idempotency-Key + balanced wallet-debit/card-credit per the iron rules. The
 // FundCard handler forwards the `Idempotency-Key` header and maps an insufficient
@@ -19,6 +18,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/timeutil"
 )
 
 // defaultControls mirrors the mobile SpendingControls default shape.
@@ -56,7 +58,7 @@ func cardJSON(id, label, brand, currency, color, status string, balanceMinor int
 		"spentThisMonth": 0,
 		"controls":       controls,
 		"provider":       "maplerad",
-		"createdAt":      nowISO(),
+		"createdAt":      timeutil.RFC3339(time.Now()),
 	}
 }
 
@@ -78,7 +80,7 @@ func (h *Handler) ListCards(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": []any{}})
 		return
 	}
-	cards, err := h.cards.ListCards(c.Request.Context(), customerID(c))
+	cards, err := h.cards.ListCards(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -92,7 +94,7 @@ func (h *Handler) GetCard(c *gin.Context) {
 		c.JSON(http.StatusOK, cardJSON(c.Param("id"), "", "", "USD", "", "active", 0, nil))
 		return
 	}
-	card, ok, err := h.cards.GetCard(c.Request.Context(), customerID(c), c.Param("id"))
+	card, ok, err := h.cards.GetCard(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -127,7 +129,7 @@ func (h *Handler) CreateCard(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	card, err := h.cards.CreateCard(ctx, customerID(c), CardDraft{
+	card, err := h.cards.CreateCard(ctx, ginutil.UserID(c), CardDraft{
 		Label: d.Label, Brand: d.Brand, Currency: cur, Color: d.Color, FundingAmount: d.FundingAmount,
 	})
 	if err != nil {
@@ -135,7 +137,7 @@ func (h *Handler) CreateCard(c *gin.Context) {
 		return
 	}
 	if d.FundingAmount > 0 {
-		funded, ferr := h.cards.FundCard(ctx, customerID(c), card.ID, d.FundingAmount, c.GetHeader("Idempotency-Key"))
+		funded, ferr := h.cards.FundCard(ctx, ginutil.UserID(c), card.ID, d.FundingAmount, ginutil.IdempotencyKey(c))
 		if ferr != nil {
 			if errors.Is(ferr, ErrInsufficientCardBalance) {
 				writeInsufficientCardFunds(c)
@@ -161,7 +163,7 @@ func (h *Handler) RevealCard(c *gin.Context) {
 		})
 		return
 	}
-	sens, ok, err := h.cards.RevealCard(c.Request.Context(), customerID(c), c.Param("id"))
+	sens, ok, err := h.cards.RevealCard(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -186,12 +188,12 @@ func (h *Handler) FundCard(c *gin.Context) {
 	}
 	// Money path: require an Idempotency-Key so a retried fund can never double-debit
 	// the wallet (the store dedupes on it). Mirrors the iron-rule idempotency guard.
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		writeErr(c, NewError(ErrInvalidRequest, "missing_idempotency_key", "Idempotency-Key header is required to fund a card."))
 		return
 	}
-	card, err := h.cards.FundCard(c.Request.Context(), customerID(c), c.Param("id"), body.Amount, idemKey)
+	card, err := h.cards.FundCard(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Amount, idemKey)
 	if err != nil {
 		if errors.Is(err, ErrInsufficientCardBalance) {
 			writeInsufficientCardFunds(c)
@@ -213,7 +215,7 @@ func (h *Handler) FreezeCard(c *gin.Context) {
 		c.JSON(http.StatusOK, cardJSON(c.Param("id"), "", "", "USD", "", "frozen", 0, nil))
 		return
 	}
-	card, ok, err := h.cards.FreezeCard(c.Request.Context(), customerID(c), c.Param("id"))
+	card, ok, err := h.cards.FreezeCard(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -230,7 +232,7 @@ func (h *Handler) UnfreezeCard(c *gin.Context) {
 		c.JSON(http.StatusOK, cardJSON(c.Param("id"), "", "", "USD", "", "active", 0, nil))
 		return
 	}
-	card, ok, err := h.cards.UnfreezeCard(c.Request.Context(), customerID(c), c.Param("id"))
+	card, ok, err := h.cards.UnfreezeCard(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -249,7 +251,7 @@ func (h *Handler) TerminateCard(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 		return
 	}
-	err := h.cards.TerminateCard(c.Request.Context(), customerID(c), c.Param("id"))
+	err := h.cards.TerminateCard(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, ErrCardNotFound) {
 			writeCardNotFound(c)
@@ -281,7 +283,7 @@ func (h *Handler) UpdateCardControls(c *gin.Context) {
 		c.JSON(http.StatusOK, cardJSON(c.Param("id"), "", "", "USD", "", "active", 0, controls))
 		return
 	}
-	card, ok, err := h.cards.UpdateControls(c.Request.Context(), customerID(c), c.Param("id"), SpendingControls{
+	card, ok, err := h.cards.UpdateControls(c.Request.Context(), ginutil.UserID(c), c.Param("id"), SpendingControls{
 		MonthlyLimit: ctrl.MonthlyLimit, PerTxLimit: ctrl.PerTxLimit,
 		Online: ctrl.Online, Atm: ctrl.Atm, International: ctrl.International, Contactless: ctrl.Contactless,
 	})
@@ -302,7 +304,7 @@ func (h *Handler) ListCardTransactions(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": []any{}})
 		return
 	}
-	txns, err := h.cards.ListCardTransactions(c.Request.Context(), customerID(c), c.Param("id"))
+	txns, err := h.cards.ListCardTransactions(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return

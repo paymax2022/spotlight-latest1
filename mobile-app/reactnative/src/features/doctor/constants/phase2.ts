@@ -1,4 +1,3 @@
-// ── Doctor module — Phase 2 constants ────────────────────────────────────────
 // Static option lists for the advanced (Phase 2) provider-side screens. Pure
 // data only — no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel).
@@ -16,8 +15,6 @@ import type {
   ReferralAttachmentKind,
 } from '@/types/doctor.phase2';
 
-// ─── Pharmacy fulfilment ─────────────────────────────────────────────────────
-
 export const PHARMACY_STATUS_LABELS: Record<PharmacyFulfilmentStatus, string> = {
   received:              'Received',
   substitute_requested: 'Substitute requested',
@@ -26,8 +23,6 @@ export const PHARMACY_STATUS_LABELS: Record<PharmacyFulfilmentStatus, string> = 
   dispensed:            'Dispensed',
   cancelled:            'Cancelled',
 };
-
-// ─── Drug delivery ───────────────────────────────────────────────────────────
 
 export const DELIVERY_STAGE_LABELS: Record<DeliveryStage, string> = {
   confirmed:        'Order confirmed',
@@ -46,15 +41,11 @@ export const DELIVERY_STAGE_ORDER: DeliveryStage[] = [
 
 export const COURIER_OPTIONS: string[] = ['Gokada', 'Kwik Delivery', 'GIG Logistics', 'Sendbox', 'In-house rider'];
 
-// ─── Refills ─────────────────────────────────────────────────────────────────
-
 export const REFILL_STATUS_LABELS: Record<RefillStatus, string> = {
   pending:  'Pending',
   approved: 'Approved',
   rejected: 'Rejected',
 };
-
-// ─── Referrals ───────────────────────────────────────────────────────────────
 
 export const REFERRAL_STATUS_LABELS: Record<ReferralStatus, string> = {
   draft:     'Draft',
@@ -90,8 +81,6 @@ export const REFERRAL_SPECIALTY_OPTIONS: string[] = [
   'Pulmonology',
 ];
 
-// ─── HMO claims ──────────────────────────────────────────────────────────────
-
 export const CLAIM_STATUS_LABELS: Record<ClaimStatus, string> = {
   submitted:    'Submitted',
   under_review: 'Under review',
@@ -104,8 +93,6 @@ export const CLAIM_STATUS_LABELS: Record<ClaimStatus, string> = {
 export const HMO_PROVIDER_OPTIONS: string[] = [
   'Hygeia HMO', 'Avon HMO', 'Reliance HMO', 'AXA Mansard', 'Leadway Health', 'Clearline HMO',
 ];
-
-// ─── Follow-up plans ─────────────────────────────────────────────────────────
 
 export const FOLLOW_UP_STATUS_LABELS: Record<FollowUpStatus, string> = {
   scheduled: 'Scheduled',
@@ -121,8 +108,6 @@ export const FOLLOW_UP_KIND_OPTIONS: { value: FollowUpKind; label: string }[] = 
   { value: 'paid', label: 'Paid follow-up' },
 ];
 
-// ─── Reviews ─────────────────────────────────────────────────────────────────
-
 export const REVIEW_REPORT_REASONS: string[] = [
   'Abusive or offensive language',
   'Not from a real patient',
@@ -131,8 +116,6 @@ export const REVIEW_REPORT_REASONS: string[] = [
   'Spam or advertising',
   'Other',
 ];
-
-// ─── Compliance ──────────────────────────────────────────────────────────────
 
 export const LICENCE_STATUS_LABELS: Record<LicenceStatus, string> = {
   valid:         'Valid',

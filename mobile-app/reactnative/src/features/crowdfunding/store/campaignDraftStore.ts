@@ -1,4 +1,3 @@
-// ── Crowdfunding — Campaign creation draft store ─────────────────────────────
 // Holds the in-progress wizard draft (Section G). Zustand mirrors the app's
 // existing store pattern (see src/store/authStore.ts).
 

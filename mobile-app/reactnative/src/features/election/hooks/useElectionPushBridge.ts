@@ -1,7 +1,6 @@
 // Presents a local OS notification the moment an estate election becomes live,
 // so residents are alerted even with the app backgrounded. The backend should
 // also send a real push with the same { type:'election_live', electionId }
-// payload; this client bridge is the foreground/polling fallback. Fires once
 // per election per app session.
 
 import { useEffect } from 'react';

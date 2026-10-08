@@ -1,11 +1,7 @@
-// ── Restaurant merchant — API wrapper ────────────────────────────────────────
 // Owner-facing store & menu management against the Go backend (BASE
-// /api/finance/restaurant). Talks LIVE by default (real operational data); set
 // EXPO_PUBLIC_RESTAURANT_MERCHANT_USE_MOCK=true for an offline in-memory stub.
-//
 // Backend contract (mapped snake_case → camelCase here):
 //   GET    /restaurant/mine                          → core store[]
-//   POST   /restaurant                               → create store (is_open=false)
 //   GET    /restaurant/:id                           → { restaurant, categories:[{items}] }
 //   PATCH  /restaurant/:id                           → update profile
 //   PATCH  /restaurant/:id/availability              → open/close
@@ -32,6 +28,7 @@ import type {
   CreateStoreInput,
   UpdateStoreInput,
   MerchantEarnings,
+  RestaurantKYB,
 } from './types';
 
 export const USE_MOCK =
@@ -51,6 +48,8 @@ function mapStore(r: any): MerchantStore {
     logoUrl: r.logo_url ?? null,
     isOpen: !!r.is_open,
     createdAt: r.created_at,
+    geoLat: typeof r.geo_lat === 'number' ? r.geo_lat : null,
+    geoLng: typeof r.geo_lng === 'number' ? r.geo_lng : null,
     // Left undefined when the server omits it, so the UI can tell "not loaded"
     // from a genuine ₦0 and never shows a price the owner did not set.
     packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,
@@ -71,18 +70,41 @@ function mapItem(i: any): MerchantMenuItem {
 function mapCategory(c: any): MerchantMenuCategory {
   return { id: c.id, restaurantId: c.restaurant_id, name: c.name, items: (c.items ?? []).map(mapItem) };
 }
+function mapKYB(r: any, documents: string[] = []): RestaurantKYB {
+  return {
+    restaurantId: r?.restaurant_id ?? '',
+    legalName: r?.legal_name ?? '',
+    businessType: (r?.business_type ?? '') as RestaurantKYB['businessType'],
+    rcNumber: r?.rc_number ?? '',
+    tin: r?.tin ?? '',
+    contactEmail: r?.contact_email ?? '',
+    contactPhone: r?.contact_phone ?? '',
+    bankCode: r?.bank_code ?? '',
+    accountNumber: r?.account_number ?? '',
+    accountName: r?.account_name ?? '',
+    status: r?.status ?? 'draft',
+    decisionReason: r?.decision_reason ?? undefined,
+    documents,
+  };
+}
 
-// ── Offline stub (only when USE_MOCK) ─────────────────────────────────────────
 let mockStore: MerchantStore = {
   id: 'r-demo', name: 'My Kitchen', description: '', address: '1 Demo Street, Lagos', isOpen: false,
   packagingFeeKobo: 20000, // the platform default, ₦200
 };
 let mockCats: MerchantMenuCategory[] = [];
 let seq = 0;
+// Offline demo reports an already-approved KYB (mirrors getPayoutReadiness's mock,
+// which reports every outlet payable — an unexplained "verification required" wall
+// in the offline demo would be noise, not a warning).
+let mockKYB: RestaurantKYB = {
+  restaurantId: mockStore.id, legalName: '', businessType: '', rcNumber: '', tin: '',
+  contactEmail: '', contactPhone: '', bankCode: '', accountNumber: '', accountName: '',
+  status: 'approved', documents: [],
+};
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
 const delay = (ms = 220) => new Promise<void>((r) => setTimeout(r, ms));
 
-// ── Store ─────────────────────────────────────────────────────────────────────
 export async function getMyStores(): Promise<MerchantStore[]> {
   if (USE_MOCK) { await delay(); return [mockStore]; }
   return unwrap<any[]>(await api.get(`${BASE}/mine`)).map(mapStore);
@@ -94,7 +116,15 @@ export async function createStore(input: CreateStoreInput): Promise<MerchantStor
     mockStore = { ...mockStore, name: input.name, description: input.description ?? '', address: input.address };
     return mockStore;
   }
-  const body = { name: input.name, description: input.description, address: input.address, logo_url: input.logoUrl };
+  const body = {
+    name: input.name,
+    description: input.description,
+    address: input.address,
+    logo_url: input.logoUrl,
+    geo_lat: input.geo?.lat,
+    geo_lng: input.geo?.lng,
+    plus_code: input.geo?.plusCode,
+  };
   return mapStore(unwrap<any>(await api.post(`${BASE}`, body)));
 }
 
@@ -145,8 +175,6 @@ export async function getPayoutReadiness(): Promise<OutletPayoutReadiness[]> {
     unpaidKobo: typeof r.unpaid_kobo === 'number' ? r.unpaid_kobo : 0,
   }));
 }
-
-// ── Staff ────────────────────────────────────────────────────────────────────
 
 export interface UserLookup {
   user_id: string;
@@ -213,7 +241,6 @@ export async function setAvailability(id: string, isOpen: boolean): Promise<Merc
   return mapStore(unwrap<any>(await api.patch(`${BASE}/${enc(id)}/availability`, { is_open: isOpen })));
 }
 
-// ── Menu ──────────────────────────────────────────────────────────────────────
 export async function createCategory(id: string, name: string): Promise<MerchantMenuCategory> {
   if (USE_MOCK) {
     await delay();
@@ -279,7 +306,6 @@ export async function deleteItem(id: string, itemId: string): Promise<void> {
   await api.delete(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`);
 }
 
-// ── Earnings (read-only) ──────────────────────────────────────────────────────
 export async function getEarnings(): Promise<MerchantEarnings> {
   if (USE_MOCK) { await delay(); return { paidOutKobo: 0, pendingKobo: 0, runs: [] }; }
   const d = unwrap<any>(await api.get(`${BASE}/earnings`));
@@ -294,4 +320,58 @@ export async function getEarnings(): Promise<MerchantEarnings> {
       processedAt: r.processed_at ?? null,
     })),
   };
+}
+
+// Opening for orders requires status='approved' (ADR-033, fail-closed — see
+// submitted/under_review/approved are locked until a reviewer acts.
+
+export type SaveKYBInput = Pick<
+  RestaurantKYB,
+  'legalName' | 'businessType' | 'rcNumber' | 'tin' | 'contactEmail' | 'contactPhone'
+  | 'bankCode' | 'accountNumber' | 'accountName'
+>;
+
+export async function getKYB(id: string): Promise<RestaurantKYB> {
+  if (USE_MOCK) { await delay(); return { ...mockKYB, restaurantId: id }; }
+  const raw = unwrap<any>(await api.get(`${BASE}/${enc(id)}/kyb`));
+  return mapKYB(raw?.kyb, raw?.documents ?? []);
+}
+
+export async function saveKYB(id: string, input: SaveKYBInput): Promise<RestaurantKYB> {
+  if (USE_MOCK) { await delay(); mockKYB = { ...mockKYB, ...input, restaurantId: id }; return mockKYB; }
+  const body = {
+    legal_name: input.legalName,
+    business_type: input.businessType,
+    rc_number: input.rcNumber,
+    tin: input.tin,
+    contact_email: input.contactEmail,
+    contact_phone: input.contactPhone,
+    bank_code: input.bankCode,
+    account_number: input.accountNumber,
+    account_name: input.accountName,
+  };
+  const raw = unwrap<any>(await api.put(`${BASE}/${enc(id)}/kyb`, body));
+  return mapKYB(raw?.kyb ?? raw);
+}
+
+/**
+ * Registers a document the owner has already hosted elsewhere (e.g. a Drive/Dropbox
+ * link) against the KYB record. There is no presigned-upload flow for KYB documents
+ * yet (see logoUpload.api.ts for the equivalent pattern once one exists) — this
+ * mirrors the same "paste a URL" fallback the branding screen already uses when
+ * direct uploads aren't wired.
+ */
+export async function addKYBDocument(id: string, docType: string, fileUrl: string, fileName?: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    mockKYB = { ...mockKYB, documents: Array.from(new Set([...mockKYB.documents, docType])) };
+    return;
+  }
+  await api.post(`${BASE}/${enc(id)}/kyb/documents`, { doc_type: docType, file_url: fileUrl, file_name: fileName });
+}
+
+export async function submitKYB(id: string): Promise<RestaurantKYB> {
+  if (USE_MOCK) { await delay(); mockKYB = { ...mockKYB, status: 'submitted' }; return mockKYB; }
+  const raw = unwrap<any>(await api.post(`${BASE}/${enc(id)}/kyb/submit`, {}));
+  return mapKYB(raw?.kyb ?? raw);
 }

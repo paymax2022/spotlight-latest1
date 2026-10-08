@@ -6,7 +6,6 @@ import (
 )
 
 // Package feesroles is the EdTech School-Fees staff role-management surface (task E11).
-//
 // It is a THIN wrapper over the existing enterprise RBAC system — it does NOT build a
 // parallel authz layer, a second roles/permissions store, or its own user_roles table.
 // A staff-role assignment IS a scoped `public.user_roles` row with
@@ -14,7 +13,6 @@ import (
 // 20260527100000_enterprise_auth_rbac.sql, whose scope_type CHECK already includes
 // 'school'). Assign/revoke go through the injected RBAC service (RBACGateway); listing
 // staff reads the same user_roles/roles tables via a narrow StaffLister.
-//
 // Conventions mirror academy/fees/school: sentinel errors mapped to snake_case codes by
 // the handler, an injected data-access interface so the authorization logic is unit
 // testable with in-memory fakes, and NO money movement here.
@@ -71,8 +69,6 @@ type StaffAssignment struct {
 	AssignedAt time.Time `json:"assignedAt"`
 }
 
-// ── Request DTOs ─────────────────────────────────────────────────────────────────
-
 // AssignRoleRequest assigns a staff role to a user for a school. The school id comes from
 // the route param; the actor is the authenticated caller (never trusted from the body).
 type AssignRoleRequest struct {
@@ -85,8 +81,6 @@ type RevokeRoleRequest struct {
 	UserID string `json:"userId" binding:"required"`
 	Role   string `json:"role" binding:"required"`
 }
-
-// ── Sentinel errors (mapped to snake_case codes by the handler) ───────────────────
 
 var (
 	ErrUnauthenticated = errors.New("unauthenticated")

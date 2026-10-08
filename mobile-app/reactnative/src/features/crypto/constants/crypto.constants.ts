@@ -1,9 +1,8 @@
-// ── Paymax Invest · Crypto — Constants ───────────────────────────────────────
 // Display catalogue + illustrative fee/spread config + UI option lists.
 // All money is integer minor units. Fees/spreads here are MOCK defaults only —
 // in production every value comes from the server quote/asset payload (Rule 1).
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   ChartRange,
   CryptoFeeType,
@@ -24,12 +23,9 @@ export const FIAT_META: Record<FiatCurrency, { symbol: string; decimals: number;
   USD: { symbol: '$', decimals: 2, flag: '🇺🇸' },
 };
 
-// ─── Rate-lock / quote ────────────────────────────────────────────────────────
-
 /** Quote-expiry window in seconds (docs/crypto/modules.md → "expiry timer"). */
 export const QUOTE_EXPIRY_SECONDS = 60;
 
-// ─── Fee / spread config (transparency line in the quote breakdown) ───────────
 // Illustrative basis-point markups — server overrides per asset/tier.
 
 export const PAYMAX_FEE_BPS = 90;       // 0.90% Paymax fee
@@ -57,8 +53,6 @@ export const SUGGESTED_FIAT_AMOUNTS: Record<FiatCurrency, number[]> = {
   USD: [10_00, 50_00, 100_00, 500_00],                // $10, $50, $100, $500
 };
 
-// ─── Chart ranges ─────────────────────────────────────────────────────────────
-
 export const CHART_RANGES: { value: ChartRange; label: string }[] = [
   { value: '1H', label: '1H' },
   { value: '1D', label: '1D' },
@@ -67,15 +61,11 @@ export const CHART_RANGES: { value: ChartRange; label: string }[] = [
   { value: '1Y', label: '1Y' },
 ];
 
-// ─── Risk rating → chip styling (design tokens only) ──────────────────────────
-
 export const RISK_STYLE: Record<RiskRating, { label: string; fg: string; bg: string }> = {
   low:    { label: 'Lower risk',    fg: Colors.tertiaryContainer,     bg: Colors.iconBgTeal },
   medium: { label: 'Medium risk',   fg: Colors.onWarning,             bg: Colors.iconBgGold },
   high:   { label: 'Higher risk',   fg: Colors.error,                 bg: Colors.iconBgRed },
 };
-
-// ─── Order / transaction status → chip styling (crypto state machine) ─────────
 
 export const CRYPTO_STATUS_STYLE: Record<
   string,
@@ -99,8 +89,6 @@ export const CRYPTO_STATUS_STYLE: Record<
   DepositConfirmed: { label: 'Completed', fg: Colors.tertiaryContainer,     bg: Colors.iconBgTeal },
 };
 
-// ─── Transaction kind display ─────────────────────────────────────────────────
-
 export const SIDE_LABEL: Record<TxKind, string> = {
   buy: 'Buy',
   sell: 'Sell',
@@ -108,15 +96,11 @@ export const SIDE_LABEL: Record<TxKind, string> = {
   withdraw: 'Withdraw',
 };
 
-// ─── Risk / education copy (education-first; docs/crypto/product.md) ───────────
-
 export const VOLATILITY_DISCLOSURE =
   'Crypto prices are highly volatile and can fall sharply. Only invest what you can afford to lose. Paymax never guarantees returns.';
 
 export const NO_ADVICE_DISCLOSURE =
   'This is general information, not financial advice. Paymax does not recommend specific assets.';
-
-// ─── Withdrawal controls (Phase-4; docs/crypto/compliance.md) ─────────────────
 
 /** Min KYC tier required to withdraw crypto. */
 export const WITHDRAWAL_MIN_KYC_TIER = 2;

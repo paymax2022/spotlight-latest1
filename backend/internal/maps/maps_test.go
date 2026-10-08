@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// ── Test doubles ──────────────────────────────────────────────────────────────
-
 // recordingCache is an in-memory GeocodeCache that mirrors the real cache's
 // license guard: it REFUSES non-OSM rows via guardCacheWrite.
 type recordingCache struct {
@@ -88,8 +86,6 @@ func testService(cfg SurfaceConfig, cache GeocodeCache, usage CapGuard, repo Geo
 		Config: cfg, Registry: reg, Cache: cache, Usage: usage, Repo: repo, DefaultSurface: "default",
 	})
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 // osmCacheableGeocoder simulates a REAL OSM-licensed geocoder (results are
 // cacheable). MockProvider results are deliberately never cacheable — synthetic

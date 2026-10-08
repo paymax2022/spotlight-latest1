@@ -6,10 +6,10 @@ import {
   Pencil, PauseCircle, PlayCircle, Star, StarOff, Wallet, BarChart3,
   Trash2, TriangleAlert, Check, ChevronRight, Info,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { confirmAsync } from '@/lib/confirm';
@@ -392,8 +392,6 @@ export default function ManageCampaignScreen() {
     </SafeAreaView>
   );
 }
-
-// ─── Action row ───────────────────────────────────────────────────────────────
 
 interface ActionRowProps {
   icon: React.ReactNode;

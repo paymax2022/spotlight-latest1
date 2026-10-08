@@ -2,7 +2,6 @@
 // Go standard library — no aws-sdk dependency. It implements AWS Signature V4
 // query-string presigning (the "X-Amz-*" query params form), which R2 accepts on
 // its S3 API endpoint.
-//
 // Security model:
 //   - Credentials (access key / secret) are SERVER-SIDE ONLY and never shipped to
 //     a client. The presigner mints a short-lived URL the client uses for a single
@@ -22,8 +21,11 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/cryptox"
 )
 
 // UnsignedPayload is the SigV4 sentinel allowing a presigned URL whose body is not
@@ -51,6 +53,9 @@ type Config struct {
 type Presigner struct {
 	cfg  Config
 	host string // host portion of AccountEndpoint (for the Host header in canonical request)
+
+	health healthState      // opt-in write probe, see probe.go
+	now    func() time.Time // injectable clock for the probe cache; nil = time.Now
 }
 
 // New builds a Presigner. It validates the endpoint but does not dial anything.
@@ -58,6 +63,7 @@ type Presigner struct {
 // false (and every Presign* call returns ErrNotConfigured) rather than an error,
 // so wiring code can degrade gracefully when R2 env is absent.
 func New(cfg Config) *Presigner {
+	cfg = normalise(cfg)
 	if cfg.Region == "" {
 		cfg.Region = "auto"
 	}
@@ -66,6 +72,28 @@ func New(cfg Config) *Presigner {
 		p.host = u.Host
 	}
 	return p
+}
+
+// normalise cleans values that arrive by copy-paste into an environment-variable
+// UI. Every one of these passes Configured() and then produces a signature or a
+// path R2 rejects at PUT time, so they are fixed here rather than discovered by
+// a user:
+//   - surrounding whitespace/newlines on any value
+//   - an endpoint pasted with the bucket path or a trailing slash (the URL is
+//     built as endpoint + "/<bucket>/<key>", so a path doubles the bucket)
+//   - a bucket pasted with leading/trailing slashes
+func normalise(cfg Config) Config {
+	cfg.AccountEndpoint = strings.TrimSpace(cfg.AccountEndpoint)
+	if u, err := url.Parse(cfg.AccountEndpoint); err == nil && u.Scheme != "" && u.Host != "" {
+		cfg.AccountEndpoint = u.Scheme + "://" + u.Host
+	} else {
+		cfg.AccountEndpoint = strings.TrimRight(cfg.AccountEndpoint, "/")
+	}
+	cfg.Bucket = strings.Trim(strings.TrimSpace(cfg.Bucket), "/")
+	cfg.AccessKeyID = strings.TrimSpace(cfg.AccessKeyID)
+	cfg.SecretAccessKey = strings.TrimSpace(cfg.SecretAccessKey)
+	cfg.Region = strings.TrimSpace(cfg.Region)
+	return cfg
 }
 
 // Configured reports whether all required fields are present.
@@ -119,7 +147,7 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
 	q.Set("X-Amz-Credential", p.cfg.AccessKeyID+"/"+scope)
 	q.Set("X-Amz-Date", amzDate)
-	q.Set("X-Amz-Expires", fmt.Sprintf("%d", int(expiry.Seconds())))
+	q.Set("X-Amz-Expires", strconv.Itoa(int(expiry.Seconds())))
 	q.Set("X-Amz-SignedHeaders", signedHeaders)
 	canonicalQuery := encodeQuery(q)
 
@@ -136,7 +164,7 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 		"AWS4-HMAC-SHA256",
 		amzDate,
 		scope,
-		hashHex([]byte(canonicalRequest)),
+		cryptox.SHA256HexBytes([]byte(canonicalRequest)),
 	}, "\n")
 
 	signingKey := deriveSigningKey(p.cfg.SecretAccessKey, dateStamp, p.cfg.Region, "s3")
@@ -146,17 +174,10 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 	return p.cfg.AccountEndpoint + canonicalURI + "?" + encodeQuery(q), nil
 }
 
-// ── SigV4 primitives ─────────────────────────────────────────────────────────
-
 func hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)
 	return h.Sum(nil)
-}
-
-func hashHex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 func deriveSigningKey(secret, dateStamp, region, service string) []byte {
@@ -171,7 +192,7 @@ func deriveSigningKey(secret, dateStamp, region, service string) []byte {
 // prefixes work, matching S3's canonicalisation).
 func encodePath(p string) string {
 	var b strings.Builder
-	for _, seg := range strings.Split(p, "/") {
+	for seg := range strings.SplitSeq(p, "/") {
 		if b.Len() > 0 {
 			b.WriteByte('/')
 		}
@@ -182,12 +203,12 @@ func encodePath(p string) string {
 
 func encodeSegment(s string) string {
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if isUnreserved(c) {
 			b.WriteByte(c)
 		} else {
-			b.WriteString(fmt.Sprintf("%%%02X", c))
+			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
 	return b.String()

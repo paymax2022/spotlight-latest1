@@ -6,10 +6,10 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
-// ─── Scheduler dispatch + sweeps ─────────────────────────────────────────────
-//
 // These methods are the worker-facing surface (backend/cmd/transport-scheduler).
 // They are all idempotent and safe to run every 60s:
 //   - DispatchScheduled: guarded materialize+escrow of ONE booking (deterministic
@@ -55,7 +55,6 @@ func (s *Service) DueForDispatch(ctx context.Context, limit int) ([]*ScheduledBo
 // DispatchScheduled materializes ONE scheduled booking into the real
 // trip/parcel/bus artifact, escrowing at dispatch via the existing per-mode
 // service. It is the single guarded, idempotent entry point the worker calls.
-//
 // Flow:
 //  1. Load + guard: must be in 'scheduled' or already 'dispatch_pending' (retry).
 //  2. Flip scheduled → dispatch_pending (guarded, optimistic).
@@ -118,7 +117,7 @@ func (s *Service) DispatchScheduled(ctx context.Context, bookingID string) (*Sch
 		    dispatch_attempts=dispatch_attempts+1, updated_at=NOW()
 		WHERE id=$1 AND status='dispatch_pending'
 		RETURNING ` + scheduledCols
-	nb, err := scanScheduled(s.db.QueryRow(ctx, done, b.ID, ref, kind, nullStr(settlementID)))
+	nb, err := scanScheduled(s.db.QueryRow(ctx, done, b.ID, ref, kind, dbutil.NullStr(settlementID)))
 	if err != nil {
 		// Status changed under us (e.g. cancelled). The materialized artifact and
 		// its escrow now belong to that terminal path; surface for reconciliation.
@@ -360,7 +359,6 @@ func (s *Service) sendReminderWave(ctx context.Context, col string, window time.
 // is a log-and-audit outbox: the audit event above is the durable record and the
 // reminder_*_sent_at / status columns are the idempotency guard. A later wiring
 // can replace the body with notifications.Service.Send without changing callers.
-//
 // TODO(notifications): inject *notifications.Service into the transport Service
 // (asynq push/email/SMS) and route these through it. Until then this is
 // intentionally best-effort + idempotent at the DB layer.

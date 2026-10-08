@@ -1,0 +1,239 @@
+package crowdfunding_test
+
+// LIVE-DB regressions for CROWDFUNDING-SEC-004 (amount tampering) and
+// CROWDFUNDING-SEC-005 (idempotency-key replay with a different amount), the
+// two abuse cases the QA plan (docs/qa/modules/crowdfunding.md §6) flagged as
+// "code-reasoned as sound" but never exhaustively live-tested (Batch 4/5,
+// Crowdfunding UAT queue position 5).
+// SEC-004: SubmitWithdrawal accepts a client-supplied amountKobo in the
+// request body (unlike Release/Refund, which take no body at all — read by
+// hand, confirmed neither accepts an amount). Pin that a client cannot
+// request more than the creator's real ledger-derived available balance.
+// SEC-005: root Contribute() reads its idempotency key from the request BODY
+// (unlike wallet/investment/csr, which read the Idempotency-Key HEADER) — a
+// genuine surface inconsistency. Pin that replaying the same body-supplied
+// key with a DIFFERENT amount cannot be used to retroactively change what was
+// charged. The contract was strengthened by the post-merge audit follow-up
+// (D4): a same-caller replay with divergent material params is now REFUSED
+// with ErrIdempotencyKeyConflict (409) — stricter than the earlier "return
+// the original" contract, and the same answer a cross-user key clash gets.
+// Either way the invariants hold: the tampered amount is never honored and
+// no extra money posts.
+// Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
+// campaign_analytics_live_db_test.go in this package for the pattern.
+//	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Withdraw_Amount -v
+//	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Contribute_Tamper -v
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
+
+	"spotlight/backend/internal/crowdfunding"
+	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
+	financeledger "spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/testsupport"
+)
+
+// TestLiveDB_Withdraw_AmountExceedingRealBalanceIsRefused pins SEC-004: a
+// withdrawal request for more than the creator's real available balance must
+// be refused BEFORE any ledger posting, regardless of what the client claims.
+func TestLiveDB_Withdraw_AmountExceedingRealBalanceIsRefused(t *testing.T) {
+	ctx := context.Background()
+	pool := moneyPathPool(t)
+
+	const contributeKobo = 1_000_000 // 90/10 split -> 900,000 net to creator
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, walletSvc := fx.campaignID, fx.creatorID, fx.walletSvc
+
+	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
+	before, err := ledgerSvc.GetBalance(ctx, creatorID)
+	if err != nil {
+		t.Fatalf("get creator balance before: %v", err)
+	}
+	if before != 900_000 {
+		t.Fatalf("test setup: creator balance = %d, want 900000 — fixture assumption broken", before)
+	}
+
+	// Client claims it wants to withdraw 10x its real available balance.
+	tamperedAmount := before * 10
+	_, err = walletSvc.SubmitWithdrawal(ctx, creatorID, campaignID, "cf-uat-sec004-tamper-"+campaignID,
+		cfwallet.WithdrawalRequestInput{
+			AmountKobo:    tamperedAmount,
+			BankAccountID: uuid.NewString(), // never reached — the balance check runs first
+		})
+	if err == nil {
+		t.Fatalf("SubmitWithdrawal succeeded for %d kobo against a real balance of %d — amount tampering was not refused", tamperedAmount, before)
+	}
+	if !strings.Contains(err.Error(), "exceeds available balance") {
+		t.Errorf("error = %v, want an 'exceeds available balance' refusal", err)
+	}
+
+	// No money may have moved on the refused attempt.
+	after, err := ledgerSvc.GetBalance(ctx, creatorID)
+	if err != nil {
+		t.Fatalf("get creator balance after: %v", err)
+	}
+	if after != before {
+		t.Errorf("creator balance changed from %d to %d on a REFUSED withdrawal — money moved despite the refusal", before, after)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM cf_withdrawals WHERE campaign_id = $1`, campaignID).Scan(&count); err != nil {
+		t.Fatalf("count withdrawals: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("cf_withdrawals row count = %d, want 0 — a refused withdrawal must not leave a row behind", count)
+	}
+}
+
+// TestLiveDB_Withdraw_ExactAvailableAmountSucceeds is the companion positive
+// case: the real balance, to the last kobo, must still be withdrawable — the
+// SEC-004 fix's own check (in.AmountKobo > wallet.AvailableKobo) must not be
+// off-by-one and refuse the boundary itself.
+func TestLiveDB_Withdraw_ExactAvailableAmountSucceeds(t *testing.T) {
+	ctx := context.Background()
+	pool := moneyPathPool(t)
+
+	const contributeKobo = 1_000_000 // -> 900,000 net to creator
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, walletSvc := fx.campaignID, fx.creatorID, fx.walletSvc
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cf_bank_accounts (id, user_id, bank_name, account_number_masked, account_name, is_default)
+		VALUES ($1, $2, 'Test Bank', '****0000', 'UAT Fixture', true)`,
+		"11111111-1111-1111-1111-111111111111", creatorID); err != nil {
+		t.Fatalf("seed bank account: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_bank_accounts WHERE user_id = $1`, creatorID)
+	})
+
+	result, err := walletSvc.SubmitWithdrawal(ctx, creatorID, campaignID, "cf-uat-sec004-exact-"+campaignID,
+		cfwallet.WithdrawalRequestInput{
+			AmountKobo:    900_000,
+			BankAccountID: "11111111-1111-1111-1111-111111111111",
+		})
+	if err != nil {
+		t.Fatalf("SubmitWithdrawal for the exact available balance: %v", err)
+	}
+	if result.AmountKobo != 900_000 {
+		t.Errorf("AmountKobo = %d, want 900000", result.AmountKobo)
+	}
+}
+
+// TestLiveDB_Contribute_IdempotencyReplayWithDifferentAmountConflicts pins
+// SEC-005 under the hardened post-merge contract: replaying a body-supplied
+// idempotency key with a DIFFERENT amount than the first call is refused
+// with ErrIdempotencyKeyConflict (409), never honored — and posts no extra
+// money. The original contribution still replays clean on identical params.
+func TestLiveDB_Contribute_IdempotencyReplayWithDifferentAmountConflicts(t *testing.T) {
+	ctx := context.Background()
+	pool := moneyPathPool(t)
+
+	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
+	settlementSvc := settlement.NewService(pool, ledgerSvc)
+	cfSvc := crowdfunding.NewService(pool, ledgerSvc, settlementSvc)
+
+	creatorID := uuid.NewString()
+	contributorID := uuid.NewString()
+	campaignID := uuid.NewString()
+	testsupport.CleanupUsers(t, pool, creatorID, contributorID)
+
+	for _, id := range []string{creatorID, contributorID} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO auth.users (id, email, aud, role)
+			VALUES ($1, $2, 'authenticated', 'authenticated')
+			ON CONFLICT (id) DO NOTHING`, id, "cf-uat-sec005-"+id+"@test.local"); err != nil {
+			t.Fatalf("seed user %s: %v", id, err)
+		}
+		testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO campaigns (id, creator_id, title, goal_kobo, status, review_status, deadline)
+		VALUES ($1, $2, 'SEC-005 tamper fixture', 5000000, 'active', 'ACTIVE', NOW() + INTERVAL '30 days')`,
+		campaignID, creatorID); err != nil {
+		t.Fatalf("seed campaign: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+	})
+
+	// Fund the contributor generously — enough for either amount below.
+	contributorWallet, err := ledgerSvc.GetOrCreateUserWallet(ctx, contributorID)
+	if err != nil {
+		t.Fatalf("get contributor wallet: %v", err)
+	}
+	clearing, err := ledgerSvc.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
+	if err != nil {
+		t.Fatalf("get clearing account: %v", err)
+	}
+	fundRef := "cf-uat-sec005-fund-" + campaignID
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, description)
+		VALUES
+			($1, 'CREDIT', 5000000, $3, $4, 'UAT test fund'),
+			($2, 'DEBIT',  5000000, $3, $5, 'UAT test fund')`,
+		contributorWallet.ID, clearing.ID, fundRef, fundRef+":credit", fundRef+":debit"); err != nil {
+		t.Fatalf("fund contributor wallet: %v", err)
+	}
+
+	idemKey := "cf-uat-sec005-replay-" + campaignID
+
+	first, err := cfSvc.Contribute(ctx, campaignID, contributorID, crowdfunding.ContributeRequest{
+		AmountKobo:     100_000,
+		IdempotencyKey: idemKey,
+	})
+	if err != nil {
+		t.Fatalf("first contribute: %v", err)
+	}
+	if first.AmountKobo != 100_000 {
+		t.Fatalf("test setup: first contribution amount = %d, want 100000", first.AmountKobo)
+	}
+
+	// Replay with the SAME key but a WILDLY DIFFERENT amount — this is the
+	// tamper attempt: can a client retroactively inflate what it "paid" by
+	// reusing a key that already succeeded for a smaller amount? Under the
+	// param-checked contract the answer is a hard 409 — the divergent request
+	// is refused outright rather than answered with the stored row.
+	_, err = cfSvc.Contribute(ctx, campaignID, contributorID, crowdfunding.ContributeRequest{
+		AmountKobo:     9_999_999,
+		IdempotencyKey: idemKey,
+	})
+	if !errors.Is(err, crowdfunding.ErrIdempotencyKeyConflict) {
+		t.Fatalf("SEC-005: amount-divergent replay must return ErrIdempotencyKeyConflict (409), got %v", err)
+	}
+
+	// The original still replays on identical params — a true retry is never
+	// punished by the param check.
+	replay, err := cfSvc.Contribute(ctx, campaignID, contributorID, crowdfunding.ContributeRequest{
+		AmountKobo:     100_000,
+		IdempotencyKey: idemKey,
+	})
+	if err != nil {
+		t.Fatalf("identical replay: %v", err)
+	}
+	if replay.ID != first.ID || replay.AmountKobo != 100_000 {
+		t.Errorf("identical replay returned id=%s amount=%d, want %s at 100000", replay.ID, replay.AmountKobo, first.ID)
+	}
+
+	// The database must agree: exactly one row, at the ORIGINAL amount.
+	var count int
+	var totalKobo int64
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(amount_kobo),0) FROM contributions WHERE idempotency_key = $1`, idemKey).
+		Scan(&count, &totalKobo); err != nil {
+		t.Fatalf("count contributions: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("contributions row count = %d, want 1", count)
+	}
+	if totalKobo != 100_000 {
+		t.Errorf("total contributed = %d, want 100000 — the tampered replay must not have posted any extra money", totalKobo)
+	}
+}

@@ -4,10 +4,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, Trash2, MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -63,7 +63,6 @@ export default function BatchCreateScreen() {
       codKobo: 0,
     }));
     create.mutate(
-      // batch hook injects idempotencyKey; per-delivery keys are server-issued
       { name: name.trim(), deliveries: deliveries as DeliveryCreateRequest[] },
       { onSuccess: () => router.replace('/mobility/business/tracking') },
     );

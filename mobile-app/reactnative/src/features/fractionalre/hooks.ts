@@ -1,4 +1,3 @@
-// ── Fractional Real Estate — React Query hooks ───────────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
@@ -9,8 +8,6 @@ import type {
 } from './types';
 
 const KEY = 'fractionalre';
-
-// ── Account / onboarding ─────────────────────────────────────────────────────
 
 export function useInvestorProfile() {
   return useQuery({ queryKey: [KEY, 'me'], queryFn: api.getInvestorProfile, staleTime: 10_000, retry: 1 });
@@ -35,8 +32,6 @@ export function useSubmitSuitability() {
 export function useAcknowledgeRisk() {
   return useMutation({ mutationFn: (scope: 'master' | string) => api.acknowledgeRisk(scope) });
 }
-
-// ── Offerings ────────────────────────────────────────────────────────────────
 
 export function useOfferings(params?: { kind?: string; risk?: string; q?: string }) {
   return useQuery({
@@ -74,16 +69,12 @@ export function useToggleWatch() {
   });
 }
 
-// ── Limit check ──────────────────────────────────────────────────────────────
-
 export function useLimitCheck() {
   return useMutation({
     mutationFn: ({ offeringId, amountKobo }: { offeringId: string; amountKobo: number }) =>
       api.limitCheck(offeringId, amountKobo),
   });
 }
-
-// ── Subscription ─────────────────────────────────────────────────────────────
 
 export function useSubscribe() {
   const qc = useQueryClient();
@@ -107,8 +98,6 @@ export function useCertificate(investmentId?: string) {
   });
 }
 
-// ── Portfolio ────────────────────────────────────────────────────────────────
-
 export function usePortfolio() {
   return useQuery({ queryKey: [KEY, 'portfolio'], queryFn: api.getPortfolio, staleTime: 20_000, retry: 1 });
 }
@@ -131,8 +120,6 @@ export function useStatements() {
   return useQuery({ queryKey: [KEY, 'statements'], queryFn: api.getStatements, staleTime: 60_000, retry: 1 });
 }
 
-// ── Auto-invest ──────────────────────────────────────────────────────────────
-
 export function useAutoInvest() {
   return useQuery({ queryKey: [KEY, 'auto-invest'], queryFn: api.getAutoInvest, staleTime: 30_000, retry: 1 });
 }
@@ -151,8 +138,6 @@ export function usePauseAutoInvest() {
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'auto-invest'] }),
   });
 }
-
-// ── Secondary market ─────────────────────────────────────────────────────────
 
 export function useMarket() {
   return useQuery({ queryKey: [KEY, 'market'], queryFn: api.getMarket, staleTime: 15_000, retry: 1 });
@@ -184,8 +169,6 @@ export function useBuyListing() {
   });
 }
 
-// ── Documents / goals ────────────────────────────────────────────────────────
-
 export function useDocuments() {
   return useQuery({ queryKey: [KEY, 'documents'], queryFn: api.getDocuments, staleTime: 60_000, retry: 1 });
 }
@@ -199,8 +182,6 @@ export function useCreateGoal() {
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'goals'] }),
   });
 }
-
-// ── Beneficiaries ────────────────────────────────────────────────────────────
 
 export function useBeneficiaries() {
   return useQuery({ queryKey: [KEY, 'beneficiaries'], queryFn: api.getBeneficiaries, staleTime: 15_000, retry: 1 });
@@ -235,13 +216,9 @@ export function useRemoveBeneficiary() {
   });
 }
 
-// ── Referrals ────────────────────────────────────────────────────────────────
-
 export function useReferrals() {
   return useQuery({ queryKey: [KEY, 'referrals'], queryFn: api.getReferrals, staleTime: 60_000, retry: 1 });
 }
-
-// ── Returns calculator (pure client preview) ─────────────────────────────────
 
 export function useRentReturnsCalc(input: ReturnsCalcInput | null) {
   return input ? calcReturns(input) : null;

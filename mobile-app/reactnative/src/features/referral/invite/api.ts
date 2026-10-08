@@ -1,4 +1,3 @@
-// ── Referral Invite & Share API ──────────────────────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`. Invite copy
 // is compliant: it points at real product use, never income/recruitment.
 
@@ -30,7 +29,6 @@ const REFERRER_NAME = 'Chidi Nwosu';
 const CODE = 'CHIDI-PAY';
 const LINK = 'https://spotlight.ng/join?ref=CHIDI-PAY';
 
-// ── Live helpers ─────────────────────────────────────────────────────────────
 // The caller's real code comes from the Direct Rewards engine (already live):
 //   GET /api/v1/referrals/me/dashboard → { code, ... }
 // The invite copy is built client-side from that code (compliant, no income
@@ -54,7 +52,6 @@ function inviteMessage(code: string, link: string): string {
   );
 }
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_SHARE: SharePayload = {
   code: CODE,
   link: LINK,
@@ -127,7 +124,6 @@ const MOCK_VERTICALS: ReferralVertical[] = [
   { id: 'miniapps', label: 'Mini-apps', icon: 'Grid3x3', blurb: 'Transport, telemedicine, more.', message: `Explore Paymax mini-apps — join with ${CODE}: ${LINK}` },
 ];
 
-// ── Calls ─────────────────────────────────────────────────────────────────────
 export async function getSharePayload(): Promise<SharePayload> {
   if (USE_MOCK) {
     await delay(200);
@@ -216,7 +212,6 @@ export async function createVanityLink(input: VanityLinkInput): Promise<VanityLi
       createdAt: new Date().toISOString(),
     };
   }
-  // Live: POST creates (or returns the existing) vanity link, idempotent per
   // (user, alias). Backend normalizes the alias server-side.
   const res = await api.post(`${REFERRAL_API_BASE}/invite/vanity`, {
     alias: input.alias,

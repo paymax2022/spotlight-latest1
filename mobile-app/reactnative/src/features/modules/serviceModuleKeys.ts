@@ -1,9 +1,5 @@
-// ── Service-grid id → registry key ───────────────────────────────────────────
-//
-// SERVICE_MODULES ids are route-shaped and kebab-case; platform_modules keys are
 // the camelCase feature-flag names. This maps between them for the entries where
 // the correspondence is unambiguous.
-//
 // DELIBERATELY PARTIAL. An id with no entry here is NOT gated by the registry and
 // always renders. That is the safe direction: gating a tile against a registry key
 // that does not exist would hide it forever, and a missing mapping is far more
@@ -59,12 +55,10 @@ export function registryKeyFor(serviceId: string): string | null {
   return SERVICE_MODULE_REGISTRY_KEY[serviceId] ?? null;
 }
 
-// ── Property hub ─────────────────────────────────────────────────────────────
 // A SEPARATE map, not an extension of the one above. The two id-spaces collide:
 // 'marketplace' is a lifestyle shopping tile in SERVICE_MODULES and the property
 // buy/rent marketplace in PROPERTY_SUBMODULES. Sharing one table would gate the
 // shopping tile on the realtor module.
-//
 // 'marketplace' and 'rent' both map to `realtor` on purpose — listings and leases
 // are the same registry module (see FEATURE_REALTOR_ENABLED: "property graph,
 // listings, inspections, leases, shortlet"). Unpublishing realtor therefore hides
@@ -81,7 +75,6 @@ export function propertyRegistryKeyFor(subModuleId: string): string | null {
   return PROPERTY_SUBMODULE_REGISTRY_KEY[subModuleId] ?? null;
 }
 
-// ── Home tab: quick actions ──────────────────────────────────────────────────
 // A third id-space. These are wallet SUB-ACTIONS ('add', 'send', 'withdraw',
 // 'exchange'), not modules, so they carry their own short ids that mean nothing
 // in the other tables — 'withdraw' and 'exchange' are not SERVICE_MODULES tiles,
@@ -97,9 +90,7 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
   return QUICK_ACTION_REGISTRY_KEY[actionId] ?? null;
 }
 
-// ── Home tab: featured service cards ─────────────────────────────────────────
 // A fourth id-space. 'food-ride' is a featured card only (it has no tile in
-// SERVICE_MODULES); 'naija-driver' and 'invest' have no registry module, so they
 // are ungated and always render.
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',

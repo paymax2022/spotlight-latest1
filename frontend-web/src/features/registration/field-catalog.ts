@@ -1,16 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Registration field catalog.
-//
 // This is the curated palette of inputs an admin can map onto a contest. Every
 // entry has a known, validated key so downstream validation, admin review and
 // analytics keep working. Admins toggle entries on/off and mark them required
-// (see the admin "Form builder"); the contestant then sees EXACTLY the enabled
 // entries (plus any custom questions and the fixed platform steps below).
-//
 // Only the `personal_information` and `category_specific` steps are configurable.
 // Account login, contest selection, and the legal/consent + submit steps are
 // fixed by the platform and defined here as `buildFixed*Step`.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES, TALENT_SKILL_OPTIONS, MEDICAL_CONDITION_OPTIONS, ALLERGY_OPTIONS, HEALTH_STATUS_OPTIONS } from './reference-data';
 import type {
   ConfigurableStepKey,
@@ -38,7 +33,6 @@ export interface CatalogField {
 
 // Ordered so the admin UI and the wizard render groups in a sensible sequence.
 export const FIELD_CATALOG: CatalogField[] = [
-  // ── personal_information ──────────────────────────────────────────────────
   { key: 'personal.firstName', label: 'First name', type: 'text', step: 'personal_information', group: 'Personal details', defaultRequired: true },
   { key: 'personal.middleName', label: 'Middle name', type: 'text', step: 'personal_information', group: 'Personal details' },
   { key: 'personal.lastName', label: 'Last name', type: 'text', step: 'personal_information', group: 'Personal details', defaultRequired: true },
@@ -79,7 +73,6 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'guardian.digitalSignature', label: 'Guardian digital signature (typed name)', type: 'text', step: 'personal_information', group: 'Guardian consent (minors)', minorOnly: true, defaultRequired: true },
   { key: 'guardian.consentGranted', label: 'Guardian authorizes participation', type: 'checkbox', step: 'personal_information', group: 'Guardian consent (minors)', minorOnly: true, defaultRequired: true },
 
-  // ── category_specific ─────────────────────────────────────────────────────
   { key: 'identity.idType', label: 'Government-issued ID type', type: 'select', step: 'category_specific', group: 'Identity', options: ['National ID', 'International passport', 'Voter card', 'Driver’s license', 'School ID', 'Birth certificate', 'Other approved ID'], defaultRequired: true },
   { key: 'identity.idNumber', label: 'ID number', type: 'text', step: 'category_specific', group: 'Identity' },
   { key: 'identity.idUpload', label: 'ID upload', type: 'file', step: 'category_specific', group: 'Identity', accept: '.jpg,.jpeg,.png,.pdf', defaultRequired: true },
@@ -90,7 +83,16 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'media.introVideo', label: 'Short intro / audition video', type: 'file', step: 'category_specific', group: 'Media uploads', accept: '.mp4,.mov' },
   { key: 'media.audioFile', label: 'Audio file', type: 'file', step: 'category_specific', group: 'Media uploads', accept: '.mp3,.wav,.m4a' },
   { key: 'media.sampleUpload', label: 'Sample work upload', type: 'file', step: 'category_specific', group: 'Media uploads', accept: '.mp4,.mov,.pdf' },
-  { key: 'media.rightsConfirmed', label: 'I confirm I have rights to uploaded materials', type: 'checkbox', step: 'category_specific', group: 'Media uploads' },
+  // SEC-010: always-required, non-conditional consent (NOT minorOnly — applies
+  // to every applicant regardless of age). `defaultRequired`, not `required`:
+  // this is a CatalogField (admin-catalog entry), and `required` only exists on
+  // the already-built RegistrationField that catalogFieldToRegistrationField()
+  // produces from it. `defaultRequired` is what that mapper reads (falling back
+  // to it whenever the admin hasn't set a requiredOverride for this key) to
+  // decide the built field's `required` flag — the same property guardian
+  // consent fields (e.g. guardian.consentGranted above) use for the identical
+  // "must be checked to submit" behaviour.
+  { key: 'media.rightsConfirmed', label: 'I confirm I have rights to uploaded materials', type: 'checkbox', step: 'category_specific', group: 'Media uploads', defaultRequired: true },
 
   { key: 'category.innovationCategory', label: 'Innovation category', type: 'select', step: 'category_specific', group: 'Project / STEM', options: ['AI', 'Robotics', 'Renewable energy', 'Agritech', 'Healthtech', 'Fintech', 'Edtech', 'Climate innovation', 'Hardware', 'Software', 'Engineering', 'Science research', 'Social innovation', 'Other'] },
   { key: 'category.projectTitle', label: 'Project title', type: 'text', step: 'category_specific', group: 'Project / STEM' },
@@ -177,7 +179,9 @@ export const FIELD_CATALOG: CatalogField[] = [
 
   { key: 'publicProfile.profilePhoto', label: 'Public profile photo', type: 'file', step: 'category_specific', group: 'Public voting profile', accept: '.jpg,.jpeg,.png,.webp' },
   { key: 'publicProfile.talentSummary', label: 'Public talent summary', type: 'textarea', step: 'category_specific', group: 'Public voting profile' },
-  { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting visibility', type: 'checkbox', step: 'category_specific', group: 'Public voting profile' },
+  // SEC-010: same reasoning as media.rightsConfirmed above — always-required
+  // photo/likeness public-use consent, gated via defaultRequired.
+  { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting visibility', type: 'checkbox', step: 'category_specific', group: 'Public voting profile', defaultRequired: true },
 ];
 
 const CATALOG_BY_KEY: Record<string, CatalogField> = FIELD_CATALOG.reduce((acc, field) => {
@@ -223,7 +227,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   general_reality_show: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.primarySkill', 'talent.strengths', 'talent.uniqueStory',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto',
+    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
     'category.housemateReadiness', 'category.dailyFilmingConsent', 'category.uniqueStory',
     'social.instagram', 'social.willingToInviteVoting',
     'bootcamp.availableFullPeriod', 'bootcamp.canTravel',
@@ -240,7 +244,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
     'category.innovationCategory', 'category.projectTitle', 'category.problemStatement', 'category.solutionSummary', 'category.currentStage', 'category.pitchDeckUpload', 'category.prototypeVideo', 'category.projectRepoLink', 'category.openToInvestorReview',
     'social.linkedin', 'social.website',
     'compliance.ownWork', 'compliance.codeOfConductAgreement',
-    'publicProfile.publicVotingConsent',
+    'media.rightsConfirmed', 'publicProfile.publicVotingConsent',
   ],
   sme_pitch: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
@@ -249,22 +253,33 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
     'category.businessName', 'category.businessSector', 'category.businessStage', 'category.productDescription', 'category.problemSolved', 'category.revenueModel', 'category.tractionMetrics', 'category.fundingNeeded', 'category.pitchDeck',
     'social.website', 'social.instagram', 'social.linkedin',
     'compliance.registeredBusiness', 'compliance.ownWork', 'compliance.codeOfConductAgreement',
-    'audition.format', 'publicProfile.publicVotingConsent',
+    'audition.format', 'media.rightsConfirmed', 'publicProfile.publicVotingConsent',
   ],
   open_mic: [
     'personal.firstName', 'personal.lastName', 'personal.stageName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.primarySkill', 'talent.strengths',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto',
+    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
     'category.performanceType', 'category.genre', 'category.durationMinutes', 'category.audioUpload', 'category.sampleLink', 'category.ownsRights',
     'social.instagram', 'social.tiktok', 'social.willingToInviteVoting',
     'compliance.codeOfConductAgreement',
     'payment.feeAmount', 'payment.method',
     'audition.format', 'publicProfile.publicVotingConsent',
   ],
+  // SEC-010: publicProfile.publicVotingConsent was missing here (the only
+  // category preset missing it) — fixed. This preset seeds a NEW
+  // the admin console (RegistrationContestManager -> from-schema.ts render
+  // (forms/film-academy.ts), which deliberately has no public-voting step at
+  // all ("Does NOT support public voting" per that file's own header comment)
+  // and is left untouched by this batch — adding a public-voting consent
+  // checkbox to a bootcamp that never asks for public-voting consent anywhere
+  // else in that form would be confusing UI, not a fix. A film_production
+  // contest created through THIS preset, however, is admin-configurable and
+  // can have voting turned on, so it needs the same consent coverage as every
+  // other preset.
   film_production: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.filmExperience', 'talent.careerGoal',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.sampleUpload',
+    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.sampleUpload', 'media.rightsConfirmed',
     'category.filmRole', 'category.productionExperience', 'category.portfolioLink', 'category.longHoursConsent',
     'social.instagram', 'social.website',
     'bootcamp.availableFullPeriod', 'bootcamp.canTravel',
@@ -272,13 +287,13 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
     'emergency.fullName', 'emergency.phone', 'emergency.state', 'emergency.city',
     'compliance.codeOfConductAgreement', 'compliance.backgroundCheckAgreement',
     'payment.feeAmount', 'payment.method',
-    'audition.format',
+    'audition.format', 'publicProfile.publicVotingConsent',
   ],
 };
 
 const GENERAL_PRESET: string[] = [
   'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
-  'identity.idType', 'identity.idUpload', 'media.profilePhoto',
+  'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
   'social.instagram',
   'compliance.codeOfConductAgreement',
   'publicProfile.publicVotingConsent',
@@ -287,8 +302,6 @@ const GENERAL_PRESET: string[] = [
 export function getCategoryFieldPreset(category: ContestCategory | string): string[] {
   return CATEGORY_FIELD_PRESETS[String(category)] || GENERAL_PRESET;
 }
-
-// ── Fixed platform steps (not admin-configurable) ────────────────────────────
 
 const fixedLegalFields: RegistrationField[] = [
   { key: 'legal.accuracyDeclaration', label: 'I confirm all information submitted is true, complete, and accurate', type: 'checkbox', required: true },
@@ -313,8 +326,6 @@ export function buildFixedContestSelectionStep(): RegistrationStep {
 export function buildFixedReviewSubmitStep(): RegistrationStep {
   return { key: 'review_submit', title: 'Consent and Submit', description: 'Confirm legal declarations and submit your application.', fields: fixedLegalFields };
 }
-
-// ── Schema sanitisation (server-side, used by the admin contest API) ─────────
 
 const ALLOWED_CUSTOM_FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'email', 'tel', 'url', 'number', 'date', 'select', 'multi_select', 'checkbox', 'file',

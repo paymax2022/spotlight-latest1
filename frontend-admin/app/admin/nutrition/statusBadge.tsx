@@ -104,7 +104,6 @@ export function ConfidenceBadge({ level }: { level: Confidence }) {
   );
 }
 
-// Honesty state (v2). RESTAURANT_CONFIRMED is approved but STILL an estimate;
 // EXACT is label-only; AI_ESTIMATE is the auto-published default.
 const STATUS_COLORS: Record<ProfileStatus, { bg: string; fg: string }> = {
   AI_ESTIMATE: { bg: '#78350f', fg: '#fde68a' },

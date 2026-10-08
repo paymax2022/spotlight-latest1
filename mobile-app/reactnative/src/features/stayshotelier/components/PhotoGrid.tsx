@@ -1,4 +1,3 @@
-// ── Property photo manager (Airbnb-style "Photos" section) ──────────────────
 // Camera/gallery pick → presign → PUT → confirm (see api.ts uploadPropertyPhoto),
 // same shape as the marketplace Sell composer's image upload. Grid layout (not
 // a horizontal strip) because a property listing wants to show many photos at
@@ -7,10 +6,10 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Star, Trash2, ImagePlus, Camera } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import {
   usePropertyPhotos, useUploadPhoto, useSetCoverPhoto, useDeletePhoto,

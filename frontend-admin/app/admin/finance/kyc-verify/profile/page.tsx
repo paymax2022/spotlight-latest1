@@ -1,7 +1,6 @@
 'use client';
 
 // AK3 — User KYC profile (SCAFFOLD).
-// RBAC: finance.admin.kyc (KYC Ops / Compliance). Tier, status, full
 // verification history, consent records, linked checks for a single user.
 // Shell: search + empty state. Backend endpoint TBD (e.g. GET /kyc/users/{id}).
 
@@ -29,8 +28,6 @@ export default function KycUserProfilePage() {
     setError('');
     try {
       // TODO: Replace with actual API call to GET /kyc/users/{id}
-      // const res = await fetch(`/api/v1/finance/kyc/users/${userId}`);
-      // const data = await res.json();
       // For now, mock data
       await new Promise(resolve => setTimeout(resolve, 500));
       setProfile({

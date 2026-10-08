@@ -1,4 +1,3 @@
-// ── Insurance / "Protection" — Domain types ──────────────────────────────────
 // Normalised, provider-agnostic shapes (PRD §7/§9). Provider-specific JSON never
 // leaks past the api layer — screens only ever see these models.
 // IRON RULE: all monetary amounts are integers in minor units (kobo).

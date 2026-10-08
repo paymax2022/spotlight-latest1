@@ -1,4 +1,3 @@
-// ── Doctor — practice-management hooks ───────────────────────────────────────
 // Phase 3. Doctor quality analytics (reads only) + multi-clinic / provider
 // management (portfolio read, active-clinic switch, per-clinic schedule edit).
 // Reads use DEMO_* as placeholderData; mutations auto-generate the Idempotency-Key.
@@ -19,8 +18,6 @@ import type {
   UpdateClinicScheduleInput,
 } from '@/types/doctor.phase3';
 
-// ─── 9. Quality analytics (reads only) ───────────────────────────────────────
-
 export function useQualityAnalytics(period?: AnalyticsPeriod) {
   return useQuery({
     queryKey:        ['doctor', 'analytics', period ?? '30d'],
@@ -29,8 +26,6 @@ export function useQualityAnalytics(period?: AnalyticsPeriod) {
     staleTime:       60_000,
   });
 }
-
-// ─── 10. Multi-clinic / provider management ──────────────────────────────────
 
 export function useClinicPortfolio() {
   return useQuery({

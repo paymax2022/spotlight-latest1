@@ -1,7 +1,6 @@
 'use client';
 
 // AK4 — AML / PEP hits queue (SCAFFOLD).
-// RBAC: finance.admin.kyc (role: Compliance). Screening hits with match detail;
 // disposition (clear / escalate). Shell: table + empty state. Backend endpoint
 // TBD (e.g. GET /kyc/aml-hits).
 

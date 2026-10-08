@@ -54,7 +54,7 @@ func (r *Repository) Apply(ctx context.Context, userID string, from Status, a Ap
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if a.RowExists {
 		submitted := "submitted_at"

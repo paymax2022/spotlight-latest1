@@ -1,12 +1,8 @@
-// ── What the pharmacist can do to an order, and when ─────────────────────────
-//
 // Mirrors the server's guarded state machine
 // (backend/internal/health/pharmacy/model.go allowedOrderTransitions) so the UI
 // offers exactly the actions the API will accept. Offering one it will reject
 // produces a button that fails; hiding one it would accept strands the order.
-//
 // Two rules here are NOT symmetrical with the customer app, and both matter:
-//
 //   • CANCEL IS PATIENT-ONLY. Service.Cancel rejects any caller who is not the
 //     patient (`o.PatientID != patientID → forbidden`), because cancelling
 //     refunds the held payment. The pharmacist never gets a cancel button.
@@ -14,7 +10,6 @@
 //     pickup_code — the inbox withholds it deliberately — so the pharmacist
 //     types in what the customer presents at the counter, and the server checks
 //     it. That is the point of the credential.
-//
 // Dependency-free so it runs under `node --test`.
 
 /** Order states, exactly as the server spells them. */

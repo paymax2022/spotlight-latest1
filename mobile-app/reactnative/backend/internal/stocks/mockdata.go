@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// ── Money helpers ────────────────────────────────────────────────────────────--
 // Both NGN (kobo) and USD (cents) are 2-decimal minor units, mirroring the
 // mobile mock's ngn()/usd() — Math.round(major * 100).
 
@@ -19,7 +18,6 @@ func daysFromNow(d int) string {
 	return time.Now().Add(time.Duration(d) * 24 * time.Hour).UTC().Format(time.RFC3339)
 }
 
-// ── Whitelisted assets (admin-controlled in production) ──────────────────────────
 // Mirrors MOCK_STOCKS so live mode looks identical to mock mode.
 
 func seedStocks() []Stock {
@@ -37,7 +35,7 @@ func seedStocks() []Stock {
 			Bid: ngn(485.00), Ask: ngn(486.00),
 			Summary:        "Dangote Cement is the largest cement producer in sub-Saharan Africa, with operations across ten African countries.",
 			RiskDisclosure: "Share prices can fall as well as rise. Past performance is not a guide to future returns.",
-			FeeBps: 25, SettlementCycle: "T+3",
+			FeeBps:         25, SettlementCycle: "T+3",
 			MinOrderAmount: minor(1_000), MaxOrderAmount: minor(50_000_000), KycTierRequired: 2,
 		},
 		{
@@ -51,7 +49,7 @@ func seedStocks() []Stock {
 			Bid: ngn(232.50), Ask: ngn(233.10),
 			Summary:        "MTN Nigeria is the largest mobile network operator in Nigeria by subscribers, offering voice, data and fintech services.",
 			RiskDisclosure: "Telecoms shares can be sensitive to regulation and currency moves, which can affect the price.",
-			FeeBps: 25, SettlementCycle: "T+3",
+			FeeBps:         25, SettlementCycle: "T+3",
 			MinOrderAmount: minor(1_000), MaxOrderAmount: minor(40_000_000), KycTierRequired: 2,
 		},
 		{
@@ -65,7 +63,7 @@ func seedStocks() []Stock {
 			Bid: ngn(58.80), Ask: ngn(59.05),
 			Summary:        "GTCO is the holding company for Guaranty Trust Bank, one of Nigeria's most profitable and well-capitalised banks.",
 			RiskDisclosure: "Bank shares are exposed to interest-rate and credit cycles, which can move the price sharply.",
-			FeeBps: 25, SettlementCycle: "T+3",
+			FeeBps:         25, SettlementCycle: "T+3",
 			MinOrderAmount: minor(1_000), MaxOrderAmount: minor(40_000_000), KycTierRequired: 2,
 		},
 		{
@@ -79,7 +77,7 @@ func seedStocks() []Stock {
 			Bid: ngn(41.10), Ask: ngn(41.30),
 			Summary:        "Zenith Bank is a tier-1 Nigerian commercial bank with a strong corporate and retail banking franchise.",
 			RiskDisclosure: "Bank shares are exposed to interest-rate and credit cycles, which can move the price sharply.",
-			FeeBps: 25, SettlementCycle: "T+3",
+			FeeBps:         25, SettlementCycle: "T+3",
 			MinOrderAmount: minor(1_000), MaxOrderAmount: minor(40_000_000), KycTierRequired: 2,
 		},
 		{
@@ -93,7 +91,7 @@ func seedStocks() []Stock {
 			Bid: ngn(583.00), Ask: ngn(585.50),
 			Summary:        "Aradel Holdings is an integrated Nigerian energy company with upstream, refining and gas operations.",
 			RiskDisclosure: "Energy shares are highly sensitive to oil prices and can be very volatile.",
-			FeeBps: 30, SettlementCycle: "T+3",
+			FeeBps:         30, SettlementCycle: "T+3",
 			MinOrderAmount: minor(1_000), MaxOrderAmount: minor(20_000_000), KycTierRequired: 2,
 		},
 		{
@@ -107,7 +105,7 @@ func seedStocks() []Stock {
 			Bid: ngn(934.00), Ask: ngn(936.00),
 			Summary:        "Nestlé Nigeria manufactures food and beverage products including Maggi, Milo and Golden Morn.",
 			RiskDisclosure: "Consumer-goods shares can be affected by input costs and consumer spending. This stock is temporarily paused on Paymax.",
-			FeeBps: 25, SettlementCycle: "T+3",
+			FeeBps:         25, SettlementCycle: "T+3",
 			MinOrderAmount: minor(1_000), MaxOrderAmount: minor(20_000_000), KycTierRequired: 2,
 		},
 		{
@@ -121,7 +119,7 @@ func seedStocks() []Stock {
 			Bid: usd(228.35), Ask: usd(228.45),
 			Summary:        "Apple designs and sells consumer electronics, software and services including iPhone, Mac and the App Store.",
 			RiskDisclosure: "US-listed shares carry currency risk for NGN-funded accounts in addition to normal market risk.",
-			FeeBps: 20, SettlementCycle: "T+2",
+			FeeBps:         20, SettlementCycle: "T+2",
 			MinOrderAmount: minor(1), MaxOrderAmount: minor(200_000), KycTierRequired: 2,
 		},
 		{
@@ -135,7 +133,7 @@ func seedStocks() []Stock {
 			Bid: usd(412.50), Ask: usd(412.90),
 			Summary:        "Tesla designs and manufactures electric vehicles, battery energy storage and solar products.",
 			RiskDisclosure: "Tesla is a higher-risk, high-volatility stock and its price can swing sharply within a single session.",
-			FeeBps: 20, SettlementCycle: "T+2",
+			FeeBps:         20, SettlementCycle: "T+2",
 			MinOrderAmount: minor(1), MaxOrderAmount: minor(150_000), KycTierRequired: 2,
 		},
 		{
@@ -149,13 +147,12 @@ func seedStocks() []Stock {
 			Bid: usd(548.00), Ask: usd(548.20),
 			Summary:        "The Vanguard S&P 500 ETF tracks the 500 largest US companies, offering broad, low-cost market exposure.",
 			RiskDisclosure: "ETFs spread risk across many companies but still fall when the broad market falls. Currency risk applies.",
-			FeeBps: 15, SettlementCycle: "T+2",
+			FeeBps:         15, SettlementCycle: "T+2",
 			MinOrderAmount: minor(1), MaxOrderAmount: minor(200_000), KycTierRequired: 2,
 		},
 	}
 }
 
-// ── Holdings (portfolio positions) ──────────────────────────────────────────────
 // Mirrors MOCK_POSITIONS' buildPosition: marketValue = round(price * qty),
 // costBasis = round(avgCost * qty). DANGCEM(120 @410), GTCO(2400 @44.50),
 // AAPL(18 @190.20).
@@ -198,7 +195,6 @@ func seedPositions(stocks []Stock) []StockPosition {
 	}
 }
 
-// ── Order history ──────────────────────────────────────────────────────────────-
 // Mirrors MOCK_ORDERS across the status machine.
 
 func seedOrders() []StockOrder {
@@ -285,7 +281,7 @@ func seedOrders() []StockOrder {
 			},
 			Total: ngn(23_582.25), Provider: "mock-broker", ProviderReference: "BR-75110-IJ",
 			IdempotencyKey: "st-mock-5", CreatedAt: hoursAgo(120),
-			FailureReason:  "You cancelled this order before it was filled. No funds were debited.",
+			FailureReason: "You cancelled this order before it was filled. No funds were debited.",
 			StatusHistory: []StatusEvent{
 				{Status: "Submitted", At: hoursAgo(120)},
 				{Status: "CancelRequested", At: hoursAgo(119)},
@@ -294,8 +290,6 @@ func seedOrders() []StockOrder {
 		},
 	}
 }
-
-// ── News / dividends / corporate actions / offers ────────────────────────────────
 
 func seedNews() []News {
 	return []News{

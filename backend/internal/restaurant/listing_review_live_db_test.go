@@ -1,11 +1,9 @@
 package restaurant
 
 // LIVE-DB tests for listing review (foodhub A6 / §6.3).
-//
 // The single most important property is NOT that moderation works — it is that
 // turning it on is a decision, and that with the flag OFF customers see exactly
 // what they saw before this feature existed (PRD §1.4).
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -25,9 +23,9 @@ func seedListing(t *testing.T, ctx context.Context, f staffFixture, name, status
 		t.Fatalf("seed listing: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		f.pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, id)
-		f.pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, id)
+		bg := t.Context()
+		_, _ = f.pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, id)
+		_, _ = f.pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, id)
 	})
 	return id
 }
@@ -35,7 +33,7 @@ func seedListing(t *testing.T, ctx context.Context, f staffFixture, name, status
 func TestLiveDB_ModerationOffChangesNothingForCustomers(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// An open shop that has NOT been approved. With moderation off it must still
@@ -61,7 +59,7 @@ func TestLiveDB_ModerationOffChangesNothingForCustomers(t *testing.T) {
 func TestLiveDB_ModerationOnHidesUnapprovedListings(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	pending := seedListing(t, ctx, f, "Gated Kitchen", "PENDING", true)
@@ -91,13 +89,11 @@ func TestLiveDB_ModerationOnHidesUnapprovedListings(t *testing.T) {
 
 // The backfill's effect ("every pre-existing restaurant is APPROVED, so enabling
 // moderation does not empty the marketplace") is NOT asserted here.
-//
 // I wrote that test twice as a global count over the whole table, and it failed
 // both times in a full run for the same reason: fixtures created by other tests
 // default to DRAFT, so the suite invalidates its own assertion. A test whose
 // result depends on what other tests leave behind measures the suite, not the
 // code — and the second time I had already written that sentence about the first.
-//
 // The claim is a one-off property of migration 20261214000000, verified against
 // the live table when it was applied: 1788 rows discoverable before, 1788 after,
 // and 1897 of 1897 restaurants APPROVED. The behaviour that must hold FOREVER —
@@ -107,7 +103,7 @@ func TestLiveDB_ModerationOnHidesUnapprovedListings(t *testing.T) {
 func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	shop := seedListing(t, ctx, f, "Review Me", "DRAFT", false)
@@ -117,7 +113,7 @@ func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 	}
 	var status string
 	var snapshot *string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT listing_review_status, published_snapshot::text FROM restaurants WHERE id=$1`, shop).
 		Scan(&status, &snapshot); err != nil {
 		t.Fatalf("read: %v", err)
@@ -137,7 +133,7 @@ func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 	if err := f.svc.DecideListing(ctx, shop, f.owner, ListingApproved, ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT listing_review_status FROM restaurants WHERE id=$1`, shop).Scan(&status); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT listing_review_status FROM restaurants WHERE id=$1`, shop).Scan(&status); err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
 	if status != "APPROVED" {
@@ -148,7 +144,7 @@ func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 func TestLiveDB_StaffWithoutStoreRightsCannotSubmit(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	shop := seedListing(t, ctx, f, "Guarded Listing", "DRAFT", false)
@@ -162,7 +158,7 @@ func TestLiveDB_StaffWithoutStoreRightsCannotSubmit(t *testing.T) {
 func TestLiveDB_ModerationQueueShowsPendingOnly(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	pending := seedListing(t, ctx, f, "Queue Me", "PENDING", false)

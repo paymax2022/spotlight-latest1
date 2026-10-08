@@ -8,9 +8,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
 
 // Handler exposes the academy tutor-marketplace surface over Gin.
 //   - member (tutor): onboard, profile, assignments, grading, earnings, payouts.
@@ -24,21 +30,17 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user. The finance group mirrors the auth user into
 // c.Set("user_id", ...); fall back to the auth context if absent.
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
 	return ""
 }
 
-// idemKey reads the Idempotency-Key header (required for the payout money path).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -50,21 +52,21 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrKYCNotMet):
-		c.JSON(http.StatusForbidden, gin.H{"error": "kyc_tier_not_met", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "kyc_tier_not_met", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrInsufficientBalance):
-		c.JSON(http.StatusConflict, gin.H{"error": "insufficient_balance", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "insufficient_balance", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -73,7 +75,6 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // gates admin routes with middleware.RequirePermission(rbac, "academy.tutor"). nil kyc
 // falls back to allow (dev); nil payout falls back to a deterministic stub; a nil pool,
 // or nil member/admin groups, are skipped.
-//
 // Member routes use BARE subpaths — the aggregator passes the /api/finance/academy base
 // group (memberAcad). The public tutor listing is on the member group (auth-gated read).
 //
@@ -127,8 +128,6 @@ func RegisterAcademyTutor(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rb
 	}
 }
 
-// ── Member handlers ─────────────────────────────────────────────────────────────
-
 func (h *Handler) Onboard(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -136,7 +135,7 @@ func (h *Handler) Onboard(c *gin.Context) {
 	}
 	var req OnboardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.OnboardTutor(c.Request.Context(), u, req.Bio, req.Subjects)
@@ -167,14 +166,14 @@ func (h *Handler) CreateAssignment(c *gin.Context) {
 	}
 	var req AssignRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	var dueAt *time.Time
 	if req.DueAt != "" {
 		t, perr := time.Parse(time.RFC3339, req.DueAt)
 		if perr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": "due_at must be RFC3339"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: "due_at must be RFC3339"})
 			return
 		}
 		dueAt = &t
@@ -194,7 +193,7 @@ func (h *Handler) CreateGrade(c *gin.Context) {
 	}
 	var req GradeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	grade, earn, err := h.svc.Grade(c.Request.Context(), u, req.AssignmentID, req.LearnerID, req.Score, req.Feedback, req.EarnMinor)
@@ -226,10 +225,10 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 	}
 	var req PayoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.RequestPayout(c.Request.Context(), u, req.AmountMinor, idemKey(c))
+	out, err := h.svc.RequestPayout(c.Request.Context(), u, req.AmountMinor, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -288,8 +287,6 @@ func (h *Handler) ListMySubmissions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers (RBAC academy.tutor) ─────────────────────────────────────────
-
 // AdminListTutors lists ALL tutors regardless of status (admin-wide, mirrors the
 // member verified-only ListTutors).
 func (h *Handler) AdminListTutors(c *gin.Context) {
@@ -302,7 +299,7 @@ func (h *Handler) AdminListTutors(c *gin.Context) {
 }
 
 func (h *Handler) AdminVerify(c *gin.Context) {
-	out, err := h.svc.VerifyTutor(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.VerifyTutor(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -311,7 +308,7 @@ func (h *Handler) AdminVerify(c *gin.Context) {
 }
 
 func (h *Handler) AdminSuspend(c *gin.Context) {
-	out, err := h.svc.SuspendTutor(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.SuspendTutor(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

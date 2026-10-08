@@ -11,6 +11,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -67,6 +68,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
+	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	return id
 }
 
@@ -92,8 +94,8 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	fundWallet(t, ctx, led, userA, 10_000_000)
 	fundWallet(t, ctx, led, userB, 10_000_000)
 
-	// --- A subscribes ₦10,000 → first deposit at par mints 1.0 unit; cash moves. ---
 	walA0, _ := led.GetBalance(ctx, userA)
+	clearing0, _ := led.GetAccountBalance(ctx, clearing.ID)
 	oA, err := svc.Subscribe(ctx, userA, run+"sub:A1", 1_000_000)
 	if err != nil {
 		t.Fatalf("A subscribe: %v", err)
@@ -104,12 +106,13 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	if walA, _ := led.GetBalance(ctx, userA); walA != walA0-1_000_000 {
 		t.Fatalf("A wallet not debited: before=%d after=%d", walA0, walA)
 	}
-	if cb, _ := led.GetAccountBalance(ctx, clearing.ID); cb != 1_000_000 {
-		t.Fatalf("clearing balance = %d, want 1_000_000", cb)
+	// Delta, not absolute: other packages' live suites share this standing
+	// account when go test runs them in parallel against one database.
+	if cb, _ := led.GetAccountBalance(ctx, clearing.ID); cb != clearing0+1_000_000 {
+		t.Fatalf("clearing balance = %d, want %d", cb, clearing0+1_000_000)
 	}
 	assertReconciled(t, svc, ctx)
 
-	// --- Idempotent replay: same key must NOT move money again. ---
 	walBeforeReplay, _ := led.GetBalance(ctx, userA)
 	if _, err := svc.Subscribe(ctx, userA, run+"sub:A1", 1_000_000); err != nil {
 		t.Fatalf("A subscribe replay: %v", err)
@@ -118,7 +121,6 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 		t.Fatalf("idempotent replay double-debited: %d → %d", walBeforeReplay, walAfter)
 	}
 
-	// --- B subscribes the same ₦10,000 at par (no P&L yet) → ~1.0 unit; A not diluted. ---
 	aUnits0 := userUnits(t, ctx, pool, userA)
 	oB, err := svc.Subscribe(ctx, userB, run+"sub:B1", 1_000_000)
 	if err != nil {
@@ -132,13 +134,11 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	}
 	assertReconciled(t, svc, ctx)
 
-	// --- Inject trading profit: raise fund clearing by ₦4,000 (→ NAV +20%). ---
 	src, _ := led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err := led.PostJournal(ctx, ledger.JournalEntry{Reference: "test:pnl", IdempotencyKey: "test:pnl:" + uuid.NewString(), AmountKobo: 400_000, DebitAccountID: src.ID, CreditAccountID: clearing.ID}); err != nil {
 		t.Fatalf("inject pnl: %v", err)
 	}
 
-	// --- Assess A's performance fee: fee income rises; A's units drop; B's NAV value unaffected. ---
 	feeBal0, _ := led.GetAccountBalance(ctx, feeAcct.ID)
 	bValue0 := unitValue(t, ctx, svc, pool, userB)
 	fee, err := svc.AssessPerformanceFee(ctx, userA, run+"fee:A:2026Q3", "2026Q3")
@@ -165,7 +165,6 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	}
 	assertReconciled(t, svc, ctx)
 
-	// --- A redeems half their units → cash returns to wallet, units drop. ---
 	aUnitsNow := userUnits(t, ctx, pool, userA)
 	walA1, _ := led.GetBalance(ctx, userA)
 	oR, err := svc.Redeem(ctx, userA, run+"red:A1", aUnitsNow/2)
@@ -180,8 +179,7 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	}
 	assertReconciled(t, svc, ctx)
 
-	// --- Over-redeem is blocked. ---
-	if _, err := svc.Redeem(ctx, userA, run+"red:over", 1_000_000_000_000); err != ErrInsufficientUnit {
+	if _, err := svc.Redeem(ctx, userA, run+"red:over", 1_000_000_000_000); !errors.Is(err, ErrInsufficientUnit) {
 		t.Fatalf("over-redeem must be rejected, got %v", err)
 	}
 }
@@ -205,7 +203,7 @@ func TestLiveDB_TradingWallet_IdemConflictNoCashout(t *testing.T) {
 	unitsBefore := userUnits(t, ctx, pool, a)
 
 	// Redeem with the SAME key → must be refused, never pay out.
-	if _, err := svc.Redeem(ctx, a, run+"K", 100); err != ErrIdemConflict {
+	if _, err := svc.Redeem(ctx, a, run+"K", 100); !errors.Is(err, ErrIdemConflict) {
 		t.Fatalf("reused subscribe key on redeem must be ErrIdemConflict, got %v", err)
 	}
 	if wal, _ := led.GetBalance(ctx, a); wal != walBefore {
@@ -281,7 +279,7 @@ func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
 	}
 
 	// Replay with an empty wallet → drives the debit, insufficient funds, cancels.
-	if _, err := svc.Subscribe(ctx, u, run+"K", 1_000_000); err != ErrInsufficientCash {
+	if _, err := svc.Subscribe(ctx, u, run+"K", 1_000_000); !errors.Is(err, ErrInsufficientCash) {
 		t.Fatalf("unpaid reservation replay must not mint; want ErrInsufficientCash, got %v", err)
 	}
 	if un := userUnits(t, ctx, pool, u); un != 0 {
@@ -313,7 +311,7 @@ func TestLiveDB_TradingWallet_AccessGate(t *testing.T) {
 	resetFund(t, ctx, pool, led)
 	u := seedUser(t, ctx, pool)
 	fundWallet(t, ctx, led, u, 5_000_000)
-	if _, err := svc.Subscribe(ctx, u, "sub:x", 1_000_000); err != ErrNoAccess {
+	if _, err := svc.Subscribe(ctx, u, "sub:x", 1_000_000); !errors.Is(err, ErrNoAccess) {
 		t.Fatalf("deposit without module-KYC must be refused, got %v", err)
 	}
 }

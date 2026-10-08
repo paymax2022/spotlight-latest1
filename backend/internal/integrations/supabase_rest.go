@@ -1,18 +1,25 @@
 package integrations
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 type SupabaseRestClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL     string
+	apiKey      string
+	jwtSecret   []byte
+	localVerify bool
+	jwks        map[string]jwksKey
+	jwksMu      sync.Mutex
+	http        *http.Client
 }
 
 func NewSupabaseRestClient(baseURL, apiKey string) *SupabaseRestClient {
@@ -30,9 +37,9 @@ func (c *SupabaseRestClient) Enabled() bool {
 func (c *SupabaseRestClient) BaseURL() string { return c.baseURL }
 func (c *SupabaseRestClient) APIKey() string  { return c.apiKey }
 
-func (c *SupabaseRestClient) Count(table string) (int, error) {
+func (c *SupabaseRestClient) Count(ctx context.Context, table string) (int, error) {
 	if !c.Enabled() {
-		return 0, fmt.Errorf("supabase REST is not configured")
+		return 0, errors.New("supabase REST is not configured")
 	}
 
 	u, err := url.Parse(c.baseURL + "/rest/v1/" + table)
@@ -43,11 +50,11 @@ func (c *SupabaseRestClient) Count(table string) (int, error) {
 	q.Set("select", "id")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Apikey", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Range", "0-0")
 	req.Header.Set("Prefer", "count=exact")
@@ -56,7 +63,7 @@ func (c *SupabaseRestClient) Count(table string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		var body map[string]any

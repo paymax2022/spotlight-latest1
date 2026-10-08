@@ -50,8 +50,6 @@ func execBuy(h http.Handler, quoteID, idemKey string) *httptest.ResponseRecorder
 	return rec
 }
 
-// ── Eligibility gate ──────────────────────────────────────────────────────────
-
 func TestGetEligibility_ClearedDemoUser(t *testing.T) {
 	h := NewServer(store.New()).Handler()
 	rec := httptest.NewRecorder()
@@ -115,8 +113,6 @@ func TestBuyAllowedWhenEligible(t *testing.T) {
 		t.Errorf("order status = %q, want Filled", o.Status)
 	}
 }
-
-// ── Quote integrity ───────────────────────────────────────────────────────────
 
 func TestBuyHappyPathConsumesQuote(t *testing.T) {
 	s := store.New()

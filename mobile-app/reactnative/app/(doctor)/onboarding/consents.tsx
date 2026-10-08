@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Check, ChevronRight, FileText, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress } from '@/features/doctor/components';
@@ -14,7 +14,6 @@ import { useConsentStatus } from '@/features/doctor/hooks';
 import { LEGAL_DOC_ORDER, LEGAL_DOC_LABELS } from '@/features/doctor/constants';
 import type { LegalDocKind } from '@/types/doctor.onboarding';
 
-// ── Section A · Entries 8–12 (hub) — Legal consent checklist ─────────────────
 // Reads useConsentStatus and renders the five required documents. Each row deep
 // links into the single versioned consent screen. When all accepted (empty
 // outstanding / allAccepted), routes onward to the permissions gate.

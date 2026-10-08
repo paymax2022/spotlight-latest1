@@ -1,10 +1,8 @@
-// ── Referral Admin OPS types (RA2) ───────────────────────────────────────────
 // Finance/Payouts, Risk/Fraud, Compliance, Users/Graph, Gamification,
 // Analytics/BI, Ambassadors/Agents, Merchants/Partners.
 // PRD §8B (A-FIN / A-RSK / A-CMPL / A-USR / A-GAM / A-BI / A-AMB / A-MER) + §7A.6.
 // All money is BIGINT kobo (integer minor units). Never floats for math.
 
-// ── A-FIN-01: Payout queue & approvals ───────────────────────────────────────
 export type PayoutStatus = 'pending' | 'approved' | 'paid' | 'rejected' | 'on_hold';
 export interface Payout {
   id: string;
@@ -22,7 +20,6 @@ export interface Payout {
   idempotency_key: string;
 }
 
-// ── A-FIN-02: Reconciliation (reward ledger ↔ wallet/payout) ──────────────────
 export interface ReconRow {
   id: string;
   date: string;
@@ -41,7 +38,6 @@ export interface Reconciliation {
   rows: ReconRow[];
 }
 
-// ── A-FIN-03: Budget & burn monitoring + A-FIN-04 reward-to-LTV ───────────────
 export interface BudgetLine {
   scope: string; // campaign / program / vertical
   budget_kobo: number;
@@ -60,7 +56,6 @@ export interface BudgetBurn {
   trend: { date: string; spent_kobo: number }[];
 }
 
-// ── A-FIN-05: Float management ───────────────────────────────────────────────
 export interface FloatPosition {
   id: string;
   account: string;
@@ -80,7 +75,6 @@ export interface Float {
   positions: FloatPosition[];
 }
 
-// ── A-RSK-01: Fraud dashboard ────────────────────────────────────────────────
 export interface RiskAlert {
   id: string;
   kind: string; // velocity | device_farm | kyc_dup | self_referral | burn_spike
@@ -100,7 +94,6 @@ export interface RiskDashboard {
   burn_anomaly_trend: { date: string; expected_kobo: number; actual_kobo: number }[];
 }
 
-// ── A-RSK-02: Rules engine ───────────────────────────────────────────────────
 export interface RiskRule {
   id: string;
   name: string;
@@ -113,7 +106,6 @@ export interface RiskRule {
   updated_at: string;
 }
 
-// ── A-RSK-03: Investigation workbench (case) ─────────────────────────────────
 export type CaseStatus = 'open' | 'investigating' | 'resolved' | 'closed';
 export interface CaseEvidence {
   ts: string;
@@ -138,7 +130,6 @@ export interface CaseDetail {
   resolved_at: string | null;
 }
 
-// ── A-RSK-04: Blocklists / allowlists ────────────────────────────────────────
 export interface BlocklistEntry {
   id: string;
   type: 'device' | 'identity' | 'account' | 'bank';
@@ -149,7 +140,6 @@ export interface BlocklistEntry {
   created_at: string;
 }
 
-// ── A-RSK-05: Clawback execution & history ───────────────────────────────────
 export type ClawbackStatus = 'pending' | 'executing' | 'recovered' | 'failed';
 export interface ClawbackRecord {
   id: string;
@@ -164,7 +154,6 @@ export interface ClawbackRecord {
   resolved_at: string | null;
 }
 
-// ── A-RSK-07: Manual review queue ────────────────────────────────────────────
 export interface ReviewItem {
   id: string;
   reward_id: string;
@@ -177,7 +166,6 @@ export interface ReviewItem {
   created_at: string;
 }
 
-// ── A-CMPL-01: Pyramid-line & tier-cap policy ────────────────────────────────
 export interface CompliancePolicy {
   jurisdiction: string;
   pyramid_line_enforced: boolean; // no earnings on recruitment alone
@@ -188,7 +176,6 @@ export interface CompliancePolicy {
   updated_at: string;
 }
 
-// ── A-CMPL-02: Disclosure / T&Cs versioning ──────────────────────────────────
 export interface Disclosure {
   id: string;
   title: string;
@@ -200,7 +187,6 @@ export interface Disclosure {
   updated_at: string;
 }
 
-// ── A-CMPL-03: AML monitoring (reward-linked txn surveillance) ────────────────
 export interface AmlAlert {
   id: string;
   subject_id: string;
@@ -211,7 +197,6 @@ export interface AmlAlert {
   created_at: string;
 }
 
-// ── A-CMPL-05: Consent / data management (NDPC) ──────────────────────────────
 export interface ConsentRecord {
   id: string;
   user_id: string;
@@ -223,7 +208,6 @@ export interface ConsentRecord {
   updated_at: string;
 }
 
-// ── A-USR-01..04: User 360 (referral) ────────────────────────────────────────
 export interface ReferralUserSummary {
   id: string;
   name: string;
@@ -261,7 +245,6 @@ export interface InterveneInput {
   reason: string;
 }
 
-// ── A-GAM-01: Mission / quest builder ────────────────────────────────────────
 export interface MissionAdmin {
   id: string;
   name: string;
@@ -274,7 +257,6 @@ export interface MissionAdmin {
   ends_at: string | null;
 }
 
-// ── A-GAM-02: Tier / rank / badge config ─────────────────────────────────────
 export interface RankAdmin {
   id: string;
   name: string;
@@ -284,7 +266,6 @@ export interface RankAdmin {
   holders: number;
 }
 
-// ── A-GAM-03: Leaderboard config ─────────────────────────────────────────────
 export interface LeaderboardConfig {
   id: string;
   name: string;
@@ -295,7 +276,6 @@ export interface LeaderboardConfig {
   status: 'active' | 'paused';
 }
 
-// ── A-GAM-04: Contest / challenge management ─────────────────────────────────
 export interface ContestAdmin {
   id: string;
   name: string;
@@ -306,7 +286,6 @@ export interface ContestAdmin {
   prize: string;
 }
 
-// ── A-BI: Analytics / growth ─────────────────────────────────────────────────
 export interface AnalyticsOverview {
   // A-BI-01 true K-factor EXCLUDES house captures (§7A.6)
   k_factor: number;
@@ -343,7 +322,6 @@ export interface SegmentationData {
   }[];
 }
 
-// ── A-AMB-01: Ambassador directory & tiers ───────────────────────────────────
 export interface Ambassador {
   id: string;
   name: string;
@@ -355,7 +333,6 @@ export interface Ambassador {
   joined_at: string;
 }
 
-// ── A-AMB-02: Application / approval queue ────────────────────────────────────
 export interface AmbassadorApplication {
   id: string;
   applicant_id: string;
@@ -367,7 +344,6 @@ export interface AmbassadorApplication {
   submitted_at: string;
 }
 
-// ── A-AMB-03: Agent network management ───────────────────────────────────────
 export interface AgentNetwork {
   id: string;
   agent_id: string;
@@ -379,7 +355,6 @@ export interface AgentNetwork {
   override_paid_kobo: number;
 }
 
-// ── A-AMB-04: Override policy config (activity-based + caps) ──────────────────
 export interface OverridePolicy {
   activity_based_only: boolean; // no earning on recruitment alone
   max_depth: number;
@@ -389,7 +364,6 @@ export interface OverridePolicy {
   updated_at: string;
 }
 
-// ── A-MER-01: Partner directory & onboarding ─────────────────────────────────
 export type MerchantStatus = 'onboarding' | 'active' | 'suspended' | 'rejected';
 export interface MerchantSummary {
   id: string;

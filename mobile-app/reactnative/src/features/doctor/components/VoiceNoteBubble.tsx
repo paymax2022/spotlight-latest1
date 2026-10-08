@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Play } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   durationSecs: number;
@@ -13,7 +13,6 @@ interface Props {
 }
 
 // New component: a voice-note row with a play affordance, a static waveform and
-// a duration label. MessageBubble only renders text + an attachment name; no
 // existing component visualises an audio waveform, so this is genuinely new.
 // The waveform bars are derived deterministically from the index so the demo
 // renders without an audio dependency (no new npm deps).

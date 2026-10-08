@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { PawPrint } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   name:        string;
@@ -16,7 +16,6 @@ interface Props {
 }
 
 // New component: a pet identity header (paw avatar + name + species/breed +
-// owner). DoctorAvatar renders human initials in a circle; a pet needs a paw
 // glyph + species/breed line, so a small pet-specific header is justified.
 export default function PetHeader({ name, speciesLabel, breed, meta, ownerName, color }: Props) {
   return (

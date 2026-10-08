@@ -1,7 +1,7 @@
 // Estate Emergencies (Block 35) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 
 export type EmergencyKind = 'panic' | 'medical' | 'fire' | 'security' | 'noise' | 'theft' | 'domestic' | 'other';

@@ -6,7 +6,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const params = await context.params;
   try {
     await assertOpenMicAdmin(request);
-    const body = (await request.json()) as { locked?: boolean };
+    const body = (await request.json().catch(() => null)) as { locked?: boolean };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (typeof body.locked !== 'boolean') return errorResponse('locked boolean is required', 400);
     const contest = await setFinalePlaylistLocked(params.id, body.locked);
     return successResponse({ success: true, contest });

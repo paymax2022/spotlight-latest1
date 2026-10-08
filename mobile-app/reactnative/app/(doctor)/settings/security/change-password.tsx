@@ -3,9 +3,9 @@ import { Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 're
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -13,7 +13,6 @@ import { SectionCard } from '@/features/doctor/components';
 import { useChangePassword } from '@/features/doctor/hooks';
 import { alertAsync } from '@/lib/confirm';
 
-// ── Section AC — Change password (AC.8) ───────────────────────────────────────
 // NEW screen. Reuses TextInputField (secure) + PrimaryButton. Local validation
 // only; the mutation auto-generates the idempotency key.
 

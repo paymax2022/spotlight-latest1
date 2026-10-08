@@ -1,4 +1,3 @@
-// ── Doctor — Batch 2 · Section J · clinical notes & diagnosis hooks ────────────
 // The richer clinical note (SOAP + ICD codes, clinical impression, treatment
 // plan, lifestyle recs, red flags, referral, follow-up, private notes) with a
 // draft → finalize (locks) → share lifecycle. Diagnosis search is a pure
@@ -21,7 +20,6 @@ import type {
   ShareSummaryInput,
 } from '@/types/doctor.batch2';
 
-// Re-export the pure diagnosis-search helper so screens can import it from the
 // hooks barrel alongside the clinical-note hooks.
 export { searchDiagnosisCodes } from '@/api/doctor.batch2.api';
 

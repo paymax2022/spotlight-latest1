@@ -2,21 +2,25 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type rbacHandlerTestService struct{}
 
-func (rbacHandlerTestService) GetUserRoles(string) ([]string, error)            { return nil, nil }
+func (rbacHandlerTestService) GetUserRoles(context.Context, string) ([]string, error) {
+	return nil, nil
+}
 func (rbacHandlerTestService) GetUserScopes(string) ([]domain.UserScope, error) { return nil, nil }
-func (rbacHandlerTestService) GetUserPermissions(string, string, string) ([]string, error) {
+func (rbacHandlerTestService) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (rbacHandlerTestService) CheckPermission(string, string, string, string) (bool, error) {
@@ -50,11 +54,13 @@ func (rbacHandlerTestService) AssignRoleToUser(string, string, string, string, s
 	return nil
 }
 func (rbacHandlerTestService) RemoveRoleFromUser(string, string, string) error { return nil }
-func (rbacHandlerTestService) GetUserStatus(string) (string, error)            { return "active", nil }
-func (rbacHandlerTestService) SuspendUser(string) error                        { return nil }
-func (rbacHandlerTestService) UnsuspendUser(string) error                      { return nil }
-func (rbacHandlerTestService) LockUser(string) error                           { return nil }
-func (rbacHandlerTestService) UnlockUser(string) error                         { return nil }
+func (rbacHandlerTestService) GetUserStatus(context.Context, string) (string, error) {
+	return "active", nil
+}
+func (rbacHandlerTestService) SuspendUser(string) error   { return nil }
+func (rbacHandlerTestService) UnsuspendUser(string) error { return nil }
+func (rbacHandlerTestService) LockUser(string) error      { return nil }
+func (rbacHandlerTestService) UnlockUser(string) error    { return nil }
 func (rbacHandlerTestService) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	return nil, nil
 }
@@ -90,7 +96,7 @@ func TestCreatePermission_Success(t *testing.T) {
 	r.POST("/permissions", h.CreatePermission)
 
 	body := `{"name":"View Users","slug":"users.view","module":"users","resource":"profile","action":"view","description":"Can view"}`
-	req := httptest.NewRequest(http.MethodPost, "/permissions", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/permissions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -116,7 +122,7 @@ func TestUpdatePermission_Success(t *testing.T) {
 	r.PATCH("/permissions/:permissionId", h.UpdatePermission)
 
 	body := `{"name":"Edit Users","module":"users","resource":"profile","action":"update","description":"Can edit"}`
-	req := httptest.NewRequest(http.MethodPatch, "/permissions/perm-1", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/permissions/perm-1", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

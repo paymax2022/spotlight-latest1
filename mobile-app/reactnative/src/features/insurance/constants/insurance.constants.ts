@@ -1,8 +1,6 @@
-// ── Insurance / "Protection" — Constants & module tokens ─────────────────────
 // LIVE-first. The member surface (catalog, product detail, buy, policies,
 // claims) talks to the real MyCover-backed endpoints through
 // `src/features/insurance/live/*`, which has NO mock fallback at all.
-//
 // `USE_MOCK` now defaults to FALSE and survives only for the fixture-backed
 // side surfaces that still have no live endpoint (agent, partner, embedded) and
 // for the unit tests. It must never again decide what a real user is shown: a
@@ -10,7 +8,7 @@
 // nobody goes looking for a bug they cannot see.
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { KycTier, ProductLineGroup } from '../types';
 
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_INSURANCE_USE_MOCK, false);
@@ -41,7 +39,6 @@ export const InsuranceColors = {
   octamileBg: Colors.iconBgTeal,
 } as const;
 
-// ── Money helper ──────────────────────────────────────────────────────────────
 // All amounts are kobo (minor units). Render with this; never divide inline.
 export function formatNaira(kobo: number, opts?: { decimals?: boolean }): string {
   const naira = kobo / 100;
@@ -74,7 +71,6 @@ export const CADENCE_SUFFIX: Record<string, string> = {
   'per-trip': ' / trip',
 };
 
-// ── KYC tier ordering (for the KYC-gap gate; PRD §16/§24 KYC_TIER_INSUFFICIENT)──
 export const TIER_RANK: Record<KycTier, number> = {
   TIER_0: 0,
   TIER_1: 1,
@@ -96,7 +92,6 @@ export const TIER_REQUIREMENT: Record<KycTier, string> = {
   TIER_3: 'Tier 2 + liveness + enhanced due diligence',
 };
 
-// ── NDPA consent (PRD §18) ──────────────────────────────────────────────────
 export const CONSENT_VERSION = 'ndpa-2023-v1';
 
 /** Product-line browse groups for the Protection hub + browse screen. */

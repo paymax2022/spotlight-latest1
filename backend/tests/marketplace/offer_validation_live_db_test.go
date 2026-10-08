@@ -9,7 +9,6 @@ import (
 )
 
 // A missing or malformed offer input must name the field, not surface Postgres.
-//
 // CreateOffer bound its body and passed straight through, so a request that
 // omitted listingId — or spelled it listing_id, an easy mistake when the RESPONSE
 // is camelCase — reached the repository with an empty string and came back as

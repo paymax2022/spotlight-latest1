@@ -6,10 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ChevronLeft } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -71,9 +71,7 @@ export default function FeaturedWizardScreen() {
   // their own restaurant screen, say — in which case asking them to pick it out
   // of a list is a step that can only go wrong. These params preselect the
   // subject and skip step 0 entirely.
-  //
   // ⚠️ subjectType must match the literal the serving side filters on. Food
-  // discovery orders by subject_type = 'restaurant'; a different spelling here
   // buys a campaign that is charged for and never shows.
   const params = useLocalSearchParams<{ subjectType?: string; subjectId?: string; label?: string; subtitle?: string; deepLink?: string }>();
   const preset: EligibleItem | null = React.useMemo(() => {
@@ -102,7 +100,6 @@ export default function FeaturedWizardScreen() {
 
   const [stepIndex, setStepIndex] = React.useState(preset ? 1 : 0);
 
-  // ── wizard form state ──────────────────────────────────────────────────────
   const [item, setItem] = React.useState<EligibleItem | null>(preset);
   const [zone, setZone] = React.useState<Zone | null>(null);
   const [durDays, setDurDays] = React.useState<number>(7);
@@ -206,7 +203,6 @@ export default function FeaturedWizardScreen() {
     });
   };
 
-  // ── render ─────────────────────────────────────────────────────────────────
   if (zonesQ.isLoading || itemsQ.isLoading) {
     return (
       <SafeAreaView style={s.safe} edges={['top']}>

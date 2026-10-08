@@ -14,8 +14,6 @@ import (
 // always-overriding red-flag layer, the LLM extractor fallback (SC-10), the engine
 // interview loop, and the SC-1 "never diagnosis" disposition framing.
 
-// --- session state machine (SC-12 guarded transitions) ---
-
 func TestSessionStateMachine(t *testing.T) {
 	legal := [][2]triage.SessionState{
 		{triage.SessStarted, triage.SessConsented},
@@ -42,8 +40,6 @@ func TestSessionStateMachine(t *testing.T) {
 		}
 	}
 }
-
-// --- red-flag override forces the more urgent (lower) level (SC-2/SC-3) ---
 
 func TestApplyRedFlagForcesLowerLevel(t *testing.T) {
 	// Engine says self-care (5); red flag forces emergency ambulance (1).
@@ -99,8 +95,6 @@ func (f fakeRedFlag) Evaluate(_ context.Context, _ []triage.Evidence, _ int, _ b
 	return f.hit, nil
 }
 
-// --- LLM extractor: never returns conclusions; falls back on error (SC-10) ---
-
 func TestLLMExtractorFallsBackToMock(t *testing.T) {
 	x := NewLLMExtractor(disabledGen{}) // disabled → mock keyword extractor
 	ev, err := x.Extract(context.Background(), "I have fever and cough", "en")
@@ -146,8 +140,6 @@ func (g stubGen) GenerateJSON(_ context.Context, _, _ string) (json.RawMessage, 
 	return json.RawMessage(g.out), nil
 }
 
-// --- engine interview loop: thin input asks a question, fuller input disposes ---
-
 func TestMockEngineInterviewLoop(t *testing.T) {
 	eng := triage.MockEngine{}
 	// One symptom → engine asks a follow-up (not done).
@@ -173,8 +165,6 @@ func TestMockEngineInterviewLoop(t *testing.T) {
 	}
 }
 
-// --- disposition framing: guidance/disclaimer never say "diagnosis" (SC-1) ---
-
 func TestDispositionFramingNeverDiagnosis(t *testing.T) {
 	if strings.Contains(strings.ToLower(Disclaimer), "diagnosis") && !strings.Contains(strings.ToLower(Disclaimer), "not a medical diagnosis") {
 		t.Fatalf("disclaimer must not frame output as a diagnosis: %q", Disclaimer)
@@ -196,8 +186,6 @@ func TestDispositionFramingNeverDiagnosis(t *testing.T) {
 		}
 	}
 }
-
-// --- infermedica level mapping is conservative on unknowns (SC-3) ---
 
 func TestInfermedicaLevelMappingConservative(t *testing.T) {
 	cases := map[string]int{

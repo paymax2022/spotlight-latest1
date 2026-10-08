@@ -2,8 +2,6 @@
 
 // A7 — Pot & disbursement. RBAC: arena.admin.manage (Competition Admin) + a
 // second approver (arena.admin.disburse). View derived pot total + contribution
-// ledger; define split per the published formula; MULTI-APPROVE (two approvers);
-// execute; show disbursement status. Amounts reconcile against the derived pot;
 // every movement is ledgered + audited (NDC-4).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -74,7 +72,10 @@ export default function ArenaPotPage() {
     if (!window.confirm(`Execute disbursement of ${formatKobo(splitTotal)} across ${splits.length} splits? This moves money via the payout rails.`)) return;
     setBusy(true); setError(null); setNotice(null);
     try {
-      await disbursePot(competitionId, splits);
+      // The live backend can only pay the full pot to ONE beneficiary — see
+      // disbursePot's own doc comment. `approve` records this call's approval
+      // requires `required` approvers before this button is enabled.
+      await disbursePot(competitionId, splits, true);
       setNotice('Disbursement submitted to payout rails (idempotent, ledgered, audited).');
       await load();
     } catch (e) { setError(String(e)); }

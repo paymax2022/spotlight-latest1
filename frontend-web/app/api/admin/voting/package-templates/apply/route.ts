@@ -28,7 +28,8 @@ import { appendAuditLog } from '@/src/server/voting/audit.service';
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const contestId = typeof body.contestId === 'string' ? body.contestId.trim() : '';
     if (!contestId) return errorResponse('contestId is required', 400);
@@ -47,14 +48,20 @@ export async function POST(request: Request) {
       .select('id')
       .eq('id', contestId)
       .maybeSingle();
-    if (contestError) return errorResponse(contestError.message, 500);
+    if (contestError) {
+      console.error('[admin/voting/package-templates/apply] contest lookup:', contestError.message);
+      return errorResponse('Failed to load contest', 500);
+    }
     if (!contest) return errorResponse('Contest not found', 404);
 
     const { data: templates, error: templateError } = await supabase
       .from('vote_package_templates')
       .select('id,name,description,votes,bonus_votes,amount,currency,is_recommended,promo_label,display_order')
       .in('id', templateIds);
-    if (templateError) return errorResponse(templateError.message, 500);
+    if (templateError) {
+      console.error('[admin/voting/package-templates/apply] templates lookup:', templateError.message);
+      return errorResponse('Failed to load templates', 500);
+    }
 
     const found = templates ?? [];
     if (found.length === 0) return errorResponse('None of the given templates exist', 404);
@@ -70,7 +77,10 @@ export async function POST(request: Request) {
       .select('template_id')
       .eq('contest_id', contestId)
       .not('template_id', 'is', null);
-    if (existingError) return errorResponse(existingError.message, 500);
+    if (existingError) {
+      console.error('[admin/voting/package-templates/apply] existing packages lookup:', existingError.message);
+      return errorResponse('Failed to check existing packages', 500);
+    }
 
     const already = new Set((existing ?? []).map((r: any) => r.template_id));
     const toInsert = found.filter((t: any) => !already.has(t.id));
@@ -105,7 +115,10 @@ export async function POST(request: Request) {
       .from('vote_packages')
       .insert(rows)
       .select('*');
-    if (insertError) return errorResponse(insertError.message, 500);
+    if (insertError) {
+      console.error('[admin/voting/package-templates/apply] insert:', insertError.message);
+      return errorResponse('Failed to apply templates', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

@@ -50,11 +50,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const draft = await getRegistrationDraft(params.id);
     if (!draft) return errorResponse('Application not found', 404);
 
-    const body = await request.json() as {
+    const body = await request.json().catch(() => null) as {
       scores?: Record<string, number>;
       recommendation?: Recommendation;
       notes?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.scores || typeof body.scores !== 'object') {
       return errorResponse('scores object is required', 400);

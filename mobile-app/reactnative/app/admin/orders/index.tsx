@@ -1,12 +1,11 @@
-// ── Paymax · Admin Console — Orders ──────────────────────────────────────────
 // Trade activity across crypto & stock, filterable (all/crypto/stock/failed/
 // pending) and searchable by ref / symbol / user. KPI tiles give quick counts.
 
 import React, { useMemo, useState } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';

@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Radio, Trophy, HeartHandshake, PlayCircle, QrCode, HandCoins } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   muted: { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
   revealRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: 6 },
   revealRank: { ...Typography.titleMd, color: Colors.onSurfaceVariant, width: 24, textAlign: 'center' },
-  revealRankTop: { color: Colors.gold, fontWeight: '800' as const },
+  revealRankTop: { color: Colors.onWarning, fontWeight: '800' as const },
   revealName: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
   revealPts: { ...Typography.labelMd, color: Colors.primary },
   tickerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },

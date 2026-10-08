@@ -1,11 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { MarketColors, formatNaira, fairPriceVerdict, FAIR_PRICE_LABEL } from '../constants';
 import type { ListingSummary } from '../types';
 import { useCategories } from '../hooks';
@@ -26,7 +26,6 @@ export default function ListingCard({ item, onPress, horizontal }: Props) {
   // an identical blank rectangle — the same failure the category grid had, in the
   // place a shopper actually looks. The category puck says what the thing is
   // while there is no photo of it.
-  //
   // useCategories is the same cached query the grid already loaded (shared key,
   // 5-minute staleTime), so this resolves off the cache rather than fetching per
   // card, and renders nothing at all until it is there.

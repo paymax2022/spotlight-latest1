@@ -2,7 +2,9 @@
  * GET  /api/v1/beneficiaries  — list saved beneficiaries (is_favorite=true)
  * POST /api/v1/beneficiaries  — save an existing recipient as a beneficiary
  *
- * Requires: FEATURE_BENEFICIARIES_ENABLED, authenticated user
+ * Requires: FEATURE_BANK_TRANSFERS_ENABLED (beneficiaries ride the bank-transfer
+ * rail — same flag gates the Go /api/finance/transfers/beneficiaries surface and
+ * the platform_modules 'beneficiaries' visibility flag), authenticated user
  */
 import { NextResponse } from 'next/server';
 import { handleApiError, ApiError } from '@/src/lib/api/responses';

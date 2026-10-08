@@ -44,7 +44,6 @@ function makeSupabase(intents: { data: { amount_kobo: number }[] | null; error: 
       if (table === 'tier_limit_events') {
         return { insert: vi.fn().mockImplementation((row) => { inserts.push(row); return Promise.resolve({ error: null }); }) };
       }
-      // wallet_topup_intents — the chain ends on .gte()
       const chain: Record<string, unknown> = {};
       chain.select = vi.fn().mockReturnValue(chain);
       chain.eq = vi.fn().mockReturnValue(chain);
@@ -133,7 +132,6 @@ describe('Tier-0 checkout allowance', () => {
 
   it('counts PENDING intents, so concurrent checkouts cannot each see a fresh allowance', async () => {
     // A pending intent is money the user has almost certainly already been charged
-    // for — the webhook just has not landed. Counting only 'completed' would let N
     // simultaneous checkouts each pass the cap.
     mockGetKycTier.mockResolvedValue(0);
     const { client } = makeSupabase(used(TIER0_ALLOWANCE - 50_000));

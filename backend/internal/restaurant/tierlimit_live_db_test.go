@@ -1,17 +1,13 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the FAIL-CLOSED TIER GATE on the food-order escrow
 // (backend/internal/restaurant/service.go PlaceOrder).
-//
 // Regression guard: PlaceOrder used to escrow the customer's wallet — a real ledger
 // DEBIT — without ever calling s.tiers.EnforceWalletDebitLimit. The seam existed and
 // was wired, but only withdrawal.go used it, so food orders were an uncapped side
 // door out of the wallet: a Tier 0 customer (wallet disabled) could order, and any
 // customer could blow straight through their KYC daily debit cap by ordering food.
-//
 // What these tests pin, in the order that matters:
-//
 //	 1. an order INSIDE the tier's daily cap still succeeds and still escrows;
 //	 2. an order OVER the cap is refused BEFORE any money moves — no ledger entry,
 //	    no settlement row, no order row, and an unchanged wallet balance;
@@ -23,22 +19,17 @@ package restaurant
 //	 7. the gate prices the FULL escrowed total (subtotal + delivery + tip), proven
 //	    with a recording limiter rather than by arithmetic coincidence;
 //	 8. FinalizeGroupOrder inherits the gate — a shared cart is not a way around it.
-//
 // And the idempotency properties the gate could have broken, which are money-path
 // invariants in their own right:
-//
 //	 9. a replay is NOT re-gated (the gate would otherwise count an order against
 //	    itself and refuse a retry whose money already moved);
 //	10. a retry whose escrow committed but whose order row did not still heals;
 //	11. an Idempotency-Key resolves only for the customer who used it;
 //	12. an empty Idempotency-Key is refused.
-//
 // Every refusal case asserts zero ledger entries for the order's escrow legs, which is
 // the invariant the gate exists to hold: a refused order costs the customer nothing and
 // leaves nothing to reverse.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -93,7 +84,6 @@ func seedKYCTier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID s
 // not knowable when PlaceOrder is refused, so the stable handle is the caller's
 // Idempotency-Key: settlement.Escrow debits under "<key>:escrow", and the ledger splits
 // that into the balanced pair "<key>:escrow:debit" / "<key>:escrow:credit".
-//
 // An ACCEPTED order therefore has exactly escrowLegsPosted (2) entries; a REFUSED one
 // must have 0 — the customer's wallet was never touched.
 func escrowLegs(t *testing.T, ctx context.Context, pool *pgxpool.Pool, idemKey string) int {
@@ -183,7 +173,6 @@ func tierGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 
 // TestLiveDB_OrderEscrowTierGate_UnderLimit: an order that fits inside the customer's
 // daily cap is unaffected by the gate — it still escrows the full total.
-//
 // Tier 1 caps daily wallet debits at ₦50,000 (5,000,000 kobo). This order is one
 // ₦2,000 item + the flat ₦500 delivery fee + a ₦500 tip = ₦3,000, comfortably under.
 func TestLiveDB_OrderEscrowTierGate_UnderLimit(t *testing.T) {
@@ -230,7 +219,6 @@ func TestLiveDB_OrderEscrowTierGate_UnderLimit(t *testing.T) {
 
 // TestLiveDB_OrderEscrowTierGate_OverLimit: an order that would push the customer past
 // their daily cap is refused BEFORE the escrow — nothing is written anywhere.
-//
 // The order is priced above Tier 1's entire ₦50,000 daily allowance on its own, so the
 // refusal does not depend on any prior spend in the test window.
 func TestLiveDB_OrderEscrowTierGate_OverLimit(t *testing.T) {
@@ -261,7 +249,6 @@ func TestLiveDB_OrderEscrowTierGate_OverLimit(t *testing.T) {
 // TestLiveDB_OrderEscrowTierGate_OverLimitCumulative: the cap is cumulative across the
 // day, not per-order. A first order that fits is accepted; a second that fits on its
 // own but pushes the DAY over the cap is refused — and the refusal still writes nothing.
-//
 // This is the case a naive per-order check would miss, and the reason the gate reads the
 // same wallet DEBIT rows the escrow posts.
 func TestLiveDB_OrderEscrowTierGate_OverLimitCumulative(t *testing.T) {
@@ -411,7 +398,6 @@ func (r *recordingLimiter) EnforceCheckoutDebitLimit(_ context.Context, _ string
 
 // TestLiveDB_OrderEscrowTierGate_GatesTheFullEscrowedTotal: the gate is enforced on the
 // WHOLE amount leaving the wallet — subtotal + delivery + tip — not the food subtotal.
-//
 // This is the invariant that keeps the tip from being a lever around the cap: the tip is
 // the one client-supplied amount on the order, so gating a smaller number than the one
 // escrowed would let a customer spend past their limit by tipping.
@@ -454,7 +440,6 @@ func TestLiveDB_OrderEscrowTierGate_GatesTheFullEscrowedTotal(t *testing.T) {
 
 // TestLiveDB_OrderEscrowTierGate_ReplayNotRegated: replaying an order under the same
 // Idempotency-Key returns the original order and does NOT re-run the tier gate.
-//
 // Regression guard for the bug the gate itself introduced: the gate measures today's
 // spend from the customer's wallet DEBIT rows, which on a replay already include THIS
 // order's escrow. Gating a replay therefore counts the order against itself and refuses
@@ -508,18 +493,15 @@ func TestLiveDB_OrderEscrowTierGate_ReplayNotRegated(t *testing.T) {
 
 // TestLiveDB_OrderEscrowTierGate_StrandedEscrowRetryHeals: a retry whose escrow already
 // committed is NOT charged against the tier limit a second time.
-//
 // settlement.Escrow can commit (ledger debit + settlement row) while the order tx that
 // follows it fails — an item deleted mid-flight, a commit timeout, a pod restart. Escrow
 // is documented as idempotent precisely so the customer's retry heals that: the debit is
 // deduped and the order row finally lands.
-//
 // Gating the escrow put that recovery at risk. The retry has no order row, so the fast
 // idempotent path cannot see it, and the customer's wallet debit is ALREADY posted — so
 // re-running the limit counts the order against itself and refuses the retry. The money
 // would then sit escrowed with no order attached: invisible to the reconciler (which
 // joins orders) and with no path to a refund.
-//
 // The order below is sized just over half the daily cap, which is exactly the range where
 // that double-count bites. Deleting the order row reproduces the crash window.
 func TestLiveDB_OrderEscrowTierGate_StrandedEscrowRetryHeals(t *testing.T) {

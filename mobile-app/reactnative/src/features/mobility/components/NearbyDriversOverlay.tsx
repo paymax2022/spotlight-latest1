@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, LayoutChangeEvent, Platform, StyleSheet, View } from 'react-native';
 import { CarFront } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
-// Transform animations can use the native driver on device; react-native-web
 // runs them on the JS thread, so disable the native driver there to avoid warns.
 const NATIVE = Platform.OS !== 'web';
 

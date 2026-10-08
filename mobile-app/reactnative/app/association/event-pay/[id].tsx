@@ -1,9 +1,6 @@
-// ── Association — Paid-event registration ─────────────────────────────────────
-//
 // This screen used to treat `registerEvent` AS the charge: it opened the
 // purchase sheet, ran register as the "charge" step and then announced
 // "Payment received — your ticket is ready". No money moved. Registration now
-// RAISES an invoice and answers `paymentRequired` with its id; the money is
 // moved by `/association/pay/[invoiceId]`, which debits the wallet, posts the
 // ledger entries and issues a receipt. So this screen confirms the fee, raises
 // (or re-uses) the invoice, and hands off to that screen.
@@ -13,17 +10,17 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { alertAsync } from '@/lib/confirm';
-import { useEvent, useRegisterEvent } from '@/features/association/hooks/useCommunity';
-import { formatNaira, formatDateTime } from '@/features/association/utils/associationFormatters';
+import { useEvent, useRegisterEvent } from '@/features/association/hooks';
+import { formatNaira, formatDateTime } from '@/features/association/utils';
 
 export default function EventPay() {
   const { id } = useLocalSearchParams<{ id: string }>();

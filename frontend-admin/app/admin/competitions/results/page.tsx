@@ -9,7 +9,6 @@ import type { VotingContest, ContestRosterEntry } from '@/types/competitions';
 // Real leaderboard — GET /api/v1/connect/contests/:id/contestants, already
 // ranked by total votes server-side. Previously this page picked from a
 // MOCK_DATA map keyed by fake slugs ('open-mic-q3' etc.) with invented
-// participant names, scores and prize amounts; "Publish Results" and "Send"
 // prize buttons only called alert(). There is no prize-distribution /
 // claim-tracking feature anywhere in the real backend, so that part of the
 // old UI is gone rather than faked — this shows exactly what the backend

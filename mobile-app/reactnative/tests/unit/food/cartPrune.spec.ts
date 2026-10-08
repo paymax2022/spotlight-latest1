@@ -1,6 +1,4 @@
 // Pure-logic unit tests for dropping deleted kitchens out of the cart.
-// Run: npm run test:food
-//
 // The defect: a cart persists locally AND server-side, so it outlives the menu it
 // was built from. A deleted restaurant's lines stayed in checkout looking
 // ordinary — named, priced, adding to the total — but PlaceOrder reads the

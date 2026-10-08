@@ -2,15 +2,15 @@ import React, { useState } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
-import WizardProgress from '@/features/association/components/WizardProgress';
+import {WizardProgress} from '@/features/association/components';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { foundedYearError, websiteError } from '@/features/association/utils/orgDraftValidation';
+import { foundedYearError, websiteError } from '@/features/association/utils';
 
 const CATEGORIES = ['Professional body', 'Alumni', 'Estate / residents', 'Cooperative', 'Trade union', 'Religious', 'Community', 'Other'];
 

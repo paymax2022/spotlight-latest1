@@ -14,8 +14,6 @@ import (
 // scopeType, scopeID) — so scope isolation across schools is observable. The fake
 // implements BOTH RBACGateway and StaffLister.
 
-// ── in-memory fake RBAC (gateway + staff lister) ──────────────────────────────────
-
 type userRoleRow struct {
 	userID, roleID, scopeType, scopeID, assignedBy string
 	createdAt                                      time.Time
@@ -117,8 +115,6 @@ func (f *fakeRBAC) ListStaffForSchool(_ context.Context, schoolID string) ([]Sta
 
 func newSvc(f *fakeRBAC) *Service { return NewService(f, f) }
 
-// ── DoD 1: assign → list shows the role; revoke removes it ─────────────────────────
-
 func TestAssignThenListThenRevoke(t *testing.T) {
 	f := newFakeRBAC()
 	f.grantAssignPerm("owner-1", "school-A") // owner may manage school A
@@ -149,8 +145,6 @@ func TestAssignThenListThenRevoke(t *testing.T) {
 	}
 }
 
-// ── DoD 2: a non-authorized actor (a bursar) cannot assign a role ──────────────────
-
 func TestAssign_NonAuthorizedActorRejected(t *testing.T) {
 	f := newFakeRBAC()
 	// bursar-7 is staff but was NOT granted PermAssignRoles ⇒ CheckPermission is false.
@@ -174,8 +168,6 @@ func TestAssign_NonAuthorizedActorRejected(t *testing.T) {
 		t.Fatalf("expected forbidden for unauthorized revoke, got %v", err)
 	}
 }
-
-// ── DoD 3: scope isolation — a grant for school A does not apply to school B ───────
 
 func TestScopeIsolation_SchoolAGrantDoesNotLeakToB(t *testing.T) {
 	f := newFakeRBAC()
@@ -216,8 +208,6 @@ func TestScopeIsolation_SchoolAGrantDoesNotLeakToB(t *testing.T) {
 		t.Fatalf("assigned_by must be the actor, got %q", row.assignedBy)
 	}
 }
-
-// ── Guard rails: closed role set, required inputs, fail-closed RBAC errors ─────────
 
 func TestAssign_RejectsNonStaffRole(t *testing.T) {
 	f := newFakeRBAC()

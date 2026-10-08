@@ -12,8 +12,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest, makeSupabaseMock } from './_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -37,19 +35,15 @@ vi.mock('@/src/server/user/profile', () => ({
   getOrCreateUserProfile: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('@/src/lib/payments/paystack', () => ({
+vi.mock('@/src/lib/payments', () => ({
   verifyPaystackTransaction: vi.fn(),
 }));
-
-// ── Import after mocks ────────────────────────────────────────────────────────
 
 import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
+import { verifyPaystackTransaction } from '@/src/lib/payments';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_USER = { id: 'user-001', email: 'student@example.com' };
 
@@ -123,8 +117,6 @@ function setupHappyPathMock() {
   vi.mocked(createAdminClient).mockReturnValue(mock as any);
   return { mock, maybySingle, insertFn, updateFn, updateEq };
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('POST /api/academy/apply', () => {
   beforeEach(() => {
@@ -224,11 +216,8 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toMatch(/already applied/i);
   });
 
-
-  // ── Application fee: base + selected areas ────────────────────────────────
   // The client renders a running total, but it is the SERVER that decides what
   // must be paid. These pin the arithmetic and the three ways it could be
-  // subverted: an understated payment, an unknown slug priced at zero, and a
   // retired area still being chargeable.
 
   /** Paid-mode settings + areas + a batch that exists and no prior application. */
@@ -379,7 +368,6 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toContain('5,000');
   });
 
-
   it('rejects an area the chosen batch does not offer', async () => {
     const { mock } = setupPaidMock(5000, [{ slug: 'acting', fee_ngn: 2000 }]);
     paystackPaid(7000);
@@ -417,7 +405,6 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toMatch(/area of interest/i);
   });
 
-  // ── The two-area cap ────────────────────────────────────────────────────────
   // A commercial rule, so it is enforced on the SERVER. The mobile form stops at
   // two, but an application that slipped past the form would be CHARGED for every
   // area it named — which is why these are route tests, not UI tests.
@@ -472,7 +459,6 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toMatch(/more than once/i);
   });
 
-  // ── Batch capacity (max_students / enrolled_count) ─────────────────────────
   // academy_batches.enrolled_count is bumped by a DB trigger on every INSERT
   // into academy_applications regardless of status, so it is NOT "seats
   // taken" — a pile of rejected applications would inflate it forever. The
@@ -497,7 +483,6 @@ describe('POST /api/academy/apply', () => {
       .mockResolvedValueOnce({ data: null, error: null }) // no existing by userId
       .mockResolvedValueOnce({ data: null, error: null }); // no existing by email
 
-    // `.in()` is called for two different queries in this route: pricing the
     // selected areas of interest ('slug', [...]) and counting seat-occupying
     // applications ('status', [...]). Branch on the column so both resolve to
     // the shape their caller expects.
@@ -537,7 +522,6 @@ describe('POST /api/academy/apply', () => {
   });
 
   it('does not count a rejected application against capacity', async () => {
-    // max_students = 1, but the only existing application was rejected, so
     // it does not occupy a seat — the capacity count itself reflects that
     // (the route filters status IN ('pending','approved'), so a batch whose
     // sole application was rejected reports 0 seats taken).

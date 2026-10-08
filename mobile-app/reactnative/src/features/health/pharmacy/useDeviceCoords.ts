@@ -1,9 +1,6 @@
-// ── Raw device coordinates for pharmacy discovery ────────────────────────────
-// Distance-ranked pharmacy discovery (GET /pharmacy/pharmacies?lat=&lng=) only
 // needs the device's raw lat/lng — not a reverse-geocoded address, which is
 // what `useCurrentLocation` (src/features/location) resolves for the address
 // picker. This hook mirrors that hook's degrade-don't-die pattern (expo-location
-// lazily required; `available: false` when it isn't linked, so the UI can hide
 // distance sort instead of crashing) without the extra network round-trip.
 
 import { useCallback, useState } from 'react';

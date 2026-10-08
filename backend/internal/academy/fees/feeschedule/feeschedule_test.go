@@ -105,8 +105,6 @@ func seed(f *fakeStore) string {
 	return fs.ID
 }
 
-// ── SF-1: locked schedule refuses every mutation ─────────────────────────────────
-
 func TestSF1_LockedScheduleRefusesUpdate(t *testing.T) {
 	f := newFakeStore()
 	svc := NewServiceWithStore(f)
@@ -134,8 +132,6 @@ func TestSF1_LockedScheduleRefusesUpdate(t *testing.T) {
 	}
 }
 
-// ── SF-1: schedule referenced by an invoice (locked flag NOT set) is still immutable ─
-
 func TestSF1_ReferencedScheduleRefusesUpdate(t *testing.T) {
 	f := newFakeStore()
 	svc := NewServiceWithStore(f)
@@ -155,8 +151,6 @@ func TestSF1_ReferencedScheduleRefusesUpdate(t *testing.T) {
 	}
 }
 
-// ── SF-6: fee_items + installment_policy are set at creation only ────────────────
-//
 // There is deliberately no field on UpdateFeeScheduleRequest for fee_items or
 // installment_policy, so they are STRUCTURALLY unmodifiable after creation. This test
 // asserts they are persisted at creation and unchanged by an allowed (pre-lock) update.
@@ -186,8 +180,6 @@ func TestSF6_InstallmentTermsImmutable(t *testing.T) {
 	}
 }
 
-// ── Create validation ────────────────────────────────────────────────────────────
-
 func TestCreate_Validation(t *testing.T) {
 	svc := NewServiceWithStore(newFakeStore())
 	ctx := context.Background()
@@ -201,8 +193,6 @@ func TestCreate_Validation(t *testing.T) {
 		t.Fatalf("expected unauthenticated, got %v", err)
 	}
 }
-
-// ── Lock is idempotent ───────────────────────────────────────────────────────────
 
 func TestLock_Idempotent(t *testing.T) {
 	f := newFakeStore()

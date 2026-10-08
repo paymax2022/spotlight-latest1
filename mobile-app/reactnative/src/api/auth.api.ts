@@ -155,7 +155,11 @@ export async function login(payload: { identifier: string; password: string }): 
   const identifier = payload.identifier.trim();
   let res;
   try {
-    res = await api.post('/api/auth/login', { identifier, password: payload.password });
+    // skipAuthRedirect: a 401 on the sign-in request itself means bad
+    // credentials, not an expired session — the global interceptor's
+    // sign-out + redirect-to-login would remount this screen and wipe the
+    // error message before it renders.
+    res = await api.post('/api/auth/login', { identifier, password: payload.password }, { skipAuthRedirect: true });
   } catch (err) {
     // 403 + email_not_confirmed is not a credential failure — surfacing it as one
     // told the user their password was wrong and left them stuck, since the thing
@@ -218,7 +222,7 @@ export async function register(payload: {
     phone: payload.phone.trim(),
     password: payload.password,
     referralCode: payload.referralCode ?? '',
-  });
+  }, { skipAuthRedirect: true });
 
   const data = res?.data as {
     user?: { id?: string; email?: string; fullName?: string };
@@ -268,7 +272,7 @@ export async function register(payload: {
  * account and stops — proving control of a mailbox is not proof of the password.
  */
 export async function verifyOtp(payload: { email: string; otp: string }): Promise<{ signedIn: boolean }> {
-  const res = await api.post(OTP_ROUTES.verifyEmail, verifyEmailBody(payload.email, payload.otp));
+  const res = await api.post(OTP_ROUTES.verifyEmail, verifyEmailBody(payload.email, payload.otp), { skipAuthRedirect: true });
 
   const data = res?.data as { signedIn?: boolean; tokens?: { accessToken?: string; refreshToken?: string } };
   if (!verificationSignedIn(data)) {
@@ -287,13 +291,13 @@ export async function verifyOtp(payload: { email: string; otp: string }): Promis
 }
 
 export async function resendOtp(payload: { email: string }): Promise<void> {
-  await api.post(OTP_ROUTES.resend, resendBody(payload.email));
+  await api.post(OTP_ROUTES.resend, resendBody(payload.email), { skipAuthRedirect: true });
 }
 
 export async function forgotPassword(payload: { email: string }): Promise<void> {
   // Through the backend, which sends BOTH the reset link and the code. Calling
   // Supabase directly would send only the link, leaving the code form unusable.
-  await api.post(OTP_ROUTES.forgotPassword, forgotPasswordBody(payload.email));
+  await api.post(OTP_ROUTES.forgotPassword, forgotPasswordBody(payload.email), { skipAuthRedirect: true });
 }
 
 /**
@@ -310,7 +314,7 @@ export async function resetPassword(payload: {
   code?: string;
 }): Promise<void> {
   if (isCodeReset(payload)) {
-    await api.post(OTP_ROUTES.resetPassword, resetWithCodeBody(payload.email!, payload.code!, payload.password));
+    await api.post(OTP_ROUTES.resetPassword, resetWithCodeBody(payload.email!, payload.code!, payload.password), { skipAuthRedirect: true });
     return;
   }
 
@@ -329,7 +333,7 @@ export async function resetPassword(payload: {
  * factor rather than passwordless sign-in.
  */
 export async function verifyLoginOtp(payload: { email: string; otp: string }): Promise<AuthResult> {
-  const res = await api.post(OTP_ROUTES.loginStepUp, loginStepUpBody(payload.email, payload.otp));
+  const res = await api.post(OTP_ROUTES.loginStepUp, loginStepUpBody(payload.email, payload.otp), { skipAuthRedirect: true });
 
   const tokens = readSession((res?.data as { session?: Record<string, unknown> })?.session);
   if (!tokens) {

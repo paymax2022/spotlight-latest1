@@ -2,18 +2,19 @@ package invest
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
+	platformRedis "spotlight/backend/internal/platform/redis"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Reconciliation: compare the investment ledger against order/settlement state
 // and surface exceptions for the Finance / Trading-Ops admins. The mock broker
 // settles synchronously, so in steady state broker-clearing nets to ~zero; with
 // a real broker this is where unmatched balances and stuck settlements show up.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ReconSummary is the headline reconciliation view.
 type ReconSummary struct {
@@ -153,7 +154,7 @@ func (r *Repository) Reconciliation(ctx context.Context) (*ReconSummary, []Order
 func (h *AdminHandler) Reconciliation(c *gin.Context) {
 	summary, stuck, trapped, err := h.svc.repo.Reconciliation(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -161,4 +162,56 @@ func (h *AdminHandler) Reconciliation(c *gin.Context) {
 		"stuck_settlements": stuck,
 		"trapped_funds":     trapped,
 	})
+}
+
+// withLock runs fn while holding a short Redis lock so only one instance acts
+// per tick. When rc is nil (no Redis) it runs fn directly — safe on a single
+// node because the underlying work is idempotent (unique idempotency keys /
+// status guards). Returns false if the lock was held elsewhere.
+func withLock(ctx context.Context, rc *platformRedis.Client, key string, ttl time.Duration, fn func()) bool {
+	if rc == nil {
+		fn()
+		return true
+	}
+	ok, val, err := platformRedis.AcquireLock(ctx, rc, key, ttl)
+	if err != nil || !ok {
+		return false
+	}
+	defer func() { _ = platformRedis.ReleaseLock(ctx, rc, key, val) }()
+	fn()
+	return true
+}
+
+// StartSettlementWorker runs a background ticker that advances PendingSettlement
+// orders whose T+N window has elapsed (buy → shares credited, sell → cash
+// released). Guarded by a Redlock so only one node settles per tick.
+func StartSettlementWorker(ctx context.Context, svc *Service, rc *platformRedis.Client, interval time.Duration) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				withLock(ctx, rc, "invest:settlement", 55*time.Second, func() {
+					n, err := svc.ProcessDueSettlements(ctx, 200)
+					if err != nil {
+						log.Printf("[invest] settlement worker error: %v", err)
+						return
+					}
+					if n > 0 {
+						log.Printf("[invest] settlement worker settled %d order(s)", n)
+					}
+				})
+			}
+		}
+	}()
+	log.Printf("[invest] settlement worker started (interval=%s, redlock=%v)", interval, rc != nil)
 }

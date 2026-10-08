@@ -1,4 +1,3 @@
-// ── Estate Election — Type Contract ──────────────────────────────────────────
 // Admin sets the election window (startsAt/endsAt). The app derives "live" from
 // the current time, so the resident header banner switches on automatically at
 // the start date/time and off at the end.
@@ -28,7 +27,7 @@ export interface Election {
   description?: string;
   startsAt: string;         // ISO — admin-set start
   endsAt: string;           // ISO — admin-set end
-  status: ElectionStatus;   // server status; UI also derives live from the window
+  status: ElectionStatus;
   positions: ElectionPosition[];
   totalEligibleVoters: number;
   votesCast: number;        // ballots fully submitted

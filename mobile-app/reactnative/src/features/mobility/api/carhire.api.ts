@@ -1,5 +1,3 @@
-// ── Car hire — API wrapper ───────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Book escrows fare+deposit; extend
 // escrows the delta; complete settles the driver split and releases the deposit.
 // Money mutations carry an Idempotency-Key. Fare + deposit come from the SERVER.
 
@@ -12,6 +10,15 @@ import type {
   CarHireBookRequest,
   CarHireExtendRequest,
 } from '../types/modes.types';
+import {
+  buildCarHireCardDirectBody,
+  carHireCardDirectStatusPath,
+  normalizeCarHireBooking,
+  normalizeCarHireStatus,
+  CARHIRE_CARD_DIRECT_BASE,
+  type CarHireCardDirectInput,
+} from '../utils/carhireCardDirect';
+import type { CardDirectIntent, CardDirectStatus } from '../utils/cardDirect';
 import {
   mockCarHireQuote,
   makeCarHireBooking,
@@ -50,7 +57,7 @@ export async function bookCarHire(req: CarHireBookRequest): Promise<CarHireBooki
     carHireStore.active = booking;
     return booking;
   }
-  return unwrap<CarHireBooking>(
+  return normalizeCarHireBooking(unwrap<CarHireBooking>(
     await api.post(
       `${BASE}/mobility/car-hire/book`,
       {
@@ -63,7 +70,7 @@ export async function bookCarHire(req: CarHireBookRequest): Promise<CarHireBooki
       },
       idemHeader(req.idempotencyKey),
     ),
-  );
+  ));
 }
 
 export async function getCarHire(id: string): Promise<CarHireBooking> {
@@ -74,7 +81,7 @@ export async function getCarHire(id: string): Promise<CarHireBooking> {
     if (!found) throw new Error('Booking not found');
     return found;
   }
-  return unwrap<CarHireBooking>(await api.get(`${BASE}/mobility/car-hire/${id}`));
+  return normalizeCarHireBooking(unwrap<CarHireBooking>(await api.get(`${BASE}/mobility/car-hire/${id}`)));
 }
 
 export async function getCarHireBookings(): Promise<CarHireBooking[]> {
@@ -84,10 +91,11 @@ export async function getCarHireBookings(): Promise<CarHireBooking[]> {
     if (carHireStore.active) list.unshift(carHireStore.active);
     return list.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<CarHireBooking[]>(await api.get(`${BASE}/mobility/car-hire`));
+  const raw = await api.get(`${BASE}/mobility/car-hire`);
+  const list = (raw.data?.bookings ?? raw.data?.data ?? raw.data) as CarHireBooking[];
+  return (Array.isArray(list) ? list : []).map((b) => normalizeCarHireBooking(b));
 }
 
-// ─── Extend (money mutation → escrow delta → Idempotency-Key) ──────────────────
 export async function extendCarHire(id: string, req: CarHireExtendRequest): Promise<CarHireBooking> {
   if (USE_MOCK) {
     await delay(700);
@@ -100,12 +108,11 @@ export async function extendCarHire(id: string, req: CarHireExtendRequest): Prom
     }
     return b!;
   }
-  return unwrap<CarHireBooking>(
+  return normalizeCarHireBooking(unwrap<CarHireBooking>(
     await api.post(`${BASE}/mobility/car-hire/${id}/extend`, { extra_hours: req.extraHours }, idemHeader(req.idempotencyKey)),
-  );
+  ));
 }
 
-// ─── Complete (settle driver split, release deposit; Idempotency-Key) ──────────
 export async function completeCarHire(id: string, idempotencyKey: string): Promise<CarHireBooking> {
   if (USE_MOCK) {
     await delay(700);
@@ -117,8 +124,69 @@ export async function completeCarHire(id: string, idempotencyKey: string): Promi
     }
     return b!;
   }
-  return unwrap<CarHireBooking>(
-    await api.post(`${BASE}/mobility/car-hire/${id}/complete`, {}, idemHeader(idempotencyKey)),
+  // The endpoint answers {ok, status, deposit_refund_status}, not the booking:
+  // re-read the booking so the screen shows the REAL deposit state.
+  await api.post(`${BASE}/mobility/car-hire/${id}/complete`, {}, idemHeader(idempotencyKey));
+  return getCarHire(id);
+}
+
+/**
+ * Cancel a booking (only offered before activation). The endpoint answers
+ * {ok, status, refund_status}; re-read the booking so the screen shows the real
+ * refund state ("pending" until the card refund is actually sent).
+ */
+export async function cancelCarHire(id: string): Promise<CarHireBooking> {
+  if (USE_MOCK) {
+    await delay(500);
+    const b = carHireStore.active;
+    if (b) {
+      b.phase = 'cancelled';
+      b.paymentStatus = 'refunded';
+    }
+    return b!;
+  }
+  await api.post(`${BASE}/mobility/car-hire/${id}/cancel`, {});
+  return getCarHire(id);
+}
+
+// ── Card-direct (pay by debit card, never the wallet KYC-tier gate) ─────────
+// backend/internal/transport/paystackcheckout (carhire domain). ONE charge =
+// fare + deposit; the server quotes + freezes it, Paystack collects it, the
+// server verifies and books. The wallet rail (bookCarHire) keeps its KYC gate.
+
+export type CarHireCardDirectIntent = CardDirectIntent;
+export type CarHireCardDirectStatus = CardDirectStatus & { bookingId?: string };
+
+export async function initiateCarHirePaystack(
+  req: CarHireCardDirectInput & { idempotencyKey: string },
+): Promise<CarHireCardDirectIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      reference: `carhireorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+      status: 'pending',
+    };
+  }
+  return unwrap<CarHireCardDirectIntent>(
+    await api.post(
+      `${BASE}${CARHIRE_CARD_DIRECT_BASE}/initiate`,
+      buildCarHireCardDirectBody(req),
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getCarHirePaystackStatus(reference: string): Promise<CarHireCardDirectStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', amountKobo: 0, bookingId: carHireStore.active?.id ?? 'mock-carhire-1' };
+  }
+  return normalizeCarHireStatus(
+    unwrap<{ reference: string; status: CardDirectStatus['status']; amountKobo?: number; bookingId?: string }>(
+      await api.get(`${BASE}${carHireCardDirectStatusPath(reference)}`),
+    ),
   );
 }
 

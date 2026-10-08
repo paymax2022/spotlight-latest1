@@ -1,8 +1,6 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // WHOLE-TABLE per-currency conservation for orch_ledger_entries (ADR-029).
-//
 // orch_ledger_invariants_live_db_test.go proves that each WRITER posts balanced
 // legs, but every assertion there is scoped to a synthetic customer the test
 // created. That scoping was not a stylistic choice — before the backfill in
@@ -10,15 +8,11 @@ package fx_test
 // whose legs were single-sided per currency (NGN residual -106669225, USD
 // residual +67668 on the QA database), so a whole-table assertion could not
 // pass and the property could not be guarded at all.
-//
 // This file closes that hole. The invariant is:
-//
 //     for every currency:  SUM(DEBIT amount_minor) == SUM(CREDIT amount_minor)
-//
 // over the ENTIRE table, regardless of which writer or which customer produced
 // the rows. A per-writer test cannot catch a writer nobody thought to test, a
 // hand-run repair script, or history; this one can.
-//
 // WHY THIS LIVES IN package fx_test (do not move it):
 // TestOrchLedger_LegacyShapeIsRejected deliberately inserts an unbalanced
 // fixture to prove the invariant has teeth. Go runs tests within a package
@@ -26,15 +20,12 @@ package fx_test
 // never observes that fixture mid-flight. `backend/tests/fx` and
 // `backend/internal/orchestration` are the only packages that touch orch_*
 // tables, so no other parallel package can race it either.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool from
 // convert_live_db_test.go). It does NOT fall back to DATABASE_URL — that is the
 // PRODUCTION Supabase pooler and this suite posts ledger entries.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run OrchGlobal -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

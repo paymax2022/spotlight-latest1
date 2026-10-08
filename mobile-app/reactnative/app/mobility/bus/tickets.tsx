@@ -3,17 +3,19 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ticket, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusTickets } from '@/features/mobility/hooks/useModes';
 import { BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { busPhaseTone } from '@/features/mobility/utils/busTicket';
 
 const dt = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -26,7 +28,7 @@ export default function BusTicketsScreen() {
       {tickets.isLoading ? (
         <StateView kind="loading" message="Loading tickets…" />
       ) : tickets.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => tickets.refetch()} />
+        <MobilityEdgeState kind={errKind(tickets.error)} actionLabel="Retry" onAction={() => tickets.refetch()} />
       ) : (tickets.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState kind="empty" title="No tickets yet" message="Your bus tickets will appear here." actionLabel="Book a bus" onAction={() => router.replace('/mobility/bus')} />
       ) : (
@@ -41,7 +43,7 @@ export default function BusTicketsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.routeLabel}>{t.routeLabel}</Text>
                 <Text style={styles.meta}>{dt(t.departAt)} · Seat {t.seatNumber} · {formatNairaWhole(t.fareKobo)}</Text>
-                <View style={styles.badgeRow}><StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={t.phase === 'completed' ? 'success' : t.phase === 'cancelled' || t.phase === 'refunded' ? 'danger' : 'info'} /></View>
+                <View style={styles.badgeRow}><StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={busPhaseTone(t.phase)} /></View>
               </View>
               <ChevronRight size={18} color={Colors.onSurfaceVariant} />
             </Pressable>

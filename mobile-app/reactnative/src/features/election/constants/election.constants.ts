@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { ElectionStatus } from '../types/election.types';
 
 // Flip to false once the real /elections endpoints land (or set

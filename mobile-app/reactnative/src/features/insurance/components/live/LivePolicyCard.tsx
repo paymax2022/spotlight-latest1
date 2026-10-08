@@ -1,14 +1,13 @@
-// ── Insurance (live) — a policy the user actually holds ─────────────────────
 // Rendered from GET /policies. Everything on it is real: the insurer's own
 // policy reference, the premium paid, the cover it buys, and when it runs out.
 
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronRight, FileCheck2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import { nairaCompact, nairaFromKobo } from '../../live/money';
 import type { Policy } from '../../live/types';

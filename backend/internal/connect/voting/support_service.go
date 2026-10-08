@@ -2,12 +2,24 @@ package connectvoting
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"time"
 
+	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrTicketNotFound is returned when a support ticket does not exist or is not
+// owned by the caller (owner-scoped lookups deliberately conflate the two so a
+// foreign ticket id is indistinguishable from a nonexistent one). Handlers map
+// it to 404 TICKET_NOT_FOUND — same as the sibling ticket GET.
+var ErrTicketNotFound = errors.New("ticket not found")
 
 // SupportService handles voting support ticket operations
 type SupportService struct {
@@ -54,7 +66,7 @@ func (s *SupportService) ListSupportTickets(ctx context.Context, userID, status 
 		FROM voting_support_tickets
 		WHERE user_id = $1
 	`
-	args := []interface{}{userID}
+	args := []any{userID}
 	argIndex := 2
 
 	if status != "" {
@@ -133,11 +145,10 @@ func (s *SupportService) UpdateSupportTicket(ctx context.Context, userID, ticket
 
 // AddTicketMessage adds a message to a support ticket
 func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID, message string, attachments []string) (*TicketMessage, error) {
-	// Verify ticket exists and belongs to user
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
-		return nil, fmt.Errorf("ticket not found")
+		return nil, ErrTicketNotFound
 	}
 
 	msgID := uuid.New().String()
@@ -154,7 +165,6 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 		&msg.ID, &msg.TicketID, &msg.AuthorID, &msg.IsInternal, &msg.Message, &msg.Attachments, &msg.CreatedAt,
 	)
 
-	// Update ticket's updated_at
 	if err == nil {
 		_, _ = s.pool.Exec(ctx, "UPDATE voting_support_tickets SET updated_at = $1 WHERE id = $2", now, ticketID)
 	}
@@ -164,11 +174,10 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 
 // ListTicketMessages lists all messages in a ticket (owner-scoped)
 func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketID string) ([]TicketMessage, error) {
-	// Verify ticket exists and belongs to user
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
-		return nil, fmt.Errorf("ticket not found")
+		return nil, ErrTicketNotFound
 	}
 
 	query := `
@@ -194,4 +203,234 @@ func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketI
 	}
 
 	return messages, rows.Err()
+}
+
+// SupportTicket represents a user support request
+type SupportTicket struct {
+	ID              string     `json:"id"`
+	UserID          string     `json:"user_id"`
+	ContestID       string     `json:"contest_id,omitempty"`
+	Category        string     `json:"category"` // 'account_issue','voting_problem',etc
+	Status          string     `json:"status"`   // 'open','in_progress','waiting','resolved','closed'
+	Subject         string     `json:"subject"`
+	Description     string     `json:"description"`
+	Priority        string     `json:"priority"` // 'low','normal','high','urgent'
+	Source          string     `json:"source"`   // 'web','mobile','marketplace'
+	AssignedTo      string     `json:"assigned_to,omitempty"`
+	ResolutionNotes string     `json:"resolution_notes,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
+}
+
+// TicketMessage represents a message in a support ticket
+type TicketMessage struct {
+	ID          string    `json:"id"`
+	TicketID    string    `json:"ticket_id"`
+	AuthorID    string    `json:"author_id"`
+	IsInternal  bool      `json:"is_internal"`
+	Message     string    `json:"message"`
+	Attachments []string  `json:"attachments,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Note: Notification type is defined in repo.go (voting notifications from connectvoting module)
+
+// support_handler.go — Support/Help ticket endpoints for voting module
+// Endpoints:
+//   POST   /support/tickets          — create a new support ticket
+//   GET    /support/tickets          — list user's tickets
+//   GET    /support/tickets/:id      — get ticket detail
+//   PATCH  /support/tickets/:id      — update ticket status (user-limited actions)
+//   POST   /support/tickets/:id/messages — add message to ticket
+//   GET    /support/tickets/:id/messages — get ticket messages
+
+// CreateSupportTicket POST /support/tickets
+func (h *Handler) CreateSupportTicket(c *gin.Context) {
+	uid, ok := getUserID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Category    string `json:"category" binding:"required"` // 'account_issue','voting_problem',etc
+		Subject     string `json:"subject" binding:"required"`
+		Description string `json:"description" binding:"required"`
+		Priority    string `json:"priority"`   // 'low','normal','high','urgent'
+		ContestID   string `json:"contest_id"` // optional
+		Source      string `json:"source"`     // 'web','mobile','marketplace'
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	ticket := SupportTicket{
+		UserID:      uid,
+		Category:    in.Category,
+		Subject:     in.Subject,
+		Description: in.Description,
+		Priority:    in.Priority,
+		ContestID:   in.ContestID,
+		Source:      in.Source,
+		Status:      "open",
+	}
+
+	created, err := h.svc.createSupportTicket(c.Request.Context(), ticket)
+	if err != nil {
+		respondErr(c, http.StatusInternalServerError, "TICKET_CREATE_FAILED", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusCreated, created)
+}
+
+// ListSupportTickets GET /support/tickets?status=&limit=&offset=
+func (h *Handler) ListSupportTickets(c *gin.Context) {
+	uid, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
+	status := c.Query("status") // filter by status
+	limit := 20
+	offset := 0
+
+	if l := c.Query("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	if o := c.Query("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	tickets, err := h.svc.listSupportTickets(c.Request.Context(), uid, status, limit, offset)
+	if err != nil {
+		respondErr(c, http.StatusInternalServerError, "TICKETS_LIST_FAILED", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"tickets": tickets,
+		"limit":   limit,
+		"offset":  offset,
+	})
+}
+
+// GetSupportTicket GET /support/tickets/:id
+func (h *Handler) GetSupportTicket(c *gin.Context) {
+	uid, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
+	ticket, err := h.svc.getSupportTicket(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, ticket)
+}
+
+// UpdateSupportTicket PATCH /support/tickets/:id
+// Users can only update: status (to 'waiting' or 'closed'), priority, description
+func (h *Handler) UpdateSupportTicket(c *gin.Context) {
+	uid, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
+	var in struct {
+		Status      string `json:"status"`   // only 'waiting' or 'closed' allowed for users
+		Priority    string `json:"priority"` // 'low','normal','high','urgent'
+		Description string `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	ticket, err := h.svc.updateSupportTicket(c.Request.Context(), uid, c.Param("id"), in.Status, in.Priority, in.Description)
+	if err != nil {
+		respondErr(c, http.StatusInternalServerError, "TICKET_UPDATE_FAILED", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, ticket)
+}
+
+// AddTicketMessage POST /support/tickets/:id/messages
+func (h *Handler) AddTicketMessage(c *gin.Context) {
+	uid, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
+	var in struct {
+		Message string   `json:"message" binding:"required"`
+		Files   []string `json:"attachments"` // optional URLs
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+
+	msg, err := h.svc.addTicketMessage(c.Request.Context(), uid, c.Param("id"), in.Message, in.Files)
+	if err != nil {
+		if errors.Is(err, ErrTicketNotFound) {
+			respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+			return
+		}
+		respondErr(c, http.StatusInternalServerError, "MESSAGE_ADD_FAILED", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusCreated, msg)
+}
+
+// ListTicketMessages GET /support/tickets/:id/messages
+func (h *Handler) ListTicketMessages(c *gin.Context) {
+	uid, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
+	messages, err := h.svc.listTicketMessages(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, ErrTicketNotFound) {
+			respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+			return
+		}
+		respondErr(c, http.StatusInternalServerError, "MESSAGES_LIST_FAILED", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"messages": messages})
+}
+
+// helper functions
+func getUserID(c *gin.Context) (string, bool) {
+	uid, exists := c.Get("user_id")
+	if !exists {
+		respondErr(c, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+		return "", false
+	}
+	uidStr, ok := uid.(string)
+	if !ok || uidStr == "" {
+		respondErr(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid user context")
+		return "", false
+	}
+	return uidStr, true
+}
+
+func respondErr(c *gin.Context, code int, errCode, msg string) {
+	c.JSON(code, gin.H{
+		"error": gin.H{
+			"code":    errCode,
+			"message": httperr.Sanitize(c, code, msg),
+		},
+	})
 }

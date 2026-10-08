@@ -5,11 +5,11 @@ import { router } from 'expo-router';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import { LogOut, Trash2, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 
 interface Row { icon: string; label: string; to?: string; onPress?: () => void }

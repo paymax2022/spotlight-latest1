@@ -1,10 +1,6 @@
-// ── Types — Paymax Health admin · MDCN doctor verification (Mode B / ASSISTED) ──
-// Companion to the doctor admin surface; this owns the assisted MDCN
-// verification-review console (HEALTH-BUILD; HL-2 credential-gated discoverability,
 // HL-8 sensitive health/identity data NDPA, HL-12 immutable audit). Mirrors the
 // vet healthVetVerification.ts shapes — but doctors are a separate vertical
 // (medical/dental) gated on RBAC `health.doctor.review`.
-//
 // Mode B (ASSISTED): a doctor (medical or dental) submits their MDCN registration
 // number + name + documents inside Paymax. An ops reviewer (this console) reviews
 // the documents + an automatic identity cross-check (name vs the doctor's Paymax
@@ -12,7 +8,6 @@
 // the doctor becomes discoverable via an idempotent capability grant and a
 // licence-expiry auto-suspend is scheduled (HL-2). Every document view is
 // access-logged server-side (HL-8 / NDPA). The doctor never sees the MDCN portal.
-//
 // VerificationRecord state machine: pending → approved | needs_info | rejected.
 
 export type MdcnVerificationStatus = 'pending' | 'needs_info' | 'approved' | 'rejected';

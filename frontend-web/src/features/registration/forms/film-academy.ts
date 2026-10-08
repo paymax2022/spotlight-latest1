@@ -1,13 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Spotlight Film Academy — registration form (slug: film-academy)
-//
 // SELF-CONTAINED. Editing anything here affects ONLY the Film Academy form.
-//
 // Contest shape: paid (₦7,500), residential bootcamp/reality cohort, requires
 // medical + bootcamp readiness and audition scheduling. Does NOT support public
 // voting (so no public-voting profile step). Focused on film-craft roles and
 // portfolio work.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES, MEDICAL_CONDITION_OPTIONS, ALLERGY_OPTIONS, HEALTH_STATUS_OPTIONS } from '../reference-data';
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from '../types';
 
@@ -112,7 +108,7 @@ const complianceFields: RegistrationField[] = [
 
 const paymentFields: RegistrationField[] = [
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', required: true, readOnly: true, helpText: 'This amount is configured by admin and cannot be edited.' },
-  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet'] },  // deliberately not required at wizard time — written by the payment flow; enforced in validation.ts
+  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet'] },
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text' },
 ];
 

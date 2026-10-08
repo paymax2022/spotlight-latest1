@@ -1,7 +1,5 @@
-// ── Spotlight Academy — Offline queue + connectivity (Phase 0/1, hardened) ────
 // nfr.md: progress, attempts and reward-eligible events queue locally and
 // reconcile on reconnect; sync is deterministic and idempotent.
-//
 // This module replaces the earlier in-memory stub with:
 //   1. AsyncStorage-backed persistence  — queued events survive app restart
 //      (versioned key + JSON serialization, write-through with a serialised lock).
@@ -9,16 +7,12 @@
 //      override retained for tests/dev (the offline toggle + banner still drive it).
 //   3. Idempotent reconciliation        — on reconnect the queue flushes to the
 //      backend /sync endpoint IN ORDER, each event carrying a stable idempotency
-//      key (client_event_id). Backend 409/duplicate counts as success; transient
 //      failures leave the event queued. No double-submission.
-//
 // Both native deps are OPTIONAL at runtime: if a package is not installed the
 // module degrades gracefully — persistence falls back to memory-only and
 // connectivity falls back to the app-controlled (manual) flag. The packages MUST
 // be installed for the real behaviour (see the module footer note):
-//   @react-native-async-storage/async-storage
 //   @react-native-community/netinfo
-//
 // The public API (QueuedMutation, enqueue, pendingCount, flushQueue, setOffline,
 // isOffline, useConnectivity) is preserved so existing call sites keep working.
 
@@ -26,7 +20,6 @@ import { useSyncExternalStore } from 'react';
 import { api } from '@/api/client';
 import { USE_MOCK, ACADEMY_API_BASE } from './constants';
 
-// ── Optional native deps (guarded so the app still runs if not installed) ─────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let AsyncStorage: any = null;
 try {
@@ -45,7 +38,6 @@ try {
   NetInfo = null; // app-controlled connectivity fallback
 }
 
-// ── Storage + wire constants ──────────────────────────────────────────────────
 const STORAGE_KEY = 'academy.offlineQueue.v1'; // versioned — bump on shape changes
 const SYNC_PATH = `${ACADEMY_API_BASE}/sync`;
 const MAX_ATTEMPTS = 8; // give up (park) an event after this many failed flushes
@@ -59,7 +51,6 @@ const KIND_MAP: Record<QueuedMutation['type'], 'progress' | 'attempt_queued' | '
   reward_earn: 'reward_eligible',
 };
 
-// ── Pending mutation queue ────────────────────────────────────────────────────
 export interface QueuedMutation {
   id: string;
   type: 'reward_earn' | 'attempt_answer' | 'progress' | 'attempt_submit';
@@ -82,7 +73,6 @@ export type EnqueueInput = Omit<QueuedMutation, 'id' | 'ts' | 'key' | 'attempts'
 let queue: QueuedMutation[] = [];
 let hydrated = false;
 
-// ── Connectivity state ────────────────────────────────────────────────────────
 // effectiveOffline = manualOverride !== null ? manualOverride : !netOnline.
 // A manual override (setOffline) always wins until NetInfo reports a real change,
 // at which point the override is cleared so genuine connectivity resumes control.
@@ -94,7 +84,6 @@ function computeOffline(): boolean {
   return manualOverride !== null ? manualOverride : !netOnline;
 }
 
-// ── External-store plumbing (stable snapshot for useSyncExternalStore) ────────
 const listeners = new Set<() => void>();
 let snapshot = `${computeOffline()}:${queue.length}`;
 
@@ -111,7 +100,6 @@ function subscribe(cb: () => void): () => void {
   return () => listeners.delete(cb);
 }
 
-// ── Persistence (write-through with a serialised lock) ────────────────────────
 let writeChain: Promise<void> = Promise.resolve();
 
 function persist(): Promise<void> {
@@ -121,7 +109,6 @@ function persist(): Promise<void> {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, snapshotQueue);
     } catch {
-      /* best-effort; keep the in-memory copy authoritative for the session */
     }
   });
   return writeChain;
@@ -169,7 +156,6 @@ function ensureHydrated(): Promise<void> {
   return hydrating;
 }
 
-// ── NetInfo subscription (real connectivity) ──────────────────────────────────
 function ensureNetInfo(): void {
   if (netInfoSubscribed || !NetInfo || typeof NetInfo.addEventListener !== 'function') return;
   netInfoSubscribed = true;
@@ -196,7 +182,6 @@ function ensureNetInfo(): void {
   }
 }
 
-// ── Idempotency key generation ────────────────────────────────────────────────
 function genKey(type: QueuedMutation['type'], payload: Record<string, unknown>): string {
   // Prefer a natural, stable key from the payload so the same logical event
   // (e.g. an attempt submit) collapses to one client_event_id across retries.
@@ -206,8 +191,6 @@ function genKey(type: QueuedMutation['type'], payload: Record<string, unknown>):
   }
   return `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
-
-// ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Queue a mutation. Synchronous & offline-first: the event is added to the
@@ -292,7 +275,6 @@ export async function flushQueue(): Promise<number> {
           void persist();
           continue;
         }
-        // Otherwise keep it queued and stop to preserve ordering; the next
         // reconnect/flush will retry from here.
         queue = queue.map((q) => (q.id === ev.id ? { ...q, attempts: nextAttempts } : q));
         notify();
@@ -338,8 +320,6 @@ async function pushEvent(ev: QueuedMutation): Promise<boolean> {
   }
 }
 
-// ── Connectivity controls (manual override preserved for tests/dev) ───────────
-
 /**
  * Manually set the offline flag. Retained so the in-app connectivity toggle and
  * the OfflineBanner "Reconnect" button keep working, and so tests can force a
@@ -364,7 +344,6 @@ export function useConnectivity() {
   return { offline: off === 'true', pendingCount: Number(pending), setOffline };
 }
 
-// ── Test / dev helpers (non-breaking additions) ───────────────────────────────
 /** Force-initialise persistence + connectivity (e.g. from a root effect). */
 export async function initOfflineQueue(): Promise<void> {
   await ensureHydrated();
@@ -374,6 +353,19 @@ export async function initOfflineQueue(): Promise<void> {
 /** Snapshot of the current queue (read-only copy) — handy for tests/telemetry. */
 export function getQueue(): QueuedMutation[] {
   return [...queue];
+}
+
+/**
+ * Drop every queued mutation, in memory and persisted. Called on sign-out:
+ * queued events are sent with whatever bearer is current, so a queue left
+ * behind is replayed as the next user.
+ */
+export async function clearOfflineQueue(): Promise<void> {
+  queue = [];
+  notify();
+  if (AsyncStorage) {
+    try { await AsyncStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  }
 }
 
 /** Reset all in-memory + persisted state. Test-only. */

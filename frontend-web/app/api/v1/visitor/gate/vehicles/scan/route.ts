@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/gate/vehicles/scan — stub ANPR/OCR plate scan.
+// Stub ANPR/OCR plate scan.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -13,11 +13,11 @@ export async function POST(request: Request) {
     const guard = await getGuardContext(supabase, user.id);
     if (!guard) throw new ApiError('No active gate session', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const plate: string = String(body?.plate ?? '').trim().toUpperCase();
     if (!plate) throw new ApiError('plate is required', 400);
 
-    // Check blacklist for plate match.
     const { data: blRow } = await supabase
       .from('visitor_blacklist')
       .select('id')

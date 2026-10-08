@@ -56,12 +56,19 @@ jobs:
         module: [backend, mobile-app/reactnative/backend]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: Run govulncheck
         working-directory: ${{ matrix.module }}
+        env:
+          # setup-go pins GOTOOLCHAIN=local so the scan runs against the module's
+          # declared toolchain — keep that for the analysis. But govulncheck
+          # itself must BUILD with a toolchain at least as new as x/vuln
+          # requires, which can outrun a stale go directive, so let `go install`
+          # fetch one instead of failing on "requires go >= X.Y.0".
+          GOTOOLCHAIN: auto
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
@@ -91,8 +98,15 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
-      - name: Scan full history against the curated allowlist
-        run: gitleaks detect --source . --redact -v
+      # `--log-opts="HEAD"` pins gitleaks' traversal to this ref's own ancestry.
+      # Without it, gitleaks' default (`--all`-equivalent) walks every ref the
+      # checkout step fetched — and `fetch-depth: 0` here fetches
+      # +refs/heads/*:refs/remotes/origin/*, i.e. every branch on the remote,
+      # not just this one. In a repo with many concurrently-pushed branches
+      # that means this job fails on OTHER branches' unmerged, untriaged test
+      # fixtures — not on anything reachable from the commit under test.
+      - name: Scan this ref's history against the curated allowlist
+        run: gitleaks detect --source . --log-opts="HEAD" --redact -v
 
   trivy-fs:
     name: trivy (filesystem — deps + IaC misconfig)
@@ -138,7 +152,7 @@ jobs:
             baseline: mobile-app-reactnative
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - name: Install (production dependencies only)

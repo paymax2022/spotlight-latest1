@@ -20,10 +20,10 @@ export async function POST(
   try {
     requireFeature('fintechAdmin');
 
+    const user = await requireRequestUser(request);
+
     const idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
     if (!idempotencyKey) throw new ApiError('Idempotency-Key header is required', 400);
-
-    const user = await requireRequestUser(request);
 
     const body = (await request.json().catch(() => ({}))) as {
       checker_note?: unknown;

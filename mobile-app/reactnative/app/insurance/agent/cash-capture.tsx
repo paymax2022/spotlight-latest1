@@ -9,10 +9,10 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { sanitizeMoneyInput } from '@/utils/money';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useCustomer, useCaptureCashToWallet } from '@/features/insurance/agent';
 import { InsuranceColors, formatNaira } from '@/features/insurance/constants/insurance.constants';
 

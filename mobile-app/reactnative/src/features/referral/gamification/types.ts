@@ -1,4 +1,3 @@
-// ── Referral Gamification types (M-GAM-01..07) ───────────────────────────────
 // Self-contained types for missions/quests, streaks, ranks/badges, leaderboards,
 // contests and the rank-up celebration. IMPORTANT: gamification POINTS are
 // NON-CASH — they are a status/progress currency, never naira and never auto-
@@ -6,7 +5,6 @@
 // is a separate integer-kobo field and is always tied to a friend's verified
 // activity (§7). Points and cash are kept as distinct fields on purpose.
 
-// ── Missions / quests (M-GAM-01 / M-GAM-02) ──────────────────────────────────
 export type MissionStatus = 'available' | 'in_progress' | 'completed' | 'expired';
 
 export interface MissionStep {
@@ -47,7 +45,6 @@ export interface MissionDetail extends MissionSummary {
   steps: MissionStep[];
 }
 
-// ── Streaks & milestones (M-GAM-03) ──────────────────────────────────────────
 export interface Milestone {
   id: string;
   label: string;
@@ -67,7 +64,6 @@ export interface StreakState {
   milestones: Milestone[];
 }
 
-// ── Ranks / tiers & badges (M-GAM-04) ────────────────────────────────────────
 export interface RankTier {
   key: string;
   name: string;
@@ -97,7 +93,6 @@ export interface RanksBadgesState {
   badges: Badge[];
 }
 
-// ── Leaderboards (M-GAM-05) ──────────────────────────────────────────────────
 export type LeaderboardScope = 'friends' | 'estate' | 'campaign' | 'global';
 
 export interface LeaderboardRow {
@@ -117,7 +112,6 @@ export interface Leaderboard {
   rows: LeaderboardRow[];
 }
 
-// ── Contests & challenges (M-GAM-06) ─────────────────────────────────────────
 export type ContestStatus = 'upcoming' | 'live' | 'ended';
 
 export interface Contest {
@@ -136,7 +130,6 @@ export interface Contest {
   participants: number;
 }
 
-// ── Rank-up celebration (M-GAM-07) ───────────────────────────────────────────
 export interface RankUpEvent {
   /** New tier name reached. */
   newTier: string;

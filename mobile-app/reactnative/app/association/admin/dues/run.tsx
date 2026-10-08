@@ -1,8 +1,5 @@
-// ── Association — Raise dues for a roster (money path) ────────────────────────
-//
 // This screen bills every matching ACTIVE member at once, so two things matter
 // more than the layout:
-//
 //  1. The Idempotency-Key is minted ONCE, when the admin commits to the run,
 //     and reused by every retry of that run. A key minted per attempt is what
 //     turns a client-side timeout on a run the server actually committed into a
@@ -15,23 +12,23 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { CheckCircle2, History } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { useIdempotencyKey } from '@/utils/idempotency';
-import AdminFormScreen from '@/features/association/components/AdminFormScreen';
-import { DUES_CAPABILITY } from '@/features/association/utils/authoringAccess';
+import {AdminFormScreen} from '@/features/association/components';
+import { DUES_CAPABILITY } from '@/features/association/utils';
 import {
   FormCard, ChoiceRow, OptionSelect, NotifyToggle, DateTimeField, FormNotice,
 } from '@/features/association/components/AdminFormControls';
 import { useRunDues, useOrgPickerLists } from '@/features/association/hooks/useAuthoring';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
-import { formatNaira } from '@/features/association/utils/associationFormatters';
+import { useAdminAccess } from '@/features/association/hooks';
+import { formatNaira } from '@/features/association/utils';
 import { INVOICE_SCOPE_OPTIONS, type DuesRunResult, type InvoiceScope } from '@/features/association/types/authoring.types';
 
 export default function RunDuesScreen() {

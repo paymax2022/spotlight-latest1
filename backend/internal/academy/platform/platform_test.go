@@ -1,7 +1,6 @@
 package platform
 
 // platform_test.go — package-local unit tests for the academy platform package.
-//
 // Scope: the pure, DB-free logic only — the composition-root FlagResolver (fail-closed
 // default-off semantics) and the pure handler/repo helpers. Every method that needs a
 // *pgxpool.Pool (Repo.GetFlag/SetFlag/List*, FlagService.*, and the gin Handlers) is
@@ -10,13 +9,13 @@ package platform
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
-
-// ── FlagResolver: the fail-closed composition-root resolver ────────────────────
 
 func TestFlagResolver_NilResolver_ReturnsCompileDefault(t *testing.T) {
 	var r *FlagResolver // nil receiver must be safe and fall back to the default
@@ -99,8 +98,6 @@ func TestFlagKeys_AreDistinctAndNamespaced(t *testing.T) {
 	}
 }
 
-// ── firstNonEmpty ─────────────────────────────────────────────────────────────
-
 func TestFirstNonEmpty(t *testing.T) {
 	cases := []struct {
 		a, b, want string
@@ -116,8 +113,6 @@ func TestFirstNonEmpty(t *testing.T) {
 		}
 	}
 }
-
-// ── topByGMV: selection sort + top-n truncation ────────────────────────────────
 
 func TestTopByGMV_SortsDescendingAndTruncates(t *testing.T) {
 	rows := []gin.H{
@@ -159,8 +154,6 @@ func TestTopByGMV_Empty(t *testing.T) {
 	}
 }
 
-// ── dateOrEmpty ───────────────────────────────────────────────────────────────
-
 func TestDateOrEmpty(t *testing.T) {
 	if got := dateOrEmpty(nil); got != "" {
 		t.Errorf("dateOrEmpty(nil) = %q, want empty", got)
@@ -192,8 +185,6 @@ func TestRFCPtr(t *testing.T) {
 	}
 }
 
-// ── itoa ──────────────────────────────────────────────────────────────────────
-
 func TestItoa(t *testing.T) {
 	cases := map[int]string{0: "0", 1: "1", 9: "9", 10: "10", 42: "42", 100: "100", 123456: "123456"}
 	for in, want := range cases {
@@ -202,8 +193,6 @@ func TestItoa(t *testing.T) {
 		}
 	}
 }
-
-// ── trustJSON: pure projection of a TrustRow ──────────────────────────────────
 
 func TestTrustJSON_ZeroUpdatedAt_OmitsTimestamp(t *testing.T) {
 	row := TrustRow{
@@ -252,5 +241,30 @@ func TestTrustJSON_NonZeroUpdatedAt_FormatsRFC(t *testing.T) {
 	j := trustJSON(TrustRow{SchoolID: "s", Score: 0.5, UpdatedAt: ts})
 	if j["updated_at"] != "2026-01-02T03:04:05Z" {
 		t.Errorf("updated_at = %v, want RFC3339 UTC", j["updated_at"])
+	}
+}
+
+// Non-uuid path params feeding uuid-typed columns must answer 400, never a 22P02 500.
+func TestUuidOK(t *testing.T) {
+	for _, s := range []string{"", "institutions", "e2e-acad-case-1", "not-a-uuid"} {
+		if uuidOK(s) {
+			t.Errorf("uuidOK(%q) = true, want false", s)
+		}
+	}
+	for _, s := range []string{"00000000-0000-0000-0000-000000000000", "4d078dc4-755b-4a83-a592-e28bae3ce00f"} {
+		if !uuidOK(s) {
+			t.Errorf("uuidOK(%q) = false, want true", s)
+		}
+	}
+}
+
+// ActionRiskCase must reject a non-uuid risk id with 400 before the audit insert.
+func TestActionRiskCase_NonUUID_Returns400(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "e2e-acad-case-1"}}
+	(&Handler{}).ActionRiskCase(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-uuid risk id: want 400, got %d", w.Code)
 	}
 }

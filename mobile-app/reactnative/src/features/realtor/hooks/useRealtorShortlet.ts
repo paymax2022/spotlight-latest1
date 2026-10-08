@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Shortlet hooks (V3) ──────────────────────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as shortlet from '../api/realtorShortlet.api';
 import type { ShortletBookingDraft } from '../api/realtorShortlet.api';

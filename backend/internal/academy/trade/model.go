@@ -2,7 +2,6 @@
 // moat. Trade tracks → modules/lessons/projects → guarded project submissions and
 // skill assessments → on PASS a verifiable credential is issued via an INJECTED
 // CredentialIssuer (idempotent). Plus a lightweight mentor directory + matching.
-//
 // GOLDEN RULES enforced here (CLAUDE.md, docs/prd/edtech state-machines.md):
 //   - Guarded state machines. The submission lifecycle (submitted→reviewed→passed|
 //     failed) and the mentor-match lifecycle (requested→active→closed) only accept
@@ -25,8 +24,6 @@ import (
 	"time"
 )
 
-// ── Project-submission lifecycle ──────────────────────────────────────────────
-
 // SubmissionState mirrors academy_project_submissions.state CHECK.
 type SubmissionState string
 
@@ -37,8 +34,6 @@ const (
 	SubmissionFailed    SubmissionState = "failed"
 )
 
-// ── Skill-attempt lifecycle ───────────────────────────────────────────────────
-
 // AttemptState mirrors academy_skill_attempts.state CHECK.
 type AttemptState string
 
@@ -46,8 +41,6 @@ const (
 	AttemptCreated AttemptState = "created"
 	AttemptGraded  AttemptState = "graded"
 )
-
-// ── Mentor-match lifecycle ────────────────────────────────────────────────────
 
 // MatchState mirrors academy_mentor_matches.state CHECK.
 type MatchState string
@@ -57,8 +50,6 @@ const (
 	MatchActive    MatchState = "active"
 	MatchClosed    MatchState = "closed"
 )
-
-// ── Domain rows ───────────────────────────────────────────────────────────────
 
 // TradeTrack is one academy_trade_tracks row (Phase-0 seeded catalog of trades).
 type TradeTrack struct {
@@ -155,8 +146,6 @@ type MentorMatch struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
-// ── Aggregate read DTOs ───────────────────────────────────────────────────────
-
 // ModuleWithLessons bundles a module with its ordered lessons + projects for the hub.
 type ModuleWithLessons struct {
 	Module   TradeModule    `json:"module"`
@@ -178,8 +167,6 @@ type AttemptResult struct {
 	Passed       bool    `json:"passed"`
 	CredentialID *string `json:"credential_id,omitempty"`
 }
-
-// ── Request DTOs ──────────────────────────────────────────────────────────────
 
 // CreateModuleRequest — admin POST /trade/modules.
 type CreateModuleRequest struct {
@@ -276,8 +263,6 @@ type CreateMentorRequest struct {
 	Bio        *string `json:"bio,omitempty"`
 	Status     string  `json:"status,omitempty"`
 }
-
-// ── Credential issuer (injected) ──────────────────────────────────────────────
 
 // CredentialIssuer is the boundary to the credentials package. The integration owner
 // wires the real credentials issuer to this interface; trade only calls it. The

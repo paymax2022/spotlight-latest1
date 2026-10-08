@@ -1,4 +1,3 @@
-// ── Association — Admin content-authoring hooks ───────────────────────────────
 
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,7 +10,7 @@ import {
   listAdminDuesRuns, runDues,
   listOrgMembers, getOrgPickerLists, registerDevice,
 } from '../api/authoring.api';
-import { describeThisDevice } from '../utils/deviceIdentity';
+import { describeThisDevice } from '../utils';
 import type {
   AnnouncementInput, DocumentInput, DuesRunInput, EventInput, MeetingInput, TaskInput,
 } from '../types/authoring.types';
@@ -78,8 +77,6 @@ function useContentInvalidator(kind: ContentKind) {
   };
 }
 
-// ─── Announcements ────────────────────────────────────────────────────────────
-
 export function useCreateAnnouncement(orgId?: string | null) {
   const invalidate = useContentInvalidator('announcements');
   return useMutation({
@@ -98,8 +95,6 @@ export function useDeleteAnnouncement() {
   const invalidate = useContentInvalidator('announcements');
   return useMutation({ mutationFn: (id: string) => deleteAnnouncement(id), onSuccess: invalidate });
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 export function useCreateMeeting(orgId?: string | null) {
   const invalidate = useContentInvalidator('meetings');
@@ -127,8 +122,6 @@ export function usePublishMinutes() {
   });
 }
 
-// ─── Documents ────────────────────────────────────────────────────────────────
-
 export function useCreateDocument(orgId?: string | null) {
   const invalidate = useContentInvalidator('documents');
   return useMutation({
@@ -147,8 +140,6 @@ export function useDeleteDocument() {
   const invalidate = useContentInvalidator('documents');
   return useMutation({ mutationFn: (id: string) => deleteDocument(id), onSuccess: invalidate });
 }
-
-// ─── Events ───────────────────────────────────────────────────────────────────
 
 export function useCreateEvent(orgId?: string | null) {
   const invalidate = useContentInvalidator('events');
@@ -169,8 +160,6 @@ export function useDeleteEvent() {
   return useMutation({ mutationFn: (id: string) => deleteEvent(id), onSuccess: invalidate });
 }
 
-// ─── Tasks ────────────────────────────────────────────────────────────────────
-
 export function useCreateTask(orgId?: string | null) {
   const invalidate = useContentInvalidator('tasks');
   return useMutation({
@@ -189,8 +178,6 @@ export function useDeleteTask() {
   const invalidate = useContentInvalidator('tasks');
   return useMutation({ mutationFn: (id: string) => deleteTask(id), onSuccess: invalidate });
 }
-
-// ─── Dues run (money path) ────────────────────────────────────────────────────
 
 /**
  * Raise dues for a roster.
@@ -212,8 +199,6 @@ export function useRunDues(orgId?: string | null) {
   });
 }
 
-// ─── Pickers ──────────────────────────────────────────────────────────────────
-
 export function useOrgMembers(orgId?: string | null, search?: string) {
   return useQuery({
     queryKey: [KEY, 'orgMembers', orgId, search ?? ''],
@@ -231,8 +216,6 @@ export function useOrgPickerLists(orgId?: string | null) {
     staleTime: 5 * 60_000,
   });
 }
-
-// ─── Device registration ──────────────────────────────────────────────────────
 
 /**
  * Register this device once per app session.

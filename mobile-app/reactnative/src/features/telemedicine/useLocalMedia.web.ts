@@ -1,6 +1,5 @@
 // Real browser capture for the consult self-view. Acquires camera + mic via
 // getUserMedia (localhost/https is a secure context, so this works in the web
-// preview). Toggling cam/mic flips the real track's `enabled`; tracks are stopped
 // on unmount / end so the camera light goes off.
 import { useCallback, useEffect, useRef, useState } from 'react';
 

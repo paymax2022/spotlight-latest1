@@ -1,11 +1,9 @@
 // ── Direct Referral Rewards — admin service (ADR-022) ─────────────────────────
 // Mock by default (mirrors referralAdminService / connectAdminService). Flip with
-// NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK=false to hit the live Go backend at the
 // append /admin/referrals → /api/v1/admin/referrals (proxied to the Go backend's
-// /v1/admin/referrals group). Bearer token + RBAC referral.admin.* on the server;
 // the sidebar gates the nav entries. Money is BIGINT kobo throughout.
 
-import { apiV1 } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   ProgramConfig,
@@ -25,15 +23,15 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK);
 
 function adminBase(): string {
-  // apiV1() = http://host/api/v1 → http://host/api/v1/admin/referrals
-  return `${apiV1()}/admin/referrals`;
+  // The Go backend mounts this group at /v1/admin/referrals (no /api prefix;
+  // backend/internal/app/referral_routes.go) and /api/admin-proxy forwards the
+  // path verbatim, so the /v1 spelling must be explicit. /api/v1/admin/referrals
+  // is a bare Gin 404.
+  return `${apiRoot()}/v1/admin/referrals`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
@@ -68,7 +66,6 @@ async function sendJson<T>(
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -79,7 +76,6 @@ export function formatPct(fraction: number): string {
 
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const MOCK_CONFIG: ProgramConfig = {
   version: 3,
   is_active: true,
@@ -144,7 +140,6 @@ const MOCK_MILESTONES: MilestonePayout[] = [
 
 const MOCK_MODULE_STATUS: ModuleStatus[] = MOCK_ANALYTICS.by_module.map((m) => ({ ...m }));
 
-// ─── A1 Program config ────────────────────────────────────────────────────────
 export async function getProgramConfig(): Promise<ProgramConfig> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(MOCK_CONFIG)); }
   return getJson<ProgramConfig>('/config');
@@ -155,13 +150,11 @@ export async function publishProgramConfig(input: ConfigPublishInput): Promise<C
   return sendJson<ConfigPublishResult>('PUT', '/config', input);
 }
 
-// ─── A2 Analytics ─────────────────────────────────────────────────────────────
 export async function getAnalytics(): Promise<ReferralAnalytics> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(MOCK_ANALYTICS)); }
   return getJson<ReferralAnalytics>('/analytics');
 }
 
-// ─── A3 Fraud queue ───────────────────────────────────────────────────────────
 export async function getFraudQueue(status?: string): Promise<FraudFlag[]> {
   if (USE_MOCK) { await delay(); return []; } // backend returns empty queue initially
   const j = await getJson<{ flags: FraudFlag[] }>(`/fraud-queue${status ? `?status=${encodeURIComponent(status)}` : ''}`);
@@ -172,7 +165,6 @@ export async function actionFraudFlag(input: FraudActionInput): Promise<{ ok: tr
   return sendJson<{ ok: true }>('POST', '/fraud-queue', input);
 }
 
-// ─── A4 Ledger ────────────────────────────────────────────────────────────────
 export async function getLedger(filters?: LedgerFilters): Promise<Reward[]> {
   if (USE_MOCK) {
     await delay();
@@ -191,7 +183,6 @@ export async function getLedger(filters?: LedgerFilters): Promise<Reward[]> {
   return j.ledger ?? [];
 }
 
-// ─── A5 Referrer case ─────────────────────────────────────────────────────────
 export async function getReferrerCase(referrerId: string): Promise<ReferrerCase> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify({ ...MOCK_CASE, referrer_id: referrerId })); }
   return getJson<ReferrerCase>(`/${encodeURIComponent(referrerId)}/case`);
@@ -204,7 +195,6 @@ export async function adjustReferrerCase(referrerId: string, input: CaseAdjustme
   });
 }
 
-// ─── Referral code (admin-chosen) ────────────────────────────────────────────
 /** 3-5 chars of A-Z0-9; the server normalises to uppercase and enforces this too. */
 export const REFERRAL_CODE_MAX = 5;
 export const REFERRAL_CODE_MIN = 3;
@@ -229,14 +219,12 @@ export async function setReferrerCode(referrerId: string, code: string): Promise
   }
 }
 
-// ─── A6 Milestone log ─────────────────────────────────────────────────────────
 export async function getMilestonesLog(limit = 50, offset = 0): Promise<MilestonePayout[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_MILESTONES]; }
   const j = await getJson<{ milestones: MilestonePayout[] }>(`/milestones-log?limit=${limit}&offset=${offset}`);
   return j.milestones ?? [];
 }
 
-// ─── A7 Module status ─────────────────────────────────────────────────────────
 export async function getModuleStatus(): Promise<ModuleStatus[]> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(MOCK_MODULE_STATUS)); }
   const j = await getJson<{ modules: ModuleStatus[] }>('/module-status');

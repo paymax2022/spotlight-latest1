@@ -7,9 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
 
 // Handler exposes ComplianceExport (SF-11) + school self-service export (SF-10) over Gin.
 // Router registration into RegisterAcademy is owned by the QA/integration task — see
@@ -21,10 +25,9 @@ type Handler struct {
 // NewHandler builds the export handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -32,7 +35,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -43,21 +46,21 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingSchool):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_school", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_school", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingReportType):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_report_type", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_report_type", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrNoCategories):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no_data_categories", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no_data_categories", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrCategoryNotOptedIn):
-		c.JSON(http.StatusForbidden, gin.H{"error": "data_category_not_opted_in", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "data_category_not_opted_in", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrSchoolNotVerified):
-		c.JSON(http.StatusForbidden, gin.H{"error": "school_not_verified", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "school_not_verified", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -83,8 +86,6 @@ func RegisterFeesExport(admin *gin.RouterGroup, pool *pgxpool.Pool, rbac service
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) TriggerExport(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -92,7 +93,7 @@ func (h *Handler) TriggerExport(c *gin.Context) {
 	}
 	var req TriggerExportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.TriggerExport(c.Request.Context(), u, req)
@@ -119,7 +120,7 @@ func (h *Handler) TriggerSchoolDataExport(c *gin.Context) {
 	}
 	var req SchoolDataExportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.TriggerSchoolDataExport(c.Request.Context(), u, req)

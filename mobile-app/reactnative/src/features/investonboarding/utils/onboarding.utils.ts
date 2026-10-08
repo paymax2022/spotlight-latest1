@@ -1,4 +1,3 @@
-// ── Paymax Invest · Onboarding — Utils ───────────────────────────────────────
 // Pure helpers: id generation, suitability scoring and form validators. The
 // scoring lives here so the mock API and the screens compute the same result
 // (the screens preview a profile; the API records one).
@@ -14,14 +13,10 @@ import type {
   SuitabilityResult,
 } from '../types/onboarding.types';
 
-// ─── Ids ───────────────────────────────────────────────────────────────────--
-
 /** Short non-cryptographic id for mock records (mirrors crypto's pattern). */
 export function newId(prefix = 'ob'): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
-
-// ─── Suitability scoring ──────────────────────────────────────────────────────
 
 /** Sum the per-answer scores from the questionnaire definition. */
 function totalScore(answers: SuitabilityAnswers): number {
@@ -68,8 +63,6 @@ export function scoreSuitability(answers: SuitabilityAnswers): SuitabilityResult
 export function isQuestionnaireComplete(answers: Partial<SuitabilityAnswers>): boolean {
   return SUITABILITY_QUESTIONS.every((q) => Boolean(answers[q.id]));
 }
-
-// ─── Validators ───────────────────────────────────────────────────────────────
 
 /** NG NIN is 11 digits; BVN is 11 digits. */
 export function isValidNin(nin: string): boolean {

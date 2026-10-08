@@ -1,4 +1,3 @@
-// ── Restaurant merchant — data hooks ─────────────────────────────────────────
 // React Query hooks over the merchant api. Mutations invalidate the store detail
 // so the screen re-renders with server truth after each change.
 
@@ -86,6 +85,43 @@ export function useSetAvailability(id: string) {
   return useMutation({
     mutationFn: (isOpen: boolean) => merchant.setAvailability(id, isOpen),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
+export function useKYB(id: string) {
+  return useQuery({
+    queryKey: [KEY, 'kyb', id],
+    queryFn: () => merchant.getKYB(id),
+    enabled: Boolean(id),
+  });
+}
+
+export function useSaveKYB(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: merchant.SaveKYBInput) => merchant.saveKYB(id, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'kyb', id] }),
+  });
+}
+
+export function useAddKYBDocument(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { docType: string; fileUrl: string; fileName?: string }) =>
+      merchant.addKYBDocument(id, v.docType, v.fileUrl, v.fileName),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'kyb', id] }),
+  });
+}
+
+export function useSubmitKYB(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => merchant.submitKYB(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'kyb', id] });
+      // The payout-readiness banner and the availability notice both read kybStatus.
+      qc.invalidateQueries({ queryKey: [KEY, 'payout-readiness'] });
+    },
   });
 }
 

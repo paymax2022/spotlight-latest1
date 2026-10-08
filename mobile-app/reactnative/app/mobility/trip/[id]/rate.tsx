@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle2, Receipt } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
@@ -15,6 +15,7 @@ import StarRating from '@/features/mobility/components/StarRating';
 import DriverCard from '@/features/mobility/components/DriverCard';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTrip, useRateTrip } from '@/features/mobility/hooks/useMobility';
 import { clearMockActiveTrip } from '@/features/mobility/api/mobility.api';
 import { TIP_PRESETS_KOBO } from '@/features/mobility/constants/mobility.constants';
@@ -61,7 +62,7 @@ export default function RateTripScreen() {
   if (trip.isError || !t) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => trip.refetch()} />
+        <MobilityEdgeState kind={errKind(trip.error)} actionLabel="Retry" onAction={() => trip.refetch()} />
       </SafeAreaView>
     );
   }

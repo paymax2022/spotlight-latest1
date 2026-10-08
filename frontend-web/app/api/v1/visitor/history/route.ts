@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 import { mapGateEvent } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/history — gate events for the resident's estate (newest first).
+// Gate events for the resident's estate (newest first).
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

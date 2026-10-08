@@ -1,12 +1,9 @@
-// ── Bus provider marketplace — types ─────────────────────────────────────────
 // camelCase types matching the backend's camelCase responses for the interstate
 // bus PROVIDER MARKETPLACE. Money is always integer kobo (never floats). Fares
-// are server-owned; the client only displays them and (for providers) proposes
 // base fares that the backend validates.
 
 import type { Kobo } from './mobility.types';
 
-// ─── Shared provider summary (search chips + provider cards) ───────────────────
 export interface BusProviderSummary {
   id: string;
   businessName: string;
@@ -14,7 +11,6 @@ export interface BusProviderSummary {
   ratingAvg: number;
 }
 
-// ─── Customer: interstate trip search (GET /bus/search) ────────────────────────
 export type BusTripProvider = BusProviderSummary;
 
 export interface BusTrip {
@@ -46,7 +42,6 @@ export interface BusSearchParams {
   date?: string;             // YYYY-MM-DD
 }
 
-// ─── Customer: provider directory (GET /bus/providers) ─────────────────────────
 export interface BusProviderListItem {
   id: string;
   businessName: string;
@@ -56,7 +51,6 @@ export interface BusProviderListItem {
   routeCount: number;
 }
 
-// ─── Customer: provider detail (GET /bus/providers/:id) ────────────────────────
 export interface BusProviderRoute {
   id: string;
   fromState: string;
@@ -74,9 +68,7 @@ export interface BusProviderDetail {
   routes: BusProviderRoute[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PROVIDER-SIDE (the operator managing their own marketplace listing)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /** The signed-in operator's own provider profile. */
 export interface BusProviderProfile {
@@ -157,7 +149,7 @@ export interface BusDepartureTemplate {
   id: string;
   providerId: string;
   routeId: string;
-  daysOfWeek: number[];      // 0=Sun .. 6=Sat
+  daysOfWeek: number[];
   departTime: string;        // "HH:MM"
   totalSeats: number;
   fareKobo: Kobo;
@@ -168,7 +160,7 @@ export interface BusDepartureTemplate {
 
 export interface BusTemplateCreateRequest {
   routeId: string;
-  daysOfWeek: number[];      // 0=Sun .. 6=Sat
+  daysOfWeek: number[];
   departTime: string;        // "HH:MM"
   totalSeats: number;
   fareKobo: Kobo;

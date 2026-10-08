@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { CheckCircle2, Lock, ShieldAlert } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -52,7 +52,6 @@ export default function InstallmentSetup() {
   const inv = invoice.data;
   const outstanding = inv.totalKobo - inv.paidKobo;
 
-  // ── Existing plan → manage view ──
   if (plan.data) {
     const p = plan.data;
     const disclosed = !!p.disclosureAcceptedAt;
@@ -115,7 +114,6 @@ export default function InstallmentSetup() {
     );
   }
 
-  // ── No plan yet → setup view ──
   const per = Math.round(outstanding / count);
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -1,19 +1,14 @@
-// ── Doctor (Telemedicine, provider-side) — Phase 3 API client ────────────────
-// Phase A style: every function resolves demo data so screens render without a
 // live API. `DEMO_*` exports double as `placeholderData` in useQuery. ADDITIVE
 // to `@/api/doctor.api` and `@/api/doctor.phase2.api` — earlier fns/exports are
 // untouched.
-//
 // Phase 3 covers veterinary mode, the three AI-assist screens (note summary,
 // prescription safety, lab explanation) and practice management (quality
 // analytics + multi-clinic). All AI content below is clearly DEMO and must not
 // be relied on for real clinical decisions.
-//
 // TODO(Phase C): replace each body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/vet/dashboard'); return res.data.data;
 // and pass the Idempotency-Key header on every mutation below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   VetDashboard,
   PetConsultSummary,
@@ -65,11 +60,7 @@ const AI_DISCLAIMER =
   'AI-generated draft for clinician review only. Demo content — verify every detail before acting. Not a substitute for professional judgement.';
 const AI_MODEL = 'Spotlight Care AI v1 (demo)';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // VETERINARY
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Demo data: 1. Vet dashboard ─────────────────────────────────────────────
 
 const DEMO_PET_CONSULTS: PetConsultSummary[] = [
   { id: 'vc-1', ref: 'VET-9F2A41', petName: 'Bingo',  petSpecies: 'dog', breed: 'Boerboel',          ownerName: 'Tunde Akinwale', reason: 'Limping on hind leg for 2 days', slotTime: '09:00 AM', feeKobo: 300000, isUrgent: false },
@@ -89,8 +80,6 @@ export const DEMO_VET_DASHBOARD: VetDashboard = {
   pendingLabs: 2,
   earningsTodayKobo: 1200000,
 };
-
-// ─── Demo data: 2. Pet profile ───────────────────────────────────────────────
 
 export const DEMO_PET_PROFILE: PetProfile = {
   id: 'pet-1', name: 'Bingo', species: 'dog', breed: 'Boerboel', sex: 'male', neutered: true,
@@ -118,8 +107,6 @@ export const DEMO_PET_PROFILE: PetProfile = {
   ],
 };
 
-// ─── Demo data: 3. Pet prescription ──────────────────────────────────────────
-
 export const DEMO_PET_PRESCRIPTION: PetPrescription = {
   id: 'prx-1', ref: 'PRX-4F2A41', petId: 'pet-1', petName: 'Bingo', petSpecies: 'dog',
   ownerName: 'Tunde Akinwale', vetName: 'Dr. Amaka Obi', diagnosis: 'Soft-tissue strain, right hind limb',
@@ -132,8 +119,6 @@ export const DEMO_PET_PRESCRIPTION: PetPrescription = {
   ],
   issuedAt: iso(0), status: 'issued',
 };
-
-// ─── Demo data: 4. Pet lab orders & results ──────────────────────────────────
 
 export const DEMO_PET_LAB_ORDERS: PetLabOrder[] = [
   {
@@ -166,8 +151,6 @@ export const DEMO_PET_LAB_RESULTS: PetLabResult[] = [
   },
 ];
 
-// ─── Demo data: 5. Pet store products ────────────────────────────────────────
-
 export const DEMO_PET_PRODUCTS: PetStoreProduct[] = [
   { id: 'pp-1', name: 'Joint Mobility Diet (Large Breed)', category: 'food',       brand: 'Royal Canin', priceKobo: 1850000, vetApproved: true,  forSpecies: ['dog'],        description: 'Therapeutic kibble for joint support in large dogs.', imageColor: '#F59E0B' },
   { id: 'pp-2', name: 'Omega-3 Fish Oil Supplement',       category: 'supplement', brand: 'Nutri-Vet',   priceKobo: 650000,  vetApproved: true,  forSpecies: ['dog', 'cat'], description: 'Supports skin, coat and joint health.',               imageColor: '#10B981' },
@@ -185,9 +168,7 @@ export const DEMO_PET_RECOMMENDATIONS: PetProductRecommendation[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // AI ASSISTANCE
-// ═══════════════════════════════════════════════════════════════════════════
 
 // ─── Demo data: 6. AI consultation note summary (ready state) ────────────────
 
@@ -239,8 +220,6 @@ export const DEMO_AI_SAFETY_REPORT: AiSafetyReport = {
   },
 };
 
-// ─── Demo data: 8. AI lab result explanation (ready state) ───────────────────
-
 export const DEMO_AI_LAB_EXPLANATION: AiLabExplanation = {
   status: 'ready', model: AI_MODEL, generatedAt: iso(0), confidence: 78, disclaimer: AI_DISCLAIMER,
   accepted: false, edited: false,
@@ -259,11 +238,7 @@ export const DEMO_AI_LAB_EXPLANATION: AiLabExplanation = {
   },
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // PRACTICE MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Demo data: 9. Quality analytics ─────────────────────────────────────────
 
 export const DEMO_QUALITY_ANALYTICS: QualityAnalytics = {
   period: '30d',
@@ -290,8 +265,6 @@ export const DEMO_QUALITY_ANALYTICS: QualityAnalytics = {
   rankingLabel: 'Top 5% of General Practitioners on Spotlight',
 };
 
-// ─── Demo data: 10. Clinic portfolio ─────────────────────────────────────────
-
 export const DEMO_CLINIC_PORTFOLIO: ClinicPortfolio = {
   activeClinicId: 'cl-1',
   memberships: [
@@ -313,9 +286,7 @@ export const DEMO_CLINIC_PORTFOLIO: ClinicPortfolio = {
   ],
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // READ ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 export async function getVetDashboard(): Promise<VetDashboard> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_DASHBOARD);
@@ -381,9 +352,7 @@ export async function getAiLabExplanation(resultId: string): Promise<AiLabExplan
   return doctorGet<AiLabExplanation>(`/ai/lab-explanation/${resultId}`);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATIONS
-// ═══════════════════════════════════════════════════════════════════════════
 
 export async function toggleVetMode(input: ToggleVetModeInput): Promise<ToggleVetModeResult> {
   if (DOCTOR_USE_MOCK) return wait({ doctorId: 'doc-1', vetModeEnabled: input.enabled }, 400);
@@ -422,7 +391,6 @@ export async function recommendProducts(input: RecommendProductsInput): Promise<
   return doctorPost<RecommendProductsResult>('/vet/recommendations', input, input.idempotencyKey);
 }
 
-// ─── AI generate / accept mutations ──────────────────────────────────────────
 // `generate*` simulate the model run (generating → ready). The "generating"
 // transition is owned by the hook; these resolve directly to the ready envelope.
 
@@ -457,8 +425,6 @@ export async function explainLabResult(input: ExplainLabResultInput): Promise<Ai
   }
   return doctorPost<AiLabExplanation>('/ai/lab-explanation', input, input.idempotencyKey);
 }
-
-// ─── Practice management mutations ───────────────────────────────────────────
 
 export async function setActiveClinic(input: SetActiveClinicInput): Promise<SetActiveClinicResult> {
   if (DOCTOR_USE_MOCK) return wait({ activeClinicId: input.clinicId }, 400);

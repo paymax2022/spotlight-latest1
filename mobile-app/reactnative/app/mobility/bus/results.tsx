@@ -4,26 +4,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Star, ChevronRight, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusRoutes, useBusSchedules } from '@/features/mobility/hooks/useModes';
 import { formatNairaWhole, formatDuration } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusRoute, BusSchedule } from '@/features/mobility/types/modes.types';
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' });
 
-// A real connectivity drop (no HTTP response) is "offline"; anything the server
-// actually answered (404/5xx/parse) is a backend failure, not the user's network.
-// Mislabelling the latter as "offline" sends people to check their wifi for nothing.
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 export default function BusResultsScreen() {
   const { origin = '', dest = '', date = '' } = useLocalSearchParams<{ origin?: string; dest?: string; date?: string }>();

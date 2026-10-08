@@ -3,15 +3,16 @@ import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Trash2, UserPlus, Shield } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useSafety } from '@/features/mobility/hooks/useMobility';
 import type { TrustedContact } from '@/features/mobility/types/mobility.types';
 
@@ -38,7 +39,7 @@ export default function TrustedContactsScreen() {
       {contacts.isLoading ? (
         <StateView kind="loading" message="Loading contacts…" />
       ) : contacts.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => contacts.refetch()} />
+        <MobilityEdgeState kind={errKind(contacts.error)} actionLabel="Retry" onAction={() => contacts.refetch()} />
       ) : (
         <FlatList
           data={contacts.data}

@@ -15,8 +15,6 @@ import (
 // human Approve freezes the invoice (overdue→frozen via the state machine); Deny does not;
 // and only an authorized reviewer may approve/deny (fail-closed).
 
-// ── in-memory fake Store ─────────────────────────────────────────────────────────
-
 type fakeStore struct {
 	reqs   map[string]*HardshipRequest
 	audits []string
@@ -95,8 +93,6 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// ── in-memory fake InvoiceFreezer ────────────────────────────────────────────────
-
 type fakeInvoiceService struct {
 	status      feesstatemachine.InvoiceState
 	freezeCalls int
@@ -119,15 +115,11 @@ func (f *fakeInvoiceService) Freeze(_ context.Context, _, _ string) (feesstatema
 	return to, nil
 }
 
-// ── in-memory fake ReviewerAuthorizer ────────────────────────────────────────────
-
 type fakeAuthorizer struct{ allow bool }
 
 func (f *fakeAuthorizer) CanReview(_ context.Context, _, _ string) (bool, error) {
 	return f.allow, nil
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
 
 func newSubmittedRequest(t *testing.T, svc *Service) *HardshipRequest {
 	t.Helper()
@@ -139,8 +131,6 @@ func newSubmittedRequest(t *testing.T, svc *Service) *HardshipRequest {
 	}
 	return r
 }
-
-// ── SF-9 (REQUIRED): submission never auto-approves/denies/freezes ───────────────
 
 func TestSubmit_LeavesPendingAndInvoiceUnchanged_SF9(t *testing.T) {
 	fs := newFakeStore()
@@ -185,8 +175,6 @@ func TestSubmit_Validation(t *testing.T) {
 		t.Fatalf("expected missing_reason, got %v", err)
 	}
 }
-
-// ── Approve freezes the invoice (overdue→frozen via the state machine) ───────────
 
 func TestApprove_FreezesInvoice(t *testing.T) {
 	fs := newFakeStore()
@@ -236,8 +224,6 @@ func TestApprove_NonOverdueInvoiceRejectedFailClosed(t *testing.T) {
 	}
 }
 
-// ── Deny does NOT freeze the invoice ──────────────────────────────────────────────
-
 func TestDeny_LeavesInvoiceUnchanged(t *testing.T) {
 	fs := newFakeStore()
 	inv := &fakeInvoiceService{status: feesstatemachine.InvoiceOverdue}
@@ -261,8 +247,6 @@ func TestDeny_LeavesInvoiceUnchanged(t *testing.T) {
 		t.Fatalf("deny must leave invoice status unchanged, got %s", inv.status)
 	}
 }
-
-// ── Only an authorized reviewer can approve/deny (fail-closed) ────────────────────
 
 func TestReview_UnauthorizedReviewerRejected(t *testing.T) {
 	fs := newFakeStore()
@@ -296,8 +280,6 @@ func TestReview_MissingReviewerRejected(t *testing.T) {
 	}
 }
 
-// ── Fail-closed when NO authorizer is wired (defense in depth) ────────────────────
-
 func TestReview_NoAuthorizerDeniesAll(t *testing.T) {
 	fs := newFakeStore()
 	inv := &fakeInvoiceService{status: feesstatemachine.InvoiceOverdue}
@@ -308,8 +290,6 @@ func TestReview_NoAuthorizerDeniesAll(t *testing.T) {
 		t.Fatalf("expected forbidden when no authorizer is wired, got %v", err)
 	}
 }
-
-// ── Double-review is rejected (no re-freeze) ──────────────────────────────────────
 
 func TestApprove_DoubleReviewRejected(t *testing.T) {
 	fs := newFakeStore()

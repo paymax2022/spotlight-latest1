@@ -1,4 +1,3 @@
-// ── Practice / quiz live-response adapters (Go assessment API → mobile) ───────
 // The Go assessment engine serves approved question items and grades submissions
 // SERVER-SIDE (GET /api/finance/academy/practice, POST …/practice/submit). The
 // read strips the answer key; the submit result carries the per-question review.
@@ -8,13 +7,11 @@
 
 import type { Question, QuestionType, PracticeResult, MasteryState } from './types';
 
-// ── Go wire shapes ───────────────────────────────────────────────────────────
-
 export interface GoQuestionItem {
   id: string;
   type: string;
   stem: string;
-  options: unknown; // jsonb array; approved items seed [{id,text}]
+  options: unknown;
   objective_id?: string | null;
   subject_id?: string | null;
   // answer is stripped on the /practice read; never trusted client-side.
@@ -44,8 +41,6 @@ export interface MobileAnswer {
   questionId: string;
   selected: string[];
 }
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 const QUESTION_TYPES: QuestionType[] = ['mcq', 'multi', 'true_false'];
 function mapType(t?: string): QuestionType {
@@ -89,8 +84,6 @@ export function mapMasteryState(s?: string): MasteryState {
       return 'not_started';
   }
 }
-
-// ── Adapters ─────────────────────────────────────────────────────────────────
 
 /** Go approved question item → mobile Question. correct/explanation stay empty:
  *  grading is server-authoritative and the answer key is revealed only in the

@@ -1,8 +1,5 @@
-// ── Insurance (live) — dynamic form engine ──────────────────────────────────
 // PURE. No `@/` imports, no React — all of it unit-testable under `node --test`.
-//
 // WHY THIS EXISTS
-// ---------------
 // Every one of MyCover's 69 products publishes its OWN required-field table, and
 // no two are alike. Verified live:
 //   Bastion health   → gender(Male|Female), nin(exactly 11 digits), image_url,
@@ -14,10 +11,8 @@
 //                      make is chosen
 //   Office content   → tenancy, address(>=6), office_items[] repeating rows,
 //                      lga(enum of Nigerian LGAs, dependent on state)
-//
 // ~65 products also nest a `policy_holder` object, and 17 carry repeating array
 // groups. So no screen may ever hardcode a product's fields.
-//
 // So no screen may ever hardcode a product's fields. Screens render a `Field[]`
 // and this module decides: which fields are currently visible (dependent
 // dropdowns), how to chunk them into steps so a 12-field motor form is not one
@@ -26,7 +21,6 @@
 
 import type { Field, FieldOption, FieldValue, FormSchema, FormValues } from './types';
 
-// ── Visibility (dependent fields) ───────────────────────────────────────────
 /**
  * A field with `dependsOn` only exists while its controller holds the required
  * value. Hidden fields are neither rendered NOR validated NOR submitted — a
@@ -73,7 +67,6 @@ export function submittableFields(fields: Field[], values: FormValues): Field[] 
   return fields.filter((f) => isActive(f, values));
 }
 
-// ── Value helpers ───────────────────────────────────────────────────────────
 export function isEmptyValue(v: FieldValue | undefined): boolean {
   if (v == null) return true;
   if (Array.isArray(v)) return v.length === 0;
@@ -106,7 +99,6 @@ export function asRows(v: FieldValue | undefined): FormValues[] {
   return v.filter((x): x is FormValues => !!x && typeof x === 'object' && !Array.isArray(x));
 }
 
-// ── Validation ──────────────────────────────────────────────────────────────
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -128,13 +120,10 @@ function isValidNgPhone(raw: string): boolean {
  */
 export function validateField(field: Field, value: FieldValue | undefined): string | null {
   // Composite fields validate their contents, not themselves.
-  //
   // An OPTIONAL block nobody has begun filling in is valid as a whole, even when
   // its children are individually required. MyCover publishes policy_holder as
-  // required:false with seven required:true children on 64 of its 68 products, so
   // validating children unconditionally would block every one of those forms on a
   // section the insurer itself says is optional.
-  //
   // Once any child is answered the block counts as started and becomes
   // all-or-nothing: a half-filled policy holder is worse than none, because the
   // insurer would receive a partial identity.
@@ -344,7 +333,6 @@ export function validateAll(fields: Field[], values: FormValues): Record<string,
   return errors;
 }
 
-// ── Step chunking ───────────────────────────────────────────────────────────
 export interface FormStep {
   /** Stable key so React does not remount a step when values change. */
   key: string;
@@ -527,7 +515,6 @@ export function firstErroredStep(steps: FormStep[], fieldErrors: Record<string, 
   return best;
 }
 
-// ── Prefill ─────────────────────────────────────────────────────────────────
 /**
  * Seed values from the signed-in profile so a person is never asked for what
  * Paymax already holds. Only fills fields the schema actually declares, and
@@ -570,7 +557,6 @@ function camel(s: string): string {
   return String(s).replace(/[_-](\w)/g, (_, c: string) => c.toUpperCase());
 }
 
-// ── Submission ──────────────────────────────────────────────────────────────
 /**
  * The unit EVERY money field is submitted in, and the app's half of a contract
  * the Go backend states as `gateway.MoneyInputWireUnit`.
@@ -659,7 +645,6 @@ export function declaredValueKobo(fields: Field[], values: FormValues): number {
   return kobo && kobo > 0 ? kobo : 0;
 }
 
-// ── Price-driving inputs ────────────────────────────────────────────────────
 /**
  * Fields the PREMIUM moves with, so the review screen can offer them as live
  * choices and re-price against the insurer on each change.
@@ -695,7 +680,6 @@ export function fallbackPlanOptions(field: Field): FieldOption[] {
   }));
 }
 
-// ── Plan families ───────────────────────────────────────────────────────────
 /**
  * MyCover's buy endpoints are per FAMILY, not per product: one
  * `POST /products/bastion/buy-medisure` sells FlexiCare, FlexiCare Mini,

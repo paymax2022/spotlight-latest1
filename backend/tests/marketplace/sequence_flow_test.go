@@ -1,10 +1,8 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // Agent F (QA) — the 3 §6 sequence-diagram flows encoded as tests, per §10
 // build order ("implement the three sequence-diagram flows in §6 as integration
 // tests first — they encode the system's non-negotiable invariants").
-//
 // LIVE-DB REQUIREMENT (documented per task instructions):
 // All three flows below are driven through spotlight/backend/internal/marketplace
 // Service methods (CreateOrder, FundOrder, SellerAccept, HandleDeliveryConfirmed,
@@ -17,19 +15,16 @@ package marketplace_test
 // is a concrete struct, not an interface, so it cannot be swapped for a test
 // double from this external test package without modifying
 // backend/internal/marketplace/*.go, which is Agent A's exclusive boundary.
-//
 // Consequently every TestFlow_* function below is SKIPPED at runtime (t.Skip)
 // with a clear reason, and is structured as a fully-written integration test
 // that will run unmodified the moment a live Postgres + the marketplace
 // migrations + a ledger.Service are available in CI (see QA_REPORT.md for the
 // exact bring-up recipe: docker-compose postgres + `supabase db reset` +
 // construct ledger.NewService(pool) + marketplace.NewService(pool, ledgerSvc, nil)).
-//
 // What CAN run without a DB (and does, unconditionally) is asserted directly
 // below each skip: the deterministic ledger reference/idempotency-key naming
 // scheme (mirrors service_order.go's s.ref/s.idem), which is what makes the
 // idempotent-replay and reconciliation invariants hold in the first place.
-// ---------------------------------------------------------------------------
 
 import (
 	"fmt"
@@ -53,17 +48,11 @@ const adr023SeqSkip = "ADR-023: escrow order/dispute/webhook flow removed (listi
 // newTestService is the single place a live-DB flow test would construct the
 // service under test. It returns (nil, false) today because no pgxpool/ledger
 // wiring is available in this sandbox; when infra is available, wire:
-//
-//	pool, _ := pgxpool.New(ctx, os.Getenv("MARKETPLACE_TEST_DATABASE_URL"))
-//	ledgerSvc := ledger.NewService(pool)
-//	svc := mkt.NewService(pool, ledgerSvc, nil) // redis nil is supported (DB-unique backstop)
 // (removed) newTestService was a constructor that called t.Skip() unconditionally
 // even when MARKETPLACE_TEST_DATABASE_URL was set, so nothing gated on it could
 // run in ANY environment — the tests behind it reported ok while asserting
 // nothing. Live marketplace tests use liveMktService (remoderation_live_db_test.go),
 // which actually connects and is what chaos_live_db_test.go drives.
-
-// ─── 6.1 Escrow checkout → funding ────────────────────────────────────────────
 
 // TestFlow_EscrowCheckoutToFunding_IdempotentSingleLedgerEffect drives §6.1
 // end-to-end: POST /orders (Idempotency-Key K1) then POST /orders/{id}/fund
@@ -83,13 +72,7 @@ func TestFlow_EscrowCheckoutToFunding_IdempotentSingleLedgerEffect(t *testing.T)
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
 
-	// ---- intended assertions once live (documented for the DB-enabled run) ----
-	// order1, err := svc.CreateOrder(ctx, buyerID, "K1", mkt.CreateOrderInput{ListingID: listingID, DeliveryOption: "pickup"})
-	// order2, err := svc.CreateOrder(ctx, buyerID, "K1", mkt.CreateOrderInput{ListingID: listingID, DeliveryOption: "pickup"})
 	// assert order1.ID == order2.ID (replay returns the SAME order, no second insert)
-	//
-	// funded1, err := svc.FundOrder(ctx, order1.ID, buyerID, "K2", mkt.FundInput{PaymentMethod: "wallet"})
-	// funded2, err := svc.FundOrder(ctx, order1.ID, buyerID, "K2", mkt.FundInput{PaymentMethod: "wallet"})
 	// assert funded1.LedgerFundRef == funded2.LedgerFundRef (same fund ref both times)
 	// assert exactly ONE ledger_entries row exists for that fund reference (query the
 	//   ledger directly: SELECT count(*) FROM ledger_entries WHERE reference = fundRef
@@ -126,8 +109,6 @@ func TestFlow_EscrowCheckoutToFunding_DeterministicKeyNaming(t *testing.T) {
 	}
 }
 
-// ─── 6.2 Delivery confirmation → auto-release ────────────────────────────────
-
 // TestFlow_DeliveryToAutoRelease_DeadlineDrivesRelease drives §6.2 end-to-end:
 // webhook delivery-confirmed → inspection_window (deadline = delivered_at+48h) →
 // cron AutoReleaseDue after the deadline passes with no open dispute → released,
@@ -140,7 +121,6 @@ func TestFlow_DeliveryToAutoRelease_DeadlineDrivesRelease(t *testing.T) {
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
 
-	// ---- intended assertions once live ----
 	// 1. seed an order through funded -> seller_accepted (SellerAccept)
 	// 2. call svc.HandleDeliveryConfirmed(ctx, mkt.DeliveryConfirmedInput{OrderID: id, DeliveryRef: "d1", ...})
 	//    assert order.Status == mkt.OrderInspectionWindow
@@ -184,7 +164,6 @@ func TestFlow_DeliveryToAutoRelease_WebhookIdempotencyIsStructural(t *testing.T)
 	terminals := []mkt.OrderStatus{mkt.OrderReleased, mkt.OrderCancelled, mkt.OrderRefunded, mkt.OrderSplitSettled}
 	for _, s := range terminals {
 		// The production code's condition is:
-		//   prior.Status == Delivered || prior.Status == InspectionWindow || orderIsTerminal(prior.Status)
 		// so terminals are covered by the orderIsTerminal disjunct even though
 		// isIdempotentNoOp() alone (mirroring only the first two cases) returns
 		// false for them — assert the FULL condition, not just the two named cases.
@@ -220,8 +199,6 @@ func isOrderTerminalMirror(s mkt.OrderStatus) bool {
 	}
 }
 
-// ─── 6.3 Dispute resolution (dual-approval path) ─────────────────────────────
-
 // TestFlow_DisputeDualApproval_RequiresDistinctSecondApprover drives §6.3
 // end-to-end for an order > ₦500k: DecideDispute records `decided` and returns
 // AWAITING_SECOND_APPROVAL WITHOUT moving money; ApproveDispute by the SAME admin
@@ -235,7 +212,6 @@ func TestFlow_DisputeDualApproval_RequiresDistinctSecondApprover(t *testing.T) {
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
 
-	// ---- intended assertions once live ----
 	// 1. seed an order with AmountKobo = 60_000_000 (₦600k, > threshold) through to
 	//    disputed / under_review.
 	// 2. d1, err := svc.DecideDispute(ctx, "admin-1", disputeID, mkt.DecideDisputeInput{
@@ -261,7 +237,6 @@ func TestFlow_DisputeSingleApproval_BelowThresholdExecutesImmediately(t *testing
 	// test no longer exists. The intended assertions below are kept as the
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
-	// ---- intended assertions once live ----
 	// seed an order with AmountKobo = 20_000_000 (₦200k, <= threshold) disputed/under_review.
 	// d, err := svc.DecideDispute(ctx, "admin-1", disputeID, mkt.DecideDisputeInput{
 	//     Decision: mkt.DecisionReleaseSeller, ReasonCode: "buyer_remorse_not_valid"})
@@ -300,8 +275,6 @@ func TestFlow_DisputeDualApproval_ThresholdBoundaryIsDeterministic(t *testing.T)
 		})
 	}
 }
-
-// ─── Cross-cutting non-negotiable invariant (§2.2): reconciliation ───────────
 
 // TestReconciliation_TerminalOrderIsExactlyOneBalancedPosting is a DB-free model
 // of the §2.2 hourly reconciliation check. It cannot query a real ledger here, so

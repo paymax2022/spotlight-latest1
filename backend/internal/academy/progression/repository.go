@@ -15,7 +15,6 @@ import (
 // transitions use UPDATE ... WHERE state=$from inside a tx so an illegal/stale
 // move can never advance a step, and the matching ProgressEvent + audit are
 // written in the SAME tx so a transition can never be half-applied.
-//
 // Mastery is REUSED read-only: this package SELECTs academy_mastery_records (owned
 // by the assessment package) and never inserts/updates them.
 type Repository struct {
@@ -26,8 +25,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("progression: not found")
-
-// ── helpers ────────────────────────────────────────────────────────────────────
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -76,8 +73,6 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 	return err
 }
 
-// ── Curriculum read (curriculum-as-data) ───────────────────────────────────────
-
 // ObjectivesForSubject returns the subject's learning objectives in curriculum
 // order: topic ordinal then objective ordinal (codes as tiebreak). This is the
 // ONLY source of a subject's structure — nothing is hardcoded.
@@ -103,8 +98,6 @@ func (r *Repository) ObjectivesForSubject(ctx context.Context, subjectID string)
 	}
 	return out, rows.Err()
 }
-
-// ── Mastery read (REUSED from assessment; never written here) ───────────────────
 
 // GetMastery reads a single academy_mastery_records row for user+objective.
 func (r *Repository) GetMastery(ctx context.Context, userID, objectiveID string) (*Mastery, error) {
@@ -149,8 +142,6 @@ func (r *Repository) ListMastery(ctx context.Context, userID string) ([]Mastery,
 	return out, rows.Err()
 }
 
-// ── Question items (read-only projection for the picker) ────────────────────────
-
 // ApprovedItemsForObjectives returns approved question items for a set of
 // objectives — minimal projection (id, objective, difficulty) for pickItems.
 func (r *Repository) ApprovedItemsForObjectives(ctx context.Context, objectiveIDs []string) ([]QuestionItemRef, error) {
@@ -180,8 +171,6 @@ func (r *Repository) ApprovedItemsForObjectives(ctx context.Context, objectiveID
 	}
 	return out, rows.Err()
 }
-
-// ── Learning paths + steps ──────────────────────────────────────────────────────
 
 // GetPath returns the learner's path for a subject (without steps).
 func (r *Repository) GetPath(ctx context.Context, userID, subjectID string) (*LearningPath, error) {
@@ -253,7 +242,7 @@ func (r *Repository) CreatePathWithSteps(ctx context.Context, actor, userID, sub
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: lock on the unique pair. INSERT ... ON CONFLICT DO NOTHING then
 	// read back; if it pre-existed we leave its steps untouched.
@@ -314,7 +303,6 @@ func (r *Repository) CreatePathWithSteps(ctx context.Context, actor, userID, sub
 // illegal move affects 0 rows and is rejected + audited. On success it writes the
 // matching ProgressEvent. The caller has already validated with canStep; the
 // WHERE clause is the authoritative concurrency guard.
-//
 // When `to` is StepDone, the NEXT step (by ordinal) is unlocked locked→available
 // in the same tx (also guarded), so a path always has exactly one frontier.
 func (r *Repository) UpdatePathStepState(ctx context.Context, actor, userID, pathID, objectiveID string, from, to PathStepState) (*PathStep, error) {
@@ -328,7 +316,7 @@ func (r *Repository) UpdatePathStepState(ctx context.Context, actor, userID, pat
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.academy_path_steps
@@ -405,8 +393,6 @@ func (r *Repository) UpdatePathStepState(ctx context.Context, actor, userID, pat
 	return r.GetStepByObjective(ctx, pathID, objectiveID)
 }
 
-// ── Practice sessions ───────────────────────────────────────────────────────────
-
 // InsertPracticeSession creates an adaptive/drill session row.
 func (r *Repository) InsertPracticeSession(ctx context.Context, userID, kind string, objectiveIDs []string) (*PracticeSession, error) {
 	if kind == "" {
@@ -450,8 +436,6 @@ func (r *Repository) CompletePracticeSession(ctx context.Context, userID, sessio
 	return s, nil
 }
 
-// ── Recommendations ─────────────────────────────────────────────────────────────
-
 // ReplaceRecommendations deletes the learner's existing recommendations and
 // inserts the fresh set in one tx (a recompute is a full replace).
 func (r *Repository) ReplaceRecommendations(ctx context.Context, userID string, recos []Recommendation) ([]Recommendation, error) {
@@ -459,7 +443,7 @@ func (r *Repository) ReplaceRecommendations(ctx context.Context, userID string, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `DELETE FROM public.academy_recommendations WHERE user_id = $1`, userID); err != nil {
 		return nil, err
@@ -504,8 +488,6 @@ func (r *Repository) ListRecommendations(ctx context.Context, userID string) ([]
 	}
 	return out, rows.Err()
 }
-
-// ── Adaptive config ─────────────────────────────────────────────────────────────
 
 // GetConfig reads one adaptive_config row by key.
 func (r *Repository) GetConfig(ctx context.Context, key string) (*AdaptiveConfig, error) {
@@ -557,8 +539,6 @@ func (r *Repository) UpsertConfig(ctx context.Context, actor, key string, value 
 		map[string]any{"key": key}, "info")
 	return r.GetConfig(ctx, key)
 }
-
-// ── Step resolution helpers (cross-path lookup by objective) ────────────────────
 
 // resolveStep finds the (path_id, current state) of the learner's step for an
 // objective. A learner has at most one active path per subject, and an objective

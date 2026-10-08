@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /** Paymax Stays (SM2) — profile / saved guests / wallet overview (PRD §17 G). */
 export default function StaysProfileLayout() {

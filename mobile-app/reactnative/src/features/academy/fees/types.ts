@@ -1,17 +1,13 @@
-// ── Spotlight Academy — EdTech School-Fees module · Domain types ─────────────
 // Source of truth for the data layer the PA-/SA- screens code against. Mirrors
 // the /api/finance/academy/fees + /competition contract. Money is ALWAYS integers
 // in minor units (kobo). Reward points/scores are plain non-monetary integers.
-//
 // This EXTENDS the existing academy domain (guardian/student identity, savings
 // pots, scholarships, leaderboards all already exist — see REUSE-MAP.md §1). The
 // genuinely-new entities are Invoice (derived-balance, SF-2), the Installment
 // plan (SF-6 disclosure), Hardship request (SF-9), Sponsorship, and the
 // cross-school Competition surface.
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT — family, children, invoices, payments (PA-01 … PA-16)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /** A child linked to the guardian (reuses academy guardian-link identity). */
 export interface FeesChild {
@@ -120,7 +116,6 @@ export interface Receipt {
   receiptUrl: string;
 }
 
-// ── Fees Vault (SF-5: purpose-segregated savings — extends academy pots) ─────
 export interface FeesVault {
   id: string;
   name: string;
@@ -147,7 +142,6 @@ export interface AutoSaveRule {
   enabled: boolean;
 }
 
-// ── Hardship request (SF-9: human-reviewed, never auto-decisioned) ───────────
 export type HardshipStatus = 'submitted' | 'approved' | 'declined' | 'needs_info';
 
 export interface HardshipRequest {
@@ -164,7 +158,6 @@ export interface HardshipRequest {
   responseNote?: string;
 }
 
-// ── Sponsor-a-student (PA-14: extends academy scholarships) ───────────────────
 export interface SponsorshipOpportunity {
   id: string;
   studentFirstName: string;    // minor-safe: first name only (SF-7)
@@ -188,7 +181,6 @@ export interface SponsorshipPledge {
   receiptUrl: string;
 }
 
-// ── School directory + trust score (PA-16) ────────────────────────────────────
 export interface DirectorySchool {
   id: string;
   name: string;
@@ -203,11 +195,9 @@ export interface DirectorySchool {
   linked: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // STUDENT — cross-school competition (SA-121 … SA-126)
 // Extends academy gamification (money-free by design). SF-4: never gated by fees.
 // SF-7: minor-safe serialization by default.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 export type LeaderboardScope = 'class' | 'school' | 'city' | 'state' | 'national';
 

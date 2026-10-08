@@ -4,13 +4,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
 import { Clock, Calculator } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import { LEARN_TOPICS } from '@/features/fractionalre/constants';
-import RiskRibbon from '@/features/fractionalre/components/RiskRibbon';
+import { RiskRibbon } from '@/features/fractionalre/components';
 
 export default function LearnHub() {
   return (

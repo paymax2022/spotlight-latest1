@@ -2,14 +2,16 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // This package defines the provider-agnostic STAYS supply gateway. It MIRRORS the
 // maps adapter pattern (internal/maps/adapter.go) and the insurance gateway
 // (internal/insurance/gateway): one small interface, concrete per-rail adapters
 // (internal/stays/adapters), and a Router that resolves an adapter from data.
-//
 // INVARIANT: only NORMALISED models cross this boundary. Supplier JSON never
 // leaks past an adapter — adapters translate to/from the structs in models.go.
 // The two-step prebook→book contract lives here: Prebook re-validates live price +
@@ -25,7 +27,6 @@ type Named interface {
 // SupplyGateway is the single, provider-agnostic capability interface every supply
 // adapter implements. Feature code (the reservation service) depends ONLY on this
 // interface; adding a supplier is a new adapter + config, never a core change.
-//
 //   - Search re-fans across rails (done by Router.Search) and each adapter returns
 //     its own normalised offers; dedup + best-bookable-rate selection sit ABOVE the
 //     adapters in the dedup package.
@@ -60,7 +61,7 @@ type SupplyGateway interface {
 
 // ErrUnsupported is returned by an adapter for a capability the rail does not
 // serve (e.g. SyncARI on a bedbank rail).
-var ErrUnsupported = fmt.Errorf("stays gateway: capability not supported by this rail")
+var ErrUnsupported = errors.New("stays gateway: capability not supported by this rail")
 
 // RailResolver maps a SourceRail + supplier code to the adapter Name() that serves
 // it. The supplier-config table (stays admin) implements this; keeping it an
@@ -101,7 +102,7 @@ func NewRouter(resolver RailResolver, adapters ...SupplyGateway) *Router {
 
 // ErrNoAdapter is returned when no adapter is configured/registered for a
 // rail+supplier (or the supplier is unknown/inactive).
-var ErrNoAdapter = fmt.Errorf("stays gateway: no adapter for rail/supplier")
+var ErrNoAdapter = errors.New("stays gateway: no adapter for rail/supplier")
 
 // Resolve returns the SupplyGateway for a (rail, supplierCode). The rail+supplier
 // → adapter mapping lives entirely in the supplier-config data; this performs no
@@ -167,4 +168,76 @@ type RailError struct {
 	Rail    SourceRail
 	Adapter string
 	Err     error
+}
+
+// DBRailResolver implements RailResolver from the stays_supplier_config table
+// (admin-managed). It is the data-driven routing table: which adapter serves which
+// (rail, supplier) and which rails are active for search fan-out. Keeping it behind
+// the RailResolver interface keeps the gateway free of a DB import cycle.
+type DBRailResolver struct {
+	db *pgxpool.Pool
+}
+
+// NewDBRailResolver constructs the DB-backed resolver.
+func NewDBRailResolver(db *pgxpool.Pool) *DBRailResolver { return &DBRailResolver{db: db} }
+
+// ResolveAdapter returns the adapter key for an active (rail, supplierCode).
+func (r *DBRailResolver) ResolveAdapter(ctx context.Context, rail SourceRail, supplierCode string) (string, bool) {
+	if r.db == nil {
+		return "", false
+	}
+	var adapter string
+	err := r.db.QueryRow(ctx, `
+		SELECT adapter FROM public.stays_supplier_config
+		WHERE source_rail = $1 AND supplier_code = $2 AND active = true
+		LIMIT 1`, string(rail), supplierCode).Scan(&adapter)
+	if err != nil || adapter == "" {
+		return "", false
+	}
+	return adapter, true
+}
+
+// ActiveRails returns the rails+adapters enabled for fan-out search.
+func (r *DBRailResolver) ActiveRails(ctx context.Context) []RailBinding {
+	if r.db == nil {
+		return nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT source_rail, adapter FROM public.stays_supplier_config
+		WHERE active = true`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []RailBinding
+	for rows.Next() {
+		var rail, adapter string
+		if err := rows.Scan(&rail, &adapter); err != nil {
+			continue
+		}
+		out = append(out, RailBinding{Rail: SourceRail(rail), Adapter: adapter})
+	}
+	return out
+}
+
+// StaticRailResolver is a config-driven resolver used in tests / when the supplier
+// table is empty (e.g. sandbox bring-up): both rails active, each mapped to its
+// adapter name.
+type StaticRailResolver struct {
+	Bindings map[SourceRail]string // rail → adapter name
+}
+
+// ResolveAdapter returns the static adapter for a rail (supplierCode ignored).
+func (r StaticRailResolver) ResolveAdapter(ctx context.Context, rail SourceRail, supplierCode string) (string, bool) {
+	a, ok := r.Bindings[rail]
+	return a, ok
+}
+
+// ActiveRails returns all statically-bound rails.
+func (r StaticRailResolver) ActiveRails(ctx context.Context) []RailBinding {
+	out := make([]RailBinding, 0, len(r.Bindings))
+	for rail, adapter := range r.Bindings {
+		out = append(out, RailBinding{Rail: rail, Adapter: adapter})
+	}
+	return out
 }

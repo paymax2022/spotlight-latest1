@@ -1,11 +1,6 @@
-// ── Paymax Invest · Stocks — API wrapper ─────────────────────────────────────
 // Typed data layer the screens code against. Mirrors crypto.api.ts: mock-flagged.
-// Flip EXPO_PUBLIC_STOCKS_USE_MOCK=false once the real Paymax /api/v1/stocks
 // endpoints land.
-//
 // IRON RULES (same as crypto):
-//  • all money is integer minor units;
-//  • every order mutation carries an Idempotency-Key;
 //  • the client never computes fees/eligibility authoritatively — server wins.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -36,7 +31,6 @@ import type {
   StockPosition,
 } from '../types/stocks.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_STOCKS_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
@@ -74,10 +68,8 @@ function requireAsset(idOrSymbol: string): StockAsset {
   return asset;
 }
 
-// ─── Assets (GET /stocks, /stocks/ticker/:symbol) ─────────────────────────────
-// Single-asset reads are namespaced under /ticker/{symbol} so the symbol wildcard
-// does not collide with the /stocks/orders and /stocks/offers collections on the
-// Go ServeMux (see internal/api/server.go).
+// Single-asset reads are /stocks/:symbol[/chart|news|dividends|corporate-actions]
+// on the Go router (backend/internal/invest/handler.go) — there is no /ticker segment.
 
 export async function getStocks(): Promise<StockAsset[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_STOCKS]; }
@@ -86,18 +78,18 @@ export async function getStocks(): Promise<StockAsset[]> {
 
 export async function getStock(symbol: string): Promise<StockAsset> {
   if (USE_MOCK) { await delay(220); return requireAsset(symbol); }
-  return unwrap<StockAsset>(await api.get(`/api/v1/stocks/ticker/${symbol}`));
+  return unwrap<StockAsset>(await api.get(`/api/v1/stocks/${symbol}`));
 }
 
 /** Deterministic mock price history for the asset chart. */
 export async function getChart(symbol: string, range: ChartRange): Promise<Candle[]> {
   if (USE_MOCK) { await delay(240); return chartFor(requireAsset(symbol), range); }
-  return unwrap<Candle[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/chart`, { params: { range } }));
+  return unwrap<Candle[]>(await api.get(`/api/v1/stocks/${symbol}/chart`, { params: { range } }));
 }
 
 export async function getNews(symbol: string): Promise<StockNews[]> {
   if (USE_MOCK) { await delay(240); void symbol; return [...MOCK_NEWS]; }
-  return unwrap<StockNews[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/news`));
+  return unwrap<StockNews[]>(await api.get(`/api/v1/stocks/${symbol}/news`));
 }
 
 export async function getDividends(symbol: string): Promise<Dividend[]> {
@@ -105,7 +97,7 @@ export async function getDividends(symbol: string): Promise<Dividend[]> {
     await delay(220);
     return MOCK_DIVIDENDS.filter((d) => d.symbol === symbol);
   }
-  return unwrap<Dividend[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/dividends`));
+  return unwrap<Dividend[]>(await api.get(`/api/v1/stocks/${symbol}/dividends`));
 }
 
 export async function getCorporateActions(symbol: string): Promise<CorporateAction[]> {
@@ -113,10 +105,8 @@ export async function getCorporateActions(symbol: string): Promise<CorporateActi
     await delay(220);
     return MOCK_CORPORATE_ACTIONS.filter((c) => c.symbol === symbol);
   }
-  return unwrap<CorporateAction[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/corporate-actions`));
+  return unwrap<CorporateAction[]>(await api.get(`/api/v1/stocks/${symbol}/corporate-actions`));
 }
-
-// ─── Portfolio (GET /portfolio, /portfolio/positions) ─────────────────────────
 
 // NOTE: there is no generic /api/v1/portfolio endpoint on the Go backend.
 // Invest exposes its own portfolio at /api/v1/invest/portfolio (aggregate
@@ -148,7 +138,6 @@ export async function getPositions(): Promise<StockPosition[]> {
   return unwrap<StockPosition[]>(await api.get('/api/v1/invest/portfolio/positions'));
 }
 
-// ─── Place order (POST /stocks/orders) ────────────────────────────────────────
 // Money mutation → pre-trade check + Idempotency-Key + provider ref.
 
 export async function placeOrder(draft: OrderDraft, idempotencyKey: string): Promise<StockOrder> {
@@ -227,8 +216,6 @@ export async function placeOrder(draft: OrderDraft, idempotencyKey: string): Pro
   }
 }
 
-// ─── Orders (GET /stocks/orders[/:id], POST /:id/cancel) ──────────────────────
-
 export async function getOrders(side?: OrderSide): Promise<StockOrder[]> {
   if (USE_MOCK) {
     await delay();
@@ -272,8 +259,6 @@ export async function cancelOrder(id: string): Promise<StockOrder> {
     throw toStockError(err);
   }
 }
-
-// ─── Public offers (GET /stocks/offers[/:id], POST /:id/apply) ────────────────
 
 // NOTE: backend splits IPOs from rights issues under /invest/public-offers and
 // /invest/rights-issues respectively (no unified /stocks/offers). This fetches

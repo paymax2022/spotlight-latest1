@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -16,7 +19,6 @@ import (
 // Store is the data-access contract for students + guardian links. Defined as an
 // in-package interface so student_test.go can substitute an in-memory fake (no live DB) —
 // the same isolation edupay_test.go / feeschedule_test.go use.
-//
 // NOTE ON GUARDIAN REUSE: none of these methods insert an identity row. AddGuardian /
 // RemoveGuardian only mutate the academy_students.guardian_user_ids[] array — the
 // guardian must already exist as an auth.users identity (validated in the service via the
@@ -70,16 +72,6 @@ func scanStudent(row pgx.Row) (*Student, error) {
 	return &s, nil
 }
 
-// uniqueViolation reports whether err is a Postgres unique_violation (SQLSTATE 23505),
-// which for academy_students means the (school_id, admission_number) UNIQUE was hit.
-func uniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505"
-	}
-	return false
-}
-
 func (r *Repository) Insert(ctx context.Context, s Student) (*Student, error) {
 	id := uuid.New().String()
 	now := time.Now()
@@ -91,10 +83,10 @@ func (r *Repository) Insert(ctx context.Context, s Student) (*Student, error) {
 	    (id, school_id, class_id, edupay_account_id, admission_number, student_user_id,
 	     guardian_user_ids, status, minor_flag, created_at)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9)`
-	_, err := r.db.Exec(ctx, q, id, s.SchoolID, nullStr(deref(s.ClassID)), nullStr(deref(s.EduPayAccountID)),
-		nullStr(deref(s.AdmissionNumber)), nullStr(deref(s.StudentUserID)), guardians, s.MinorFlag, now)
+	_, err := r.db.Exec(ctx, q, id, s.SchoolID, dbutil.NullStr(ptr.DerefZero(s.ClassID)), dbutil.NullStr(ptr.DerefZero(s.EduPayAccountID)),
+		dbutil.NullStr(ptr.DerefZero(s.AdmissionNumber)), dbutil.NullStr(ptr.DerefZero(s.StudentUserID)), guardians, s.MinorFlag, now)
 	if err != nil {
-		if uniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrAdmissionNumberTaken
 		}
 		return nil, err
@@ -165,8 +157,6 @@ func (r *Repository) SetGuardians(ctx context.Context, id string, guardianUserID
 	return r.Get(ctx, id)
 }
 
-// ── Audit ───────────────────────────────────────────────────────────────────────
-
 func (r *Repository) WriteAudit(ctx context.Context, actorID, action, entityID, from, to string, detail any) error {
 	return writeAudit(ctx, r.db, actorID, action, entityID, from, to, detail)
 }
@@ -176,39 +166,8 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,'academy_student',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
-}
-
-// ── small helpers ─────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }
 
 func toJSON(v any) []byte {

@@ -7,12 +7,11 @@ package symptomsearch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 )
-
-// ─── fake repo ───────────────────────────────────────────────────────────────
 
 type fakeRepo struct {
 	terms          map[string]Term // key: normalised term text
@@ -158,9 +157,9 @@ func (f *fakeRepo) ReviewCaseByID(_ context.Context, id string) (*PharmacyReview
 	return nil, nil
 }
 
-func (f *fakeRepo) ReviewCaseByOrder(_ context.Context, orderID string) (*PharmacyReviewCase, error) {
+func (f *fakeRepo) ReviewCaseByOrder(ctx context.Context, orderID string) (*PharmacyReviewCase, error) {
 	if id, ok := f.casesByOrder[orderID]; ok {
-		return f.ReviewCaseByID(context.Background(), id)
+		return f.ReviewCaseByID(ctx, id)
 	}
 	return nil, nil
 }
@@ -176,7 +175,7 @@ func (f *fakeRepo) appendCaseEvent(caseID string, from *ReviewState, to ReviewSt
 
 func (f *fakeRepo) InsertReviewCase(_ context.Context, rc *PharmacyReviewCase, actorID string) error {
 	if _, dup := f.casesByOrder[rc.OrderID]; dup {
-		return fmt.Errorf("unique violation: order_id")
+		return errors.New("unique violation: order_id")
 	}
 	cp := *rc
 	f.cases[rc.ID] = &cp
@@ -231,9 +230,8 @@ func (f *fakeRepo) UpsertTaxonomyRow(_ context.Context, entity, action, actorID 
 	return map[string]any{"id": "fake", "entity": entity, "action": action}, nil
 }
 
-// ─── fixtures (mirror the migration seeds) ───────────────────────────────────
-
-func intPtr(v int) *int { return &v }
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
 
 func newFakeRepo() *fakeRepo {
 	f := &fakeRepo{
@@ -290,7 +288,7 @@ func newFakeRepo() *fakeRepo {
 		{ID: "r3", ClusterID: "cl-fever", Expression: "who:PREGNANT_OR_BF", Priority: 30,
 			Effect: EffectRequireConfirmation, Reason: "fever while pregnant or breastfeeding", Status: StatusApproved},
 		{ID: "r4", ClusterID: "cl-hbp", Expression: "who:PREGNANT_OR_BF", Priority: 40,
-			Effect: EffectSuppressClass, SuppressClassID: strPtr("cls-nsaid"),
+			Effect: EffectSuppressClass, SuppressClassID: new("cls-nsaid"),
 			Reason: "NSAIDs suppressed in pregnancy/breastfeeding", Status: StatusApproved},
 	}
 	f.classMap = []ClassMapEntry{
@@ -316,12 +314,13 @@ func newFakeRepo() *fakeRepo {
 			TherapeuticClassID: "cls-para", InStock: false, PregnancySafe: true},
 		{ID: "sku-adult", ProductID: "p6", Name: "Adult only", Brand: "W", PackSize: "1",
 			PriceKobo: 20000, NAFDACRegNo: "A4-2222", Classification: ClassificationOTC,
-			TherapeuticClassID: "cls-para", InStock: true, AgeMinYears: intPtr(12), PregnancySafe: true},
+			TherapeuticClassID: "cls-para", InStock: true, AgeMinYears: new(12), PregnancySafe: true},
 	}
 	return f
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 func newTestService() (*Service, *fakeRepo) {
 	f := newFakeRepo()
@@ -338,8 +337,6 @@ func resolve(t *testing.T, s *Service, terms []string, who, duration string) *Sy
 	}
 	return res
 }
-
-// ─── tier escalation (seed rules) ────────────────────────────────────────────
 
 func TestResolve_FeverProlonged_EscalatesT3(t *testing.T) {
 	s, _ := newTestService()
@@ -404,8 +401,6 @@ func TestResolve_MixedClusters_HighestTierWins(t *testing.T) {
 	}
 }
 
-// ─── T2 gate & multilingual match ────────────────────────────────────────────
-
 func TestResolve_FeverBase_T2RequiresConfirmation(t *testing.T) {
 	s, _ := newTestService()
 	res := resolve(t, s, []string{"body dey hot"}, "", "TODAY") // pidgin term → fever
@@ -419,8 +414,6 @@ func TestResolve_FeverBase_T2RequiresConfirmation(t *testing.T) {
 		t.Fatal("T2 shows options behind the pharmacist gate — class groups expected")
 	}
 }
-
-// ─── pregnancy suppression (suppressed, never shown-disabled) ────────────────
 
 func TestResolve_Pregnancy_SuppressesNSAIDGroup(t *testing.T) {
 	s, _ := newTestService()
@@ -455,13 +448,11 @@ func TestResolve_NoPregnancy_NSAIDPresent(t *testing.T) {
 	}
 }
 
-// ─── fail-closed rule parsing ────────────────────────────────────────────────
-
 func TestResolve_MalformedApprovedRule_FailsClosedToT3(t *testing.T) {
 	s, f := newTestService()
 	f.rules = append(f.rules, ClusterRule{
-		ID: "r-bad", ClusterID: "cl-hbp", Expression: "concept:headache AND AND broken(",
-		Priority: 1, Effect: EffectEscalate, EscalateToTier: strPtr("T2"), Status: StatusApproved,
+		ID: "r-bad", ClusterID: "cl-hbp", Expression: "concept:headache AND broken(",
+		Priority: 1, Effect: EffectEscalate, EscalateToTier: new("T2"), Status: StatusApproved,
 	})
 	res := resolve(t, s, []string{"headache"}, "", "")
 	if res.Tier != TierT3 {
@@ -471,8 +462,6 @@ func TestResolve_MalformedApprovedRule_FailsClosedToT3(t *testing.T) {
 		t.Fatal("expected escalation card on fail-closed path")
 	}
 }
-
-// ─── never a dead end ────────────────────────────────────────────────────────
 
 func TestResolve_ConceptWithoutCluster_T3ConsultNotEmpty(t *testing.T) {
 	s, _ := newTestService()
@@ -523,8 +512,6 @@ func TestResolve_EventLoggedWithoutRawRefinerPII(t *testing.T) {
 		t.Fatalf("refiners must be recorded as structured values, got %v", ev.Refiners)
 	}
 }
-
-// ─── SKU surface gates ───────────────────────────────────────────────────────
 
 func TestListClassSkus_POMAndBlockedNeverSurface(t *testing.T) {
 	s, _ := newTestService()
@@ -591,8 +578,6 @@ func TestListClassSkus_UnknownClass404(t *testing.T) {
 		t.Fatalf("expected ErrNotFound for unknown class, got %v", err)
 	}
 }
-
-// ─── review-case state machine ───────────────────────────────────────────────
 
 func TestReviewStateMachine_EdgeMap(t *testing.T) {
 	legal := [][2]ReviewState{
@@ -740,8 +725,6 @@ func TestReviewCase_InvalidDecision(t *testing.T) {
 	}
 }
 
-// ─── search-event linking (order seam, PRD §10) ──────────────────────────────
-
 func TestResolve_ReturnsSearchEventID(t *testing.T) {
 	s, f := newTestService()
 	res := resolve(t, s, []string{"fever"}, "", "TODAY")
@@ -858,8 +841,6 @@ func TestOrderSeam_ForeignUsersSearchEvent_NotLinkedFailsClosed(t *testing.T) {
 	}
 }
 
-// ─── read-path tenant scoping (object-level authz on review reads) ───────────
-
 func TestGetReviewCaseDetail_ForeignTenantReadsNotFound(t *testing.T) {
 	s, _ := newTestService()
 	ctx := context.Background()
@@ -902,8 +883,6 @@ func TestListReviewCases_TenantScoped(t *testing.T) {
 		t.Fatalf("override queue read: %v, %d cases", err, len(all))
 	}
 }
-
-// ─── evented review-case history ─────────────────────────────────────────────
 
 func TestReviewCase_EventRowPerTransition(t *testing.T) {
 	s, f := newTestService()

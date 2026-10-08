@@ -3,13 +3,11 @@ package orchestration
 // cards_store.go — Postgres-backed persistence for the FX virtual-cards vertical
 // (mobile src/features/fx/api/fxCards.api.ts). Replaces the honest stubs in
 // handler_cards.go with real rows in orch_fx_cards / orch_fx_card_txns.
-//
 // Tenant model: the FX account owner (the authenticated customer id) IS the
-// business/tenant, so every query is scoped by business_id (= customerID(c)) for
+// business/tenant, so every query is scoped by business_id (= ginutil.UserID(c)) for
 // object-level authorization — the same convention as the other orch_fx_* tables.
 // A nil store makes the handlers fall back to the existing stubs so a DB-less dev
 // setup still renders.
-//
 // Card FUNDING is a money path: it debits the customer's wallet and credits the
 // card balance atomically (single tx, wallet lock then row locks, fail-closed on
 // insufficient funds) and is deduped on (business_id, idempotency_key) via
@@ -17,7 +15,6 @@ package orchestration
 // scopes the card and keys the wallet. Which pot that wallet debit lands in is
 // decided in ONE place — customer_wallet.go: NGN in the main platform ledger,
 // every other currency in orch_balances.
-//
 // Requires migration 20261003000000_fx_cards_collections.sql.
 
 import (
@@ -34,10 +31,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/jsonx"
 	"spotlight/backend/internal/provider"
 )
-
-// ─── Sentinel errors (mapped to HTTP status in the handlers) ──────────────────
 
 var (
 	// ErrCardNotFound is returned when a card id is not found for the business.
@@ -46,8 +42,6 @@ var (
 	// balance is short. The handler maps this to HTTP 402 Payment Required.
 	ErrInsufficientCardBalance = errors.New("insufficient balance to fund card")
 )
-
-// ─── Contract-shaped records (camelCase JSON mirrors mobile fx.types.ts) ──────
 
 // SpendingControls mirrors the mobile SpendingControls contract. Limits are
 // pointers so an unset limit serializes as JSON null (= "no limit").
@@ -109,8 +103,6 @@ type CardDraft struct {
 	FundingAmount int64
 }
 
-// ─── Store interface ──────────────────────────────────────────────────────────
-
 // CardStore persists the FX virtual-cards tables. An interface so handlers stay
 // testable and so a nil store degrades to the existing stubs.
 type CardStore interface {
@@ -151,7 +143,7 @@ func NewCardStore(db *pgxpool.Pool, issuer provider.CardIssuer) CardStore {
 const cardCols = `id, label, brand, currency, last4, exp_month, exp_year, cardholder_name,
 	balance_minor, status, color, spent_this_month_minor, controls, provider, created_at`
 
-func controlsJSON(sc SpendingControls) string { b, _ := json.Marshal(sc); return string(b) }
+func controlsJSON(sc SpendingControls) string { return jsonx.MarshalString(sc) }
 
 func defaultCardControls() SpendingControls {
 	return SpendingControls{Online: true, Atm: false, International: true, Contactless: true}
@@ -174,8 +166,6 @@ func scanCard(row pgx.Row) (Card, error) {
 	cd.CreatedAt = created.UTC().Format(time.RFC3339)
 	return cd, nil
 }
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 func (s *sqlCardStore) ListCards(ctx context.Context, business string) ([]Card, error) {
 	rows, err := s.db.Query(ctx, `SELECT `+cardCols+` FROM orch_fx_cards WHERE business_id=$1 ORDER BY created_at DESC`, business)
@@ -204,8 +194,6 @@ func (s *sqlCardStore) GetCard(ctx context.Context, business, id string) (Card, 
 	}
 	return cd, true, nil
 }
-
-// ─── Create ───────────────────────────────────────────────────────────────────
 
 // CreateCard inserts a zero-balance active card. The initial funding load (if any)
 // is applied separately via FundCard so it stays on the idempotent money path.
@@ -284,8 +272,6 @@ func (s *sqlCardStore) CreateCard(ctx context.Context, business string, draft Ca
 	return cd, nil
 }
 
-// ─── Fund (money path) ────────────────────────────────────────────────────────
-
 // cardFundIdem derives the main-ledger idempotency key for a card-funding leg.
 // When the caller supplied an Idempotency-Key the derived key is stable, so a
 // replayed funding request replays the SAME ledger key and cannot post twice.
@@ -309,7 +295,7 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 	if err != nil {
 		return Card{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Wallet lock FIRST, before the card row lock, so card funding orders its
 	// locks the same way conversions and payouts do and no cycle can form.
@@ -335,7 +321,6 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 		}
 	}
 
-	// Lock the card row.
 	var currency string
 	err = tx.QueryRow(ctx, `SELECT currency FROM orch_fx_cards WHERE id=$1 AND business_id=$2 FOR UPDATE`, id, business).Scan(&currency)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -400,8 +385,6 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 	return cd, nil
 }
 
-// ─── Status transitions ───────────────────────────────────────────────────────
-
 func (s *sqlCardStore) setStatus(ctx context.Context, business, id, status string) (Card, bool, error) {
 	cd, err := scanCard(s.db.QueryRow(ctx, `
 		UPDATE orch_fx_cards SET status=$3, updated_at=now()
@@ -459,7 +442,7 @@ func (s *sqlCardStore) TerminateCard(ctx context.Context, business, id string) e
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Same lock ordering as FundCard: wallet first, then the card row.
 	if err = lockCustomerWallet(ctx, tx, business); err != nil {
@@ -524,8 +507,6 @@ func (s *sqlCardStore) TerminateCard(ctx context.Context, business, id string) e
 	return nil
 }
 
-// ─── Controls ─────────────────────────────────────────────────────────────────
-
 func (s *sqlCardStore) UpdateControls(ctx context.Context, business, id string, controls SpendingControls) (Card, bool, error) {
 	cd, err := scanCard(s.db.QueryRow(ctx, `
 		UPDATE orch_fx_cards SET controls=$3, updated_at=now()
@@ -539,8 +520,6 @@ func (s *sqlCardStore) UpdateControls(ctx context.Context, business, id string, 
 	}
 	return cd, true, nil
 }
-
-// ─── Card transactions ────────────────────────────────────────────────────────
 
 func (s *sqlCardStore) ListCardTransactions(ctx context.Context, business, cardID string) ([]CardTransaction, error) {
 	rows, err := s.db.Query(ctx, `
@@ -563,8 +542,6 @@ func (s *sqlCardStore) ListCardTransactions(ctx context.Context, business, cardI
 	}
 	return out, rows.Err()
 }
-
-// ─── Reveal ───────────────────────────────────────────────────────────────────
 
 // RevealCard returns the sensitive PAN/CVV/expiry for a card. When a real issuer is
 // wired AND the card has a provider_card_id, the material comes from the provider's

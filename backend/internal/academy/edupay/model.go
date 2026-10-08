@@ -10,8 +10,6 @@ import (
 // state (disbursement SM, award state) lives here; the actual value movement is the
 // concern of the INJECTED rails (collect / disburse / bnpl) — no vendor leak.
 
-// ── School / fee catalog ────────────────────────────────────────────────────────
-
 // School mirrors academy_schools.
 type School struct {
 	ID                string    `json:"id"`
@@ -49,8 +47,6 @@ type EduPayAccount struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
-// ── Savings pots (append-only contributions; saved_minor is DERIVED) ────────────
-
 // SavingsPot mirrors academy_savings_pots. SavedMinor is a PROJECTION of the sum of
 // pot contributions — never mutated directly as a shadow balance (golden rule:
 // append-only ledger / no shadow balances).
@@ -59,7 +55,7 @@ type SavingsPot struct {
 	UserID        string    `json:"userId"`
 	GoalName      string    `json:"goalName"`
 	TargetMinor   int64     `json:"targetMinor"`
-	SavedMinor    int64     `json:"savedMinor"` // derived = SUM(contributions)
+	SavedMinor    int64     `json:"savedMinor"`
 	FeeScheduleID *string   `json:"feeScheduleId,omitempty"`
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"createdAt"`
@@ -76,8 +72,6 @@ type PotContribution struct {
 	IdempotencyKey string    `json:"-"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
-
-// ── Disbursement (guarded SM; money via rails) ──────────────────────────────────
 
 // Disbursement mirrors academy_disbursements. Funds flow: collect from the payer
 // (CollectRail / pot / scholarship) then disburse to the school (DisburseRail). The
@@ -98,8 +92,6 @@ type Disbursement struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 	ReconciledAt   *time.Time `json:"reconciledAt,omitempty"`
 }
-
-// ── Scholarships (sponsor-funded; same disbursement SM) ─────────────────────────
 
 // Scholarship mirrors academy_scholarships. AwardedMinor is the running total drawn
 // against BudgetMinor.
@@ -127,8 +119,6 @@ type ScholarshipAward struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// ── Aggregate view ──────────────────────────────────────────────────────────────
-
 // MyEduPay is the member dashboard: linked schools, fee schedules due, pots and the
 // disbursement history for the payer.
 type MyEduPay struct {
@@ -137,8 +127,6 @@ type MyEduPay struct {
 	Pots          []SavingsPot    `json:"pots"`
 	Disbursements []Disbursement  `json:"disbursements"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // LinkSchoolRequest links the payer to a school for a named student.
 type LinkSchoolRequest struct {
@@ -205,13 +193,4 @@ type AwardScholarshipRequest struct {
 	UserID        string `json:"userId" binding:"required"`
 	FeeScheduleID string `json:"feeScheduleId"`
 	AmountMinor   int64  `json:"amountMinor" binding:"required"`
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
 }

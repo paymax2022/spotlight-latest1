@@ -1,4 +1,3 @@
-// ── Crowdfunding — Wallet / support / notifications / rewards / settings hooks ─
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

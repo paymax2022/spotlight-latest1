@@ -1,5 +1,3 @@
-// ── Sell — edit an existing listing (LM-001 / LM-002 / EC-010) ───────────────
-//
 // The compose wizard (sell/compose) is create-only. This route edits the mutable
 // fields of an existing listing — title, description, price, and category
 // attributes — via PATCH /listings/:id. Editing the CONTENT (title/description/
@@ -14,9 +12,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldAlert, Info } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
 import { estimateFairPriceBand, uploadListingImage } from '@/features/marketplace/api/sell.api';
@@ -38,7 +36,6 @@ const MIN_DESC_WORDS = 8;
 
 function phashOf(uri: string): string {
   // Same stand-in as the composer (features/sell/compose.tsx phashOf) — normalized
-  // uri for a same-session duplicate hint; the server's DUPLICATE_PHOTO check is
   // authoritative.
   return uri.split('?')[0];
 }
@@ -81,7 +78,6 @@ export default function EditListingScreen() {
     }
   }, [listing, hydrated]);
 
-  // ── Photo capture (mirrors sell/compose.tsx addPhotos) ──
   const addPhotos = async (fromCamera: boolean) => {
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()

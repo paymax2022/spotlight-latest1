@@ -7,11 +7,11 @@ import {
   ChevronRight, ShieldCheck, Wallet, Users,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 
 interface Track {
@@ -29,7 +29,6 @@ interface Track {
 // rather than `/(doctor)/onboarding`, because that group's index maps to the URL
 // `/onboarding`, which the consumer onboarding carousel (app/onboarding.tsx) also
 // claims — the deeper path is unambiguous.
-//
 // HMO and clinic carry no route on purpose: nothing implements their onboarding
 // yet, and a card that navigates nowhere is worse than one that says so.
 const TRACKS: Track[] = [

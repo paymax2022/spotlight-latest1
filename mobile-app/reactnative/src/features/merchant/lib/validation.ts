@@ -1,4 +1,3 @@
-// ── Merchant Onboarding — pure form-schema validation ────────────────────────
 // Dependency-free (type-only imports). Mirrors the server validator so the
 // wizard validates client-side against the SAME rules (FR-12). Unit-tested.
 

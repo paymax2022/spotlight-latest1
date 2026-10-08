@@ -3,9 +3,9 @@ import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -15,7 +15,6 @@ import { useCreateSupportTicket } from '@/features/doctor/hooks';
 import { SUPPORT_CATEGORIES } from '@/features/doctor/constants';
 import { alertAsync } from '@/lib/confirm';
 
-// ── Section AA — Create / contact support ticket (AA.3 / AA.5 / AA.6) ──────────
 // NEW screen. REUSES the Phase 1 useCreateSupportTicket mutation. When a
 // `category` param is passed (e.g. Technical from the hub) it pre-selects it, so
 // the "report a technical issue" entry point is the same screen with a preset.

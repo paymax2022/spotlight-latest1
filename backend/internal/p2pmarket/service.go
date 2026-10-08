@@ -2,14 +2,14 @@ package p2pmarket
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"spotlight/backend/internal/escrow"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/escrow"
 )
 
 const moduleType = "p2pmarket"
@@ -33,15 +33,13 @@ func NewService(db *pgxpool.Pool, esc *escrow.Service, audit Auditor) *Service {
 	return &Service{db: db, escrow: esc, audit: audit}
 }
 
-// ───────────────────────── Listings ─────────────────────────────────────────────
-
 // CreateListing publishes a seller listing (object-level: the caller is the seller).
 func (s *Service) CreateListing(ctx context.Context, sellerID, title, description string, priceKobo int64) (*Listing, error) {
 	if sellerID == "" {
-		return nil, fmt.Errorf("p2pmarket: seller required")
+		return nil, errors.New("p2pmarket: seller required")
 	}
 	if priceKobo <= 0 {
-		return nil, fmt.Errorf("p2pmarket: price must be positive kobo")
+		return nil, errors.New("p2pmarket: price must be positive kobo")
 	}
 	l := &Listing{ID: uuid.New().String(), SellerID: sellerID, Title: title, Description: description, PriceKobo: priceKobo, State: ListingActive, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	const ins = `INSERT INTO p2p_listings (id, seller_id, title, description, price_kobo, state) VALUES ($1,$2,$3,$4,$5,'ACTIVE')`
@@ -71,7 +69,7 @@ func (s *Service) GetListing(ctx context.Context, listingID string) (*Listing, e
 	var l Listing
 	var state string
 	if err := s.db.QueryRow(ctx, q, listingID).Scan(&l.ID, &l.SellerID, &l.Title, &l.Description, &l.PriceKobo, &state, &l.CreatedAt, &l.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrListingNotFound
 		}
 		return nil, err
@@ -105,24 +103,22 @@ func (s *Service) Browse(ctx context.Context, limit int) ([]Listing, error) {
 	return out, rows.Err()
 }
 
-// ───────────────────────── Orders (escrow-backed) ───────────────────────────────
-
 // Checkout creates an order and HOLDS the buyer's funds in escrow (escrow.Hold,
 // idempotent on idemKey — NL-6/NL-9). The seller is recorded but not paid until the
 // buyer confirms or an arbiter releases.
 func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey string) (*Order, error) {
 	if buyerID == "" || idemKey == "" {
-		return nil, fmt.Errorf("p2pmarket: buyer and idempotency key required")
+		return nil, errors.New("p2pmarket: buyer and idempotency key required")
 	}
 	l, err := s.GetListing(ctx, listingID)
 	if err != nil {
 		return nil, err
 	}
 	if l.State != ListingActive {
-		return nil, fmt.Errorf("p2pmarket: listing not available")
+		return nil, errors.New("p2pmarket: listing not available")
 	}
 	if l.SellerID == buyerID {
-		return nil, fmt.Errorf("p2pmarket: cannot buy your own listing")
+		return nil, errors.New("p2pmarket: cannot buy your own listing")
 	}
 
 	// Idempotent: an order already created for this key is returned as-is.
@@ -143,8 +139,28 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 	}
 	const ins = `INSERT INTO p2p_orders (id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, idempotency_key)
 	             VALUES ($1,$2,$3,$4,$5,$6,'CHECKOUT',$7) ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, o.ID, o.ListingID, o.BuyerID, o.SellerID, o.AmountKobo, o.EscrowID, idemKey); err != nil {
+	ct, err := s.db.Exec(ctx, ins, o.ID, o.ListingID, o.BuyerID, o.SellerID, o.AmountKobo, o.EscrowID, idemKey)
+	if err != nil {
+		// The escrow hold is already durable but owns no order — refund it
+		// best-effort (mirrors transport's refundOnFailure) rather than strand a
+		// HELD hold with no owning row. Refund is idempotent; a failed refund is
+		// still surfaced via the insert error, and a same-key client retry also
+		// self-heals (Hold replays the same hold, the insert is retried).
+		_ = s.escrow.Refund(ctx, hold.ID)
 		return nil, fmt.Errorf("p2pmarket: insert order: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// A same-key order committed between our orderByIdem check and this
+		// insert (a racing retry). The escrow hold for this key IS that order's
+		// hold (escrow.Hold replays by key), so the money is accounted for —
+		// return the persisted row, never the unpersisted `o` we built above
+		// (which would report an order id/escrow pairing nothing saved). Do NOT
+		// refund: the hold is owned by the conflicting order.
+		persisted, ferr := s.orderByIdem(ctx, idemKey)
+		if ferr != nil {
+			return nil, fmt.Errorf("p2pmarket: order insert conflicted but re-read failed: %w", ferr)
+		}
+		return persisted, nil
 	}
 	// Mark the listing sold (single-quantity model).
 	_, _ = s.db.Exec(ctx, `UPDATE p2p_listings SET state='SOLD', updated_at=now() WHERE id=$1 AND state='ACTIVE'`, listingID)
@@ -163,7 +179,7 @@ func (s *Service) ConfirmReceipt(ctx context.Context, orderID, buyerID string) e
 		return ErrNotParty
 	}
 	if o.State != OrderCheckout {
-		return fmt.Errorf("p2pmarket: order not in CHECKOUT state")
+		return errors.New("p2pmarket: order not in CHECKOUT state")
 	}
 	if err := s.escrow.Release(ctx, o.EscrowID, o.SellerID); err != nil {
 		return fmt.Errorf("p2pmarket: release escrow: %w", err)
@@ -183,7 +199,7 @@ func (s *Service) RaiseDispute(ctx context.Context, orderID, raisedBy, evidence 
 		return err
 	}
 	if o.State != OrderCheckout {
-		return fmt.Errorf("p2pmarket: only an in-escrow order can be disputed")
+		return errors.New("p2pmarket: only an in-escrow order can be disputed")
 	}
 	if _, err := s.escrow.RaiseDispute(ctx, o.EscrowID, raisedBy, evidence); err != nil {
 		return err
@@ -204,7 +220,7 @@ func (s *Service) Arbitrate(ctx context.Context, orderID string, decision escrow
 		return err
 	}
 	if o.State != OrderDisputed {
-		return fmt.Errorf("p2pmarket: order not in DISPUTED state")
+		return errors.New("p2pmarket: order not in DISPUTED state")
 	}
 	if err := s.escrow.Arbitrate(ctx, o.EscrowID, decision, arbiterID); err != nil {
 		return err
@@ -226,7 +242,7 @@ func (s *Service) GetOrder(ctx context.Context, orderID string) (*Order, error) 
 	var o Order
 	var state string
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.ListingID, &o.BuyerID, &o.SellerID, &o.AmountKobo, &o.EscrowID, &state, &o.CreatedAt, &o.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrOrderNotFound
 		}
 		return nil, err
@@ -235,13 +251,11 @@ func (s *Service) GetOrder(ctx context.Context, orderID string) (*Order, error) 
 	return &o, nil
 }
 
-// ───────────────────────── Seller ratings ───────────────────────────────────────
-
 // RateSeller lets the buyer rate the seller after a CONFIRMED order (object-level
 // authZ: only the buyer of that order, only once).
 func (s *Service) RateSeller(ctx context.Context, orderID, buyerID string, stars int, comment string) (*Rating, error) {
 	if stars < 1 || stars > 5 {
-		return nil, fmt.Errorf("p2pmarket: stars must be 1..5")
+		return nil, errors.New("p2pmarket: stars must be 1..5")
 	}
 	o, err := s.GetOrder(ctx, orderID)
 	if err != nil {
@@ -251,7 +265,7 @@ func (s *Service) RateSeller(ctx context.Context, orderID, buyerID string, stars
 		return nil, ErrNotParty
 	}
 	if o.State != OrderConfirmed {
-		return nil, fmt.Errorf("p2pmarket: can only rate a confirmed order")
+		return nil, errors.New("p2pmarket: can only rate a confirmed order")
 	}
 	r := &Rating{ID: uuid.New().String(), OrderID: orderID, SellerID: o.SellerID, BuyerID: buyerID, Stars: stars, Comment: comment, CreatedAt: time.Now()}
 	const ins = `INSERT INTO p2p_seller_ratings (id, order_id, seller_id, buyer_id, stars, comment)
@@ -261,7 +275,7 @@ func (s *Service) RateSeller(ctx context.Context, orderID, buyerID string, stars
 		return nil, fmt.Errorf("p2pmarket: insert rating: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return nil, fmt.Errorf("p2pmarket: order already rated")
+		return nil, errors.New("p2pmarket: order already rated")
 	}
 	return r, nil
 }
@@ -273,14 +287,12 @@ func (s *Service) SellerRating(ctx context.Context, sellerID string) (avg float6
 	return avg, count, err
 }
 
-// --- internals ---
-
 func (s *Service) orderByIdem(ctx context.Context, idemKey string) (*Order, error) {
 	const q = `SELECT id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, created_at, updated_at FROM p2p_orders WHERE idempotency_key=$1`
 	var o Order
 	var state string
 	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&o.ID, &o.ListingID, &o.BuyerID, &o.SellerID, &o.AmountKobo, &o.EscrowID, &state, &o.CreatedAt, &o.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
 		return nil, err
@@ -298,8 +310,64 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var (
-	ErrListingNotFound = fmt.Errorf("p2pmarket: listing not found")
-	ErrOrderNotFound   = fmt.Errorf("p2pmarket: order not found")
-	ErrNotParty        = fmt.Errorf("p2pmarket: not a party to this order")
-	ErrNotOwnerOrState = fmt.Errorf("p2pmarket: not owner or not in a closable state")
+	ErrListingNotFound = errors.New("p2pmarket: listing not found")
+	ErrOrderNotFound   = errors.New("p2pmarket: order not found")
+	ErrNotParty        = errors.New("p2pmarket: not a party to this order")
+	ErrNotOwnerOrState = errors.New("p2pmarket: not owner or not in a closable state")
 )
+
+// ListingState is the listing lifecycle.
+type ListingState string
+
+const (
+	ListingActive ListingState = "ACTIVE"
+	ListingSold   ListingState = "SOLD"
+	ListingClosed ListingState = "CLOSED"
+)
+
+// Listing is a seller's offer.
+type Listing struct {
+	ID          string       `json:"id"`
+	SellerID    string       `json:"seller_id"` // FK auth.users(id)
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	PriceKobo   int64        `json:"price_kobo"`
+	State       ListingState `json:"state"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+}
+
+// OrderState is the order lifecycle. It mirrors the escrow hold underneath:
+// CHECKOUT (funds HELD) → CONFIRMED (RELEASED to seller) | DISPUTED → resolved.
+type OrderState string
+
+const (
+	OrderCheckout  OrderState = "CHECKOUT"  // funds held in escrow
+	OrderConfirmed OrderState = "CONFIRMED" // buyer confirmed delivery → released
+	OrderDisputed  OrderState = "DISPUTED"  // contested → arbitration
+	OrderRefunded  OrderState = "REFUNDED"  // refunded to buyer
+)
+
+// Order is a buyer's purchase of a listing, backed by an escrow hold.
+type Order struct {
+	ID         string     `json:"id"`
+	ListingID  string     `json:"listing_id"`
+	BuyerID    string     `json:"buyer_id"`
+	SellerID   string     `json:"seller_id"`
+	AmountKobo int64      `json:"amount_kobo"`
+	EscrowID   string     `json:"escrow_id"` // -> escrow_holds.id
+	State      OrderState `json:"state"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// Rating is a buyer's rating of a seller after an order (1..5).
+type Rating struct {
+	ID        string    `json:"id"`
+	OrderID   string    `json:"order_id"`
+	SellerID  string    `json:"seller_id"`
+	BuyerID   string    `json:"buyer_id"`
+	Stars     int       `json:"stars"`
+	Comment   string    `json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
+}

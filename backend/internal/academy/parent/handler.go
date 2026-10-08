@@ -7,9 +7,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler exposes the academy parent layer over Gin.
 //   - member (guardian): child dashboards, controls, reports, purchase approvals.
@@ -22,10 +30,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated caller from gin context (set by auth middleware).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -37,23 +44,23 @@ func uid(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
 // requireUID resolves the guardian or aborts 401.
 func (h *Handler) requireUID(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication_required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication_required"})
 		return "", false
 	}
 	return u, true
@@ -80,7 +87,6 @@ func RegisterAcademyParent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 	svc := NewService(pool)
 	h := NewHandler(svc)
 
-	// ── Member (guardian) ──
 	if member != nil {
 		pg := member.Group("/parent")
 		pg.GET("/children", h.GetChildren)
@@ -93,7 +99,6 @@ func RegisterAcademyParent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 		pg.POST("/approvals/:id/decide", h.DecideApproval)
 	}
 
-	// ── Admin — academy.notifications capability ──
 	if admin != nil {
 		guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 		ag := admin.Group("/notification-templates", guard("academy.notifications"))
@@ -104,8 +109,6 @@ func RegisterAcademyParent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 		ag.DELETE("/:key", h.AdminDeleteTemplate)
 	}
 }
-
-// ── Member handlers (guardian) ──────────────────────────────────────────────────
 
 func (h *Handler) GetChildren(c *gin.Context) {
 	u, ok := h.requireUID(c)
@@ -153,7 +156,7 @@ func (h *Handler) UpsertControls(c *gin.Context) {
 	}
 	var req UpsertControlsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpsertControls(c.Request.Context(), u, c.Param("minorId"), req)
@@ -184,7 +187,7 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 	}
 	var req GenerateReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.GenerateReport(c.Request.Context(), u, req.MinorUserID, req.Period)
@@ -215,7 +218,7 @@ func (h *Handler) DecideApproval(c *gin.Context) {
 	}
 	var req DecideApprovalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Decide(c.Request.Context(), u, c.Param("id"), req.Decision)
@@ -226,15 +229,13 @@ func (h *Handler) DecideApproval(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers: notification templates ──────────────────────────────────────
-
 func (h *Handler) AdminUpsertTemplate(c *gin.Context) {
 	var req UpsertTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.UpsertTemplate(c.Request.Context(), uid(c), req)
+	out, err := h.svc.UpsertTemplate(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -261,7 +262,7 @@ func (h *Handler) AdminGetTemplate(c *gin.Context) {
 }
 
 func (h *Handler) AdminDeleteTemplate(c *gin.Context) {
-	if err := h.svc.DeleteTemplate(c.Request.Context(), uid(c), c.Param("key")); err != nil {
+	if err := h.svc.DeleteTemplate(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("key")); err != nil {
 		h.fail(c, err)
 		return
 	}

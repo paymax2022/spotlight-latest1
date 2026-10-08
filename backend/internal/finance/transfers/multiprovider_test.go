@@ -3,13 +3,12 @@ package transfers_test
 import (
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
 	"spotlight/backend/internal/finance/transfers"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
-// ---------------------------------------------------------------------------
 // Per-leg idempotency key derivation.
-// ---------------------------------------------------------------------------
 
 // TestLegKeyDistinctPerLeg verifies every money leg derives a distinct key from
 // the base, so the ledger unique constraint isolates legs and a duplicate webhook
@@ -33,11 +32,9 @@ func TestLegKeyDistinctPerLeg(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Ledger-leg balance invariants (pure arithmetic on the amounts the service
 // posts). The actual posting is exercised against the DB elsewhere; here we lock
 // the math so the legs always net to zero and restore the source exactly.
-// ---------------------------------------------------------------------------
 
 // TestReserveLegBalances verifies the reserve leg debits (amount+fee) from the
 // wallet and credits exactly the same total to suspense (DR == CR).
@@ -95,9 +92,7 @@ func TestReversalRestoresSourceExactly(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Bank→bank state progression guard.
-// ---------------------------------------------------------------------------
 
 func TestCanAdvanceBankToBank(t *testing.T) {
 	cases := []struct {
@@ -141,10 +136,8 @@ func TestNextStatusOnProviderErrorBankSource(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PIN hash + verify (bcrypt round-trip; lockout state machine is DB-backed and
 // tested at the integration layer — here we lock the hash/verify invariant).
-// ---------------------------------------------------------------------------
 
 func TestPinBcryptRoundTrip(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("1234"), bcrypt.DefaultCost)
@@ -163,9 +156,7 @@ func TestPinBcryptRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Webhook status classification (shared mapping) — pending is a benign no-op.
-// ---------------------------------------------------------------------------
 
 func TestClassifyWebhookStatusPendingNoOp(t *testing.T) {
 	if _, _, known := transfers.ClassifyWebhookStatus("pending"); known {

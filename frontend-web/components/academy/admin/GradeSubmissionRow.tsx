@@ -1,9 +1,7 @@
 'use client';
 
 // One learner's submission, with the grading form inline.
-//
 // The score is bounded by the assignment's own max_score both here and on the
-// server. Client-side it is guidance; the server rejects out-of-range scores
 // outright, because a silently clamped mark corrupts any average built from it.
 
 import { useState } from 'react';

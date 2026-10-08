@@ -1,4 +1,5 @@
 import { ApiError } from '@/src/lib/api/responses';
+import { verifyHmacSha512Hex } from '@/src/lib/crypto/hmac';
 
 const PAYSTACK_BASE = 'https://api.paystack.co';
 
@@ -46,7 +47,8 @@ export async function initializePaystackPayment(input: InitializePaymentInput): 
   const json = (await res.json()) as { status: boolean; data?: { authorization_url: string }; message?: string };
 
   if (!json.status || !json.data?.authorization_url) {
-    throw new ApiError(`Paystack initialization failed: ${json.message ?? 'unknown error'}`, 502);
+    console.error('[voting/paystack] transaction initialize failed:', json);
+    throw new ApiError('Paystack initialization failed', 502);
   }
 
   return json.data.authorization_url;
@@ -54,6 +56,11 @@ export async function initializePaystackPayment(input: InitializePaymentInput): 
 
 export interface PaystackVerificationResult {
   success: boolean;
+  /** Raw gateway status: 'success' | 'pending' | 'failed' | 'abandoned' |
+   *  'reversed' | 'processing' | 'queued' | 'ongoing' | null when the API
+   *  itself didn't answer. Callers must treat only the terminal non-success
+   *  values as durable failures — a 'pending' result is retriable. */
+  gatewayStatus: string | null;
   providerReference: string | null;
   amountKobo: number;
   currency: string;
@@ -84,6 +91,7 @@ export async function verifyPaystackPayment(reference: string): Promise<Paystack
   if (!json.status || !json.data) {
     return {
       success: false,
+      gatewayStatus: null,
       providerReference: null,
       amountKobo: 0,
       currency: 'NGN',
@@ -96,6 +104,7 @@ export async function verifyPaystackPayment(reference: string): Promise<Paystack
   const data = json.data;
   return {
     success: data.status === 'success',
+    gatewayStatus: data.status ?? null,
     providerReference: String(data.id),
     amountKobo: data.amount,
     currency: data.currency ?? 'NGN',
@@ -105,10 +114,8 @@ export async function verifyPaystackPayment(reference: string): Promise<Paystack
   };
 }
 
-// Verify the webhook signature from Paystack
+// Verify the webhook signature from Paystack (constant-time compare —
+// `expected === signature` leaks prefix-match timing).
 export function verifyPaystackWebhookSignature(rawBody: string, signature: string): boolean {
-  const crypto = require('node:crypto') as typeof import('node:crypto');
-  const secret = getSecretKey();
-  const expected = crypto.createHmac('sha512', secret).update(rawBody).digest('hex');
-  return expected === signature;
+  return verifyHmacSha512Hex(rawBody, signature, getSecretKey());
 }

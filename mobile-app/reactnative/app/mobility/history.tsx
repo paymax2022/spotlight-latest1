@@ -3,14 +3,15 @@ import { View, Text, FlatList, StyleSheet, Pressable, RefreshControl } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MapPin, Repeat } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useHistory } from '@/features/mobility/hooks/useMobility';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import { SERVICE_TYPE_LABEL } from '@/features/mobility/constants/mobility.constants';
@@ -26,7 +27,7 @@ export default function HistoryScreen() {
       {history.isLoading ? (
         <StateView kind="loading" message="Loading your trips…" />
       ) : history.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => history.refetch()} />
+        <MobilityEdgeState kind={errKind(history.error)} actionLabel="Retry" onAction={() => history.refetch()} />
       ) : (history.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState
           kind="empty"

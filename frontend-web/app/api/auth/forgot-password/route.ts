@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { featureFlags } from '@/src/lib/feature-flags';
 import { createAnonClient } from '../_supabase';
 import { callGo } from '../_otp';
 
@@ -18,7 +19,10 @@ import { callGo } from '../_otp';
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // Malformed JSON must not reach the catch-all, which would answer 500 with
+    // the parser's message. Same pattern as ../login: null falls into the
+    // field checks and a clean 400.
+    const body = await request.json().catch(() => null);
     const { email } = body ?? {};
 
     if (!email) {
@@ -27,11 +31,16 @@ export async function POST(request: Request) {
 
     const accepted = () => NextResponse.json({
       message: 'If an account exists for that address, reset instructions were sent.',
+      // Environment-level capability, identical for every address — telling the
+      // caller whether the emailed instructions include a redeemable code leaks
+      // nothing about which accounts exist. When false the email carries only
+      // the reset link, and the code-entry step is a dead end (E2E-AUTH-010).
+      codeReset: featureFlags.otpEmail(),
     });
 
     const go = await callGo('/api/auth/request-password-reset', {
       email: String(email).trim().toLowerCase(),
-    });
+    }, request);
     if (go.kind === 'answered') {
       // Go answers 200 regardless; a non-200 is logged, never surfaced.
       if (go.status >= 400) {

@@ -1,7 +1,7 @@
 // Estate Maintenance / Repairs (Block 32) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 
 export type RepairCategory = 'plumbing' | 'electrical' | 'gate' | 'generator' | 'elevator' | 'water' | 'waste' | 'road' | 'pest' | 'facility' | 'other';
@@ -74,7 +74,6 @@ export async function listRepairs(): Promise<RepairRequest[]> {
 // server-side: 404 if it belongs to a different estate than the caller's, 403
 // if the caller isn't a resident of any estate) plus its update history in one
 // call. A fetch-the-list-and-find-by-id workaround used to live here because
-// that route didn't exist yet; it does now, and calling it directly is
 // strictly better: one request instead of two, and a real 403/404 the caller
 // can act on instead of a generic "not found" synthesized from an empty list.
 export async function getRepair(id: string): Promise<RepairRequest> {

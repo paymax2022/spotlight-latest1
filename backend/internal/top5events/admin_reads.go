@@ -15,6 +15,7 @@ package top5events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -274,6 +275,7 @@ type AdminTicketTier struct {
 
 type AdminEventDetail struct {
 	AdminEventSummary
+
 	Description       string            `json:"description"`
 	Venue             string            `json:"venue"`
 	CapacitySoldPct   float64           `json:"capacity_sold_pct"`
@@ -292,7 +294,7 @@ func (s *Service) AdminGetEvent(ctx context.Context, eventID string) (*AdminEven
 	var startsAt, createdAt timeScan
 	if err := row.Scan(&d.ID, &d.Title, &organiserName, &d.Category, &state, &startsAt.t, &createdAt.t,
 		&d.Capacity, &d.TicketsSold, &d.GMVKobo, &d.CashlessEnabled); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("events: admin get: %w", err)

@@ -18,8 +18,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 func iso(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
-// ── Bookmarks ───────────────────────────────────────────────────────────────
-
 func (r *Repository) ListBookmarks(ctx context.Context, userID string) ([]Bookmark, error) {
 	const q = `
 		SELECT id, kind, title, subject_name, href, created_at
@@ -79,8 +77,6 @@ func (r *Repository) DeleteBookmark(ctx context.Context, userID, id string) erro
 	return nil
 }
 
-// ── Notes ───────────────────────────────────────────────────────────────────
-
 func (r *Repository) ListNotes(ctx context.Context, userID string) ([]Note, error) {
 	const q = `
 		SELECT id, lesson_id, lesson_title, subject_name, body, created_at
@@ -130,8 +126,6 @@ func (r *Repository) DeleteNote(ctx context.Context, userID, id string) error {
 	return nil
 }
 
-// ── Notifications ───────────────────────────────────────────────────────────
-
 func (r *Repository) ListNotifications(ctx context.Context, userID string) ([]Notification, error) {
 	const q = `
 		SELECT id, kind, title, body, COALESCE(href,''), read, created_at
@@ -167,8 +161,6 @@ func (r *Repository) MarkAllRead(ctx context.Context, userID string) error {
 	return err
 }
 
-// ── Announcements ───────────────────────────────────────────────────────────
-
 func (r *Repository) ListAnnouncements(ctx context.Context) ([]Announcement, error) {
 	const q = `
 		SELECT id, title, body, kind, COALESCE(sponsor,''), pinned, created_at
@@ -191,8 +183,6 @@ func (r *Repository) ListAnnouncements(ctx context.Context) ([]Announcement, err
 	}
 	return out, rows.Err()
 }
-
-// ── Search (published curriculum only) ──────────────────────────────────────
 
 // Search matches subjects/topics/lessons in the ACTIVE curriculum version by a
 // case-insensitive substring. Question items are intentionally excluded (exam
@@ -252,8 +242,6 @@ func iconForKind(kind string) string {
 		return "search"
 	}
 }
-
-// ── Daily goal inputs ───────────────────────────────────────────────────────
 
 // StreakSummary reads the learner's streak + freezes from the gamification
 // profile (0/0 when no profile exists yet).

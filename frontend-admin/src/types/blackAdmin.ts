@@ -1,4 +1,3 @@
-// ── Admin — Paymax Black (premium tier, perks, partners, settlement) types ─────
 // Field names mirror the Go JSON (snake_case) from /api/loyalty/admin/black*.
 // Money is BIGINT kobo (minor units) throughout — display via formatNaira (kobo → ₦).
 // Invariants surfaced in the UI:
@@ -13,7 +12,6 @@ export type RedemptionStatus = 'issued' | 'redeemed' | 'expired' | 'revoked';
 export type PartnerStatus = 'active' | 'pending' | 'suspended';
 export type SettlementStatus = 'open' | 'investigating' | 'settled' | 'reconciled';
 
-// ── A · Dashboard ─────────────────────────────────────────────────────────────
 export interface BlackDashboardActivity {
   id: string;
   kind: string; // member_upgraded | perk_redeemed | partner_added | settlement_run | perk_revoked …
@@ -38,7 +36,6 @@ export interface BlackDashboard {
   activity: BlackDashboardActivity[];
 }
 
-// ── B · Perk config ───────────────────────────────────────────────────────────
 export interface BlackPerk {
   id: string;
   name: string;
@@ -62,7 +59,6 @@ export interface BlackPerkUpsertResult {
   message: string;
 }
 
-// ── C · Partner-offer management ──────────────────────────────────────────────
 export interface BlackPartner {
   id: string;
   name: string;
@@ -78,7 +74,6 @@ export interface BlackPartner {
   created_at: string;
 }
 
-// ── D · Partner settlement ────────────────────────────────────────────────────
 export interface BlackSettlementLine {
   id: string;
   partner_id: string;

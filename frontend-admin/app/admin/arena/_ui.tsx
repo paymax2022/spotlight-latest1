@@ -95,8 +95,6 @@ export function BackToArena() {
   );
 }
 
-// ── Badges ──────────────────────────────────────────────────────────────────
-
 const COMPETITION_STATUS_COLORS: Record<CompetitionStatus, { fg: string; bg: string }> = {
   DRAFT:      { fg: colors.muted, bg: colors.headBg },
   CONFIGURED: { fg: '#1d4ed8', bg: '#dbeafe' },
@@ -167,7 +165,6 @@ export function LockedChip({ label = 'LOCKED' }: { label?: string }) {
   );
 }
 
-// ── RBAC ──────────────────────────────────────────────────────────────────
 // Per-console permissions. Server RBAC (arena.*) remains authoritative — these
 // are UX gates only. Mirrors kyc-verify useKycPermissions.
 export const ARENA_PERMS = {

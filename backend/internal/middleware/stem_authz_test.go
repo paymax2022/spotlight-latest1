@@ -26,7 +26,7 @@ func TestRequireStemRoles_MissingRole(t *testing.T) {
 	r.Use(RequireStemRoles(rbac, "ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -45,7 +45,7 @@ func TestRequireStemRoles_AllowedRole(t *testing.T) {
 	r.Use(RequireStemRoles(rbac, "ADMIN", "SUPER_ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -65,7 +65,7 @@ func TestRequireStemRoles_FailsClosedWithoutVerifiedAdmin(t *testing.T) {
 	r.Use(RequireStemRoles(nil, "ADMIN", "SUPER_ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -85,7 +85,7 @@ func TestRequireStemRoles_HeaderIsNoLongerTrusted(t *testing.T) {
 	r.Use(RequireStemRoles(rbac, "SUPER_ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("x-stem-role", "super_admin") // claims a role the caller does not really hold
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -105,7 +105,7 @@ func TestRequireStemRoles_FailsClosedOnRoleLookupError(t *testing.T) {
 	r.Use(RequireStemRoles(rbac, "SUPER_ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -141,7 +141,7 @@ func TestRequireStemRoles_RealRoleSlugsResolve(t *testing.T) {
 			r.Use(RequireStemRoles(rbac, tc.want))
 			r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-			req := httptest.NewRequest(http.MethodGet, "/x", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 
@@ -162,7 +162,7 @@ func TestRequireStemRoles_NoRolesConfigured_NoopEvenWithoutVerifiedAdmin(t *test
 	r.Use(RequireStemRoles(nil))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

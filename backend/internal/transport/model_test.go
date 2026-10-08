@@ -67,7 +67,6 @@ func TestTripStatusConstants(t *testing.T) {
 		}
 		seen[s] = true
 	}
-	// Verify terminal states exist.
 	terminals := []transport.TripStatus{transport.TripCompleted, transport.TripCancelled}
 	for _, ts := range terminals {
 		if !seen[ts] {

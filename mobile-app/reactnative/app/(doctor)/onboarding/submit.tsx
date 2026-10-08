@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Clock, CheckCircle2, XCircle, Eye, Ban, ChevronRight, FileClock } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, StatusBadge } from '@/features/doctor/components';
@@ -15,7 +15,6 @@ import type { StatusTone } from '@/features/doctor/components';
 import { useOnboardingAccountStatus } from '@/features/doctor/hooks';
 import type { AccountState } from '@/types/doctor.onboarding';
 
-// ── Section A · Entries 17–20 — Post-submission account state (REUSE) ─────────
 // Terminal step of the onboarding flow. Reads the account state via
 // useOnboardingAccountStatus (REUSE of the Batch 7 account-status query — no new
 // account-status screen is created) and surfaces pending / rejected / suspended

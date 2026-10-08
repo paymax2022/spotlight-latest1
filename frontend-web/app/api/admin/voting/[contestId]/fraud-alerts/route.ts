@@ -41,11 +41,12 @@ export async function PATCH(
 ) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       flagId: string;
       status: 'resolved' | 'dismissed' | 'actioned';
       actionTaken: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.flagId) return errorResponse('flagId is required', 400);
     if (!body.status) return errorResponse('status is required', 400);

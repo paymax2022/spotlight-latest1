@@ -1,9 +1,7 @@
-// ── Referral Invite & Share types ────────────────────────────────────────────
 // Self-contained types for the M-INV-* surfaces (share sheet, share-by-name,
 // contact picker, QR, vanity link, contextual share, tracking, nudge, vertical
 // picker). Earnings tie to friends' real verified activity (§7), never signups.
 
-// ── Share payload (M-INV-01) ─────────────────────────────────────────────────
 export interface SharePayload {
   code: string;
   link: string;
@@ -16,7 +14,6 @@ export interface SharePayload {
 
 export type ShareChannel = 'whatsapp' | 'sms' | 'social' | 'copy' | 'more';
 
-// ── Contact picker (M-INV-03) ────────────────────────────────────────────────
 export interface InviteContact {
   id: string;
   name: string;
@@ -26,7 +23,6 @@ export interface InviteContact {
   alreadyJoined: boolean;
 }
 
-// ── Vanity link & UTM (M-INV-05) ─────────────────────────────────────────────
 export interface VanityLink {
   id: string;
   alias: string;
@@ -44,7 +40,6 @@ export interface VanityLinkInput {
   campaign?: string;
 }
 
-// ── Contextual share (M-INV-06) ──────────────────────────────────────────────
 export type ShareContext =
   | 'paid_bill'
   | 'won_contest'
@@ -60,7 +55,6 @@ export interface ContextualPrompt {
   message: string;
 }
 
-// ── Invite tracking (M-INV-07) ───────────────────────────────────────────────
 export type FunnelStage =
   | 'invited'
   | 'clicked'
@@ -81,14 +75,12 @@ export interface TrackedInvitee {
   nudgeable: boolean;
 }
 
-// ── Nudge (M-INV-08) ─────────────────────────────────────────────────────────
 export interface NudgeResult {
   ok: boolean;
   /** Set when rate-limited or the invitee opted out. */
   error?: 'rate_limited' | 'opted_out' | 'already_activated';
 }
 
-// ── Vertical referral picker (M-INV-09) ──────────────────────────────────────
 export interface ReferralVertical {
   id: string;
   label: string;

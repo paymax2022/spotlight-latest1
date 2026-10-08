@@ -1,7 +1,5 @@
-// ── Spotlight Academy — Phase 3 mock dataset ─────────────────────────────────
 // Self-contained fixtures for the Trade & Skills moat (S1–S8), credentials &
 // earning bridge (G10/G11 + S6/S7), and live/community/notifications (C1–C7).
-// Backs the Phase-3 screens while USE_MOCK is true. Money in kobo; reward points
 // are plain integers. Child-safety: community is group/Q&A only — no 1:1 DMs.
 // Reuses Phase-1 subject IDs from academy.mock where coherent.
 
@@ -27,7 +25,6 @@ const hoursAgo = (h: number) => new Date(now - h * 3_600_000).toISOString();
 const hoursAhead = (h: number) => new Date(now + h * 3_600_000).toISOString();
 const daysAhead = (d: number) => new Date(now + d * 86_400_000).toISOString();
 
-// ── Trade tracks (A11 / S1) ──────────────────────────────────────────────────
 // The first track is the learner's chosen trade; the rest are pickable.
 export const MOCK_TRADE_TRACKS: TradeTrack[] = [
   {
@@ -57,7 +54,6 @@ export const MOCK_TRADE_TRACKS: TradeTrack[] = [
   },
 ];
 
-// ── Trade modules for the chosen track (S1/S2) ───────────────────────────────
 export const MOCK_TRADE_MODULES: Record<string, TradeModule[]> = {
   trk_solar: [
     { id: 'tm_solar_1', trackId: 'trk_solar', title: 'Solar basics & safety', kind: 'theory', order: 1, estMinutes: 25, status: 'completed', outcome: 'Explain PV, batteries, inverters and site safety.' },
@@ -69,7 +65,6 @@ export const MOCK_TRADE_MODULES: Record<string, TradeModule[]> = {
   ],
 };
 
-// ── Projects / portfolio (S3) ────────────────────────────────────────────────
 export const MOCK_TRADE_PROJECTS: Record<string, TradeProject> = {
   prj_solar_1: {
     id: 'prj_solar_1', moduleId: 'tm_solar_4', trackId: 'trk_solar',
@@ -85,7 +80,6 @@ export const MOCK_TRADE_PROJECTS: Record<string, TradeProject> = {
   },
 };
 
-// ── Skill assessment (S4) ────────────────────────────────────────────────────
 const SOLAR_QUESTIONS: Question[] = [
   {
     id: 'asq_solar_1', subjectId: 'trk_solar', type: 'mcq',
@@ -114,7 +108,6 @@ export const MOCK_ASSESSMENTS: Record<string, SkillAssessment> = {
   },
 };
 
-// ── Credentials (G10 / S5) ───────────────────────────────────────────────────
 const VERIFY_BASE = 'https://verify.spotlight.academy/c';
 export const MOCK_CREDENTIALS: Credential[] = [
   {
@@ -131,7 +124,6 @@ export const MOCK_CREDENTIALS: Credential[] = [
   },
 ];
 
-// ── Earning opportunities (S6/S7 — Paymax bridge) ─────────────────────────────
 export const MOCK_OPPORTUNITIES: EarningOpportunity[] = [
   {
     id: 'opp_solar_service', role: 'service', title: 'Solar service technician',
@@ -172,7 +164,6 @@ export const MOCK_MENTORS: Mentor[] = [
   { id: 'mnt_3', name: 'Mr. Bayo K.', trade: 'gsm', headline: '7 yrs · GSM & board repair', rating: 4.6, groupOnly: true, avatarColorKey: 'iconBgBlue', requestState: 'none', bio: 'Micro-soldering specialist; hosts cohort clinics.' },
 ];
 
-// ── Live sessions (C1–C3) ────────────────────────────────────────────────────
 export const MOCK_LIVE_SESSIONS: LiveSession[] = [
   { id: 'live_1', title: 'Solar wiring clinic', subjectOrTrade: 'Solar', host: 'Engr. Tunde A.', status: 'live', startsAt: hoursAgo(0.3), durationMin: 60, viewers: 214, moderated: true },
   { id: 'live_2', title: 'WASSCE Maths: surds & indices', subjectOrTrade: 'Mathematics', host: 'Mr. Femi O.', status: 'upcoming', startsAt: hoursAhead(20), durationMin: 75, moderated: true },
@@ -181,21 +172,18 @@ export const MOCK_LIVE_SESSIONS: LiveSession[] = [
   { id: 'live_5', title: 'Phone repair: no-power faults', subjectOrTrade: 'GSM repair', host: 'Mr. Bayo K.', status: 'replay', startsAt: daysAgo(6), durationMin: 55, watchedPct: 0, moderated: true },
 ];
 
-// ── Study groups / cohorts (C4) ──────────────────────────────────────────────
 export const MOCK_STUDY_GROUPS: StudyGroup[] = [
   { id: 'grp_solar_cohort', name: 'Solar Cohort — June', subjectOrTrade: 'Solar', members: 38, goal: 'Everyone passes Level 1 assessment by month-end', goalProgressPct: 55, joined: true, cohort: true },
   { id: 'grp_wassce_maths', name: 'WASSCE Maths warriors', subjectOrTrade: 'Mathematics', members: 126, goal: 'Cover 5 past papers this week', goalProgressPct: 40, joined: false, cohort: true },
   { id: 'grp_fashion', name: 'Fashion makers circle', subjectOrTrade: 'Fashion', members: 52, goal: 'Each member submits one finished piece', goalProgressPct: 20, joined: false, cohort: true },
 ];
 
-// ── Discussions / Q&A (C5) — moderated, group context only ────────────────────
 export const MOCK_DISCUSSIONS: Discussion[] = [
   { id: 'dsc_1', scope: 'Solar', authorName: 'Engr. Tunde A.', authorRole: 'mentor', title: 'How to size a battery bank safely', body: 'Always factor depth-of-discharge. For lead-acid, keep DoD under 50% to extend life…', ts: hoursAgo(3), replyCount: 12, moderation: 'clean', reported: false },
   { id: 'dsc_2', scope: 'Mathematics', authorName: 'Ada Obi', authorRole: 'peer', title: 'Quick way to remember the quadratic formula?', body: 'I keep forgetting the ±. Any tips?', ts: hoursAgo(8), replyCount: 5, moderation: 'clean', reported: false },
   { id: 'dsc_3', scope: 'General', authorName: 'Mrs. Grace U.', authorRole: 'tutor', title: 'Exam timetable reminder', body: 'UTME mock window opens Monday. Download your bundle for offline practice.', ts: daysAgo(1), replyCount: 2, moderation: 'clean', reported: false },
 ];
 
-// ── Notifications (C6) ───────────────────────────────────────────────────────
 export const MOCK_NOTIFICATIONS: AcademyNotification[] = [
   { id: 'ntf_1', kind: 'live', title: 'Live now: Solar wiring clinic', body: 'Engr. Tunde is live. Join with raise-hand enabled.', ts: hoursAgo(0.2), read: false, href: '/learn/academy/live' },
   { id: 'ntf_2', kind: 'credential', title: 'Credential issued', body: 'Your Solar Installation — Level 1 certificate is ready.', ts: daysAgo(8), read: false, href: '/learn/academy/certificates' },
@@ -204,7 +192,6 @@ export const MOCK_NOTIFICATIONS: AcademyNotification[] = [
   { id: 'ntf_5', kind: 'reward', title: 'You earned 120 reward points', body: 'Nice work finishing the wiring practical.', ts: daysAgo(2), read: true, href: '/learn/academy/rewards' },
 ];
 
-// ── Announcements (C7) ───────────────────────────────────────────────────────
 export const MOCK_ANNOUNCEMENTS: Announcement[] = [
   { id: 'ann_1', title: 'Trade & Earn is live', body: 'Pick a trade, build a portfolio, earn a verifiable credential and unlock Paymax earning roles.', kind: 'program', ts: daysAgo(3), pinned: true },
   { id: 'ann_2', title: 'Sponsor: MTN data for learners', body: 'Complete 3 lessons this week to qualify for 500MB study data, courtesy MTN.', kind: 'sponsor', sponsor: 'MTN', ts: daysAgo(5), pinned: false },

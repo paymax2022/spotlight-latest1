@@ -1,7 +1,5 @@
-// ── Paymax Mobility — Multi-mode types ───────────────────────────────────────
 // Types for the 5 new mobility modes: parcel · bus · towing · movers · car-hire.
 // Mirrors docs/prd/transportation/BUILD-CONTRACT-MODES.md payloads.
-//
 // IRON RULES: all money is integer minor units (kobo). Never floats for money.
 // Fares/deposits/bids are server-computed — the client only *displays* them.
 
@@ -10,9 +8,7 @@ import type { Kobo, Place } from './mobility.types';
 // Re-exported so mode screens can import the shared error helpers from one place.
 export type { Kobo, Place } from './mobility.types';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARCEL DELIVERY
-// ═══════════════════════════════════════════════════════════════════════════════
 export type ParcelCategory = 'documents' | 'electronics' | 'food' | 'clothing' | 'fragile' | 'other';
 export type ParcelSize = 'small' | 'medium' | 'large';
 export type ParcelSpeed = 'standard' | 'express' | 'same_day';
@@ -110,10 +106,8 @@ export interface CourierParcelRequest {
   expiresAt: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUS BOOKING
-// ═══════════════════════════════════════════════════════════════════════════════
-export type BusTicketPhase = 'booked' | 'issued' | 'boarding' | 'boarded' | 'completed' | 'rescheduled' | 'cancelled' | 'refunded';
+export type BusTicketPhase = 'booked' | 'issued' | 'boarding' | 'boarded' | 'completed' | 'rescheduled' | 'cancelled' | 'cancelled_pending_refund' | 'refunded';
 
 export interface BusRoute {
   id: string;
@@ -178,11 +172,23 @@ export interface BusTicket {
   qrCode: string | null;    // QR payload once issued
   paymentStatus: 'settled' | 'refunded' | 'failed';
   createdAt: string;
+  scheduleId?: string;
+  /** Server refund state for a cancelled ticket. */
+  refundStatus: 'none' | 'pending' | 'refunded' | 'failed' | 'manual_required';
+  /** After this instant self-service cancel is refused (RFC3339) or null. */
+  cancelDeadline: string | null;
+  cancelCutoffMinutes: number | null;
+  /** Server verdict: would a self-service cancel + refund be accepted right now. */
+  cancellable: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+export interface BusCancelResult {
+  refundStatus: 'none' | 'pending' | 'refunded' | 'failed' | 'manual_required';
+  refundedKobo: number;
+  message: string;
+}
+
 // TOWING
-// ═══════════════════════════════════════════════════════════════════════════════
 export type TowingServiceType = 'flatbed' | 'wheel_lift' | 'heavy_duty' | 'roadside';
 export type TowingIssue = 'breakdown' | 'accident' | 'flat_tyre' | 'no_fuel' | 'battery' | 'locked_out';
 export type TowingVehicleType = 'sedan' | 'suv' | 'van' | 'truck' | 'motorcycle';
@@ -253,9 +259,7 @@ export interface TowingJob {
   rated: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // MOVERS
-// ═══════════════════════════════════════════════════════════════════════════════
 export type TruckSize = 'pickup' | 'small_van' | 'box_truck' | 'large_truck';
 
 export type MoverPhase =
@@ -307,10 +311,9 @@ export interface MoverJob {
   rated: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // CAR HIRE
-// ═══════════════════════════════════════════════════════════════════════════════
 export type HireType = 'hourly' | 'daily' | 'airport' | 'event';
+export type CarHireRail = 'card' | 'wallet';
 export type VehicleClass = 'economy' | 'executive' | 'suv' | 'luxury' | 'van';
 
 export type CarHirePhase =
@@ -366,6 +369,12 @@ export interface CarHireBooking {
   paymentStatus: 'escrowed' | 'settled' | 'refunded' | 'failed';
   createdAt: string;
   completedAt: string | null;
+  /** 'card' = paid by card-direct (deposit/refunds go back to the CARD; no extensions). Absent on old servers/mocks = wallet. */
+  fundingRail?: CarHireRail;
+  /** none | held | returning (hire over, refund owed/in flight) | returned (refund sent; the bank may take days). */
+  depositStatus?: 'none' | 'held' | 'returning' | 'returned';
+  /** For a cancelled booking: none | pending | refunded | failed. */
+  refundStatus?: 'none' | 'pending' | 'refunded' | 'failed';
 }
 
 export interface CarHireExtendRequest {

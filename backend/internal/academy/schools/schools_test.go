@@ -3,6 +3,7 @@ package schools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
@@ -12,12 +13,9 @@ import (
 //   - the seat-capped, idempotent bulk-enrolment service logic (stops at the cap,
 //     reports how many succeeded; a replayed batch never double-seats),
 //   - the billing-charge-once invariant (rail invoked once; second call is a no-op).
-//
 // The DB-bound store is replaced by an in-memory fake that faithfully models the seat
 // accounting (used_seats ≤ seats, atomic per learner) and the enrolment unique
 // constraint; the rail is a counting fake.
-
-// ── Licence state machine: allowed + illegal transitions ─────────────────────────
 
 func TestCanLicence_AllowedTransitions(t *testing.T) {
 	allowed := [][2]LicenceState{
@@ -48,8 +46,6 @@ func TestCanLicence_IllegalTransitions(t *testing.T) {
 		}
 	}
 }
-
-// ── Fake store (in-memory seat accounting) ───────────────────────────────────────
 
 type fakeStore struct {
 	insts    map[string]*Institution
@@ -229,8 +225,6 @@ func (f *fakeStore) WriteAudit(context.Context, string, string, string, string, 
 	return nil
 }
 
-// ── Counting billing rail ─────────────────────────────────────────────────────────
-
 type fakeBillingRail struct {
 	calls map[string]int // idemKey → invocation count
 }
@@ -242,13 +236,11 @@ func (f *fakeBillingRail) Charge(_ context.Context, _, _, idemKey string, _ int6
 	return "bill-ref-" + idemKey, nil
 }
 
-// ── Bulk enrolment: seat cap (stops at limit, reports count) ──────────────────────
-
 func TestBulkEnroll_SeatCapped(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
 	inst, _ := store.InsertInstitution(ctx, "Acme", "school", "admin-1", nil, "va-1")
-	store.InsertLicence(ctx, inst.ID, "pro", 3, 100000, nil, nil)
+	_, _ = store.InsertLicence(ctx, inst.ID, "pro", 3, 100000, nil, nil)
 	svc := newServiceWithStore(store, newFakeBillingRail())
 
 	// 5 learners, only 3 seats → first 3 seated, then seat_limit_exceeded.
@@ -256,7 +248,7 @@ func TestBulkEnroll_SeatCapped(t *testing.T) {
 		InstitutionID: inst.ID,
 		LearnerIDs:    []string{"l1", "l2", "l3", "l4", "l5"},
 	}, "batch-1")
-	if err != ErrSeatLimitExceeded {
+	if !errors.Is(err, ErrSeatLimitExceeded) {
 		t.Fatalf("expected seat_limit_exceeded, got %v", err)
 	}
 	if res.Succeeded != 3 {
@@ -273,13 +265,11 @@ func TestBulkEnroll_SeatCapped(t *testing.T) {
 	}
 }
 
-// ── Bulk enrolment: idempotency (replay = no double-seat) ─────────────────────────
-
 func TestBulkEnroll_IdempotentReplay(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
 	inst, _ := store.InsertInstitution(ctx, "Beta", "school", "admin-1", nil, "")
-	store.InsertLicence(ctx, inst.ID, "pro", 10, 0, nil, nil)
+	_, _ = store.InsertLicence(ctx, inst.ID, "pro", 10, 0, nil, nil)
 	svc := newServiceWithStore(store, newFakeBillingRail())
 
 	learners := []string{"l1", "l2", "l3"}
@@ -312,14 +302,14 @@ func TestRemoveEnrollment_FreesSeat(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
 	inst, _ := store.InsertInstitution(ctx, "Gamma", "school", "admin-1", nil, "")
-	store.InsertLicence(ctx, inst.ID, "pro", 1, 0, nil, nil)
+	_, _ = store.InsertLicence(ctx, inst.ID, "pro", 1, 0, nil, nil)
 	svc := newServiceWithStore(store, newFakeBillingRail())
 
 	if _, err := svc.BulkEnroll(ctx, "admin-1", BulkEnrollRequest{InstitutionID: inst.ID, LearnerIDs: []string{"l1"}}, "b"); err != nil {
 		t.Fatalf("enroll l1: %v", err)
 	}
 	// Cap full: l2 rejected.
-	if _, err := svc.BulkEnroll(ctx, "admin-1", BulkEnrollRequest{InstitutionID: inst.ID, LearnerIDs: []string{"l2"}}, "b2"); err != ErrSeatLimitExceeded {
+	if _, err := svc.BulkEnroll(ctx, "admin-1", BulkEnrollRequest{InstitutionID: inst.ID, LearnerIDs: []string{"l2"}}, "b2"); !errors.Is(err, ErrSeatLimitExceeded) {
 		t.Fatalf("expected seat cap for l2, got %v", err)
 	}
 	// Free l1's seat, then l2 fits.
@@ -334,8 +324,6 @@ func TestRemoveEnrollment_FreesSeat(t *testing.T) {
 	}
 }
 
-// ── Licence SM service path (suspend → reactivate → expire) ───────────────────────
-
 func TestLicenceLifecycle_Service(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -348,7 +336,7 @@ func TestLicenceLifecycle_Service(t *testing.T) {
 		t.Fatalf("suspend: %v", err)
 	}
 	// Suspend again is illegal (suspended→suspended).
-	if _, err := svc.SuspendLicence(ctx, "admin-1", lic.ID); err != ErrIllegalTransition {
+	if _, err := svc.SuspendLicence(ctx, "admin-1", lic.ID); !errors.Is(err, ErrIllegalTransition) {
 		t.Errorf("double-suspend should be illegal, got %v", err)
 	}
 	if _, err := svc.ReactivateLicence(ctx, "admin-1", lic.ID); err != nil {
@@ -358,12 +346,10 @@ func TestLicenceLifecycle_Service(t *testing.T) {
 		t.Fatalf("expire: %v", err)
 	}
 	// Expired is terminal.
-	if _, err := svc.ReactivateLicence(ctx, "admin-1", lic.ID); err != ErrIllegalTransition {
+	if _, err := svc.ReactivateLicence(ctx, "admin-1", lic.ID); !errors.Is(err, ErrIllegalTransition) {
 		t.Errorf("reactivate after expire should be illegal, got %v", err)
 	}
 }
-
-// ── Billing: charge once (rail invoked exactly once across replays) ───────────────
 
 func TestChargeBilling_Once(t *testing.T) {
 	ctx := context.Background()
@@ -409,7 +395,7 @@ func TestChargeBilling_RequiresIdemKey(t *testing.T) {
 	inst, _ := store.InsertInstitution(ctx, "Zeta", "school", "admin-1", nil, "")
 	svc := newServiceWithStore(store, newFakeBillingRail())
 	b, _ := svc.GenerateBilling(ctx, "admin-1", GenerateBillingRequest{InstitutionID: inst.ID, Period: "2026-07", AmountMinor: 1000})
-	if _, err := svc.ChargeBilling(ctx, "admin-1", b.ID, ""); err != ErrIdempotencyRequired {
+	if _, err := svc.ChargeBilling(ctx, "admin-1", b.ID, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Errorf("expected idempotency_key_required, got %v", err)
 	}
 }

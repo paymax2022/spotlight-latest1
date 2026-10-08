@@ -15,8 +15,8 @@ import (
 // depending on a built-in indicator crossing a threshold at the final bar.
 type alwaysRanging struct{}
 
-func (alwaysRanging) Name() string                        { return "test_ranging" }
-func (alwaysRanging) ValidRegimes() []regime.Regime       { return []regime.Regime{regime.Ranging} }
+func (alwaysRanging) Name() string                  { return "test_ranging" }
+func (alwaysRanging) ValidRegimes() []regime.Regime { return []regime.Regime{regime.Ranging} }
 func (alwaysRanging) Generate(ctx signals.Context) []signals.Candidate {
 	return []signals.Candidate{{
 		Strategy: "test_ranging", Asset: ctx.Asset, Side: signals.Long,
@@ -37,7 +37,7 @@ func baseInputs(prices []float64, equity int64) Inputs {
 		Asset: "BTC", Prices: prices, Returns: returnsOf(prices),
 		BaselineVolBps: regime.RealizedVolBps(returnsOf(prices)), LiquidityScoreBps: 8000,
 		RegimeConfig: regime.DefaultConfig(),
-		State: risk.PortfolioState{EquityKobo: equity, PeakEquityKobo: equity},
+		State:        risk.PortfolioState{EquityKobo: equity, PeakEquityKobo: equity},
 		Limits: risk.Limits{
 			MaxDrawdownBps: 2000, MaxOpenPositions: 10, MaxPositionKobo: 60_000_000,
 			MaxGrossLeverageBps: 30_000, MinConfidenceBps: 1, AllowedAssets: []string{"BTC"},

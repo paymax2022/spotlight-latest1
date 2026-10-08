@@ -31,12 +31,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestSlug?: string;
       userId?: string;
       role?: 'public_user' | 'contestant' | 'parent_guardian' | 'school_representative' | 'admin' | 'super_admin';
       accountData?: Record<string, unknown>;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body?.contestSlug) {
       return errorResponse('contestSlug is required', 400);
@@ -82,6 +83,11 @@ export async function POST(request: Request) {
         },
         409,
       );
+    }
+    // startRegistrationDraft throws plain Errors for client-caused failures —
+    // an unresolvable contestSlug is a 404, not a 500.
+    if (error instanceof Error && error.message.startsWith('Contest not found')) {
+      return errorResponse('Contest not found', 404);
     }
     return handleApiError(error, 'Failed to create registration draft');
   }

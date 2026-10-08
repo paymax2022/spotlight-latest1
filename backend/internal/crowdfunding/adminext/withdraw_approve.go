@@ -1,13 +1,11 @@
 package adminext
 
 // Crowdfunding withdrawal MONEY-PATH (admin approval → payout).
-//
 // This is the payout leg of the creator cash-out flow. SubmitWithdrawal
 // (wallet domain) only files a PENDING request and moves no money; DecideWithdrawal
 // (service.go) flips PENDING→APPROVED/REJECTED but still moves no money. This file
 // adds the single place where a crowdfunding withdrawal actually posts to the
 // finance ledger and pays the creator out.
-//
 // LEDGER MODEL (mirrors internal/finance/settlement):
 //   - Contributions escrow money via settlement.Escrow → ledger.Debit(payer) /
 //     CREDIT AccountEscrow. So UNSETTLED crowdfunding funds live in the shared
@@ -32,7 +30,6 @@ package adminext
 //     The bank transfer itself is a separate rail (see TODO(prod) below); until a
 //     disbursement provider is wired into this admin surface we post to the
 //     clearing account and DO NOT fabricate a provider success.
-//
 // IRON RULES enforced here:
 //   - integer kobo only (BIGINT throughout);
 //   - a deterministic idempotency key derived from the withdrawal id makes the
@@ -77,6 +74,18 @@ var ErrLedgerUnavailable = errors.New("adminext: finance ledger not configured �
 // happens on this path.
 var ErrInsufficientBalance = errors.New("adminext: creator's wallet balance is insufficient for this withdrawal")
 
+// ErrCampaignFrozen is returned when the withdrawal's campaign is currently
+// frozen. wallet.SubmitWithdrawal already refuses a frozen campaign at
+// request time ("campaign is frozen — withdrawals are disabled") — this path
+// is the payout leg for a PENDING row approved separately (currently dead in
+// the live creator flow, since SubmitWithdrawal never leaves anything
+// PENDING, but still a real, reachable admin action) and had no equivalent
+// check at all: nothing here ever queried campaigns. A freeze issued AFTER a
+// withdrawal was filed but BEFORE an admin approved it must still block the
+// payout — freezing a campaign is meaningless if money can keep leaving it
+// through this door.
+var ErrCampaignFrozen = errors.New("adminext: campaign is frozen — withdrawal payout is disabled")
+
 // ApproveWithdrawalResult summarises the outcome of an approval.
 type ApproveWithdrawalResult struct {
 	ID         string `json:"id"`
@@ -89,7 +98,6 @@ type ApproveWithdrawalResult struct {
 }
 
 // ApproveWithdrawal is the crowdfunding withdrawal money-path.
-//
 // Guarded + idempotent. It:
 //  1. loads the withdrawal; a non-PENDING/APPROVED/COMPLETED state (e.g. REJECTED)
 //     is illegal; an already-COMPLETED row is an idempotent no-op;
@@ -104,29 +112,28 @@ type ApproveWithdrawalResult struct {
 // BEFORE any state change. The ledger posting is idempotent (Redis fast-path +
 // DB unique constraint on idempotency_key) so ErrDuplicate on replay is success.
 func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverID, idempotencyKey string) (*ApproveWithdrawalResult, error) {
-	// ── Fail-closed input guards (run before any DB access) ──────────────────
 	if withdrawalID == "" {
-		return nil, fmt.Errorf("adminext: withdrawal id is required")
+		return nil, errors.New("adminext: withdrawal id is required")
 	}
 	if approverID == "" {
-		return nil, fmt.Errorf("adminext: approver id is required")
+		return nil, errors.New("adminext: approver id is required")
 	}
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("adminext: Idempotency-Key is required")
+		return nil, errors.New("adminext: Idempotency-Key is required")
 	}
 	if s.ledger == nil {
 		return nil, ErrLedgerUnavailable
 	}
 
-	// ── (1) Load the withdrawal + validate its state ─────────────────────────
 	var (
-		reference string
-		creatorID string
-		amount    int64
-		status    string
+		reference  string
+		creatorID  string
+		campaignID string
+		amount     int64
+		status     string
 	)
-	const sel = `SELECT reference, creator_id, amount_kobo, status FROM cf_withdrawals WHERE id = $1`
-	if err := s.db.QueryRow(ctx, sel, withdrawalID).Scan(&reference, &creatorID, &amount, &status); err != nil {
+	const sel = `SELECT reference, creator_id, campaign_id, amount_kobo, status FROM cf_withdrawals WHERE id = $1`
+	if err := s.db.QueryRow(ctx, sel, withdrawalID).Scan(&reference, &creatorID, &campaignID, &amount, &status); err != nil {
 		return nil, ErrWithdrawalNotFound
 	}
 
@@ -145,7 +152,16 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		return nil, fmt.Errorf("adminext: withdrawal amount must be positive, got %d", amount)
 	}
 
-	// ── (2) Post the BALANCED, balance-checked double-entry (money leaves the
+	// A freeze issued after this request was filed must still block payout —
+	// re-check at approval time, not just at request time (see ErrCampaignFrozen).
+	var frozen bool
+	if err := s.db.QueryRow(ctx, `SELECT review_status = 'FROZEN' FROM campaigns WHERE id = $1`, campaignID).Scan(&frozen); err != nil {
+		return nil, fmt.Errorf("adminext: resolve campaign freeze state: %w", err)
+	}
+	if frozen {
+		return nil, ErrCampaignFrozen
+	}
+
 	// creator's OWN wallet, not the shared escrow pool — see file header) ────
 	// Deterministic key derived from the withdrawal id ⇒ replay posts nothing twice.
 	payoutIdem := "cf:withdraw:payout:" + withdrawalID
@@ -172,12 +188,11 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 	// then reconcile the clearing account on the provider webhook. We deliberately
 	// DO NOT fabricate a provider success here.
 
-	// ── (3) Guarded state transitions PENDING→APPROVED→COMPLETED, plus audit ──
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// PENDING → APPROVED (skipped/no-op if already APPROVED from a prior attempt).
 	if _, err := tx.Exec(ctx,

@@ -1,4 +1,3 @@
-// ── Admin — Paymax Events (Ticketing + Cashless event wallet) control-plane ────
 // Mock by default (mirrors stays / savings admin services). Flip with
 // NEXT_PUBLIC_EVENTS_USE_MOCK=false to hit the live Go backend at /api/events/admin/*.
 // RBAC: events.admin.* gates wired on the sidebar.
@@ -39,26 +38,20 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
-// UPDATED: the admin surface now also has 7 real GET reads (RBAC
 // events.admin.view) — dashboard/events/events/:id/tickets/cashless/vendors/
 // settlement, all in backend/internal/top5events/admin_reads.go — alongside
 // the original 3 write routes (approve/suspend/settle). getEventsDashboard,
 // listEvents, getEvent, listTickets, getCashlessFloat, listVendors, and
 // getSettlement below already called these exact paths/shapes in live mode
-// before the backend existed; no code change was needed here, only the
 // routes landing. The functions below that still throw do so because the
 // admin UI's REVIEW/DECISION model (reject, request_changes, a
 // approve/reject payout decision, settlement-break resolution, fraud
 // actions) has no backend equivalent at all — not because a route is
 // missing, but because the underlying capability doesn't exist server-side.
-// Functions with a real route throw NOT_IN_FIXTURE_MODE; functions with no
 // reachable route throw NO_BACKEND_YET instead, since flipping the mock flag
 // would not reach a working call either way. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
@@ -82,7 +75,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -92,9 +84,7 @@ const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).to
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 const dateAhead = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: EventsDashboard = {
   gmv_today_kobo: 184_500_000_00,
   gmv_30d_kobo: 3_942_800_000_00,
@@ -137,9 +127,7 @@ export async function getEventsDashboard(): Promise<EventsDashboard> {
   return getJson<EventsDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Event approval / CMS queue
-// ════════════════════════════════════════════════════════════════════════════
 const APPROVALS: EventApprovalItem[] = [
   { id: 'evt_9001', title: 'Afrobeats Live Lagos', organiser_masked: 'Kemi Sound•••', category: 'Concert', city: 'Lagos', status: 'submitted', starts_at: dateAhead(21), capacity: 8000, tiers_count: 3, cashless_enabled: true, submitted_at: iso(6), cms_complete: true, flagged_terms: false, created_at: iso(48) },
   { id: 'evt_9002', title: 'Abuja Food Festival', organiser_masked: 'Naija Eats•••', category: 'Festival', city: 'Abuja', status: 'submitted', starts_at: dateAhead(35), capacity: 5000, tiers_count: 2, cashless_enabled: true, submitted_at: iso(20), cms_complete: false, flagged_terms: false, created_at: iso(72) },
@@ -147,7 +135,6 @@ const APPROVALS: EventApprovalItem[] = [
   { id: 'evt_9004', title: 'Port Harcourt Comedy Night', organiser_masked: 'PH Laughs•••', category: 'Comedy', city: 'Port Harcourt', status: 'draft', starts_at: dateAhead(45), capacity: 1200, tiers_count: 2, cashless_enabled: false, submitted_at: null, cms_complete: false, flagged_terms: false, created_at: iso(30) },
   { id: 'evt_9005', title: 'Owambe Owners Convention', organiser_masked: 'Lekki Events•••', category: 'Conference', city: 'Lagos', status: 'submitted', starts_at: dateAhead(60), capacity: 3000, tiers_count: 4, cashless_enabled: true, submitted_at: iso(40), cms_complete: true, flagged_terms: false, created_at: iso(120) },
 ];
-// Deliberately NOT wired to the real GET /events?status=submitted (the
 // backend has no separate /approvals route — that filter IS the approvals
 // queue). EventApprovalItem's tiers_count is derivable from real data, but
 // cms_complete and flagged_terms are content-moderation flags with no
@@ -171,7 +158,6 @@ export async function listEventApprovals(opts?: { status?: string; q?: string })
 }
 export async function decideEvent(id: string, decision: EventApprovalDecision, note?: string): Promise<EventDecisionResult> {
   if (USE_MOCK) throw new Error(`Deciding an event ${NOT_IN_FIXTURE_MODE}`);
-  // backend: only two verbs exist — POST /:id/approve and POST /:id/suspend
   // (top5events.Handler.{Approve,Suspend}), both with no body. "reject" and
   // "request_changes" have no backend equivalent — the service only has
   // Approve/Suspend state-transition methods.
@@ -182,9 +168,7 @@ export async function decideEvent(id: string, decision: EventApprovalDecision, n
   return sendJson<EventDecisionResult>('POST', `/${id}/${verb}`, {});
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Event catalog + detail
-// ════════════════════════════════════════════════════════════════════════════
 const EVENTS: EventSummary[] = [
   { id: 'evt_8841', title: 'Detty December Fest 2026', organiser_masked: 'Kemi Sound•••', category: 'Concert', city: 'Lagos', status: 'live', starts_at: dateAhead(40), capacity: 12000, tickets_sold: 9420, gmv_kobo: 2_120_000_000_00, cashless_enabled: true, created_at: dateStr(60) },
   { id: 'evt_8702', title: 'Lagos Tech Summit', organiser_masked: 'TechCity•••', category: 'Conference', city: 'Lagos', status: 'closed', starts_at: dateStr(8), capacity: 4000, tickets_sold: 3880, gmv_kobo: 612_400_000_00, cashless_enabled: true, created_at: dateStr(120) },
@@ -237,9 +221,7 @@ export async function getEvent(id: string): Promise<EventDetail> {
   return getJson<EventDetail>(`/events/${id}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Ticket inventory / tiers / promo
-// ════════════════════════════════════════════════════════════════════════════
 const TICKETS: TicketTier[] = [
   { id: 'tk_101', event_id: 'evt_8841', event_title: 'Detty December Fest 2026', name: 'Regular', price_kobo: 15_000_00, quantity: 8000, sold: 6420, held: 120, status: 'on_sale', config_version: 2, promo_codes: [{ code: 'EARLYBIRD', discount_pct: 0.15, max_redemptions: 1000, redeemed: 640, active: true }, { code: 'STUDENT', discount_pct: 0.20, max_redemptions: 500, redeemed: 500, active: false }] },
   { id: 'tk_102', event_id: 'evt_8841', event_title: 'Detty December Fest 2026', name: 'VIP', price_kobo: 50_000_00, quantity: 3000, sold: 3000, held: 0, status: 'sold_out', config_version: 1, promo_codes: [] },
@@ -265,9 +247,7 @@ export async function listTickets(opts?: { status?: string; event_id?: string; q
   return getJson<TicketTier[]>(`/tickets${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Cashless float & liability + residual refunds (NL-3)
-// ════════════════════════════════════════════════════════════════════════════
 const CASHLESS: CashlessFloat = {
   generated_at: iso(0.2),
   total_loaded_kobo: 700_600_000_00,
@@ -288,9 +268,7 @@ export async function getCashlessFloat(): Promise<CashlessFloat> {
   return getJson<CashlessFloat>('/cashless');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Vendors + KYC payout gate (NL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const VENDORS: VendorRecord[] = [
   { id: 'ven_5501', name_masked: 'Mama Put•••', event_id: 'evt_8841', event_title: 'Detty December Fest 2026', kyc_tier: 'tier2', kyc_verified: true, collected_kobo: 18_400_000_00, fees_kobo: 920_000_00, net_payable_kobo: 17_480_000_00, payout_status: 'approved', active: true, created_at: dateStr(20) },
   { id: 'ven_5521', name_masked: 'Suya King•••', event_id: 'evt_8841', event_title: 'Detty December Fest 2026', kyc_tier: 'tier0', kyc_verified: false, collected_kobo: 9_200_000_00, fees_kobo: 460_000_00, net_payable_kobo: 8_740_000_00, payout_status: 'kyc_hold', active: true, created_at: dateStr(18) },
@@ -319,7 +297,6 @@ export async function decideVendorPayout(id: string, decision: 'approve' | 'reje
   // UNCONDITIONAL, irreversible pay-now action requiring BOTH the event id and
   // vendor id plus an Idempotency-Key header, with no request body and no
   // "decision" parameter at all (it fails closed on missing KYC, but there is
-  // no separate approve/reject step). This function only has the vendor id in
   // scope, and "reject" has no backend equivalent regardless. Treated as a
   // genuine gap rather than silently firing an irreversible settlement in
   // place of what the UI presents as a reviewable decision.
@@ -327,9 +304,7 @@ export async function decideVendorPayout(id: string, decision: 'approve' | 'reje
   return sendJson<VendorPayoutResult>('POST', `/vendors/${id}/payout`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Settlement + reconciliation
-// ════════════════════════════════════════════════════════════════════════════
 const SETTLEMENT: Settlement = {
   generated_at: iso(0.2),
   total_gross_kobo: 2_918_800_000_00,
@@ -358,9 +333,7 @@ export async function resolveSettlementBreak(id: string, action: 'investigate' |
   return sendJson<SettlementResolveResult>('POST', `/settlement/${id}/resolve`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // H · Fraud — dup-scan / abnormal top-up
-// ════════════════════════════════════════════════════════════════════════════
 const FRAUD: EventFraudSignal[] = [
   { id: 'fr_2207', event_id: 'evt_8841', event_title: 'Detty December Fest 2026', kind: 'abnormal_topup', subject_masked: 'wlt Chioma•••', detail: '11 rapid top-ups (₦2.4m total) in 6 minutes from one device', severity: 'high', amount_kobo: 2_400_000_00, status: 'open', created_at: iso(2) },
   { id: 'fr_2188', event_id: 'evt_8841', event_title: 'Detty December Fest 2026', kind: 'dup_scan', subject_masked: 'tkt #A4821•••', detail: 'Single ticket scanned at 3 gates within 90 seconds', severity: 'medium', amount_kobo: 15_000_00, status: 'investigating', created_at: iso(5) },

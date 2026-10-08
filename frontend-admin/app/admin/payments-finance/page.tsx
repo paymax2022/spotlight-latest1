@@ -6,8 +6,10 @@
  * paymentsFinanceAdminService.ts for the data-path and permission notes).
  */
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   getPaymentsFinanceConsole, kycAction, adjustWallet, backfillWallets, formatNaira,
+  ADJUST_WALLET_MIN_REASON_LENGTH,
   type PaymentsFinanceConsole,
 } from '@/services/paymentsFinanceAdminService';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
@@ -96,11 +98,21 @@ export default function PaymentsFinanceAdminPage() {
     const reason = (direction === 'credit' ? form.creditReason : form.debitReason).trim();
     if (!amount || amount <= 0) { setError('Enter a valid amount greater than 0.'); return; }
     if (!reason) { setError('Reason is required for wallet adjustments.'); return; }
+    if (reason.length < ADJUST_WALLET_MIN_REASON_LENGTH) {
+      setError(`Reason must be at least ${ADJUST_WALLET_MIN_REASON_LENGTH} characters — the approval endpoint will reject a shorter one.`);
+      return;
+    }
     setBusy(`${userId}:${direction}`);
     setError(null);
     try {
       const result = await adjustWallet(userId, direction, amount, reason);
-      flash(result.alreadyProcessed ? 'Already processed (duplicate submission ignored)' : `Wallet ${direction}ed — ${result.reference}`);
+      if (result.alreadyProcessed) {
+        flash('Already processed (duplicate submission ignored)');
+      } else if (result.status === 'pending_approval') {
+        flash(`Queued for approval — this ${direction} requires a second admin to approve before it executes. No money has moved yet.`);
+      } else {
+        flash(`Wallet ${direction}ed successfully.`);
+      }
       setForm(userId, direction === 'credit' ? { credit: '', creditReason: '' } : { debit: '', debitReason: '' });
       await load();
     } catch (e) {
@@ -133,9 +145,12 @@ export default function PaymentsFinanceAdminPage() {
         title="Payments & Finance"
         subtitle="Fintech operations console for wallet, ledger, virtual accounts and KYC. Served from the web app over the admin web proxy."
         actions={
-          <Button variant="primary" disabled={busy === 'backfill'} onClick={() => void runBackfill()}>
-            {busy === 'backfill' ? 'Backfilling…' : 'Backfill wallets'}
-          </Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link href="/admin/payments-finance/adjustments"><Button variant="outline">Adjustment Approvals</Button></Link>
+            <Button variant="primary" disabled={busy === 'backfill'} onClick={() => void runBackfill()}>
+              {busy === 'backfill' ? 'Backfilling…' : 'Backfill wallets'}
+            </Button>
+          </div>
         }
       />
 
@@ -144,10 +159,11 @@ export default function PaymentsFinanceAdminPage() {
 
       {data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-            <StatTile label="Wallet balance" value={formatNaira(data.stats.totalBalanceKobo)} note="Across listed wallet accounts" />
-            <StatTile label="Credit volume" value={formatNaira(data.stats.creditVolumeKobo)} note="Recent ledger credits" />
-            <StatTile label="Debit volume" value={formatNaira(data.stats.debitVolumeKobo)} note="Recent ledger debits" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
+            <StatTile label="Wallet balance" value={formatNaira(data.stats.totalBalanceKobo)} note="True total across ALL customer wallets" />
+            <StatTile label="Credit volume" value={formatNaira(data.stats.creditVolumeKobo)} note={`Last ${data.stats.statsWindowDays} days`} />
+            <StatTile label="Debit volume" value={formatNaira(data.stats.debitVolumeKobo)} note={`Last ${data.stats.statsWindowDays} days`} />
+            <StatTile label="Active wallets" value={String(data.stats.activeWalletsCount)} note={`Moved money in the last ${data.stats.statsWindowDays} days`} />
             <StatTile label="Pending KYC" value={String(data.stats.pendingKyc)} note="Manual review queue" />
           </div>
 
@@ -227,7 +243,7 @@ export default function PaymentsFinanceAdminPage() {
                               <div style={{ display: 'flex', gap: 6 }}>
                                 <Input placeholder="NGN" type="number" min={1} style={{ width: 80 }}
                                   value={form.credit} onChange={(e) => setForm(w.user_id, { credit: e.target.value })} />
-                                <Input placeholder="Reason" style={{ width: 130 }}
+                                <Input placeholder="Reason (min 10 chars)" style={{ width: 150 }}
                                   value={form.creditReason} onChange={(e) => setForm(w.user_id, { creditReason: e.target.value })} />
                                 <Button sm variant="primary" disabled={busy === `${w.user_id}:credit`} onClick={() => void runAdjust(w.user_id, 'credit')}>
                                   Top up
@@ -236,7 +252,7 @@ export default function PaymentsFinanceAdminPage() {
                               <div style={{ display: 'flex', gap: 6 }}>
                                 <Input placeholder="NGN" type="number" min={1} style={{ width: 80 }}
                                   value={form.debit} onChange={(e) => setForm(w.user_id, { debit: e.target.value })} />
-                                <Input placeholder="Reason" style={{ width: 130 }}
+                                <Input placeholder="Reason (min 10 chars)" style={{ width: 150 }}
                                   value={form.debitReason} onChange={(e) => setForm(w.user_id, { debitReason: e.target.value })} />
                                 <Button sm variant="danger" disabled={busy === `${w.user_id}:debit`} onClick={() => void runAdjust(w.user_id, 'debit')}>
                                   Deduct

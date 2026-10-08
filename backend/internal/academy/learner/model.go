@@ -1,7 +1,6 @@
 // Package learner is the Spotlight Academy per-learner surface: personal
 // bookmarks + notes (server-persisted), full-text-ish search over the published
 // curriculum, and the daily-goal/streak summary.
-//
 // NOTE on JSON shape: unlike most academy packages (snake_case + {data} envelope)
 // these DTOs are tagged camelCase and returned bare, to match the pre-existing
 // mobile contract (features/academy/api.ts) exactly — the mobile branches consume
@@ -15,7 +14,7 @@ type Bookmark struct {
 	Title       string `json:"title"`
 	SubjectName string `json:"subjectName"`
 	Href        string `json:"href"`
-	Ts          string `json:"ts"` // ISO8601 (created_at)
+	Ts          string `json:"ts"`
 }
 
 // Note is one lesson note (public.academy_learner_notes).
@@ -25,7 +24,7 @@ type Note struct {
 	LessonTitle string `json:"lessonTitle"`
 	SubjectName string `json:"subjectName"`
 	Body        string `json:"body"`
-	Ts          string `json:"ts"` // ISO8601 (created_at)
+	Ts          string `json:"ts"`
 }
 
 // SearchResult is one hit from the curriculum search.
@@ -61,7 +60,7 @@ type Notification struct {
 	Body  string `json:"body"`
 	Href  string `json:"href,omitempty"`
 	Read  bool   `json:"read"`
-	Ts    string `json:"ts"` // ISO8601 (created_at)
+	Ts    string `json:"ts"`
 }
 
 // Announcement is one program/sponsor broadcast (public.academy_announcements).
@@ -72,10 +71,8 @@ type Announcement struct {
 	Kind    string `json:"kind"` // program|sponsor
 	Sponsor string `json:"sponsor,omitempty"`
 	Pinned  bool   `json:"pinned"`
-	Ts      string `json:"ts"` // ISO8601 (created_at)
+	Ts      string `json:"ts"`
 }
-
-// ── Request DTOs (match the mobile POST bodies) ─────────────────────────────────
 
 // CreateBookmarkRequest is the body for POST /learner/bookmarks.
 type CreateBookmarkRequest struct {

@@ -14,7 +14,7 @@ export function mapBooking(row: any, facilityName?: string) {
   };
 }
 
-// GET /api/v1/estate/facilities/bookings — current user's bookings
+// Current user's bookings
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -33,9 +33,8 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list bookings'); }
 }
 
-// POST /api/v1/estate/facilities/bookings — reserve a facility.
+// Reserve a facility.
 // Money note: this records a *reservation* with the fee captured in kobo. No
-// balance is moved here; settlement runs through the dues/payments money-path
 // (double-entry ledger + audit). Idempotency-Key dedupes accidental re-submits.
 export async function POST(request: Request) {
   try {
@@ -47,7 +46,8 @@ export async function POST(request: Request) {
     const idemKey = request.headers.get('Idempotency-Key');
     if (!idemKey) throw new ApiError('Idempotency-Key header is required', 400);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const facilityId = String(body?.facilityId ?? '');
     const startsAt = body?.startsAt ? new Date(body.startsAt) : null;
     const endsAt = body?.endsAt ? new Date(body.endsAt) : null;

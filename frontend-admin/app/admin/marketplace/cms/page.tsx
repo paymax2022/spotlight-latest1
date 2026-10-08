@@ -77,13 +77,12 @@ export default function CmsPage() {
   );
 }
 
-// ── Banners ──────────────────────────────────────────────────────────────────
 function BannersSection({ banners, cats, canEdit, busy, onCreate, onUpdate, onStatus }: {
   banners: MktBanner[]; cats: MktCategory[]; canEdit: boolean; busy: string | null;
   onCreate: (inp: MktBannerInput) => void; onUpdate: (id: string, inp: MktBannerInput) => void;
   onStatus: (b: MktBanner, status: 'archived' | 'draft', reason: string) => void;
 }) {
-  const [editingId, setEditingId] = useState<string | null>(null); // null = new
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<MktBannerInput>(EMPTY);
   const [statusReason, setStatusReason] = useState<Record<string, string>>({});
 
@@ -164,7 +163,6 @@ function BannersSection({ banners, cats, canEdit, busy, onCreate, onUpdate, onSt
   );
 }
 
-// ── Category landing / SEO content ───────────────────────────────────────────
 function CategoryContentSection({ cats, canEdit, busy, onSaved, setBusy, setError, setMsg }: {
   cats: MktCategory[]; canEdit: boolean; busy: string | null;
   onSaved: (c: MktCategoryContent) => void;

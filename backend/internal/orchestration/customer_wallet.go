@@ -1,35 +1,21 @@
 package orchestration
 
 // ── Where a customer's money actually lives (ADR-051) ──────────────
-//
-// FX used to keep EVERY currency, NGN included, in its own `orch_balances` pot.
-// Nothing in production ever credited that pot: its only writers are a
-// conversion's own destination leg, a card refund, and a test-only SeedBalance.
-// So /fx reported ₦0 to every user while the wallet, checkout, food and mobility
-// screens all showed the real figure out of `ledger_entries` — and a first
-// conversion was unreachable, because the only way to get NGN into the FX pot
-// was to have already converted into it.
-//
-// Two pots for one currency also breaks the iron rule that a wallet balance is a
-// projection of the ledger: whichever pot a screen did not read was silently
-// wrong, and "show one number, spend a different one" is the worst shape a money
-// bug can take.
-//
-// The rule now, in ONE place so no caller can pick a different answer:
-//
+// Two pots for one currency breaks the iron rule that a wallet balance is a
+// projection of the ledger: whichever pot a screen did not read would be
+// silently wrong. The rule, in ONE place so no caller can pick a different answer:
 //	NGN      → the platform's main double-entry ledger (ledger_accounts /
 //	           ledger_entries), the same pot every other NGN module reads and
 //	           spends. FX reads it, debits it, and pays into it.
-//	anything → the `orch_balances` pot, unchanged. The main ledger has no
+//	anything → the `orch_balances` pot. The main ledger has no
 //	else       per-currency user accounts (ledger_accounts is unique on
 //	           (user_id, type) and every user_wallet row is NGN), so non-NGN FX
 //	           holdings have nowhere else to live.
-//
-// The FX module's own book (`orch_ledger_entries`) is untouched and still posts
-// a full per-currency balanced set for every move, so the ADR-029 invariant
-// holds exactly as before. For NGN it is now an analytical mirror of a cash
-// movement recorded in the main ledger rather than the record of the pot itself;
-// `provider_clearing` is the bridging account on both books.
+// The FX module's own book (`orch_ledger_entries`) still posts a full
+// per-currency balanced set for every move, so the ADR-029 invariant holds. For
+// NGN it is an analytical mirror of a cash movement recorded in the main ledger
+// rather than the record of the pot itself; `provider_clearing` is the bridging
+// account on both books.
 
 import (
 	"context"
@@ -78,13 +64,11 @@ const mainWalletBalanceSQL = `
 // mainWalletAccountID resolves the customer's user_wallet account, creating it
 // for a real auth user who does not have one yet (same get-or-create contract as
 // ledger.Service.GetBalance).
-//
 // ok=false with a nil error means "this customer has no main wallet and cannot
 // have one" — an FX business customer keyed by business id, or a synthetic test
 // customer. Those keep using the orch_balances pot for NGN as well, which makes
 // the routing DETERMINISTIC PER CUSTOMER: a given customer's NGN always lives in
 // exactly one place, so no customer is ever split across both pots.
-//
 // The identity probe is load-bearing, not defensive decoration:
 // ledger_accounts.user_id is FK to auth.users and a failed INSERT aborts the
 // whole enclosing transaction in Postgres. Inside a money tx we cannot "try it
@@ -150,12 +134,10 @@ func standingAccountID(ctx context.Context, q querier, accountType string) (stri
 }
 
 // lockCustomerWallet serialises every money move against this customer.
-//
 // The key namespace ("wallet:<id>") is shared with finance/ledger and
 // finance/transfers deliberately: an FX conversion and a wallet transfer for the
 // same user then block each other instead of both reading a pre-debit balance
 // and together overdrawing the wallet.
-//
 // Callers MUST take this FIRST — before any row lock — and exactly once per
 // transaction. One lock, always the same key, always first: no lock cycle can
 // form between FX, transfers and the ledger.
@@ -165,7 +147,6 @@ func lockCustomerWallet(ctx context.Context, tx pgx.Tx, customerID string) error
 }
 
 // postMainLedgerPair writes the balanced DEBIT/CREDIT pair into ledger_entries.
-//
 // Per-side ":debit"/":credit" suffixes and ON CONFLICT DO NOTHING mirror
 // ledger.Repository.DebitWithBalanceCheck exactly, so a replay is a no-op rather
 // than a unique-key error. The "fx:" prefix keeps an FX leg from ever colliding
@@ -186,11 +167,8 @@ func postMainLedgerPair(ctx context.Context, tx pgx.Tx, debitAccountID, creditAc
 	return err
 }
 
-// ── The four operations every FX money path goes through ────────────────────
-
 // customerBalance reads one currency's spendable balance from whichever pot
 // holds it.
-//
 // Read-only and UNLOCKED: fine for display and for a cheap pre-flight rejection,
 // never as the sufficiency gate for a debit. debitCustomerWallet re-checks under
 // the wallet lock inside the money transaction — that check is the real gate.
@@ -219,7 +197,6 @@ func customerBalance(ctx context.Context, q querier, customerID, currency string
 
 // customerBalances lists every wallet the customer holds: their main-ledger NGN
 // wallet plus every orch_balances pot.
-//
 // The NGN entry is always present for a customer who has a main wallet, even at
 // zero, so /fx can render an NGN card with a funding CTA instead of an empty
 // list — the state that made the screen look broken rather than merely empty.
@@ -259,7 +236,6 @@ func customerBalances(ctx context.Context, q querier, customerID string) ([]Mone
 // debitCustomerWallet removes amountMinor from the customer's spendable balance,
 // failing closed with ErrInsufficientBalance when short. The caller must already
 // hold lockCustomerWallet on this transaction.
-//
 // NGN posts a balanced DEBIT(user_wallet) / CREDIT(provider_clearing) pair into
 // the immutable main ledger, so an FX spend shows up in the wallet, in
 // statements and in reconciliation like any other spend. Other currencies

@@ -1,13 +1,8 @@
-// ── Merchant Onboarding & Role-Upgrade — type contract ───────────────────────
 // Source of truth for the "one identity, many capabilities" subsystem
 // (Spotlight-Paymax-Onboarding-PRD.md §5, §7, §10).
-//
 // This file is the interface the mobile screens code against. The Backend role
 // owns it; the Frontend role consumes it and never reaches past it.
-//
 // IRON RULE: every monetary amount is an integer in minor units (kobo).
-
-// ─── Modules & merchant types (PRD §4, §8.2) ─────────────────────────────────
 
 export type ModuleOnboardingStatus = 'open' | 'closed';
 
@@ -38,8 +33,6 @@ export interface MerchantType {
   currentFormSchemaId: string;
   status:              'open' | 'retired';
 }
-
-// ─── Form-schema engine (PRD §8.3, FR-8 … FR-13) ─────────────────────────────
 
 export type FormFieldType =
   | 'text'
@@ -96,7 +89,6 @@ export interface FormSchema {
   steps:            FormStep[];
 }
 
-// ─── Submitted values ────────────────────────────────────────────────────────
 // A flat map keyed by FormField.key. Document fields store a DocumentValue.
 
 export interface DocumentValue {
@@ -109,8 +101,6 @@ export interface DocumentValue {
 export type FieldValue = string | number | boolean | string[] | DocumentValue | null;
 
 export type ApplicationData = Record<string, FieldValue>;
-
-// ─── Onboarding application (PRD §7.2, §10) ──────────────────────────────────
 
 export type ApplicationStatus =
   | 'DRAFT'
@@ -146,8 +136,6 @@ export interface OnboardingApplication {
   submittedAt?:      string | null;
   decidedAt?:        string | null;
 }
-
-// ─── Merchant profile & capabilities (PRD §7.3, §8.7) ────────────────────────
 
 export type MerchantProfileStatus =
   | 'PROVISIONING'
@@ -192,8 +180,6 @@ export interface MyCapabilities {
   activeApplications: OnboardingApplication[];  // in-flight (DRAFT … UNDER_REVIEW)
 }
 
-// ─── Mutation inputs (FR-11, FR-12, idempotent — §9) ─────────────────────────
-
 export interface CreateApplicationInput {
   merchantTypeId: string;
 }
@@ -214,8 +200,6 @@ export interface ResubmitApplicationInput {
   data:           ApplicationData;
   idempotencyKey: string;
 }
-
-// ─── Validation (client mirrors server, FR-12) ───────────────────────────────
 
 export type FieldErrors = Record<string, string>;
 

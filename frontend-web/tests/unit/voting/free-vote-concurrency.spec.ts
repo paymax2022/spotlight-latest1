@@ -8,20 +8,20 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { assertKycTier, KycGateError } from '@/server/voting-bridge/kyc-gate';
 import { castFreeVoteAtomic } from '@/server/voting-bridge/free-vote-atomic';
 import { fakeIdempotencyTable } from './_idempotency-fake';
 import { enableBridge } from '@/server/voting-bridge/feature-flag';
+import { boundClaimKey } from '@/server/voting-bridge/idempotency';
 
 // Mock Supabase client
-vi.mock('@/lib/supabase/admin');
+vi.mock('@/lib/supabase/server');
 
 // The KYC tier gate is mocked at the module boundary rather than choreographed
 // through the Supabase stub below. bridgedCastFreeVote gained the
 // assertKycTier() call (bridge.ts step 2) in the same commit that added these
 // specs, so their stubs never arranged its three-query chain
-// (profiles -> contestants -> competitions); single() returned undefined, the
 // gate fail-closed on the TypeError, and every vote in this file was refused.
 // Mocking the gate keeps each test on its actual subject — idempotency, caching
 // and outbox behaviour — while the gate's own logic stays covered by
@@ -81,7 +81,6 @@ describe('Free Vote Concurrency', () => {
     const { client } = fakeIdempotencyTable();
     (createAdminClient as any).mockReturnValue(client);
 
-    // Send two identical requests concurrently
     const request1 = bridgedCastFreeVote(
       mockVoteRequest,
       userId,
@@ -102,7 +101,6 @@ describe('Free Vote Concurrency', () => {
     expect(result1.success).toBe(true);
     expect(result2.success).toBe(true);
 
-    // ...but only ONE of them voted. This is the whole point of the file, and it
     // is only expressible now that the vote is a single mockable call: before,
     // the vote was an INSERT indistinguishable from the idempotency INSERT in
     // the same stub.
@@ -129,9 +127,14 @@ describe('Free Vote Concurrency', () => {
     expect(result1.freeVotesRemaining).toBe(CLAIM_OK.freeVotesRemaining);
 
     // The result was published against the key, so a later duplicate can be
-    // served from it rather than voting again.
+    // served from it rather than voting again. The row lives under the BOUND
+    // key — raw client keys are scoped to voter + vote shape before touching
+    // the store (cross-user/payload key reuse must not share a claim).
     expect(client.update).toHaveBeenCalled();
-    expect(rows.get(idempotencyKey)?.response).toMatchObject({ success: true });
+    const boundKey = boundClaimKey('free-vote', userId, idempotencyKey, {
+      contestId: '1', contestantId: '2', voteQuantity: 1, voter: '', device: 'fp-123',
+    });
+    expect(rows.get(boundKey)?.response).toMatchObject({ success: true });
   });
 
   it('should return cached result on second identical request', async () => {
@@ -162,7 +165,6 @@ describe('Free Vote Concurrency', () => {
       return mockSupabase;
     });
 
-    // Fetch existing key
     mockSupabase.select.mockImplementationOnce(() => {
       mockSupabase.eq.mockReturnThis();
       mockSupabase.single.mockResolvedValueOnce({
@@ -179,7 +181,6 @@ describe('Free Vote Concurrency', () => {
       mockContext
     );
 
-    // Should return cached response
     expect(result.success).toBe(true);
     expect(result.voteId).toBe(cachedResponse.voteId);
     expect(result.totalVotes).toBe(42);

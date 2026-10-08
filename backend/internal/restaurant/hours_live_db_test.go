@@ -1,11 +1,9 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for weekly business hours (Phase 5): owner replace-all
 // SetBusinessHours, the loader, and the effective-open gate driven off real rows.
 // Skipped unless TEST_DATABASE_URL is set. Requires the restaurant +
 // business-hours migrations.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

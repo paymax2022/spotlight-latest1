@@ -12,8 +12,6 @@ import (
 //   - the reconciler MUTATES NOTHING (read-only; never auto-corrects);
 //   - the job is idempotent + safe to re-run (identical report on a second run).
 
-// ── fakePaymentSource ────────────────────────────────────────────────────────────────
-
 type fakePaymentSource struct {
 	rows  []PaymentRecord
 	calls int
@@ -27,8 +25,6 @@ func (f *fakePaymentSource) RecentPayments(_ context.Context, _ time.Time) ([]Pa
 	return out, nil
 }
 
-// ── fakeContributionSource ─────────────────────────────────────────────────────────
-
 type fakeContributionSource struct {
 	rows  []ContributionRecord
 	calls int
@@ -40,8 +36,6 @@ func (f *fakeContributionSource) RecentContributions(_ context.Context, _ time.T
 	copy(out, f.rows)
 	return out, nil
 }
-
-// ── fakeLedger: knows which idempotency keys are posted ───────────────────────────────
 
 type fakeLedgerReader struct {
 	posted map[string]bool
@@ -55,8 +49,6 @@ func (l *fakeLedgerReader) Posted(_ context.Context, baseIdempotencyKey string) 
 	return l.posted[baseIdempotencyKey], nil
 }
 
-// ── fakeGateway (optional) ────────────────────────────────────────────────────────────
-
 type fakeGatewayReader struct {
 	status map[string]string
 	amount map[string]int64
@@ -66,10 +58,8 @@ func (g *fakeGatewayReader) VerifyAmount(_ context.Context, reference string) (s
 	return g.status[reference], g.amount[reference], nil
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // SF-8: a seeded drift (payment with no matching ledger entry) is flagged, and nothing
 //        is mutated.
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 func TestSF8_FlagsPaymentWithNoLedgerEntry(t *testing.T) {
 	ctx := context.Background()

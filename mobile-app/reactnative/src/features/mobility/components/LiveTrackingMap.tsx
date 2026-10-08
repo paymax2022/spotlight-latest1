@@ -69,7 +69,7 @@ export default function LiveTrackingMap({ gpsTrace, style }: LiveTrackingMapProp
         if (snapped.encoded) line = decodePolyline(snapped.encoded);
         else if (snapped.points) line = snapped.points.map((p) => [p.lng, p.lat]);
       } catch {
-        line = gpsTrace.map((p) => [p.lng, p.lat]); // graceful: show raw trace
+        line = gpsTrace.map((p) => [p.lng, p.lat]);
       }
       if (!cancelled) setCoords(line);
     })();

@@ -46,7 +46,7 @@ func TestClusterExposure(t *testing.T) {
 func TestVaRAndCVaR(t *testing.T) {
 	// 20 samples: worst two are −1000 and −500; the rest are non-losses.
 	pnl := []int64{-1000, -500}
-	for i := 0; i < 18; i++ {
+	for i := range 18 {
 		pnl = append(pnl, int64(i*10)) // 0,10,...,170 (gains)
 	}
 	// n=20, 95% conf → alpha 0.05 → idx floor(1)=1 → sorted[1]=−500 → VaR 500.

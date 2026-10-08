@@ -1,6 +1,4 @@
-// ── Protection — start a claim ───────────────────────────────────────────────
 // Pick the policy, then hand off to the insurer's own hosted claim flow.
-//
 // There is no API to post a claim to — MyCover issues a per-policy claim link
 // when the policy is bound and runs the whole process itself, reporting progress
 // back over webhooks. So the useful thing this screen can do is remove the part
@@ -14,10 +12,10 @@ import { router } from 'expo-router';
 import { ChevronRight, ExternalLink, Info } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { alertAsync } from '@/lib/confirm';
 import {
   InsuranceErrorState,

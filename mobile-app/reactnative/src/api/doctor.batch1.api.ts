@@ -1,18 +1,12 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 1 API client ────────────────
-// Batch 1 = spec sections C, D, E, F. Phase A style: every function resolves
 // demo data so screens render without a live API. `DEMO_*` exports double as
 // `placeholderData` in useQuery. ADDITIVE to `@/api/doctor.api`,
 // `@/api/doctor.phase2.api`, `@/api/doctor.profile.api` and
 // `@/api/doctor.phase3.api` — earlier fns/exports are untouched.
-//
-// Sections: C vet profile & verification, D dashboard aggregate + alerts,
 // E availability & schedule management, F appointment & consultation queue.
-//
 // TODO(Phase C): replace each body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/dashboard'); return res.data.data;
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import {
   DEMO_APPOINTMENTS,
   DEMO_EARNINGS,
@@ -91,11 +85,7 @@ const iso = (daysAgo: number): string => new Date(Date.now() - daysAgo * 8640000
 const isoDate = (daysFromNow: number): string =>
   new Date(Date.now() + daysFromNow * 86400000).toISOString().slice(0, 10);
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION C — VETERINARY DOCTOR PROFILE & VERIFICATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Demo data: vet document slots ───────────────────────────────────────────
 
 export const DEMO_VET_DOCUMENT_SLOTS: ProfileDocumentSlot[] = [
   { type: 'medical_license',  label: 'Veterinary Licence (VCN)', required: true,
@@ -106,8 +96,6 @@ export const DEMO_VET_DOCUMENT_SLOTS: ProfileDocumentSlot[] = [
   { type: 'passport_photo',    label: 'Passport Photograph',     required: true },
   { type: 'certificate',       label: 'Additional Certificate',  required: false },
 ];
-
-// ─── Demo data: the in-progress vet profile draft ────────────────────────────
 
 export const DEMO_VET_PROFILE_DRAFT: VetProfileDraft = {
   id: 'vet-draft-1', doctorId: 'doc-1',
@@ -150,8 +138,6 @@ export const DEMO_VET_PROFILE_DRAFT: VetProfileDraft = {
   isPublished: false,
 };
 
-// ─── Demo data: vet verification submission (pending state) ──────────────────
-
 export const DEMO_VET_VERIFICATION: VetVerificationSubmission = {
   id: 'vver-1', draftId: 'vet-draft-1', status: 'pending',
   submittedAt: iso(2),
@@ -159,14 +145,11 @@ export const DEMO_VET_VERIFICATION: VetVerificationSubmission = {
   notes: 'Awaiting review against the VCN register.',
 };
 
-// ─── Read endpoints (Section C) ──────────────────────────────────────────────
-
 // GET /vet/profile/draft (internal/doctor GetVetProfileDraft) returns the flat
 // doctor_vet_profiles row — id, userId, vetModeEnabled, licenceNumber,
 // verification, isPublished, profileDraft, detail, createdAt, updatedAt — not
 // the rich VetProfileDraft shape (personalInfo, licence, pricing, ...) this
 // function promises. Same root cause as the human getProfileDraft() bug it
-// mirrors: every vet screen's `save.mutateAsync({ draft: {...} })` sends its
 // whole SaveVetProfileDraftInput (including the `draft` wrapper key) as the PUT
 // body, so what actually lands in profile_draft is `{draft: {...}, ...}` —
 // the real fields live at `profileDraft.draft`, one level deeper than either
@@ -214,7 +197,6 @@ export async function getVetDocumentSlots(): Promise<ProfileDocumentSlot[]> {
 // GET /vet/verification (internal/doctor GetVetVerification) returns the same
 // flat VetProfile row as above — there is no separate vet verifications table
 // (see repository_vet_tail.go SubmitVetVerificationRecord), so `submittedAt`/
-// `reviewedAt`/`decision` genuinely don't exist anywhere server-side; only
 // `status` and the renewal/submission `notes`/`documents` folded into `detail`
 // (see marshalVetVerificationDetail) are real. Translated rather than cast
 // directly so `verification.tsx`'s `STATUS_CONFIG[submission.status]` reads a
@@ -232,8 +214,6 @@ export async function getVetVerification(submissionId?: string): Promise<VetVeri
     notes: wire.detail?.notes,
   };
 }
-
-// ─── Mutations (Section C) ───────────────────────────────────────────────────
 
 // PUT /vet/profile/draft returns the flat VetProfile row, not
 // {draftId, status, updatedAt} — translated the same way requestMerchantUpgrade
@@ -292,19 +272,13 @@ export async function publishVetProfile(input: PublishVetProfileInput): Promise<
   return { doctorId: wire.userId, isPublished: wire.isPublished, publishedAt: wire.updatedAt };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION D — DOCTOR DASHBOARD
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Demo data: platform announcement ────────────────────────────────────────
 
 export const DEMO_ANNOUNCEMENT: PlatformAnnouncement = {
   id: 'ann-1', tone: 'info', title: 'New: AI prescription safety checker',
   body: 'You can now run a one-tap drug-interaction check before issuing a prescription.',
   publishedAt: iso(1), dismissible: true, ctaLabel: 'Learn more', ctaRoute: 'announcements',
 };
-
-// ─── Demo data: the dashboard aggregate ──────────────────────────────────────
 
 export const DEMO_DASHBOARD: DoctorDashboardData = {
   presence: 'online',
@@ -351,8 +325,6 @@ export const DEMO_DASHBOARD: DoctorDashboardData = {
   satisfactionPct: 96,
 };
 
-// ─── Read endpoints (Section D) ──────────────────────────────────────────────
-
 export async function getDashboard(): Promise<DoctorDashboardData> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_DASHBOARD);
   return doctorGet<DoctorDashboardData>('/dashboard');
@@ -362,8 +334,6 @@ export async function getAnnouncement(): Promise<PlatformAnnouncement | undefine
   if (DOCTOR_USE_MOCK) return wait(DEMO_ANNOUNCEMENT);
   return doctorGet<PlatformAnnouncement | undefined>('/announcements/latest');
 }
-
-// ─── Mutations (Section D) ───────────────────────────────────────────────────
 
 export async function setPresence(input: SetPresenceInput): Promise<SetPresenceResult> {
   if (DOCTOR_USE_MOCK) return wait({ presence: input.presence }, 400);
@@ -375,11 +345,7 @@ export async function dismissAnnouncement(input: DismissAnnouncementInput): Prom
   return doctorPost<DismissAnnouncementResult>(`/announcements/${input.announcementId}/dismiss`, input, input.idempotencyKey);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION E — AVAILABILITY & SCHEDULE MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Demo data: blocked dates, vacation, reminders, recurring rules ──────────
 
 export const DEMO_BLOCKED_DATES: BlockedDate[] = [
   { id: 'bd-1', date: isoDate(3),  reason: 'Public holiday', allDay: true },
@@ -399,8 +365,6 @@ export const DEMO_RECURRING_RULES: RecurringRule[] = [
   { id: 'rr-2', frequency: 'biweekly', days: ['sat'], startTime: '10:00', endTime: '13:00', startsOn: isoDate(-14), endsOn: isoDate(90), active: false },
 ];
 
-// ─── Demo data: the extended schedule settings aggregate ─────────────────────
-
 export const DEMO_SCHEDULE_SETTINGS: ScheduleSettings = {
   schedule: DEMO_AVAILABILITY,
   appointmentOnly: false,
@@ -411,8 +375,6 @@ export const DEMO_SCHEDULE_SETTINGS: ScheduleSettings = {
   reminders: DEMO_REMINDER_SETTINGS,
   recurringRules: DEMO_RECURRING_RULES,
 };
-
-// ─── Read endpoints (Section E) ──────────────────────────────────────────────
 
 export async function getScheduleSettings(): Promise<ScheduleSettings> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_SCHEDULE_SETTINGS);
@@ -442,8 +404,6 @@ export function checkOverbooking(
       : `Overbooked by ${overBy} — ${total} slots exceed the ${capacity}-slot capacity for this day.`,
   };
 }
-
-// ─── Mutations (Section E) ───────────────────────────────────────────────────
 
 export async function blockDate(input: BlockDateInput): Promise<BlockDateResult> {
   if (DOCTOR_USE_MOCK) {
@@ -490,19 +450,13 @@ export async function setTimezone(input: SetTimezoneInput): Promise<SetTimezoneR
   return doctorPut<SetTimezoneResult>('/schedule/timezone', input, input.idempotencyKey);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION F — APPOINTMENT & CONSULTATION QUEUE
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Demo data: consultation queue (priority-ordered) ────────────────────────
 
 export const DEMO_QUEUE: ConsultationQueueItem[] = [
   { appointmentId: 'apt-2', ref: 'TM-7C1B88', patientName: 'Fatima Bello',  initials: 'FB', avatarColor: '#EC4899',         consultType: 'audio', status: 'confirmed',   priority: 'emergency', billing: 'hmo',            isHmo: true,  waitMins: 4,  slotTime: '05:15 PM', feeKobo: 350000 },
   { appointmentId: 'apt-1', ref: 'TM-9F2A41', patientName: 'Tunde Akinwale', initials: 'TA', avatarColor: Colors.secondary,  consultType: 'video', status: 'confirmed',   priority: 'normal',    billing: 'paid',           isHmo: false, waitMins: 1,  slotTime: '04:30 PM', feeKobo: 350000 },
   { appointmentId: 'apt-5', ref: 'TM-2B7D33', patientName: 'Ngozi Adeyemi',  initials: 'NA', avatarColor: Colors.teal,       consultType: 'video', status: 'upcoming',    priority: 'low',       billing: 'free_follow_up', isHmo: false, waitMins: 0,  slotTime: '06:00 PM', feeKobo: 0 },
 ];
-
-// ─── Demo data: pending appointment requests (accept/reject) ─────────────────
 
 export const DEMO_APPOINTMENT_REQUESTS: AppointmentRequest[] = [
   {
@@ -518,8 +472,6 @@ export const DEMO_APPOINTMENT_REQUESTS: AppointmentRequest[] = [
     patientNote: 'Persistent headache and fatigue for a week.',
   },
 ];
-
-// ─── Read endpoints (Section F) ──────────────────────────────────────────────
 
 export async function getConsultationQueue(): Promise<ConsultationQueueItem[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_QUEUE);
@@ -562,8 +514,6 @@ export function computeConsultCountdown(
   return { appointmentId, slotAt, minsUntil, isStartingSoon, isOverdue, isDoctorLate, label };
 }
 
-// ─── Mutations (Section F) ───────────────────────────────────────────────────
-// accept / reject / reschedule-request operate on a pending request; start /
 // end / cancel / no-show / reschedule operate on a confirmed appointment. The
 // existing `updateAppointmentStatus` (Phase 1) still covers generic status
 // transitions; these add the named, intent-specific variants.

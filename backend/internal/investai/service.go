@@ -3,13 +3,21 @@ package investai
 import (
 	"context"
 	"errors"
+	"net/http"
 	"regexp"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyError = "error"
 
 var (
 	ErrNotFound  = errors.New("investai: session not found")
@@ -147,7 +155,7 @@ func (s *Service) appendMessage(ctx context.Context, m *ChatMessage) error {
 		return err
 	}
 	// Touch the session so ListSessions orders by recency.
-	s.db.Exec(ctx, `UPDATE investai_sessions SET updated_at=NOW() WHERE id=$1`, m.SessionID)
+	_, _ = s.db.Exec(ctx, `UPDATE investai_sessions SET updated_at=NOW() WHERE id=$1`, m.SessionID)
 	return nil
 }
 
@@ -252,4 +260,119 @@ func (s *Service) ExplainAsset(ctx context.Context, symbol string) (*ExplainAsse
 		"the fees and spread shown on the quote, and how much you'd be comfortable risking. This is " +
 		"general education about " + sym + " — not a recommendation to buy, sell, or hold it."
 	return &ExplainAssetResponse{Symbol: sym, Text: text, Disclaimer: Disclaimer}, nil
+}
+
+// RegisterInvestAI mounts the InvestAI education routes on the provided group. The
+// caller passes a group already scoped to /api/v1/ai/invest and already carrying
+// the auth middleware (user_id mirrored onto the gin context), matching the mobile
+// base path (mobile-app/reactnative/src/features/investai/api/ai.api.ts).
+//
+//	POST /chat                    — one education turn { prompt, context?, session_id? }
+//	POST /explain-asset           — neutral educational summary of one symbol { symbol }
+//	GET  /sessions                — list the caller's education sessions
+//	GET  /sessions/:id/messages   — owner-scoped chat history for a session
+//
+// Every assistant turn is educational and disclaimered; advice-seeking prompts are
+// refused server-side. No money path.
+func RegisterInvestAI(g *gin.RouterGroup, h *Handler) {
+	g.POST("/chat", h.Chat)
+	g.POST("/explain-asset", h.ExplainAsset)
+	g.GET("/sessions", h.ListSessions)
+	g.GET("/sessions/:id/messages", h.GetHistory)
+}
+
+// Handler exposes the InvestAI education API. user_id is set on the gin context by
+// the auth middleware (c.GetString("user_id")) — the same OLA convention the learn
+// and invest modules use. Responses are returned as the raw payload (no envelope)
+// to match the mobile api wrapper's unwrap(res.data?.data ?? res.data).
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusBadRequest, ErrBadInput),
+)
+
+// httpErr writes the mapped status; unknown errors get a generic 500 body so
+// internals never leak to the client.
+func httpErr(c *gin.Context, err error) {
+	if code := errMap.Code(err); code != http.StatusInternalServerError {
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{keyError: "something went wrong"})
+}
+
+// Chat — POST /chat  { prompt, context?, session_id? } → { session_id, text, refused, disclaimer }
+func (h *Handler) Chat(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	var req ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
+		return
+	}
+	res, err := h.svc.Chat(c.Request.Context(), uid, req)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ExplainAsset — POST /explain-asset  { symbol } → { symbol, text, disclaimer }
+func (h *Handler) ExplainAsset(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	var req ExplainAssetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
+		return
+	}
+	res, err := h.svc.ExplainAsset(c.Request.Context(), req.Symbol)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ListSessions — GET /sessions → [ ChatSession ]
+func (h *Handler) ListSessions(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	sessions, err := h.svc.ListSessions(c.Request.Context(), uid)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, sessions)
+}
+
+// GetHistory — GET /sessions/:id/messages → [ ChatMessage ] (owner-scoped)
+func (h *Handler) GetHistory(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	msgs, err := h.svc.GetHistory(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, msgs)
 }

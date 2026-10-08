@@ -1,12 +1,6 @@
-// ── Paymax Invest · Crypto — API wrapper ─────────────────────────────────────
 // Typed data layer the screens code against (Backend role owns this file).
-// Mirrors fx.api.ts: mock-flagged. Flip EXPO_PUBLIC_CRYPTO_USE_MOCK=false once
 // the real Paymax /api/v1/crypto endpoints (docs/crypto/api.md) land.
-//
 // IRON RULES honoured here (docs/crypto/architecture.md):
-//  • all money is integer minor units;
-//  • every buy/sell carries an Idempotency-Key (Rule 6);
-//  • execution runs against a server quote id — price is never assumed (Rule 2);
 //  • the client never computes fees/eligibility authoritatively — server wins.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -45,7 +39,6 @@ import type {
   WithdrawalResult,
 } from '../types/crypto.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
@@ -83,12 +76,9 @@ function requireAsset(assetId: string): CryptoAsset {
   return asset;
 }
 
-// ─── Eligibility (server-side gate; docs/crypto/compliance.md) ────────────────
-
 export async function getEligibility(): Promise<CryptoEligibility> {
   if (USE_MOCK) {
     await delay(160);
-    // Mock: a fully-verified, eligible user. Other states are reachable by
     // changing the returned `state` here while wiring the gated UI.
     return {
       state: 'eligible',
@@ -99,8 +89,6 @@ export async function getEligibility(): Promise<CryptoEligibility> {
   }
   return unwrap<CryptoEligibility>(await api.get('/api/v1/invest/eligibility'));
 }
-
-// ─── Assets (GET /crypto/assets, /crypto/assets/:symbol) ──────────────────────
 
 export async function getAssets(): Promise<CryptoAsset[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_ASSETS]; }
@@ -143,7 +131,6 @@ export async function getChart(symbol: string, range: ChartRange): Promise<Candl
   return unwrap<CandlePoint[]>(await api.get(`/api/v1/crypto/assets/${symbol}/chart`, { params: { range } }));
 }
 
-// ─── Quote (GET /crypto/assets/:id/quote) ─────────────────────────────────────
 // NOTE: the backend quote route is a GET on the asset (no swap/side inputs);
 // it re-prices server-side at execution time regardless, so this is display-only.
 
@@ -152,7 +139,6 @@ export async function createQuote(req: QuoteRequest): Promise<CryptoQuote> {
   return unwrap<CryptoQuote>(await api.get(`/api/v1/crypto/assets/${req.assetId}/quote`));
 }
 
-// ─── Execute buy / sell (POST /crypto/buy, /crypto/sell) ──────────────────────
 // Money mutations → server-side pre-trade check + Idempotency-Key + provider ref.
 
 async function executeMock(quote: CryptoQuote, idempotencyKey: string): Promise<CryptoOrder> {
@@ -215,10 +201,7 @@ export async function executeSell(quote: CryptoQuote, idempotencyKey: string): P
   }
 }
 
-// ─── Swap ──────────────────────────────────────────────────────────────────────
-// LIVE: crypto-to-crypto swap is now backed by Go — POST /crypto/swap/quote for
 // the pre-trade estimate and POST /crypto/swap for the atomic two-leg order
-// (sell A → buy B under one Idempotency-Key). The server re-prices at execution;
 // the client quote is display-only. Amounts are integer asset minor units.
 
 export async function createSwapQuote(draft: SwapDraft): Promise<SwapQuote> {
@@ -284,8 +267,6 @@ export async function executeSwap(quote: SwapQuote, idempotencyKey: string): Pro
   }
 }
 
-// ─── Portfolio (GET /portfolio, /portfolio/positions) ─────────────────────────
-
 export async function getPortfolio(): Promise<CryptoPortfolio> {
   if (USE_MOCK) {
     await delay(280);
@@ -317,10 +298,8 @@ export async function getPositions(): Promise<Position[]> {
   return unwrap<Position[]>(await api.get('/api/v1/crypto/portfolio/holdings'));
 }
 
-// ─── Transactions ──────────────────────────────────────────────────────────────
 // MISSING backend endpoints: no /crypto/transactions list/detail route — only
 // GET /crypto/orders (own order history) exists. Reusing it as the closest
-// live analogue; per-transaction detail (id lookup) stays mock until the
 // backend ships GET /crypto/transactions/:id.
 
 export async function getTransactions(side?: 'buy' | 'sell'): Promise<CryptoTransactionSummary[]> {
@@ -353,8 +332,6 @@ export async function getTransaction(id: string): Promise<CryptoTransactionDetai
   return found;
 }
 
-// ─── Deposit address (GET /crypto/deposit-address) ────────────────────────────
-// LIVE: GET /crypto/deposit-address?asset=<symbol>&network=<net> returns the
 // caller's per-asset deposit address, generated + persisted on first request via
 // the custody provider seam (stable across calls). Mock keeps a deterministic
 // address so the same asset/network always renders the same QR offline.
@@ -383,11 +360,8 @@ export async function getDepositAddress(symbol: string, networkId: string): Prom
   return unwrap<DepositAddress>(await api.get('/api/v1/crypto/deposit-address', { params: { symbol, network: networkId } }));
 }
 
-// ─── Watchlist (GET/POST/DELETE /watchlists) ──────────────────────────────────
-// Mock keeps a single default watchlist as a set of asset ids. Reads return the
 // resolved assets so the screens can render rows without a second round-trip.
 // The only live watchlist surface on the backend is invest's shared
-// /invest/watchlists (list container + POST/DELETE …/stocks entries); crypto
 // reuses the "default" list id as its container. Shape differs slightly
 // (symbol-keyed here vs asset-id there) so this maps through best-effort.
 
@@ -411,7 +385,6 @@ export async function removeFromWatchlist(assetId: string): Promise<void> {
   await api.delete(`/api/v1/invest/watchlists/default/stocks/${assetId}`);
 }
 
-// ─── Price alerts (GET/POST/PATCH/DELETE /alerts) ─────────────────────────────
 // Reuses invest's shared /invest/alerts surface (cross-asset price alerts).
 
 const ngn = (major: number) => Math.round(major * 100);
@@ -465,10 +438,8 @@ export async function deleteAlert(id: string): Promise<void> {
   await api.delete(`/api/v1/invest/alerts/${id}`);
 }
 
-// ─── Withdrawal address book (Phase-4; docs/crypto/compliance.md) ─────────────
 // Every destination is whitelisted + screened before first use. Addresses are
 // masked in the UI; the full value is only shown on the detail/confirm screens.
-// LIVE: the address allow-list + withdrawal state machine are now backed by Go —
 // GET/POST/DELETE /crypto/addresses (whitelist) and POST/GET /crypto/withdrawals
 // (requested→pending→broadcast→confirmed|failed via a pluggable provider seam).
 // screenAddress + getWithdrawalEligibility remain mock (compliance surfaces the
@@ -556,12 +527,9 @@ export async function deleteAddress(id: string): Promise<void> {
   await api.delete(`/api/v1/crypto/addresses/${id}`);
 }
 
-// ─── Withdrawal eligibility + quote + execution ───────────────────────────────
-
 export async function getWithdrawalEligibility(): Promise<WithdrawalEligibility> {
   if (USE_MOCK) {
     await delay(180);
-    // Mock: a Tier-2 user, cleared, but every crypto withdrawal goes to manual
     // review per the MVP rule (docs/crypto/product.md, Phase 3).
     return {
       gate: 'eligible',
@@ -641,7 +609,6 @@ export async function initiateWithdrawal(
   // debits+parks the holding units (no mint), charges the fiat fee to revenue, and
   // drives the state machine requested→pending→broadcast via the provider seam.
   // Idempotency-Key makes the POST retry-safe. (otp is a client-side confirmation
-  // gate; the backend authorises via the whitelist + session identity.)
   void otp;
   try {
     return unwrap<WithdrawalResult>(

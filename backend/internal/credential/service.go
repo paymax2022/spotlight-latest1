@@ -2,11 +2,11 @@ package credential
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/dbutil"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,7 +41,7 @@ const defaultRotateTTL = 30 * time.Second
 // CurrentToken to get the rotating value each render so screenshots go stale.
 func (s *Service) Issue(ctx context.Context, subjectRef string, kind Kind, policy Policy) (*Credential, error) {
 	if subjectRef == "" {
-		return nil, fmt.Errorf("credential: subjectRef required")
+		return nil, errors.New("credential: subjectRef required")
 	}
 	if policy.RotateTTL <= 0 {
 		policy.RotateTTL = defaultRotateTTL
@@ -244,13 +244,11 @@ func (s *Service) Revoke(ctx context.Context, credentialID string) error {
 		return fmt.Errorf("credential: revoke: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("credential: not revocable (missing or terminal)")
+		return errors.New("credential: not revocable (missing or terminal)")
 	}
 	s.log("", "credential.revoke", credentialID, nil)
 	return nil
 }
-
-// --- internals ---
 
 func (s *Service) consume(ctx context.Context, id string) (bool, error) {
 	const q = `UPDATE credentials SET state='USED', used_at=now() WHERE id=$1 AND state='ACTIVE'`
@@ -309,8 +307,8 @@ func (s *Service) load(ctx context.Context, id string) (*Credential, error) {
 		&c.Policy.SingleUse, &c.Policy.AllowReentry, &reentrySecs, &rotateSecs,
 		&c.Policy.ValidFrom, &validTo, &c.IssuedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("credential: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("credential: not found")
 		}
 		return nil, fmt.Errorf("credential: load: %w", err)
 	}
@@ -331,8 +329,6 @@ func (s *Service) log(subject, action, id string, meta map[string]any) {
 	s.audit.LogAction(subject, "", action, "credential", "credential", id, nil, meta, "", "", "info")
 }
 
-// --- token crypto (pure functions, deterministic per window) ---
-
 func windowFor(c *Credential, now time.Time) int64 {
 	ttl := c.Policy.RotateTTL
 	if ttl <= 0 {
@@ -352,26 +348,116 @@ func mintToken(c *Credential, now time.Time) *Token {
 	}
 }
 
+func sign(secret, credentialID string, window int64, nonce string) string {
+	return cryptox.HMACSHA256Hex(secret, credentialID, strconv.FormatInt(window, 10), nonce)
+}
+
 func verifyToken(c *Credential, tok Token) bool {
 	want := sign(c.Secret, tok.CredentialID, tok.Window, tok.Nonce)
-	return hmac.Equal([]byte(want), []byte(tok.Sig))
+	return cryptox.ConstantTimeEqual(want, tok.Sig)
 }
 
-func sign(secret, cid string, window int64, nonce string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%s|%d|%s", cid, window, nonce)
-	return hex.EncodeToString(mac.Sum(nil))
+func randHex(n int) string { return cryptox.RandHex(n) }
+
+func nullTime(t time.Time) any { return dbutil.NullTime(t) }
+
+// Kind enumerates what a credential authorises. A single credential primitive
+// backs event entry, cashless-wallet identity and loyalty perks (reuse across
+// events + loyalty per TOP5-BUILD-PLAN §1).
+type Kind string
+
+const (
+	KindEventTicket Kind = "event_ticket" // gate entry for a ticketed event
+	KindWalletBand  Kind = "wallet_band"  // cashless event-wallet band / tag
+	KindVendorPOS   Kind = "vendor_pos"   // vendor POS-lite identity at a gate/stall
+	KindLoyaltyPerk Kind = "loyalty_perk" // a redeemable loyalty perk
+	KindStewardPass Kind = "steward_pass" // staff/steward scanning capability
+)
+
+// State is the lifecycle of an issued credential.
+type State string
+
+const (
+	StateActive  State = "ACTIVE"
+	StateUsed    State = "USED"    // single-use credential already redeemed
+	StateRevoked State = "REVOKED" // organiser/admin revoked it
+	StateExpired State = "EXPIRED" // past valid_to
+)
+
+// Policy controls how a credential validates. It is stored with the credential so
+// validation is self-describing (an offline gate can enforce it from the signed
+// token alone, then reconcile later).
+type Policy struct {
+	SingleUse     bool          `json:"single_use"`     // true => one scan only (NL: QR single-use)
+	AllowReentry  bool          `json:"allow_reentry"`  // re-entry: many scans, deduped per gate-window
+	ReentryWindow time.Duration `json:"reentry_window"` // dedupe window for re-entry scans
+	RotateTTL     time.Duration `json:"rotate_ttl"`     // QR rotates every RotateTTL (anti-screenshot)
+	ValidFrom     time.Time     `json:"valid_from"`
+	ValidTo       time.Time     `json:"valid_to"`
 }
 
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+// Credential is the persisted issuance record. The on-the-wire token is signed and
+// carries a rotating nonce; this row is the authority that the token references.
+type Credential struct {
+	ID         string     `json:"id"`
+	SubjectRef string     `json:"subject_ref"` // owning user id (FK auth.users) or vendor id
+	Kind       Kind       `json:"kind"`
+	State      State      `json:"state"`
+	Secret     string     `json:"-"` // HMAC signing secret (never serialised out)
+	Policy     Policy     `json:"policy"`
+	NFCToken   string     `json:"nfc_token,omitempty"` // long-lived tap token (single-use enforced same path)
+	IssuedAt   time.Time  `json:"issued_at"`
+	UsedAt     *time.Time `json:"used_at,omitempty"`
 }
 
-func nullTime(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t
+// Token is the rotating, signed value rendered as a QR (and an NFC payload). It is
+// short-lived: window pins it to a RotateTTL bucket so a screenshot taken in one
+// window is rejected in the next (anti-screenshot). The signature binds id+window+
+// nonce so the token cannot be forged or replayed across windows.
+type Token struct {
+	CredentialID string `json:"cid"`
+	Window       int64  `json:"w"` // unix-time bucket = floor(now/rotateTTL)
+	Nonce        string `json:"n"` // per-window random nonce
+	Sig          string `json:"sig"`
 }
+
+// Gate identifies where a validation happens (entry gate, stall, perk counter). It
+// scopes re-entry dedupe and audit.
+type Gate struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Result is the outcome of a Validate call.
+type Result struct {
+	OK           bool   `json:"ok"`
+	CredentialID string `json:"credential_id"`
+	SubjectRef   string `json:"subject_ref"`
+	Kind         Kind   `json:"kind"`
+	Reason       string `json:"reason,omitempty"` // populated when OK=false
+	Reentry      bool   `json:"reentry"`          // true when accepted as a re-entry (not first use)
+}
+
+// Validation is an append-only scan record (one row per accepted/rejected scan).
+// The offline-tolerant queue inserts PENDING rows that reconcile to ACCEPTED /
+// REJECTED, so a brief gate outage never loses an entry event.
+type Validation struct {
+	ID           string    `json:"id"`
+	CredentialID string    `json:"credential_id"`
+	GateID       string    `json:"gate_id"`
+	Window       int64     `json:"window"`
+	Outcome      string    `json:"outcome"` // ACCEPTED | REJECTED | PENDING
+	Reason       string    `json:"reason,omitempty"`
+	ScannedAt    time.Time `json:"scanned_at"`
+}
+
+// Rejection reasons (stable strings for audit + client UX).
+const (
+	ReasonReplay      = "replay_rejected" // token already used / window already consumed
+	ReasonExpired     = "expired"
+	ReasonNotYetValid = "not_yet_valid"
+	ReasonBadSig      = "bad_signature"
+	ReasonStaleWindow = "stale_window" // screenshot from an older rotation window
+	ReasonRevoked     = "revoked"
+	ReasonNotFound    = "not_found"
+)

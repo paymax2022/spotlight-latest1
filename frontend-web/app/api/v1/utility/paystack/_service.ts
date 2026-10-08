@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { initializePaystackPayment, verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { payUtility, quoteUtilityPayment } from '@/src/server/utility/service';
+import { creditWallet } from '@/src/server/wallet/service';
 import type { UtilityCategory } from '@/src/server/utility/types';
 import { isReturnableOrigin, resolveReturnOrigin } from '@/src/server/registration/return-origin';
 
@@ -62,7 +63,6 @@ export async function initiateUtilityPaystackPayment(input: {
   const paymentReference = reference();
   const intentId = crypto.randomUUID();
   // Capture WHERE this payment was started from, same as the registration
-  // payment flow (src/server/registration/return-origin.ts): the callback is
   // reached by a top-level navigation from Paystack and so has no Origin of
   // its own, so this is the only point that can identify the caller's origin.
   // Re-validated on the way back out before ever being used as a redirect
@@ -71,7 +71,12 @@ export async function initiateUtilityPaystackPayment(input: {
   const callbackPath =
     `/api/v1/utility/paystack/callback?reference=${encodeURIComponent(paymentReference)}` +
     (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
-  const callbackUrl = new URL(callbackPath, input.request.url).toString();
+  // The callbackUrl is handed to Paystack and followed by the payer's BROWSER —
+  // a public URL, so it must be built on the public site origin. request.url is
+  // http://0.0.0.0:PORT on Railway/cPanel (the server binds the wildcard
+  // address), which Paystack would echo back as a dead redirect.
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+  const callbackUrl = new URL(callbackPath, siteUrl).toString();
 
   const { error: insertError } = await supabase.from('utility_paystack_intents').insert({
     id: intentId,
@@ -88,7 +93,12 @@ export async function initiateUtilityPaystackPayment(input: {
     metadata: input.metadata ?? {},
   });
 
-  if (insertError) throw new ApiError(`Failed to create Paystack utility intent: ${insertError.message}`, 500);
+  if (insertError) {
+    // ApiError's message reaches the client — log the PostgREST detail
+    // server-side, never embed it.
+    console.error('[utility/paystack] intent insert failed:', insertError.message);
+    throw new ApiError('Failed to create Paystack utility intent', 500);
+  }
 
   const authorizationUrl = await initializePaystackPayment({
     reference: paymentReference,
@@ -153,21 +163,51 @@ export async function verifyUtilityPaystackPayment(reference: string, userId?: s
   }
 
   const metadata = (typeof intent.metadata === 'object' && intent.metadata !== null ? intent.metadata : {}) as Record<string, unknown>;
-  const result = await payUtility(String(intent.user_id), {
-    category: intent.category as UtilityCategory,
-    billerId: String(intent.biller_id),
-    productId: String(intent.product_id),
-    customerReference: String(intent.customer_reference),
-    amountKobo: Number(intent.amount_kobo),
-    paymentSource: 'paystack',
-    idempotencyKey: `utility:paystack:${reference}`,
-    metadata: {
-      ...metadata,
-      payment_reference: reference,
-      paystack_provider_reference: verification.providerReference,
-      payment_source: 'paystack',
-    },
-  });
+  let result: Awaited<ReturnType<typeof payUtility>>;
+  try {
+    result = await payUtility(String(intent.user_id), {
+      category: intent.category as UtilityCategory,
+      billerId: String(intent.biller_id),
+      productId: String(intent.product_id),
+      customerReference: String(intent.customer_reference),
+      amountKobo: Number(intent.amount_kobo),
+      paymentSource: 'paystack',
+      idempotencyKey: `utility:paystack:${reference}`,
+      metadata: {
+        ...metadata,
+        payment_reference: reference,
+        paystack_provider_reference: verification.providerReference,
+        payment_source: 'paystack',
+      },
+    });
+  } catch (err) {
+    // The Paystack charge was just verified above — the money is already
+    // captured. payUtility can throw BEFORE it ever creates a
+    // utility_transactions row (e.g. customer/meter validation failure), so
+    // there is no transaction for payUtility's own reversal branch to act
+    // on. Without this, that charge was captured with no transaction record
+    // AND no refund — found 2026-09-18 via a cable_tv purchase whose
+    // validation failed on every attempt (see the sandbox fix in
+    // adapters/vtpass.ts) and left money stuck with zero trace of it.
+    const message = err instanceof ApiError ? err.message : 'Utility payment could not be completed.';
+    await creditWallet(String(intent.user_id), {
+      amountKobo: Number(intent.retail_amount_kobo),
+      reference,
+      idempotencyKey: `utility:paystack-intent:${intent.id}:VALIDATION_REFUND`,
+      description: `Refund: utility payment ${reference} (${message})`,
+      metadata: {
+        utility_paystack_intent_id: intent.id,
+        category: intent.category,
+        refund_reason: 'validation_failed',
+        original_payment_source: 'paystack',
+      },
+    });
+    await supabase
+      .from('utility_paystack_intents')
+      .update({ status: 'failed', failure_reason: message, updated_at: new Date().toISOString() })
+      .eq('id', intent.id);
+    throw new ApiError(message, 400);
+  }
 
   await supabase
     .from('utility_paystack_intents')
@@ -187,7 +227,6 @@ export function redirectToApp(transactionId?: string, returnOrigin?: string | nu
   // web, e.g. :8083) or a plain browser tab on a dead navigation even though
   // the charge itself was correctly verified and recorded server-side. Prefer
   // the origin the payment was started from (re-validated — see
-  // return-origin.ts) and land on the resolver screen by reference, which
   // works for success, pending, AND failed alike.
   if (isReturnableOrigin(returnOrigin) && reference) {
     return NextResponse.redirect(buildWebReturnUrl(returnOrigin as string, reference));

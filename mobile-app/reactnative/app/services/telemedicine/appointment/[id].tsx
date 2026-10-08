@@ -7,11 +7,11 @@ import {
   Video, Phone, MessageCircle, FileText, X, CalendarClock, NotebookPen,
 } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getAppointment, cancelAppointment, formatKobo, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
@@ -79,7 +79,6 @@ export default function AppointmentDetailScreen() {
   const TypeIcon = TYPE_META[appt.consultType].Icon;
   const dateLabel = new Date(`${appt.slotDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const isUpcoming = ['upcoming', 'confirmed', 'in_progress'].includes(appt.status);
-  // What the patient actually paid = what was escrowed, and what a cancellation
   // refunds. Bookings made before ADR-040 have no platform fee, so their total is
   // the consultation fee alone.
   const paidKobo = appt.totalKobo ?? appt.feeKobo + (appt.platformFeeKobo ?? 0);

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/health/triage"
 	"spotlight/backend/internal/health/triage/care"
 	"spotlight/backend/internal/health/triage/core"
@@ -30,13 +31,17 @@ import (
 //   - WhatsApp omnichannel driven by the core session service (gated)
 //
 // Member: /api/finance/health/triage/*; admin: /api/health/triage/admin/*.
+// adminAuthMW must be the same RequireAuthContext middleware the finance group
+// uses (mapsAuth()): adminGroupTop5 applies it before requireUserID, which only
+// reads the user_id it populates — without it every /api/health/triage/admin/*
+// route 401s even with a valid token (E2E-SOC-034).
 func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService,
-	ledgerSvc *ledger.Service, mapSvc *maps.Service, anthropicKey, redisURL, engineName, infID, infKey, waSecret string,
+	adminAuthMW gin.HandlerFunc, ledgerSvc *ledger.Service, mapSvc *maps.Service, anthropicKey, redisURL, engineName, infID, infKey, waSecret string,
 	whatsappEnabled bool, audit services.AuditService) {
 	if pool == nil {
 		return
 	}
-	adminG := adminGroupTop5(r, "/api/health/triage/admin")
+	adminG := adminGroupTop5(r, "/api/health/triage/admin", adminAuthMW)
 
 	// Clinical engine: licensed Infermedica when configured, else deterministic mock.
 	var engine triage.EngineProvider
@@ -60,7 +65,7 @@ func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool
 	// disposition into the existing pharmacy/lab/telemedicine booking flows.
 	var pay care.Payment
 	if ledgerSvc != nil {
-		pay = triagePayment{l: ledgerSvc}
+		pay = triagePayment{l: ledgerSvc, tiers: tiers.NewService(pool)}
 	}
 	var loc care.EmergencyLocator
 	if mapSvc != nil {
@@ -89,10 +94,19 @@ func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool
 }
 
 // triagePayment charges the user's wallet into the escrow standing account via the
-// ledger (idempotent on idemKey). Satisfies care.Payment.
-type triagePayment struct{ l *ledger.Service }
+// ledger (idempotent on idemKey). Satisfies care.Payment. The tier-limit gate runs
+// BEFORE the debit (E2E-FIN-046); a nil gate fails closed via ErrTierGateUnwired.
+type triagePayment struct {
+	l     *ledger.Service
+	tiers *tiers.Service
+}
 
 func (p triagePayment) Charge(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (string, error) {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, p.tiers, userID, amountMinor); err != nil {
+		return "", err
+	}
 	acc, err := p.l.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return "", err
@@ -115,7 +129,12 @@ func (l triageEmergencyLocator) NearestER(ctx context.Context, lat, lng float64)
 		return "Nearest hospital / ER", "", 0, nil // care still returns ambulance + first-aid
 	}
 	p := places[0]
-	return p.Name, p.Address, haversineMeters(lat, lng, p.Lat, p.Lng), nil
+	const earthR = 6371000.0
+	rad := func(d float64) float64 { return d * math.Pi / 180 }
+	dLat, dLng := rad(p.Lat-lat), rad(p.Lng-lng)
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(rad(lat))*math.Cos(rad(p.Lat))*math.Sin(dLng/2)*math.Sin(dLng/2)
+	dist := earthR * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return p.Name, p.Address, dist, nil
 }
 
 // triageNotifier delivers escalation/follow-up notices via the platform queue.
@@ -205,7 +224,6 @@ func formatWAReply(v *core.SessionView) (string, bool, error) {
 }
 
 // resolveUserIDByPhone looks up the Paymax account behind a WhatsApp number.
-//
 // user_profiles.phone is the only place a registered user's real phone number
 // lives: RegisterUser (services/auth_service.go) PATCHes it there after signup.
 // auth.users.phone (GoTrue's own column) and its platform_users mirror are
@@ -223,12 +241,4 @@ func resolveUserIDByPhone(ctx context.Context, pool *pgxpool.Pool, externalID st
 		`SELECT id::text FROM public.user_profiles
 		 WHERE right(regexp_replace(COALESCE(phone,''), '\D', '', 'g'), 10) = $1 LIMIT 1`, nsn).Scan(&userID)
 	return userID
-}
-
-func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
-	const R = 6371000.0
-	rad := func(d float64) float64 { return d * math.Pi / 180 }
-	dLat, dLng := rad(lat2-lat1), rad(lng2-lng1)
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(rad(lat1))*math.Cos(rad(lat2))*math.Sin(dLng/2)*math.Sin(dLng/2)
-	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }

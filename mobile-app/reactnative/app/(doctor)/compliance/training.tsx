@@ -2,14 +2,13 @@ import React from 'react';
 import { Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GraduationCap } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, TrainingModuleRow } from '@/features/doctor/components';
 import { useMandatoryTraining, useCompleteTrainingModule } from '@/features/doctor/hooks';
 
-// ── Section AB — Mandatory training (AB.13) ───────────────────────────────────
 // NEW screen: required + optional training modules with a "Mark complete" action
 // (TrainingModuleRow). Reuses SectionCard / InfoRow.
 

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Owner / landlord data layer (V2) ─────────────────────
 // Mock by default (REALTOR_USE_MOCK). Real branch hits the property-graph tables
 // (20260620000000) + realtor_owner_dashboard RPC (20260620020000).
 
@@ -20,7 +19,6 @@ const IMG = (s: string) => `https://picsum.photos/seed/${s}/800/600`;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// ── Mock store (default path) ────────────────────────────────────────────────
 const properties = [
   { id: 'op_1', name: 'Lekki Phase 1 Apartments', area: 'Lekki Phase 1', city: 'Lagos', coverUrl: IMG('own1'), unitCount: 6, occupiedCount: 5, monthlyRent: 3_250_000_00, arrears: 0 },
   { id: 'op_2', name: 'Yaba Studios', area: 'Yaba', city: 'Lagos', coverUrl: IMG('own2'), unitCount: 4, occupiedCount: 3, monthlyRent: 800_000_00, arrears: 150_000_00 },
@@ -42,7 +40,6 @@ const voidCandidates: VoidCandidate[] = [
   { unitId: 'ou_2', unitLabel: 'Studio 2', propertyName: 'Yaba Studios', area: 'Yaba', vacantDays: 21, monthlyRent: 100_000_00, recommendedNightly: 22_000_00, projectedMonthlyVoidRevenue: 396_000_00, shortletEnabled: false, longTermConflict: true },
 ];
 
-// ── Real-path helpers ────────────────────────────────────────────────────────
 async function getOrCreatePortfolio(supabase: any, ownerId: string): Promise<string> {
   const { data: existing } = await supabase.from('realtor_portfolios').select('id').eq('owner_id', ownerId).limit(1).maybeSingle();
   if (existing?.id) return existing.id;
@@ -50,8 +47,6 @@ async function getOrCreatePortfolio(supabase: any, ownerId: string): Promise<str
   if (error) throw error;
   return data.id;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function getOwnerDashboard(): Promise<OwnerDashboard> {
   if (USE_MOCK) {

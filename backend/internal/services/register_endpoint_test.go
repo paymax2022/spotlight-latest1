@@ -108,7 +108,7 @@ func registerRaw(t *testing.T, otpEnabled bool, settings func(*captured)) (strin
 	// The admin path is gated on OTP being OPERATIONAL, not merely flagged — see
 	// TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired.
 	SetOTPOperational(svc, otpEnabled)
-	_, err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		Email: "Ada@Example.com", Password: "correct-horse-battery",
 		FirstName: "Ada", LastName: "Lovelace",
 	})
@@ -120,7 +120,6 @@ func registerRaw(t *testing.T, otpEnabled bool, settings func(*captured)) (strin
 // which sends no mail. /auth/v1/signup would send GoTrue's own confirmation email
 // on top of ours — two codes for one registration, redeemed at two different
 // endpoints.
-//
 // There is no setting that avoids this: enable_confirmations (mailer_autoconfirm
 // on cloud) governs BOTH whether the mail goes out AND whether the account starts
 // unconfirmed, so turning it off would auto-confirm every sign-up and remove
@@ -175,8 +174,6 @@ func keysOf(m map[string]any) []string {
 	}
 	return out
 }
-
-// ── the project signup policy on the admin path ─────────────────────────────
 
 // /auth/v1/admin/users is NOT gated by the project's enable_signup switch — that
 // is the price of a creation call that sends no mail. So a project that closed
@@ -238,18 +235,109 @@ func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
 	}
 }
 
-// THE regression for a defect this file's earlier version did not catch.
-//
-// RegisterUser used to branch on cfg.FeatureOTPEmailEnabled while the register
-// HANDLER branched on whether an issuer was actually wired. Those disagree in a
-// state that is easy to reach — flag on, Brevo credentials absent, which is the
-// repository's state today — and the result was an account created through the
-// silent admin path (so GoTrue sent nothing) with no code issued either.
-// Unconfirmed, unverifiable, login refused forever, and /api/auth/otp/request
-// answering 503 so the user could not even ask for one.
-//
-// Reproduced live before the fix: registration returned 201, the mail catcher
-// recorded zero messages, otp_codes was empty, and login answered 403.
+// THE enumeration regression: the admin endpoint answers a taken address with
+// 422/email_exists. Returning that as an error re-opened the account-existence
+// oracle the supabase-js path never had — GoTrue's own /signup obfuscates a
+// duplicate into an ordinary 200. RegisterUser must convert the definitive
+// signal into a decoy success result instead.
+func TestRegisterReturnsADecoyForATakenAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/v1/settings" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"disable_signup":false,"mailer_autoconfirm":false}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":422,"error_code":"email_exists","msg":"A user with this email address has already been registered"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		config.Config{FeatureOTPEmailEnabled: true},
+	)
+	SetOTPOperational(svc, true)
+
+	res, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
+		Email: "taken@example.com", Password: "correct-horse-battery",
+	})
+	if err != nil {
+		t.Fatalf("RegisterUser: %v — a taken address must not surface as an error", err)
+	}
+	if !res.AlreadyExisted {
+		t.Fatal("AlreadyExisted = false — the handler would attribute a referral to a fabricated id")
+	}
+	if !res.NeedsVerification() {
+		t.Error("decoy carries no session — NeedsVerification must be true so the client is sent to the code screen")
+	}
+	if res.UserID == "" {
+		t.Error("decoy user.id is empty — a fresh-signup body carries a uuid, so an empty id is itself a tell")
+	}
+}
+
+// Only the definitive "address taken" answers become decoys. A 422 for any
+// other reason must stay an error — answering it as a fake success would send
+// the caller to a verify screen for an account that does not exist.
+func TestRegisterStillFailsForOtherUpstreamErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/v1/settings" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"disable_signup":false,"mailer_autoconfirm":false}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":422,"error_code":"validation_failed","msg":"Password should be at least 8 characters"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		config.Config{FeatureOTPEmailEnabled: true},
+	)
+	SetOTPOperational(svc, true)
+
+	res, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
+		Email: "new@example.com", Password: "correct-horse-battery",
+	})
+	if err == nil {
+		t.Fatalf("expected an error for a non-duplicate rejection, got decoy/success %+v", res)
+	}
+}
+
+// /signup carries no /settings preflight — a project that closed signups is
+// reported by GoTrue's error_code instead. It must map to ErrSignupDisabled so
+// the handler answers 403, not the generic 400.
+func TestRegisterMapsUpstreamSignupDisabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":403,"error_code":"signup_disabled","msg":"Signups not allowed for this instance"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		config.Config{FeatureOTPEmailEnabled: false},
+	)
+
+	_, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
+		Email: "new@example.com", Password: "correct-horse-battery",
+	})
+	if !errors.Is(err, ErrSignupDisabled) {
+		t.Fatalf("error = %v, want ErrSignupDisabled", err)
+	}
+}
+
+// THE regression for a flag-vs-wiring mismatch: RegisterUser must branch on
+// whether an OTP issuer is actually wired — the same condition the register
+// HANDLER branches on — not on cfg.FeatureOTPEmailEnabled alone. Branching on
+// the flag alone diverges in an easy-to-reach state (flag on, Brevo credentials
+// absent, which is the repository's state today): the account is created
+// through the silent admin path (so GoTrue sends nothing) and no code is
+// issued either — unconfirmed, unverifiable, login refused forever, and
+// /api/auth/otp/request answering 503 so the user cannot even ask for one.
 func TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired(t *testing.T) {
 	cap := &captured{}
 	srv := gotrueStub(t, cap)
@@ -263,7 +351,7 @@ func TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired(t *testing.T) {
 	)
 	// … but the OTP service was never built, so SetOTPOperational is never called.
 
-	if _, err := svc.RegisterUser(domain.RegisterRequest{
+	if _, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		Email: "Ada@Example.com", Password: "correct-horse-battery",
 		FirstName: "Ada", LastName: "Lovelace",
 	}); err != nil {

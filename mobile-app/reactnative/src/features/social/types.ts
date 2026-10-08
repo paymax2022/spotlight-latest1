@@ -1,4 +1,3 @@
-// ── Social Payments domain types ─────────────────────────────────────────────
 // Money is always integer minor units (kobo).
 
 export interface Cashtag {
@@ -10,7 +9,7 @@ export interface Cashtag {
 }
 
 export interface MyCashtag {
-  handle:      string | null;   // null = not set up yet
+  handle:      string | null;
   displayName: string;
   avatarColor: string;
   /** Remaining daily AML send allowance (kobo). */
@@ -18,7 +17,6 @@ export interface MyCashtag {
   dailyLimitKobo:     number;
 }
 
-// ── Activity feed ────────────────────────────────────────────────────────────
 export type ActivityKind = 'sent' | 'received' | 'request' | 'split' | 'pool';
 export type ActivityStatus = 'completed' | 'pending' | 'declined';
 
@@ -33,7 +31,6 @@ export interface ActivityItem {
   createdAtISO: string;
 }
 
-// ── Send / Request ───────────────────────────────────────────────────────────
 export interface SendInput {
   toHandle:   string;
   amountKobo: number;
@@ -52,7 +49,6 @@ export interface PayResult {
   status: ActivityStatus;
 }
 
-// ── Split bill ───────────────────────────────────────────────────────────────
 export type SplitStatus = 'collecting' | 'settled';
 export type ShareState = 'paid' | 'pending';
 
@@ -84,7 +80,6 @@ export interface CreateSplitInput {
   participants: { handle: string; amountKobo: number }[];
 }
 
-// ── Group pool ───────────────────────────────────────────────────────────────
 export type PoolStatus = 'open' | 'closed';
 
 export interface PoolContributor {

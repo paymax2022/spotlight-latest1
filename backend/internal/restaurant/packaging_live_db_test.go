@@ -1,19 +1,15 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for takeaway packaging on the food-delivery money
 // path: restaurants.packaging_fee_kobo must be charged per pack, escrowed with
 // the order, persisted on it, and settled 100% to the RESTAURANT
 // (settlement.Split.ProviderFeeKobo) — with conservation intact.
-//
 // Regression guard, and the reason this exists: 20261113000000 gave the per-pack
 // price a column, but PlaceOrder had no packaging term at all, so the fee was
 // configuration nothing ever read. Checkout meanwhile displayed a "Takeaway
 // packaging" line and added it to the total it showed — the customer was shown
 // one number and billed another.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -101,7 +97,6 @@ func TestLiveDB_PackagingChargedAndPaidWholeToRestaurant(t *testing.T) {
 		t.Errorf("customer paid %d, want %d", balBefore-balAfter, wantTotal)
 	}
 
-	// --- Settlement. ---
 	deliverWithRider(t, ctx, f, order.ID)
 
 	wantRider := int64(float64(gross) * splitRiderPct)
@@ -232,7 +227,7 @@ func TestLiveDB_OwnerSetsPackagingPrice(t *testing.T) {
 
 	const ownPrice = 35_000 // ₦350 a pack
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(ownPrice),
+		PackagingFeeKobo: new(int64(ownPrice)),
 	}); err != nil {
 		t.Fatalf("owner set packaging price: %v", err)
 	}
@@ -274,7 +269,7 @@ func TestLiveDB_PackagingPriceIsOwnerOnly(t *testing.T) {
 	}
 	testsupport.CleanupUser(t, pool, stranger)
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, stranger, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(999_000),
+		PackagingFeeKobo: new(int64(999_000)),
 	}); err == nil {
 		t.Fatal("a non-owner must not be able to price another restaurant's packaging")
 	}
@@ -290,24 +285,24 @@ func TestLiveDB_PackagingPriceRejectsNonsense(t *testing.T) {
 	f := newPromoOrderFixture(t, ctx, pool, "Nonsense Kitchen", 300_000)
 
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(-1),
+		PackagingFeeKobo: new(int64(-1)),
 	}); err == nil {
 		t.Error("expected a negative packaging price to be rejected")
 	}
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(maxPackagingFeePerPackKobo + 1),
+		PackagingFeeKobo: new(maxPackagingFeePerPackKobo + 1),
 	}); err == nil {
 		t.Error("expected an absurd packaging price to be rejected")
 	}
 	// The ceiling itself is allowed.
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(maxPackagingFeePerPackKobo),
+		PackagingFeeKobo: new(maxPackagingFeePerPackKobo),
 	}); err != nil {
 		t.Errorf("the ceiling must be settable: %v", err)
 	}
 	// And zero — an owner who does not charge for packaging.
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(0),
+		PackagingFeeKobo: new(int64(0)),
 	}); err != nil {
 		t.Errorf("zero must be settable: %v", err)
 	}
@@ -320,4 +315,5 @@ func TestLiveDB_PackagingPriceRejectsNonsense(t *testing.T) {
 	}
 }
 
-func ptrInt64(v int64) *int64 { return &v }
+//go:fix inline
+func ptrInt64(v int64) *int64 { return new(v) }

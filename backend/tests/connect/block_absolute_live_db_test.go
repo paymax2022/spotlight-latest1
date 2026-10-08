@@ -2,11 +2,9 @@
 // module. This file is the executed, deterministic evidence for safety invariant 3
 // ("block is absolute & mutual-invisible") across every discovery/contact surface —
 // test-plan rows TS-001, DM-008, EC-004 and PN-011.
-//
 // Root cause it guards against: before this suite, connect_blocks was consulted ONLY
 // by the chat layer, so a blocked user still appeared in the dating deck, could still
 // form a match, and their posts + professional profile stayed visible to the blocker.
-//
 // Bring-up (skipped unless a DB is wired):
 //  1. A Postgres with the Connect schema applied (e.g. the local Supabase DB).
 //  2. export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres
@@ -144,20 +142,19 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 
 	t.Cleanup(func() {
 		users := []any{viewerUser, blockedUser, controlUser}
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_matches WHERE profile_a = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[])) OR profile_b = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_likes WHERE from_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[])) OR to_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_blocks WHERE blocker_id = ANY($1::uuid[]) OR blocked_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_posts WHERE author_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profile_modes WHERE profile_id = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_professional_profiles WHERE user_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE user_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_matches WHERE profile_a = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[])) OR profile_b = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_likes WHERE from_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[])) OR to_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_blocks WHERE blocker_id = ANY($1::uuid[]) OR blocked_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_posts WHERE author_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profile_modes WHERE profile_id = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_professional_profiles WHERE user_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE user_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id = ANY($1::uuid[])`, users)
 	})
 
 	// The block: viewer blocks blocked. (One direction; the predicate is bidirectional.)
 	seedBlock(t, ctx, pool, viewerUser, blockedUser)
 
-	// ── DM-008: dating deck excludes the blocked user, keeps the control ──────────
 	t.Run("DM-008_discovery_deck_excludes_blocked", func(t *testing.T) {
 		seedDatingMode(t, ctx, pool, blockedProfile)
 		seedDatingMode(t, ctx, pool, controlProfile)
@@ -183,7 +180,6 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 		}
 	})
 
-	// ── EC-004: like/match refused in both directions when a block exists ─────────
 	t.Run("EC-004_like_refused_both_directions", func(t *testing.T) {
 		m := connectmatching.NewService(pool)
 		if _, err := m.Like(ctx, viewerUser, blockedProfile, "like"); !errors.Is(err, connectmatching.ErrBlocked) {
@@ -208,15 +204,14 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 		}
 	})
 
-	// ── DM-007: a minor never surfaces in the adult deck and can't be liked ───────
 	t.Run("DM-007_minor_excluded_from_deck_and_like", func(t *testing.T) {
 		minorUser, minorProfile := seedProfile(t, ctx, pool)
 		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_likes WHERE to_profile=$1 OR from_profile=$1`, minorProfile)
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_underage_flags WHERE user_id=$1::uuid`, minorUser)
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_profile_modes WHERE profile_id=$1`, minorProfile)
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE id=$1`, minorProfile)
-			_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1::uuid`, minorUser)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_likes WHERE to_profile=$1 OR from_profile=$1`, minorProfile)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_underage_flags WHERE user_id=$1::uuid`, minorUser)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profile_modes WHERE profile_id=$1`, minorProfile)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE id=$1`, minorProfile)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1::uuid`, minorUser)
 		})
 		// Make the minor maximally "visible": dating mode on, and flagged underage.
 		seedDatingMode(t, ctx, pool, minorProfile)
@@ -243,7 +238,6 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 		}
 	})
 
-	// ── PN-011: professional feed hides the blocked user's posts ──────────────────
 	t.Run("PN-011_feed_excludes_blocked_author", func(t *testing.T) {
 		blockedPost := seedPost(t, ctx, pool, blockedUser, "post from blocked user")
 		controlPost := seedPost(t, ctx, pool, controlUser, "post from control user")
@@ -269,7 +263,6 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 		}
 	})
 
-	// ── PN-011: professional discovery hides the blocked user's profile ───────────
 	t.Run("PN-011_professional_discover_excludes_blocked", func(t *testing.T) {
 		seedProfessional(t, ctx, pool, blockedUser)
 		seedProfessional(t, ctx, pool, controlUser)
@@ -312,13 +305,13 @@ func TestConnectBanIsEnforced(t *testing.T) {
 
 	t.Cleanup(func() {
 		users := []any{adminUser, viewerUser, subjectUser, controlUser}
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_account_restrictions WHERE user_id = ANY($1::uuid[]) OR created_by = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_audit_log WHERE actor_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_cases WHERE subject_id = ANY($1::uuid[]) OR reporter_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_likes WHERE from_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[])) OR to_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profile_modes WHERE profile_id = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE user_id = ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_account_restrictions WHERE user_id = ANY($1::uuid[]) OR created_by = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_audit_log WHERE actor_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_cases WHERE subject_id = ANY($1::uuid[]) OR reporter_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_likes WHERE from_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[])) OR to_profile = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profile_modes WHERE profile_id = ANY(SELECT id FROM connect_profiles WHERE user_id = ANY($1::uuid[]))`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE user_id = ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id = ANY($1::uuid[])`, users)
 	})
 
 	// The subject is a visible, adult dating profile — so absent a ban they WOULD
@@ -402,7 +395,7 @@ func TestConnectMatchRaceExactlyOnce(t *testing.T) {
 
 	const iterations = 25
 	var missed, dup int
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		uA, pA := seedProfile(t, ctx, pool)
 		uB, pB := seedProfile(t, ctx, pool)
 		seedDatingMode(t, ctx, pool, pA)
@@ -452,7 +445,7 @@ func TestConnectBanSeversActiveChat(t *testing.T) {
 	uB, pB := seedProfile(t, ctx, pool)
 	t.Cleanup(func() {
 		users := []any{uA, uB}
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_messages WHERE conversation_id IN (SELECT c.id FROM connect_conversations c JOIN connect_matches m ON m.id=c.match_id WHERE m.profile_a=ANY($1) OR m.profile_b=ANY($1))`, []any{pA, pB})
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_messages WHERE conversation_id IN (SELECT c.id FROM connect_conversations c JOIN connect_matches m ON m.id=c.match_id WHERE m.profile_a=ANY($1) OR m.profile_b=ANY($1))`, []any{pA, pB})
 		_, _ = pool.Exec(ctx, `DELETE FROM connect_conversations WHERE match_id IN (SELECT id FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1))`, []any{pA, pB})
 		_, _ = pool.Exec(ctx, `DELETE FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1)`, []any{pA, pB})
 		_, _ = pool.Exec(ctx, `DELETE FROM connect_account_restrictions WHERE user_id=ANY($1::uuid[])`, users)
@@ -517,16 +510,16 @@ func TestConnectAccountDeletionCascade(t *testing.T) {
 	t.Cleanup(func() {
 		users := []any{subjU, partU}
 		profs := []any{subjP, partP}
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_messages WHERE conversation_id IN (SELECT c.id FROM connect_conversations c JOIN connect_matches m ON m.id=c.match_id WHERE m.profile_a=ANY($1) OR m.profile_b=ANY($1))`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_conversations WHERE match_id IN (SELECT id FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1))`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1)`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profile_media WHERE profile_id=ANY($1)`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profile_modes WHERE profile_id=ANY($1)`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_verification WHERE user_id=ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_professional_profiles WHERE user_id=ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_audit_log WHERE entity_id=ANY($1) OR actor_id=ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE user_id=ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_messages WHERE conversation_id IN (SELECT c.id FROM connect_conversations c JOIN connect_matches m ON m.id=c.match_id WHERE m.profile_a=ANY($1) OR m.profile_b=ANY($1))`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_conversations WHERE match_id IN (SELECT id FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1))`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1)`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profile_media WHERE profile_id=ANY($1)`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profile_modes WHERE profile_id=ANY($1)`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_verification WHERE user_id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_professional_profiles WHERE user_id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_audit_log WHERE entity_id=ANY($1) OR actor_id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE user_id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=ANY($1::uuid[])`, users)
 	})
 
 	// Seed a rich footprint for the subject.
@@ -633,8 +626,6 @@ func assertCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, want int
 	}
 }
 
-// --- PAY-007 refund test scaffolding ---
-
 type testRefunder struct{ led *ledger.Service }
 
 func (r testRefunder) Refund(ctx context.Context, userID, reference, idem string, amountKobo int64) error {
@@ -708,7 +699,7 @@ func TestConnectRefundSafeAndSingle(t *testing.T) {
 		uid, _ := seedProfile(t, ctx, pool)
 		orderID := seedPaidOrder(t, ctx, pool, uid, amount)
 		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE user_id=$1::uuid`, uid)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE user_id=$1::uuid`, uid)
 			cleanupOrder(uid, orderID)
 		})
 
@@ -738,7 +729,7 @@ func TestConnectRefundSafeAndSingle(t *testing.T) {
 		uid, _ := seedProfile(t, ctx, pool)
 		orderID := seedPaidOrder(t, ctx, pool, uid, amount)
 		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE user_id=$1::uuid`, uid)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE user_id=$1::uuid`, uid)
 			cleanupOrder(uid, orderID)
 		})
 
@@ -746,7 +737,7 @@ func TestConnectRefundSafeAndSingle(t *testing.T) {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(2)
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			go func() { defer wg.Done(); <-start; _, _ = svc.Refund(ctx, orderID, "admin-1", "race") }()
 		}
 		close(start)
@@ -757,8 +748,6 @@ func TestConnectRefundSafeAndSingle(t *testing.T) {
 		}
 	})
 }
-
-// --- PAY-006 billing-cycle scaffolding ---
 
 type scriptedWallet struct {
 	err   error
@@ -922,10 +911,10 @@ func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 	ctx := context.Background()
 	uid, _ := seedProfile(t, ctx, pool)
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_credit_txns WHERE user_id=$1::uuid`, uid)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_credits WHERE user_id=$1::uuid`, uid)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE user_id=$1::uuid`, uid)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1::uuid`, uid)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_credit_txns WHERE user_id=$1::uuid`, uid)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_credits WHERE user_id=$1::uuid`, uid)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE user_id=$1::uuid`, uid)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1::uuid`, uid)
 	})
 	cr := connectcredits.NewService(pool)
 	const ct = "super_like"
@@ -946,7 +935,7 @@ func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 	start := make(chan struct{})
 	results := make(chan error, attempts)
 	var wg sync.WaitGroup
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -1010,15 +999,15 @@ func TestConnectSuperLikeRequiresCredit(t *testing.T) {
 	t.Cleanup(func() {
 		users := []any{liker}
 		profs := []any{likerP, t1, t2}
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1)`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_likes WHERE from_profile=ANY($1) OR to_profile=ANY($1)`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_credit_txns WHERE user_id=ANY($1::uuid[])`, users)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_credits WHERE user_id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_matches WHERE profile_a=ANY($1) OR profile_b=ANY($1)`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_likes WHERE from_profile=ANY($1) OR to_profile=ANY($1)`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_credit_txns WHERE user_id=ANY($1::uuid[])`, users)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_credits WHERE user_id=ANY($1::uuid[])`, users)
 		for _, p := range profs {
-			_, _ = pool.Exec(ctx, `DELETE FROM connect_profiles WHERE id=$1`, p)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_profiles WHERE id=$1`, p)
 		}
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=ANY((SELECT ARRAY(SELECT user_id FROM connect_profiles WHERE id=ANY($1)))::uuid[])`, profs)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1::uuid`, liker)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=ANY((SELECT ARRAY(SELECT user_id FROM connect_profiles WHERE id=ANY($1)))::uuid[])`, profs)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1::uuid`, liker)
 	})
 
 	cr := connectcredits.NewService(pool)

@@ -1,9 +1,8 @@
-// ── Paymax Invest · Crypto — Mock fixtures ───────────────────────────────────
 // Deterministic seed data so every UI state renders in mock mode. Flip
 // EXPO_PUBLIC_CRYPTO_USE_MOCK=false to hit the real Go endpoints (crypto.api.ts).
 // All fiat is NGN kobo (minor units); crypto is base-unit minor units.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   CryptoAsset,
   CryptoTransactionDetail,
@@ -11,8 +10,6 @@ import type {
 } from '../types/crypto.types';
 
 const ngn = (major: number) => Math.round(major * 100);
-
-// ─── Whitelisted assets (admin-controlled in production) ──────────────────────
 
 export const MOCK_ASSETS: CryptoAsset[] = [
   {
@@ -116,8 +113,6 @@ export const MOCK_ASSETS: CryptoAsset[] = [
   },
 ];
 
-// ─── Holdings (portfolio positions) ───────────────────────────────────────────
-
 const btc = MOCK_ASSETS[0];
 const eth = MOCK_ASSETS[1];
 const usdt = MOCK_ASSETS[2];
@@ -149,8 +144,6 @@ export const MOCK_POSITIONS: Position[] = [
   buildPosition(eth, 0.94, 5_460_000),
   buildPosition(usdt, 1_250, 1_598),
 ];
-
-// ─── Transaction history ──────────────────────────────────────────────────────
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 

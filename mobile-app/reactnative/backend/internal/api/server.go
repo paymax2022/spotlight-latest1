@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"paymax/crypto-backend/internal/admin"
 	"paymax/crypto-backend/internal/adapter"
+	"paymax/crypto-backend/internal/admin"
 	"paymax/crypto-backend/internal/auth"
 	"paymax/crypto-backend/internal/config"
 	"paymax/crypto-backend/internal/engine"
@@ -49,6 +49,10 @@ type Server struct {
 	// ledgerShadowEnabled gates the additive parallel post. True only for
 	// LEDGER_BACKEND=shadow|http; false (default) leaves the money path untouched.
 	ledgerShadowEnabled bool
+
+	// trustedProxyHops is how many right-most X-Forwarded-For entries are
+	// operator-controlled proxies (TRUSTED_PROXY_HOPS). 0 ignores XFF entirely.
+	trustedProxyHops int
 }
 
 // NewServer builds a Server. Provider adapters are mock by default; set
@@ -68,11 +72,12 @@ func NewServer(repo store.Repository) *Server {
 	}
 
 	s := &Server{
-		S:      repo,
-		MD:     adapter.MockMarketData{S: repo},
-		LQ:     adapter.MockLiquidity{S: repo},
-		CU:     adapter.MockCustody{S: repo},
-		Stocks: stk,
+		S:                repo,
+		MD:               adapter.MockMarketData{S: repo},
+		LQ:               adapter.MockLiquidity{S: repo},
+		CU:               adapter.MockCustody{S: repo},
+		Stocks:           stk,
+		trustedProxyHops: cfg.TrustedProxyHops,
 	}
 	s.Admin = admin.NewService(repo, s.Stocks)
 
@@ -94,7 +99,6 @@ func NewServer(repo store.Repository) *Server {
 
 // newLedgerClient selects the money-core ledger Client from LEDGER_BACKEND and
 // reports whether additive shadow-posting is enabled:
-//
 //   - "mock" (default) / unset → in-memory MockLedger, shadow DISABLED (no parallel
 //     post; the store is the only writer — a pure no-op relative to today).
 //   - "shadow"                 → shadow ENABLED. Posts additively for validation. Uses
@@ -126,7 +130,6 @@ func newLedgerClient() (ledger.Client, bool) {
 // line and NEVER affects the caller's result — the user's operation already
 // succeeded via the store. A non-positive amount is skipped so a zero-fee leg never
 // logs spurious noise.
-//
 // The post is deliberately NOT balance-checked: during the shadow phase the STORE is
 // authoritative and has already enforced the user's balance, while this parallel
 // ledger has not seen the user's deposits — so a balance check here would be a false
@@ -201,7 +204,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/crypto/withdrawals/quote", s.postWithdrawalQuote)
 	mux.HandleFunc("POST /api/v1/crypto/withdraw", s.postWithdraw)
 
-	// ── Stocks ───────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/v1/stocks", s.listStocks)
 	mux.HandleFunc("GET /api/v1/stocks/orders", s.getStockOrders)
 	mux.HandleFunc("POST /api/v1/stocks/orders", s.postStockOrder)
@@ -220,7 +222,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/dividends", s.getStockDividends)
 	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/corporate-actions", s.getStockCorporateActions)
 
-	// ── Admin console (RBAC via X-Admin-Role; mutations audited + maker-checker) ─
 	mux.HandleFunc("GET /api/v1/admin/dashboard", s.adminDashboard)
 	mux.HandleFunc("GET /api/v1/admin/users", s.adminUsers)
 	mux.HandleFunc("GET /api/v1/admin/users/{id}", s.adminUser)
@@ -264,7 +265,7 @@ func (s *Server) Handler() http.Handler {
 		authMW = auth.Middleware(os.Getenv("SUPABASE_JWT_SECRET"), allowDevAuth)
 	}
 	rps := envFloat("RATE_LIMIT_RPS", 50)
-	rl := rateLimitMW(ratelimit.New(rps, rps*2))
+	rl := rateLimitMW(ratelimit.New(rps, rps*2), s.trustedProxyHops)
 	cors := corsMW(corsAllowedOrigins())
 	return recoverMW(metricsMW(reg)(requestIDMW(tracing.Middleware(rl(cors(authMW(logMW(mux))))))))
 }
@@ -295,8 +296,6 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
-
-// ── Middleware ────────────────────────────────────────────────────────────────
 
 // corsAllowedOrigins reads the CORS allowlist from CORS_ALLOW_ORIGINS (comma-
 // separated). Unset → a safe localhost dev default (NOT a wildcard). Set to "*"
@@ -390,14 +389,14 @@ func metricsMW(reg *metrics.Registry) func(http.Handler) http.Handler {
 }
 
 // rateLimitMW sheds excess load per client IP (health/readiness/metrics exempt).
-func rateLimitMW(l *ratelimit.Limiter) func(http.Handler) http.Handler {
+func rateLimitMW(l *ratelimit.Limiter, trustedHops int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if !l.Allow(clientIP(r)) {
+			if !l.Allow(clientIP(r, trustedHops)) {
 				writeErr(w, http.StatusTooManyRequests, "rate_limited", "Too many requests — slow down.")
 				return
 			}
@@ -406,10 +405,31 @@ func rateLimitMW(l *ratelimit.Limiter) func(http.Handler) http.Handler {
 	}
 }
 
-// clientIP prefers the left-most X-Forwarded-For hop, else the socket address.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+// clientIP resolves the caller IP for rate limiting.
+//
+// trustedHops is the number of trusted proxies in the request path, counting
+// the directly-connected peer (TRUSTED_PROXY_HOPS — same convention as
+// frontend-web's RATE_LIMIT_TRUSTED_PROXY_HOPS / Express `trust proxy`).
+// XFF is appended to by proxies, so the client is the entry at index
+// len-hops — everything to its right was appended by trusted infrastructure.
+// The left-most entry is NEVER trusted: it is client-controlled and spoofing
+// it would defeat the limiter.
+//
+// Fail-closed: hops==0, a chain shorter than the configured proxy count, or a
+// candidate that isn't a parseable IP all fall back to RemoteAddr — the socket
+// peer, which only the directly-connected proxy can claim. Behind an
+// unconfigured proxy that aggregates clients into one bucket, which is the
+// safe direction for a limiter.
+func clientIP(r *http.Request, trustedHops int) string {
+	if trustedHops > 0 {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if idx := len(parts) - trustedHops; idx >= 0 {
+				if ip := net.ParseIP(strings.TrimSpace(parts[idx])); ip != nil {
+					return ip.String()
+				}
+			}
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
@@ -435,8 +455,6 @@ func recoverMW(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-// ── JSON helpers ──────────────────────────────────────────────────────────────
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

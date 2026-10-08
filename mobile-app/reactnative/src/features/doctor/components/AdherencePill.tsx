@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 type Tone = 'success' | 'warning' | 'danger' | 'info' | 'muted';
 
@@ -13,7 +13,6 @@ interface Props {
 
 // New component: a small adherence-level pill (Section Q). StatusBadge covers
 // status unions but its tone set differs from the adherence ADHERENCE_OPTIONS
-// tone strings; this pill maps the {label,tone} option shape directly so the
 // adherence rows read consistently without re-mapping at every call site.
 const TONE: Record<Tone, { fg: string; bg: string }> = {
   success: { fg: Colors.teal,             bg: Colors.iconBgTeal },

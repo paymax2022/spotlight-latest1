@@ -8,9 +8,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
 
 // Handler exposes Student + Guardian-linking + bulk-import routes over Gin. Router
 // registration into RegisterAcademy is owned by the QA/integration task — see
@@ -22,10 +28,9 @@ type Handler struct {
 // NewHandler builds the student handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -33,7 +38,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -44,23 +49,23 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingSchool):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_school", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_school", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingAdmissionNo):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_admission_number", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_admission_number", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingGuardian):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_guardian", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_guardian", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrGuardianAlreadyLinked):
-		c.JSON(http.StatusConflict, gin.H{"error": "guardian_already_linked", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "guardian_already_linked", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrAdmissionNumberTaken):
-		c.JSON(http.StatusConflict, gin.H{"error": "admission_number_taken", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "admission_number_taken", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrImportNotApprovable):
-		c.JSON(http.StatusConflict, gin.H{"error": "import_not_approvable", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "import_not_approvable", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -96,8 +101,6 @@ func RegisterFeesStudent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateStudent(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -105,7 +108,7 @@ func (h *Handler) CreateStudent(c *gin.Context) {
 	}
 	var req CreateStudentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateStudent(c.Request.Context(), u, c.Param("schoolId"), req)
@@ -141,7 +144,7 @@ func (h *Handler) LinkGuardian(c *gin.Context) {
 	}
 	var req LinkGuardianRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.LinkGuardian(c.Request.Context(), u, c.Param("studentId"), req.GuardianUserID)
@@ -173,7 +176,7 @@ func (h *Handler) ImportPreview(c *gin.Context) {
 	}
 	csvData, err := readCSVBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ParseAndValidateImport(c.Request.Context(), c.Param("schoolId"), csvData)
@@ -197,7 +200,7 @@ func (h *Handler) ImportApprove(c *gin.Context) {
 	}
 	var req importApproveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	created, skipped, err := h.svc.ApproveImport(c.Request.Context(), u, c.Param("schoolId"), req.Preview)

@@ -5,11 +5,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   Trophy, Gamepad2, HandCoins, MapPin, Target, Radio, PiggyBank, Flag, ChevronRight, ShieldCheck,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useCompetitions, useCompetition, useMeritLeaderboard } from '@/features/arena/hooks';
@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
   },
   leaderRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.sm },
   rank: { ...Typography.titleMd, color: Colors.onSurfaceVariant, width: 28, textAlign: 'center' },
-  rankTop: { color: Colors.gold, fontWeight: '800' as const },
+  rankTop: { color: Colors.onWarning, fontWeight: '800' as const },
   driverName: { ...Typography.labelLg, color: Colors.onSurface },
   driverMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   meritPill: { alignItems: 'flex-end' },

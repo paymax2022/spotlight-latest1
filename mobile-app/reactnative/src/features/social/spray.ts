@@ -1,4 +1,3 @@
-// ── Spray (Phase 3) ──────────────────────────────────────────────────────────
 // Instant celebratory transfer + leaderboard, wired conceptually into lives &
 // events. NEW file alongside the P1 social lib (do NOT edit P1 files). Reuses the
 // P1 social.constants helpers. AML velocity limits apply (NL-10).
@@ -11,7 +10,6 @@ export { formatNaira };
 
 // Spray is mounted by RegisterP2PMarket alongside p2pmarket (shared engine —
 // see backend/internal/app/top5_p3_routes.go), NOT under Social Pay's own
-// base. spray.Handler.Register(member, ...) receives the SAME member group as
 // p2pmarket (finance.Group("/p2p")), so the full path is /api/finance/p2p/spray.
 const SPRAY_BASE = '/api/finance/p2p/spray';
 
@@ -20,7 +18,6 @@ function sprayIdempotencyKey(): string {
   return `spr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ── NL-10 — spray is a real money transfer; velocity limits apply. ────────────
 export const SPRAY_DISCLOSURE =
   'Spraying sends real money instantly to the creator or host. It counts toward ' +
   'your daily send limit. Spray responsibly.';
@@ -30,7 +27,6 @@ export const SPRAY_PRESETS_KOBO = [50_000, 100_000, 200_000, 500_000, 1_000_000,
 
 export const SPRAY_DAILY_LIMIT_KOBO = AML_DAILY_LIMIT_KOBO;
 
-// ── Types ──────────────────────────────────────────────────────────────────────
 export interface SprayTarget {
   id:          string;
   /** 'live' | 'event' — where the spray surface is mounted. */
@@ -61,7 +57,6 @@ export interface SprayResult {
   newTotalKobo: number;        // your running total for this target
 }
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_TARGETS: SprayTarget[] = [
   { id: 'live_tope', context: 'live',  title: 'Tope Beats — Live Session', hostHandle: '@topebeats', hostName: 'Tope Beats', avatarColor: '#0051D5' },
   { id: 'evt_owanbe', context: 'event', title: 'Owanbe Night 2026',         hostHandle: '@laracooks', hostName: 'Lara',       avatarColor: '#16A34A' },
@@ -76,11 +71,12 @@ const MOCK_LEADERBOARD: SprayLeaderEntry[] = [
   { rank: 6, handle: '@femi',     name: 'Femi',        avatarColor: '#DC2626', totalKobo: 1_500_000 },
 ];
 
-// ── API ─────────────────────────────────────────────────────────────────────
 // MISSING BACKEND ENDPOINT: no GET /spray/targets/:id exists — the spray
 // engine only exposes POST /spray (send) and GET /spray/leaderboard/:contextRef.
-// Falls back to the mock target catalogue until a targets-read endpoint ships.
+// The mock target catalogue is dev-only: a deployed build must not put an
+// invented host on the spray screen, where the next tap sends money.
 export async function getSprayTarget(id: string): Promise<SprayTarget> {
+  if (!USE_MOCK) throw new Error('This spray target is not available yet.');
   await delay();
   return MOCK_TARGETS.find((t) => t.id === id) ?? MOCK_TARGETS[0];
 }
@@ -101,7 +97,6 @@ export async function getLeaderboard(targetId?: string): Promise<SprayLeaderEntr
   }));
 }
 
-// Backend: POST /spray expects { context_ref, amount_kobo } (Idempotency-Key)
 // → { success, spray, new_total_kobo }.
 export async function sendSpray(input: SprayInput): Promise<SprayResult> {
   if (USE_MOCK) {
@@ -122,7 +117,6 @@ export async function sendSpray(input: SprayInput): Promise<SprayResult> {
   };
 }
 
-// ── Hooks ─────────────────────────────────────────────────────────────────────
 const KEYS = {
   target:      (id: string) => ['social', 'spray', 'target', id] as const,
   leaderboard: (id: string) => ['social', 'spray', 'leaderboard', id] as const,

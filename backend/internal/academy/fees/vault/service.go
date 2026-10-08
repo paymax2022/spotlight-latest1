@@ -2,6 +2,7 @@ package feesvault
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,7 +15,6 @@ import (
 // vault_test.go inject a fake ledger and ASSERT the SF-5 segregation — that vault money
 // flows into the dedicated segregated account, distinct from the general wallet float —
 // without a live DB or Redis.
-//
 // The real *ledger.Service satisfies these methods:
 //   - Debit(ctx, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
 //     moves money OUT of the guardian wallet INTO creditAccountID (the vault segregated
@@ -74,8 +74,6 @@ func NewServiceWithStore(store Store, ledger LedgerService, invoice InvoiceServi
 	return &Service{store: store, ledger: ledger, invoice: invoice}
 }
 
-// ── Create ────────────────────────────────────────────────────────────────────────
-
 // CreateVault opens a FeesVault in 'active' toward a goal (optionally a fee schedule).
 func (s *Service) CreateVault(ctx context.Context, userID string, req CreateVaultRequest) (*Vault, error) {
 	if userID == "" {
@@ -104,13 +102,10 @@ func (s *Service) ListVaults(ctx context.Context, userID string) ([]Vault, error
 	return s.store.ListVaults(ctx, userID)
 }
 
-// ── Contribute (guardian wallet → SF-5 segregated vault account) ────────────────────
-
 // Contribute funds the vault. Money flow (SF-5): DEBIT the guardian wallet and CREDIT the
 // dedicated segregated FeesVault standing account (AccountEdtechFeesVault) — never the
 // general wallet-float / escrow account — then APPEND an immutable contribution row.
 // saved_minor is DERIVED (SUM of contributions), never set here.
-//
 // Idempotent (money path, required): the SAME idempotency_key funds the wallet at most
 // once (ledger idempotency guard) AND appends at most one contribution row (contribution
 // idempotency_key is globally UNIQUE). A replay returns the vault with an unchanged
@@ -169,15 +164,13 @@ func (s *Service) Contribute(ctx context.Context, userID, vaultID string, amount
 	return fresh, nil
 }
 
-// ── State transitions (all via feesstatemachine — never a direct status write) ─────
-
 // fire drives ONE guarded vault transition: it computes the target via the pure
 // feesstatemachine.VaultTransition, then applies the guarded Store.SetStatus. Any status
 // change in this package MUST go through here (no direct status mutation anywhere).
 func (s *Service) fire(ctx context.Context, actorID string, v *Vault, event feesstatemachine.Event) error {
 	to, err := feesstatemachine.VaultTransition(v.Status, event)
 	if err != nil {
-		if err == feesstatemachine.ErrAlreadyInState {
+		if errors.Is(err, feesstatemachine.ErrAlreadyInState) {
 			return nil // idempotent no-op
 		}
 		return err
@@ -230,8 +223,6 @@ func (s *Service) Withdraw(ctx context.Context, userID, vaultID string) (*Vault,
 	}
 	return s.store.GetVault(ctx, userID, vaultID)
 }
-
-// ── Apply to invoice (single guarded one-tap transfer; SF-2 + SF-5) ────────────────
 
 // ApplyToInvoice applies a target-reached vault to an invoice in a SINGLE guarded ledger
 // transfer (target_reached → applied_to_invoice, per statemachine/vault.go). Steps:

@@ -3,12 +3,10 @@ package feescompetition
 import "context"
 
 // SF-7 (RELEASE BLOCKER) — minor-safe leaderboard serializer.
-//
 // build-spec §4 SF-7: "Public leaderboard display defaults to first-name + school
 // only for any minor_flag=true student; full identity/photo requires explicit
 // recorded guardian consent … API response serializer — strips PII by default,
 // consent flag required to include more."
-//
 // The invariant is DEFAULT-STRIP, i.e. fail-CLOSED: a minor's row is reduced to
 // {rank, score, first name, school} UNLESS a recorded guardian consent is found.
 // Absence of a consent lookup, a lookup error, or an ambiguous result all resolve
@@ -19,7 +17,6 @@ import "context"
 // LeaderboardConsentScope is the consent scope key that authorises publishing a
 // minor's full identity/photo on a public leaderboard. It reuses the existing
 // academy/identity data-sharing capability scope (identity.CapabilityDataSharing
-// == "data_sharing"); a guardian who has granted data_sharing for the minor has
 // authorised public display. Kept as a const so the serializer and any wiring
 // agree on exactly one key.
 const LeaderboardConsentScope = "data_sharing"
@@ -67,7 +64,6 @@ func NewSerializer(consent ConsentChecker) *Serializer {
 }
 
 // SerializeEntry converts one raw entry into its public form, applying SF-7.
-//
 // Decision (fail-closed):
 //   - non-minor (MinorFlag=false)            → full identity.
 //   - minor + recorded data_sharing consent  → full identity.

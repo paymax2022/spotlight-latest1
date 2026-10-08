@@ -1,13 +1,11 @@
 package escrow
 
 // PURE money-path invariant tests — no live DB.
-//
 // The escrow Service is pgx-backed and posts ledger legs (service.go), so Hold /
 // Release / Refund cannot run without Postgres + the ledger (see the DOC note at the
 // bottom for what needs an integration test). What IS exercised here is the guarded
 // funds-hold state machine and the per-side idempotency-key discipline the service
 // relies on to keep a hold balanced and replay-safe:
-//
 //   - canTransition (model.go): HELD -> RELEASED|REFUNDED|DISPUTED, the P3
 //     DISPUTED arbitration edges, and the fact that RELEASED/REFUNDED are terminal.
 //   - amount conservation: a hold's single amount_kobo is set once on Hold and is
@@ -16,7 +14,6 @@ package escrow
 //     resolved hold. This is pinned as a transition-driven arithmetic property.
 //   - per-side idempotency suffixes (:hold on the debit, :release / :refund on the
 //     credit) that make the two ledger legs distinct yet share a base key.
-//
 // Symbols under test are unexported, so this file is in-package (package escrow).
 
 import (
@@ -24,9 +21,7 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
 // Guarded funds-hold state machine
-// ---------------------------------------------------------------------------
 
 // TestEscrowFSM_LegalTransitions verifies the intended edges: a HELD hold can be
 // released, refunded, or (P3) disputed; a DISPUTED hold can be released or refunded
@@ -86,18 +81,14 @@ func TestEscrowFSM_UnknownStateRejects(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Amount conservation
-//
 // A hold carries ONE amount_kobo, set on Hold and never mutated. resolve() posts a
 // single credit of the full h.AmountKobo to exactly one beneficiary — the payee on
 // release, the payer on refund — and there is no partial-release path. So across the
 // hold's whole life exactly amount_kobo leaves escrow, to exactly one side.
-//
 // resolveOutcome models that: given a terminal state, it returns how the held amount
 // is distributed as (releasedToPayee, refundedToPayer). The invariant asserted is
 // released + refunded == held, and that only ONE side is non-zero.
-// ---------------------------------------------------------------------------
 
 func resolveOutcome(held int64, to State) (releasedToPayee, refundedToPayer int64) {
 	switch to {
@@ -136,11 +127,9 @@ func TestEscrowAmountConservation(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Fail-closed guard: Hold rejects non-positive amounts BEFORE any DB / ledger call.
 // service.go Hold checks `if amountKobo <= 0` first, so this is reachable with a nil
 // pool (mirrors the ledger reversal_test nil-pool pattern).
-// ---------------------------------------------------------------------------
 
 func TestHoldRejectsNonPositiveAmount(t *testing.T) {
 	s := &Service{} // amount guard runs before db/ledger are touched
@@ -155,14 +144,12 @@ func TestHoldRejectsNonPositiveAmount(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Per-side idempotency-key discipline (service.go: debit uses idemKey+":hold";
 // the resolve credit uses h.IdempotencyKey+":"+leg where leg is release|refund).
 // The two legs of one hold MUST use DISTINCT suffixed keys (else the second insert
 // collides on the unique idempotency key and the pair can never balance), yet share
 // the same base key so a whole-hold replay is one logical no-op. This locks that
 // contract as an explicit, greppable invariant.
-// ---------------------------------------------------------------------------
 
 func TestEscrowIdempotencySuffixes(t *testing.T) {
 	base := "escrow:split42"
@@ -189,9 +176,7 @@ func TestEscrowIdempotencySuffixes(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DOC — needs a live-DB integration test (no injectable seam here):
-//
 //   - Hold posts a ledger debit (payer -> escrow standing account) and inserts the
 //     escrow_holds row; assert the debit fails closed on insufficient balance and
 //     that the row is created atomically with the ledger leg.
@@ -202,4 +187,3 @@ func TestEscrowIdempotencySuffixes(t *testing.T) {
 //     (double-entry conservation) — all require the ledger + Postgres.
 //   - Replay: calling Hold twice with the same idemKey must return the existing hold
 //     (getByIdem) without a second debit.
-// ---------------------------------------------------------------------------

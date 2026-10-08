@@ -3,10 +3,10 @@ import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, ActivityIndic
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Minus, Plus, AlertTriangle, CheckCircle2, ShieldX } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -15,7 +15,7 @@ import { useOffering, useLimitCheck } from '@/features/fractionalre/hooks';
 import { useInvestDraft } from '@/features/fractionalre/store/investDraftStore';
 import { formatNaira } from '@/features/fractionalre/utils';
 import { sanitizeMoneyInput } from '@/utils/money';
-import RiskRibbon from '@/features/fractionalre/components/RiskRibbon';
+import { RiskRibbon } from '@/features/fractionalre/components';
 
 export default function InvestAmountScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

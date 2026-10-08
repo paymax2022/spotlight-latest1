@@ -1,13 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Spotlight STEM Contest — registration form (slug: stem-contest)
-//
 // SELF-CONTAINED. Editing anything here affects ONLY the STEM Contest form.
-//
 // Contest shape: free entry, innovation/project focused, supports school &
 // group entry and public voting. NO medical, NO bootcamp, NO payment, NO
 // audition scheduling. The form deliberately omits performing-arts talent
 // fields and instead collects project + innovation details.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES } from '../reference-data';
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from '../types';
 

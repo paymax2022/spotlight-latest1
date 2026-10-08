@@ -19,7 +19,8 @@
  * that laundered a trusted domain into an arbitrary one.
  *
  * The allow rule mirrors middleware.ts's isAllowedOrigin (any localhost /
- * 127.0.0.1 port for dev, plus CORS_ALLOWED_ORIGINS for deployed web origins).
+ * 127.0.0.1 port for dev — production builds refuse loopback here — plus
+ * CORS_ALLOWED_ORIGINS for deployed web origins).
  * It is duplicated rather than imported because middleware.ts is a protected
  * legacy file that must be wrapped, not edited — if that rule changes, change it
  * here too.
@@ -40,7 +41,11 @@ export function isReturnableOrigin(origin: string | null | undefined): boolean {
   if (parsed.origin !== origin) return false;
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
 
-  if (LOOPBACK.test(origin)) return true;
+  // Loopback exists for local dev (Expo web runs on a localhost port). In a
+  // production build it must NOT be honoured — a bare `return=` carrying a
+  // loopback origin let an attacker bounce a victim's browser to a localhost
+  // URL bearing the payment reference.
+  if (LOOPBACK.test(origin)) return process.env.NODE_ENV !== 'production';
 
   return (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')

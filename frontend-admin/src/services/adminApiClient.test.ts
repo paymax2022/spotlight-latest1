@@ -1,24 +1,22 @@
 /**
- * AUTH-018 regression coverage.
+ * BFF session-cookie coverage (replaces the AUTH-018 localStorage pinning).
  *
- * getAdminMenuCounts()/getAdminOverview() used to send only `credentials:
- * 'include'` — the session cookie. AUTH-010 tightened the admin-proxy and the
- * Go backend's admin/overview route groups to require a REAL verified bearer
- * token (middleware.RequireAdminConsoleRole), so cookie-only calls now 401
- * forever and the Operations dashboard never leaves "Loading…". These tests
- * pin that both calls attach `Authorization: Bearer <token>` sourced from the
- * same localStorage key adminAuth.ts's signInAdmin() writes to.
+ * getAdminMenuCounts()/getAdminOverview() call the same-origin /api/admin-proxy
+ * with `credentials: 'include'` so the HttpOnly `sb-admin-token` cookie reaches
+ * the route handler, which attaches `Authorization: Bearer <token>` SERVER-SIDE
+ * from the cookie. No browser code may attach (or even read) the token — the
+ * CodeQL js/clear-text-storage-of-sensitive-data fix removed the localStorage
+ * copy entirely. These tests pin the new contract: proxy URL, credentials, and
+ * NO client-supplied Authorization header.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-describe('adminApiClient — attaches the admin bearer token', () => {
+describe('adminApiClient — calls the session-cookie proxy, never sends a bearer', () => {
   beforeEach(() => {
     vi.resetModules();
-    localStorage.clear();
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    localStorage.clear();
   });
 
   function mockFetch(body: unknown) {
@@ -27,8 +25,7 @@ describe('adminApiClient — attaches the admin bearer token', () => {
     return fn;
   }
 
-  it('getAdminMenuCounts sends an Authorization header when a token is stored', async () => {
-    localStorage.setItem('spotlight_admin_access_token', 'test-token-123');
+  it('getAdminMenuCounts goes through /api/admin-proxy with credentials and no client Authorization', async () => {
     const fetchFn = mockFetch({ success: true, counts: {} });
     const mod = await import('@/services/adminApiClient');
 
@@ -36,13 +33,13 @@ describe('adminApiClient — attaches the admin bearer token', () => {
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/api/admin-proxy/');
     expect(String(url)).toContain('/admin/menu-counts');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token-123');
     expect(init.credentials).toBe('include');
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
-  it('getAdminOverview sends an Authorization header when a token is stored', async () => {
-    localStorage.setItem('spotlight_admin_access_token', 'test-token-456');
+  it('getAdminOverview goes through /api/admin-proxy with credentials and no client Authorization', async () => {
     const fetchFn = mockFetch({ success: true, modules: [] });
     const mod = await import('@/services/adminApiClient');
 
@@ -50,17 +47,20 @@ describe('adminApiClient — attaches the admin bearer token', () => {
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain('/api/admin-proxy/');
     expect(String(url)).toContain('/admin/overview');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-token-456');
+    expect(init.credentials).toBe('include');
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
-  it('omits Authorization (without throwing) when no token is stored', async () => {
-    const fetchFn = mockFetch({ success: true, counts: {} });
-    const mod = await import('@/services/adminApiClient');
-
-    await mod.getAdminMenuCounts();
-
-    const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
-    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+  it('adminAuthHeaders never attaches Authorization — even with a stale key planted', async () => {
+    // A leftover/forged localStorage entry must not be picked up: the service
+    // layer does not read the key at all any more.
+    localStorage.setItem('spotlight_admin_access_token', 'planted-token');
+    const mod = await import('@/config/env');
+    expect(mod.adminAuthHeaders()).toEqual({});
+    expect(mod.adminAuthHeaders({ 'Content-Type': 'application/json' }))
+      .toEqual({ 'Content-Type': 'application/json' });
+    localStorage.removeItem('spotlight_admin_access_token');
   });
 });

@@ -1,7 +1,5 @@
-// ── Doctor — Vet Lab & Pet Health hooks (Batch 5, Section U) ─────────────────
 // Query keys under ['doctor', 'vet', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 3 pet lab order / result hooks (useVet.ts)
-// for the create-order + mark-reviewed flows; this file adds the catalogue,
 // inbox/interpretation, vaccination recs/reminders, health record, growth
 // timeseries and chronic monitoring.
 
@@ -34,8 +32,6 @@ import type {
   RecordPetGrowthInput,
   SavePetChronicMonitoringInput,
 } from '@/types/doctor.batch5';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function usePetLabCatalogue(species?: PetSpecies) {
   return useQuery({
@@ -104,8 +100,6 @@ export function usePetChronicMonitoring(petId: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useAddPetLabInterpretation() {
   const qc = useQueryClient();

@@ -1,4 +1,3 @@
-// ── Fractional Real Estate / Land Crowd-Investing — Types ────────────────────
 // Investor module (PRD §8). All monetary values are integer kobo (minor units).
 // Mirrors the canonical backend at /api/finance/fractionalre.
 
@@ -23,8 +22,6 @@ export type PayoutFrequency = 'monthly' | 'quarterly' | 'biannual' | 'annual' | 
 export type HoldingStatus = 'active' | 'maturing' | 'exited' | 'defaulted';
 
 export type MarketOrderStatus = 'open' | 'matched' | 'filled' | 'cancelled' | 'expired';
-
-// ── Investor profile / account ───────────────────────────────────────────────
 
 export interface InvestorProfile {
   id:                  string;
@@ -55,8 +52,6 @@ export interface SuitabilityResult {
   annualLimitKobo:    number;
   eligibleKinds:      OfferingKind[];
 }
-
-// ── Offerings (marketplace) ──────────────────────────────────────────────────
 
 export interface OfferingSummary {
   id:               string;
@@ -118,15 +113,11 @@ export interface OfferingDetail extends OfferingSummary {
   offerRiskAckId:  string | null;
 }
 
-// ── Limit check (server-authoritative) ───────────────────────────────────────
-
 export interface LimitCheckResult {
   status:         LimitStatus;
   remainingKobo:  number;
   message?:       string;
 }
-
-// ── Subscription ─────────────────────────────────────────────────────────────
 
 export interface SubscribeRequest {
   /** Exactly one of units / amountKobo is sent. */
@@ -160,8 +151,6 @@ export interface SubscribeResult {
   status:         'confirmed' | 'pending';
   certificate:    Certificate;
 }
-
-// ── Portfolio ────────────────────────────────────────────────────────────────
 
 export interface PortfolioOverview {
   totalValueKobo:     number;
@@ -228,8 +217,6 @@ export interface Statement {
   issuedAt: string;
 }
 
-// ── Auto-invest ──────────────────────────────────────────────────────────────
-
 export interface AutoInvestPlan {
   id:               string;
   amountKobo:       number;
@@ -247,8 +234,6 @@ export interface AutoInvestInput {
   riskBand:   RiskBand;
   kinds:      OfferingKind[];
 }
-
-// ── Secondary market ─────────────────────────────────────────────────────────
 
 export interface MarketListing {
   id:              string;
@@ -290,8 +275,6 @@ export interface BuyListingRequest {
   idempotencyKey: string;
 }
 
-// ── Documents vault / certificates ───────────────────────────────────────────
-
 export interface VaultDocument {
   id:        string;
   label:     string;
@@ -302,7 +285,6 @@ export interface VaultDocument {
   issuedAt:  string;
 }
 
-// ── Beneficiaries ────────────────────────────────────────────────────────────
 // Wire format is snake_case per the backend contract. share_pct is an INTEGER
 // percentage (0..100) — never a float. The server enforces Σ share_pct ≤ 100
 // across a user's rows, max 10 rows, name 2–80 chars, relationship 2–40 chars.
@@ -322,7 +304,6 @@ export interface BeneficiaryInput {
   share_pct:    number;
 }
 
-// ── Referrals ────────────────────────────────────────────────────────────────
 // GET /referrals returns either the summary or { enabled: false } when the
 // referral programme is not yet live for this user.
 
@@ -335,8 +316,6 @@ export interface ReferralSummary {
 }
 
 export type Referrals = ReferralSummary | { enabled: false };
-
-// ── Goals ────────────────────────────────────────────────────────────────────
 
 export interface InvestGoal {
   id:           string;
@@ -353,8 +332,6 @@ export interface CreateGoalInput {
   targetDate: string;
   kind:       OfferingKind | 'mixed';
 }
-
-// ── Returns calculator (client preview only — server is authoritative) ───────
 
 export interface ReturnsCalcInput {
   amountKobo:        number;

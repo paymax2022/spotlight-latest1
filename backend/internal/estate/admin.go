@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,13 +28,17 @@ type AdminDashboard struct {
 
 // AdminResident is a resident row for the admin list.
 type AdminResident struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Unit      string    `json:"unit"`
-	Role      string    `json:"role"`
-	Banned    bool      `json:"banned"`
-	Deleted   bool      `json:"deleted"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Unit        string    `json:"unit"`
+	Role        string    `json:"role"`
+	Phone       string    `json:"phone"`
+	Banned      bool      `json:"banned"`
+	Deleted     bool      `json:"deleted"`
+	Status      string    `json:"status"`
+	ArrearsKobo int64     `json:"arrears_kobo"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // EstateConfig holds estate-wide rules + subscription plan.
@@ -85,14 +90,22 @@ func (s *Service) ListResidents(ctx context.Context, estateID, adminID, role str
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
-	q := `SELECT id, user_id, COALESCE(unit,''), role, banned_at IS NOT NULL, deleted_at IS NOT NULL, created_at
-		FROM estate_residents WHERE estate_id=$1`
+	q := `SELECT r.id, r.user_id,
+			COALESCE(NULLIF(btrim(pu.first_name || ' ' || pu.last_name), ''), pu.email, ''),
+			COALESCE(r.unit,''), r.role, COALESCE(pu.phone,''),
+			r.banned_at IS NOT NULL, r.deleted_at IS NOT NULL,
+			COALESCE((SELECT SUM(amount_kobo) FROM estate_dues_invoices di
+				WHERE di.resident_id=r.id AND di.status IN ('pending','overdue')), 0),
+			r.created_at
+		FROM estate_residents r
+		LEFT JOIN public.platform_users pu ON pu.id = r.user_id
+		WHERE r.estate_id=$1`
 	args := []any{estateID}
 	if role != "" {
-		q += " AND role=$2"
+		q += " AND r.role=$2"
 		args = append(args, role)
 	}
-	q += " ORDER BY created_at DESC LIMIT 500"
+	q += " ORDER BY r.created_at DESC LIMIT 500"
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -101,8 +114,14 @@ func (s *Service) ListResidents(ctx context.Context, estateID, adminID, role str
 	var out []AdminResident
 	for rows.Next() {
 		var r AdminResident
-		if err := rows.Scan(&r.ID, &r.UserID, &r.Unit, &r.Role, &r.Banned, &r.Deleted, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.Unit, &r.Role, &r.Phone,
+			&r.Banned, &r.Deleted, &r.ArrearsKobo, &r.CreatedAt); err != nil {
 			return nil, err
+		}
+		if r.Banned {
+			r.Status = "banned"
+		} else {
+			r.Status = "active"
 		}
 		out = append(out, r)
 	}
@@ -115,7 +134,7 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 		return err
 	}
 	if targetUserID == adminID {
-		return fmt.Errorf("estate: cannot ban yourself")
+		return errors.New("estate: cannot ban yourself")
 	}
 	ct, err := s.db.Exec(ctx,
 		`UPDATE estate_residents SET banned_at=NOW(), ban_reason=$3 WHERE estate_id=$1 AND user_id=$2 AND deleted_at IS NULL`,
@@ -124,7 +143,7 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: resident not found in this estate")
+		return errors.New("estate: resident not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "RESIDENT_BAN", "resident", targetUserID, map[string]any{"reason": reason})
 	s.notify(ctx, estateID, targetUserID, NotifAdminApprovalRequired, "Account banned",
@@ -144,7 +163,7 @@ func (s *Service) RestoreResident(ctx context.Context, estateID, adminID, target
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: resident not found in this estate")
+		return errors.New("estate: resident not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "RESIDENT_RESTORE", "resident", targetUserID, nil)
 	s.notify(ctx, estateID, targetUserID, NotifAdminApprovalRequired, "Access restored",
@@ -187,7 +206,7 @@ func (s *Service) GetEstateConfig(ctx context.Context, estateID, adminID string)
 	cfg := &EstateConfig{EstateID: estateID, Rules: json.RawMessage("{}"), SubscriptionPlan: json.RawMessage("{}")}
 	const q = `SELECT rules, subscription_plan, updated_at FROM estate_config WHERE estate_id=$1`
 	err := s.db.QueryRow(ctx, q, estateID).Scan(&cfg.Rules, &cfg.SubscriptionPlan, &cfg.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return cfg, nil
 	}
 	if err != nil {

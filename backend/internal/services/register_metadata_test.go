@@ -33,7 +33,7 @@ func TestRegisterUser_SendsFullNameForTheProfileTrigger(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
-	_, err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		FirstName: "Ada", LastName: "Obi", Email: "ada@example.test",
 		Password: "Str0ngPass!23", ConfirmPassword: "Str0ngPass!23", UserType: "user",
 	})
@@ -53,7 +53,7 @@ func TestRegisterUser_SendsFullNameForTheProfileTrigger(t *testing.T) {
 
 func TestRegisterUser_RejectsMismatchedConfirmation(t *testing.T) {
 	svc := NewAuthService(integrations.NewSupabaseRestClient("http://unused", "k"), nil, config.Config{})
-	_, err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		Email: "a@b.test", Password: "Str0ngPass!23", ConfirmPassword: "different",
 	})
 	if err == nil {
@@ -76,7 +76,7 @@ func TestRegisterUser_SucceedsEvenIfTheProfileWriteFails(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
-	if _, err := svc.RegisterUser(domain.RegisterRequest{
+	if _, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		FirstName: "Ada", LastName: "Obi", Email: "ada@example.test", Phone: "08031234567",
 		Password: "Str0ngPass!23", ConfirmPassword: "Str0ngPass!23", UserType: "user",
 	}); err != nil {
@@ -103,7 +103,7 @@ func TestRegisterUser_AcceptsTheFullNameShapeItsCallerActuallySends(t *testing.T
 	defer srv.Close()
 
 	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
-	res, err := svc.RegisterUser(domain.RegisterRequest{
+	res, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		// No firstName/lastName, no confirmPassword, no userType.
 		FullName: "Ada Obi", Email: "ada@example.test", Password: "Str0ngPass!23",
 	})
@@ -133,7 +133,7 @@ func TestRegisterResult_ReportsAVerifiedSessionWhenConfirmationIsOff(t *testing.
 	defer srv.Close()
 
 	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
-	res, err := svc.RegisterUser(domain.RegisterRequest{
+	res, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		FullName: "A B", Email: "a@b.test", Password: "Str0ngPass!23",
 	})
 	if err != nil {

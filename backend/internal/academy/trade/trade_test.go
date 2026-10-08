@@ -12,8 +12,6 @@ import (
 // (which the repo enforces with academy_skill_attempts.idempotency_key UNIQUE). The
 // DB-bound service/repo methods are validated end-to-end by the integration suite.
 
-// ── Project-submission state machine: allowed + illegal ───────────────────────
-
 func TestCanSubmission_Allowed(t *testing.T) {
 	allowed := [][2]SubmissionState{
 		{SubmissionSubmitted, SubmissionReviewed},
@@ -53,8 +51,6 @@ func TestValidSubmissionState(t *testing.T) {
 	}
 }
 
-// ── Mentor-match state machine ────────────────────────────────────────────────
-
 func TestCanMatch_Transitions(t *testing.T) {
 	if !canMatch(MatchRequested, MatchActive) {
 		t.Error("requested→active should be allowed (mentor accepts)")
@@ -79,8 +75,6 @@ func TestCanMatch_Transitions(t *testing.T) {
 	}
 }
 
-// ── grade() threshold math ────────────────────────────────────────────────────
-
 func TestGrade(t *testing.T) {
 	cases := []struct {
 		score, threshold float64
@@ -99,8 +93,6 @@ func TestGrade(t *testing.T) {
 		}
 	}
 }
-
-// ── Credential issuance: pass→issue, idempotent on key ────────────────────────
 
 // fakeIssuer counts invocations and returns deterministic ids.
 type fakeIssuer struct {

@@ -1,11 +1,9 @@
 // Package metrics exposes drop-in business metrics for the money path, emitted via
 // OpenTelemetry to Cloud Monitoring (wired in internal/platform/observability).
-//
 // These are safe to call from anywhere: when no MeterProvider is configured (local
 // dev), OTel's global no-op meter makes every call a cheap no-op. Instruments are
 // created lazily and route to the real provider once observability.Init sets it
 // (OTel's global meter delegates), so import order never matters.
-//
 // Recommended call sites (add where the money path already makes these decisions):
 //   - RecordPaymentResult      → after a Paystack charge/verify resolves
 //   - RecordMoneyMovement      → on wallet fund / transfer / payout completion
@@ -25,10 +23,11 @@ import (
 const meterName = "paymax-backend"
 
 var (
-	once          sync.Once
-	paymentResult metric.Int64Counter
-	moneyMovement metric.Int64Counter
-	ledgerBreach  metric.Int64Counter
+	once                sync.Once
+	paymentResult       metric.Int64Counter
+	moneyMovement       metric.Int64Counter
+	ledgerBreach        metric.Int64Counter
+	notificationEnqueue metric.Int64Counter
 )
 
 func instruments() {
@@ -40,6 +39,8 @@ func instruments() {
 			metric.WithDescription("Wallet/transfer/payout movements by type and result"))
 		ledgerBreach, _ = m.Int64Counter("paymax.ledger.invariant_breach",
 			metric.WithDescription("Ledger invariant breaches detected — SLO target is 0"))
+		notificationEnqueue, _ = m.Int64Counter("paymax.notification.enqueue",
+			metric.WithDescription("Notification task enqueues by channel and result — failures here mean silently dropped notifications (E2E-FR-051)"))
 	})
 }
 
@@ -71,4 +72,16 @@ func RecordMoneyMovement(ctx context.Context, movementType, result string) {
 func RecordLedgerInvariantBreach(ctx context.Context, kind string) {
 	instruments()
 	ledgerBreach.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", kind)))
+}
+
+// RecordNotificationEnqueue counts notification-task enqueues by channel
+// ("push" | "email" | "sms") and result ("success" | "failure" |
+// "marshal_error" | "client_unconfigured"). This counter is the metric surface to
+// alert on when notifications are expected to flow (failure ≈ 0) (E2E-FR-051).
+func RecordNotificationEnqueue(ctx context.Context, channel, result string) {
+	instruments()
+	notificationEnqueue.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("channel", channel),
+		attribute.String("result", result),
+	))
 }

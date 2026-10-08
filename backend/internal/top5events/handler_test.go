@@ -16,6 +16,7 @@ package top5events
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,10 +46,10 @@ func doRequest(r *gin.Engine, method, path, body string, headers map[string]stri
 	w := httptest.NewRecorder()
 	var req *http.Request
 	if body != "" {
-		req = httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		req = httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 	} else {
-		req = httptest.NewRequest(method, path, nil)
+		req = httptest.NewRequestWithContext(context.Background(), method, path, nil)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)

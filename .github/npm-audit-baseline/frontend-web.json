@@ -1,13 +1,6 @@
 {
   "workspace": "frontend-web",
-  "reviewed": "2026-09-15",
-  "why": "next@16.3.3+ and sharp@0.35.4 cleared the two next RCE advisories (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4) and the sharp/libheif advisory (GHSA-rgj7-g3m4-5g8c) — real patch-version bumps, not baselined. maplibre-gl's GHSA-jrc7-96c5-q579 (DOM.sanitize() XSS in the attribution control) is baselined below because the installed 4.7.1 does not contain the vulnerable code at all: sanitize() was added to src/util/dom.ts starting in maplibre-gl 5.0.0 (diffed https://raw.githubusercontent.com/maplibre/maplibre-gl-js/v4.7.1/src/util/dom.ts against v5.0.0 on 2026-09-15 — absent vs. present). The advisory's stated vulnerable_version_range ('<= 6.4.0') is broader than the code history; upgrading past it means a 4.x -> 6.x jump (two majors) with real breaking-change risk for a fix that does not apply to what's installed. Re-verify this reasoning before bumping past 4.x, and re-check whenever maplibre-gl is upgraded regardless.",
-  "accepted": [
-    {
-      "package": "maplibre-gl",
-      "ghsa": "GHSA-jrc7-96c5-q579",
-      "severity": "critical",
-      "title": "MapLibre GL JS: XSS Sanitizer Bypass in DOM.sanitize() via Live NamedNodeMap Removal Skip"
-    }
-  ]
+  "reviewed": "2026-09-23",
+  "why": "next@16.3.3+ and sharp@0.35.4 cleared the two next RCE advisories (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4) and the sharp/libheif advisory (GHSA-rgj7-g3m4-5g8c) — real patch-version bumps, not baselined. maplibre-gl's GHSA-jrc7-96c5-q579 (DOM.sanitize() XSS in the attribution control, aka CVE-2026-85061) was previously baselined here because the installed 4.7.1 predated the vulnerable code (sanitize() was only added in 5.0.0, so 4.7.1 sat inside the advisory's stated '<= 6.4.0' range without containing the flaw). That baseline is gone as of 2026-09-23: maplibre-gl was bumped straight to 6.4.1, the actual fixed version, so the entry is removed rather than carried forward stale. 6.4.1 was chosen deliberately over any 5.0.0-6.4.0 version, since per the code-history analysis above those versions ARE genuinely vulnerable — re-verify this reasoning before ever downgrading maplibre-gl.",
+  "accepted": []
 }

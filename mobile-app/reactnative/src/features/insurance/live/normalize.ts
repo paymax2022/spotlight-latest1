@@ -1,9 +1,6 @@
-// ── Insurance (live) — wire → domain normalisation ──────────────────────────
 // PURE. No `@/` imports, no React — unit-tested under plain `node --test`.
-//
 // The ONLY place snake_case from `/api/v1/insurance/*` becomes a domain object.
 // Screens never touch a raw payload.
-//
 // Rules this file enforces:
 //  · Money stays an INTEGER in kobo. A decimal string ("6000.0000") that reaches
 //    here is a backend contract violation — we coerce defensively but we never
@@ -31,7 +28,6 @@ import type {
 
 type Raw = Record<string, any>;
 
-// ── Envelope ────────────────────────────────────────────────────────────────
 /** Unwrap `{ data: T }`, or accept a bare payload. */
 export function unwrap<T = unknown>(body: unknown): T {
   if (body && typeof body === 'object' && 'data' in (body as Raw)) {
@@ -53,7 +49,6 @@ export function unwrapList<T = unknown>(body: unknown): T[] {
   return [];
 }
 
-// ── Scalar coercions ────────────────────────────────────────────────────────
 function str(v: unknown, fallback = ''): string {
   return v == null ? fallback : String(v);
 }
@@ -87,7 +82,6 @@ function int(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
-// ── Enums ───────────────────────────────────────────────────────────────────
 const LINES = new Set<ProductLine>([
   'health', 'auto', 'travel', 'gadget', 'life', 'content', 'package',
 ]);
@@ -183,7 +177,6 @@ export function humanizeName(name: string): string {
     .replace(/\b(nin|bvn|lga|vin)\b/g, (m) => m.toUpperCase());
 }
 
-// ── Form schema ─────────────────────────────────────────────────────────────
 function toOptions(v: unknown): FieldOption[] | undefined {
   if (!Array.isArray(v) || v.length === 0) return undefined;
   const out: FieldOption[] = [];
@@ -255,7 +248,6 @@ export function mapField(raw: Raw): Field {
 
   // The provider's `type` describes the WIRE type, not the control: `gender`
   // arrives as `type: "string"` with its two allowed values in
-  // `validation.enum`. Rendering that as a free-text box would let a person type
   // anything and be refused by the insurer for it, so a declared or fetched set
   // of options promotes the field to a picker.
   const declared = toFieldType(raw?.type ?? validation?.type);
@@ -319,7 +311,6 @@ export function mapField(raw: Raw): Field {
   const maxDate = strOrNull(raw?.max_date ?? raw?.maxDate);
   if (minDate) field.minDate = minDate;
   if (maxDate) field.maxDate = maxDate;
-  // The provider rejects a future date of birth; apply that even when the
   // schema does not spell it out, so the user is told before the 400 arrives.
   if (!field.maxDate && type === 'date' && /(^dob$|date_?of_?birth|birth_?date)/i.test(name)) {
     field.maxDate = 'today';
@@ -355,7 +346,6 @@ export function mapFormSchema(raw: unknown): FormSchema | null {
   return { fields: mapped };
 }
 
-// ── Product ─────────────────────────────────────────────────────────────────
 /**
  * `rate_bps` is authoritative when the backend sends it. When it does not (an
  * older payload), derive it from `base_price_kobo` — for a percentage product
@@ -417,7 +407,6 @@ export function mapProduct(raw: Raw): Product {
     howItWorksHtml: str(raw?.how_it_works_html ?? raw?.how_it_works),
     howToClaimHtml: str(raw?.how_to_claim_html ?? raw?.how_to_claim),
 
-    // `active` defaults TRUE when absent: a catalog the backend chose to return
     // is a catalog it means us to show. Only an explicit false hides a product.
     active: raw?.active == null ? true : bool(raw.active),
     // `purchasable` also defaults TRUE — but an explicit false closes the buy
@@ -433,7 +422,6 @@ export function mapProducts(body: unknown): Product[] {
   return unwrapList<Raw>(body).map(mapProduct).filter((p) => p.code);
 }
 
-// ── Quote ───────────────────────────────────────────────────────────────────
 export function mapQuote(body: unknown): Quote {
   const raw = unwrap<Raw>(body) ?? {};
   return {
@@ -449,7 +437,6 @@ export function mapQuote(body: unknown): Quote {
   };
 }
 
-// ── Policy ──────────────────────────────────────────────────────────────────
 export function mapPolicy(raw: Raw): Policy {
   return {
     id: str(raw?.id ?? raw?.policy_id),
@@ -477,7 +464,6 @@ export function mapPolicies(body: unknown): Policy[] {
   return unwrapList<Raw>(body).map(mapPolicy).filter((p) => p.id);
 }
 
-// ── Claim ───────────────────────────────────────────────────────────────────
 function mapEvidence(raw: unknown, index: number): ClaimEvidence {
   if (typeof raw === 'string') {
     return { id: `ev-${index}`, name: fileNameFromUrl(raw), url: raw, uploadedAt: null };
@@ -522,7 +508,6 @@ export function mapClaims(body: unknown): Claim[] {
   return unwrapList<Raw>(body).map(mapClaim).filter((c) => c.id);
 }
 
-// ── Errors ──────────────────────────────────────────────────────────────────
 const FRIENDLY: Record<string, string> = {
   KYC_TIER_INSUFFICIENT: 'You need a higher verification level before you can buy this cover.',
   INSUFFICIENT_FUNDS: 'Your wallet balance is too low for this premium.',

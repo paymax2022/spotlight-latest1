@@ -1,6 +1,7 @@
 package r2
 
 import (
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -22,10 +23,10 @@ func TestNotConfiguredFailsClosed(t *testing.T) {
 	if p.Configured() {
 		t.Fatal("empty config must not be Configured()")
 	}
-	if _, err := p.PresignPut("k", "image/png", time.Minute); err != ErrNotConfigured {
+	if _, err := p.PresignPut("k", "image/png", time.Minute); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("want ErrNotConfigured, got %v", err)
 	}
-	if _, err := p.PresignGet("k", time.Minute); err != ErrNotConfigured {
+	if _, err := p.PresignGet("k", time.Minute); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("want ErrNotConfigured, got %v", err)
 	}
 }

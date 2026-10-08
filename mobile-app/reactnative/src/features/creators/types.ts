@@ -1,5 +1,3 @@
-// ── Creators monetisation domain types ───────────────────────────────────────
-// Money is always integer minor units (kobo). Creator income = content/perks,
 // never a financial return (NL-5).
 
 export interface Creator {
@@ -16,7 +14,6 @@ export interface Creator {
   acceptsTips:  boolean;
 }
 
-// ── Storefront (creator's public page) ───────────────────────────────────────
 export interface Storefront {
   creator:      Creator;
   tiers:        SubTier[];
@@ -25,7 +22,6 @@ export interface Storefront {
   isSubscribed: boolean;
 }
 
-// ── Subscription tiers ───────────────────────────────────────────────────────
 export interface SubTier {
   id:           string;
   creatorId:    string;
@@ -52,7 +48,6 @@ export interface Subscription {
   startedAtISO:  string;
 }
 
-// ── Gated content + entitlements ─────────────────────────────────────────────
 // `Entitlement: GRANTED → REVOKED`
 export type ContentKind = 'video' | 'image' | 'article' | 'audio';
 
@@ -63,7 +58,7 @@ export interface GatedContent {
   kind:         ContentKind;
   /** true = pay-per-view / subscriber-only; false = public preview. */
   gated:        boolean;
-  priceKobo:    number | null;   // for pay-per-view (kobo); null = subscriber-only
+  priceKobo:    number | null;
   /** NL-11 — mature/adult content that requires an age gate. */
   ageRestricted: boolean;
   thumbColor:   string;
@@ -73,7 +68,6 @@ export interface GatedContent {
   entitled:     boolean;
 }
 
-// ── Tips ──────────────────────────────────────────────────────────────────────
 export interface TipInput {
   creatorId:  string;
   amountKobo: number;
@@ -85,13 +79,11 @@ export interface TipResult {
   ok:     boolean;
 }
 
-// ── Subscribe ─────────────────────────────────────────────────────────────────
 export interface SubscribeInput {
   creatorId: string;
   tierId:    string;
 }
 
-// ── Become a creator (schema wizard + payout KYC) ────────────────────────────
 export interface BecomeCreatorInput {
   displayName: string;
   handle:      string;
@@ -108,7 +100,6 @@ export interface BecomeCreatorResult {
   creatorId: string;
 }
 
-// ── Earnings + payout ────────────────────────────────────────────────────────
 export type EarningSource = 'tip' | 'subscription' | 'content';
 
 export interface EarningEntry {
@@ -141,7 +132,6 @@ export interface PayoutResult {
   newAvailableKobo: number;
 }
 
-// ── Content management (creator side) ────────────────────────────────────────
 export interface CreateContentInput {
   title:         string;
   kind:          ContentKind;

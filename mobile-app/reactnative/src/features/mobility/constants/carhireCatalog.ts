@@ -95,7 +95,6 @@ export const VEHICLE_CLASS_META: Record<VehicleClass, VehicleClassMeta> = {
   },
 };
 
-// ─── Gallery media ────────────────────────────────────────────────────────────
 export interface GalleryMedia {
   type: 'image' | 'video';
   url: string;

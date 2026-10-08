@@ -20,14 +20,11 @@ import (
 )
 
 // Test that all admin console endpoints are accessible and return valid responses.
-//
 // ⚠️ GATED ON TEST_DATABASE_URL, DELIBERATELY WITH NO FALLBACK TO DATABASE_URL:
 // the root .env points DATABASE_URL at the PRODUCTION Supabase pooler, and the
 // DB-backed tests below INSERT fixtures. Run against a local database only:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/handlers/ -run TestAdminConsole -v
-//
 // The DB-backed endpoints here are GLOBAL reads (every user, every payout, every
 // audit row) — there is no owner to scope them to. So these tests never assert a
 // global row count: they seed uniquely-identifiable fixtures and assert those
@@ -54,17 +51,14 @@ func adminTestPool(t *testing.T) *pgxpool.Pool {
 }
 
 // seedAdminUser creates a throwaway auth.users row and returns its id.
-//
 // email is required even though the column is nullable: a trigger on auth.users
 // (on_auth_user_created) mirrors the row into user_profiles, whose email column
 // is NOT NULL. .invalid is reserved by RFC 2606, so a fixture address can never
 // be a routable one.
-//
 // created_at is set explicitly rather than left to a default: GoTrue populates it
 // from the application, so real Supabase declares auth.users.created_at with NO
 // default (only the CI compat shim adds one). Leaving it NULL puts the fixture at
 // the very END of ListUsers' created_at DESC NULLS LAST ordering, off page 1.
-//
 // The row is deleted on cleanup — user_profiles cascades from it — so repeated
 // local runs against the same database stay stable.
 func seedAdminUser(t *testing.T, pool *pgxpool.Pool, label string) (id string, email string) {
@@ -79,7 +73,7 @@ func seedAdminUser(t *testing.T, pool *pgxpool.Pool, label string) (id string, e
 	}
 	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(),
+		if _, err := pool.Exec(context.WithoutCancel(t.Context()),
 			`DELETE FROM auth.users WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup auth.users %s: %v", id, err)
 		}
@@ -103,7 +97,6 @@ func seedAdminProfile(t *testing.T, pool *pgxpool.Pool, userID, fullName string,
 }
 
 // seedPendingKyc puts a user's profile into the state GetKYCQueue selects on.
-//
 // 'pending' — not 'submitted'. The store's predicate is
 // `kyc_status IN ('submitted','pending')`, but user_profiles_kyc_status_check
 // only permits unverified/pending/verified/failed/suspended, so 'submitted' can
@@ -135,7 +128,7 @@ func seedPayout(t *testing.T, pool *pgxpool.Pool, userID string, amountKobo int6
 		t.Fatalf("seed payout: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM payouts WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM payouts WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup payout %s: %v", id, err)
 		}
 	})
@@ -165,10 +158,10 @@ func seedAuditLog(t *testing.T, pool *pgxpool.Pool, action string) string {
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM audit_logs WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM audit_logs WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup audit_logs %s: %v", id, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM platform_users WHERE id = $1`, actorID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id = $1`, actorID); err != nil {
 			t.Logf("cleanup platform_users %s: %v", actorID, err)
 		}
 	})
@@ -205,10 +198,10 @@ func seedCryptoOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side stri
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM crypto_orders WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM crypto_orders WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup crypto_orders %s: %v", id, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM crypto_assets WHERE id = $1`, assetID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM crypto_assets WHERE id = $1`, assetID); err != nil {
 			t.Logf("cleanup crypto_assets %s: %v", assetID, err)
 		}
 	})
@@ -245,10 +238,10 @@ func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side stri
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM invest_orders WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM invest_orders WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup invest_orders %s: %v", id, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM invest_stock_assets WHERE id = $1`, assetID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM invest_stock_assets WHERE id = $1`, assetID); err != nil {
 			t.Logf("cleanup invest_stock_assets %s: %v", assetID, err)
 		}
 	})
@@ -259,7 +252,7 @@ func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side stri
 func adminGet(t *testing.T, r *gin.Engine, path, role string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", path, nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 	req.Header.Set("X-Admin-Role", role)
 	r.ServeHTTP(w, req)
 	return w
@@ -287,7 +280,6 @@ func setupAdminConsoleRouterWithPool(t *testing.T, pool *pgxpool.Pool) *gin.Engi
 		c.Next()
 	})
 
-	// Register all routes
 	admin := r.Group("/api/v1/admin")
 	admin.GET("/dashboard", handler.Dashboard)
 	admin.GET("/users", handler.GetUsers)
@@ -321,7 +313,6 @@ func setupAdminConsoleRouterWithPool(t *testing.T, pool *pgxpool.Pool) *gin.Engi
 // delta. `go test ./...` runs packages concurrently against one database and
 // several other suites seed auth.users and post ledger entries, so an exact
 // count — or a delta across two requests — would be flaky by construction.
-//
 // The bug this guards is a 500: the aggregate query referenced orders.amount_kobo,
 // a column public.orders does not have, so the endpoint failed unconditionally.
 func TestAdminConsole_Dashboard(t *testing.T) {
@@ -337,7 +328,7 @@ func TestAdminConsole_Dashboard(t *testing.T) {
 
 	w := adminGet(t, r, "/api/v1/admin/dashboard", "SuperAdmin")
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	var data map[string]interface{}
+	var data map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &data))
 
 	require.Contains(t, data, "users")
@@ -433,12 +424,12 @@ func TestAdminConsole_GetUser(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/users/usr_001", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/users/usr_001", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var user map[string]interface{}
+	var user map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &user)
 	assert.NoError(t, err)
 	assert.Equal(t, "usr_001", user["id"])
@@ -493,13 +484,13 @@ func TestAdminConsole_ReviewKyc(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"decision":"approve","reason":"All checks passed"}`)
-	req, _ := http.NewRequest("POST", "/api/v1/admin/kyc/kyc_001/review", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/kyc/kyc_001/review", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "ComplianceAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, "approve", result["status"])
@@ -509,12 +500,12 @@ func TestAdminConsole_GetAssets(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/assets", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/assets", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var assets []map[string]interface{}
+	var assets []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &assets)
 	assert.NoError(t, err)
 	// require, not assert: assert.Len records the failure and carries on, so the
@@ -529,13 +520,13 @@ func TestAdminConsole_UpdateAsset(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"buyEnabled":false,"feeBps":100}`)
-	req, _ := http.NewRequest("PATCH", "/api/v1/admin/assets/ast_001", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/assets/ast_001", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "RiskAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, false, result["buyEnabled"])
@@ -546,7 +537,6 @@ func TestAdminConsole_UpdateAsset(t *testing.T) {
 // single trading `orders` table (public.orders is the restaurant module's). Both
 // legs of that union are seeded so a regression to a single-table query fails
 // here rather than 500ing in production.
-//
 // The endpoint caps at LIMIT 100 ordered by created_at DESC. That is safe to
 // assert against under concurrent packages because the fixtures are seeded
 // immediately before the read: only 100+ orders created inside that millisecond
@@ -698,13 +688,13 @@ func TestAdminConsole_ReviewWithdrawal(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"decision":"approve","reason":"Risk score acceptable"}`)
-	req, _ := http.NewRequest("POST", "/api/v1/admin/withdrawals/WD-001-XYZ/review", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/withdrawals/WD-001-XYZ/review", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, "approve", result["status"])
@@ -714,12 +704,12 @@ func TestAdminConsole_GetReconciliation(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/reconciliation", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/reconciliation", nil)
 	req.Header.Set("X-Admin-Role", "FinanceAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var recon map[string]interface{}
+	var recon map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &recon)
 	assert.NoError(t, err)
 	assert.Contains(t, recon, "exceptions")
@@ -729,12 +719,12 @@ func TestAdminConsole_GetProviders(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/providers", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/providers", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var providers []map[string]interface{}
+	var providers []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &providers)
 	assert.NoError(t, err)
 	require.Len(t, providers, 3) // require: guards the indexed read below
@@ -745,12 +735,12 @@ func TestAdminConsole_GetRiskLimits(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/risk-limits", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/risk-limits", nil)
 	req.Header.Set("X-Admin-Role", "RiskAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var limits []map[string]interface{}
+	var limits []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &limits)
 	assert.NoError(t, err)
 	assert.Len(t, limits, 3)
@@ -761,13 +751,13 @@ func TestAdminConsole_UpdateRiskLimit(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"valueMinor":20000000}`)
-	req, _ := http.NewRequest("PATCH", "/api/v1/admin/risk-limits/rl_001", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/risk-limits/rl_001", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "RiskAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, float64(20000000), result["valueMinor"])
@@ -777,12 +767,12 @@ func TestAdminConsole_GetFees(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/fees", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/fees", nil)
 	req.Header.Set("X-Admin-Role", "FinanceAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var fees []map[string]interface{}
+	var fees []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &fees)
 	assert.NoError(t, err)
 	assert.Len(t, fees, 3)
@@ -793,13 +783,13 @@ func TestAdminConsole_UpdateFee(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"bps":100}`)
-	req, _ := http.NewRequest("PATCH", "/api/v1/admin/fees/fee_001", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/fees/fee_001", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "FinanceAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, float64(100), result["bps"])
@@ -809,12 +799,12 @@ func TestAdminConsole_GetFeatureFlags(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/feature-flags", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/feature-flags", nil)
 	req.Header.Set("X-Admin-Role", "ProductAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var flags []map[string]interface{}
+	var flags []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &flags)
 	assert.NoError(t, err)
 	assert.Len(t, flags, 4)
@@ -825,13 +815,13 @@ func TestAdminConsole_SetFeatureFlag(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"enabled":true}`)
-	req, _ := http.NewRequest("PATCH", "/api/v1/admin/feature-flags/ENABLE_STOCK_TRADING", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/feature-flags/ENABLE_STOCK_TRADING", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "ProductAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, true, result["enabled"])
@@ -841,12 +831,12 @@ func TestAdminConsole_GetApprovals(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/approvals", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/approvals", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var approvals []map[string]interface{}
+	var approvals []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &approvals)
 	assert.NoError(t, err)
 	require.Len(t, approvals, 2) // require: guards the indexed read below
@@ -858,13 +848,13 @@ func TestAdminConsole_Approve(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{}`)
-	req, _ := http.NewRequest("POST", "/api/v1/admin/approvals/app_001/approve", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/approvals/app_001/approve", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, "approved", result["status"])
@@ -875,13 +865,13 @@ func TestAdminConsole_RejectApproval(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"reason":"Insufficient supporting documentation"}`)
-	req, _ := http.NewRequest("POST", "/api/v1/admin/approvals/app_001/reject", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/approvals/app_001/reject", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
+	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	assert.NoError(t, err)
 	assert.Equal(t, "rejected", result["status"])
@@ -930,12 +920,12 @@ func TestAdminConsole_GetAdmins(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/admins", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/admins", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var admins []map[string]interface{}
+	var admins []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &admins)
 	assert.NoError(t, err)
 	assert.Len(t, admins, 3)
@@ -945,7 +935,7 @@ func TestAdminConsole_MissingRole(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("GET", "/api/v1/admin/dashboard", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/dashboard", nil)
 	// No X-Admin-Role header
 	r.ServeHTTP(w, req)
 

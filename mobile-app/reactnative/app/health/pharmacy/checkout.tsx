@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Truck, Package, ShieldCheck, MapPin, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -37,7 +37,6 @@ export default function CheckoutScreen() {
     pharmacy?.supportsDelivery ? 'delivery' : 'pickup',
   );
   // Delivery dropoff — the backend requires an address + real coordinates for a
-  // DELIVERY order (Dispatch can't route a courier without them); this used to
   // be a hardcoded fixture string ("12B Ozumba Mbadiwe Ave..."), which meant a
   // real request would either be silently wrong or (now that the backend
   // validates it, see CreateOrder in service.go) rejected outright.

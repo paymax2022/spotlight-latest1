@@ -2,7 +2,6 @@
 
 // A6 — Milestone Payout Log. Chronological view of the one-time bonus payouts,
 // tracked separately from the high-volume ongoing-share ledger.
-// RBAC: referral.admin.milestones (Finance).
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';

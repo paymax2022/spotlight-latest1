@@ -1,7 +1,5 @@
-// ── Protection — policy wallet ───────────────────────────────────────────────
 // Real policies from GET /policies. Nothing is synthesised: an empty list means
 // the user genuinely holds no cover, and that is what the screen says.
-//
 // The empty state is the one almost everyone sees today, so it is not a grey box
 // with "No data" in it. It explains what a policy wallet is for, what would be
 // here, and offers the one action that changes the situation.
@@ -14,10 +12,10 @@ import { FolderOpen, ShieldCheck } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import SegmentedControl from '@/components/SegmentedControl';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   InsuranceErrorState,
   LivePolicyCard,
@@ -55,7 +53,6 @@ export default function PolicyWallet() {
     .filter((p) => p.status === 'active')
     .reduce((s, p) => s + p.sumInsuredKobo, 0);
 
-  // ── Loading ──
   if (policies.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -65,7 +62,6 @@ export default function PolicyWallet() {
     );
   }
 
-  // ── Failed ── (never a fixture fallback — a policy list must be true)
   if (policies.isError) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -75,7 +71,6 @@ export default function PolicyWallet() {
     );
   }
 
-  // ── Genuinely empty — the state almost everyone is in ──
   if (!hasAny) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>

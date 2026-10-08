@@ -2,12 +2,10 @@
 // professional profile (experience / education / about — PR-07..PR-09), a
 // PN-1-safe profile-strength meter (PR-11), and the consent-gated recommendation
 // state machine (RC-01..RC-04, PN-4).
-//
 // PN-4 (CRITICAL): a recommendation is DRAFTED → SENT → ACCEPTED_VISIBLE |
 // DECLINED_HIDDEN. It is NEVER auto-published — acceptance is an explicit subject
 // action. The public read path returns ONLY state='accepted_visible'; this is
 // enforced in BOTH the service query and the RLS reader policy.
-//
 // PN-1: profile strength is an internal completion/verification calc. The API
 // surfaces only a coarse band/label — never a raw granular trust number.
 package connectnetprofile
@@ -29,7 +27,7 @@ const (
 // recommendation without the subject's explicit accept — is rejected.
 //
 //	DRAFTED → SENT
-//	SENT    → ACCEPTED_VISIBLE
+//	→ ACCEPTED_VISIBLE
 //	SENT    → DECLINED_HIDDEN
 func validTransition(from, to RecoState) bool {
 	switch from {
@@ -47,8 +45,6 @@ func validTransition(from, to RecoState) bool {
 // anyone other than its author/subject/admin ONLY when accepted_visible. Every
 // public read path (query + RLS reader policy) must agree with this predicate.
 func PubliclyVisible(state RecoState) bool { return state == RecoAcceptedVisible }
-
-// ═══════════════════════════════ Domain records ══════════════════════════════
 
 // Experience is one role in a user's timeline (PR-07).
 type Experience struct {
@@ -103,8 +99,6 @@ type RecommendationRequest struct {
 	CreatedAt       time.Time `json:"createdAt"`
 }
 
-// ═══════════════════════════════ Request DTOs ════════════════════════════════
-
 type ExperienceInput struct {
 	Title       string `json:"title" binding:"required"`
 	Company     string `json:"company" binding:"required"`
@@ -137,8 +131,6 @@ type RequestRecommendationInput struct {
 	TargetUserID string `json:"targetUserId" binding:"required"`
 	Note         string `json:"note"`
 }
-
-// ═══════════════════════════ Profile strength (PR-11) ═════════════════════════
 
 // StrengthSignals is the input to the pure strength calc. It is populated from
 // the user's own profile data plus verification/assessment signals. Keeping it a
@@ -186,10 +178,7 @@ func ComputeStrength(s StrengthSignals) int {
 	if s.PassedAssessment {
 		score += wAssessment
 	}
-	recoCredit := s.AcceptedRecommendations * wPerReco
-	if recoCredit > maxRecoCredit {
-		recoCredit = maxRecoCredit
-	}
+	recoCredit := min(s.AcceptedRecommendations*wPerReco, maxRecoCredit)
 	if recoCredit < 0 {
 		recoCredit = 0
 	}

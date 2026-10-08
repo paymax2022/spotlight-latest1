@@ -35,6 +35,13 @@ export async function validateRequest(
 
 // Service-role client for role lookups — RLS is bypassed intentionally because
 // this is a server-side internal call, not a user-facing query.
+//
+// WARNING (E2E-SEC-053): user_profiles.role is USER-WRITABLE profile data —
+// it was self-assignable via PUT /api/me/profile. Do NOT use this for
+// authorization. Admin authz must read public.user_roles → roles.slug via
+// getUserRbacRoleSlugs (src/server/admin/auth.ts); the callers that used this
+// for authz (assertAdminPermission, requireFinanceRole, v1/admin/contests)
+// have all been moved over. Remaining callers are display-only.
 export async function getRequestUserRole(userId: string): Promise<string | null> {
   const supabase = createAdminClient();
   const { data, error } = await supabase

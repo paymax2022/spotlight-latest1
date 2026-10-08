@@ -2,13 +2,11 @@
 // EdTech (academy fees) module — the backend for the /admin/platform/edtech console
 // (SU-01..SU-12). It is authorized PURELY by the seeded RBAC capability
 // `platform_edtech_admin`; no school-level role reaches it.
-//
 // SCOPE — READ + LIGHT OVERSIGHT ONLY. Nothing here posts a ledger entry or moves
 // money. The two write endpoints (trust-score override, school verify) mutate ONLY
 // the existing guarded, money-free tables (academy_fees_trust_overrides append-only
 // history; academy_schools.verification_tier advance) — never the ledger, never a
 // balance. All monetary amounts are integers in minor units (kobo).
-//
 // Cross-tenant by design: a platform operator reads ACROSS every school via the pgx
 // pool, authorized by platform RBAC alone (mirrors estate_admin_routes.go). Where a
 // screen has NO backing table, the handler returns a DOCUMENTED empty/placeholder
@@ -17,6 +15,7 @@ package platform
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,8 +30,6 @@ type Repo struct{ pool *pgxpool.Pool }
 // NewRepo builds the platform oversight repo over the shared pgx pool.
 func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-// ── SU-01 — Platform School Directory ─────────────────────────────────────────
-//
 // Reads public.academy_schools (base spine + the fees-integration ALTERs:
 // verification_tier, level, owner_user_id). GMV = SUM of succeeded invoice payments
 // across the school's students (academy_invoice_payments → academy_invoices →
@@ -41,7 +38,6 @@ func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 // (never fabricated — the computed score lives in the fees/trustscore service; here
 // we surface the override or a documented neutral 0-if-unknown fallback resolved in
 // the handler).
-//
 // NOTE the base academy_schools table has NO geographic "state" column and no
 // "gov_sync opt-in" flag; those fields in the console fixture map to, respectively,
 // academy_schools.level (best available locality descriptor, may be empty) and the
@@ -50,7 +46,7 @@ type SchoolRow struct {
 	ID               string
 	Name             string
 	State            string // mapped from academy_schools.level (no geo column exists)
-	OwnerIdentityID  string // academy_schools.owner_user_id (nullable)
+	OwnerIdentityID  string
 	VerificationTier string
 	Status           string
 	Students         int64
@@ -104,8 +100,6 @@ LIMIT 500`
 	return out, rows.Err()
 }
 
-// ── SU-02 — Verification Queue ────────────────────────────────────────────────
-//
 // There is NO dedicated verification-submission table (no CAC/references entity in
 // the schema). The pending-verification QUEUE is therefore derived from
 // academy_schools whose verification_tier is not yet terminal ('verified'/'premium').
@@ -115,7 +109,7 @@ type VerificationRow struct {
 	SchoolID    string
 	SchoolName  string
 	CurrentTier string
-	Status      string // pending (derived)
+	Status      string
 	SubmittedAt time.Time
 }
 
@@ -163,8 +157,6 @@ RETURNING id::text, name, COALESCE(verification_tier,'unverified'), created_at`
 	return v, nil
 }
 
-// ── SU-03 — Platform-Wide Collections ─────────────────────────────────────────
-//
 // Aggregates real GMV + invoice counts across ALL schools. GMV = succeeded payments;
 // invoices_issued = non-draft invoices; invoices_paid = status 'paid'. Reconciliation
 // health is a best-effort projection read (matched = succeeded payments, pending =
@@ -233,8 +225,6 @@ ORDER BY d.day`
 	return out, rows.Err()
 }
 
-// ── SU-04 — Fraud & Risk (best-effort heuristic reads) ────────────────────────
-//
 // No fraud-case table exists. This is a best-effort heuristic read over real data:
 //   - reversed payments (chargeback-like) → one risk row each
 //
@@ -275,8 +265,6 @@ LIMIT 200`
 	return out, rows.Err()
 }
 
-// ── SU-05 — Gov Sync + Compliance Exports (SF-11 immutable log) ───────────────
-//
 // GovSync opt-in state per school = the set of academy_school_compliance_optins
 // categories; export count/last export come from academy_compliance_exports.
 type GovSyncRow struct {
@@ -356,7 +344,6 @@ LIMIT 500`
 	return out, rows.Err()
 }
 
-// ── SU-06 — Competitions (real table academy_competitions) ────────────────────
 type CompetitionRow struct {
 	ID                   string
 	Name                 string
@@ -395,8 +382,6 @@ LIMIT 500`
 	return out, rows.Err()
 }
 
-// ── SU-07 — Trust Scores (+ override) ─────────────────────────────────────────
-//
 // Per-school trust: the latest academy_fees_trust_overrides row is authoritative
 // when present (overridden=true). When absent, a documented neutral fallback is
 // returned (score 0, overridden=false) — the real computed score lives in the
@@ -478,8 +463,6 @@ RETURNING created_at`
 	}, nil
 }
 
-// ── SU-08 — Scholarships (fund-flow audit) ────────────────────────────────────
-//
 // Reads academy_scholarship_pledges (the pledge spine). ledger_ref = fund_ledger_ref
 // (every settled leg posts to the finance ledger; a still-pledged row has none).
 // target_student_ref is the student id (minor-safe ref, not PII) per SF-7.
@@ -525,8 +508,6 @@ LIMIT 500`
 	return out, rows.Err()
 }
 
-// ── SU-11 — Audit search (academy_commerce_audit) ─────────────────────────────
-//
 // Searches the append-only academy_commerce_audit trail (module-scoped to academy).
 // The generic public.audit_logs is keyed on platform_users (a different identity
 // space per 20260815001000 header), so the academy-native commerce audit is the
@@ -580,8 +561,6 @@ WHERE 1=1`
 	return out, rows.Err()
 }
 
-// ── SU-12 — Compliance posture (Model-A) drift signals ────────────────────────
-//
 // Model-A means Paymax never fronts fees. A best-effort drift read flags schools
 // whose fee schedules carry a non-empty installment_policy referencing advance /
 // financing structures (factoring-like). This is a heuristic over real config, not a
@@ -623,8 +602,6 @@ LIMIT 200`
 	return out, rows.Err()
 }
 
-// ── SU-10 — Feature flags (config-backed; no per-scope override table) ─────────
-//
 // There is no tenant feature-flag override table in the schema. The set of flags is
 // therefore read from the seeded academy fees RBAC permissions namespace as a
 // documented, read-only placeholder projection (each academy.fees.* capability is a
@@ -659,17 +636,5 @@ ORDER BY slug`
 	return out, nil
 }
 
-// itoa is a tiny local strconv.Itoa to keep the repo import surface minimal.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
-}
+// itoa is a tiny local strconv.Itoa kept for test compatibility.
+func itoa(n int) string { return strconv.Itoa(n) }

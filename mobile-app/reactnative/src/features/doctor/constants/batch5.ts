@@ -1,14 +1,10 @@
-// ── Doctor module — Batch 5 constants ────────────────────────────────────────
 // Static option lists / label maps for Batch 5 (Sections S · T · U · V — the
 // VETERINARY sections). Pure data only — no money math. Money is always integers
 // in kobo. ADDITIVE to `@/features/doctor/constants` (re-exported from its
 // barrel).
-//
-// REUSE: existing Phase 3 vet/pet constants from `phase3.ts`
 // (PET_SPECIES_OPTIONS, PET_SPECIES_LABELS, PET_BREED_OPTIONS,
 // PET_DRUG_CATALOGUE, PET_DRUG_CATEGORY_LABELS, PET_LAB_TESTS,
 // PET_LAB_CATEGORY_LABELS, PET_PRODUCT_CATEGORIES, PET_WARNING_SEVERITY_LABELS,
-// PET_WARNING_SEVERITY_TONES). We re-export the most-reused ones below so Batch 5
 // screens have a single import site, and add only the missing maps.
 
 import type {
@@ -25,7 +21,6 @@ import type {
   PetWarningSeverity,
 } from '@/types/doctor.batch5';
 
-// ─── REUSE: re-export the existing Phase 3 vet/pet constants ──────────────────
 export {
   PET_SPECIES_OPTIONS,
   PET_SPECIES_LABELS,
@@ -38,8 +33,6 @@ export {
   PET_WARNING_SEVERITY_LABELS,
   PET_WARNING_SEVERITY_TONES,
 } from './phase3';
-
-// ─── Section S — vet consultation ────────────────────────────────────────────
 
 export const VET_CONSULT_TYPE_OPTIONS: { value: VetConsultType; label: string }[] = [
   { value: 'chat',      label: 'Chat' },
@@ -82,8 +75,6 @@ export const VET_REFERRAL_URGENCY_OPTIONS: { value: 'routine' | 'urgent'; label:
   { value: 'urgent',  label: 'Urgent' },
 ];
 
-// ─── Section T — pet e-prescription ──────────────────────────────────────────
-
 export const PET_RX_WARNING_LABELS: Record<PetRxWarningKind, string> = {
   medicine:                  'Medicine warning',
   species_contraindication:  'Species contraindication',
@@ -121,8 +112,6 @@ export const DOSAGE_UNIT_OPTIONS: { value: string; label: string }[] = [
   { value: 'tablet', label: 'tablet(s)' },
   { value: 'drop',   label: 'drop(s)' },
 ];
-
-// ─── Section U — vet lab & pet health ────────────────────────────────────────
 
 export const PET_VACCINATION_URGENCY_LABELS: Record<PetVaccinationUrgency, string> = {
   due_soon: 'Due soon',
@@ -170,8 +159,6 @@ export const PET_CHRONIC_TREND_TONES: Record<PetChronicTrend, string> = {
   stable:    '#3B82F6',
   worsening: '#EF4444',
 };
-
-// ─── Section V — pet store / fulfilment ──────────────────────────────────────
 
 export const PET_FULFILMENT_STATUS_LABELS: Record<PetFulfilmentStatus, string> = {
   pending:          'Pending',

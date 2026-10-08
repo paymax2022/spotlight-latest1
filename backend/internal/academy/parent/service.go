@@ -47,8 +47,6 @@ func (s *Service) requireActiveLink(ctx context.Context, guardianID, minorID str
 	return nil
 }
 
-// ── Children / dashboards ────────────────────────────────────────────────────────
-
 // Children returns the minors the guardian is actively linked to.
 func (s *Service) Children(ctx context.Context, guardianID string) ([]Child, error) {
 	if guardianID == "" {
@@ -99,8 +97,6 @@ func (s *Service) buildDashboard(ctx context.Context, minorID, subjectID string)
 	}, nil
 }
 
-// ── Parent controls ──────────────────────────────────────────────────────────────
-
 // UpsertControls writes controls for a minor. Gated by the link.
 func (s *Service) UpsertControls(ctx context.Context, guardianID, minorID string, req UpsertControlsRequest) (*ParentControls, error) {
 	if req.ScreenTimeMinutes < 0 {
@@ -111,8 +107,6 @@ func (s *Service) UpsertControls(ctx context.Context, guardianID, minorID string
 	}
 	return s.repo.UpsertControls(ctx, guardianID, minorID, req)
 }
-
-// ── Progress reports ─────────────────────────────────────────────────────────────
 
 // GenerateReport aggregates the minor's stats for the period into a stored report.
 // Gated by the link.
@@ -148,8 +142,6 @@ func (s *Service) ListReports(ctx context.Context, guardianID, minorID string) (
 	return s.repo.ListReports(ctx, minorID, 50)
 }
 
-// ── Purchase approvals ───────────────────────────────────────────────────────────
-
 // ListPending returns the guardian's pending purchase approvals (already scoped to
 // the guardian; each row belongs to a minor the guardian linked).
 func (s *Service) ListPending(ctx context.Context, guardianID string) ([]PurchaseApproval, error) {
@@ -184,8 +176,6 @@ func (s *Service) Decide(ctx context.Context, guardianID, approvalID, decision s
 	}
 	return s.repo.DecideApproval(ctx, guardianID, approvalID, to)
 }
-
-// ── Notification templates (admin) ───────────────────────────────────────────────
 
 func (s *Service) UpsertTemplate(ctx context.Context, actor string, req UpsertTemplateRequest) (*NotificationTemplate, error) {
 	if req.Key == "" || req.Body == "" || !validChannel(req.Channel) {

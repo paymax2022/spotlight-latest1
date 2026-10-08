@@ -1,9 +1,7 @@
 'use client';
 
 // Mapping approval workbench — symptom taxonomy suggest-approve console
-// (PRD §4: AI proposes term synonyms and cluster→class mappings; NOTHING
 // AI-drafted is user-visible until a licensed pharmacist approves it here).
-// Tabs: Terms | Clusters→Classes. Every approval confirms via a modal because
 // approval makes the mapping live in user-facing symptom search immediately.
 // Cluster rules are read-only on this surface (rule changes go through the
 // versioned taxonomy/rules pipeline, not the console).
@@ -39,8 +37,6 @@ function useMappingPermissions() {
   }, []);
   return { user, can: (perms: string[]) => hasAnyPermission(user, perms) };
 }
-
-// ── Local badges ──────────────────────────────────────────────────────────────
 
 const LANGUAGE_LABELS: Record<SymptomLanguage, string> = { en: 'English', pcm: 'Pidgin', ha: 'Hausa', yo: 'Yoruba', ig: 'Igbo' };
 const LANGUAGES: SymptomLanguage[] = ['en', 'pcm', 'ha', 'yo', 'ig'];
@@ -118,8 +114,6 @@ function ConfirmModal({ pending, busy, onConfirm, onCancel }: { pending: Pending
     </>
   );
 }
-
-// ── Page component ────────────────────────────────────────────────────────────
 
 export default function SymptomMappingWorkbench() {
   const { can } = useMappingPermissions();

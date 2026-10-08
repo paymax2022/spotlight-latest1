@@ -3,31 +3,27 @@ package spotlightwealth
 import (
 	"context"
 	"fmt"
+	"spotlight/backend/go-common/ginutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ──────────────────────────────────────────────────────────────────────────
 // Spotlight Wealth — CONTENT ADMIN.
-//
 // This file adds the content-authoring surface on top of the read-mostly
 // member API in service.go/handler.go/routes.go (none of those files are
 // modified here — additive only, per house brownfield-safety rules).
 // Mirrors backend/internal/learn/admin.go exactly.
-//
 // Scope: create/update/delete for spotlight_videos, spotlight_challenges,
 // spotlight_campaigns. All mutations are RBAC-gated at the route layer (see
 // RegisterSpotlightwealthAdmin / backend/internal/app/spotlightwealth_routes.go)
 // and audited via the existing nil-safe Auditor sink (Service.audit /
 // AdminService.audit).
-//
 // MONEY: challenge reward amounts are BIGINT kobo (int64) — never floats,
 // never strings for math (per house iron rules). This file only authors the
 // challenge's reward_kobo config column; the actual reward payout (ledger
 // credit) remains solely in Service.CompleteChallenge (service.go), untouched.
-// ──────────────────────────────────────────────────────────────────────────
 
 // AdminService owns the content-authoring mutations. It shares the same pool
 // (and, optionally, the same Auditor) as the read-mostly Service.
@@ -58,8 +54,6 @@ var isValidTopic = map[SpotlightTopic]bool{
 var isValidChallengeKind = map[ChallengeKind]bool{
 	"literacy": true, "quiz": true, "savings": true,
 }
-
-// ───────────────────────── Admin DTOs ─────────────────────────
 
 type AdminVideoInput struct {
 	ID             string         `json:"id"`
@@ -94,8 +88,6 @@ type AdminCampaignInput struct {
 	SortOrder   int    `json:"sortOrder"`
 	Published   *bool  `json:"published"`
 }
-
-// ───────────────────────── Videos ─────────────────────────
 
 func (s *AdminService) CreateVideo(ctx context.Context, actor string, in AdminVideoInput) (*FinanceVideo, error) {
 	if !isValidTopic[in.Topic] {
@@ -149,8 +141,6 @@ func (s *AdminService) DeleteVideo(ctx context.Context, actor, id string) error 
 	s.log(actor, "spotlight.admin.video.delete", "spotlight_video", id, nil, nil)
 	return nil
 }
-
-// ───────────────────────── Challenges ─────────────────────────
 
 func (s *AdminService) CreateChallenge(ctx context.Context, actor string, in AdminChallengeInput) (*Challenge, error) {
 	if !isValidChallengeKind[in.Kind] {
@@ -221,8 +211,6 @@ func (s *AdminService) DeleteChallenge(ctx context.Context, actor, id string) er
 	return nil
 }
 
-// ───────────────────────── Campaigns ─────────────────────────
-
 func (s *AdminService) CreateCampaign(ctx context.Context, actor string, in AdminCampaignInput) (*Campaign, error) {
 	id := in.ID
 	if id == "" {
@@ -270,15 +258,11 @@ func (s *AdminService) DeleteCampaign(ctx context.Context, actor, id string) err
 	return nil
 }
 
-// ───────────────────────── Admin handler ─────────────────────────
-
 type AdminHandler struct {
 	svc *AdminService
 }
 
 func NewAdminHandler(svc *AdminService) *AdminHandler { return &AdminHandler{svc: svc} }
-
-func adminActor(c *gin.Context) string { return c.GetString("user_id") }
 
 // RegisterSpotlightwealthAdmin mounts the Spotlight Wealth CONTENT ADMIN routes
 // on the provided group. The caller is responsible for RBAC-gating each route
@@ -315,7 +299,7 @@ func (h *AdminHandler) CreateVideo(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	v, err := h.svc.CreateVideo(c.Request.Context(), adminActor(c), in)
+	v, err := h.svc.CreateVideo(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -329,7 +313,7 @@ func (h *AdminHandler) UpdateVideo(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	v, err := h.svc.UpdateVideo(c.Request.Context(), adminActor(c), c.Param("id"), in)
+	v, err := h.svc.UpdateVideo(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -338,7 +322,7 @@ func (h *AdminHandler) UpdateVideo(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteVideo(c *gin.Context) {
-	if err := h.svc.DeleteVideo(c.Request.Context(), adminActor(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteVideo(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -351,7 +335,7 @@ func (h *AdminHandler) CreateChallenge(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	ch, err := h.svc.CreateChallenge(c.Request.Context(), adminActor(c), in)
+	ch, err := h.svc.CreateChallenge(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -365,7 +349,7 @@ func (h *AdminHandler) UpdateChallenge(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	ch, err := h.svc.UpdateChallenge(c.Request.Context(), adminActor(c), c.Param("id"), in)
+	ch, err := h.svc.UpdateChallenge(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -374,7 +358,7 @@ func (h *AdminHandler) UpdateChallenge(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteChallenge(c *gin.Context) {
-	if err := h.svc.DeleteChallenge(c.Request.Context(), adminActor(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteChallenge(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -387,7 +371,7 @@ func (h *AdminHandler) CreateCampaign(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	cmp, err := h.svc.CreateCampaign(c.Request.Context(), adminActor(c), in)
+	cmp, err := h.svc.CreateCampaign(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -401,7 +385,7 @@ func (h *AdminHandler) UpdateCampaign(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
-	cmp, err := h.svc.UpdateCampaign(c.Request.Context(), adminActor(c), c.Param("id"), in)
+	cmp, err := h.svc.UpdateCampaign(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -410,7 +394,7 @@ func (h *AdminHandler) UpdateCampaign(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteCampaign(c *gin.Context) {
-	if err := h.svc.DeleteCampaign(c.Request.Context(), adminActor(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteCampaign(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}

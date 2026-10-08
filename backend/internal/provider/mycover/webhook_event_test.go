@@ -7,7 +7,6 @@ import "testing"
 // policy.cancelled / policy.lapsed / policy.expired. Nothing translated between
 // them, so a real delivery verified its signature and was then dropped as an
 // "unhandled event type": the webhook worked and did nothing.
-//
 // Translating is the adapter's job. It is the layer that knows this provider's
 // vocabulary; the service owns the internal one.
 func TestNormaliseEventType(t *testing.T) {

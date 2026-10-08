@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -186,7 +187,7 @@ func (r *Repository) User360(ctx context.Context, userID string) (*User360, erro
 	const attrQ = `SELECT attribution_type, is_house, COALESCE(referrer_id::text,'')
 		FROM referral_attributions WHERE referred_user_id = $1`
 	err := r.db.QueryRow(ctx, attrQ, userID).Scan(&u.AttributionType, &u.IsHouse, &u.ReferrerID)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("analytics: user360 attribution: %w", err)
 	}
 

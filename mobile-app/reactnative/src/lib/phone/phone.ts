@@ -1,17 +1,13 @@
-// ── Phone number sanitisation, formatting and identity normalisation ─────────
-//
 // One place, because a phone number is an AUTHENTICATION IDENTIFIER here, not
 // just a contact field. backend/internal/services/auth_service.go resolves a
 // sign-in by NormalizePhone(), so a number this app formats differently from the
 // way the backend reduces it is not a cosmetic bug — it is a user who cannot log
 // in, presenting as a wrong password.
-//
 // The backend rule (services/phone_identifier.go), mirrored exactly below:
 //   strip to digits
 //   "234" + 10 digits (13 total) -> drop the country code
 //   "0"   + 10 digits (11 total) -> drop the trunk zero
 //   anything that is not then exactly 10 digits -> NOT a match ("")
-//
 // That rule is NIGERIA-ONLY and collapses to a bare 10-digit national number, so
 // two subscribers in different countries whose national numbers share those ten
 // digits are indistinguishable to sign-in. See COUNTRIES below.
@@ -66,7 +62,6 @@ export function toNsn(raw: string, country: Country = DEFAULT_COUNTRY): string {
   if (d.startsWith(cc) && d.length > country.nsnLen) d = d.slice(cc.length);
   // Trunk zero, stripped WHENEVER present rather than only on a full-length
   // string. A national number never begins with 0, so keeping it mid-typing
-  // grouped "0801" as "080 1", and let the 10-digit "0801234567" — which is one
   // digit short — pass isValid by occupying the full width with a zero.
   while (d.startsWith('0')) d = d.slice(1);
   return d.slice(0, country.nsnLen);

@@ -38,9 +38,7 @@ const WALLET = 'account-wallet-001';
 const COUNTER = 'account-standing-001';
 const ALL_TYPES: LedgerEntryType[] = ['CREDIT', 'DEBIT', 'REVERSAL_CREDIT', 'REVERSAL_DEBIT'];
 
-// ---------------------------------------------------------------------------
 // 1. Sign rule matches the wallet_balance view / Go balanceProjectionSQL.
-// ---------------------------------------------------------------------------
 describe('signed amount rule', () => {
   it('treats CREDIT and REVERSAL_DEBIT as positive', () => {
     expect(signedKobo({ type: 'CREDIT', amount_kobo: 500 })).toBe(500);
@@ -60,10 +58,8 @@ describe('signed amount rule', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 2. Every side has an opposite, and opposing is an involution — so a journal
 //    built from any side is balanced by construction.
-// ---------------------------------------------------------------------------
 describe('counter-side mapping', () => {
   it('covers every entry type', () => {
     for (const type of ALL_TYPES) {
@@ -86,9 +82,7 @@ describe('counter-side mapping', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 3. THE invariant: the builder cannot produce an unbalanced journal.
-// ---------------------------------------------------------------------------
 describe('buildJournalLegs conservation', () => {
   const base = {
     primaryAccountId: WALLET,
@@ -135,12 +129,10 @@ describe('buildJournalLegs conservation', () => {
       .toThrow(/integer/i);
   });
 
-  // ---------------------------------------------------------------------------
   // Regression guard for the most dangerous detail in ADR-040. Entries written
   // before the ADR carry the UN-suffixed key, and checkIdempotencyKey looks up
   // that exact string. Suffixing the wallet leg would make a replayed webhook
   // miss dedup and double-credit the user.
-  // ---------------------------------------------------------------------------
   it('keeps the caller idempotency key VERBATIM on the primary leg', () => {
     const legs = buildJournalLegs({ ...base, primarySide: 'CREDIT' });
     expect(legs[0].idempotency_key).toBe('topup:intent-001:CREDIT');
@@ -153,9 +145,7 @@ describe('buildJournalLegs conservation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 4. Balance detection itself.
-// ---------------------------------------------------------------------------
 describe('journalIsBalanced', () => {
   it('rejects the pre-ADR-040 single-leg top-up shape', () => {
     // The exact row observed on the local DB: a lone CREDIT with no counter-leg.
@@ -198,9 +188,7 @@ describe('journalIsBalanced', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 5. The writer is fail-closed: an unbalanced set never reaches the database.
-// ---------------------------------------------------------------------------
 describe('postJournal fail-closed guard', () => {
   const insertFn = vi.fn();
 
@@ -271,10 +259,8 @@ describe('postJournal fail-closed guard', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 6. Counter-account defaults are on the SHARED chart of accounts — using the Go
 //    ledger's own type names is what keeps the two planes reconcilable.
-// ---------------------------------------------------------------------------
 describe('counter-account defaults', () => {
   it('funds inbound money from provider_clearing', () => {
     expect(DEFAULT_CREDIT_COUNTER).toBe('provider_clearing');

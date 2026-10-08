@@ -25,9 +25,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - name: Build (whole backend — catches wiring/import breaks)
         run: go build ./...
@@ -43,7 +43,7 @@ jobs:
         working-directory: mobile-app/reactnative
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           # Without this the RN dependency tree is installed from scratch every

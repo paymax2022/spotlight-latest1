@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   AccessCodeStatus,
   CodeType,
@@ -7,7 +7,6 @@ import type {
 } from '../types/visitor.types';
 
 // Flip to false once the real /visitor endpoints land (or set
-// EXPO_PUBLIC_VISITOR_USE_MOCK=false). Mirrors voting/association/fx convention.
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VISITOR_USE_MOCK, true);
 
 // Estate-scoped REST namespace served by the frontend-web API (see api/client).
@@ -48,7 +47,6 @@ export interface CodeTypeMeta {
   accent: string;
   bg: string;
   reusable: boolean;
-  // default validity in hours; 0 == long-lived/open-ended
   defaultValidityHours: number;
   phase: 1 | 2 | 3; // PRD §16 rollout phase
 }

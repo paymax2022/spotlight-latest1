@@ -1,5 +1,4 @@
 // Contest stages — CRUD for public.contest_stages.
-//
 // Go's connect/voting module (backend/internal/connect/voting) already reads
 // this table (GetStages, GetContestantsByStage) and has admin routes for the
 // EVICTION mechanics (evict/save/finalize), but no route to create or edit a
@@ -9,8 +8,6 @@
 // (registration-v2/contest-store.ts) — writes go straight to Postgres via the
 // admin Supabase client, and Go's reads see them immediately since both sides
 // hit the same table with no cache in between.
-//
-// contest_stages.contest_id references public.contests(id), which is the
 // SAME id connect_contests rows carry (20261223000000 mirrors contests ->
 // connect_contests preserving the id) — so a stage created against a
 // contest's id here is exactly the stage Go's /connect/contests/:id/stages

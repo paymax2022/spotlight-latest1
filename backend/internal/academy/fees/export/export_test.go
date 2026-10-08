@@ -2,6 +2,8 @@ package feesexport
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,8 +13,6 @@ import (
 // These tests are PURE — no DB, no pgx. They use in-memory fakes for the Store, OptInStore and
 // SchoolVerifier to prove the SF-11 opt-in gate, the append-only immutability of the compliance
 // log (no update/delete path exists), and the SF-10 verified-school gate.
-
-// ── in-memory fakes ──────────────────────────────────────────────────────────────
 
 type fakeStore struct {
 	exports []ComplianceExport
@@ -37,9 +37,9 @@ func (f *fakeStore) AppendExport(_ context.Context, e ComplianceExport) (*Compli
 
 func (f *fakeStore) ListExports(_ context.Context, schoolID string) ([]ComplianceExport, error) {
 	out := []ComplianceExport{}
-	for i := len(f.exports) - 1; i >= 0; i-- {
-		if f.exports[i].SchoolID == schoolID {
-			out = append(out, f.exports[i])
+	for _, v := range slices.Backward(f.exports) {
+		if v.SchoolID == schoolID {
+			out = append(out, v)
 		}
 	}
 	return out, nil
@@ -72,8 +72,6 @@ func (f *fakeVerifier) VerificationTier(_ context.Context, schoolID string) (str
 	}
 	return t, nil
 }
-
-// ── SF-11: an accepted export appends an immutable row ───────────────────────────
 
 func TestTriggerExport_AppendsImmutableRow(t *testing.T) {
 	ctx := context.Background()
@@ -115,8 +113,6 @@ func TestTriggerExport_AppendsImmutableRow(t *testing.T) {
 	}
 }
 
-// ── SF-11: an export for a NON-opted-in category is rejected (fail-closed) ────────
-
 func TestTriggerExport_NonOptedInCategory_Rejected(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -129,7 +125,7 @@ func TestTriggerExport_NonOptedInCategory_Rejected(t *testing.T) {
 		ReportType:     "SF-11-quarterly",
 		DataCategories: []DataCategory{CategoryEnrollment, CategoryResults}, // results NOT opted in
 	})
-	if err != ErrCategoryNotOptedIn {
+	if !errors.Is(err, ErrCategoryNotOptedIn) {
 		t.Fatalf("expected ErrCategoryNotOptedIn, got %v", err)
 	}
 	// Fail-closed: NOTHING appended to the compliance log.
@@ -141,8 +137,6 @@ func TestTriggerExport_NonOptedInCategory_Rejected(t *testing.T) {
 		t.Error("rejected export must be audited")
 	}
 }
-
-// ── SF-11: explicit request-carried opt-in fallback (no opt-in store wired) ──────
 
 func TestTriggerExport_RequestCarriedOptInFallback(t *testing.T) {
 	ctx := context.Background()
@@ -169,13 +163,11 @@ func TestTriggerExport_RequestCarriedOptInFallback(t *testing.T) {
 		ReportType:     "SF-11",
 		DataCategories: []DataCategory{CategoryFees},
 	})
-	if err != ErrCategoryNotOptedIn {
+	if !errors.Is(err, ErrCategoryNotOptedIn) {
 		t.Fatalf("no opt-in at all must reject, got %v", err)
 	}
 }
 
-// ── SF-11: the compliance log is append-only (no update/delete path exists) ───────
-//
 // This is a STRUCTURAL guarantee: the Store interface exposes only AppendExport + ListExports.
 // There is no UpdateExport / DeleteExport method to call. We assert the contract by exercising
 // the surface: appended rows are only ever added, never removed or changed by the service.
@@ -212,8 +204,6 @@ func TestComplianceLog_AppendOnly_NoMutationPath(t *testing.T) {
 // real guarantee is the interface definition itself — asserted here by documenting the surface.
 var _ Store = (*fakeStore)(nil)
 
-// ── SF-10: verified-school full data export gate ─────────────────────────────────
-
 func TestSchoolDataExport_VerifiedOnly(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -236,7 +226,7 @@ func TestSchoolDataExport_VerifiedOnly(t *testing.T) {
 
 	// Unverified school → rejected.
 	_, err = svc.TriggerSchoolDataExport(ctx, "owner", SchoolDataExportRequest{SchoolID: "new-school"})
-	if err != ErrSchoolNotVerified {
+	if !errors.Is(err, ErrSchoolNotVerified) {
 		t.Fatalf("unverified school must be rejected, got %v", err)
 	}
 }
@@ -244,12 +234,10 @@ func TestSchoolDataExport_VerifiedOnly(t *testing.T) {
 func TestSchoolDataExport_NoVerifier_FailsClosed(t *testing.T) {
 	svc := NewServiceWithDeps(newFakeStore(), nil, nil)
 	_, err := svc.TriggerSchoolDataExport(context.Background(), "owner", SchoolDataExportRequest{SchoolID: "s"})
-	if err != ErrSchoolNotVerified {
+	if !errors.Is(err, ErrSchoolNotVerified) {
 		t.Fatalf("no verifier must fail closed with ErrSchoolNotVerified, got %v", err)
 	}
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
 
 func hasAudit(s *fakeStore, action string) bool {
 	for _, a := range s.audits {

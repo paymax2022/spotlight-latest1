@@ -2,16 +2,12 @@
 // keeps balances in memory, HTTPLedger posts balanced cash legs to the money-core
 // internal ledger API and reads derived balances back over HTTP. It is selected by
 // LEDGER_BACKEND=http and is behaviour-compatible with MockLedger by construction:
-//
 //   - the same validity rules gate a post (idem key required; debit, credit and a
 //     positive amount required) BEFORE any network call;
 //   - a 200 response is success for both a fresh post and an idempotent replay;
 //   - a 409 maps to ErrInsufficientFunds (a balance-checked overdraw), matching the
 //     mock's fail-closed behaviour.
-//
 // Endpoint contract (relative to the configured base URL):
-//
-//	POST {base}/internal/finance/ledger/journal
 //	     headers: Authorization: Bearer <serviceToken>
 //	              Content-Type: application/json
 //	              Idempotency-Key: <j.IdempotencyKey>
@@ -22,7 +18,6 @@
 //	GET  {base}/internal/finance/ledger/balance?userId=&account=
 //	     headers: Authorization: Bearer <serviceToken>
 //	     200 -> {balanceKobo: <int64>}
-//
 // Breaker accounting mirrors httpadapter: only transport errors and 5xx responses
 // count as failures (a money-core-down signal). Any 4xx — including a 409
 // insufficient-funds, which is a HEALTHY provider decision — leaves the breaker
@@ -86,7 +81,6 @@ type journalRequest struct {
 }
 
 // PostJournal posts one balanced pair to the money-core ledger, idempotently.
-//
 // Validity is checked BEFORE any network call (mirroring MockLedger): a missing
 // idempotency key returns ErrMissingIdem; a missing account or non-positive amount
 // returns ErrUnbalanced. On the wire, a 200 is success (fresh post or replay), a

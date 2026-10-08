@@ -8,7 +8,6 @@
 // Source of a composition reference row.
 //  WAFCT  — West African Food Composition Table (preferred regional source)
 //  NFCT   — Nigerian Food Composition Table
-//  OFF    — Open Food Facts (crowd-sourced; lower trust)
 //  FALLBACK — generic macro estimate when no source matched
 //  CUSTOM — manually curated by an operator
 export type NutritionSource = 'WAFCT' | 'NFCT' | 'OFF' | 'FALLBACK' | 'CUSTOM';
@@ -33,15 +32,12 @@ export type Confidence = 'EXACT' | 'MEDIUM' | 'LOW';
 // library (WAFCT/NFCT) lives behind the AI rather than being a vendor-facing tier.
 //  LABEL          — packaged-goods barcode/label fast-path
 //  LIBRARY_MATCHED — matched the Nigerian grounding library
-//  FREE_ESTIMATED  — no library match; estimated from name/description/photo
 //  RECIPE          — optional power-user ingredient declaration
 export type Grounding = 'LABEL' | 'LIBRARY_MATCHED' | 'FREE_ESTIMATED' | 'RECIPE';
 
 // Honesty state of a resolved dish profile (v2 three-state machine + STALE).
-//  AI_ESTIMATE         — auto-published estimate; needs no vendor action
 //  RESTAURANT_CONFIRMED — vendor approved, but STILL an estimate (approval ≠ exact)
 //  EXACT               — label-only (packaged/barcoded items)
-//  STALE               — name/photo/portion/version change invalidated; re-estimate
 export type ProfileStatus = 'AI_ESTIMATE' | 'RESTAURANT_CONFIRMED' | 'EXACT' | 'STALE';
 
 // Operator review-queue lifecycle (distinct from the honesty machine above).
@@ -129,7 +125,6 @@ export interface CompositionFilters {
   q?: string;
 }
 
-// ── Nutritionist consults (admin review/resolve queue) ───────────────────────
 // NOTE: the Go nutrition module (backend/internal/nutrition) exposes the food
 // catalog + resolution engine only — it has NO consult or payout backend surface
 // (grep for consult/nutritionist/payout in that package returns nothing). These
@@ -174,7 +169,6 @@ export interface ConsultFilters {
   q?: string;
 }
 
-// ── Nutritionist payouts (payout runs / reconciliation) ──────────────────────
 // Amounts are integers in minor units (kobo) per the money iron-rules. Mock-only
 // until a nutritionist-settlement backend exists.
 export type PayoutRunStatus = 'DRAFT' | 'PENDING' | 'PAID' | 'FAILED' | 'RECONCILED';

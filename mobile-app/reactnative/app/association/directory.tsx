@@ -2,15 +2,15 @@ import React, { useState } from 'react';
 import { View, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import MemberRow from '@/features/association/components/MemberRow';
-import { useDirectory } from '@/features/association/hooks/useAssociation';
-import { DIRECTORY_STATUS_SEGMENTS } from '@/features/association/constants/association.constants';
+import {MemberRow} from '@/features/association/components';
+import { useDirectory } from '@/features/association/hooks';
+import { DIRECTORY_STATUS_SEGMENTS } from '@/features/association/constants';
 import type { MemberStatus } from '@/features/association/types/association.types';
 
 export default function MemberDirectory() {

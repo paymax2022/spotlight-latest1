@@ -5,19 +5,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Camera } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import DatePickerField from '@/components/DatePickerField';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useMyProfile, useUpdateProfile } from '@/features/association/hooks/useProfile';
-import { pickDocument } from '@/features/association/utils/docPicker';
-import { initials } from '@/features/association/utils/associationFormatters';
-import type { ProfileEdit } from '@/features/association/types/profile.types';
+import { useMyProfile, useUpdateProfile } from '@/features/association/hooks';
+import { pickDocument } from '@/features/association/utils';
+import { initials } from '@/features/association/utils';
+import type { ProfileEdit } from '@/features/association/types';
 
 export default function EditProfile() {
   const profile = useMyProfile();

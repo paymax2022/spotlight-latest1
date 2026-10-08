@@ -1,9 +1,9 @@
-// ── Fractional Real Estate — Mock data ───────────────────────────────────────
 // Realistic kobo data so the app runs with no backend (USE_MOCK default true).
 // 6+ offerings across income_property / development_debt / land, plus holdings,
 // payouts, market listings, statements, documents, goals.
 
 import { getSecureItem, setSecureItem } from '@/lib/secureStorage';
+import { secureRandomInt } from '@/lib/secureRandom';
 import type {
   OfferingDetail, OfferingSummary, InvestorProfile, PortfolioOverview, Holding,
   HoldingDetail, Payout, Statement, MarketListing, MarketOrder, AutoInvestPlan,
@@ -225,14 +225,13 @@ export const MOCK_GOALS: InvestGoal[] = [
   { id: 'g-1', name: 'Property down-payment', targetKobo: 5_000_000_00, savedKobo: 1_640_000_00, targetDate: iso(720), kind: 'income_property' },
 ];
 
-// ── Beneficiaries (mutable mock state, persisted to secure storage) ──────────
 // Module-level in-memory list like the rest of the mock layer, but ALSO written
 // through to secure storage so beneficiaries survive dev reloads (the reported
 // P0: the screen previously lost everything on unmount).
 
 const BENEFICIARIES_STORAGE_KEY = 'fre_beneficiaries_mock_v1';
 
-let mockBeneficiaries: Beneficiary[] | null = null; // null = not hydrated yet
+let mockBeneficiaries: Beneficiary[] | null = null;
 
 async function hydrateBeneficiaries(): Promise<Beneficiary[]> {
   if (mockBeneficiaries) return mockBeneficiaries;
@@ -281,8 +280,6 @@ export async function mockRemoveBeneficiary(id: string): Promise<void> {
   await persistBeneficiaries(list.filter((b) => b.id !== id));
 }
 
-// ── Referrals ────────────────────────────────────────────────────────────────
-
 export const MOCK_REFERRALS: Referrals = {
   enabled: true,
   code: 'PAYMAX-RE-4821',
@@ -295,7 +292,7 @@ export function buildMockCertificate(offeringId: string, units: number, amountKo
   const off = MOCK_OFFERINGS.find((o) => o.id === offeringId) ?? MOCK_OFFERINGS[0];
   return {
     investmentId: `inv-${Date.now()}`,
-    certificateNo: `FRE-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`,
+    certificateNo: `FRE-${new Date().getFullYear()}-${secureRandomInt(10000, 99999)}`,
     offeringTitle: off.title,
     units,
     amountKobo,

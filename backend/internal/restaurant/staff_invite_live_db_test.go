@@ -1,13 +1,11 @@
 package restaurant
 
 // LIVE-DB tests for staff invite / accept (foodhub A18).
-//
 // An invite is a credential: whoever holds the token gains standing authority at
 // a real shop — the menu, the order queue, sometimes the earnings. So the token
 // is treated like a password (hashed at rest, returned exactly once), and the
 // grant graph is kept acyclic: only an OWNER may create a MANAGER, or a manager
 // could promote a peer and, through them, themselves.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -36,7 +34,7 @@ func TestLiveDB_InviteIssuesAOneTimeTokenAndStoresOnlyItsHash(t *testing.T) {
 
 	var stored string
 	var status, role string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT COALESCE(invite_token_hash,''), status, role FROM restaurant_staff
 		  WHERE restaurant_id=$1 AND user_id=$2`, f.lekki, invitee).Scan(&stored, &status, &role); err != nil {
 		t.Fatalf("read invite row: %v", err)
@@ -212,7 +210,7 @@ func TestLiveDB_StaffRosterIsScopedAndGuarded(t *testing.T) {
 func seedUser(t *testing.T, ctx context.Context, f staffFixture) string {
 	t.Helper()
 	id := uuid.New().String()
-	if _, err := f.pool.Exec(ctx,
+	if _, err := f.pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}

@@ -3,16 +3,17 @@ import { View, Text, StyleSheet, Pressable, FlatList, ScrollView } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SlidersHorizontal, LayoutGrid, Rows3, ArrowUpDown } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import SelectField from '@/components/SelectField';
 import StateView from '@/components/StateView';
 import PropertyCard from '@/features/realtor/components/PropertyCard';
+import { RemoteBanner } from '@/features/media/banners';
 import { useSearchListings } from '@/features/realtor/hooks/useRealtor';
 import { useSearchStore } from '@/features/realtor/store/searchStore';
 import { MODE_LABEL, SORT_LABEL, SORT_OPTIONS } from '@/features/realtor/constants/realtor.constants';
@@ -53,6 +54,8 @@ export default function SearchScreen() {
         onChangeText={(t) => setFilter({ query: t })}
         placeholder="Search by area, type or budget"
       />
+
+      <RemoteBanner slug="property-management" priority style={styles.banner} />
 
       <View style={styles.modeRow}>
         <SegmentedControl<TransactionMode | 'all'>
@@ -144,6 +147,7 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   modeRow: { marginBottom: Spacing.md },
   toolbar: {
     flexDirection: 'row',

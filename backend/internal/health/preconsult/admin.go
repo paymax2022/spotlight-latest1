@@ -3,6 +3,7 @@ package preconsult
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,8 +14,6 @@ import (
 // admin.go — service methods + handlers for the admin console (A2–A13). All admin
 // routes are RBAC-gated (health.admin.intake) and audit-logged at the wiring layer.
 // The record viewer additionally writes a health_intake_access_log row (admin role).
-
-// ── Red-flag rules (A2) ───────────────────────────────────────────────────────
 
 type RedFlagRule struct {
 	ID          string          `json:"id"`
@@ -51,18 +50,18 @@ func (s *Service) ListRedFlagRules(ctx context.Context) ([]RedFlagRule, error) {
 // UpsertRedFlagRule creates or updates a rule by unique code (admin A2).
 func (s *Service) UpsertRedFlagRule(ctx context.Context, actor string, r RedFlagRule) (*RedFlagRule, error) {
 	if r.Code == "" || r.Label == "" {
-		return nil, fmt.Errorf("preconsult: code and label required")
+		return nil, errors.New("preconsult: code and label required")
 	}
 	if r.Level < 1 || r.Level > 5 {
-		return nil, fmt.Errorf("preconsult: level must be 1..5")
+		return nil, errors.New("preconsult: level must be 1..5")
 	}
 	if r.Severity != "emergency" && r.Severity != "urgent" {
-		return nil, fmt.Errorf("preconsult: invalid severity")
+		return nil, errors.New("preconsult: invalid severity")
 	}
 	switch r.Routing {
 	case "EMERGENCY", "URGENT_CARE", "CRISIS":
 	default:
-		return nil, fmt.Errorf("preconsult: invalid routing")
+		return nil, errors.New("preconsult: invalid routing")
 	}
 	if len(r.MatchJSON) == 0 {
 		r.MatchJSON = json.RawMessage(`{}`)
@@ -88,7 +87,7 @@ func (s *Service) ToggleRedFlagRule(ctx context.Context, actor, code string, act
 		return nil, err
 	}
 	if ct.RowsAffected() == 0 {
-		return nil, fmt.Errorf("preconsult: rule not found")
+		return nil, errors.New("preconsult: rule not found")
 	}
 	s.audited(actor, "", "health.preconsult.admin.rule.toggle", code, nil, map[string]any{"active": active})
 	return s.getRule(ctx, code)
@@ -102,8 +101,6 @@ func (s *Service) getRule(ctx context.Context, code string) (*RedFlagRule, error
 	}
 	return &r, nil
 }
-
-// ── Consent versions (A4) ─────────────────────────────────────────────────────
 
 type ConsentVersion struct {
 	ID         string    `json:"id"`
@@ -136,7 +133,7 @@ func (s *Service) ListConsentVersions(ctx context.Context) ([]ConsentVersion, er
 // CreateConsentVersion authors a new consent version (immutable per version+locale).
 func (s *Service) CreateConsentVersion(ctx context.Context, actor string, c ConsentVersion) (*ConsentVersion, error) {
 	if c.Version < 1 || c.Body == "" {
-		return nil, fmt.Errorf("preconsult: version>=1 and body required")
+		return nil, errors.New("preconsult: version>=1 and body required")
 	}
 	if c.ConsentKey == "" {
 		c.ConsentKey = "PRE_CONSULT_INTAKE"
@@ -154,8 +151,6 @@ func (s *Service) CreateConsentVersion(ctx context.Context, actor string, c Cons
 	return &c, nil
 }
 
-// ── Clinical vocab (A3) ───────────────────────────────────────────────────────
-
 func (s *Service) ListVocab(ctx context.Context, kind string) ([]Vocab, error) {
 	return s.listVocab(ctx, kind)
 }
@@ -164,10 +159,10 @@ func (s *Service) UpsertVocab(ctx context.Context, actor, kind, code, label stri
 	switch kind {
 	case "condition", "allergen", "medication":
 	default:
-		return fmt.Errorf("preconsult: invalid vocab kind")
+		return errors.New("preconsult: invalid vocab kind")
 	}
 	if code == "" || label == "" {
-		return fmt.Errorf("preconsult: code and label required")
+		return errors.New("preconsult: code and label required")
 	}
 	const up = `INSERT INTO health_clinical_vocab (id, kind, code, label, active) VALUES ($1,$2,$3,$4,$5)
 	            ON CONFLICT (kind, code) DO UPDATE SET label=EXCLUDED.label, active=EXCLUDED.active, version=health_clinical_vocab.version+1`
@@ -178,18 +173,16 @@ func (s *Service) UpsertVocab(ctx context.Context, actor, kind, code, label stri
 	return nil
 }
 
-// ── Config get/set (A1/A5/A6/A7) ──────────────────────────────────────────────
-
 func (s *Service) GetConfig(ctx context.Context, key string) (json.RawMessage, error) {
 	return s.getConfig(ctx, key)
 }
 
 func (s *Service) SetConfig(ctx context.Context, actor, key string, value json.RawMessage) error {
 	if key == "" {
-		return fmt.Errorf("preconsult: config key required")
+		return errors.New("preconsult: config key required")
 	}
 	if len(value) == 0 || !json.Valid(value) {
-		return fmt.Errorf("preconsult: value must be valid JSON")
+		return errors.New("preconsult: value must be valid JSON")
 	}
 	const up = `INSERT INTO health_intake_config (id, config_key, value) VALUES ($1,$2,$3)
 	            ON CONFLICT (config_key) DO UPDATE SET value=EXCLUDED.value, version=health_intake_config.version+1, updated_at=now()`
@@ -199,8 +192,6 @@ func (s *Service) SetConfig(ctx context.Context, actor, key string, value json.R
 	s.audited(actor, "", "health.preconsult.admin.config.set", key, nil, map[string]any{"key": key})
 	return nil
 }
-
-// ── Intake monitoring (A8) ────────────────────────────────────────────────────
 
 type MonitorRow struct {
 	IntakeID        string     `json:"intake_id"`
@@ -247,8 +238,6 @@ func (s *Service) Monitoring(ctx context.Context, incompleteOnly bool, nearMinut
 	return out, rows.Err()
 }
 
-// ── Intake record viewer (A9; access-logged + audited) ────────────────────────
-
 type AdminIntakeRecord struct {
 	Intake  *Intake        `json:"intake"`
 	Answers map[string]any `json:"answers"`
@@ -260,8 +249,8 @@ type AdminIntakeRecord struct {
 func (s *Service) AdminViewIntake(ctx context.Context, actor, appointmentID string) (*AdminIntakeRecord, error) {
 	it, err := s.getIntakeByAppointment(ctx, appointmentID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("preconsult: intake not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("preconsult: intake not found")
 		}
 		return nil, err
 	}
@@ -276,8 +265,6 @@ func (s *Service) AdminViewIntake(ctx context.Context, actor, appointmentID stri
 	access, _ := s.AccessLog(ctx, it.ID)
 	return &AdminIntakeRecord{Intake: it, Answers: answers, Access: access}, nil
 }
-
-// ── Access & audit log (A10) ──────────────────────────────────────────────────
 
 type AccessLogRow struct {
 	IntakeID     string    `json:"intake_id"`
@@ -309,8 +296,6 @@ func (s *Service) AccessLog(ctx context.Context, intakeID string) ([]AccessLogRo
 	return out, rows.Err()
 }
 
-// ── Red-flag queue (A11) ──────────────────────────────────────────────────────
-
 type RedFlagQueueRow struct {
 	IntakeID      string          `json:"intake_id"`
 	AppointmentID string          `json:"appointment_id"`
@@ -341,8 +326,6 @@ func (s *Service) RedFlagQueue(ctx context.Context) ([]RedFlagQueueRow, error) {
 	}
 	return out, rows.Err()
 }
-
-// ── Analytics (A12/A13; de-identified, counts only) ───────────────────────────
 
 type Analytics struct {
 	Total          int            `json:"total_intakes"`

@@ -1,21 +1,14 @@
-// ── Category icon: a dimensional puck, one identity per category ─────────────
-//
 // The grid used to render every category as the SAME flat lucide `Package` in a
 // single lilac square. That was not a styling preference — mkt_categories has no
 // icon column, so `category.icon` is undefined for every API row and the tile's
 // `?? 'Package'` fallback caught all of them. Nineteen identical tiles, so the
 // only thing distinguishing "Cars" from "Property" was two lines of small text.
-//
 // Two things are being fixed, and the first matters more than the styling: each
 // category gets its OWN glyph and its OWN hue, so the grid is scannable by shape
 // and colour before a word is read. Icon and colour move together — hue is a
 // second channel carrying the same identity, not decoration.
-//
 // The 3D read comes from modelling one light source, top-left, consistently:
 //   · a diagonal gradient, lighter at the top-left corner, deeper at the
-//     bottom-right, so the face is lit rather than filled;
-//   · a specular sheen over the upper half, fading out before the middle;
-//   · a hairline top edge in translucent white — the lit rim of a raised surface;
 //   · a drop shadow tinted with the CATEGORY's own hue rather than black, which
 //     is what stops nineteen coloured pucks reading as stickers on grey card.
 // The glyph sits white on saturated colour, so contrast holds in both themes.
@@ -23,7 +16,7 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
-import { Radius } from '@/constants/radius';
+import { Radius } from '@/constants/tokens';
 
 type Spec = { icon: string; from: string; to: string };
 
@@ -31,7 +24,6 @@ type Spec = { icon: string; from: string; to: string };
 // people-and-work green, craft and materials warm — then adjusted so that no two
 // tiles ADJACENT in the 4-up grid share a hue family, which is the property that
 // actually makes the grid scannable.
-//
 // That adjustment is not theoretical: health-beauty and babies-kids were both
 // pink, and with fashion between them the middle row rendered as three pinks in a
 // row. Health took coral (warm, still reads clinical//spa) and babies took
@@ -96,7 +88,6 @@ export function specFor(category: CategoryLike, parent?: CategoryLike): Spec {
   // first put one orange puck among five blue Vehicles siblings and the family
   // stopped reading as a family. Whoever owns the hue owns the grouping, and one
   // level down the grouping is the parent's.
-  //
   // A parent is never itself given a parent, so this recurses at most once.
   const hue = ownSpec(parent);
   return { icon: own.icon, from: hue.from, to: hue.to };
@@ -109,7 +100,6 @@ function ownSpec(category: CategoryLike): Spec {
   if (SPECS[slug]) return SPECS[slug];
   const key = BY_NAME[(category.name ?? '').trim().toLowerCase()];
   if (key && SPECS[key]) return SPECS[key];
-  // mkt_categories carries a lucide name per category (migration 20270123000000);
   // it supplies the glyph for the 72 subcategories the curated map does not name.
   if (category.icon && (Icons as Record<string, unknown>)[category.icon]) {
     return { ...FALLBACK, icon: category.icon };

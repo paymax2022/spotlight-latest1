@@ -6,16 +6,15 @@ import {
   Stethoscope, CalendarCheck, Wallet, ShieldCheck, HeartPulse, Sparkles,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { OnboardingSlidePager, StateView } from '@/features/doctor/components';
 import type { PagerSlide } from '@/features/doctor/components';
 import { useOnboardingSlides } from '@/features/doctor/hooks';
 
-// ── Section A · Entry 2 — App intro carousel ─────────────────────────────────
 // Paged slides from useOnboardingSlides with dots + skip/next/get-started.
 // Maps the contract's Ionicons name to a lucide icon (the rest of the app uses
 // lucide); falls back to Sparkles for any unmapped name.

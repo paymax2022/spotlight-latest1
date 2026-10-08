@@ -1,17 +1,14 @@
-// ── Paymax Invest · Learn Center — Mock fixtures ─────────────────────────────
 // Deterministic seed content so every Learn UI state renders in mock mode. Flip
 // EXPO_PUBLIC_LEARN_USE_MOCK=false to hit the real Go endpoints (learn.api.ts).
 // Content here is illustrative education copy only — never financial advice.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   GlossaryTerm,
   Lesson,
   LearnPath,
   Quiz,
 } from '../types/learn.types';
-
-// ─── Lessons (the atomic units; ~8 across the tracks) ─────────────────────────
 
 export const MOCK_LESSONS: Lesson[] = [
   // Beginner track
@@ -128,8 +125,6 @@ export const MOCK_LESSONS: Lesson[] = [
   },
 ];
 
-// ─── Paths (the curated tracks) ───────────────────────────────────────────────
-
 export const MOCK_PATHS: LearnPath[] = [
   {
     id: 'path_beginner',
@@ -168,8 +163,6 @@ export const MOCK_PATHS: LearnPath[] = [
     progressPct: 0,
   },
 ];
-
-// ─── Quizzes (knowledge checks; 2 across the content) ─────────────────────────
 
 export const MOCK_QUIZZES: Quiz[] = [
   {
@@ -235,8 +228,6 @@ export const MOCK_QUIZZES: Quiz[] = [
     ],
   },
 ];
-
-// ─── Glossary (~15 plain-English terms) ───────────────────────────────────────
 
 export const MOCK_GLOSSARY: GlossaryTerm[] = [
   { term: 'Asset', definition: 'Anything you own that has value and may grow or earn income, such as a stock, bond, fund, or crypto.' },

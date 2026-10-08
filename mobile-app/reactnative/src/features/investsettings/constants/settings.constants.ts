@@ -1,9 +1,8 @@
-// ── Paymax Invest · Settings — Constants ─────────────────────────────────────
 // Display catalogue: fee schedule, help-center FAQ, and status/label styling.
 // Styling pulls design tokens only (Colors) — no hard-coded hex (mirrors
 // CRYPTO_STATUS_STYLE in the crypto module).
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   FaqItem,
   FeeScheduleItem,
@@ -15,8 +14,6 @@ import type {
 /** Feature flag gating the whole invest-settings surface (mirrors invest_crypto). */
 export const SETTINGS_FEATURE_FLAG = 'invest_settings';
 
-// ─── Fee schedule (transparency table; server-config in production) ───────────
-
 export const FEE_SCHEDULE: FeeScheduleItem[] = [
   { label: 'Crypto buy / sell fee', value: '0.90%' },
   { label: 'Liquidity provider fee', value: '0.20%' },
@@ -27,8 +24,6 @@ export const FEE_SCHEDULE: FeeScheduleItem[] = [
   { label: 'Crypto network fee', value: 'At cost (varies)' },
   { label: 'Inactivity fee', value: 'None' },
 ];
-
-// ─── Help center FAQ ──────────────────────────────────────────────────────────
 
 export const FAQ_LIST: FaqItem[] = [
   {
@@ -69,8 +64,6 @@ export const FAQ_LIST: FaqItem[] = [
   },
 ];
 
-// ─── KYC tier display metadata ────────────────────────────────────────────────
-
 export const KYC_TIER_META: Record<KycTier, { label: string; description: string }> = {
   0: { label: 'Unverified', description: 'Complete verification to start investing.' },
   1: { label: 'Tier 1', description: 'Basic verification — limited daily limits.' },
@@ -78,15 +71,11 @@ export const KYC_TIER_META: Record<KycTier, { label: string; description: string
   3: { label: 'Tier 3', description: 'Enhanced verification — highest limits.' },
 };
 
-// ─── Risk category display metadata ───────────────────────────────────────────
-
 export const RISK_CATEGORY_META: Record<RiskCategory, { label: string; description: string }> = {
   conservative: { label: 'Conservative', description: 'Prioritises capital preservation over growth.' },
   balanced: { label: 'Balanced', description: 'A mix of stability and growth potential.' },
   aggressive: { label: 'Aggressive', description: 'Higher risk tolerance for higher potential returns.' },
 };
-
-// ─── Status chip styling (design tokens only) ─────────────────────────────────
 
 export interface ChipStyle {
   label: string;

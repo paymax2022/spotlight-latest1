@@ -1,4 +1,3 @@
-// ── AI Trading — Withdraw / redeem units — §16A #14 ────────────────────────────
 // Redeems units at the current NAV, paying cash back to the base Paymax wallet.
 // Supports "withdraw all" and shows the cash the redemption will pay.
 import React, { useState } from 'react';
@@ -7,10 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Info } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useRedeem } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';

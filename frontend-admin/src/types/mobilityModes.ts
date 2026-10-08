@@ -1,9 +1,7 @@
-// ── Admin — Paymax Mobility multi-modal types ────────────────────────────────
 // Parcel · Bus · Towing · Movers · Car hire. All monetary amounts are integers
 // in minor units (kobo). Never floats. Mirrors the admin endpoints under
 // /api/finance/admin/transport/{parcels,bus,towing,movers,car-hire}.
 
-// ─── Parcel delivery ──────────────────────────────────────────────────────────
 // created → courier_assigned → pickup_pin_verified → picked_up → in_transit →
 // dropoff_verified → delivered · (failed / disputed / cancelled)
 export type ParcelStatus =
@@ -41,7 +39,6 @@ export interface ParcelRow {
   updatedAt: string;
 }
 
-// ─── Bus ──────────────────────────────────────────────────────────────────────
 export interface BusOperator {
   id: string;
   businessName: string;
@@ -91,7 +88,6 @@ export interface BusManifestRow {
   bookedAt: string;
 }
 
-// ─── Towing ─────────────────────────────────────────────────────────────────--
 // requested → operator_accepted → operator_en_route → pin_verified → in_progress
 // → completed · (cancelled)
 export type TowingStatus =
@@ -120,7 +116,6 @@ export interface TowingRow {
   updatedAt: string;
 }
 
-// ─── Movers (bidding + escrow) ────────────────────────────────────────────────
 // quote_requested → bids_received → bid_accepted(escrow funded) → crew_assigned →
 // in_progress → completion_confirmed(escrow released) · (disputed / cancelled)
 export type MoverStatus =
@@ -166,7 +161,6 @@ export interface MoverDetail extends MoverRow {
   bids: MoverBid[];
 }
 
-// ─── Car hire ─────────────────────────────────────────────────────────────────
 // requested → quoted → confirmed → active → (extended) → completed · (cancelled)
 export type CarHireStatus =
   | 'requested'
@@ -196,8 +190,6 @@ export interface CarHireRow {
   updatedAt: string;
 }
 
-// ─── Business logistics ───────────────────────────────────────────────────────
-// Business owner = a Paymax user with a business_accounts row. Billing: prepaid
 // wallet (escrow per delivery) or monthly invoice (accrue, settle at close).
 export type BusinessAccountStatus = 'active' | 'suspended' | 'closed';
 
@@ -260,7 +252,6 @@ export interface BusinessInvoiceRow {
   paidAt: string | null;
 }
 
-// ─── Event transport (Spotlight) ──────────────────────────────────────────────
 // Organizer publishes event_transport_offers tied to a Spotlight event_id.
 export type EventOfferType =
   | 'group_ride'
@@ -320,7 +311,6 @@ export interface EventBookingRow {
   bookedAt: string;
 }
 
-// ─── Shared status patch ──────────────────────────────────────────────────────
 export interface ModeStatusPatch {
   status: string;
   reason?: string;

@@ -1,12 +1,8 @@
-// ── Restaurant & Delivery — Delivery-fee MOCK calculator ─────────────────────
 // Pure, deterministic mirror of backend/internal/restaurant/deliveryfee.go so the
 // food checkout can quote a distance/time-based delivery fee fully offline. The
 // SERVER stays authoritative on placeOrder — this only powers the pre-payment
 // estimate (and the mock when EXPO_PUBLIC_FOOD_USE_MOCK !== 'false').
-//
-//   Fee = round((base + extra-distance + extra-time) × demand)
 //         + night + weather + handling − promo, clamped to [min, max].
-//
 // Money is integer kobo throughout (never floats for the result lines).
 
 import type { LatLng } from './types';

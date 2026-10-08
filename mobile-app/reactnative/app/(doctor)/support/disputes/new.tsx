@@ -2,9 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -16,7 +16,6 @@ import { DISPUTE_KIND_LABELS } from '@/features/doctor/constants';
 import type { DisputeKind } from '@/types/doctor.batch7';
 import { alertAsync } from '@/lib/confirm';
 
-// ── Section AA — Create dispute (AA.7-14, unified by kind) ─────────────────────
 // NEW screen: a single create flow keyed by DisputeKind. Reference label adapts
 // to the kind (consultation/payment/pharmacy/lab/HMO/prescription/call/
 // complaint). naming: reference field is `referenceValue`, never `ref` (reserved).

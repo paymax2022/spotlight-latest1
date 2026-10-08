@@ -32,9 +32,7 @@ export interface KycDetails {
   documentType: string | null;
 }
 
-// ---------------------------------------------------------------------------
 // Internal helpers
-// ---------------------------------------------------------------------------
 
 type Row = Record<string, unknown>;
 
@@ -111,9 +109,7 @@ function profileFromApi(raw: Row): ProfileDetails {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Reads — Supabase direct (no Next.js dependency)
-// ---------------------------------------------------------------------------
 
 export async function getProfile(): Promise<ProfileDetails> {
   const supabase = createSupabaseClient();
@@ -148,9 +144,7 @@ export async function getKyc(): Promise<KycDetails> {
   return kycFromRow(asRow(data));
 }
 
-// ---------------------------------------------------------------------------
 // Mutations — Next.js API routes (server-side validation + business logic)
-// ---------------------------------------------------------------------------
 
 export async function updateProfile(payload: Partial<ProfileDetails>): Promise<ProfileDetails> {
   const res = await api.put('/api/me/profile', payload);

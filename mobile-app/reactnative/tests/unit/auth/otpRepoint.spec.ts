@@ -1,10 +1,8 @@
 // The mobile client no longer calls supabase.auth for verification or reset.
-//
 // It could not keep doing so: once server-issued OTP is on, registration creates
 // the account through GoTrue's ADMIN endpoint, which sends nothing, so GoTrue
 // never mints a code for supabase.auth.verifyOtp to check. Every newly
 // registered user would have failed verification.
-//
 // auth.api.ts itself cannot be imported here — it pulls in the Supabase client
 // and React Native polyfills — so the parts worth pinning were split into
 // src/api/authOtp.ts and are exercised directly.
@@ -63,7 +61,6 @@ test('verification reports a session ONLY when one really came back', () => {
   assert.equal(verificationSignedIn({ signedIn: true, tokens: { accessToken: 'a', refreshToken: 'r' } }), true);
 
   // The server-issued path confirms the account and stops — control of a mailbox
-  // is not proof of the password. The screen branches on this; a wrong answer
   // sends the user to a logged-in screen with no session.
   assert.equal(verificationSignedIn({ signedIn: false, tokens: { accessToken: '', refreshToken: '' } }), false);
 
@@ -86,7 +83,6 @@ test('a login response is read as a challenge, not as a failure', () => {
 test('a token pair is only accepted when both halves are present', () => {
   assert.deepEqual(readSession({ access_token: 'a', refresh_token: 'r' }),
     { accessToken: 'a', refreshToken: 'r' });
-  // A half-session cannot be adopted; reporting one would sign the user in with
   // no way to refresh.
   assert.equal(readSession({ access_token: 'a' }), null);
   assert.equal(readSession({ refresh_token: 'r' }), null);

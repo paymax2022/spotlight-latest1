@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -76,9 +77,7 @@ func NewService(d Deps) *Service {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Member: create / quote / list / get
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CreateInput is the draft-creation input.
 type CreateInput struct {
@@ -179,9 +178,7 @@ func (s *Service) Analytics(ctx context.Context, merchantID, campaignID string) 
 	return s.repo.CampaignAnalytics(ctx, campaignID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Member: submit / cancel / pause / resume / pay-retry
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Submit moves DRAFT/NEEDS_MORE_INFO → SUBMITTED → UNDER_REVIEW (re-checks eligibility
 // FIRST: cap/cooldown/creative + external merchant/subject). Idempotency-Key required
@@ -197,8 +194,6 @@ func (s *Service) Submit(ctx context.Context, merchantID, campaignID string) (*C
 	if err := s.checkEligibility(ctx, c); err != nil {
 		return nil, err
 	}
-	// DRAFT→SUBMITTED then SUBMITTED→UNDER_REVIEW (NEEDS_MORE_INFO resubmits straight
-	// to UNDER_REVIEW).
 	if c.State == StateDraft {
 		if err := s.transition(ctx, c, StateSubmitted, merchantID, "placement.submit"); err != nil {
 			return nil, err
@@ -231,7 +226,6 @@ func (s *Service) Cancel(ctx context.Context, merchantID, campaignID string) (*C
 			// Window already started — must use early-cancel (pro-rata) instead.
 			return nil, fmt.Errorf("%w: window already started; use early cancel", ErrBadState)
 		}
-		// Full refund of the escrow hold back to the merchant wallet.
 		if err := s.refundFull(ctx, c); err != nil {
 			return nil, err
 		}
@@ -338,9 +332,7 @@ func (s *Service) Pay(ctx context.Context, merchantID, campaignID string) (*Camp
 	return s.repo.GetCampaign(ctx, c.ID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin: review queue / approve / reject / request-info / suspend
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ReviewQueue returns the admin review pipeline (optionally filtered by state).
 func (s *Service) ReviewQueue(ctx context.Context, state string, limit, offset int) ([]Campaign, error) {
@@ -367,7 +359,6 @@ func (s *Service) Approve(ctx context.Context, adminID, campaignID string) (*Cam
 	if err := s.checkEligibility(ctx, c); err != nil {
 		return nil, err
 	}
-	// Settle payment now.
 	if err := s.holdEscrow(ctx, c); err != nil {
 		if errors.Is(err, ErrInsufficient) {
 			// Approved-but-unpaid: park in PENDING_PAYMENT for a pay retry.
@@ -380,7 +371,6 @@ func (s *Service) Approve(ctx context.Context, adminID, campaignID string) (*Cam
 		}
 		return nil, err
 	}
-	// Record the approval decision + flip to SCHEDULED, then reserve the slot.
 	if err := s.repo.SetReview(ctx, c.ID, StateScheduled, adminID, "approved", "", c.Version); err != nil {
 		return nil, err
 	}
@@ -463,9 +453,7 @@ func (s *Service) Suspend(ctx context.Context, adminID, campaignID, reason strin
 	return s.repo.GetCampaign(ctx, c.ID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Money legs (all reuse the ledger; idempotency keys are exact per spec)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // holdEscrow performs the tier-checked merchant-wallet debit into PLACEMENT_ESCROW.
 // idempotency key `placement:<id>:hold`, reference `placement:<id>`. Maps insufficient
@@ -585,9 +573,7 @@ func (s *Service) recognizeAndRefundProRata(ctx context.Context, c *Campaign, ac
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Reservation + scheduling helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 // reserveExclusive inserts the durable no-overlap reservation for an EXCLUSIVE zone.
 // POOLED zones reserve nothing (capacity is checked at activation). Returns ErrSlotTaken
@@ -619,14 +605,11 @@ func (s *Service) reserveAndSchedule(ctx context.Context, c *Campaign, actorID s
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Eligibility (re-checked at submit AND activation)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // checkEligibility runs the full eligibility gate: self-owned (cap, cooldown,
 // creative) + external (merchant, subject). Returns an error wrapping ErrIneligible.
 func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
-	// Concurrent-campaign cap.
 	if s.cfg.MaxConcurrentCampaigns > 0 {
 		n, err := s.repo.CountActiveByMerchant(ctx, c.MerchantID, c.ID)
 		if err != nil {
@@ -636,7 +619,6 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 			return fmt.Errorf("%w: concurrent campaign cap (%d) reached", ErrIneligible, s.cfg.MaxConcurrentCampaigns)
 		}
 	}
-	// Per-zone cooldown.
 	if s.cfg.PerZoneCooldownDays > 0 {
 		last, err := s.repo.LastWindowEndInZone(ctx, c.MerchantID, c.ZoneCode, c.ID)
 		if err != nil {
@@ -649,7 +631,6 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 			}
 		}
 	}
-	// Creative pre-checks against the zone spec.
 	zone, err := s.repo.GetZone(ctx, c.ZoneCode)
 	if err != nil {
 		return err
@@ -657,19 +638,14 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 	if err := validateCreative(zone, c.Creative, s.cfg.BannedWords); err != nil {
 		return err
 	}
-	// External: merchant + subject.
 	if err := s.ext.CheckMerchant(ctx, c.MerchantID, c.ZoneCode); err != nil {
-		return fmt.Errorf("%w: %v", ErrIneligible, err)
+		return fmt.Errorf("%w: %w", ErrIneligible, err)
 	}
 	if err := s.ext.CheckSubject(ctx, c.MerchantID, c.SubjectType, c.SubjectID); err != nil {
-		return fmt.Errorf("%w: %v", ErrIneligible, err)
+		return fmt.Errorf("%w: %w", ErrIneligible, err)
 	}
 	return nil
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// internals
-// ─────────────────────────────────────────────────────────────────────────────
 
 // transition applies a guarded optimistic-locked state change, writes audit, and
 // refreshes the in-memory campaign version/state.
@@ -706,9 +682,7 @@ func (s *Service) writeAudit(ctx context.Context, campaignID, actorID, action st
 	_ = s.repo.InsertAudit(ctx, campaignID, actorID, action, before, after, nil)
 	if s.audit != nil {
 		detail := map[string]any{"campaign_id": campaignID}
-		for k, v := range after {
-			detail[k] = v
-		}
+		maps.Copy(detail, after)
 		s.audit.Audit(ctx, actorID, action, detail)
 	}
 }

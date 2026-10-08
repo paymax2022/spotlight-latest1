@@ -71,8 +71,6 @@ export function mapBusiness(raw: ApiRecord): BusinessProfile {
   };
 }
 
-// ── Name check / reserve ─────────────────────────────────────────────────────
-
 /** POST /name/check — availability of a proposed name (+ optional suggestions). */
 export async function checkName(input: NameCheckInput): Promise<NameCheckResult> {
   const res = await api.post(`${BASE}/name/check`, {
@@ -96,8 +94,6 @@ export async function reserveName(businessId: string): Promise<BusinessProfile> 
   return mapBusiness(unwrap<ApiRecord>(res.data));
 }
 
-// ── Verify existing ──────────────────────────────────────────────────────────
-
 /** POST /verify — verify an EXISTING business by its RC/BN number. */
 export async function verifyExisting(input: VerifyExistingInput): Promise<BusinessProfile> {
   const res = await api.post(`${BASE}/verify`, {
@@ -106,8 +102,6 @@ export async function verifyExisting(input: VerifyExistingInput): Promise<Busine
   });
   return mapBusiness(unwrap<ApiRecord>(res.data));
 }
-
-// ── Register new ─────────────────────────────────────────────────────────────
 
 /** POST /register — create a draft registration (201). */
 export async function registerNew(input: RegisterNewInput): Promise<BusinessProfile> {
@@ -122,8 +116,6 @@ export async function registerNew(input: RegisterNewInput): Promise<BusinessProf
   });
   return mapBusiness(unwrap<ApiRecord>(res.data));
 }
-
-// ── Money-path: pay fee + submit (Idempotency-Key required) ──────────────────
 
 /** POST /:id/pay-fee — debit the CAC fee. Idempotency-Key required. */
 export async function payFee(id: string): Promise<BusinessProfile> {
@@ -166,8 +158,6 @@ export async function submit(id: string): Promise<BusinessProfile> {
   return mapBusiness(unwrap<ApiRecord>(res.data));
 }
 
-// ── Status / reads ───────────────────────────────────────────────────────────
-
 /** GET /:id/status — poll CAC and advance state. */
 export async function getStatus(id: string): Promise<BusinessProfile> {
   const res = await api.get(`${BASE}/${id}/status`);
@@ -197,8 +187,6 @@ export async function getCertificate(id: string): Promise<{ certificateUrl: stri
   const data = unwrap<ApiRecord>(res.data);
   return { certificateUrl: String(data.certificateUrl ?? '') };
 }
-
-// ── UI helpers ───────────────────────────────────────────────────────────────
 
 /** True when a business grants the user a merchant-eligible identity. */
 export function isBusinessActive(b: Pick<BusinessProfile, 'status'>): boolean {

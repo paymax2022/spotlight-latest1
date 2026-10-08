@@ -1,7 +1,6 @@
-// ── Admin — MapService v2 cost/coverage + OSM contribution review ───────────────
 // Mirrors healthVetVerificationService.ts exactly for request building / auth / errors:
 //  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/maps/admin
-//  • authHeaders() attaches the admin Bearer token from localStorage
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // These endpoints live under …/api/maps/admin and require RBAC permission
 // `map.admin.review` (carried by the admin session token).
@@ -21,7 +20,6 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MAPS_USE_MOCK);
 
 // apiRoot() strips any trailing /api/v1 off env.apiBaseUrl → /api/maps/admin
-// (verified: backend/internal/maps/routes_v2.go `grp := r.Group("/api/maps/admin")`,
 // registered via RegisterMapsV2Admin in finance_routes.go). This used to be a
 // regex on env.apiBaseUrl itself, which relied on apiBaseUrl ending in
 // /api/v1 — it no longer does (see config/env.ts), so that regex silently
@@ -32,10 +30,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,7 +56,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Mock fixtures (parallel to the existing health vet admin service) ───────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dayStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 

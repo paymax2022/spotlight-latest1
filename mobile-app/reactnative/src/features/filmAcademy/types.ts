@@ -1,6 +1,4 @@
-// ── Film Academy — types ─────────────────────────────────────────────────────
 // Mirrors the payloads of /api/academy/* in frontend-web, which reads Supabase.
-// Field names are snake_case because that is what the API returns; they are not
 // renamed here so a payload can be compared against the server without a
 // mental mapping step.
 
@@ -28,7 +26,6 @@ export interface FilmAcademySettings {
   tuition_fee?: number;
   [key: string]: unknown;
 }
-
 
 /** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
 export interface FilmAcademyInterestArea {

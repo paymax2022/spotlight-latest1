@@ -1,4 +1,3 @@
-// ── Sell — reorderable photo strip (Smart Composer, screen 11) ───────────────
 // The first photo is the cover. Reordering is done with explicit controls
 // (make-cover + left/right nudge + remove) rather than a native drag gesture, so
 // it works reliably on Expo web and native without a drag-drop dependency. The
@@ -6,9 +5,9 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, Image, ScrollView, ActivityIndicator } from 'react-native';
 import { X, Star, ChevronLeft, ChevronRight, Camera, ImagePlus } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 
 export interface ComposerPhoto {

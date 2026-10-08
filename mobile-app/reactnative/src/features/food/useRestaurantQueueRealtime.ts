@@ -1,14 +1,10 @@
-// ── Restaurant & Delivery — merchant queue realtime ──────────────────────────
-//
 // Decision record: ADR-049.
-//
 // WHY THIS EXISTS, SEPARATELY FROM useOrderRealtime
 // useOrderRealtime subscribes to ONE order and drops every frame whose
 // `order_id` is not that order. A merchant's problem is the opposite: the order
 // they most need to hear about is the one they have not been told about yet, so
 // there is no id to subscribe with. The queue therefore polled every 6 seconds
 // and a new order could sit unseen for that long.
-//
 // The backend hub is keyed by USER id (Realtime.publish → hub.SendToUser), so a
 // single user-scoped socket already carries every frame for every one of this
 // merchant's orders, including ones placed after the socket opened. This hook
@@ -16,13 +12,13 @@
 // invalidates the order queries — react-query then refetches through the normal
 // authenticated path, so the LIST stays the single source of truth and a frame
 // can never paint an order the server would not have returned.
-//
 // Polling stays as the fallback (mock mode, cold start, a dropped socket).
 
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { openWebSocket } from '@/lib/nativeWebSocket';
 import { api } from '@/api/client';
 import { USE_MOCK } from './api';
@@ -30,7 +26,7 @@ import type { OrderFrame } from './types';
 
 /** Legacy direct URL, used when the signed-ticket endpoint is unreachable. */
 function userWsUrl(): string {
-  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const base = getDevUrl(resolveApiBaseUrl());
   return base.replace(/^http/, 'ws').replace(/\/$/, '') + '/api/finance/restaurant/ws';
 }
 
@@ -107,7 +103,6 @@ export function useRestaurantQueueRealtime(enabled = true): QueueRealtimeState {
         const usingTicket = wsUrl !== userWsUrl();
         const ws = openWebSocket(
           wsUrl,
-          // The signed URL authenticates via its ?ticket= query; the header is
           // only needed on the legacy fallback path (and only takes effect on
           // native — see nativeWebSocket.ts for why web can't use it at all).
           !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Formatting & helpers ─────────────────────────────────
 // Money is integer minor units (kobo). Display helpers never mutate amounts.
 
 import type { Kobo, RentSchedule, TransactionMode, Listing, ListingCard } from '../types/realtor.types';

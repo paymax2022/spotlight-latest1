@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"encoding/json"
+	"maps"
 	"testing"
 )
 
@@ -73,10 +74,10 @@ func TestValidateAttrs_ArrayType(t *testing.T) {
 		attrs   map[string]any
 		wantErr bool
 	}{
-		{"valid subset", map[string]any{"features": []interface{}{"ac", "sunroof"}}, false},
-		{"empty array below minItems", map[string]any{"features": []interface{}{}}, true},
-		{"too many items above maxItems", map[string]any{"features": []interface{}{"ac", "sunroof", "reverse_camera", "ac"}}, true},
-		{"element not in enum", map[string]any{"features": []interface{}{"ac", "turbo"}}, true},
+		{"valid subset", map[string]any{"features": []any{"ac", "sunroof"}}, false},
+		{"empty array below minItems", map[string]any{"features": []any{}}, true},
+		{"too many items above maxItems", map[string]any{"features": []any{"ac", "sunroof", "reverse_camera", "ac"}}, true},
+		{"element not in enum", map[string]any{"features": []any{"ac", "turbo"}}, true},
 		{"wrong type (not an array)", map[string]any{"features": "ac"}, true},
 		{"absent key is fine (not required)", map[string]any{}, false},
 	}
@@ -110,7 +111,7 @@ func TestValidateAttrs_RealSeededCarsSchema(t *testing.T) {
 		"accident_history": "no_accident",
 		"mileage":          45000,
 		"seats":            7,
-		"features":         []interface{}{"ac", "reverse_camera", "bluetooth"},
+		"features":         []any{"ac", "reverse_camera", "bluetooth"},
 		"salvage_title":    false,
 	}
 	if err := validateAttrs(json.RawMessage(realCarsSchema), validSubmission); err != nil {
@@ -127,14 +128,12 @@ func TestValidateAttrs_RealSeededCarsSchema(t *testing.T) {
 		{"year below floor", func(m map[string]any) { m["year"] = 1975 }, true},
 		{"seats above stepper max", func(m map[string]any) { m["seats"] = 20 }, true},
 		{"unknown attribute rejected (strict schema)", func(m map[string]any) { m["turbo_boost"] = true }, true},
-		{"feature not in enum", func(m map[string]any) { m["features"] = []interface{}{"nitro"} }, true},
+		{"feature not in enum", func(m map[string]any) { m["features"] = []any{"nitro"} }, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			attrs := map[string]any{}
-			for k, v := range validSubmission {
-				attrs[k] = v
-			}
+			maps.Copy(attrs, validSubmission)
 			c.mutate(attrs)
 			err := validateAttrs(json.RawMessage(realCarsSchema), attrs)
 			if (err != nil) != c.wantErr {

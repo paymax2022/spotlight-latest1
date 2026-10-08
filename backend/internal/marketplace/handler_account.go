@@ -8,18 +8,14 @@ import (
 
 // handler_account.go — Trust & Account gap endpoints the mobile Account tab needs
 // (§ Mobile-UX-Flows.md 28–34) that the core marketplace did not yet expose:
-//
 //   • Saved items / wishlist  : PATCH /listings/:id/save (toggle), GET /saved-items
 //                              (POST/DELETE kept for backwards compatibility)
 //   • Reports (safety valve)   : POST /reports
 //   • Block user               : POST/DELETE /blocks/:id, GET /blocks
 //   • Notification preferences : GET/PATCH /notification-prefs
 //   • Meetup safe-spots        : GET /meetup/safe-spots
-//
 // All are non-money metadata endpoints (no Idempotency-Key, no ledger), Bearer-auth,
 // owner-scoped (OLA enforced in the service). Responses are snake_case via respond().
-
-// ─── Saved items / wishlist ──────────────────────────────────────────────────
 
 // ToggleSavedItem PATCH /listings/:id/save — toggle a listing in the caller's wishlist.
 func (h *Handler) ToggleSavedItem(c *gin.Context) {
@@ -87,8 +83,6 @@ func (h *Handler) ListSavedItems(c *gin.Context) {
 	respond(c, http.StatusOK, items)
 }
 
-// ─── Reports ─────────────────────────────────────────────────────────────────
-
 // CreateReport POST /reports — file a report against a listing, seller, or chat.
 func (h *Handler) CreateReport(c *gin.Context) {
 	uid, ok := requireUser(c)
@@ -107,8 +101,6 @@ func (h *Handler) CreateReport(c *gin.Context) {
 	}
 	respond(c, http.StatusCreated, gin.H{"report": r})
 }
-
-// ─── Blocks ──────────────────────────────────────────────────────────────────
 
 // CreateBlock POST /blocks — block another user.
 func (h *Handler) CreateBlock(c *gin.Context) {
@@ -158,8 +150,6 @@ func (h *Handler) ListBlocks(c *gin.Context) {
 	respond(c, http.StatusOK, blocks)
 }
 
-// ─── Followed sellers ────────────────────────────────────────────────────────
-
 // FollowSeller POST /sellers/:id/follow.
 func (h *Handler) FollowSeller(c *gin.Context) {
 	uid, ok := requireUser(c)
@@ -201,8 +191,6 @@ func (h *Handler) ListFollowedSellers(c *gin.Context) {
 	respond(c, http.StatusOK, sellers)
 }
 
-// ─── Notification preferences ────────────────────────────────────────────────
-
 // GetNotificationPrefs GET /notification-prefs — the caller's per-category toggles
 // (defaults returned when no row exists yet).
 func (h *Handler) GetNotificationPrefs(c *gin.Context) {
@@ -238,8 +226,6 @@ func (h *Handler) UpdateNotificationPrefs(c *gin.Context) {
 	respond(c, http.StatusOK, p)
 }
 
-// ─── Meetup safe-spots ───────────────────────────────────────────────────────
-
 // MeetupSafeSpots GET /meetup/safe-spots?state=&lga= — curated verified-safe
 // meetup locations for the Transact agent's Meetup Mode (§27).
 func (h *Handler) MeetupSafeSpots(c *gin.Context) {
@@ -263,8 +249,6 @@ func (h *Handler) ListingInsights(c *gin.Context) {
 	}
 	respond(c, http.StatusOK, ins)
 }
-
-// ─── Notifications (feed) ────────────────────────────────────────────────────
 
 // ListNotifications GET /notifications — the caller's notification feed (newest first).
 func (h *Handler) ListNotifications(c *gin.Context) {

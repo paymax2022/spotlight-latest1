@@ -60,7 +60,6 @@ func sandboxPending(clientRef string) provider.KycCheckResult {
 
 // smileResultCodes: 0810/1020/... — we key off ResultCode families and the
 // Actions block rather than hardcoding every code. Authoritative on the callback.
-//
 // duplicate-identity fraud signal: IDNumberPreviouslyRegistered ("true"/"false")
 // + UserIDsOfPreviousRegistrants (list) are surfaced into ExtractedFields so the
 // admin fraud queue can flag a reused ID.
@@ -186,8 +185,6 @@ func mapCallbackResult(raw []byte) provider.KycCheckResult {
 	}
 	return res
 }
-
-// --- helpers ---
 
 func parseConfidence(v json.RawMessage) float64 {
 	if len(v) == 0 || string(v) == "null" {

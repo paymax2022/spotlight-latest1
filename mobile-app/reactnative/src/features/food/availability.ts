@@ -1,8 +1,5 @@
-// ── Restaurant & Delivery — is this kitchen still there? ─────────────────────
-//
 // Used to decide whether to drop a kitchen's food from the cart, so the bar is
 // deliberately high: ONLY a 404 counts as "gone".
-//
 // A 500, a timeout, a dropped connection or an aborted request all mean "we do
 // not know", and must leave the cart alone. Deleting someone's food because the
 // server hiccuped once would be a worse bug than the stale lines this exists to

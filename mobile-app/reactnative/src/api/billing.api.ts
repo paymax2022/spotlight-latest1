@@ -1,5 +1,6 @@
 import { createSupabaseClient } from '@/lib/supabase';
 import { api } from '@/api/client';
+import { verifyPin } from '@/features/transfers/api';
 import {
   mapNetworkFromApi,
   mapCableProviderFromApi,
@@ -18,8 +19,6 @@ import {
   EducationProduct,
   MeterType,
 } from '@/types/billing';
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 type Meta = Record<string, unknown>;
 type UtilityCategory = 'airtime' | 'data' | 'electricity' | 'cable_tv' | 'education';
@@ -99,7 +98,13 @@ async function postUtilityPayment(input: {
   amountKobo?: number;
   metadata?: Record<string, unknown>;
   idempotencyKey: string;
+  transactionPin: string;
 }): Promise<Record<string, unknown>> {
+  // /api/v1/utility/pay takes no PIN, so the bill screens only ever checked that
+  // four digits were typed: any PIN debited the wallet. Verify it against the
+  // server first — a wrong PIN rejects here and counts toward the lockout.
+  // (Binding the PIN to the debit itself is server work, tracked in #500.)
+  await verifyPin(input.transactionPin);
   const res = await api.post('/api/v1/utility/pay', {
     category: input.category,
     biller_id: input.billerId,
@@ -139,9 +144,7 @@ async function postUtilityPaystackInitiation(input: {
   };
 }
 
-// ─── Paystack intent status (bills) ─────────────────────────────────────────
 // A utility Paystack payment creates a `utility_paystack_intents` row keyed by
-// its payment_reference; the Paystack webhook flips its status to
 // 'completed'/'failed' and links transaction_id → the utility_transactions row.
 // The in-app SDK checkout polls this to know when to route to the transaction
 // status screen. RLS scopes the row to the owner.
@@ -191,8 +194,6 @@ async function postUtilityValidation(input: {
   return (res.data?.data ?? res.data) as Record<string, unknown>;
 }
 
-// ─── Provider logos (VTPass `image`) ────────────────────────────────────────
-
 export interface ProviderLogoInfo { serviceID: string; name: string; image?: string }
 
 // Fetches official provider logos (serviceID + image) for a category from VTPass
@@ -208,7 +209,6 @@ export async function getProviderLogos(category: UtilityCategory): Promise<Provi
 }
 
 // Resolves a provider/biller (by code or name) to its VTPass logo image URL.
-// Biller codes look like 'vtpass-eko-electric' / 'vtpass-mtn-airtime'; VTPass
 // serviceIDs are 'eko-electric' / 'mtn' / 'mtn-data' / 'dstv' / 'waec'.
 export function resolveProviderImage(
   services: ProviderLogoInfo[],
@@ -228,8 +228,6 @@ export function resolveProviderImage(
   }
   return undefined;
 }
-
-// ─── Airtime ─────────────────────────────────────────────────────────────────
 
 export async function getAirtimeNetworks(): Promise<Network[]> {
   const supabase = createSupabaseClient();
@@ -256,6 +254,7 @@ export async function purchaseAirtime(payload: AirtimePurchasePayload): Promise<
   const billerId = await getBillerIdByCode(payload.networkCode, 'airtime');
   const productId = await getFirstActiveProductId(billerId, 'variable');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'airtime',
     billerId,
     productId,
@@ -285,8 +284,6 @@ export async function initiateAirtimePaystack(payload: Omit<AirtimePurchasePaylo
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Data ─────────────────────────────────────────────────────────────────────
 
 export async function getDataNetworks(): Promise<Network[]> {
   const supabase = createSupabaseClient();
@@ -329,6 +326,7 @@ export interface DataPurchasePayload {
 export async function purchaseData(payload: DataPurchasePayload): Promise<Record<string, unknown>> {
   const billerId = await getBillerIdByCode(payload.networkCode, 'data');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'data',
     billerId,
     productId: payload.planId,
@@ -355,8 +353,6 @@ export async function initiateDataPaystack(payload: Omit<DataPurchasePayload, 'p
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Electricity ──────────────────────────────────────────────────────────────
 
 export async function getElectricityDiscos(): Promise<Disco[]> {
   const supabase = createSupabaseClient();
@@ -419,6 +415,7 @@ export async function payElectricity(payload: ElectricityPayPayload): Promise<Re
   const billerId = await getBillerIdByCode(payload.discoCode, 'electricity');
   const productId = await getFirstActiveProductId(billerId, 'variable');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'electricity',
     billerId,
     productId,
@@ -452,8 +449,6 @@ export async function initiateElectricityPaystack(payload: Omit<ElectricityPayPa
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Cable TV ─────────────────────────────────────────────────────────────────
 
 export async function getCableProviders(): Promise<CableProvider[]> {
   const supabase = createSupabaseClient();
@@ -516,6 +511,7 @@ export interface CablePayPayload {
 export async function payCable(payload: CablePayPayload): Promise<Record<string, unknown>> {
   const billerId = await getBillerIdByCode(payload.providerCode, 'cable_tv');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'cable_tv',
     billerId,
     productId: payload.packageId,
@@ -544,8 +540,6 @@ export async function initiateCablePaystack(payload: Omit<CablePayPayload, 'paym
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Education ────────────────────────────────────────────────────────────────
 
 const EDUCATION_COLORS: Record<string, { accent: string; bg: string }> = {
   WAEC:    { accent: '#7C3AED', bg: 'rgba(124,58,237,0.10)' },
@@ -610,6 +604,7 @@ export interface EducationPayPayload {
 export async function payEducation(payload: EducationPayPayload): Promise<Record<string, unknown>> {
   const billerId = await getBillerIdByCode(payload.providerCode, 'education');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'education',
     billerId,
     productId: payload.productId,

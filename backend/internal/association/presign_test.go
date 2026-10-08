@@ -31,7 +31,7 @@ func postPresign(t *testing.T, h *Handler, userID, body string) *httptest.Respon
 	t.Helper()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/uploads/logo/presign", strings.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/uploads/logo/presign", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	if userID != "" {
 		c.Set("user_id", userID)
@@ -113,7 +113,7 @@ func TestPresignLogoKeyIsScopedToTheCaller(t *testing.T) {
 	if !strings.HasSuffix(res.Data.ObjectKey, ".png") {
 		t.Errorf("objectKey = %q; extension must be normalised to lowercase .png", res.Data.ObjectKey)
 	}
-	if res.Data.Method != "PUT" || res.Data.UploadURL == "" {
+	if res.Data.Method != http.MethodPut || res.Data.UploadURL == "" {
 		t.Errorf("got method=%q url=%q; want a PUT url", res.Data.Method, res.Data.UploadURL)
 	}
 	if res.Data.ContentType != "image/png" {
@@ -205,5 +205,48 @@ func TestResolveLogoSignsStoredKeys(t *testing.T) {
 	}
 	if !strings.Contains(*got, "abc.png") {
 		t.Errorf("resolved logo = %q; must point at the stored object", *got)
+	}
+}
+
+// TestPresignLogoFailsClosedWhenTheBucketCannotBeWritten is the failure behind
+// "Image couldn't be uploaded": the variables are all present (so Configured()
+// is true and a URL can be signed) but R2 rejects the write — wrong bucket, bad
+// token, read-only token. Minting a URL then sends the founder into a retry loop
+// that cannot succeed, so the endpoint must answer 503, which the app already
+// maps to "uploads aren't available — paste a logo URL".
+func TestPresignLogoFailsClosedWhenTheBucketCannotBeWritten(t *testing.T) {
+	r2srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("<Error><Code>NoSuchBucket</Code></Error>"))
+	}))
+	defer r2srv.Close()
+
+	p := r2.New(r2.Config{AccountEndpoint: r2srv.URL, Bucket: "no-such-bucket", AccessKeyID: "AK", SecretAccessKey: "SK"})
+	p.EnableHealthCheck(r2srv.Client())
+	h := (&Handler{}).WithPresigner(p, "no-such-bucket")
+
+	w := postPresign(t, h, "user-1", `{"fileName":"logo.png","contentType":"image/png"}`)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when R2 rejects the write; body %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "no-such-bucket") || strings.Contains(w.Body.String(), "NoSuchBucket") {
+		t.Errorf("the response must not leak the bucket or R2 error code: %s", w.Body)
+	}
+}
+
+// A healthy bucket still mints the URL — the probe must not get in the way.
+func TestPresignLogoStillIssuesWhenTheBucketIsWritable(t *testing.T) {
+	r2srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer r2srv.Close()
+
+	p := r2.New(r2.Config{AccountEndpoint: r2srv.URL, Bucket: "ok-bucket", AccessKeyID: "AK", SecretAccessKey: "SK"})
+	p.EnableHealthCheck(r2srv.Client())
+	h := (&Handler{}).WithPresigner(p, "ok-bucket")
+
+	w := postPresign(t, h, "user-1", `{"fileName":"logo.png","contentType":"image/png"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", w.Code, w.Body)
 	}
 }

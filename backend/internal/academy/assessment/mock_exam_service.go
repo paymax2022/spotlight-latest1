@@ -3,6 +3,7 @@ package assessment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,13 +32,11 @@ func (s *MockExamService) GetTemplate(ctx context.Context, templateID string) (*
 		return nil, fmt.Errorf("template not found: %w", err)
 	}
 
-	// Fetch available instances
 	instances, err := s.repo.GetInstancesByTemplate(ctx, templateID, 10)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch instances: %w", err)
 	}
 
-	// Get statistics
 	stats, err := s.repo.GetStatistics(ctx, templateID)
 	if err != nil {
 		// Statistics may not exist yet, that's OK
@@ -45,8 +44,8 @@ func (s *MockExamService) GetTemplate(ctx context.Context, templateID string) (*
 	}
 
 	return &TemplateDetailResponse{
-		Template:  template,
-		Instances: instances,
+		Template:   template,
+		Instances:  instances,
 		Statistics: stats,
 	}, nil
 }
@@ -66,7 +65,6 @@ func (s *MockExamService) StartExam(ctx context.Context, userID, templateID stri
 
 	instance := instances[0]
 
-	// Create attempt record
 	attempt, err := s.repo.CreateAttempt(ctx, userID, instance.ID, template.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create attempt: %w", err)
@@ -90,7 +88,7 @@ func (s *MockExamService) GetExamProgress(ctx context.Context, attemptID string)
 	}
 
 	if attempt.Status == "submitted" || attempt.Status == "graded" {
-		return nil, fmt.Errorf("exam already submitted")
+		return nil, errors.New("exam already submitted")
 	}
 
 	instance, err := s.repo.GetInstance(ctx, attempt.InstanceID)
@@ -103,26 +101,20 @@ func (s *MockExamService) GetExamProgress(ctx context.Context, attemptID string)
 		return nil, fmt.Errorf("template not found: %w", err)
 	}
 
-	// Get question mappings
 	mappings, err := s.repo.GetQuestionMappings(ctx, instance.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch questions: %w", err)
 	}
 
-	// Calculate time elapsed
 	elapsed := int(time.Since(attempt.StartedAt).Seconds())
-	progress := int((float64(elapsed) / float64(template.TotalSeconds)) * 100)
-	if progress > 100 {
-		progress = 100
-	}
+	progress := min(int((float64(elapsed)/float64(template.TotalSeconds))*100), 100)
 
-	// Parse current answers
-	var currentAnswers map[string]interface{}
+	var currentAnswers map[string]any
 	if attempt.Answers != nil {
-		json.Unmarshal(attempt.Answers, &currentAnswers)
+		_ = json.Unmarshal(attempt.Answers, &currentAnswers)
 	}
 	if currentAnswers == nil {
-		currentAnswers = make(map[string]interface{})
+		currentAnswers = make(map[string]any)
 	}
 
 	return &ExamProgressResponse{
@@ -141,12 +133,12 @@ func (s *MockExamService) GetExamProgress(ctx context.Context, attemptID string)
 }
 
 // SaveProgress updates exam answers and flagged questions
-func (s *MockExamService) SaveProgress(ctx context.Context, attemptID string, answers map[string]interface{}, flaggedQuestions []string) error {
+func (s *MockExamService) SaveProgress(ctx context.Context, attemptID string, answers map[string]any, flaggedQuestions []string) error {
 	return s.repo.UpdateAttempt(ctx, attemptID, answers, flaggedQuestions)
 }
 
 // SubmitExam grades and submits an exam
-func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answers map[string]interface{}) (*MockExamResultResponse, error) {
+func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answers map[string]any) (*MockExamResultResponse, error) {
 	attempt, err := s.repo.GetAttempt(ctx, attemptID)
 	if err != nil {
 		return nil, fmt.Errorf("attempt not found: %w", err)
@@ -157,10 +149,8 @@ func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answ
 		return nil, fmt.Errorf("instance not found: %w", err)
 	}
 
-	// Grade the exam
 	result := s.gradeExam(ctx, instance, answers)
 
-	// Save final answers + performance
 	perfJSON, _ := json.Marshal(result.Performance)
 	answersJSON, _ := json.Marshal(answers)
 	if err := s.repo.SubmitAttempt(ctx, attemptID, answersJSON, perfJSON); err != nil {
@@ -181,10 +171,9 @@ func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answ
 }
 
 // gradeExam evaluates learner answers against marking scheme
-func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInstance, answers map[string]interface{}) *ExamGradingResult {
-	// Parse marking scheme
-	var markingScheme map[string]interface{}
-	json.Unmarshal(instance.MarkingScheme, &markingScheme)
+func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInstance, answers map[string]any) *ExamGradingResult {
+	var markingScheme map[string]any
+	_ = json.Unmarshal(instance.MarkingScheme, &markingScheme)
 
 	totalMarks := 100.0
 	if v, ok := markingScheme["total_marks"].(float64); ok && v > 0 {
@@ -195,7 +184,7 @@ func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInsta
 	totalQuestions := 0
 
 	// Simple grading: compare against answer_keys
-	if answerKeys, ok := markingScheme["answer_keys"].(map[string]interface{}); ok {
+	if answerKeys, ok := markingScheme["answer_keys"].(map[string]any); ok {
 		totalQuestions = len(answerKeys)
 		for qID, answered := range answers {
 			if correct, exists := answerKeys[qID]; exists {
@@ -218,11 +207,11 @@ func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInsta
 
 	grade := s.calculateGrade(scorePercent)
 
-	bySection := make(map[string]interface{}) // would be populated in full implementation
+	bySection := make(map[string]any) // would be populated in full implementation
 
 	// Persisted shape of academy_mock_attempt_metadata.performance; score_pct
 	// feeds v_mock_attempt_scores.score_percent, the rest feeds analytics.
-	performance := map[string]interface{}{
+	performance := map[string]any{
 		"score_raw":       scoredMarks,
 		"score_pct":       scorePercent,
 		"grade":           grade,
@@ -265,34 +254,32 @@ func (s *MockExamService) GetResults(ctx context.Context, userID string, limit i
 	return make([]*MockExamResultResponse, 0), nil
 }
 
-// Response types
-
 type TemplateDetailResponse struct {
-	Template   *MockExamTemplate     `json:"template"`
-	Instances  []*MockExamInstance   `json:"instances"`
-	Statistics *MockExamStatistics   `json:"statistics,omitempty"`
+	Template   *MockExamTemplate   `json:"template"`
+	Instances  []*MockExamInstance `json:"instances"`
+	Statistics *MockExamStatistics `json:"statistics,omitempty"`
 }
 
 type ExamProgressResponse struct {
-	AttemptID        string                       `json:"attempt_id"`
-	ExamCode         string                       `json:"exam_code"`
-	TemplateName     string                       `json:"template_name"`
-	Progress         int                          `json:"progress"`
-	TimeElapsed      int                          `json:"time_elapsed"`
-	TimeRemaining    int                          `json:"time_remaining"`
-	TotalQuestions   int                          `json:"total_questions"`
-	AnsweredCount    int                          `json:"answered_count"`
-	FlaggedCount     int                          `json:"flagged_count"`
-	QuestionMappings []*MockExamQuestionMapping   `json:"questions"`
-	CurrentAnswers   map[string]interface{}      `json:"current_answers"`
+	AttemptID        string                     `json:"attempt_id"`
+	ExamCode         string                     `json:"exam_code"`
+	TemplateName     string                     `json:"template_name"`
+	Progress         int                        `json:"progress"`
+	TimeElapsed      int                        `json:"time_elapsed"`
+	TimeRemaining    int                        `json:"time_remaining"`
+	TotalQuestions   int                        `json:"total_questions"`
+	AnsweredCount    int                        `json:"answered_count"`
+	FlaggedCount     int                        `json:"flagged_count"`
+	QuestionMappings []*MockExamQuestionMapping `json:"questions"`
+	CurrentAnswers   map[string]any             `json:"current_answers"`
 }
 
 type ExamGradingResult struct {
-	Score          float64                `json:"score"`
-	ScorePercent   float64                `json:"score_percent"`
-	Grade          string                 `json:"grade"`
-	CorrectAnswers int                    `json:"correct_answers"`
-	TotalAnswered  int                    `json:"total_answered"`
-	BySection      map[string]interface{} `json:"by_section"`
-	Performance    map[string]interface{} `json:"performance"`
+	Score          float64        `json:"score"`
+	ScorePercent   float64        `json:"score_percent"`
+	Grade          string         `json:"grade"`
+	CorrectAnswers int            `json:"correct_answers"`
+	TotalAnswered  int            `json:"total_answered"`
+	BySection      map[string]any `json:"by_section"`
+	Performance    map[string]any `json:"performance"`
 }

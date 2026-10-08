@@ -1,10 +1,8 @@
-// ── Admin — Paymax Creators (Storefront, Tips, Subscriptions, Gated content) types ─
 // Field names mirror the Go JSON (snake_case) from /api/creators/admin/*.
 // Money is BIGINT kobo (minor units) throughout — display via formatNaira (kobo → ₦).
 // Invariants surfaced in the UI:
 //   NL-5  — Perks, not returns: creator income delivers goods/content/perks, never a
 //           financial return or revenue share. No securities.
-//   NL-10 — KYC gates & AML: creator payouts require the right KYC tier; payout is
 //           gated fail-closed until KYC clears.
 //   NL-11 — Content & age safety: all creator content passes moderation with
 //           age-appropriate controls. Audience skews young — never weaken controls.
@@ -24,7 +22,6 @@ export type CreatorFraudKind = 'self_tip' | 'tip_wash' | 'sub_churn_abuse' | 'ch
 export type CreatorFraudStatus = 'open' | 'investigating' | 'cleared' | 'blocked';
 export type CreatorFraudAction = 'investigate' | 'clear' | 'block';
 
-// ── A · Dashboard ───────────────────────────────────────────────────────────
 export interface CreatorsDashboardActivity {
   id: string;
   kind: string; // creator_verified | content_flagged | payout_held | sub_failed | self_tip_flag | fee_updated …
@@ -55,7 +52,6 @@ export interface CreatorsDashboard {
   activity: CreatorsDashboardActivity[];
 }
 
-// ── B · Verification queue ───────────────────────────────────────────────────
 export interface CreatorVerificationItem {
   id: string;
   handle_masked: string;
@@ -79,7 +75,6 @@ export interface CreatorDecisionResult {
   message: string;
 }
 
-// ── C · Content moderation + age controls (NL-11) ────────────────────────────
 export interface ContentModItem {
   id: string;
   creator_handle_masked: string;
@@ -102,7 +97,6 @@ export interface ContentModResult {
   message: string;
 }
 
-// ── D · Subscription billing + failed-renewal ────────────────────────────────
 export interface CreatorBillingItem {
   id: string;                     // subscription id
   subscriber_masked: string;
@@ -119,7 +113,6 @@ export interface CreatorBillingItem {
   created_at: string;
 }
 
-// ── E · Payout queue (KYC-gated, NL-10) ──────────────────────────────────────
 export interface CreatorPayoutItem {
   id: string;
   creator_handle_masked: string;
@@ -140,7 +133,6 @@ export interface CreatorPayoutResult {
   message: string;
 }
 
-// ── F · Fee config ───────────────────────────────────────────────────────────
 export interface CreatorFeeConfig {
   generated_at: string;
   tip_fee_bps: number;            // basis points
@@ -158,7 +150,6 @@ export interface CreatorFeeConfigResult {
   message: string;
 }
 
-// ── G · Abuse / self-tip fraud ───────────────────────────────────────────────
 export interface CreatorFraudSignal {
   id: string;
   creator_handle_masked: string;

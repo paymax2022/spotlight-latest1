@@ -1,6 +1,3 @@
-// ── Association — Event authoring form (create + edit) ────────────────────────
-//
-// Money: the admin types NAIRA, the API carries INTEGER KOBO. The conversion is
 // `nairaToKobo` (digit-wise, never `parseFloat * 100`), and the paid/fee rule
 // the server enforces is enforced inline here so an admin sees why the form is
 // blocked instead of meeting a 400 after pressing save.
@@ -8,16 +5,16 @@
 import React, { useState } from 'react';
 import { Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import { alertAsync, confirmAsync } from '@/lib/confirm';
-import AdminFormScreen from '../AdminFormScreen';
-import { CONTENT_CAPABILITY } from '../../utils/authoringAccess';
+import { AdminFormScreen } from '../index';
+import { CONTENT_CAPABILITY } from '../../utils';
 import { FormCard, ToggleRow, NotifyToggle, DateTimeField, FormNotice } from '../AdminFormControls';
 import { useCreateEvent, useUpdateEvent, useDeleteEvent } from '../../hooks/useAuthoring';
-import { str, bool, num, kobo } from '../../utils/metaFields';
-import { formatNaira, nairaToKobo } from '../../utils/associationFormatters';
+import { str, bool, num, kobo } from '../../utils';
+import { formatNaira, nairaToKobo } from '../../utils';
 import type { AdminContentRow, EventInput } from '../../types/authoring.types';
 
 /** kobo → the naira text the amount field starts with. Integer-safe. */

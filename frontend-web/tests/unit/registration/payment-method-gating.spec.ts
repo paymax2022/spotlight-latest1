@@ -39,7 +39,6 @@ describe('payment.method gating', () => {
       const field = step.fields.find((f) => f.key === 'payment.method')!;
       // Still present — paid contests must be able to show a method choice.
       expect(field).toBeDefined();
-      // ...but not a wizard gate, because nothing can have filled it yet.
       expect(field.required).toBeFalsy();
     });
 

@@ -1,14 +1,13 @@
-// ── Marketplace — PriceOfferSheet (Screens 19/20 Make Offer + Counter) ───────
 // A bottom-sheet price capture reused for BOTH the Make Offer sheet (prefilled at
 // asking price) and the counter-offer sheet. Naira input, optional message, and
 // a plain reminder that an accepted offer moves to escrow checkout.
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, TextInput } from 'react-native';
 import { X, Tag } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { MarketColors, formatNaira } from '@/features/marketplace';

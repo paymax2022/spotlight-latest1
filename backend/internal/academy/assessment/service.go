@@ -51,8 +51,6 @@ var (
 	ErrNoItems           = errors.New("assessment: no approved items for objective")
 )
 
-// ── Question bank (admin) ───────────────────────────────────────────────────────
-
 func (s *Service) CreateItem(ctx context.Context, actor string, req CreateItemRequest) (*QuestionItem, error) {
 	if req.Stem == "" {
 		return nil, ErrInvalidInput
@@ -84,8 +82,6 @@ func (s *Service) ItemAnalysis(ctx context.Context, f ItemFilter) ([]ItemAnalysi
 	return s.repo.ItemAnalysis(ctx, f)
 }
 
-// ── Learner practice serving ────────────────────────────────────────────────────
-
 // PracticeItems serves approved items for an objective. The handler strips the
 // `answer` field before returning to the learner (answers stay server-side).
 func (s *Service) PracticeItems(ctx context.Context, objectiveID string, limit int) ([]QuestionItem, error) {
@@ -94,8 +90,6 @@ func (s *Service) PracticeItems(ctx context.Context, objectiveID string, limit i
 	}
 	return s.repo.GetApprovedItemsForObjective(ctx, objectiveID, limit)
 }
-
-// ── Learner progression engine ──────────────────────────────────────────────────
 
 // RecordPractice records a single practice attempt for an objective WITHOUT a
 // mastery re-score. It bootstraps not_started→in_progress, otherwise just logs a
@@ -136,7 +130,6 @@ func (s *Service) RecordPractice(ctx context.Context, userID, objectiveID string
 // RunMasteryCheck scores the learner's answers against the approved item answers,
 // upserts the mastery record through the guarded progression machine, and writes a
 // ProgressEvent on any upgrade. Returns the practice result.
-//
 // answers maps question_item_id → selected. The score is the fraction correct.
 func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID string, answers []PracticeAnswer, examTagged bool) (*PracticeResult, error) {
 	if objectiveID == "" || len(answers) == 0 {

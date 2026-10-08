@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useTripTracking, type TripPosition } from './useTripTracking';
 import type { LatLng, TripPhase } from '../types/mobility.types';
 
-// Live tracking is disabled in mock mode (no real backend WebSocket); screens
 // fall back to polling. Mirrors the USE_MOCK gate used across the mobility APIs.
 const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
@@ -72,7 +71,6 @@ export function useTripRealtime(tripId?: string, options?: UseTripRealtimeOption
   const trackable = !phase || TRACKABLE_PHASES.includes(phase);
   const realtimeEnabled = !USE_MOCK && Boolean(tripId) && trackable;
 
-  // Only open the socket when realtime is enabled; otherwise pass undefined so the
   // underlying hook stays idle and the screen relies on polling.
   const { position, connected } = useTripTracking(realtimeEnabled ? tripId : undefined);
 

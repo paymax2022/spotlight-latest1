@@ -1,4 +1,3 @@
-// ── Paymax AI Symptom Checker — analytics (no-op stub) ───────────────────────
 // House style (mirrors src/features/academy/analytics.ts): a feature-local
 // no-op sink with a string-union event type. Real telemetry wired here later.
 // Kept side-effect-free so mock-first screens run with no backend.

@@ -1,0 +1,139 @@
+name: Ops - repair backend DATABASE_URL
+
+# One-purpose repair: rewrites the backend service's DATABASE_URL from the
+# repo secrets that are KNOWN-GOOD (the same SUPABASE_DB_PASSWORD ops-db-push
+# uses to reach the database). Exists because the Supabase pooler can
+# circuit-break a service holding a rotated-out password:
+#   FATAL: (ECIRCUITBREAKER) too many authentication failures
+#
+# SECRET DISCIPLINE (same doctrine as ops-railway-vars.yml):
+# - The composed URL is piped via `railway variable set --stdin` and masked
+#   with ::add-mask:: before the write — it never reaches argv or the log.
+# - Verification prints the variable NAME and the URL's hash only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Railway environment to repair'
+        required: true
+        type: choice
+        options: [production, staging]
+      confirm:
+        description: 'Type FIX to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-db-url-repair-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    name: repair DATABASE_URL on backend (${{ inputs.environment }})
+    if: ${{ inputs.confirm == 'FIX' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Resolve tokens (explicit case — no ternary fall-through)
+        env:
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          PROD_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          PROD_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          STG_PROJECT_ID: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
+          STG_DB_PASSWORD: ${{ secrets.SUPABASE_STAGING_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            production)  tok="$TOK_PRODUCTION";  ref="$PROD_PROJECT_ID"; pw="$PROD_DB_PASSWORD" ;;
+            staging)     tok="$TOK_STAGING";     ref="$STG_PROJECT_ID";  pw="$STG_DB_PASSWORD" ;;
+            *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
+          esac
+          [ -n "$tok" ] || { echo "::error::missing RAILWAY_TOKEN for $ENVIRONMENT"; exit 1; }
+          [ -n "$ref" ] || { echo "::error::missing SUPABASE project ref for $ENVIRONMENT"; exit 1; }
+          [ -n "$pw" ]  || { echo "::error::missing SUPABASE_DB_PASSWORD for $ENVIRONMENT"; exit 1; }
+          if [ "$ENVIRONMENT" = staging ] && [ "$ref" = "$PROD_PROJECT_ID" ]; then
+            echo "::error::staging ref equals production ref — refusing"
+            exit 1
+          fi
+          printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          # Percent-encode the password — the Supabase CLI accepts it raw, but a
+          # URI cannot carry unescaped reserved bytes (@, :, /, ?, #, %, space…).
+          enc_pw="$(RAW_PW="$pw" node -e 'process.stdout.write(encodeURIComponent(process.env.RAW_PW))' 2>/dev/null || true)"
+          if [ -z "$enc_pw" ]; then
+            enc_pw="$(RAW_PW="$pw" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["RAW_PW"],safe=""))')"
+          fi
+          # Compose both candidate DSNs: session-mode pooler (what the backend
+          # logs show it using) and the direct db host (what supabase CLI uses).
+          url="postgres://postgres.${ref}:${enc_pw}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres?sslmode=require"
+          direct="postgres://postgres:${enc_pw}@db.${ref}.supabase.co:5432/postgres?sslmode=require"
+          echo "::add-mask::$url"
+          echo "::add-mask::$direct"
+          printf 'DATABASE_URL_VALUE=%s\n' "$url" >> "$GITHUB_ENV"
+          printf 'DIRECT_URL_VALUE=%s\n' "$direct" >> "$GITHUB_ENV"
+          unset tok ref pw url enc_pw direct
+          echo "  credentials resolved for $ENVIRONMENT (values never printed)"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Probe both endpoints — pick whichever authenticates
+        env:
+          DATABASE_URL_VALUE: ${{ env.DATABASE_URL_VALUE }}
+          DIRECT_URL_VALUE: ${{ env.DIRECT_URL_VALUE }}
+        run: |
+          set -euo pipefail
+          pick=""
+          for label in pooler direct; do
+            url="$DATABASE_URL_VALUE"; [ "$label" = direct ] && url="$DIRECT_URL_VALUE"
+            err="$(psql "$url" -c 'SELECT 1' 2>&1 >/dev/null || true)"
+            if [ -z "$err" ]; then
+              echo "  $label: auth OK"
+              pick="$url"
+            else
+              printf '%s\n' "$err" | sed -E 's#postgres[^ ]*#<dsn-redacted>#g; s#password=[^ ]*#password=<redacted>#g' | head -3 | sed "s/^/  $label: /"
+            fi
+          done
+          if [ -z "$pick" ]; then
+            echo "::error::neither endpoint authenticates with SUPABASE_DB_PASSWORD — rotate the secret or recover the real password"
+            exit 1
+          fi
+          echo "::add-mask::$pick"
+          printf 'DATABASE_URL_VALUE=%s\n' "$pick" >> "$GITHUB_ENV"
+          echo "  selected endpoint written (value masked)"
+
+      - name: Write DATABASE_URL (stdin, masked) and redeploy
+        env:
+          DATABASE_URL_VALUE: ${{ env.DATABASE_URL_VALUE }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$DATABASE_URL_VALUE" | railway variable set DATABASE_URL --stdin \
+            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
+          echo "  wrote DATABASE_URL"
+          railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes || true
+          echo "  redeploy triggered"
+
+      - name: Verify (hash only)
+        env:
+          EXPECT: ${{ env.DATABASE_URL_VALUE }}
+        run: |
+          set -euo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            const vars = JSON.parse(fs.readFileSync("vars.json", "utf8"));
+            const v = vars["DATABASE_URL"];
+            if (!v) { console.error("  DATABASE_URL not present after write"); process.exit(1); }
+            const got = crypto.createHash("sha256").update(String(v)).digest("hex").slice(0, 8);
+            const want = crypto.createHash("sha256").update(process.env.EXPECT).digest("hex").slice(0, 8);
+            console.log("  DATABASE_URL hash " + got + (got === want ? " — matches intended value" : " — MISMATCH"));
+            if (got !== want) process.exit(1);
+          '

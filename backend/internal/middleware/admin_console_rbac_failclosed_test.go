@@ -1,14 +1,16 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // newAdminConsoleTestRouter wires RequireAdminConsoleRole behind a throwaway
@@ -64,7 +66,7 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newAdminConsoleTestRouter(t)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 			for k, v := range tc.headers {
 				req.Header.Set(k, v)
 			}
@@ -78,23 +80,46 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 	}
 }
 
-// A well-formed bearer token that does not resolve to a real Supabase user
-// must be rejected too — the gate cannot be satisfied by shape alone.
-func TestRequireAdminConsoleRole_RejectsUnresolvableBearerToken(t *testing.T) {
+// A well-formed bearer token that cannot be verified — because the auth
+// backend is absent/unreachable (no baseURL on the client here) — still fails
+// closed, but as a 503: AUD-AUTH-001 reserves 401 for a definitive token
+// rejection so an auth outage never masquerades as session expiry.
+func TestRequireAdminConsoleRole_AuthBackendUnavailableReturns503(t *testing.T) {
 	r := newAdminConsoleTestRouter(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer not-a-real-token")
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("unresolvable bearer token: got %d, want %d (body: %s)", w.Code, http.StatusUnauthorized, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth backend unavailable: got %d, want %d (body: %s)", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
 }
 
-// --- AUTH-012: fail closed when GetUserStatus errors -----------------------
+// The complementary case: a token the auth backend actively rejects (401/403)
+// is a genuine invalid credential and stays a 401.
+func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	supabase := integrations.NewSupabaseRestClient(srv.URL, "test-key")
+	r := gin.New()
+	r.Use(RequireAdminConsoleRole(supabase, nil))
+	r.GET("/api/v1/admin/overview-like", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req.Header.Set("Authorization", "Bearer rejected-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("rejected bearer token: got %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
 
 // fakeConsoleRBAC embeds the (large) RBACService interface as a nil value so
 // only the two methods RequireAdminConsoleRole actually calls need overriding
@@ -102,14 +127,19 @@ func TestRequireAdminConsoleRole_RejectsUnresolvableBearerToken(t *testing.T) {
 // trigger.
 type fakeConsoleRBAC struct {
 	services.RBACService
+
 	roles     []string
 	rolesErr  error
 	status    string
 	statusErr error
 }
 
-func (f *fakeConsoleRBAC) GetUserRoles(string) ([]string, error) { return f.roles, f.rolesErr }
-func (f *fakeConsoleRBAC) GetUserStatus(string) (string, error)  { return f.status, f.statusErr }
+func (f *fakeConsoleRBAC) GetUserRoles(context.Context, string) ([]string, error) {
+	return f.roles, f.rolesErr
+}
+func (f *fakeConsoleRBAC) GetUserStatus(context.Context, string) (string, error) {
+	return f.status, f.statusErr
+}
 
 // fakeAuthServer stands in for Supabase's GoTrue /auth/v1/user endpoint so a
 // bearer token can resolve to a real userID without a network dependency,
@@ -142,7 +172,7 @@ func consoleRouterWithRBAC(t *testing.T, userID string, rbac services.RBACServic
 }
 
 func doAuthedGet(r *gin.Engine) int {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer any-token-the-fake-server-accepts")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

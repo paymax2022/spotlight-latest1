@@ -1,19 +1,15 @@
 package aicare
 
 // Internal (package-local) tests for the aicare package.
-//
 // SCOPE NOTE: This module is an AI *customer-support* agent, not a medical/
-// telemedicine advisor. The production code contains NO medical-safety
-// classifier, NO safe-completion / red-flag escalation logic, NO disclaimer
-// builder, NO session FSM transition function, and NO MockProvider. Those were
-// assumed by the task brief but do not exist in the source. We therefore test
-// only the pure logic that is actually present:
+// telemedicine advisor — it has NO medical-safety classifier, no red-flag
+// escalation logic, no disclaimer builder, no session FSM transition function,
+// and no MockProvider. These tests cover only the pure logic that exists:
 //   1. AnthropicProvider.Reply — role mapping, request construction, headers,
 //      system framing, and response/error parsing — exercised through an
 //      injected fake http.RoundTripper (the live Anthropic API is never called).
 //   2. A test-local mock AIProvider — interface satisfaction + determinism.
 //   3. Model data integrity — status/role constants and JSON round-trips.
-//
 // The Service (SendMessage/Escalate/Resolve/GetHistory) is bound to a concrete
 // *pgxpool.Pool with no fake seam, so its DB-driven FSM (open→escalated→
 // resolved, resolved-is-terminal) is intentionally left uncovered here.
@@ -28,8 +24,6 @@ import (
 	"testing"
 	"time"
 )
-
-// --- fake transport so Reply never touches the network ---------------------
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -65,14 +59,10 @@ func captureReply(t *testing.T, history []Message, userMessage, respBody string)
 	return captured, capturedBody, reply, err
 }
 
-// --- compile-time interface guarantees -------------------------------------
-
 var (
 	_ AIProvider = (*AnthropicProvider)(nil)
 	_ AIProvider = (*stubProvider)(nil)
 )
-
-// --- AnthropicProvider construction ----------------------------------------
 
 func TestNewAnthropicProvider(t *testing.T) {
 	p := NewAnthropicProvider("secret")
@@ -89,8 +79,6 @@ func TestNewAnthropicProvider(t *testing.T) {
 		t.Errorf("client timeout = %v, want 30s", p.client.Timeout)
 	}
 }
-
-// --- Reply: role mapping ----------------------------------------------------
 
 func TestReplyRoleMapping(t *testing.T) {
 	history := []Message{
@@ -158,8 +146,6 @@ func TestReplyEmptyHistory(t *testing.T) {
 	}
 }
 
-// --- Reply: request framing (model, tokens, system prompt) -----------------
-
 func TestReplyRequestFraming(t *testing.T) {
 	_, body, _, err := captureReply(t, nil, "hello", `{"content":[{"type":"text","text":"y"}]}`)
 	if err != nil {
@@ -184,8 +170,6 @@ func TestReplyRequestFraming(t *testing.T) {
 	}
 }
 
-// --- Reply: headers ---------------------------------------------------------
-
 func TestReplyHeaders(t *testing.T) {
 	req, _, _, err := captureReply(t, nil, "hi", `{"content":[{"type":"text","text":"z"}]}`)
 	if err != nil {
@@ -194,10 +178,10 @@ func TestReplyHeaders(t *testing.T) {
 	if got := req.Header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
-	if got := req.Header.Get("x-api-key"); got != "test-key-123" {
+	if got := req.Header.Get("X-Api-Key"); got != "test-key-123" {
 		t.Errorf("x-api-key = %q, want test-key-123", got)
 	}
-	if got := req.Header.Get("anthropic-version"); got != anthropicVer {
+	if got := req.Header.Get("Anthropic-Version"); got != anthropicVer {
 		t.Errorf("anthropic-version = %q, want %q", got, anthropicVer)
 	}
 	if req.Method != http.MethodPost {
@@ -207,8 +191,6 @@ func TestReplyHeaders(t *testing.T) {
 		t.Errorf("url = %q, want %q", req.URL.String(), anthropicAPI)
 	}
 }
-
-// --- Reply: response parsing & error handling ------------------------------
 
 func TestReplyReturnsFirstContentText(t *testing.T) {
 	body := `{"content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}`
@@ -249,7 +231,7 @@ func TestReplyEmptyContent(t *testing.T) {
 }
 
 func TestReplyMalformedJSON(t *testing.T) {
-	_, _, _, err := captureReply(t, nil, "q", `{not json`)
+	_, _, _, err := captureReply(t, nil, "q", `{not json`) //nolint:dogsled // tuple: only err asserted
 	if err == nil {
 		t.Fatal("expected decode error on malformed JSON")
 	}
@@ -271,8 +253,6 @@ func TestReplyTransportError(t *testing.T) {
 		t.Errorf("error = %v, want wrapped 'http' error", err)
 	}
 }
-
-// --- Mock AIProvider: determinism + interface contract ---------------------
 
 type stubProvider struct {
 	reply       string
@@ -325,8 +305,6 @@ func TestStubProviderError(t *testing.T) {
 		t.Errorf("reply = %q, want empty on error", got)
 	}
 }
-
-// --- Model data integrity ---------------------------------------------------
 
 func TestStatusConstantValues(t *testing.T) {
 	cases := map[SessionStatus]string{

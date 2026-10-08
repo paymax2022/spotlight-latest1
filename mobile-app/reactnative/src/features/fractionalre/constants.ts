@@ -1,6 +1,5 @@
-// ── Fractional Real Estate — Constants ───────────────────────────────────────
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { OfferingKind, RiskBand, PayoutFrequency } from './types';
 
 /** Mandatory SEC-style risk disclosure shown on home / marketplace / subscription. */

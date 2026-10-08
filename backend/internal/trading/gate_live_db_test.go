@@ -48,6 +48,7 @@ func TestLiveDB_KycGatesWallet(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, u)
+	testsupport.SetKycTier(t, ctx, pool, u, testsupport.KycTierUnlimited)
 	src, _ := led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err := led.Credit(ctx, u, "seed", "seed:"+u+":"+uuid.NewString(), src.ID, 5_000_000); err != nil {
 		t.Fatalf("fund wallet: %v", err)

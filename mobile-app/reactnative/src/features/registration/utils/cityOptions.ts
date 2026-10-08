@@ -1,4 +1,3 @@
-// ── Registration — city ↔ state cascade ──────────────────────────────────────
 // The registration form schema ships city selects (account.city, personal.city,
 // emergency.city) with EMPTY options — they are meant to cascade off the sibling
 // state field, which was never wired, so the city dropdown rendered blank

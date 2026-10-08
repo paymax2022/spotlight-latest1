@@ -5,20 +5,11 @@ import { getBasemap, type MapSource, type MapStyleConfig } from '../api/maps.api
 // @maplibre/maplibre-react-native throws at module-init time when its native binary
 // is absent (Expo Go / JS-only builds). Lazy-require it so the crash is caught here
 // instead of propagating before any component can render a fallback.
-//
 // ┌─ Enabling the real interactive map (already declared, just needs a build) ──┐
 // │ The dependency (@maplibre/maplibre-react-native ^10.4.2) and its Expo config │
 // │ plugin (see app.json → expo.plugins) are BOTH present. MapLibre GL is a      │
 // │ native module, so it does NOT run in Expo Go — it needs a custom dev-client  │
 // │ or a release build. To turn the real GL map on:                             │
-// │   1. npx expo install @maplibre/maplibre-react-native   (already installed)  │
-// │   2. Ensure "@maplibre/maplibre-react-native" is in app.json plugins (it is) │
-// │   3. Build a dev client / app:                                              │
-// │        eas build --profile development --platform ios|android               │
-// │        (or:  npx expo run:ios  /  npx expo run:android  for a local build)   │
-// │   4. Launch that build (NOT Expo Go). NativeModules.MLRNModule is then set   │
-// │      and this component renders live tiles from getBasemap()'s style URL.    │
-// │ No provider API key ships in the app — the basemap style URL comes from the  │
 // │ backend maps proxy. In Expo Go, MobilityMap degrades to MapPlaceholder,      │
 // │ which renders a real OSM (Leaflet-in-WebView) map so dev still sees tiles.   │
 // └─────────────────────────────────────────────────────────────────────────────┘

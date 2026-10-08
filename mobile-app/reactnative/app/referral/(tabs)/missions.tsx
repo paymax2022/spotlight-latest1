@@ -4,18 +4,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
 import { ChevronRight, Sparkles, Coins } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { ReferralHeader, DisclosureCard } from '@/features/referral/components';
 import { formatNaira } from '@/features/referral/constants/format';
 import { useMissions } from '@/features/referral/gamification/hooks';
 import type { MissionSummary, MissionStatus } from '@/features/referral/gamification/types';
 
-// M-GAM-01 — Missions / quests list. "Refer + friend completes X = both earn."
-// POINTS shown here are NON-CASH status rewards; any cash reward is a separate,
 // activity-conditioned naira amount.
 
 const STATUS_META: Record<MissionStatus, { label: string; color: string; bg: string }> = {

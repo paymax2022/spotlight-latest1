@@ -5,6 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/timeutil"
+
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,20 +26,16 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{store: NewRepositor
 // NewServiceWithStore injects a custom Store (tests).
 func NewServiceWithStore(store Store) *Service { return &Service{store: store} }
 
-const dateLayout = "2006-01-02"
-
 func parseDate(s string) (*time.Time, error) {
-	if s == "" {
-		return nil, nil
-	}
-	t, err := time.Parse(dateLayout, s)
+	t, err := timeutil.ParseDate(s)
 	if err != nil {
 		return nil, ErrInvalidDate
 	}
+	if t.IsZero() {
+		return nil, nil
+	}
 	return &t, nil
 }
-
-// ── AcademicSession ─────────────────────────────────────────────────────────────
 
 // CreateSession opens an academic session for a school. The session starts 'active'.
 func (s *Service) CreateSession(ctx context.Context, actorID, schoolID string, req CreateSessionRequest) (*AcademicSession, error) {
@@ -101,8 +101,6 @@ func (s *Service) SetSessionStatus(ctx context.Context, actorID, id string, stat
 	return out, nil
 }
 
-// ── Class ───────────────────────────────────────────────────────────────────────
-
 // CreateClass opens a class within a school (optionally bound to a session). When a
 // session is supplied it is validated to belong to the SAME school (fail-closed).
 func (s *Service) CreateClass(ctx context.Context, actorID, schoolID string, req CreateClassRequest) (*Class, error) {
@@ -123,10 +121,10 @@ func (s *Service) CreateClass(ctx context.Context, actorID, schoolID string, req
 	}
 	cls, err := s.store.InsertClass(ctx, Class{
 		SchoolID:           schoolID,
-		SessionID:          ptrOrNil(req.SessionID),
+		SessionID:          ptr.OrNil(req.SessionID),
 		Name:               req.Name,
-		Level:              ptrOrNil(req.Level),
-		ClassTeacherUserID: ptrOrNil(req.ClassTeacherUserID),
+		Level:              ptr.OrNil(req.Level),
+		ClassTeacherUserID: ptr.OrNil(req.ClassTeacherUserID),
 	})
 	if err != nil {
 		return nil, err

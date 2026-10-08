@@ -1,7 +1,5 @@
 // Pure-logic unit tests: mobile registration validation stays in sync with the
 // backend's messages/rules (see memory: client-side validation mirrors server).
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/registration/*.spec.ts"
-// (node:test + assert — this app has no vitest; matches the other unit suites.)
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

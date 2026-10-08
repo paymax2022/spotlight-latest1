@@ -1,15 +1,15 @@
 import React from 'react';
 import { View, Text, Switch, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { useNotificationPrefs, useUpdateNotificationPrefs } from '@/features/association/hooks/useSettings';
-import type { NotificationPrefs } from '@/features/association/types/settings.types';
+import { useNotificationPrefs, useUpdateNotificationPrefs } from '@/features/association/hooks';
+import type { NotificationPrefs } from '@/features/association/types';
 
 const ROWS: { key: keyof NotificationPrefs; label: string; help: string }[] = [
   { key: 'announcements', label: 'Announcements', help: 'Chapter and national announcements.' },

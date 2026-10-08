@@ -39,7 +39,7 @@ Files:
 - `AppLanguage`, `AppTheme`, `AppPreferences`
 
 ### Section AD — Empty / Error / Edge-State
-- `EdgeStateKind` (26-member union), `EdgeStateTone`, `EdgeStateVariant`
+- `EdgeStateKind` (25-member union), `EdgeStateTone`, `EdgeStateVariant`
 - `EdgeStateCta`, `EdgeStateDescriptor`
 - `AppStatusMode`, `AppStatus`
 - `AccountState` (= REUSED `VerificationStatus | 'under_review' | 'suspended'`), `AccountStatus`

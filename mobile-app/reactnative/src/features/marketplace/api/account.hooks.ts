@@ -1,5 +1,3 @@
-// ── Marketplace — Trust & Account React Query hooks ──────────────────────────
-// Query keys namespaced under ['mkt','account',…]; mutations invalidate the
 // relevant queries. Kept in the api/ folder next to account.api.ts so the Account
 // screens import everything from one place without touching the foundation hooks.ts.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,7 +12,6 @@ export const MKT_ACCOUNT_KEYS = {
   safeSpots: (filter?: { state?: string; lga?: string }) => ['mkt', 'account', 'safe-spots', filter ?? null] as const,
 };
 
-// ── Blocked users (§32) ───────────────────────────────────────────────────────
 export const useBlocks = () =>
   useQuery({ queryKey: MKT_ACCOUNT_KEYS.blocks, queryFn: accountApi.listBlocks });
 
@@ -35,7 +32,6 @@ export function useUnblockUser() {
   });
 }
 
-// ── Notification preferences (§33) ────────────────────────────────────────────
 export const useNotificationPrefs = () =>
   useQuery({ queryKey: MKT_ACCOUNT_KEYS.notificationPrefs, queryFn: accountApi.getNotificationPrefs });
 
@@ -59,7 +55,6 @@ export function useUpdateNotificationPrefs() {
   });
 }
 
-// ── Notification feed (§33 · NT-001/002/003) ─────────────────────────────────
 export const useNotifications = () =>
   useQuery({ queryKey: MKT_ACCOUNT_KEYS.notifications, queryFn: accountApi.listNotifications });
 
@@ -102,11 +97,9 @@ export function useMarkAllNotificationsRead() {
   });
 }
 
-// ── Followed sellers (LD-005) ────────────────────────────────────────────────
 export const useFollowedSellers = () =>
   useQuery({ queryKey: MKT_ACCOUNT_KEYS.followedSellers, queryFn: accountApi.listFollowedSellers });
 
-// Convenience: is the current user following this seller?
 export function useIsFollowing(sellerId: string): boolean {
   const { data } = useFollowedSellers();
   return (data ?? []).some((f) => f.sellerId === sellerId);
@@ -128,11 +121,9 @@ export function useUnfollowSeller() {
   });
 }
 
-// ── Reports (§31) ─────────────────────────────────────────────────────────────
 export function useCreateReport() {
   return useMutation({ mutationFn: accountApi.createReport });
 }
 
-// ── Meetup safe-spots (§27, used by Transact) ─────────────────────────────────
 export const useSafeSpots = (filter?: { state?: string; lga?: string }) =>
   useQuery({ queryKey: MKT_ACCOUNT_KEYS.safeSpots(filter), queryFn: () => accountApi.getSafeSpots(filter), staleTime: 10 * 60_000 });

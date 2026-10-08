@@ -1,4 +1,3 @@
-// ── Paymax Health — Veterinary React Query hooks (Phase 3) ───────────────────
 // Declarative data hooks the vet screens use. React Query v5.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -72,7 +71,6 @@ import type {
 
 const KEY = 'vet';
 
-// ── Pets ────────────────────────────────────────────────────────────────────
 export function usePets() {
   return useQuery({ queryKey: [KEY, 'pets'], queryFn: getPets, staleTime: 60_000 });
 }
@@ -130,7 +128,6 @@ export function useScheduleVaccination() {
   });
 }
 
-// ── Vets ────────────────────────────────────────────────────────────────────
 export function useVets(query?: VetQuery) {
   return useQuery({
     queryKey: [KEY, 'vets', query ?? {}],
@@ -173,7 +170,6 @@ export function useSubmitReview() {
   });
 }
 
-// ── Appointments ──────────────────────────────────────────────────────────────
 export function useAppointments() {
   return useQuery({ queryKey: [KEY, 'appointments'], queryFn: getAppointments, staleTime: 15_000 });
 }
@@ -211,7 +207,6 @@ export function useCancelAppointment() {
   });
 }
 
-// ── Consult ─────────────────────────────────────────────────────────────────
 export function useConsult(id?: string) {
   return useQuery({
     queryKey: [KEY, 'consult', id],
@@ -257,7 +252,6 @@ export function useConsultSummary(id?: string) {
   });
 }
 
-// ── e-Prescription ────────────────────────────────────────────────────────────
 export function usePrescription(id?: string) {
   return useQuery({
     queryKey: [KEY, 'prescription', id],
@@ -287,7 +281,6 @@ export function useSendRxToPharmacy() {
   });
 }
 
-// ── Meds & refills ──────────────────────────────────────────────────────────
 export function useMedications(petId?: string) {
   return useQuery({
     queryKey: [KEY, 'medications', petId ?? 'all'],
@@ -304,7 +297,6 @@ export function useRequestRefill() {
   });
 }
 
-// ── Home-visit tracking ─────────────────────────────────────────────────────
 export function useHomeVisitTracking(appointmentId?: string) {
   return useQuery({
     queryKey: [KEY, 'tracking', appointmentId],
@@ -314,12 +306,10 @@ export function useHomeVisitTracking(appointmentId?: string) {
   });
 }
 
-// ── Emergency ───────────────────────────────────────────────────────────────
 export function useEmergencyVets() {
   return useQuery({ queryKey: [KEY, 'emergency'], queryFn: getEmergencyVets, staleTime: 60_000 });
 }
 
-// ── Provider ────────────────────────────────────────────────────────────────
 export function useProviderProfile() {
   return useQuery({ queryKey: [KEY, 'provider', 'profile'], queryFn: getProviderProfile });
 }
@@ -332,7 +322,6 @@ export function useSubmitProviderOnboarding() {
   });
 }
 
-// ── Mode B (assisted) VCN verification ──────────────────────────────────────
 export function useSubmitVcnVerification() {
   const qc = useQueryClient();
   return useMutation({

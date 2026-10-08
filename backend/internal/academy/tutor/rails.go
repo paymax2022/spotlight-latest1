@@ -21,7 +21,6 @@ type PayoutRail interface {
 	Payout(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (ref string, err error)
 }
 
-// ── Default no-op / stub implementations (dev) ────────────────────────────────────
 // These let the package run end-to-end in dev without binding a vendor.
 
 // stubKYCChecker is the default when no checker is injected (dev). It reports tier 1 so

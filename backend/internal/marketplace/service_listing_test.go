@@ -32,3 +32,31 @@ func TestValidateCondition(t *testing.T) {
 		})
 	}
 }
+
+// TestListingTombstoned pins the public detail-read gate (E2E-SOC-037): only the
+// two soft-delete tombstones must 404 on GET /listings/:id. Every lifecycle
+// status stays readable — the route is auth-optional and the seller's own
+// detail view of a non-live listing comes through it (SOC-004 asserts
+// pending_review at 200).
+func TestListingTombstoned(t *testing.T) {
+	cases := []struct {
+		status ListingStatus
+		want   bool
+	}{
+		{ListingRemovedUser, true},
+		{ListingRemovedPolicy, true},
+		{ListingDraft, false},
+		{ListingPendingReview, false},
+		{ListingActive, false},
+		{ListingPaused, false},
+		{ListingExpired, false},
+		{ListingSold, false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.status), func(t *testing.T) {
+			if got := listingTombstoned(tc.status); got != tc.want {
+				t.Errorf("listingTombstoned(%q) = %v, want %v", tc.status, got, tc.want)
+			}
+		})
+	}
+}

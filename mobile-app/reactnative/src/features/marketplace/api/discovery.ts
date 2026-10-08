@@ -1,10 +1,5 @@
-// ── Marketplace — Discovery API (mock/live dispatch) ─────────────────────────
-//
-// The Discover group's data layer. Every function switches on MKT_USE_MOCK:
 //   • mock  → ../api/discovery.mock fixtures (offline-first, camelCase already)
 //   • live  → the shared client (mktGet/…) which normalizes snake→camel for us.
-//
-// GET /search returns 501 SEARCH_NOT_WIRED until Elasticsearch is configured;
 // searchListings() catches that (err.isSearchNotWired) and falls back to the mock
 // result set so Results/Map never dead-end while search is being provisioned.
 
@@ -22,8 +17,6 @@ import type {
   SellerProfile,
   Review,
 } from '../types';
-
-// ── Search ───────────────────────────────────────────────────────────────────
 
 export async function searchListings(params: SearchParams): Promise<SearchResponse> {
   if (MKT_USE_MOCK) return M.mockSearch(params);
@@ -57,15 +50,11 @@ export async function trendingSearches(): Promise<string[]> {
   return M.mockTrending();
 }
 
-// ── Listings ─────────────────────────────────────────────────────────────────
-
 export async function getListing(id: string): Promise<Listing> {
   if (MKT_USE_MOCK) return M.mockGetListing(id);
   return mktGet<Listing>(`/listings/${id}`);
 }
 
-// ── Home rails ───────────────────────────────────────────────────────────────
-// The Go module has no single "home" endpoint; live builds compose the rails from
 // /search sorts. Kept resilient — a rail failing returns empty rather than
 // blanking the whole Home screen.
 
@@ -91,8 +80,6 @@ export async function getHomeRails(coords?: { lat: number; lng: number }): Promi
   return { nearYou, priceDrops: [], escrowEligible };
 }
 
-// ── Categories ───────────────────────────────────────────────────────────────
-
 export async function getCategories(): Promise<Category[]> {
   if (MKT_USE_MOCK) return M.mockCategories();
   return arr(await mktGet<Category[]>('/categories'));
@@ -102,8 +89,6 @@ export async function getCategory(id: string): Promise<Category> {
   if (MKT_USE_MOCK) return M.mockGetCategory(id);
   return mktGet<Category>(`/categories/${id}`);
 }
-
-// ── Seller ───────────────────────────────────────────────────────────────────
 
 export async function getSellerProfile(id: string): Promise<SellerProfile> {
   if (MKT_USE_MOCK) return M.mockSellerProfile(id);
@@ -120,10 +105,8 @@ export async function getSellerReviews(id: string): Promise<Review[]> {
   return arr(await mktGet<Review[]>(`/sellers/${id}/reviews`));
 }
 
-// ── Saved items (wishlist) ───────────────────────────────────────────────────
 // Live source: GET /saved-items (added by the Trust/Account build — see
 // BUILD-STATUS §"Saved-items live enrichment"). The backend returns each
-// wishlist row with its current listing joined; we project that to the Discover
 // SavedItem shape ({ listing: summary, savedPriceKobo, savedAt }) the Saved
 // Items screen renders, so the "price changed" badge can compare saved vs.
 // current price. Rows whose listing has since been removed (no join) are
@@ -147,8 +130,6 @@ export async function getSavedItems(): Promise<SavedItem[]> {
       savedAt: r.createdAt,
     }));
 }
-
-// ── Saved searches (live: member CRUD; POST/GET/DELETE/PATCH /saved-searches) ─
 
 export async function listSavedSearches(): Promise<SavedSearch[]> {
   if (MKT_USE_MOCK) return M.mockListSavedSearches();

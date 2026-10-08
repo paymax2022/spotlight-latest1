@@ -1,24 +1,16 @@
-// ── Types — Paymax Health admin · Veterinary vertical (HEALTH-BUILD Phase 3 ADM) ──
 // Parallel to healthAdmin.ts (Pharmacy P1) and healthLabAdmin.ts (Lab P2) — do NOT
 // edit those files; this owns the Vet vertical.
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces the HEALTH invariants the Vet vertical enforces (HEALTH-BUILD §4 / §7C):
 //  HL-1 marketplace, not provider (VCN-licensed vets deliver all clinical care) ·
-//  HL-2 credential-gated supply (VCN vet licences; auto-suspend on expiry; VCN surfaced) ·
-//  HL-3 prescription discipline (e-Rx issued by a licensed vet; dispense-once; POM gating) ·
-//  HL-8 health data = sensitive NDPA (consent, masking, access-logged) ·
 //  HL-9 money held→released→refunded (escrow released on consult completion) ·
 //  HL-10 payout KYC + AML gate · HL-11 emergency safety (tele ≠ emergency; SOS → in-person) ·
 //  HL-12 immutable audit on every state transition / config change.
-//
 // Appointment state machine (HEALTH-BUILD §5 / HEALTH-RECONCILE §4):
-//  REQUESTED→ACCEPTED→CONFIRMED→IN_PROGRESS→COMPLETED ; (any)→CANCELLED|NO_SHOW ;
 //  CONFIRMED→RESCHEDULED→CONFIRMED. Consult: SCHEDULED→IN_PROGRESS→COMPLETED.
-// Prescription: ISSUED→SENT_TO_PHARMACY→VERIFYING→VERIFIED→DISPENSED→FULFILLED ;
 //  VERIFYING→REJECTED ; DISPENSED is terminal-once (no re-dispense — HL-3).
 // ProviderApplication (VCN): DRAFT→SUBMITTED→UNDER_REVIEW(↔NEEDS_INFO)→APPROVED(↔SUSPENDED)|REJECTED.
 
-// ── A · Dashboard ─────────────────────────────────────────────────────────────
 export type VetActivity = {
   id: string;
   kind: string; // vcn_approved | appointment_completed | eprescription_issued | payout_held | content_moderated | sos_routed ...
@@ -64,9 +56,17 @@ export type VetDashboard = {
   appointment_mix: { label: string; appointments: number; gmv_kobo: number; share_pct: number }[]; // tele / home / clinic
   appointments_trend: { date: string; appointments: number }[];
   activity: VetActivity[];
+
+  // backend (GET /admin/dashboard → healthvet.AdminDashboard). Additive/
+  // optional so the mock fixture above (which doesn't set them) still
+  // type-checks. See healthVetAdminService.ts getVetDashboard for the
+  // mapping and why they are distinct from the (still-mocked) fields above.
+  // Mirrors healthLabAdmin.ts's identical dashboard-fix addition exactly.
+  appointments_total?: number;
+  appointments_by_state?: Record<string, number>;
+  platform_revenue_kobo_week?: number;
 };
 
-// ── B · VCN credential audit queue (HL-2) ──────────────────────────────────────
 export type VcnApplicationStatus =
   | 'draft'
   | 'submitted'
@@ -111,7 +111,6 @@ export type VcnDecisionResult = {
   message: string;
 };
 
-// ── C · Service / fee governance ───────────────────────────────────────────────
 export type VetServiceStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type VetServiceMode = 'tele' | 'home' | 'clinic';
 
@@ -139,7 +138,6 @@ export type VetServiceGovernanceResult = {
   message: string;
 };
 
-// ── D · Appointment oversight ──────────────────────────────────────────────────
 export type AppointmentStatus =
   | 'requested'
   | 'accepted'
@@ -179,7 +177,6 @@ export type VetAppointmentDetail = VetAppointment & {
   timeline: { step: string; label: string; actor_masked: string; audit_id: string; at: string }[];
 };
 
-// ── E · E-prescription audit (HL-3) ────────────────────────────────────────────
 export type EprescriptionStatus =
   | 'issued'
   | 'sent_to_pharmacy'
@@ -199,7 +196,7 @@ export type EprescriptionAuditItem = {
   vcn_licence_no: string; // prescriber VCN licence — surfaced (HL-2/HL-3)
   drug_summary: string; // e.g. "Amoxicillin 250mg ×14 (POM)"
   is_pom: boolean; // prescription-only medicine — POM gating (HL-3)
-  is_controlled: boolean; // controlled substance — extra controls (HL-4; excluded at MVP)
+  is_controlled: boolean;
   status: EprescriptionStatus;
   dispense_once_ok: boolean; // true ⇒ single dispense enforced server-side (HL-3)
   flagged: boolean; // audit anomaly (e.g. expired licence at issue, duplicate dispense attempt)
@@ -208,7 +205,6 @@ export type EprescriptionAuditItem = {
   dispensed_at: string | null;
 };
 
-// ── F · Payouts (KYC-gated — HL-10) ────────────────────────────────────────────
 export type VetPayoutStatus = 'pending' | 'approved' | 'paid' | 'kyc_hold' | 'rejected';
 
 export type VetPayoutRecord = {
@@ -234,7 +230,6 @@ export type VetPayoutDecisionResult = {
   message: string;
 };
 
-// ── G · Content / credential moderation ────────────────────────────────────────
 export type ModerationStatus = 'open' | 'investigating' | 'resolved' | 'ignored';
 export type ModerationSeverity = 'low' | 'medium' | 'high';
 
@@ -259,7 +254,6 @@ export type ModerationResult = {
   message: string;
 };
 
-// ── H · Reporting ──────────────────────────────────────────────────────────────
 export type VetReportingData = {
   generated_at: string;
   period_label: string;

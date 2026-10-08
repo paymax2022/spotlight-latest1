@@ -7,11 +7,11 @@ import {
   GraduationCap, ChevronRight, UserCircle, Users, ClipboardList, CheckSquare,
   Radio, Wallet, Building2, ShieldCheck, Clock,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow3 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import Chip from '@/features/academy/components/Chip';
 import { formatNaira } from '@/features/academy/constants';

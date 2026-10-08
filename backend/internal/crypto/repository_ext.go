@@ -2,7 +2,9 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,8 +14,6 @@ import (
 // deposit addresses, and the withdrawal state machine. Holdings are moved ONLY
 // through these transactional methods (asset-unit legs); the cash legs live in the
 // finance ledger and are posted by the service.
-
-// ── Swap ────────────────────────────────────────────────────────────────────
 
 // RecordSwapFill atomically writes the swap order row and moves BOTH holding
 // projections in ONE transaction: from-asset units decrement (CHECK units>=0
@@ -25,7 +25,7 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `INSERT INTO crypto_swap_orders
 		(user_id, from_asset_id, to_asset_id, status, from_units, to_units,
@@ -39,7 +39,7 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 		o.FromPriceKobo, o.ToPriceKobo, o.CashKobo, o.SpreadKobo, o.SpreadBps,
 		o.IdempotencyKey(), o.Reference,
 	).Scan(&orderID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		if e := tx.QueryRow(ctx,
 			`SELECT id FROM crypto_swap_orders WHERE idempotency_key=$1`, o.IdempotencyKey()).Scan(&orderID); e != nil {
 			return "", false, e
@@ -111,8 +111,6 @@ func (r *Repository) SwapOrdersForUser(ctx context.Context, userID string, limit
 	return out, rows.Err()
 }
 
-// ── Address allow-list ──────────────────────────────────────────────────────
-
 // AddAddress inserts a whitelisted address (idempotent on the active partial
 // unique index). Returns the row; dup=true when it already existed.
 func (r *Repository) AddAddress(ctx context.Context, userID, assetID, label, network, address string) (*Address, bool, error) {
@@ -123,7 +121,7 @@ func (r *Repository) AddAddress(ctx context.Context, userID, assetID, label, net
 	var a Address
 	err := r.db.QueryRow(ctx, q, userID, assetID, label, network, address).Scan(
 		&a.ID, &a.UserID, &a.AssetID, &a.Label, &a.Network, &a.Address, &a.IsActive, &a.VerifiedAt, &a.CreatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Already exists (active). Fetch and return dup=true.
 		existing, e := r.GetActiveAddressByValue(ctx, userID, assetID, address)
 		if e != nil {
@@ -145,7 +143,7 @@ func (r *Repository) GetActiveAddressByValue(ctx context.Context, userID, assetI
 	var a Address
 	if err := r.db.QueryRow(ctx, q, userID, assetID, address).Scan(
 		&a.ID, &a.UserID, &a.AssetID, &a.Label, &a.Network, &a.Address, &a.IsActive, &a.VerifiedAt, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAddressNotFound
 		}
 		return nil, err
@@ -163,7 +161,7 @@ func (r *Repository) GetAddress(ctx context.Context, userID, id string) (*Addres
 	if err := r.db.QueryRow(ctx, q, id, userID).Scan(
 		&a.ID, &a.UserID, &a.AssetID, &a.Symbol, &a.Label, &a.Network, &a.Address,
 		&a.IsActive, &a.VerifiedAt, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAddressNotFound
 		}
 		return nil, err
@@ -215,8 +213,6 @@ func (r *Repository) DeleteAddress(ctx context.Context, userID, id string) error
 	return nil
 }
 
-// ── Deposit addresses ───────────────────────────────────────────────────────
-
 // GetOrCreateDepositAddress returns the persisted deposit address for (user,asset),
 // generating + persisting one via the supplied deriver on first request. The
 // UNIQUE(user_id,asset_id) constraint keeps it stable across calls.
@@ -237,7 +233,7 @@ func (r *Repository) GetOrCreateDepositAddress(
 		}
 		return &d, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	// Generate + persist (idempotent on the unique constraint).
@@ -261,8 +257,6 @@ func (r *Repository) GetOrCreateDepositAddress(
 	return &d, nil
 }
 
-// ── Withdrawal state machine ────────────────────────────────────────────────
-
 // CreateWithdrawal atomically inserts the withdrawal row (status=requested) and
 // parks the debited units by decrementing the holding projection (CHECK units>=0
 // fail-closes an over-withdrawal). No minting: units leave crypto_holdings and are
@@ -273,7 +267,7 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `INSERT INTO crypto_withdrawals
 		(user_id, asset_id, address_id, status, units, network_fee_units, fee_kobo,
@@ -286,7 +280,7 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		w.UserID, w.AssetID, w.AddressID, w.Units, w.NetworkFeeUnits, w.FeeKobo,
 		w.PriceKobo, w.Provider, w.IdempotencyKey(), w.Reference,
 	).Scan(&wid)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		if e := tx.QueryRow(ctx,
 			`SELECT id FROM crypto_withdrawals WHERE idempotency_key=$1`, w.IdempotencyKey()).Scan(&wid); e != nil {
 			return "", false, e
@@ -311,7 +305,6 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		return "", false, ErrInsufficient
 	}
 
-	// Record the opening transition (requested).
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1, NULL, 'requested', $2, 'withdrawal requested; units parked')`
 	if _, err := tx.Exec(ctx, evt, wid, w.UserID); err != nil {
@@ -337,7 +330,7 @@ func (r *Repository) TransitionWithdrawal(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const upd = `UPDATE crypto_withdrawals
 		SET status=$3,
@@ -371,7 +364,7 @@ func (r *Repository) TransitionWithdrawal(
 
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1,$2,$3,$4,$5)`
-	if _, err := tx.Exec(ctx, evt, id, from, to, nullStr(actorID), nullStr(detail)); err != nil {
+	if _, err := tx.Exec(ctx, evt, id, from, to, dbutil.NullStr(actorID), dbutil.NullStr(detail)); err != nil {
 		return nil, err
 	}
 
@@ -443,7 +436,7 @@ type rowScanner interface {
 
 func scanWithdrawal(row pgx.Row) (*Withdrawal, error) {
 	w, err := scanWithdrawalRows(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return w, err

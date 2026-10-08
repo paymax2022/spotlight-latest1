@@ -1,10 +1,7 @@
-// ── Device coordinates for "near me" restaurant sorting ──────────────────────
 // Raw {lat, lng} only — no reverse-geocode, unlike useCurrentLocation (the
 // address-picker's "use my location" button), which resolves a full address
 // and is heavier than a discovery screen sort needs.
-//
 // expo-location is loaded lazily and defensively, same reason as
-// useCurrentLocation: it may be absent in Expo Go or a JS-only build that
 // hasn't been rebuilt yet. `available: false` lets the UI just skip distance
 // sort instead of crashing.
 

@@ -1,5 +1,4 @@
 // Package rewards is the Spotlight Academy real-value sub-package.
-//
 // GOLDEN RULES (money path — enforced here, never relaxed):
 //  1. NO reward is credited without a FUNDED RewardPool. The pool balance check
 //     (funded_minor - spent_minor >= amount) is performed atomically under a
@@ -28,8 +27,6 @@ import (
 	"context"
 	"time"
 )
-
-// ── Injected collaborators (faked in tests, real in wiring) ─────────────────────
 
 // WalletCredit is the narrow seam onto finance/ledger.Service. The real
 // ledger.Service.Credit satisfies this; tests inject a fake to assert exactly one
@@ -64,8 +61,6 @@ type NopNotifier struct{}
 
 func (NopNotifier) RewardIssued(ctx context.Context, e LedgerEntry)                   {}
 func (NopNotifier) RewardRejected(ctx context.Context, userID, poolID, reason string) {}
-
-// ── Domain types (mirror migration columns exactly) ─────────────────────────────
 
 // EntryType mirrors academy_reward_ledger_entries.type CHECK.
 type EntryType string
@@ -153,8 +148,6 @@ type Redemption struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// ── Inputs / results ────────────────────────────────────────────────────────────
-
 // IssueInput is the request to issue a sponsor-funded reward.
 type IssueInput struct {
 	UserID         string
@@ -191,8 +184,6 @@ type RedeemInput struct {
 	SKU            string
 	IdempotencyKey string
 }
-
-// ── Admin request DTOs ──────────────────────────────────────────────────────────
 
 type CreatePoolRequest struct {
 	SponsorID           *string  `json:"sponsor_id,omitempty"`

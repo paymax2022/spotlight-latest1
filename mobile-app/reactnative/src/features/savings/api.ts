@@ -20,10 +20,8 @@ const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 // unwrap() returns that ENVELOPE — not the entity inside it. Mutation callers
 // below rely on that, because they read `balance_kobo` directly off the
 // envelope (`{ success, balance_kobo }`).
-//
 // Entity/list reads must therefore go through the `envelope.*` helpers to pull
 // their payload out by key. Calling unwrap() alone for a list yields the
-// envelope object, `Array.isArray()` is false, and the read silently degrades
 // to `[]` — an empty screen with no error. See ./envelope.ts.
 function unwrap<T>(res: { data: unknown }): T {
   return envelope.body(res) as T;
@@ -120,7 +118,6 @@ function idempotencyKey(): string {
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
 const daysAgo     = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
 
-// ── Mock fixtures (vaults across OPEN / LOCKED / FLEX / MATURED) ──────────────
 const MOCK_VAULTS: Vault[] = [
   {
     id: 'v_open', name: 'Rainy Day', emoji: '☔️', status: 'OPEN',
@@ -193,7 +190,6 @@ const MOCK_TARGETS: GroupTarget[] = [
   },
 ];
 
-// ── Reads ────────────────────────────────────────────────────────────────────
 // GET /summary → { success, summary: { vault_count, vault_balance_kobo,
 // circle_count, target_count, target_balance_kobo, total_saved_kobo } }.
 // Deriving this client-side from the lists cannot work: list rows carry no
@@ -246,7 +242,6 @@ export async function getEarlyWithdrawQuote(id: string): Promise<EarlyWithdrawQu
     return { vaultId: id, balanceKobo, penaltyKobo, netKobo: balanceKobo - penaltyKobo, allowed: true };
   }
   // Ask the SERVER. The rate is server policy now, so any client-side estimate
-  // could differ from what is actually debited; this endpoint runs the very same
   // function the charge uses, so quote and charge cannot disagree.
   const v = await getVault(id);
   const q = envelope.body(
@@ -308,7 +303,6 @@ export async function getTarget(id: string): Promise<GroupTarget> {
   return targetFromBackend(envelope.targetDetail(await api.get(`${API_BASE}/targets/${id}`)));
 }
 
-// ── Mutations (each carries an Idempotency-Key) ──────────────────────────────
 export async function createVault(input: CreateVaultInput): Promise<Vault> {
   if (USE_MOCK) {
     await delay();
@@ -400,7 +394,6 @@ export async function createCircle(input: CreateCircleInput): Promise<AjoCircle>
   return circleFromBackend(raw);
 }
 
-// POST /circles/:id/contribute exists (handler.go:441); /circles/:id/make-good
 // (:442) covers defaults separately.
 export async function contributeToCircle(id: string, amountKobo: number): Promise<ContributionResult> {
   if (USE_MOCK) { await delay(); return { ok: true, newBalanceKobo: amountKobo }; }

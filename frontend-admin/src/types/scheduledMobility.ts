@@ -1,4 +1,3 @@
-// ── Admin — Paymax Transport Scheduled Bookings types ────────────────────────
 // All monetary amounts are integers in minor units (kobo). Never floats.
 // Mirrors the Transport Scheduling SWARM_INTEGRATION_CONTRACT admin endpoints
 // under /api/finance/admin/transport/scheduled. Response shape is camelCase.
@@ -36,7 +35,6 @@ export interface ScheduledAuditEntry {
   createdAt: string;
 }
 
-// ─── Ops board row ────────────────────────────────────────────────────────────
 export interface ScheduledBookingRow {
   id: string;
   marketId: string;
@@ -59,7 +57,6 @@ export interface ScheduledBookingRow {
   updatedAt: string;
 }
 
-// ─── Detail ───────────────────────────────────────────────────────────────────
 export interface ScheduledBookingDetail extends ScheduledBookingRow {
   pickupGeo: { lat: number; lng: number } | null;
   dropoffGeo: { lat: number; lng: number } | null;
@@ -83,7 +80,6 @@ export interface ScheduledFilter {
   to?: string;
 }
 
-// ─── Admin mutation payloads — every mutation REQUIRES reason_code ──────────
 export interface ScheduledReasonPayload {
   reasonCode: string;
 }

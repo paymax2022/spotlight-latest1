@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	connectsafety "spotlight/backend/internal/connect/safety"
 	connecttrust "spotlight/backend/internal/connect/trust"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service owns the chat state machine. The single hard rule it enforces:
@@ -48,7 +53,6 @@ type participantMatch struct {
 // a participant of an active mutual match and no block exists. It lazily creates
 // the conversation row the first time a matched pair opens chat. This is the
 // server-side enforcement of "chat only after match".
-//
 // Sibling-owned schema (verified against 20260702000000_connect_phase1_core.sql):
 //
 //	connect_matches(id, profile_a, profile_b, status, ...)   profile_* → connect_profiles.id
@@ -197,7 +201,7 @@ func (s *Service) SendMessage(ctx context.Context, convID, userID string, req Se
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	pm, err := s.resolveConversationByID(ctx, tx, convID, userID)
 	if err != nil {
@@ -301,4 +305,139 @@ func (s *Service) SendMessage(ctx context.Context, convID, userID string, req Se
 // of a transaction.
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Conversation safety states (mirror the connect_conversations CHECK constraint).
+const (
+	StateOpen        = "open"
+	StateFlagged     = "flagged"
+	StateUnderReview = "under_review"
+	StateRestricted  = "restricted"
+	StateClosed      = "closed"
+)
+
+// Message kinds (mirror the connect_messages CHECK constraint).
+var messageKinds = map[string]bool{"text": true, "voice": true, "icebreaker": true}
+
+// ValidMessageKind reports whether k is an allowed message kind.
+func ValidMessageKind(k string) bool { return messageKinds[k] }
+
+// Message mirrors a row of public.connect_messages.
+type Message struct {
+	ID             string    `json:"id"`
+	ConversationID string    `json:"conversation_id"`
+	SenderID       string    `json:"sender_id"`
+	Body           string    `json:"body"`
+	Kind           string    `json:"kind"`
+	Flagged        bool      `json:"flagged"`
+	ReasonCodes    []string  `json:"reason_codes,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// SendMessageRequest is the member body for POST .../messages.
+type SendMessageRequest struct {
+	Body string `json:"body" binding:"required"`
+	Kind string `json:"kind"`
+}
+
+// SendResult is returned to the sender. The message is persisted even when
+// flagged (so moderators can see it), but the sender receives the inline
+// warning and is told whether the conversation was escalated.
+type SendResult struct {
+	Message   Message `json:"message"`
+	Warning   string  `json:"warning,omitempty"`
+	Flagged   bool    `json:"flagged"`
+	Escalated bool    `json:"escalated"`
+}
+
+// ErrNoMatch is returned when a user tries to chat without a mutual, active match.
+type chatError string
+
+func (e chatError) Error() string { return string(e) }
+
+const (
+	// ErrNoMatch — caller is not a participant of an active mutual match.
+	ErrNoMatch = chatError("connect: no mutual match for this conversation")
+	// ErrConversationClosed — the conversation is restricted/closed by moderation.
+	ErrConversationClosed = chatError("connect: conversation is not open")
+	// ErrBlocked — an active block exists between the two participants.
+	ErrBlocked = chatError("connect: messaging blocked between these users")
+	// ErrRestricted — the sender is suspended/banned (moderation enforcement, TS-009).
+	ErrRestricted = chatError("connect: account restricted")
+	// ErrSafetyUnavailable — safety config could not be loaded; the send fails
+	// closed (message not delivered unscanned) per invariant 12 (TS-013).
+	ErrSafetyUnavailable = chatError("connect: safety checks temporarily unavailable")
+)
+
+// Handler exposes the member chat endpoints.
+type Handler struct{ svc *Service }
+
+// NewHandler wires the chat handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// errMap maps the chat domain errors to HTTP codes. Match/authorization
+// failures are 403 (deny-by-default), not 404, since the caller is authenticated.
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusForbidden, ErrNoMatch, ErrBlocked, ErrRestricted),
+	httperr.R(http.StatusConflict, ErrConversationClosed),
+	httperr.R(http.StatusServiceUnavailable, ErrSafetyUnavailable),
+)
+
+// OpenConversation — POST /api/v1/connect/matches/:matchId/conversation
+// Returns (creating if needed) the conversation for a mutual match. 403 if the
+// caller is not a participant of an active match.
+func (h *Handler) OpenConversation(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	convID, state, err := h.svc.OpenConversation(c.Request.Context(), c.Param("matchId"), userID)
+	if err != nil {
+		c.JSON(errMap.Code(err), gin.H{"error": httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"conversation_id": convID, "safety_state": state}})
+}
+
+// ListMessages — GET /api/v1/connect/conversations/:id/messages (participant-only)
+func (h *Handler) ListMessages(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	limit := 0
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	msgs, err := h.svc.ListMessages(c.Request.Context(), c.Param("id"), userID, limit)
+	if err != nil {
+		c.JSON(errMap.Code(err), gin.H{"error": httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": msgs})
+}
+
+// SendMessage — POST /api/v1/connect/conversations/:id/messages
+// Blocked unless matched + open + no block; runs the inline AI safety hook.
+func (h *Handler) SendMessage(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	var req SendMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	res, err := h.svc.SendMessage(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		c.JSON(errMap.Code(err), gin.H{"error": httperr.Msg(c, errMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": res})
 }

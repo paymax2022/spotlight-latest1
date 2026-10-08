@@ -75,8 +75,6 @@ func New() *Store {
 	return s
 }
 
-// ── Seed ──────────────────────────────────────────────────────────────────────
-
 func (s *Store) seedAssets() {
 	s.assets = []domain.Asset{
 		{
@@ -85,8 +83,8 @@ func (s *Store) seedAssets() {
 			BuyEnabled: true, SellEnabled: true, DepositEnabled: true, WithdrawalEnabled: true,
 			MinOrderAmount: ngn(1_000), MaxOrderAmount: ngn(50_000_000),
 			Price: domain.Money{Amount: ngn(98_420_000), Currency: "NGN"}, Change24hPct: 2.41,
-			MarketCap: domain.Money{Amount: ngn(1_940_000_000_000_000), Currency: "NGN"},
-			Volume24h: domain.Money{Amount: ngn(48_200_000_000_000), Currency: "NGN"},
+			MarketCap:         domain.Money{Amount: ngn(1_940_000_000_000_000), Currency: "NGN"},
+			Volume24h:         domain.Money{Amount: ngn(48_200_000_000_000), Currency: "NGN"},
 			SupportedNetworks: []domain.Network{{ID: "bitcoin", Name: "Bitcoin", Confirmations: 2}},
 			Description:       "Bitcoin is the first and largest cryptocurrency by market value. It runs on a decentralised network and is often used as a long-term store of value.",
 			RiskDisclosure:    "Bitcoin is volatile and its price can move sharply in either direction within a single day.",
@@ -146,8 +144,8 @@ func (s *Store) seedAssets() {
 			BuyEnabled: true, SellEnabled: true, DepositEnabled: true, WithdrawalEnabled: true,
 			MinOrderAmount: ngn(1_000), MaxOrderAmount: ngn(10_000_000),
 			Price: domain.Money{Amount: ngn(238_500), Currency: "NGN"}, Change24hPct: 5.83,
-			MarketCap: domain.Money{Amount: ngn(112_000_000_000_000), Currency: "NGN"},
-			Volume24h: domain.Money{Amount: ngn(9_400_000_000_000), Currency: "NGN"},
+			MarketCap:         domain.Money{Amount: ngn(112_000_000_000_000), Currency: "NGN"},
+			Volume24h:         domain.Money{Amount: ngn(9_400_000_000_000), Currency: "NGN"},
 			SupportedNetworks: []domain.Network{{ID: "solana", Name: "Solana", Confirmations: 32}},
 			Description:       "Solana is a high-throughput blockchain known for fast, low-cost transactions and a growing app ecosystem.",
 			RiskDisclosure:    "Solana is a higher-risk asset with large price swings and periods of network congestion.",
@@ -159,8 +157,8 @@ func (s *Store) seedAssets() {
 			BuyEnabled: false, SellEnabled: false, DepositEnabled: false, WithdrawalEnabled: false,
 			MinOrderAmount: ngn(1_000), MaxOrderAmount: ngn(10_000_000),
 			Price: domain.Money{Amount: ngn(3_640), Currency: "NGN"}, Change24hPct: -0.74,
-			MarketCap: domain.Money{Amount: ngn(205_000_000_000_000), Currency: "NGN"},
-			Volume24h: domain.Money{Amount: ngn(6_200_000_000_000), Currency: "NGN"},
+			MarketCap:         domain.Money{Amount: ngn(205_000_000_000_000), Currency: "NGN"},
+			Volume24h:         domain.Money{Amount: ngn(6_200_000_000_000), Currency: "NGN"},
 			SupportedNetworks: []domain.Network{{ID: "xrpl", Name: "XRP Ledger", Confirmations: 1}},
 			Description:       "XRP is the native asset of the XRP Ledger, designed for fast, low-cost cross-border value transfer.",
 			RiskDisclosure:    "XRP is a higher-risk asset and is temporarily paused for trading on Paymax.",
@@ -187,8 +185,8 @@ func (s *Store) seedTxns() {
 			TxSummary: domain.TxSummary{
 				ID: "cx_1", Reference: "PMX-CR-840192", Side: "buy", Symbol: "BTC",
 				AssetName: "Bitcoin", IconColor: "#F7931A", Status: "Filled",
-				Fiat: domain.Money{Amount: ngn(500_000), Currency: "NGN"},
-				Crypto: domain.CryptoAmount{Amount: int64(math.Round(0.00508 * 1e8)), Symbol: "BTC"},
+				Fiat:      domain.Money{Amount: ngn(500_000), Currency: "NGN"},
+				Crypto:    domain.CryptoAmount{Amount: int64(math.Round(0.00508 * 1e8)), Symbol: "BTC"},
 				CreatedAt: hoursAgo(5),
 			},
 			AllInRate: domain.Money{Amount: ngn(98_900_000), Currency: "NGN"},
@@ -210,8 +208,8 @@ func (s *Store) seedTxns() {
 			TxSummary: domain.TxSummary{
 				ID: "cx_2", Reference: "PMX-CR-839004", Side: "buy", Symbol: "USDT",
 				AssetName: "Tether USD", IconColor: "#26A17B", Status: "Filled",
-				Fiat: domain.Money{Amount: ngn(200_000), Currency: "NGN"},
-				Crypto: domain.CryptoAmount{Amount: int64(math.Round(124.6 * 1e6)), Symbol: "USDT"},
+				Fiat:      domain.Money{Amount: ngn(200_000), Currency: "NGN"},
+				Crypto:    domain.CryptoAmount{Amount: int64(math.Round(124.6 * 1e6)), Symbol: "USDT"},
 				CreatedAt: hoursAgo(28),
 			},
 			AllInRate: domain.Money{Amount: ngn(1_605), Currency: "NGN"},
@@ -231,8 +229,8 @@ func (s *Store) seedTxns() {
 			TxSummary: domain.TxSummary{
 				ID: "cx_3", Reference: "PMX-CR-835517", Side: "sell", Symbol: "ETH",
 				AssetName: "Ethereum", IconColor: "#627EEA", Status: "Processing",
-				Fiat: domain.Money{Amount: ngn(310_000), Currency: "NGN"},
-				Crypto: domain.CryptoAmount{Amount: int64(math.Round(0.0588 * 1e8)), Symbol: "ETH"},
+				Fiat:      domain.Money{Amount: ngn(310_000), Currency: "NGN"},
+				Crypto:    domain.CryptoAmount{Amount: int64(math.Round(0.0588 * 1e8)), Symbol: "ETH"},
 				CreatedAt: hoursAgo(1),
 			},
 			AllInRate: domain.Money{Amount: ngn(5_270_000), Currency: "NGN"},
@@ -271,19 +269,17 @@ func (s *Store) seedAddresses() {
 		{
 			ID: "addr_1", Label: "My Ledger", Symbol: "BTC",
 			NetworkID: "bitcoin", NetworkName: "Bitcoin",
-			Address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+			Address:     "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
 			Whitelisted: true, Screened: true, AddedAt: hoursAgo(216),
 		},
 		{
 			ID: "addr_2", Label: "Binance USDT", Symbol: "USDT",
 			NetworkID: "tron", NetworkName: "Tron (TRC-20)",
-			Address: "TJ8s3sB1kY7Yb9aQ2cZx4pN6mWvL1rGq5d",
+			Address:     "TJ8s3sB1kY7Yb9aQ2cZx4pN6mWvL1rGq5d",
 			Whitelisted: true, Screened: true, AddedAt: hoursAgo(72),
 		},
 	}
 }
-
-// ── Eligibility ───────────────────────────────────────────────────────────────
 
 // Eligibility returns the demo user's compliance facts.
 func (s *Store) Eligibility() domain.EligibilityFacts {
@@ -299,8 +295,6 @@ func (s *Store) SetEligibility(f domain.EligibilityFacts) {
 	defer s.mu.Unlock()
 	s.eligibility = f
 }
-
-// ── Assets ────────────────────────────────────────────────────────────────────
 
 // Assets returns a copy of the whitelisted assets.
 func (s *Store) Assets() []domain.Asset {
@@ -324,8 +318,6 @@ func (s *Store) findAsset(key string) (domain.Asset, bool) {
 	}
 	return domain.Asset{}, false
 }
-
-// ── Quotes ────────────────────────────────────────────────────────────────────
 
 func (s *Store) PutQuote(q domain.Quote) {
 	s.mu.Lock()
@@ -375,8 +367,6 @@ func quoteExpired(expiresAt string) bool {
 	return !time.Now().Before(t)
 }
 
-// ── Idempotency ───────────────────────────────────────────────────────────────
-
 func (s *Store) Idempotent(key string) (any, bool) {
 	if key == "" {
 		return nil, false
@@ -395,8 +385,6 @@ func (s *Store) SaveIdempotent(key string, v any) {
 	defer s.mu.Unlock()
 	s.idem[key] = v
 }
-
-// ── Positions / portfolio ─────────────────────────────────────────────────────
 
 func (s *Store) position(assetID string) (*posState, int) {
 	for i := range s.positions {
@@ -486,8 +474,6 @@ func (s *Store) Portfolio() domain.Portfolio {
 	}
 }
 
-// ── Transactions ──────────────────────────────────────────────────────────────
-
 // Transactions returns history summaries, newest first, optionally by side.
 func (s *Store) Transactions(side string) []domain.TxSummary {
 	s.mu.Lock()
@@ -530,8 +516,6 @@ func (s *Store) Transaction(id string) (domain.TxDetail, bool) {
 	return domain.TxDetail{}, false
 }
 
-// ── Watchlist ─────────────────────────────────────────────────────────────────
-
 func (s *Store) Watchlist() []domain.Asset {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -546,8 +530,6 @@ func (s *Store) Watchlist() []domain.Asset {
 
 func (s *Store) AddWatch(assetID string)    { s.mu.Lock(); s.watch[assetID] = true; s.mu.Unlock() }
 func (s *Store) RemoveWatch(assetID string) { s.mu.Lock(); delete(s.watch, assetID); s.mu.Unlock() }
-
-// ── Alerts ────────────────────────────────────────────────────────────────────
 
 func (s *Store) Alerts() []domain.PriceAlert {
 	s.mu.Lock()
@@ -584,8 +566,6 @@ func (s *Store) DeleteAlert(id string) {
 	}
 	s.alerts = out
 }
-
-// ── Addresses ─────────────────────────────────────────────────────────────────
 
 func (s *Store) Addresses(symbol string) []domain.Address {
 	s.mu.Lock()
@@ -648,8 +628,6 @@ func (s *Store) AddressByID(id string) (domain.Address, bool) {
 	return domain.Address{}, false
 }
 
-// ── Ledger ────────────────────────────────────────────────────────────────────
-
 func (s *Store) appendLedger(txID, debit, credit string, amount int64, currency, typ, ref, provRef string) {
 	s.ledger = append(s.ledger, domain.LedgerEntry{
 		ID: engine.NewID("le"), TransactionID: txID, DebitAccount: debit, CreditAccount: credit,
@@ -657,8 +635,6 @@ func (s *Store) appendLedger(txID, debit, credit string, amount int64, currency,
 		CreatedAt: engine.Now(),
 	})
 }
-
-// ── Execution (buy / sell / swap) — updates positions + ledger + history ──────
 
 // ExecuteBuy fills a buy: debit cash, credit crypto, post the ledger + history.
 func (s *Store) ExecuteBuy(q domain.Quote) (domain.Order, *ExecError) {

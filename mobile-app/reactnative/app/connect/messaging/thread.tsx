@@ -10,10 +10,10 @@ import {
   ArrowLeft, BadgeCheck, Phone, Video, ShieldAlert,
   Send, Sparkles, MapPin, Lock,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { useThread, useSendMessage } from '@/features/connect/messaging/hooks';

@@ -20,12 +20,13 @@ export async function POST(request: Request) {
     if (!featureFlags.kyc()) return errorResponse('KYC feature is not available', 503);
 
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       document_type?: string;
       document_number?: string;
       phone?: string;
       requested_tier?: number;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.document_type || !ALLOWED_DOC_TYPES.includes(body.document_type as DocumentType)) {
       return errorResponse(

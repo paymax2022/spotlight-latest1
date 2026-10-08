@@ -22,6 +22,19 @@ services:
       REDIS_URL: redis://redis:6379
       # Local Supabase REST API
       SUPABASE_URL: http://host.docker.internal:54321
+      # E2E-PERF-061 (local close): verify JWTs locally instead of a per-request
+      # GoTrue GET /auth/v1/user — the per-request call opens a fresh Postgres
+      # connection through GoTrue every request and was the measured authed
+      # ceiling (~50–100 req/s, ephemeral-port exhaustion at ~25 VU). ES256
+      # verifies against the JWKS at SUPABASE_URL above. Safe locally: the only
+      # trade-off is GoTrue logout/password-change staleness bounded by the
+      # access-token TTL, and platform_users status still gates per request.
+      # PROD stays a deliberate decision — see jwt_local.go's revocation note.
+      # E2E-SEC-055 residual: FEATURE_SESSION_HARDENING stays OFF even with
+      # local verify — turning it on without a session-sync-on-refresh design
+      # 401s every token minted outside Login (GoTrue refresh rotation,
+      # password grants) since ValidateAccess fails closed on a missing row.
+      AUTH_JWT_LOCAL_VERIFY: "true"
     depends_on:
       redis:
         condition: service_healthy
@@ -132,6 +145,34 @@ services:
     environment:
       FEATURE_TRANSPORT_SCHEDULING_ENABLED: "true"
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Notification delivery worker ───────────────────────────────────────────
+  # Consumes the notification:push/email/sms asynq tasks the api enqueues —
+  # health appointment/vaccination reminders, wallet events, estate notices.
+  # E2E-BE-031: nothing local consumed the queue, so enqueued tasks sat
+  # pending forever (the scheduler poller writes them; this drains them).
+  # Render already runs the same binary in prod (render.yaml
+  # spotlight-notification-worker). Profile-gated so it only runs when
+  # notification delivery is being exercised locally:
+  #   docker compose --profile notifications up notification-worker
+  # Provider creds (RESEND_API_KEY / TERMII_API_KEY / Expo) are unset locally —
+  # provider calls fail and the task retries, which is the observable behavior
+  # you want when testing enqueue→consume without real delivery.
+  notification-worker:
+    profiles: ["notifications"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/app/notification-worker"]
+    environment:
+      # Local-only dev fixture (postgres:postgres on the Supabase CLI sidecar
+      # port), same DSN the other compose services carry.
+      DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable # trufflehog:ignore
       REDIS_URL: redis://redis:6379
     depends_on:
       redis:

@@ -1,6 +1,4 @@
-// ── Arena spectator reads — mock fallback (dev / offline) ────────────────────
 // The public spectator screens (home leaderboard, State Pride, pot, driver
-// profile) read from the Go backend. When it isn't running in dev these 404;
 // these deterministic mocks keep the screens walkable. No effect once the backend
 // is live (the api reads only fall back on error/empty).
 

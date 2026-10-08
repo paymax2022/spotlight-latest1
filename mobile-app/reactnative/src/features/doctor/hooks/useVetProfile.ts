@@ -1,6 +1,4 @@
-// ── Doctor — Batch 1 · Section C · vet profile & verification hooks ───────────
 // Veterinary profile builder draft + verification lifecycle (vet equivalent of
-// Section B). Reads use the DEMO_* exports as placeholderData; mutations
 // auto-generate the Idempotency-Key.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

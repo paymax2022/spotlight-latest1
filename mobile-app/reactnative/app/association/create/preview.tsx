@@ -3,24 +3,28 @@ import { View, Text, Image, ScrollView, Pressable, StyleSheet, Alert } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CheckSquare, Square, Pencil } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import WizardProgress from '@/features/association/components/WizardProgress';
+import {WizardProgress} from '@/features/association/components';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { useCreateOrganisation } from '@/features/association/hooks/useCreateOrganisation';
-import { initials, formatNaira } from '@/features/association/utils/associationFormatters';
-import { CADENCE_LABEL } from '@/features/association/constants/association.constants';
-import { GROUP_TYPE_OPTIONS, APPROVAL_RULE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
+import { useCreateOrganisation } from '@/features/association/hooks';
+import { initials, formatNaira, isRemoteLogoUrl } from '@/features/association/utils';
+import { CADENCE_LABEL } from '@/features/association/constants';
+import { GROUP_TYPE_OPTIONS, APPROVAL_RULE_OPTIONS } from '@/features/association/constants';
 
 export default function WizardPreview() {
   const { draft, patch, reset } = useOrgDraft();
   const create = useCreateOrganisation();
   const [touched, setTouched] = useState(false);
+
+  // An uploaded logo is stored as an R2 object key, which is not fetchable, so
+  // show the local preview picked on the Branding step; a pasted URL renders as-is.
+  const logoSrc = draft.logoPreviewUri ?? (draft.logoUri && isRemoteLogoUrl(draft.logoUri) ? draft.logoUri : null);
 
   const groupTypeLabel = GROUP_TYPE_OPTIONS.find((o) => o.value === draft.groupType)?.label ?? '—';
   const approvalLabel = APPROVAL_RULE_OPTIONS.find((o) => o.value === draft.approvalRule)?.label ?? '—';
@@ -43,7 +47,7 @@ export default function WizardPreview() {
         <View style={[styles.card, shadow1]}>
           <View style={styles.identity}>
             <View style={styles.logo}>
-              {draft.logoUri ? <Image source={{ uri: draft.logoUri }} style={styles.logoImg} /> : <Text style={styles.logoText}>{draft.acronym || initials(draft.name || 'NA')}</Text>}
+              {logoSrc ? <Image source={{ uri: logoSrc }} style={styles.logoImg} /> : <Text style={styles.logoText}>{draft.acronym || initials(draft.name || 'NA')}</Text>}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{draft.name || 'Untitled organisation'}</Text>

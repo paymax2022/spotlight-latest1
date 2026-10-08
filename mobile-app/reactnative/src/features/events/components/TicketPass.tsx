@@ -1,11 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Calendar, MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
 import QrCodeView from '@/components/QrCodeView';
 import { EventColors, TICKET_STATE_BADGE, eventCoverEmoji, eventBannerColor } from '../constants/events.constants';
 import type { Ticket, EventDetail } from '../types';

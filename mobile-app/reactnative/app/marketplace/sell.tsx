@@ -1,4 +1,3 @@
-// ── Sell tab — My Listings dashboard (15) OR Sell entry CTA (10) ─────────────
 // If the seller has listings → the My Listings command center (status chips,
 // per-listing stats, quick actions: renew / pause·resume / mark sold / boost).
 // If not → the zero-friction Sell entry CTA into the camera-first composer.
@@ -8,10 +7,10 @@ import { View, Text, StyleSheet, Pressable, ScrollView, Image, RefreshControl } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Camera, Plus, Eye, Heart, Zap, Play, Pause, RefreshCw, CheckCircle2, Tag, Pencil, ListChecks, Circle, Trash2, X, TrendingUp } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
@@ -72,7 +71,6 @@ export default function SellTab() {
   return <MyListings listings={listings} refreshing={listingsQuery.isRefetching} onRefresh={() => listingsQuery.refetch()} />;
 }
 
-// ── Screen 10 entry — empty state → camera composer ──
 function SellEntry() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -102,7 +100,6 @@ function EntryPoint({ icon: Icon, text }: { icon: React.ComponentType<{ size?: n
   );
 }
 
-// ── Screen 15 — My Listings dashboard ──
 function MyListings({ listings, refreshing, onRefresh }: { listings: Listing[]; refreshing: boolean; onRefresh: () => void }) {
   const [filter, setFilter] = useState<'all' | ListingStatus>('all');
   const [selectMode, setSelectMode] = useState(false);

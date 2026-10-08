@@ -2,11 +2,11 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ShieldCheck, Trophy } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useClassLeaderboard } from '@/features/academy/hooks';
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   rowMe: { borderWidth: 1.5, borderColor: Colors.primary },
   rankWrap: { width: 30, alignItems: 'center' },
   rank: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
-  rankPodiumText: { color: Colors.gold, fontWeight: '700' },
+  rankPodiumText: { color: Colors.onWarning, fontWeight: '700' },
   avatar: { width: 38, height: 38, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerHigh },
   avatarText: { ...Typography.labelLg, color: Colors.primary, fontWeight: '700' },
   name: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },

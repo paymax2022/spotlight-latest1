@@ -1,13 +1,11 @@
 'use client';
 
 // Vote packages — one console surface for both halves of the job.
-//
 // This page merges two implementations that were built concurrently:
 //   · a per-contest package manager (what voters can actually buy), and
 //   · a reusable template catalog (definitions authored once and attached).
 // They are two halves of one workflow, and having them on separate screens
 // meant an operator had to know which one they wanted before they could look.
-//
 // WHY EACH HALF EXISTS
 // /api/admin/voting/packages has had full CRUD behind `votes:manage` for a long
 // time and nothing in the console called it, so in practice contests shipped
@@ -16,7 +14,6 @@
 // Separately, vote_packages.contest_id is NOT NULL, so a package belongs to
 // exactly one contest and there was no way to reuse a tier: every contest meant
 // retyping the same ladder, and they drifted apart.
-//
 // ⚠️ UNITS: `amount` is NAIRA end to end — the column, the admin API, the
 // templates and both forms here. Only /api/v1/contests/[id]/vote-packages
 // converts to kobo for the app. Entering kobo would price everything at 100x.

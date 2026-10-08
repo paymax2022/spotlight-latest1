@@ -23,7 +23,6 @@ const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_CREATORS: Creator[] = [
   { id: 'cr_tope',  handle: '@topebeats', displayName: 'Tope Beats',   bio: 'Afrobeats producer. New packs weekly.', avatarColor: '#0051D5', category: 'Music',     verified: true,  subscriberCount: 1240, fromPriceKobo: 100_000,  acceptsTips: true },
   { id: 'cr_lara',  handle: '@laracooks', displayName: 'Lara Cooks',   bio: 'Naija home cooking, step by step.',      avatarColor: '#16A34A', category: 'Food',      verified: true,  subscriberCount: 8930, fromPriceKobo: 50_000,   acceptsTips: true },
@@ -69,11 +68,11 @@ const MOCK_EARNINGS: CreatorEarnings = {
   ],
 };
 
-// ── Reads ────────────────────────────────────────────────────────────────────
 // MISSING BACKEND ENDPOINT: no creator discovery/list endpoint exists (the
 // backend only exposes GET /creators/:creatorId — a single storefront read).
 // Falls back to the mock directory so Discover/search still renders.
 export async function listCreators(query?: string): Promise<Creator[]> {
+  if (!USE_MOCK) return [];
   await delay();
   const q = (query ?? '').trim().toLowerCase().replace(/^@/, '');
   if (!q) return MOCK_CREATORS;
@@ -82,7 +81,6 @@ export async function listCreators(query?: string): Promise<Creator[]> {
   );
 }
 
-// Backend: GET /creators/:creatorId → { success, profile }. The backend
 // returns only the creator profile — tiers/content/isSubscribed are NOT part
 // of this response (MISSING: a combined storefront read). We map the profile
 // fields we can and fall back to the mock tiers/content/subscription state so
@@ -154,6 +152,7 @@ function mapContent(c: Record<string, unknown>): GatedContent {
 // MISSING BACKEND ENDPOINT: no "my content" list endpoint for a creator's own
 // catalogue exists (only single-item GET /creators/content/:contentId).
 export async function listMyContent(): Promise<GatedContent[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return contentFor('cr_tope');
 }
@@ -161,11 +160,11 @@ export async function listMyContent(): Promise<GatedContent[]> {
 // MISSING BACKEND ENDPOINT: no "my subscriptions" list endpoint exists (the
 // backend only exposes mutation endpoints — Subscribe/CancelSub — no read).
 export async function listSubscriptions(): Promise<Subscription[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_SUBSCRIPTIONS;
 }
 
-// Backend: GET /creators/earnings/balance → { success, balance_kobo }. Only
 // the available balance is returned (no pending/lifetime/recent breakdown —
 // MISSING: a full earnings summary). We keep the rest from the mock shape.
 export async function getEarnings(): Promise<CreatorEarnings> {
@@ -175,7 +174,6 @@ export async function getEarnings(): Promise<CreatorEarnings> {
   return { ...MOCK_EARNINGS, availableKobo };
 }
 
-// ── Mutations (each money-path call carries an Idempotency-Key) ──────────────
 // Backend: POST /creators/:creatorId/tip expects { amount_kobo } → { success, tip }.
 export async function sendTip(input: TipInput): Promise<TipResult> {
   if (USE_MOCK) { await delay(); return { id: `tip_${Date.now()}`, ok: true }; }
@@ -288,11 +286,12 @@ export async function requestPayout(input: PayoutInput): Promise<PayoutResult> {
 // incomplete, but there is no member-facing endpoint to complete it — KYC is
 // owned by finance/kyc and has no creators-specific wiring yet).
 export async function completePayoutKyc(legalName: string, kycRef: string): Promise<{ ok: boolean }> {
+  // Reporting success here told a creator their payout KYC was done when nothing was sent.
+  if (!USE_MOCK) throw new Error('Payout verification is not available in the app yet.');
   await delay();
   return { ok: true };
 }
 
-// Backend: POST /creators/content expects { title, body, price_kobo,
 // age_rating } → { success, content }. NOTE: `kind`/`ageRestricted` (boolean)
 // have no direct backend field — we map ageRestricted to an AgeRating string
 // (MATURE/GENERAL) since that's what the backend models.

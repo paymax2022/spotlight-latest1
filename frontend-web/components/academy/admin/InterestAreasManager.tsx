@@ -1,15 +1,12 @@
 'use client';
 
-// ── Admin — Film Academy areas of interest ───────────────────────────────────
 // Each area carries a NAIRA fee ADDED to the base application fee. An applicant
 // selecting three areas pays application_fee + the three fees, and the total is
 // recomputed server-side on submit — so a fee edited here applies to the next
 // application immediately, with nothing to invalidate.
-//
 // The SLUG is intentionally read-only after creation: it is written into
 // academy_applications.areas_of_interest, and changing it would orphan every
 // historic application that referenced it. Labels are free to change.
-//
 // Retiring uses the Active toggle rather than deletion, for the same reason —
 // a deleted area would leave old applications pointing at nothing.
 

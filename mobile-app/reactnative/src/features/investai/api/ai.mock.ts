@@ -1,4 +1,3 @@
-// ── Paymax Invest · AI Investment Education Assistant — Mock engine ───────────
 // Deterministic, guardrailed canned responses so every UI state renders in mock
 // mode. Implements the policy from docs/crypto/modules.md entirely client-side:
 //  1. Detect advice-seeking / prediction / guarantee prompts → return REFUSAL.

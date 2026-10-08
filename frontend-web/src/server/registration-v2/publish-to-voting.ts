@@ -1,18 +1,14 @@
 // Publish an admin-created registration contest into the voting plane.
-//
 // THE THREE PLANES
 //   contest_registration_contests  what /admin/contests persists (registration
-//                                  definition: form schema, fees, consent rules)
 //   contests                       the contest the web app and admin voting
 //                                  console operate on
 //   connect_contests               what the MOBILE app reads, via Go
 //                                  GET /api/v1/connect/contests
-//
 // The second hop already exists: 20261223000000_connect_contests_bridge.sql
 // mirrors contests -> connect_contests on a trigger, preserving the id. So this
 // module only has to write the FIRST hop. Writing to `contests` is enough for a
 // contest to reach the phone.
-//
 // Nothing here edits a protected legacy file. The contests/voting module is
 // wrapped, not modified, per CLAUDE.md and the vote-bridge skill.
 import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
@@ -81,7 +77,6 @@ export async function publishContestToVotingPlane(
     status: 'upcoming' as const,
     voting_enabled: true,
     // Paid voting OFF. A vote price is a commercial decision an admin makes
-    // explicitly; inventing one here would put a price in front of voters that
     // nobody set.
     voting_type: 'free',
     vote_price_ngn: 0,
@@ -100,7 +95,10 @@ export async function publishContestToVotingPlane(
 
   if (findErr) {
     console.error('[publish-to-voting] slug lookup failed', { slug: def.slug, error: findErr.message });
-    return { published: false, reason: 'failed', detail: findErr.message };
+    // No PostgREST text in `detail` — the caller embeds this object verbatim in
+    // the admin response body, and findErr.message carries SQLSTATE/schema
+    // internals. reason:'failed' plus the server log is enough.
+    return { published: false, reason: 'failed' };
   }
 
   if (existing) {
@@ -127,7 +125,7 @@ export async function publishContestToVotingPlane(
     const { error } = await supabase.from('contests').update(safeUpdate).eq('id', id);
     if (error) {
       console.error('[publish-to-voting] update failed', { slug: def.slug, error: error.message });
-      return { published: false, reason: 'failed', detail: error.message };
+      return { published: false, reason: 'failed' };
     }
     return { published: true, contestId: id, created: false };
   }
@@ -135,7 +133,7 @@ export async function publishContestToVotingPlane(
   const { data, error } = await supabase.from('contests').insert(payload).select('id').single();
   if (error || !data) {
     console.error('[publish-to-voting] insert failed', { slug: def.slug, error: error?.message });
-    return { published: false, reason: 'failed', detail: error?.message };
+    return { published: false, reason: 'failed' };
   }
   return { published: true, contestId: (data as { id: string }).id, created: true };
 }

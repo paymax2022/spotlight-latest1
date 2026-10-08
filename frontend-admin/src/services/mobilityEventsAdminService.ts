@@ -1,5 +1,3 @@
-// ── Admin — Paymax Mobility Event Transport service ──────────────────────────
-// Event transport offers · bookings. Mock by default; flip USE_MOCK to false
 // and the fetch branches hit /api/finance/admin/transport/events/*. This route
 // IS live — registered under FeatureTransportModesEnabled, same as the sibling
 // mobilityModesAdminService.ts — the OLD "Go backend admin endpoints not live
@@ -14,7 +12,6 @@ import type {
   ModeStatusPatch,
 } from '@/types/mobilityModes';
 
-// Mock by default; flip with NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK=false once the
 // admin control-plane endpoints are live on the Go backend.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK);
 
@@ -22,8 +19,6 @@ const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK)
 // see backend/internal/app/finance_routes.go's `adminTr` group), so the caller
 // must spell the full path out. apiRoot() strips any trailing /api/v1 from the
 // proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy
 // path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
 // for the same regression. Every request 404'd against <proxy>/events/offers
@@ -33,10 +28,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,8 +51,6 @@ async function writeOk(url: string, init: RequestInit): Promise<{ ok: boolean }>
   return { ok: true };
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
-
 const OFFERS: EventOfferRow[] = [
   { id: 'evo_1001', eventId: 'evt_5001', organizerName: 'Spotlight Live Events', type: 'fan_bus', title: 'Burna Boy Concert — Fan Bus (Mainland)', venue: 'Eko Convention Centre, VI', capacity: 50, bookedCount: 50, fareKobo: 5_000_00, departureTime: '2026-06-25T16:00:00Z', busScheduleId: 'sch_1', status: 'full', createdAt: '2026-06-10T09:00:00Z', updatedAt: '2026-06-21T10:00:00Z' },
   { id: 'evo_1002', eventId: 'evt_5001', organizerName: 'Spotlight Live Events', type: 'group_ride', title: 'Burna Boy Concert — Group Ride (Lekki)', venue: 'Eko Convention Centre, VI', capacity: 6, bookedCount: 3, fareKobo: 8_000_00, departureTime: '2026-06-25T17:00:00Z', busScheduleId: null, status: 'open', createdAt: '2026-06-11T09:00:00Z', updatedAt: '2026-06-20T14:00:00Z' },
@@ -77,7 +67,6 @@ let BOOKINGS: EventBookingRow[] = [
   { id: 'evb_2005', offerId: 'evo_1001', offerTitle: 'Burna Boy Concert — Fan Bus (Mainland)', riderName: 'Bayo L.', type: 'fan_bus', seats: 1, fareKobo: 5_000_00, totalKobo: 5_000_00, ticketRef: null, status: 'refunded', escrowStatus: 'refunded', bookedAt: '2026-06-16T11:00:00Z' },
 ];
 
-// ─── Offers ───────────────────────────────────────────────────────────────────
 export async function getEventOffers(status?: EventOfferStatus | ''): Promise<EventOfferRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -95,7 +84,6 @@ export async function setEventOfferStatus(id: string, patch: ModeStatusPatch): P
   return writeOk(`${adminBase()}/events/offers/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
-// ─── Bookings (read-only) ─────────────────────────────────────────────────────
 export async function getEventBookings(status?: EventBookingStatus | ''): Promise<EventBookingRow[]> {
   if (USE_MOCK) {
     await delay();

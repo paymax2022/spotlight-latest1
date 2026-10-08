@@ -2,10 +2,10 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
 import * as Icons from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StatusBadge from './StatusBadge';
 import type { StatusTone } from './StatusBadge';
 import { DISPUTE_KIND_LABELS, DISPUTE_STATUS_LABELS } from '@/features/doctor/constants';
@@ -13,7 +13,6 @@ import { formatKobo } from '@/api/doctor.batch7.api';
 import type { Dispute, DisputeKind } from '@/types/doctor.batch7';
 
 // New component: a tappable dispute summary row for the AA dispute list. The
-// eight dispute kinds collapse to one row keyed off Dispute.kind; existing rows
 // (TicketRow inline, AlertCard) do not model ref + kind + disputed-amount +
 // status, so this is genuinely new. Reuses StatusBadge for the status pill.
 

@@ -2,10 +2,10 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Leaf } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { ReferralHeader, DisclosureCard } from '@/features/referral/components';
 import { RESPONSIBLE_EARNING_POINTS, COMPLIANT_EARN_LINE } from '@/features/referral/constants/referral.constants';
 

@@ -1,8 +1,6 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for the operator-tunable Paymax FX markup (ADR-030).
-//
 // The markup decides what every customer pays on a conversion, so this proves
 // against a real database that:
 //   - the seeded DEFAULT rate is 1% and resolves for any corridor;
@@ -12,14 +10,11 @@ package fx_test
 //   - a deactivated corridor rate falls back to DEFAULT rather than to zero;
 //   - EVERY change writes an immutable before/after audit row naming the actor;
 //   - the fat-finger ceiling is enforced by the store AND by the table CHECK.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
-//
 // Bring-up: apply migrations incl. 20261204000000_fx_markup_rates.sql, then:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run MarkupStore -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -41,9 +36,9 @@ func isolateCorridor(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 	corridor := "ZZ" + uuid.NewString()[:4] + "-QQ" + uuid.NewString()[:4]
 	corridor = fx.NormalizeCorridor(corridor)
 	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_markup_rate_audit WHERE corridor=$1`, corridor)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_markup_rates WHERE corridor=$1`, corridor)
+		ctx := t.Context()
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_markup_rate_audit WHERE corridor=$1`, corridor)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_markup_rates WHERE corridor=$1`, corridor)
 	})
 	return corridor
 }
@@ -51,7 +46,7 @@ func isolateCorridor(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 // splitCorridor turns "AAA-BBB" back into its two currency halves.
 func splitCorridor(t *testing.T, corridor string) (string, string) {
 	t.Helper()
-	for i := 0; i < len(corridor); i++ {
+	for i := range len(corridor) {
 		if corridor[i] == '-' {
 			return corridor[:i], corridor[i+1:]
 		}
@@ -61,7 +56,7 @@ func splitCorridor(t *testing.T, corridor string) (string, string) {
 }
 
 func TestMarkupStore_SeededDefaultIsOnePercent(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 
@@ -91,7 +86,7 @@ func TestMarkupStore_SeededDefaultIsOnePercent(t *testing.T) {
 // The whole point of moving the rate into the DB: an admin edit must change what
 // the next conversion charges, with no restart and no cache to invalidate.
 func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 
@@ -122,7 +117,6 @@ func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
 	if fee, err := store.FeeMinor(ctx, src, tgt, 100_000); err != nil || fee != 2_500 {
 		t.Fatalf("post-override fee = %d (err %v), want 2,500", fee, err)
 	}
-	// ...and only for this corridor.
 	if fee, err := store.FeeMinor(ctx, "GBP", "KES", 100_000); err != nil || fee != 1_000 {
 		t.Fatalf("unrelated corridor fee = %d (err %v), want the 1,000 default", fee, err)
 	}
@@ -146,7 +140,7 @@ func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
 
 // Changing a customer-facing fee must always be attributable.
 func TestMarkupStore_EveryChangeIsAudited(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 
@@ -200,7 +194,7 @@ func TestMarkupStore_EveryChangeIsAudited(t *testing.T) {
 // The ceiling is a fat-finger guard on a customer-facing charge, so it is
 // enforced in the store as well as by the table's CHECK constraint.
 func TestMarkupStore_RejectsOutOfRange(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 
@@ -239,7 +233,7 @@ func TestMarkupStore_RejectsOutOfRange(t *testing.T) {
 // returns — and, since the value reaches an allocation, must never let a caller
 // size that allocation (CodeQL go/uncontrolled-allocation-size).
 func TestMarkupStore_AuditLimitIsBounded(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 

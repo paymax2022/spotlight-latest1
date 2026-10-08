@@ -1,12 +1,9 @@
 // KYC verification admin console — domain types (snake_case mirrors the Go
 // backend / openapi.yaml). RBAC: finance.admin.kyc.
-//
-// Roles (per docs/prd/kyc/admin-console.md — Authorization):
 //   - KYC Ops     → review queue, case decisions (AK1, AK2).
 //   - Compliance  → AML / fraud queues, thresholds, audit/consent logs (AK4, AK5, AK7, AK13).
 //   - Admin       → routing rules, provider config, templates (AK6, AK8, AK9).
 //   - System      → runs checks, drives transitions, ingests webhooks (no UI).
-//
 // Evidence (selfies, documents, bio-data) is object-level access-controlled and
 // NEVER rendered inline — every view is fetched behind an explicit, logged call.
 
@@ -68,7 +65,7 @@ export interface KycReviewItem {
   provider?: string | null;
   confidence?: number | null;
   submitted_at?: string | null;
-  priority?: number | null; // higher = triage sooner.
+  priority?: number | null;
 }
 
 export interface KycRoutingRule {

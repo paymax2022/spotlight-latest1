@@ -50,7 +50,6 @@ export default function InsuranceCatalogPage() {
   const [failure, setFailure] = useState<EndpointFailure | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // The catalog endpoint returns products only; the sync RUN record lives on
   // /providers. Loaded separately so a missing sync record never blanks the
   // product table, and vice versa.
   const [lastSync, setLastSync] = useState<CatalogSyncRun | null>(null);

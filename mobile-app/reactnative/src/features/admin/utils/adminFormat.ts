@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Formatters ──────────────────────────────────────
 // All money is minor units (integer). Display helpers convert to major units.
 // Ported from crypto's cryptoFormatters so the admin surface formats money and
 // time identically to the rest of the app.
@@ -68,8 +67,6 @@ export function formatMoneyCompact(amount: number, currency: string): string {
 export function formatBps(bps: number): string {
   return `${(bps / 100).toFixed(2)}%`;
 }
-
-// ─── Time ──────────────────────────────────────────────────────────────────────
 
 /** Human "x ago" relative time, falling back to an absolute date past 30 days. */
 export function relativeTime(iso: string): string {

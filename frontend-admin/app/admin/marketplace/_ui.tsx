@@ -156,10 +156,7 @@ export function fmtDate(isoStr: string | null | undefined): string {
   return new Date(isoStr).toLocaleDateString('en-NG', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Badges ──────────────────────────────────────────────────────────────────
-
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
-  // success / active
   active: { fg: colors.success, bg: tint(colors.success, 0.12) }, released: { fg: colors.success, bg: tint(colors.success, 0.12) },
   executed: { fg: colors.success, bg: tint(colors.success, 0.12) }, approved: { fg: colors.success, bg: tint(colors.success, 0.12) },
   actioned: { fg: colors.success, bg: tint(colors.success, 0.12) }, completed: { fg: colors.success, bg: tint(colors.success, 0.12) },
@@ -190,7 +187,6 @@ export function StatusBadge({ status }: { status: MktListingStatus | MktOrderSta
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{String(status).replace(/_/g, ' ')}</span>;
 }
 
-// ── RBAC ──────────────────────────────────────────────────────────────────
 // Per-console permissions — MUST match the slugs seeded in
 // supabase/migrations/20260905000001_marketplace_rbac_perms.sql and referenced
 // in contracts/openapi.yaml (MarketplaceAdmin tag). Server RBAC

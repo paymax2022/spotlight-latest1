@@ -7,14 +7,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyApproversMustDiffer = "approvers_must_differ"
+
 // Handler exposes the Promotion engine routes over Gin. Router registration into
 // RegisterAcademy is owned by the QA/integration task — see RegisterFeesPromotion for
 // the groups this package expects and the permission slugs to gate them with.
-//
 // SF-3 note: the two approval endpoints are DISTINCT and must be gated with DIFFERENT
 // permission slugs (teacher vs head-teacher/admin) so the two-approval requirement is
 // enforced at the authz layer as well as the state machine + service.
@@ -25,10 +32,9 @@ type Handler struct {
 // NewHandler builds the promotion handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -36,7 +42,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -47,32 +53,32 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidDecision):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_decision", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_decision", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrSchoolMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrScoresIncomplete):
-		c.JSON(http.StatusConflict, gin.H{"error": "scores_incomplete", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "scores_incomplete", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	// SF-3 signals: an attempted approval bypass / missing-or-same approver.
 	case errors.Is(err, ErrApprovalRequired):
-		c.JSON(http.StatusConflict, gin.H{"error": "approval_required", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "approval_required", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrApprovalsIncomplete):
-		c.JSON(http.StatusConflict, gin.H{"error": "approvals_incomplete", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "approvals_incomplete", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrApproversMustDiffer):
-		c.JSON(http.StatusConflict, gin.H{"error": "approvers_must_differ", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": keyApproversMustDiffer, keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrTerminal):
-		c.JSON(http.StatusConflict, gin.H{"error": "terminal_state", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "terminal_state", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -116,8 +122,6 @@ func RegisterFeesPromotion(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 	return h
 }
 
-// ── Handlers ──────────────────────────────────────────────────────────────────
-
 func (h *Handler) ImportScores(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -125,7 +129,7 @@ func (h *Handler) ImportScores(c *gin.Context) {
 	}
 	var req ImportScoresRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// Path params are authoritative over the body.
@@ -146,7 +150,7 @@ func (h *Handler) Compute(c *gin.Context) {
 	}
 	var req ComputeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	req.SchoolID = c.Param("schoolId")

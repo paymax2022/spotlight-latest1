@@ -29,7 +29,7 @@ func serve(t *testing.T, h gin.HandlerFunc, path string) *httptest.ResponseRecor
 	r.Use(h)
 	r.Any("/*any", func(c *gin.Context) { c.String(http.StatusOK, "reached") })
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return w
 }
 
@@ -40,7 +40,7 @@ func TestModuleForResolvesOnlyVerifiedPrefixes(t *testing.T) {
 		"/api/finance/wallet":           "wallet",
 		"/api/finance/wallet/balance":   "wallet",
 		"/api/finance/transfers/paymax": "walletTransfers", // NOT "wallet"
-		"/api/finance/va/provision":     "virtualAccounts", // name != prefix
+		"/api/finance/va/provision":     "virtualAccounts",
 		"/api/v1/pharmacy/orders":       "healthPharmacy",
 		"/api/finance/unmapped-thing":   "",
 		"/api/v1/trading/orders":        "",
@@ -132,7 +132,7 @@ func TestEmptyRegistryIsNotTreatedAsUnreadable(t *testing.T) {
 func TestCacheBoundsRegistryReads(t *testing.T) {
 	src := &stubSource{keys: []string{"wallet"}}
 	h := New(src, Options{Enabled: true, TTL: time.Hour})
-	for i := 0; i < 25; i++ {
+	for range 25 {
 		serve(t, h, "/api/finance/wallet/balance")
 	}
 	if src.n != 1 {

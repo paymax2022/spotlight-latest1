@@ -1,29 +1,63 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Send, ArrowDown, RefreshCw, ArrowUpRight, ArrowDownLeft } from 'lucide-react-native';
+import { Plus, Send, ArrowDown, RefreshCw, ArrowUpRight, ArrowDownLeft, ShieldCheck, ChevronRight } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import BalanceCard from '@/components/BalanceCard';
 import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
 import SectionHeader from '@/components/SectionHeader';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getWallet } from '@/api/wallet.api';
 import { getWalletLedger, getWalletFlowSummary, type WalletLedgerEntry } from '@/api/walletLedger.api';
 // Shared formatter — this screen's own copy used minimumFractionDigits:0, so a
 // total ending in a round ten of kobo lost its last digit (₦13,645.20 read as
-// "₦13,645.2"). Its comment claimed "one place so every wallet number matches";
 // src/utils/money.ts is that place.
 import { formatNaira } from '@/utils/money';
 
 const TABS = ['All', 'Credit', 'Debit'];
 
-// A ledger entry → a display row. Icon/colour reflect the money direction; the
+// WAL-014: at narrow widths (360px) a wide stat amount ("₦200,000.00") wrapped
+// mid-digit across two lines. `adjustsFontSizeToFit` is the standard RN fix for
+// "must render on one line, shrink don't wrap/clip" — but react-native-web does
+// not implement it (confirmed against a live Expo-web render: the DOM node's
+// silently clipped with an ellipsis, which is worse than the original wrap for
+// a money amount). Native (iOS/Android) gets the real prop below and shrinks
+// (its own font, not an approximation) and shrinks the font size itself so the
+// full amount stays on one line and fully legible there too.
+const STAT_AMOUNT_BASE_SIZE = 18; // Typography.titleMd.fontSize
+
+function useWebFitFontSize(text: string, minScale = 0.6) {
+  const ref = useRef<any>(null);
+  const [fontSize, setFontSize] = useState(STAT_AMOUNT_BASE_SIZE);
+
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = ref.current as HTMLElement | null;
+    if (!node || typeof node.scrollWidth !== 'number') return;
+    // Measure at the base size so repeated renders (a new amount after a
+    // refetch) always start from the same reference point.
+    const prevInlineFontSize = node.style.fontSize;
+    node.style.fontSize = `${STAT_AMOUNT_BASE_SIZE}px`;
+    const available = node.clientWidth;
+    const needed = node.scrollWidth;
+    node.style.fontSize = prevInlineFontSize;
+    if (available > 0 && needed > available) {
+      const scale = Math.max(minScale, available / needed);
+      setFontSize(Math.floor(STAT_AMOUNT_BASE_SIZE * scale));
+    } else {
+      setFontSize(STAT_AMOUNT_BASE_SIZE);
+    }
+  }, [text]);
+
+  return { fontSize, ref };
+}
+
 // title prefers the ledger description, falling back to the reference/type.
 function entryToActivity(e: WalletLedgerEntry): Activity {
   const isCredit = e.direction === 'credit';
@@ -74,6 +108,11 @@ export default function WalletScreen() {
 
   const handleRefresh = () => { refetchWallet(); refetchTx(); refetchSummary(); };
 
+  const incomeAmountText   = formatNaira(totalInKobo);
+  const expensesAmountText = formatNaira(totalOutKobo);
+  const incomeFit   = useWebFitFontSize(incomeAmountText);
+  const expensesFit = useWebFitFontSize(expensesAmountText);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -88,6 +127,8 @@ export default function WalletScreen() {
         <BalanceCard
           balance={wallet?.balance ?? 0}
           currency={wallet?.currency ?? 'NGN'}
+          balanceUnavailable={wallet?.balanceUnavailable}
+          unavailableHint="Couldn’t load your balance — pull down to refresh"
           quickActions={[
             { id: 'add',      label: 'Add Money', icon: <Plus      size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/wallet/add' as never) },
             { id: 'send',     label: 'Send',      icon: <Send      size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/wallet/send' as never) },
@@ -96,20 +137,50 @@ export default function WalletScreen() {
           ]}
         />
 
+        <Pressable
+          style={({ pressed }) => [styles.tierBanner, shadow1, pressed && { opacity: 0.85 }]}
+          onPress={() => router.push('/connect/wallet/tier/status' as never)}
+        >
+          <View style={styles.tierBannerIcon}>
+            <ShieldCheck size={18} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.tierBannerTitle}>Account tier & limits</Text>
+            <Text style={styles.tierBannerSubtitle}>View your verification tier and transaction limits</Text>
+          </View>
+          <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
         <View style={styles.statsRow}>
           <LinearGradient colors={[Colors.iconBgTeal, 'rgba(72,184,172,0.04)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.statCard, shadow1]}>
             <View style={[styles.statIcon, { backgroundColor: Colors.iconBgTeal }]}>
               <ArrowDownLeft size={18} color={Colors.teal} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Income</Text>
-            <Text style={[styles.statAmount, { color: Colors.teal }]}>{formatNaira(totalInKobo)}</Text>
+            <Text
+              ref={incomeFit.ref}
+              style={[styles.statAmount, { color: Colors.teal, fontSize: incomeFit.fontSize }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {incomeAmountText}
+            </Text>
           </LinearGradient>
           <LinearGradient colors={['rgba(220,38,38,0.06)', 'rgba(220,38,38,0.02)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.statCard, shadow1]}>
             <View style={[styles.statIcon, { backgroundColor: 'rgba(220,38,38,0.08)' }]}>
               <ArrowUpRight size={18} color={Colors.error} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Expenses</Text>
-            <Text style={[styles.statAmount, { color: Colors.error }]}>{formatNaira(totalOutKobo)}</Text>
+            <Text
+              ref={expensesFit.ref}
+              style={[styles.statAmount, { color: Colors.error, fontSize: expensesFit.fontSize }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {expensesAmountText}
+            </Text>
           </LinearGradient>
         </View>
 
@@ -148,6 +219,10 @@ const styles = StyleSheet.create({
   safe:     { flex: 1, backgroundColor: Colors.background },
   header:   { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
   title:    { ...Typography.headlineMd, color: Colors.onSurface },
+  tierBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  tierBannerIcon: { width: 36, height: 36, borderRadius: Radius.sm + 4, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.iconBgPurple },
+  tierBannerTitle: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '600' },
+  tierBannerSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   statsRow: { flexDirection: 'row', gap: Spacing.md, paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg },
   statCard: { flex: 1, borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.xs, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   statIcon: { width: 36, height: 36, borderRadius: Radius.sm + 4, alignItems: 'center', justifyContent: 'center' },

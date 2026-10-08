@@ -5,9 +5,7 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy for the Insurance / Protection member API.
 //   /api/v1/insurance/<...>  →  Go: /api/finance/insurance/<...>
-// Auth + feature-flag guarded; the Go side enforces object-level authZ, KYC
 // gating, NDPA consent, and the debit→bind saga. Admin routes are NOT proxied
-// here (the admin app calls /api/insurance/admin/* on Go directly); provider
 // webhooks hit Go's /internal/webhooks/* directly. Money mutations (bind, FNOL)
 // forward the caller's Idempotency-Key header.
 
@@ -38,6 +36,11 @@ export async function PUT(request: Request, ctx: { params: Promise<{ path: strin
 }
 
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  const { path } = await ctx.params;
+  return forward(request, path);
+}
+
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   return forward(request, path);
 }

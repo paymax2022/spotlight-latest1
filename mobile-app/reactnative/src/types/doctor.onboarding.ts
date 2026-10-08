@@ -1,14 +1,9 @@
-// ── Doctor (Telemedicine, provider-side) — Section A Domain Types ─────────────
-// Section A = Splash, Onboarding & Authentication (20 entries). This is the
 // pre-account funnel: splash/welcome, the intro carousel, the user→merchant
 // (provider) upgrade + provider-type choice, the legal-consent gate, the OS
 // permission record, and the post-submission account-status screens.
-//
-// CONSOLIDATED + heavy REUSE — ADDITIVE to every earlier contract; nothing in
 // `@/types/doctor`, `@/types/doctor.batch7`, `@/types/doctor.profile` etc. is
 // edited. Money amounts (none in Section A) are integers in minor units (kobo).
 // Use `import type` for type-only imports.
-//
 // Entry → coverage map (full detail in docs/DOCTOR_SECTIONA_OWNERSHIP_MAP.md):
 //   1  Splash + Welcome ............ static screen, no data (Frontend-only)
 //   2  App intro carousel .......... OnboardingSlide + getOnboardingSlides (NEW)
@@ -23,17 +18,12 @@
 //                                   getPermissionStates / recordPermissionDecision (NEW)
 //   17–20 Account states ......... REUSE Batch 7 AccountStatus / AccountState / useAccountStatus
 
-// Re-export the Batch 7 account-status vocabulary so a Section A account-state
-// screen can pull everything from one import site — these are REUSED verbatim,
 // never re-declared.
 export type { AccountStatus, AccountState } from '@/types/doctor.batch7';
 export type { AccountReviewNotice, AccountReviewReason } from '@/types/doctor.batch7';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRY 2 — APP INTRO CAROUSEL
-// ═══════════════════════════════════════════════════════════════════════════
 // A single slide of the post-splash intro carousel. `icon` is an Ionicons name
-// (the Frontend renders the artwork); `accent` is an optional theme key the UI
 // can map to a colour. Pure presentational content — no money, no PII.
 
 export interface OnboardingSlide {
@@ -44,12 +34,9 @@ export interface OnboardingSlide {
   accent?:  string;          // optional theme accent key
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRIES 3 & 4 — UPGRADE TO MERCHANT (PROVIDER) + CHOOSE PROVIDER TYPE
-// ═══════════════════════════════════════════════════════════════════════════
 // The provider type drives which profile builder the Frontend routes into:
 //   - 'doctor'       → Section B builder (useProfileBuilder)
-//   - 'specialist'   → Section B builder (a doctor variant; same builder, the
 //                      specialty step is mandatory) — entry 6
 //   - 'veterinarian' → Section C / Batch 1 builder (useVetProfile) — entry 7
 // NOTE: name-spaced `Provider*` here to avoid collision with `MerchantType` /
@@ -86,9 +73,7 @@ export interface MerchantUpgradeStatus {
   updatedAt:     string;         // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRIES 8–12 — LEGAL CONSENTS (versioned)
-// ═══════════════════════════════════════════════════════════════════════════
 // Five documents the provider must accept during onboarding. Each acceptance is
 // versioned — re-accepting is required when a document's `version` changes.
 // NOTE: `ConsentRecord` already exists in `@/types/doctor.phase2` (compliance
@@ -140,9 +125,7 @@ export interface ConsentStatus {
   updatedAt:    string;                // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRIES 13–16 — OS PERMISSIONS (the app's record of the OS outcome)
-// ═══════════════════════════════════════════════════════════════════════════
 // The actual OS prompt is the Frontend's job (expo-notifications / expo-camera /
 // expo-av / expo-location). This data layer only stores the doctor-app's record
 // of the outcome so the backend / other screens know what was granted.
@@ -170,13 +153,10 @@ export interface PermissionStates {
   updatedAt:   string;       // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
 
-// ─── Entry 3 — request the user→merchant (provider) upgrade ──────────────────
 export interface RequestMerchantUpgradeInput {
   idempotencyKey: string;
 }
@@ -185,7 +165,6 @@ export interface RequestMerchantUpgradeResult {
   status: MerchantUpgradeStatus;
 }
 
-// ─── Entry 4 — choose the provider type ──────────────────────────────────────
 // Field named providerType, not type: doctorPost sends this object as-is (no
 // snake/camel conversion, no key remapping — see doctorPost in doctor.client.ts),
 // and the Go handler's SetProviderTypeRequest requires json:"providerType". A
@@ -202,7 +181,6 @@ export interface SelectProviderTypeResult {
   status: MerchantUpgradeStatus;   // state becomes 'type_selected', selectedType set
 }
 
-// ─── Entries 8–12 — accept a legal document (versioned) ──────────────────────
 export interface AcceptConsentInput {
   kind:           LegalDocKind;
   version:        string;          // the version the user is accepting
@@ -214,7 +192,6 @@ export interface AcceptConsentResult {
   status: ConsentStatus;           // refreshed aggregate after this acceptance
 }
 
-// ─── Entries 13–16 — record an OS permission decision ────────────────────────
 export interface RecordPermissionDecisionInput {
   kind:           AppPermissionKind;
   state:          PermissionState;

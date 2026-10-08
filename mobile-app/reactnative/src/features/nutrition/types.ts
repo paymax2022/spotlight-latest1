@@ -1,16 +1,10 @@
-// ── Nutrition Resolution Engine — Domain types (v2, onboarding-first) ─────────
-// Buyers see HONEST estimated nutrition + allergen info on dishes; the engine
 // AUTO-PUBLISHES an AI estimate for every dish at menu upload, and vendors
 // later OPTIONALLY approve or lightly edit. The cardinal rules:
-//   • a nutrition number is NEVER shown without its grounding + confidence;
 //   • approval ≠ measurement — RESTAURANT_CONFIRMED stays labelled an estimate,
-//     "exact" is reserved for real labels only;
 //   • allergen info is ALWAYS rendered visually separate from macros.
-//
 // Mirrors the food feature's snake_case DTO shape (the Go backend speaks
 // snake_case; the api layer maps to these types verbatim — they already match).
 
-// ─── Resolution grounding (how the AI sourced the estimate) ──────────────────
 /** Where the numbers were grounded. The library sits BEHIND the AI in v2. */
 export type NutritionGrounding = 'LABEL' | 'LIBRARY_MATCHED' | 'FREE_ESTIMATED' | 'RECIPE';
 
@@ -33,7 +27,6 @@ export type NutritionBand = 'Light' | 'Balanced' | 'Heavy';
 /** Per-nutrient traffic light (UK FOP-style green/amber/red). */
 export type TrafficLight = 'green' | 'amber' | 'red';
 
-// ─── Nutrient value (honest precision) ───────────────────────────────────────
 // `value` is the best point estimate. `low`/`high` bound the estimate when
 // confidence is MEDIUM/LOW; for EXACT they may equal `value`.
 export interface NutrientValue {
@@ -80,7 +73,6 @@ export interface DishNutritionProfile {
   allergens?: AllergenDeclaration[];
 }
 
-// ─── Allergens ──────────────────────────────────────────────────────────────
 export type AllergenDeclarationType = 'CONTAINS' | 'MAY_CONTAIN' | 'FREE_FROM';
 export type AllergenSource = 'VENDOR' | 'AI';
 
@@ -93,7 +85,6 @@ export interface AllergenDeclaration {
   cross_contamination_ack: boolean;
 }
 
-// ─── Cart aggregate ─────────────────────────────────────────────────────────
 export interface CartSummary {
   /** Aggregate energy across the cart — a range when any line is estimated. */
   energy_kcal: NutrientValue;
@@ -106,7 +97,6 @@ export interface CartSummary {
   disclaimer: string;
 }
 
-// ─── Vendor request payloads ────────────────────────────────────────────────
 // Edit is intentionally lightweight: portion + direct macro nudge ONLY. It
 // NEVER asks for ingredients. The optional ingredient path is the hidden
 // power-user recipe declaration below.
@@ -126,7 +116,6 @@ export interface EditNutritionRequest {
   macros?: MacroNudge;
 }
 
-// ─── Optional hidden power-user path (ingredients) ───────────────────────────
 // NEVER required, NEVER surfaced during onboarding.
 export interface RecipeIngredient {
   food_code: string;
@@ -147,7 +136,6 @@ export interface AttestAllergenRequest {
   cross_contamination_ack: boolean;
 }
 
-// ─── Controlled allergen vocabulary ─────────────────────────────────────────
 // The 14 major declarable allergens (EU FIC). Used by the attestation checklist.
 export const ALLERGEN_VOCAB: readonly string[] = [
   'Milk',

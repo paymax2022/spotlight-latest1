@@ -1,19 +1,15 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the platform pricing config on the food-delivery
 // money path: restaurants.surge_bp must inflate the item subtotal INSIDE the
 // settlement gross (split 80/10/10 like any food revenue), and
 // restaurants.service_fee_bp must be escrowed on top and paid 100% to the
 // platform (settlement.Split.ServiceFeeKobo, the mirror of a rider tip) — with
 // conservation intact (escrow released == provider + platform + rider legs).
-//
 // Regression guard: SetPricingConfig wrote both knobs but PlaceOrder never read
 // them, so orders.service_fee_kobo and orders.surge_kobo were always 0 — the
 // platform never collected a service fee and surge pricing did nothing.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -98,7 +94,6 @@ func TestLiveDB_OrderSurgeAndServiceFee(t *testing.T) {
 		t.Errorf("customer paid %d, want %d", balBefore-balAfter, wantTotal)
 	}
 
-	// --- Settlement. ---
 	deliverWithRider(t, ctx, f, order.ID)
 
 	wantRider := int64(float64(gross) * splitRiderPct)
@@ -284,7 +279,7 @@ func TestLiveDB_OrderCartIsSanityBounded(t *testing.T) {
 	}
 	// Many in-bound lines that still add up past the aggregate ceiling.
 	var manyLines []OrderItemInput
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		manyLines = append(manyLines, OrderItemInput{MenuItemID: f.itemID, Quantity: maxLineQuantity})
 	}
 	_, err = f.svc.PlaceOrder(ctx, f.restID, f.customer, PlaceOrderRequest{

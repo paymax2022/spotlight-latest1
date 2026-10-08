@@ -1,22 +1,16 @@
-// ── "This module is not available here" — telling that apart from a real fault ─
-//
 // Modules on this platform are feature-flagged server-side, and the flag gates
 // ROUTE REGISTRATION: with FEATURE_X_ENABLED unset, every path under that module
 // 404s. Nothing distinguishes that from a route that was never written, or one
 // the client is calling at the wrong path — a mistake this codebase has produced
 // repeatedly.
-//
 // So a 404 gets two properties here, and only two:
-//
 //   1. It is TERMINAL. Retrying cannot make a disabled module appear, and
 //      React Query's default retry + refetch-on-focus turns one absent module
 //      into a request on every window focus, from whatever screen the user is
 //      on — a cached property query re-firing on an unrelated page.
-//
 //   2. It is still an ERROR. It is deliberately not swallowed into empty data:
 //      a genuinely missing route is a defect worth seeing, and hiding it would
 //      make the next path mismatch invisible.
-//
 // Anything that is not a 404 keeps its normal retry: a 500 or a dropped
 // connection is transient, and a 401 belongs to the API client's interceptor.
 

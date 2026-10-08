@@ -1,4 +1,3 @@
-// ── Crowdfunding — Investment (Section L) data layer ─────────────────────────
 // Mock-backed. Money in kobo. The module entry is gated by INVESTMENT_ENABLED.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -83,21 +82,19 @@ const QUIZ: QuizQuestion[] = [
 
 let MOCK_PORTFOLIO: PortfolioHolding[] = [];
 
-// ─── API ──────────────────────────────────────────────────────────────────────
-
 export async function getInvestorProfile(): Promise<InvestorProfile> {
   if (USE_MOCK) { await delay(160); return { ...PROFILE }; }
   const res = await api.get('/api/v1/crowdfunding/investment/profile');
   return res.data?.data ?? res.data;
 }
 
-export async function completeOnboardingStep(step: 'kyc' | 'education' | 'quiz' | 'risk', riskProfile?: InvestorRiskProfile): Promise<void> {
+export async function completeOnboardingStep(step: 'kyc' | 'education' | 'quiz' | 'riskProfile', riskProfile?: InvestorRiskProfile): Promise<void> {
   if (USE_MOCK) {
     await delay(250);
     if (step === 'kyc') PROFILE.kycComplete = true;
     if (step === 'education') PROFILE.educationComplete = true;
     if (step === 'quiz') PROFILE.quizPassed = true;
-    if (step === 'risk' && riskProfile) PROFILE.riskProfile = riskProfile;
+    if (step === 'riskProfile' && riskProfile) PROFILE.riskProfile = riskProfile;
     PROFILE.onboarded = PROFILE.kycComplete && PROFILE.educationComplete && PROFILE.quizPassed && !!PROFILE.riskProfile;
     return;
   }

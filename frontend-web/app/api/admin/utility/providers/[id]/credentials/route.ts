@@ -9,7 +9,8 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
 
   try {
     const identity = await requireUtilityManager(request);
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const credentials = body.credentials;
     if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) {
       return errorResponse('credentials object is required.', 400);

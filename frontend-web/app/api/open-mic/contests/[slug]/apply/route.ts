@@ -2,11 +2,13 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { createApplication, getContestBySlug } from '@/src/server/openmic/persistence';
 import { requireRequestUser } from '@/src/lib/auth/request';
 
-export async function POST(request: Request, context: { params: { slug: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as any;
-    const contest = await getContestBySlug(context.params.slug);
+    const { slug } = await context.params;
+    const body = (await request.json().catch(() => null)) as any;
+    if (!body) return errorResponse('Invalid JSON body', 400);
+    const contest = await getContestBySlug(slug);
     if (!contest) return errorResponse('Contest not found', 404);
 
     const requiredFields = ['fullName', 'stageName', 'email', 'phone', 'country', 'state', 'lga'];
@@ -26,7 +28,7 @@ export async function POST(request: Request, context: { params: { slug: string }
     }
 
     const result = await createApplication({
-      contestSlug: context.params.slug,
+      contestSlug: slug,
       userId: user.id,
       fullName: String(body.fullName || '').trim(),
       stageName: String(body.stageName || '').trim(),
@@ -58,12 +60,6 @@ export async function POST(request: Request, context: { params: { slug: string }
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    const message =
-      (error instanceof Error ? error.message : undefined) ||
-      (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'
-        ? (error as any).message
-        : undefined) ||
-      'Failed to apply for open mic contest';
-    return handleApiError(new Error(message), message);
+    return handleApiError(error, 'Failed to apply for open mic contest');
   }
 }

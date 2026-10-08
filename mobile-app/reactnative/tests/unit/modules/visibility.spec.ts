@@ -1,8 +1,5 @@
 // Pure-logic tests for the module-visibility gate on the services grid.
-// Run: npm run test:modules
-//
 // The gate decides which service tiles a user sees. Two failure directions:
-//   • too strict → a mapping typo silently hides a shipped module forever;
 //   • too loose  → an unpublished module leaks into production.
 // The tests below pin both.
 
@@ -54,7 +51,6 @@ describe('visibilityFor', () => {
   });
 
   test('matching is exact — no prefix or case coercion', () => {
-    // 'health' must not satisfy 'healthLab'; a loose match would publish three
     // modules when an admin published one.
     assert.equal(visibilityFor(list('health'), 'healthLab'), false);
     assert.equal(visibilityFor(list('Telemedicine'), 'telemedicine'), false);
@@ -121,8 +117,6 @@ describe('the gate applied to the grid', () => {
   });
 });
 
-// ── Property hub ─────────────────────────────────────────────────────────────
-
 describe('property hub gate', () => {
   const gate = (published: ModuleVisibility | null) =>
     PROPERTY_SUBMODULES.filter((p) => {
@@ -146,7 +140,6 @@ describe('property hub gate', () => {
   });
 
   test('unpublishing realtor hides both listings and leases', () => {
-    // Deliberate: FEATURE_REALTOR_ENABLED covers listings AND leases, so both
     // pillars follow it.
     const left = gate(list('stays', 'estate')).map((p) => p.id);
     assert.deepEqual(left.sort(), ['estate', 'stays']);
@@ -157,7 +150,6 @@ describe('property hub gate', () => {
   });
 
   test('all pillars unpublished yields an empty hub, not a partial one', () => {
-    // The screen renders a real empty state for this; the gate must actually
     // produce zero rather than silently falling back to "show everything".
     assert.equal(gate(list()).length, 0);
   });
@@ -167,10 +159,8 @@ describe('property hub gate', () => {
   });
 });
 
-// ── The mapped VALUES must be real registry keys ─────────────────────────────
 // Mirrors the keys seeded into platform_modules (supabase migration
 // 20261210000000, generated from frontend-web/src/lib/feature-flags.ts). Keep in
-// step: a mapping pointing at a key the registry does not have gates the tile on
 // a module that can never be published, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([
   'aiCare', 'association', 'beneficiaries', 'checkoutTopupTier0', 'creators', 'crowdfunding',
@@ -194,8 +184,6 @@ describe('mapped values are real registry modules', () => {
     }
   });
 });
-
-// ── Home tab: quick actions, featured cards, category groups ─────────────────
 
 describe('home tab gates', () => {
   test('every mapped quick-action and featured id is real', () => {
@@ -264,8 +252,6 @@ describe('home tab gates', () => {
   });
 });
 
-// ── Deep links: route → module ───────────────────────────────────────────────
-
 describe('route guard', () => {
   test('a nested route beats its parent', () => {
     // The whole reason for longest-first matching. If ['health'] won, publishing
@@ -286,7 +272,6 @@ describe('route guard', () => {
   });
 
   test('hubs and navigation are never gated', () => {
-    // '/services' is the tab hub; gating it would lock the user out of the very
     // screen that lists what IS available.
     assert.equal(moduleKeyForSegments(['services']), null);
     assert.equal(moduleKeyForSegments(['(tabs)', 'home']), null);
@@ -314,7 +299,6 @@ describe('route guard', () => {
   });
 
   test('the guard never runs on itself, or on the auth stack', () => {
-    // Redirecting the unavailable screen to itself is an infinite loop; fighting
     // the auth guard over navigation is the other way to trap a user.
     assert.equal(guardAppliesTo(['module-unavailable']), false);
     assert.equal(guardAppliesTo(['(auth)', 'login']), false);

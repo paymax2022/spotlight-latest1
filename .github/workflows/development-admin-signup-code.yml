@@ -1,0 +1,179 @@
+name: Development admin signup code
+
+# Sets (or clears) ADMIN_SIGNUP_CODE on the DEVELOPMENT frontend-admin service —
+# the variable that decides whether the admin console's "Create admin account"
+# panel is usable by someone who is not signed in.
+#
+# ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+# /api/admin/signup resolves one of four modes (features/auth/adminSignupShared):
+#
+#   session   — the caller already holds a valid admin session cookie; no code.
+#   code      — no session, but ADMIN_SIGNUP_CODE is configured; the caller
+#               presents it (this is the door this workflow opens).
+#   bootstrap — no session, no code, and the console has ZERO admins.
+#   disabled  — everything else, and the panel renders the message
+#               "Admin signup is disabled. Set ADMIN_SIGNUP_CODE on the server,
+#               or sign in as an existing admin."
+#
+# On a console that already has an admin and no code, the login page's "Create
+# admin account" button is therefore a dead end — by design, but it reads as a
+# broken deployment to anyone who does not know that the variable was never
+# written. Writing it is the whole job of this workflow.
+#
+# The value comes from the repo secret and is piped via --stdin exactly as
+# ADMIN_API_KEY / INSURANCE_MYCOVER_API_KEY are: it never appears in a command
+# line, a process list, or `set -x` output, and is never echoed. That discipline
+# exists because `railway variable list --kv` printed raw values and leaked
+# ADMIN_API_KEY on run 32545670584.
+#
+# ── SAFETY ───────────────────────────────────────────────────────────────────
+# workflow_dispatch ONLY, the DEVELOPMENT service only, and it requires typing
+# SET to confirm. Never point this at production: a configured code is a public
+# (if code-gated) door that mints admin accounts. `disable: true` removes the
+# variable again and restores the previous behaviour.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type SET to confirm writing to the Development frontend-admin service'
+        required: true
+        type: string
+      disable:
+        description: 'Instead of setting a code, DELETE ADMIN_SIGNUP_CODE (closes the door again)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-admin-signup-code
+  cancel-in-progress: false
+
+jobs:
+  set-signup-code:
+    name: set Development ADMIN_SIGNUP_CODE
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: frontend-admin
+      ENVIRONMENT: development
+      ADMIN_DOMAIN: frontend-admin-development-5a67.up.railway.app
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_DEVELOPMENT}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # --skip-deploys on the write, then ONE explicit redeploy below: the route
+      # handler reads process.env per request, but the running process only sees
+      # a new variable on restart, and a write that silently does not restart is
+      # exactly the set-but-not-live state this is meant to avoid.
+      - name: Clear the code (disable)
+        if: ${{ inputs.disable }}
+        run: |
+          set -euo pipefail
+          railway variable delete ADMIN_SIGNUP_CODE \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys || echo "  (already absent)"
+          echo "  ADMIN_SIGNUP_CODE deleted"
+
+      - name: Write the code from the repo secret
+        if: ${{ !inputs.disable }}
+        env:
+          SIGNUP_CODE: ${{ secrets.ADMIN_SIGNUP_CODE_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          : "${SIGNUP_CODE:?missing secret ADMIN_SIGNUP_CODE_DEVELOPMENT - add it under repo Settings > Secrets and variables > Actions}"
+          # Strip CR/LF defensively: a pasted value often carries a newline, it
+          # is invisible in every UI, and the endpoint compares the code exactly.
+          CLEAN="$(printf '%s' "$SIGNUP_CODE" | tr -d '\r\n')"
+          printf '%s' "$CLEAN" | railway variable set ADMIN_SIGNUP_CODE --stdin \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+          unset CLEAN
+          echo "  ADMIN_SIGNUP_CODE written (value never printed)"
+
+      # Read it BACK and compare digests. Neither the value nor its digest is
+      # printed — only its length and whether it matches the secret. Without this
+      # the job would report success for a write that landed on the wrong service.
+      - name: Verify the read-back matches the secret
+        if: ${{ !inputs.disable }}
+        env:
+          SIGNUP_CODE: ${{ secrets.ADMIN_SIGNUP_CODE_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node -e '
+            const crypto = require("crypto");
+            let vars;
+            try {
+              vars = JSON.parse(require("fs").readFileSync("vars.json", "utf8"));
+            } catch {
+              console.error("Could not parse the variable list as JSON. Refusing to print it - it holds every Development variable in the clear.");
+              process.exit(1);
+            }
+            const got = vars.ADMIN_SIGNUP_CODE;
+            if (typeof got !== "string" || got.length === 0) {
+              console.error("ADMIN_SIGNUP_CODE is not set on " + (process.env.SERVICE || "frontend-admin") + " / " + process.env.ENVIRONMENT + ".");
+              process.exit(1);
+            }
+            const want = process.env.SIGNUP_CODE.replace(/[\r\n]+/g, "");
+            const same = crypto.createHash("sha256").update(got).digest("hex")
+                       === crypto.createHash("sha256").update(want).digest("hex");
+            console.log("  ADMIN_SIGNUP_CODE = set (len " + got.length + ", matches secret: " + (same ? "yes" : "NO") + ")");
+            if (!same) {
+              console.error("The value on the service is not the one in the secret. Refusing to continue.");
+              process.exit(1);
+            }
+            if (got.length < 8) {
+              console.error("Shorter than MIN_SIGNUP_CODE_LENGTH (8) - the endpoint would classify it too-short and stay closed.");
+              process.exit(1);
+            }
+            if (/[\r\n]/.test(got)) {
+              console.error("The stored value carries a newline; the exact-match compare would fail.");
+              process.exit(1);
+            }
+          '
+
+      - name: Restart frontend-admin so a fresh process reads it
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+          for i in $(seq 1 40); do
+            st=$(railway deployment list --service "$SERVICE" --environment "$ENVIRONMENT" \
+                   --project "$PROJECT" --limit 5 --json 2>/dev/null \
+                 | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log((r[0]&&r[0].status)||"")}catch{console.log("")}})')
+            echo "  attempt $i: ${st:-unknown}"
+            case "$st" in
+              SUCCESS) echo "  frontend-admin is live again"; break ;;
+              FAILED|CRASHED|REMOVED) echo "  deployment ended $st"; exit 1 ;;
+            esac
+            sleep 15
+          done
+
+      # End-to-end: ask the deployed endpoint itself. `mode` is the only field
+      # read, and it is not sensitive — it says which door is open, never the code.
+      - name: Confirm the deployed endpoint reports the expected mode
+        run: |
+          set -uo pipefail
+          WANT_MODE=$([ "${{ inputs.disable }}" = "true" ] && echo "disabled" || echo "code")
+          for i in $(seq 1 20); do
+            body=$(curl -s -m 20 "https://$ADMIN_DOMAIN/api/admin/signup" || true)
+            mode=$(printf '%s' "$body" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{console.log(JSON.parse(d).mode||"")}catch{console.log("")}})')
+            echo "  attempt $i: mode=${mode:-unknown}"
+            if [ "$mode" = "$WANT_MODE" ]; then
+              echo "  /api/admin/signup reports mode=$WANT_MODE as expected"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::/api/admin/signup did not report mode=$WANT_MODE"
+          exit 1

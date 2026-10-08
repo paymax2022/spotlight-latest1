@@ -1,17 +1,11 @@
-// ── Paymax Marketplace — shared camelCase domain types ───────────────────────
-//
 // SINGLE SOURCE OF TRUTH for the marketplace feature. Every screen and every
 // sibling domain agent (Sell, Transact, Trust/Account) imports its types from
 // here. Derived 1:1 from the Go domain model
 // (backend/internal/marketplace/model.go), but expressed in camelCase because
 // the shared client (./api/client.ts) deep-normalizes every backend response
 // snake_case → camelCase and converts request bodies camelCase → snake_case.
-//
-// RULE: enum string VALUES below match the backend SQL/Go enums EXACTLY (the Go
 // constants are the authority). Only the TS identifier casing differs. Do not
 // rename a value without changing the backend enum first.
-
-// ─── Enums (values mirror backend model.go verbatim) ─────────────────────────
 
 /** mkt_listings.status — ListingStatus in model.go */
 export type ListingStatus =
@@ -95,8 +89,6 @@ export function kycTierAtLeast(tier: KYCTier | undefined | null, min: KYCTier): 
   return KYC_TIER_RANK[tier] >= KYC_TIER_RANK[min];
 }
 
-// ─── Media / pricing value objects ───────────────────────────────────────────
-
 export interface ListingMedia {
   id: string;
   urlThumb: string;
@@ -112,8 +104,6 @@ export interface FairPriceBand {
   p50Kobo: number;
   p75Kobo: number;
 }
-
-// ─── Listing ─────────────────────────────────────────────────────────────────
 
 // Compact seller summary embedded on listing cards / detail (trust card source).
 export interface SellerSummary {
@@ -183,8 +173,6 @@ export interface ListingSummary {
   createdAt: string;
 }
 
-// ─── Category ─────────────────────────────────────────────────────────────────
-
 /** mkt_categories (Category in model.go). attributeSchema drives the schema-driven
  *  quick filters (Category Landing) and the Sell attribute form. */
 export interface Category {
@@ -213,8 +201,6 @@ export interface CategoryQuickFilter {
   type: 'enum' | 'range' | 'bool';
   options?: Array<{ value: string; label: string }>;
 }
-
-// ─── Search ──────────────────────────────────────────────────────────────────
 
 export type SearchSort = 'relevance' | 'price_asc' | 'price_desc' | 'newest' | 'trusted_first';
 
@@ -257,8 +243,6 @@ export interface SearchSuggestion {
   categoryId?: string;
 }
 
-// ─── Seller profile & reviews ────────────────────────────────────────────────
-
 /** GET /sellers/:id/profile — TrustProfile join in model.go. */
 export interface SellerProfile {
   id: string;
@@ -298,8 +282,6 @@ export interface Review {
   createdAt: string;
 }
 
-// ─── Order (escrow FSM — Transact agent) ─────────────────────────────────────
-
 /** mkt_orders (Order in model.go). Money fields are integer kobo. */
 export interface Order {
   id: string;
@@ -338,8 +320,6 @@ export interface FundOrderInput {
   paymentMethod: PaymentMethod;
 }
 
-// ─── Offer (mkt_offers) ──────────────────────────────────────────────────────
-
 export type OfferStatus = 'pending' | 'accepted' | 'declined' | 'countered' | 'expired';
 
 export interface Offer {
@@ -358,8 +338,6 @@ export interface CreateOfferInput {
   offerPriceKobo: number;
   message?: string;
 }
-
-// ─── Dispute (mkt_disputes) ──────────────────────────────────────────────────
 
 export type DisputeReasonCode =
   | 'item_not_as_described'
@@ -393,8 +371,6 @@ export interface Dispute {
   decidedAt?: string | null;
   executedAt?: string | null;
 }
-
-// ─── Boost (mkt_boosts) ──────────────────────────────────────────────────────
 
 export interface BoostTier {
   tier: string;
@@ -446,8 +422,6 @@ export interface CreateBoostInput {
   endsAt?: string;
 }
 
-// ─── Saved search (mkt_saved_searches) ───────────────────────────────────────
-
 export type AlertFrequency = 'instant' | 'daily' | 'off';
 
 export interface SavedSearch {
@@ -468,8 +442,6 @@ export interface CreateSavedSearchInput {
   alertEnabled?: boolean;
 }
 
-// ─── Listing create/update (Sell agent) ──────────────────────────────────────
-
 export interface CreateListingInput {
   categoryId: string;
   title: string;
@@ -489,8 +461,6 @@ export interface UpdateListingInput {
   priceKobo?: number;
   attrs?: Record<string, unknown>;
 }
-
-// ─── Saved items / wishlist (Discover Saved Items screen) ────────────────────
 
 /** A wishlist entry: the listing summary plus the price it was saved at, so the
  *  UI can flag a price change (§ Saved Items "price changed" badge). */

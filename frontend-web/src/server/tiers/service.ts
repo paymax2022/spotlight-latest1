@@ -20,14 +20,12 @@ import { ApiError } from '@/src/lib/api/responses';
 import { WALLET_ACCOUNT_TYPE } from '@/src/server/wallet/account-type';
 import { featureFlags } from '@/src/lib/feature-flags';
 
-// ---------------------------------------------------------------------------
 // Public types
-// ---------------------------------------------------------------------------
 
 export interface TierConfig {
   tier: KycTier;
-  dailyWalletLimitKobo: number | null;  // null = unlimited (Tier 3)
-  dailyVoteLimit: number | null;         // null = unlimited (Tier 3)
+  dailyWalletLimitKobo: number | null;
+  dailyVoteLimit: number | null;
 }
 
 export interface WalletLimitResult {
@@ -35,9 +33,7 @@ export interface WalletLimitResult {
   dailyLimitKobo: number | null;
 }
 
-// ---------------------------------------------------------------------------
 // getTierConfig
-// ---------------------------------------------------------------------------
 
 export function getTierConfig(tier: KycTier): TierConfig {
   return {
@@ -47,9 +43,7 @@ export function getTierConfig(tier: KycTier): TierConfig {
   };
 }
 
-// ---------------------------------------------------------------------------
 // enforceWalletLimit
-// ---------------------------------------------------------------------------
 
 /**
  * Validates that a user is allowed to debit `amountKobo` from their wallet
@@ -119,7 +113,6 @@ export async function enforceWalletLimit(
     .maybeSingle();
 
   if (acctErr || !acct) {
-    // No account yet — first debit; daily total is 0, always within limits
     return { dailyLimitKobo: config.dailyWalletLimitKobo };
   }
 
@@ -161,9 +154,7 @@ export async function enforceWalletLimit(
   return { dailyLimitKobo: config.dailyWalletLimitKobo };
 }
 
-// ---------------------------------------------------------------------------
 // enforceVoteLimit
-// ---------------------------------------------------------------------------
 
 /**
  * Validates that a user has not exceeded their tier's daily paid-vote cap.
@@ -221,9 +212,7 @@ export async function enforceVoteLimit(userId: string): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Internal helpers
-// ---------------------------------------------------------------------------
 
 interface LimitEventPayload {
   amountKobo?: number;

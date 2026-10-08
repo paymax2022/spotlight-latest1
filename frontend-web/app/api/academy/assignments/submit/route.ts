@@ -2,16 +2,17 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { resolveLearner } from '@/src/server/services/academy/learner';
+import { resolveLearner } from '@/src/server/services/academy';
 
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       assignmentId?: string;
       submissionLink?: string;
       submissionText?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.assignmentId) return errorResponse('assignmentId is required', 400);
 

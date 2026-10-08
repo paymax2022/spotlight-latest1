@@ -1,4 +1,3 @@
-// ── Paymax Health — Pharmacy cart store ──────────────────────────────────────
 // Lightweight zustand store so the catalog / product / cart / checkout screens
 // share one cart without threading objects through router params. Money in kobo.
 

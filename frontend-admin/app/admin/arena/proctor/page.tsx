@@ -3,7 +3,6 @@
 // A3 — Proctor console (SCAFFOLD, service wired). RBAC: arena.proctor.attest
 // (Proctor, assigned batch only). Monitor active exam sessions, flag/pause/resume
 // per policy, submit a session attestation → TheoryExamAdapter signs a
-// merit_entry. Full live-monitoring feeds are a later build; the attest write is
 // wired to the backend contract.
 
 import { useCallback, useEffect, useState } from 'react';

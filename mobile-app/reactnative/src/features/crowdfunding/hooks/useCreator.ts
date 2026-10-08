@@ -1,4 +1,3 @@
-// ── Crowdfunding — Creator data hooks (Section F + G) ────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -65,8 +64,6 @@ export function useSubmitCampaign() {
     },
   });
 }
-
-// ─── Owner self-management (Section G2) ───────────────────────────────────────
 
 /**
  * A single campaign the caller owns, read out of the creator list.

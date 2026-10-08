@@ -70,7 +70,6 @@ function fromApi(r: any): AiNote {
   };
 }
 
-// ── mock store ────────────────────────────────────────────────────────────────
 const H = 3_600_000;
 const iso = (o: number) => new Date(Date.now() + o).toISOString();
 let notes: AiNote[] = [

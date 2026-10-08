@@ -8,7 +8,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   if (unavailable) return unavailable;
   try {
     const identity = await requireUtilityManager(request);
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
     if (!reason) return errorResponse('reason is required.', 400);
     const transaction = await adminGetUtilityTransaction(params.id);

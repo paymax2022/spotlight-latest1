@@ -162,7 +162,6 @@ export default function CompetitionsListPage() {
                         <Badge text="Not votable" color={colors.danger} />
                       </Link>
                     ) : (
-                      // A draft is allowed to be half-configured; that is what draft
                       // means. Worth flagging before it is published, not alarming.
                       <Link href={`/admin/voting/packages?contestId=${c.id}`} title="Not set up for voting yet. It will get the default free vote when opened, or add packages now.">
                         <Badge text="Not configured" color={colors.muted} />

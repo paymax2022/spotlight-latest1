@@ -13,7 +13,7 @@ test.describe('Bills E2E - Airtime purchase', () => {
 
   test('navigates from bills hub and completes a wallet-funded airtime purchase', async ({ page }) => {
     await openBillsHome(page);
-    await page.getByText('Airtime', { exact: true }).click();
+    await page.getByRole('button', { name: 'Airtime' }).click();
     await expect(page.getByText('Buy Airtime').first()).toBeVisible();
 
     await completeAirtimePurchase(page);
@@ -34,7 +34,7 @@ test.describe('Bills E2E - Airtime purchase', () => {
       category: 'airtime',
       biller_id: 'net-mtn',
       product_id: 'variable-product',
-      customer_reference: '08031234567',
+      customer_reference: '+2348031234567',
       amount_kobo: 50_000,
     });
   });

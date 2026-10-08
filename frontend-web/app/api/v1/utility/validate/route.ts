@@ -19,7 +19,8 @@ export async function POST(request: Request) {
     const user = await requireUtilityReader(request);
     const limited = utilityRateLimit(request, 'validate', user.id, 40, 60_000);
     if (limited) return limited;
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const category = parseUtilityCategory(String(body.category || ''));
     if (!category) return errorResponse('category is required.', 400);
 

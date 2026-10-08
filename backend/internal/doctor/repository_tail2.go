@@ -18,8 +18,6 @@ import (
 //     itself is computed by the service from the ledger (Service.ledger.GetBalance),
 //     never read from a stored column.
 
-// ── Call disputes ─────────────────────────────────────────────────────────────
-
 // ListCallDisputes returns the doctor's call disputes (newest first).
 // Source: public.doctor_call_disputes (migration 20260625000000_doctor_module.sql).
 func (r *Repository) ListCallDisputes(ctx context.Context, userID string) ([]CallDispute, error) {
@@ -44,8 +42,6 @@ func (r *Repository) ListCallDisputes(ctx context.Context, userID string) ([]Cal
 	return out, rows.Err()
 }
 
-// ── Settlement (payout) disputes ──────────────────────────────────────────────
-
 // ListSettlementDisputes returns the doctor's settlement/payout disputes (newest
 // first). Source: public.doctor_settlement_disputes.
 func (r *Repository) ListSettlementDisputes(ctx context.Context, userID string) ([]SettlementDispute, error) {
@@ -68,8 +64,6 @@ func (r *Repository) ListSettlementDisputes(ctx context.Context, userID string) 
 	}
 	return out, rows.Err()
 }
-
-// ── Emergency: cases / escalations / facilities ───────────────────────────────
 
 // ListEmergencyCases returns the doctor's emergency case records (newest first).
 // Source: public.doctor_emergency_cases.
@@ -147,8 +141,6 @@ func (r *Repository) ListEmergencyFacilities(ctx context.Context, userID string)
 	return out, rows.Err()
 }
 
-// ── Invoices + money projections ──────────────────────────────────────────────
-
 // ListInvoices returns the doctor's invoices (newest first). All money columns are
 // int64 kobo (minor units). Source: public.doctor_invoices.
 func (r *Repository) ListInvoices(ctx context.Context, userID string) ([]Invoice, error) {
@@ -206,8 +198,6 @@ func (r *Repository) GetCommissionConfig(ctx context.Context, userID string) (*C
 	return cfg, err
 }
 
-// ── Dashboard counts ──────────────────────────────────────────────────────────
-
 // appointmentStatusCounts returns the doctor's appointment counts grouped by
 // status, used to compose the dashboard projection. Pure read.
 func (r *Repository) appointmentStatusCounts(ctx context.Context, userID string) (map[string]int64, error) {
@@ -239,8 +229,6 @@ func (r *Repository) unreadNotificationCount(ctx context.Context, userID string)
 	err := r.db.QueryRow(ctx, q, userID).Scan(&n)
 	return n, err
 }
-
-// ── Vet profile reads ─────────────────────────────────────────────────────────
 
 // ListVetProfileDocuments returns the document slots attached to the doctor's vet
 // verification. Reuses public.doctor_verification_documents (filtered to vet doc

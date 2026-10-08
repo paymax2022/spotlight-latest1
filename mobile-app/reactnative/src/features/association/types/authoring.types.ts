@@ -1,15 +1,12 @@
-// ── Association — Admin content-authoring contract ────────────────────────────
-//
 // Mirrors backend/internal/association/model_content.go. These are the WRITE
 // bodies for the tables that used to have read endpoints and no writer at all
 // (assoc_announcements / meetings / documents / events / tasks / dues_invoices
 // / devices), plus the uniform admin listing row those org-scoped GETs return.
-//
 // IRON RULE: every *Kobo field is an INTEGER in minor units. Never a float,
 // never a string carried into arithmetic.
 
 import type { Chapter, MembershipCategory } from './association.types';
-import type { DocCategory, MeetingMode, MeetingState, TaskPriority } from './engagement.types';
+import type { DocCategory, MeetingMode, MeetingState, TaskPriority } from './index';
 
 /** `POST` create responses are uniformly `{ id }` (HTTP 201). */
 export interface CreatedId { id: string }
@@ -54,8 +51,6 @@ export interface OrgPickerLists {
   categories: MembershipCategory[];
 }
 
-// ─── Announcements ────────────────────────────────────────────────────────────
-
 export interface AnnouncementInput {
   title:        string;
   body?:        string | null;
@@ -65,8 +60,6 @@ export interface AnnouncementInput {
   /** Fans the announcement out to EVERY ACTIVE member. Create only. */
   notify?:      boolean;
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 export interface MeetingInput {
   title:        string;
@@ -82,8 +75,6 @@ export interface MeetingInput {
   generateAttendanceCode?: boolean;
   notify?:      boolean;
 }
-
-// ─── Documents ────────────────────────────────────────────────────────────────
 
 export type DocKind = 'pdf' | 'image' | 'doc';
 
@@ -101,8 +92,6 @@ export interface DocumentInput {
   notify?:      boolean;
 }
 
-// ─── Events ───────────────────────────────────────────────────────────────────
-
 export interface EventInput {
   title:        string;
   description?: string | null;
@@ -118,8 +107,6 @@ export interface EventInput {
   coverUrl?:    string | null;
   notify?:      boolean;
 }
-
-// ─── Tasks ────────────────────────────────────────────────────────────────────
 
 /**
  * The admin authoring surface can set states the member-facing lifecycle never
@@ -146,8 +133,6 @@ export interface TaskInput {
   /** Notifies the ASSIGNEE only (not the whole organisation). */
   notify?:      boolean;
 }
-
-// ─── Dues runs (money path) ───────────────────────────────────────────────────
 
 export type InvoiceScope = 'NATIONAL' | 'STATE' | 'LOCAL' | 'COMMITTEE';
 
@@ -179,15 +164,12 @@ export interface DuesRunResult {
   alreadyRaised: boolean;
 }
 
-// ─── Devices (member self-service) ────────────────────────────────────────────
-
 export interface DeviceInput {
   name:      string;
   platform:  string;
   location?: string | null;
 }
 
-// ─── Option tables for the authoring forms ────────────────────────────────────
 // Kept in lockstep with the backend's validation maps (service_content.go).
 
 export const MEETING_MODE_OPTIONS: { value: MeetingMode; label: string }[] = [

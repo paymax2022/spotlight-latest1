@@ -1,4 +1,3 @@
-// ── Doctor module — Batch 3 (sections K · L · M · N) constants ────────────────
 // Static option lists for the Batch 3 provider-side screens (e-prescription,
 // pharmacy & drug fulfilment, lab test ordering, lab result review). Pure data
 // only — no money math. Money is always integers in kobo. ADDITIVE to
@@ -26,9 +25,7 @@ import type {
   LabResultAuditAction,
 } from '@/types/doctor.batch3';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION K — e-prescription
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Dosage-form options (drives the dosage-form picker in the rx builder).
 export const DOSAGE_FORM_OPTIONS: { value: DosageForm; label: string }[] = [
@@ -148,9 +145,7 @@ export const RX_CANCEL_REASONS: string[] = [
   'Other',
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION L — pharmacy & drug fulfilment
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Drug stock-level labels + tone keys (drug-unavailable alert source).
 export const STOCK_LEVEL_LABELS: Record<StockLevel, { label: string; tone: string }> = {
@@ -187,9 +182,7 @@ export const PHARMACY_REPORT_REASONS: string[] = [
   'Other',
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION M — lab test ordering
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Sample-type labels + collection instruction copy.
 export const SAMPLE_TYPE_OPTIONS: { value: SampleType; label: string; instruction: string }[] = [
@@ -238,9 +231,7 @@ export const LAB_PACKAGES: LabPackage[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION N — lab result review
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Result-status labels + tone keys (pending / ready / delayed).
 export const RESULT_STATUS_LABELS: Record<LabResultStatus, { label: string; tone: string }> = {

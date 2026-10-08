@@ -3,18 +3,18 @@ import { View, Text, ScrollView, Switch, StyleSheet, Pressable } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Check, Plus, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import WizardProgress from '@/features/association/components/WizardProgress';
+import {WizardProgress} from '@/features/association/components';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { GROUP_RULE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
-import type { RestrictionConfig } from '@/features/association/types/orgDraft.types';
+import { GROUP_RULE_OPTIONS } from '@/features/association/constants';
+import type { RestrictionConfig } from '@/features/association/types';
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 const TOGGLES: { key: keyof Omit<RestrictionConfig, 'graceDays'>; label: string; help: string }[] = [

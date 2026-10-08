@@ -1,12 +1,10 @@
 // Package attribution is the §7A Attribution & Default-Referrer engine.
-//
 // ResolveReferrer runs the configurable fallback chain — valid code → deep-link →
 // context (agent/estate/campaign) → regional house → GLOBAL house/Super-Admin —
 // and ALWAYS resolves: the house is the last resort, so no signup is ever left
 // unattributed (§7A.1). It writes exactly one referral_attributions row per
 // referred user (UNIQUE referred_user_id; idempotent), accrues the referrer-side
 // reward (notional for house rows), and records an engine event.
-//
 // Self-referral (own code, or same kycHash/deviceID) is BLOCKED → routed to the
 // house with a risk flag (§7A.4). Invalid/expired codes are treated as no-code →
 // house, and the attempt is logged. House rows are tagged is_house=true and the
@@ -15,22 +13,33 @@ package attribution
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
+	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/strutil"
 	cfgpkg "spotlight/backend/internal/referral/config"
 	"spotlight/backend/internal/referral/events"
 	"spotlight/backend/internal/referral/house"
 	rewardledger "spotlight/backend/internal/referral/ledger"
 )
 
-// HouseReferrerRewardKobo is the notional referrer-side accrual captured to the
-// house for an organic / no-code signup. Mirrors the seed reward (₦500). When
-// config.budget_neutral is true the house accrual is purely notional (no payout).
+// HouseReferrerRewardKobo — HISTORICAL, unused as of 2026-09-18. Used to be
+// the notional referrer-side accrual captured on every signup (organic or
+// code-attributed). Removed per an explicit product decision that signup must
+// never be profitable, for a real referrer or the house — see the removed
+// accrual calls in attributeToReferrer/attributeToHouseAccount (this file)
+// and ClaimCode/Reassign (reassign.go). Left declared (not deleted) only
+// because it's exported public API a caller outside this package could
+// reference; nothing in this package still reads it.
 const HouseReferrerRewardKobo = 50_000
 
 // Attribution types (mirror the DB CHECK + §7A.1 chain).
@@ -54,9 +63,14 @@ const (
 	StatusLocked = "locked"
 )
 
-// CodeResolver maps a referral code to its owning referrer user id. The existing
-// finance/referrals.Service satisfies this (ResolveCodeToReferrer), so the engine
-// reuses the seed without breaking it.
+// CodeResolver maps a referral code to its owning referrer user id. Both
+// finance/referrals.Service (legacy, finance_referral_codes only) and
+// finance/referrals.RewardService (checks referral_links THEN
+// finance_referral_codes — see its ResolveCodeToReferrer) satisfy this. Wiring
+// MUST use RewardService (see internal/app/referral_routes.go) so a code minted
+// through the newer Direct Referral Rewards Engine is visible to attribution
+// (REF-002) — the legacy Service alone would silently miss it and route the
+// signup to the house with RiskInvalidCode.
 type CodeResolver interface {
 	ResolveCodeToReferrer(ctx context.Context, code string) (string, error)
 }
@@ -87,9 +101,16 @@ type Attribution struct {
 
 // Service is the §7A resolver.
 type Service struct {
-	db     *pgxpool.Pool
-	codes  CodeResolver
-	house  *house.Service
+	db    *pgxpool.Pool
+	codes CodeResolver
+	house *house.Service
+	// reward is kept wired (constructor signature unchanged) but is NO LONGER
+	// called from anywhere in this file as of 2026-09-18 — see the removed
+	// accrual calls in attributeToReferrer/attributeToHouseAccount. Left in
+	// place rather than ripped out of the constructor across its callers for a
+	// purely cosmetic removal with no behavior change; a future signup-time
+	// (not purchase-time) reward policy, if one is ever reintroduced, would use
+	// this same seam.
 	reward *rewardledger.Service
 	cfg    *cfgpkg.Service
 	events *events.Service
@@ -111,7 +132,7 @@ func NewService(
 // call returns the existing attribution.
 func (s *Service) ResolveReferrer(ctx context.Context, referredUserID string, opts ResolveOpts) (*Attribution, error) {
 	if referredUserID == "" {
-		return nil, fmt.Errorf("referral/attribution: referred user id required")
+		return nil, errors.New("referral/attribution: referred user id required")
 	}
 
 	// Idempotency: if already attributed, return it untouched.
@@ -132,7 +153,7 @@ func (s *Service) ResolveReferrer(ctx context.Context, referredUserID string, op
 	for _, step := range cfg.FallbackChain {
 		switch step {
 		case TypeCode:
-			code := normalizeCode(opts.CodeEntered)
+			code := strutil.NormalizeCode(opts.CodeEntered)
 			if code == "" {
 				continue
 			}
@@ -210,16 +231,11 @@ func (s *Service) attributeToReferrer(ctx context.Context, referredUserID, refer
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-		BeneficiaryID:  referrerID,
-		ReferredUserID: referredUserID,
-		Kind:           rewardledger.KindReferrer,
-		AmountKobo:     HouseReferrerRewardKobo,
-		IsHouse:        false,
-		IdempotencyKey: "ref:accrue:" + referredUserID,
-	}); err != nil {
-		return nil, err
-	}
+	// No monetary accrual on signup, by design — a referrer earns only when the
+	// REFERRED user purchases a service (see referral/commissionsplit, hooked into
+	// commission.Service.RecordEarning/RecordExact). This used to accrue a notional
+	// HouseReferrerRewardKobo (₦500) here purely for signing up; removed 2026-09-18
+	// per an explicit product decision that signup itself must never be profitable.
 	_ = s.events.Record(ctx, events.Input{
 		EventType:      events.TypeSignupAttributed,
 		UserID:         referredUserID,
@@ -255,16 +271,7 @@ func (s *Service) attributeToHouseAccount(ctx context.Context, referredUserID, h
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-		HouseAccountID: houseAccountID,
-		ReferredUserID: referredUserID,
-		Kind:           rewardledger.KindReferrer,
-		AmountKobo:     HouseReferrerRewardKobo,
-		IsHouse:        true,
-		IdempotencyKey: "ref:accrue:" + referredUserID,
-	}); err != nil {
-		return nil, err
-	}
+	// No monetary accrual on signup — see the comment in attributeToReferrer above.
 	_ = s.events.Record(ctx, events.Input{
 		EventType:      events.TypeAttributionToHouse,
 		UserID:         referredUserID,
@@ -297,15 +304,15 @@ func (s *Service) insertAttribution(ctx context.Context, p insertParams) (*Attri
 		RETURNING ` + attrCols
 	att, err := scanAttribution(s.db.QueryRow(ctx, q,
 		p.ReferredUserID,
-		nullable(p.ReferrerID),
-		nullable(p.HouseAccountID),
+		dbutil.NullStr(p.ReferrerID),
+		dbutil.NullStr(p.HouseAccountID),
 		p.AttributionType,
-		nullable(p.CodeUsed),
+		dbutil.NullStr(p.CodeUsed),
 		p.IsHouse,
-		nullable(p.RiskFlag),
+		dbutil.NullStr(p.RiskFlag),
 		p.GraceExpiresAt,
 	))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Already attributed by a concurrent call — return existing.
 		return s.getByReferred(ctx, p.ReferredUserID)
 	}
@@ -397,21 +404,166 @@ func (s *Service) regionalHouse(ctx context.Context, region string) (*house.Acco
 	return &a, nil
 }
 
-func normalizeCode(code string) string {
-	return strings.ToUpper(strings.TrimSpace(code))
-}
-
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 // emptyToken avoids matching NULL/empty payload fields against an empty signal.
 func emptyToken(s string) string {
 	if s == "" {
 		return "\x00-none-\x00"
 	}
 	return s
+}
+
+// Handler exposes attribution endpoints (member my-attribution + claim, admin
+// reassignment queue + apply).
+type Handler struct {
+	svc *Service
+	db  *pgxpool.Pool
+}
+
+func NewHandler(svc *Service, db *pgxpool.Pool) *Handler {
+	return &Handler{svc: svc, db: db}
+}
+
+// MyAttribution handles GET /api/finance/referral/my-attribution.
+func (h *Handler) MyAttribution(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	att, err := h.svc.GetByReferred(c.Request.Context(), userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no attribution"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, att)
+}
+
+// ClaimCode handles POST /api/finance/referral/claim-code (§7A.3 late claim).
+func (h *Handler) ClaimCode(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code required"})
+		return
+	}
+	att, err := h.svc.ClaimCode(c.Request.Context(), userID, body.Code)
+	if err != nil {
+		// Every failure carries a machine-readable `reason` alongside the human
+		// message. Status alone is ambiguous: a closed grace window, an existing
+		// non-house referrer and a missing attribution row are three different
+		// situations that all answer 409, and a client mapping on status can only
+		// show one message for all three — telling a user with no attribution at
+		// all that they "already claimed" one.
+		switch {
+		case errors.Is(err, ErrWindowClosed):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "grace window closed", "reason": "window_closed"})
+		case errors.Is(err, ErrSelfClaim):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "self-referral cannot be claimed", "reason": "self_referral"})
+		case errors.Is(err, ErrInvalidCode):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "invalid code", "reason": "invalid_code"})
+		case errors.Is(err, ErrNotHouse):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "attribution already assigned to a referrer", "reason": "already_claimed"})
+		case errors.Is(err, ErrNoAttribution):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "no attribution to claim", "reason": "no_attribution"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, att)
+}
+
+// ListReassignments handles GET /api/referral/admin/reassignments — the queue.
+func (h *Handler) ListReassignments(c *gin.Context) {
+	const q = `
+		SELECT id, attribution_id, from_party, to_party, reason, requested_by,
+		       cosigned_by, benefits_house, status, created_at, decided_at
+		FROM referral_reassignments
+		ORDER BY created_at DESC
+		LIMIT 200`
+	rows, err := h.db.Query(c.Request.Context(), q)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	defer rows.Close()
+	out := make([]gin.H, 0)
+	for rows.Next() {
+		var (
+			id, attrID                        string
+			fromP, toP, reason, reqBy, cosign *string
+			benefitsHouse                     bool
+			status                            string
+			createdAt, decidedAt              any
+		)
+		if err := rows.Scan(&id, &attrID, &fromP, &toP, &reason, &reqBy, &cosign,
+			&benefitsHouse, &status, &createdAt, &decidedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+			return
+		}
+		out = append(out, gin.H{
+			"id":             id,
+			"attribution_id": attrID,
+			"from_party":     fromP,
+			"to_party":       toP,
+			"reason":         reason,
+			"requested_by":   reqBy,
+			"cosigned_by":    cosign,
+			"benefits_house": benefitsHouse,
+			"status":         status,
+			"created_at":     createdAt,
+			"decided_at":     decidedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"reassignments": out})
+}
+
+// Reassign handles POST /api/referral/admin/reassignments (apply, co-signed when
+// the change benefits the house). requested_by is the calling admin.
+func (h *Handler) Reassign(c *gin.Context) {
+	requestedBy := ginutil.UserID(c)
+	var body struct {
+		AttributionID string `json:"attribution_id"`
+		ToParty       string `json:"to_party"`
+		Reason        string `json:"reason"`
+		CosignedBy    string `json:"cosigned_by"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.AttributionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "attribution_id required"})
+		return
+	}
+	att, err := h.svc.Reassign(c.Request.Context(), ReassignInput{
+		AttributionID: body.AttributionID,
+		ToParty:       body.ToParty,
+		Reason:        body.Reason,
+		RequestedBy:   requestedBy,
+		CosignedBy:    body.CosignedBy,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrCosignRequired):
+			c.JSON(http.StatusForbidden, gin.H{"error": "house-benefiting reassignment requires a distinct co-signer"})
+		case errors.Is(err, ErrNoAttribution):
+			c.JSON(http.StatusNotFound, gin.H{"error": "attribution not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, att)
 }

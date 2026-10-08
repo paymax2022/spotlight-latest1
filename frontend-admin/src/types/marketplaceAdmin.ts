@@ -5,8 +5,6 @@
 // docs/prd/marketplace/SWARM_INTEGRATION_CONTRACT.md "Base API path: /v1/marketplace").
 // Backend RBAC (guard("marketplace.admin.<perm>")) is authoritative — the UI's
 // permission gates here are UX-only.
-//
-// Money: every *_kobo field is an integer (kobo). NEVER do math on these in
 // floats — format-only via formatKobo() in the service layer.
 
 export type MktListingStatus =
@@ -251,7 +249,6 @@ export interface MarketplaceErrorBody {
   };
 }
 
-// ── Taxonomy (categories + attribute schema) ─────────────────────────────────
 // A category's attribute_schema is the draft-07 SUBSET the backend enforces at
 // listing write-time (internal/marketplace/attrs_validation.go): required[],
 // per-property type/enum/minimum/maximum, additionalProperties. Authoring it here
@@ -279,7 +276,7 @@ export interface MktCategory {
   slug: string;
   name: string;
   attribute_schema: MktAttributeSchema;
-  risk_tier: number; // 0..3; 0 = auto-approve eligible for trusted sellers
+  risk_tier: number;
   commission_bps: number; // platform take-rate in basis points
   is_active: boolean;
   listing_count?: number; // active listings under this category (EC-007 delete guard)
@@ -298,8 +295,6 @@ export interface MktCategoryInput {
   reason_code?: string; // audited config change (ADM-001)
 }
 
-// ── Analytics (GMV / DAU / conversion) — ADM-005 ─────────────────────────────
-
 export interface MktAnalyticsPoint {
   date: string; // ISO date (day granularity)
   gmv_kobo: number; // transaction value facilitated that day
@@ -313,11 +308,9 @@ export interface MktCategoryStat {
   active_listings: number;
 }
 
-// ── Appeals (moderation reversal, maker-checker) — MOD-009 ───────────────────
-
 export type MktAppealStatus = 'opened' | 'under_review' | 'decided' | 'executed' | 'closed';
 export type MktAppealTargetType = 'listing' | 'boost' | 'user';
-export type MktAppealDecision = 'upheld' | 'overturned'; // uphold = deny appeal; overturn = reverse the original action
+export type MktAppealDecision = 'upheld' | 'overturned';
 
 export interface MktAppeal {
   id: string;
@@ -428,7 +421,6 @@ export interface MktFraudSignal {
   related_user_ids: string[]; // the ring, for duplicate_device/shared_ip (USR-006)
   created_at: string;
 }
-// ── Pricing & Monetisation config — ADM-001/002, MO-002/011/016 ──────────────
 
 // A purchasable boost package (mirrors backend BoostTiers). Editing applies to
 // NEW purchases only (ADM-001) — existing active boosts keep their bought terms.
@@ -453,7 +445,7 @@ export interface MktBoostDailyRate {
 
 export interface MktCommissionConfig {
   default_bps: number; // platform take-rate default (per-category override lives in Taxonomy)
-  boost_revenue_bps: number; // platform cut already implicit in boost price; shown for transparency
+  boost_revenue_bps: number;
   updated_at?: string | null;
   updated_by?: string | null;
 }
@@ -465,7 +457,7 @@ export interface MktDiscountCode {
   kind: MktDiscountKind;
   value: number; // percent (0..100) or fixed kobo, per kind
   applies_to: 'boost' | 'listing_fee'; // what the code discounts
-  max_redemptions: number | null; // null = unlimited
+  max_redemptions: number | null;
   redeemed_count: number;
   valid_from: string;
   valid_until: string | null;
@@ -491,8 +483,6 @@ export interface MktFeaturedSlotConfig {
   max_slots: number;
   filled_slots: number;
 }
-
-// ── CMS: home banners + category landing/SEO content — ADM-003/004 ───────────
 
 export type MktBannerSlot = 'home_hero' | 'home_strip' | 'category_top';
 export type MktBannerStatus = 'draft' | 'scheduled' | 'live' | 'expired' | 'archived';
@@ -549,6 +539,5 @@ export interface MktCategoryContentInput {
   seo_description: string;
   reason_code: string;
 }
-
 
 export type AuditLog = MktAdminAuditLogEntry;

@@ -163,11 +163,27 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
     if (!memoryResult && !postgresOk) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest: full });
   } catch (error) {
+    // Exact-match the domain errors normalizeContestPayload and
+    // updateRegistrationContest deliberately throw — a substring match here
+    // (e.g. includes('valid')) used to catch PostgREST's "invalid input
+    // syntax for type …" and echo the raw Postgres message to the client.
     const message = error instanceof Error ? error.message : '';
-    if (message.includes('required') || message.includes('Invalid') || message.includes('valid')) {
+    if (
+      message === 'Contest title is required.' ||
+      message === 'Contest slug is required.' ||
+      message === 'Invalid contest category.' ||
+      message === 'Invalid contest type.' ||
+      message === 'Season / edition is required.' ||
+      message === 'Registration fee must be a valid number for paid contests.'
+    ) {
       return errorResponse(message, 400);
     }
-    if (message.includes('already exists')) return errorResponse(message, 409);
+    if (
+      message === 'A contest with this slug already exists.' ||
+      message === 'A contest with this title already exists.'
+    ) {
+      return errorResponse(message, 409);
+    }
     return handleApiError(error, 'Failed to update contest');
   }
 }

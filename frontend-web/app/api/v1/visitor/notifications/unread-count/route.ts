@@ -3,7 +3,6 @@ import { handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// GET /api/v1/visitor/notifications/unread-count — count of unread notifications.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

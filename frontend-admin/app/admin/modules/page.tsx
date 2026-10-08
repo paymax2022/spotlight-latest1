@@ -124,8 +124,6 @@ export default function ModulesPage() {
     }
   };
 
-  // ─── States ────────────────────────────────────────────────────────────────
-
   if (loading) {
     return (
       <Page>

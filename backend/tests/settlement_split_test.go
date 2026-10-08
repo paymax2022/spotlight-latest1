@@ -7,17 +7,11 @@ import (
 // Settlement split math is the single most leak-prone money calculation in the
 // platform: every marketplace vertical (food, transport, telemedicine, events,
 // crowdfunding) routes its payout through it. The production Settle() computes:
-//
-//	platformKobo = int64(total * platformPct)
-//	riderKobo    = int64(total * riderPct)   // 0 if no rider
-//	providerKobo = total - platformKobo - riderKobo   // <- absorbs rounding
-//
 // The critical invariant is CONSERVATION: platform + rider + provider == total,
 // to the kobo, for ANY split percentages and ANY amount. The "provider absorbs
 // the remainder" pattern guarantees this — these tests lock that property so a
 // future refactor (e.g. rounding each leg independently) that leaks fractions of
 // a kobo is caught immediately.
-//
 // This mirrors internal/finance/settlement/service.go without importing it,
 // because that package is under concurrent edit. If the production split formula
 // changes, update splitParts() to match and these invariants still apply.

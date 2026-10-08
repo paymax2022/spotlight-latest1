@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -31,12 +32,7 @@ var AnalyticsTypes = []string{
 }
 
 func validAnalyticsType(t string) bool {
-	for _, x := range AnalyticsTypes {
-		if x == t {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AnalyticsTypes, t)
 }
 
 // resolveRange returns the [from,to] window, defaulting to the last 30 days when

@@ -1,13 +1,9 @@
-// ── Doctor (Telemedicine, provider-side) — Phase 2 API client ────────────────
-// Phase A style: every function resolves demo data so screens render without a
 // live API. `DEMO_*` exports double as `placeholderData` in useQuery. ADDITIVE
 // to `@/api/doctor.api` — Phase 1 fns/exports are untouched.
-//
 // TODO(Phase C): replace each body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/pharmacy/fulfilments'); return res.data.data;
 // and pass the Idempotency-Key header on every mutation below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   PharmacyFulfilment,
   DrugDelivery,
@@ -45,7 +41,6 @@ import type {
   AcknowledgePolicyResult,
 } from '@/types/doctor.phase2';
 
-// Re-export the shared money formatter (re-exported by Phase 1 from telemedicine)
 // so Phase 2 screens can import it from this module too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost } from '@/api/doctor.client';
@@ -63,8 +58,6 @@ const PATIENT_TUNDE  = { id: 'pat-1', name: 'Tunde Akinwale', initials: 'TA', av
 const PATIENT_FATIMA = { id: 'pat-2', name: 'Fatima Bello',   initials: 'FB', avatarColor: '#EC4899',        age: 28, gender: 'female' as const };
 const PATIENT_CHIDI  = { id: 'pat-3', name: 'Chidi Okeke',    initials: 'CO', avatarColor: '#F59E0B',        age: 45, gender: 'male' as const };
 const PATIENT_NGOZI  = { id: 'pat-4', name: 'Ngozi Adeyemi',  initials: 'NA', avatarColor: Colors.teal,      age: 52, gender: 'female' as const };
-
-// ─── Demo data: 1. Pharmacy fulfilment / substitution ────────────────────────
 
 export const DEMO_PHARMACY_FULFILMENTS: PharmacyFulfilment[] = [
   {
@@ -84,8 +77,6 @@ export const DEMO_PHARMACY_FULFILMENTS: PharmacyFulfilment[] = [
   },
 ];
 
-// ─── Demo data: 2. Drug delivery tracking ────────────────────────────────────
-
 export const DEMO_DRUG_DELIVERIES: DrugDelivery[] = [
   {
     id: 'dlv-1', ref: 'DLV-3D0F12', fulfilmentId: 'pf-2', prescriptionRef: 'RX-4F2A41',
@@ -102,8 +93,6 @@ export const DEMO_DRUG_DELIVERIES: DrugDelivery[] = [
     ],
   },
 ];
-
-// ─── Demo data: 3. Refill requests ───────────────────────────────────────────
 
 export const DEMO_REFILL_REQUESTS: RefillRequest[] = [
   {
@@ -124,8 +113,6 @@ export const DEMO_REFILL_REQUESTS: RefillRequest[] = [
     status: 'approved', lastDispensedAt: isoDate(-28), reviewedAt: iso(2),
   },
 ];
-
-// ─── Demo data: 4. Specialists & referrals ───────────────────────────────────
 
 export const DEMO_SPECIALISTS: Specialist[] = [
   { id: 'sp-1', name: 'Dr. Emeka Nwosu',  initials: 'EN', avatarColor: '#6366F1', specialty: 'Cardiology',  hospital: 'Lagoon Medical Centre',  state: 'Lagos' },
@@ -153,8 +140,6 @@ export const DEMO_REFERRALS: SpecialistReferral[] = [
     createdAt: iso(1), scheduledAt: new Date(Date.now() + 3 * 86400000).toISOString(),
   },
 ];
-
-// ─── Demo data: 5. Patient record hub ────────────────────────────────────────
 
 export const DEMO_PATIENT_RECORD_HUB: PatientRecordHub = {
   patient: PATIENT_NGOZI,
@@ -224,8 +209,6 @@ export const DEMO_PATIENT_RECORD_HUB: PatientRecordHub = {
   ],
 };
 
-// ─── Demo data: 6. HMO claims ────────────────────────────────────────────────
-
 export const DEMO_HMO_CLAIMS: HmoClaim[] = [
   {
     id: 'clm-1', ref: 'CLM-9F2A41', appointmentId: 'apt-2', patient: PATIENT_FATIMA,
@@ -268,8 +251,6 @@ export const DEMO_HMO_CLAIMS: HmoClaim[] = [
   },
 ];
 
-// ─── Demo data: 7. Follow-up plans ───────────────────────────────────────────
-
 export const DEMO_FOLLOW_UPS: FollowUpPlan[] = [
   {
     id: 'fu-1', ref: 'FU-4F2A41', patient: PATIENT_NGOZI, appointmentId: 'apt-4',
@@ -287,8 +268,6 @@ export const DEMO_FOLLOW_UPS: FollowUpPlan[] = [
     kind: 'paid', feeKobo: 350000, status: 'requested', createdAt: iso(0), isPatientRequest: true,
   },
 ];
-
-// ─── Demo data: 8. Ratings & reviews ─────────────────────────────────────────
 
 export const DEMO_REPUTATION: ReputationSummary = {
   averageRating: 4.9, totalReviews: 312,
@@ -308,8 +287,6 @@ export const DEMO_REPUTATION: ReputationSummary = {
   ],
 };
 
-// ─── Demo data: 9. Payout report ─────────────────────────────────────────────
-
 export const DEMO_PAYOUT_REPORT: PayoutReport = {
   rangeLabel: 'Jan – Jun 2026',
   grossKobo: 28500000, commissionKobo: 4275000, vatKobo: 320625, netKobo: 23904375,
@@ -328,8 +305,6 @@ export const DEMO_PAYOUT_REPORT: PayoutReport = {
     { id: 'po-3', ref: 'PO-2026-015', amountKobo: 1240000, status: 'pending', consultCount: 4, periodLabel: '01–15 Jun 2026' },
   ],
 };
-
-// ─── Demo data: 10. Compliance dashboard ─────────────────────────────────────
 
 export const DEMO_COMPLIANCE: ComplianceDashboard = {
   licence: {
@@ -359,8 +334,6 @@ export const DEMO_COMPLIANCE: ComplianceDashboard = {
     { id: 'pa-3', policyKey: 'prescribing_guideline', title: 'E-Prescribing Guidelines', version: 'v1.4', required: false, acknowledged: true, acknowledgedAt: iso(60) },
   ],
 };
-
-// ─── Read endpoints ──────────────────────────────────────────────────────────
 
 export async function getPharmacyFulfilments(): Promise<PharmacyFulfilment[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PHARMACY_FULFILMENTS);
@@ -461,8 +434,6 @@ export async function getComplianceDashboard(): Promise<ComplianceDashboard> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_COMPLIANCE);
   return doctorGet<ComplianceDashboard>('/compliance');
 }
-
-// ─── Mutations ───────────────────────────────────────────────────────────────
 
 export async function reviewSubstitute(input: ReviewSubstituteInput): Promise<ReviewSubstituteResult> {
   if (DOCTOR_USE_MOCK) {

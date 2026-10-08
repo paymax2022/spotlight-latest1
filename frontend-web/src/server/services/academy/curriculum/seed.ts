@@ -1,5 +1,4 @@
 // Writes an authored pathway into the database.
-//
 // Idempotent by natural key, because seeding is something people re-run: modules
 // by (program_id, title), lessons by (module_id, title), exams by (program_id,
 // title), questions by (exam_id, order_index), assignments by (program_id, title).

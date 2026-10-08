@@ -1,4 +1,3 @@
-// ── FX Exchange — clipboard helper ───────────────────────────────────────────
 // expo-clipboard is not currently a project dependency, so we feature-detect it
 // at runtime and fall back to the native Share sheet. This keeps the copy/share
 // affordance working today and "just works" if expo-clipboard is added later.

@@ -9,10 +9,10 @@ import (
 
 func TestValidateProofOfDelivery_OTP_Valid(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofOTP,
-		ProofData: "123456",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofOTP,
+		ProofData:  "123456",
 		CapturedBy: "driver_user_id",
 	}
 
@@ -23,10 +23,10 @@ func TestValidateProofOfDelivery_OTP_Valid(t *testing.T) {
 
 func TestValidateProofOfDelivery_OTP_ValidWithWhitespace(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofOTP,
-		ProofData: "  123456  ",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofOTP,
+		ProofData:  "  123456  ",
 		CapturedBy: "driver_user_id",
 	}
 
@@ -37,18 +37,18 @@ func TestValidateProofOfDelivery_OTP_ValidWithWhitespace(t *testing.T) {
 
 func TestValidateProofOfDelivery_OTP_InvalidLength(t *testing.T) {
 	tests := []string{
-		"12345",    // 5 digits
-		"1234567",  // 7 digits
-		"",         // empty
-		"1a3456",   // non-digit
+		"12345",   // 5 digits
+		"1234567", // 7 digits
+		"",        // empty
+		"1a3456",  // non-digit
 	}
 
 	for _, data := range tests {
 		proof := DeliveryProof{
-			ID:        "proof123",
-			OrderID:   "order123",
-			ProofType: ProofOTP,
-			ProofData: data,
+			ID:         "proof123",
+			OrderID:    "order123",
+			ProofType:  ProofOTP,
+			ProofData:  data,
 			CapturedBy: "driver_user_id",
 		}
 
@@ -60,10 +60,10 @@ func TestValidateProofOfDelivery_OTP_InvalidLength(t *testing.T) {
 
 func TestValidateProofOfDelivery_MissingProofType(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: "", // missing
-		ProofData: "123456",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  "", // missing
+		ProofData:  "123456",
 		CapturedBy: "driver_user_id",
 	}
 
@@ -74,10 +74,10 @@ func TestValidateProofOfDelivery_MissingProofType(t *testing.T) {
 
 func TestValidateProofOfDelivery_MissingProofData(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofOTP,
-		ProofData: "", // missing
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofOTP,
+		ProofData:  "", // missing
 		CapturedBy: "driver_user_id",
 	}
 
@@ -88,10 +88,10 @@ func TestValidateProofOfDelivery_MissingProofData(t *testing.T) {
 
 func TestValidateProofOfDelivery_MissingCapturedBy(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofOTP,
-		ProofData: "123456",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofOTP,
+		ProofData:  "123456",
 		CapturedBy: "", // missing
 	}
 
@@ -102,10 +102,10 @@ func TestValidateProofOfDelivery_MissingCapturedBy(t *testing.T) {
 
 func TestValidateProofOfDelivery_UnrecognizedType(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofType("INVALID"),
-		ProofData: "123456",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofType("INVALID"),
+		ProofData:  "123456",
 		CapturedBy: "driver_user_id",
 	}
 
@@ -116,10 +116,10 @@ func TestValidateProofOfDelivery_UnrecognizedType(t *testing.T) {
 
 func TestValidateProofOfDelivery_PhotoValid(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofPhoto,
-		ProofData: "https://cdn.example.com/delivery/proof123.jpg?token=abc",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofPhoto,
+		ProofData:  "https://cdn.example.com/delivery/proof123.jpg?token=abc",
 		CapturedBy: "driver_user_id",
 	}
 
@@ -130,10 +130,10 @@ func TestValidateProofOfDelivery_PhotoValid(t *testing.T) {
 
 func TestValidateProofOfDelivery_PhotoTooShort(t *testing.T) {
 	proof := DeliveryProof{
-		ID:        "proof123",
-		OrderID:   "order123",
-		ProofType: ProofPhoto,
-		ProofData: "short",
+		ID:         "proof123",
+		OrderID:    "order123",
+		ProofType:  ProofPhoto,
+		ProofData:  "short",
 		CapturedBy: "driver_user_id",
 	}
 
@@ -150,7 +150,7 @@ func TestDeliveryProof_Complete(t *testing.T) {
 		ProofData:     "654321",
 		CapturedBy:    "driver_user_id",
 		CapturedAt:    time.Now(),
-		RecipientName: stringPtr("John Doe"),
+		RecipientName: new("John Doe"),
 		Note:          "Delivered to main gate",
 	}
 
@@ -164,4 +164,6 @@ func TestDeliveryProof_Complete(t *testing.T) {
 }
 
 // Helper
-func stringPtr(s string) *string { return &s }
+//
+//go:fix inline
+func stringPtr(s string) *string { return new(s) }

@@ -1,11 +1,11 @@
 package exam
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
-
-// ── canAttempt: legal + illegal transitions ─────────────────────────────────────
 
 func TestCanAttempt_Allowed(t *testing.T) {
 	legal := []struct{ from, to AttemptState }{
@@ -44,8 +44,6 @@ func TestCanAttempt_Illegal(t *testing.T) {
 	}
 }
 
-// ── Submit idempotency contract ──────────────────────────────────────────────────
-//
 // Two guarantees back idempotent submit:
 //  1. Once the attempt is terminal-for-responses (submitted/scored/reviewed) it must
 //     NOT accept another submit transition — isTerminalForResponses short-circuits and
@@ -77,8 +75,6 @@ func TestSubmit_Idempotency_LiveStatesAcceptSubmit(t *testing.T) {
 		}
 	}
 }
-
-// ── score(): UTME 400-scale ──────────────────────────────────────────────────────
 
 func TestScore_UTME400Scale(t *testing.T) {
 	rules := map[string]any{"scale": "400"}
@@ -112,8 +108,6 @@ func TestScore_UTME400Scale(t *testing.T) {
 		}
 	}
 }
-
-// ── score(): grade-band (WASSCE default) ─────────────────────────────────────────
 
 func TestScore_GradeBand_Default(t *testing.T) {
 	rules := map[string]any{} // no scale → grade-band scoring
@@ -157,12 +151,10 @@ func TestScore_GradeBand_CustomBands(t *testing.T) {
 	}
 }
 
-// ── Readiness: coverage × mastery × mock, mock-only fallback ──────────────────────
-
 func TestScore_Readiness_MockOnly_WhenNoMastery(t *testing.T) {
 	rules := map[string]any{}
 	responses := []ResponseInput{{QuestionItemID: "q1"}, {QuestionItemID: "q2"}}
-	correct := map[string]bool{"q1": true, "q2": false} // mock = 0.5
+	correct := map[string]bool{"q1": true, "q2": false}
 	subjects := map[string]string{"q1": "x", "q2": "x"}
 
 	res := score(rules, responses, correct, subjects, 0, 0) // totalObj == 0 → mock-only
@@ -174,7 +166,7 @@ func TestScore_Readiness_MockOnly_WhenNoMastery(t *testing.T) {
 func TestScore_Readiness_Composite(t *testing.T) {
 	rules := map[string]any{}
 	responses := []ResponseInput{{QuestionItemID: "q1"}, {QuestionItemID: "q2"}}
-	correct := map[string]bool{"q1": true, "q2": false} // mock = 0.5
+	correct := map[string]bool{"q1": true, "q2": false}
 	subjects := map[string]string{"q1": "x", "q2": "x"}
 
 	// mastered 2 of 4 objectives → mastery factor 0.5; coverage 1.0.
@@ -185,8 +177,6 @@ func TestScore_Readiness_Composite(t *testing.T) {
 	}
 }
 
-// ── Deadline-late marking via injectable clock ───────────────────────────────────
-//
 // The server-authoritative timer says: a submission after server_deadline is still
 // accepted but flagged late. We model the pure decision here using a fixed clock and
 // the same comparison the service performs.
@@ -225,8 +215,6 @@ func TestServerDeadline_DerivedFromBlueprint(t *testing.T) {
 	}
 }
 
-// ── resultToScoreMap: subject_name is persisted when resolved, omitted otherwise ──
-
 func TestResultToScoreMap_CarriesSubjectName(t *testing.T) {
 	res := Result{
 		Subjects: []SubjectScore{
@@ -245,5 +233,16 @@ func TestResultToScoreMap_CarriesSubjectName(t *testing.T) {
 	}
 	if _, present := subs[1]["subject_name"]; present {
 		t.Error("subjects[1] has no resolved name → subject_name must be omitted, not empty")
+	}
+}
+
+// An arena code outside the CHECK enum must fail validation with ErrInvalidInput
+// before the repository is reached. Nil pool is safe — the guard returns first.
+func TestCreateArena_InvalidCode_ReturnsInvalidInput(t *testing.T) {
+	svc := NewService(nil)
+	for _, code := range []string{"", "NOPE", "bece", "BECE2"} {
+		if _, err := svc.CreateArena(context.Background(), "actor-1", CreateArenaRequest{Code: code, Name: "n"}); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("code %q: want ErrInvalidInput, got %v", code, err)
+		}
 	}
 }

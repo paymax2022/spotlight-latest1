@@ -1,8 +1,7 @@
-// ── Paymax Health — Pharmacy presentation constants ──────────────────────────
 // Status → label/colour maps for Rx and order state. Resolve all colours through
 // the design tokens; never hardcode hex in screens.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { OrderStatus, RxStatus, ProductCategory } from './types';
 
 export const RX_STATUS_META: Record<RxStatus, { label: string; color: string; bg: string; icon: string }> = {
@@ -41,7 +40,6 @@ export const CATEGORY_OPTIONS: { value: ProductCategory | 'all'; label: string }
 export const PAYMENT_HELD_COPY =
   'Your payment is held securely and only released to the pharmacy once your order is delivered or collected. It is refunded if the order is cancelled.';
 
-// Health-BNPL is OFF by default (HEALTH-BUILD §4 — triggers the FCCPC DEON regime;
 // must be partner-powered and separately approved). The bnpl screen renders a
 // placeholder while this remains false.
 export const PHARMACY_BNPL_ENABLED =

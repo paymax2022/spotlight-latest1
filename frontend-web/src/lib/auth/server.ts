@@ -1,5 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { getUserRbacRoleSlugs } from '@/src/server/admin/auth';
+import { adminRoleFromRbacSlug } from '@/src/server/admin/rbac';
 
 export interface AuthenticatedRequestContext {
   supabase: Awaited<ReturnType<typeof createClient>>;
@@ -29,55 +31,59 @@ export async function requireUser(request?: Request): Promise<AuthenticatedReque
   return { supabase, user };
 }
 
+// E2E-SEC-053: this used to read user_profiles.role — a column
+// PUT /api/me/profile let any user self-assign — and fell back to
+// self-editable user_metadata.role. Both are user-controlled and neither may
+// grant admin/judge access. The authoritative store is public.user_roles →
+// public.roles.slug, the same source the Go backend's RBAC enforces
+// (see getUserRbacRoleSlugs / adminRoleFromRbacSlug). Kept for callers of
+// requireUser-style contexts; fail closed on any lookup error.
 export async function getUserRole(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  _supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string
 ): Promise<string | null> {
-  const { data: profile, error } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .single();
-
-  if (error) {
+  try {
+    const slugs = await getUserRbacRoleSlugs(userId);
+    return slugs[0] ?? null;
+  } catch {
     return null;
   }
-
-  return (profile as { role?: string } | null)?.role ?? null;
 }
 
 export async function requireAdmin(): Promise<AdminRequestContext> {
   const { supabase, user } = await requireUser();
-  const dbRole = await getUserRole(supabase, user.id);
-  const metadataRole =
-    typeof user.user_metadata?.role === 'string'
-      ? user.user_metadata.role
-      : typeof user.app_metadata?.role === 'string'
-        ? user.app_metadata.role
-        : null;
-  const role = dbRole || metadataRole;
 
-  if (role !== 'admin') {
+  let isAdmin = false;
+  try {
+    const slugs = await getUserRbacRoleSlugs(user.id);
+    isAdmin = slugs.some((slug) => adminRoleFromRbacSlug(slug) === 'super_admin');
+  } catch {
+    isAdmin = false;
+  }
+
+  if (!isAdmin) {
     throw new Error('FORBIDDEN');
   }
 
-  return { supabase, user, role };
+  return { supabase, user, role: 'admin' };
 }
 
 export async function requireJudgeOrAdmin(): Promise<JudgeRequestContext> {
   const { supabase, user } = await requireUser();
-  const dbRole = await getUserRole(supabase, user.id);
-  const metadataRole =
-    typeof user.user_metadata?.role === 'string'
-      ? user.user_metadata.role
-      : typeof user.app_metadata?.role === 'string'
-        ? user.app_metadata.role
-        : null;
-  const role = dbRole || metadataRole;
 
-  if (role !== 'admin' && role !== 'judge') {
+  let role: 'admin' | 'judge' | null = null;
+  try {
+    const slugs = await getUserRbacRoleSlugs(user.id);
+    const mapped = slugs.map(adminRoleFromRbacSlug);
+    if (mapped.includes('super_admin')) role = 'admin';
+    else if (mapped.includes('judge')) role = 'judge';
+  } catch {
+    role = null;
+  }
+
+  if (!role) {
     throw new Error('FORBIDDEN');
   }
 
-  return { supabase, user, role: role || 'judge' };
+  return { supabase, user, role };
 }

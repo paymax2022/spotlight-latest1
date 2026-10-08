@@ -5,11 +5,11 @@ import { Wallet, Clock } from 'lucide-react-native';
 
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { usePharmacyEarnings } from '@/features/pharmacymerchant/hooks';
 
 const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

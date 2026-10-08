@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Lease / payment / move-in types (V2) ─────────────────
 // Continues the funnel past application approval:
 //   lease → e-sign → rent/deposit payment (escrow) → move-in → occupancy.
 // Money is integer minor units (kobo).
@@ -46,8 +45,6 @@ export interface SignLeaseDraft {
   agreed: boolean;
 }
 
-// ── Invoice & payment ────────────────────────────────────────────────────────
-
 export type InvoiceStatus = 'pending' | 'processing' | 'paid' | 'failed';
 
 export interface InvoiceLine {
@@ -86,8 +83,6 @@ export interface PaymentReceipt {
   escrowHeld: Kobo;
 }
 
-// ── Escrow ───────────────────────────────────────────────────────────────────
-
 export type EscrowStatus = 'held' | 'release_requested' | 'released' | 'disputed';
 
 export interface EscrowDeposit {
@@ -98,8 +93,6 @@ export interface EscrowDeposit {
   heldSince: string;
   releaseCondition: string;   // e.g. "Released after a clean move-out inspection"
 }
-
-// ── Move-in ──────────────────────────────────────────────────────────────────
 
 export interface MoveInChecklistItem {
   id: string;
@@ -112,4 +105,22 @@ export interface MoveIn {
   checklist: MoveInChecklistItem[];
   keysHandedOver: boolean;
   occupancyActivated: boolean;
+}
+
+// Submitting a move-out does NOT move money — it only unlocks the admin
+// escrow resolve endpoint (POST /api/realtor/admin/escrow/{id}/resolve) to
+// release/forfeit the deposit. See supabase/migrations/
+// 20270221000000_realtor_escrow_release.sql.
+
+export interface MoveOutChecklistItem {
+  id: string;
+  label: string;
+  done: boolean;
+}
+
+export interface MoveOut {
+  leaseId: string;
+  checklist: MoveOutChecklistItem[];
+  submitted: boolean;
+  submittedAt?: string;
 }

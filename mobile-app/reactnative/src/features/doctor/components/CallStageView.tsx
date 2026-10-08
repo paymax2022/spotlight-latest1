@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Loader, PhoneIncoming, PhoneOutgoing, RefreshCw, PhoneOff, Hourglass, WifiOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { DoctorAvatar } from '@/features/telemedicine/components';
 import type { CallPhase } from '@/types/doctor.batch2';
 
@@ -19,7 +19,6 @@ interface Props {
 
 // New component: the central call-stage visual that renders the patient avatar
 // plus a phase-specific status (waiting room, ringing/incoming, connecting,
-// reconnecting, dropped, ended). The base call.tsx inlined one connecting state;
 // this consolidates every CallPhase variant in one reusable stage. Sits on the
 // call gradient, so translucent backgrounds use rgba overlays (accepted
 // exception).

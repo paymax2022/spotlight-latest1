@@ -7,13 +7,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeSupabaseMock } from '../golden-path/_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
-
-// ── Import after mocks ────────────────────────────────────────────────────────
 
 import {
   getKycProfile,
@@ -25,8 +21,6 @@ import {
 } from '@/src/server/kyc/service';
 import { requireKycTier } from '@/src/server/kyc/gate';
 import { createAdminClient } from '@/lib/supabase/server';
-
-// ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const USER_ID = 'user-kyc-001';
 const ACTOR_ID = 'admin-001';
@@ -69,7 +63,6 @@ function setupMockForTransition(profileRow: Record<string, unknown> | null) {
 
   // SELECT returns profile
   maybySingle.mockResolvedValueOnce({ data: profileRow, error: null });
-  // updateEq is the terminal awaitable in .update({}).eq('id', x)
   updateEq.mockResolvedValueOnce({ data: null, error: null });
   // INSERT (kyc_events) succeeds
   insertFn.mockResolvedValueOnce({ error: null });
@@ -77,8 +70,6 @@ function setupMockForTransition(profileRow: Record<string, unknown> | null) {
   vi.mocked(createAdminClient).mockReturnValue(mock as any);
   return { mock, maybySingle, updateFn, updateEq, insertFn };
 }
-
-// ── Tests: getKycProfile ──────────────────────────────────────────────────────
 
 describe('getKycProfile', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -105,8 +96,6 @@ describe('getKycProfile', () => {
   });
 });
 
-// ── Tests: getKycTier ─────────────────────────────────────────────────────────
-
 describe('getKycTier', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -126,8 +115,6 @@ describe('getKycTier', () => {
     expect(await getKycTier(USER_ID)).toBe(3);
   });
 });
-
-// ── Tests: initiateKyc ────────────────────────────────────────────────────────
 
 describe('initiateKyc', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -195,8 +182,6 @@ describe('initiateKyc', () => {
   });
 });
 
-// ── Tests: approveKyc ────────────────────────────────────────────────────────
-
 describe('approveKyc', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -219,8 +204,6 @@ describe('approveKyc', () => {
   });
 });
 
-// ── Tests: failKyc ───────────────────────────────────────────────────────────
-
 describe('failKyc', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -241,8 +224,6 @@ describe('failKyc', () => {
   });
 });
 
-// ── Tests: suspendKyc ────────────────────────────────────────────────────────
-
 describe('suspendKyc', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -261,8 +242,6 @@ describe('suspendKyc', () => {
     await expect(suspendKyc(USER_ID, 'reason', ACTOR_ID)).rejects.toThrow(/transition.*not permitted/i);
   });
 });
-
-// ── Tests: requireKycTier ─────────────────────────────────────────────────────
 
 describe('requireKycTier', () => {
   beforeEach(() => vi.clearAllMocks());

@@ -1,15 +1,12 @@
 'use client';
 
 // Events authoring — MONEY PATH (fee_kobo).
-//
 // A paid event's fee is what the member's registration invoice is raised for
 // (RegisterEvent returns paymentRequired + an invoice instead of a ticket), so
 // the paid/fee pair is not cosmetic: a paid event with a zero fee issues free
 // tickets, and a fee on a free event is money the platform will never collect.
 // The backend refuses both. This page refuses them FIRST, inline, so the
 // operator is told while the form is still in front of them.
-//
-// Fee is INTEGER KOBO on the wire. Naira exists only as the text in the box;
 // nairaToKobo() converts once, on submit.
 
 import { useState } from 'react';
@@ -133,7 +130,6 @@ export default function AssociationEventsPage() {
   }
 
   async function remove(r: EventRow) {
-    // The backend REFUSES the delete once paid registrations exist and says so;
     // the refusal is surfaced verbatim rather than as a bare status code.
     const paidNote = (r.meta.awaitingPayment ?? 0) > 0 || ((r.meta.paid) && (r.meta.registeredCount ?? 0) > 0)
       ? ' This event has registrations attached to invoices — the backend will refuse the delete and ask you to cancel it instead.'

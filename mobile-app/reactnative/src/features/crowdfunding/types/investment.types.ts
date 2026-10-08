@@ -1,4 +1,3 @@
-// ── Crowdfunding — Investment (Section L) types ──────────────────────────────
 // Regulated module: feature-flagged OFF until licensed (INVESTMENT_ENABLED).
 // All monetary amounts are integers in minor units (kobo).
 

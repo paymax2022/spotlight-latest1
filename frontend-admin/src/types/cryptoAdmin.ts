@@ -4,8 +4,6 @@
 // FEATURE_CRYPTO_ENABLED and RBAC guard(crypto.admin) — see
 // backend/internal/app/finance_routes.go and backend/internal/crypto/routes.go.
 // Backend RBAC is authoritative — permission gates in the UI are UX-only.
-//
-// Money: price_kobo / cash_kobo / value_kobo are integers (NGN kobo). NEVER do
 // math on these in floats — format-only via formatKobo() in the service layer.
 // `units` / `minor_unit_scale` are integer asset-minor-unit fields (not money).
 
@@ -45,10 +43,8 @@ export interface CryptoAssetConfigRequest {
   is_active: boolean;
 }
 
-// ─── Withdrawal / AML oversight ───────────────────────────────────────────────
 // Mirrors backend/internal/crypto/model_ext.go Withdrawal + its guarded state
 // machine (WithdrawalRequested → Pending → Broadcast → Confirmed | Failed).
-// The member-side state machine is authoritative; the admin AML queue drives the
 // requested→pending (approve) or requested→failed (reject) transitions. NOTE: the
 // admin withdrawal routes below are NOT yet wired server-side (only member routes
 // exist today) — the console is mock-first and the live fetch paths target the
@@ -88,7 +84,7 @@ export interface CryptoWithdrawal {
   failure_reason?: string;
   reference?: string;
   aml_flags?: CryptoAmlFlag[];
-  aml_score?: number;        // 0-100 risk score (higher = riskier)
+  aml_score?: number;
   created_at: string;
   updated_at: string;
 }
@@ -99,7 +95,6 @@ export interface CryptoWithdrawalDecisionRequest {
   note: string;
 }
 
-// ─── Swap monitoring ──────────────────────────────────────────────────────────
 // Mirrors backend/internal/crypto/model_ext.go SwapOrder.
 export interface CryptoSwapOrder {
   id: string;
@@ -121,7 +116,6 @@ export interface CryptoSwapOrder {
   created_at: string;
 }
 
-// ─── Address allow-list review ────────────────────────────────────────────────
 // Mirrors backend/internal/crypto/model_ext.go Address, plus admin review fields.
 export type CryptoAddressReview = 'pending' | 'approved' | 'rejected' | string;
 
@@ -145,7 +139,6 @@ export interface CryptoAddressDecisionRequest {
   note: string;
 }
 
-// ─── Reconciliation (on-chain vs ledger drift) ───────────────────────────────
 // Per-asset comparison of the on-chain custodial balance vs the sum of holding
 // projections in the finance ledger. Drift ≠ 0 is a break to investigate.
 export interface CryptoReconRow {

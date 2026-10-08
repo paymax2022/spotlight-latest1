@@ -1,18 +1,12 @@
 // The KOBO/NAIRA SEAM between this app and the Go adapter.
 //   node --experimental-strip-types --test src/features/insurance/__tests__/live-money-seam.test.ts
-//
 // MyCover's form inputs are denominated in NAIRA. This app carries every money
 // value in INTEGER KOBO, because that is the internal contract. For a long time
 // nothing converted between them: buildInputs sent kobo, the Go adapter copied
 // the inputs verbatim into the provider body, and every declared value reached
 // the insurer 100x too large.
-//
 // Proven live against product ffb0711c-1e4a-453b-a26c-2726e0a1a7bb (gadget
 // cover, rated at 5% of the declared value):
-//
-//   body.value = 200000    (naira)  → premium NGN 10,000
-//   body.value = 20000000  (kobo)   → premium NGN 1,000,000
-//
 // The fix converts ONCE, in the Go adapter, for exactly the fields the published
 // schema labelled `money`. These tests pin this side of that seam.
 import { test } from 'node:test';
@@ -42,8 +36,6 @@ const GADGET_VALUE: Field = f({
   min: 10_000_000, // ₦100,000 in kobo
   unit: 'kobo',
 });
-
-// ── The minimum must bite at its true magnitude ─────────────────────────────
 
 test('a ₦100,000 money minimum rejects a ₦1,000 device', () => {
   // ₦1,000 is a hundredth of the minimum. Read against an UNSCALED bound of
@@ -98,8 +90,6 @@ test('a normalised backend schema keeps the published unit and bound', () => {
   assert.equal(boundInFieldUnits(plan, plan.min), 1);
 });
 
-// ── What goes over the wire ─────────────────────────────────────────────────
-
 test('buildInputs emits money in the unit the seam declares', () => {
   assert.equal(MONEY_WIRE_UNIT, 'kobo');
 
@@ -146,15 +136,13 @@ test('nested and repeating money answers are kobo too', () => {
   assert.equal(rows[0].item_value, 1_000_000, '₦10,000 → 1,000,000 kobo');
 });
 
-// ── THE SEAM PIN ────────────────────────────────────────────────────────────
-//
 // This bug existed because neither side of the boundary stated which unit
 // crossed it, and each assumed the other converted. Both sides now declare it.
 // This test fails the moment they stop agreeing.
 
 test('the unit this app submits is the unit the Go adapter converts from', () => {
   const here = dirname(fileURLToPath(import.meta.url));
-  const goContract = resolve(here, '../../../../../../backend/internal/insurance/gateway/form_money.go');
+  const goContract = resolve(here, '../../../../../../backend/internal/insurance/gateway/gateway.go');
   const src = readFileSync(goContract, 'utf8');
 
   const m = /MoneyInputWireUnit\s*=\s*"([a-z]+)"/.exec(src);

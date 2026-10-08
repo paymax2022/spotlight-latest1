@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { STOCK_LEVEL_LABELS } from '@/features/doctor/constants';
 import type { StockLevel } from '@/types/doctor.batch3';
 
@@ -11,7 +11,6 @@ interface Props {
 }
 
 // New component: a stock-level pill (in/low/out of stock) for the drug-stock
-// availability list. StatusBadge takes a free string tone; this maps the
 // StockLevel union to the contract's STOCK_LEVEL_LABELS tones in one place.
 const TONE: Record<string, { fg: string; bg: string }> = {
   success: { fg: Colors.teal,      bg: Colors.iconBgTeal },

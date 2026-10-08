@@ -1,4 +1,3 @@
-// ── FX Exchange — Account API (business, notifications, settings) ─────────────
 // Covers spec I (business/multi-user), J (notifications), K (settings).
 // Mock-flagged; flip USE_MOCK=false once endpoints land. Money in minor units.
 
@@ -24,8 +23,6 @@ const unwrap = <T>(res: { data: unknown }): T => {
 const arr = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
-
-// ─── Business / multi-user ────────────────────────────────────────────────────
 
 let TEAM: TeamMember[] = [
   { id: 'm1', name: 'Ada Obi', email: 'ada@acme.example', role: 'OWNER', status: 'ACTIVE', lastActiveAt: iso(3_600_000) },
@@ -113,8 +110,6 @@ export async function toggleWebhook(id: string, enabled: boolean): Promise<void>
   await api.patch(`/api/v1/fx/webhooks/${id}`, { enabled });
 }
 
-// ─── Notifications ────────────────────────────────────────────────────────────
-
 let NOTIFICATIONS: AppNotification[] = [
   { id: 'n1', kind: 'rate_alert', title: 'USD/NGN hit your target', body: 'USD/NGN is now ₦1,650 — above your alert of ₦1,650.', read: false, createdAt: iso(900_000), deeplink: '/fx/convert' },
   { id: 'n2', kind: 'payout', title: 'Payout paid', body: 'Your ₦250,000 payout to Amara Okafor was paid.', read: false, createdAt: iso(3_600_000), deeplink: '/fx/transactions' },
@@ -136,8 +131,6 @@ export async function markAllNotificationsRead(): Promise<void> {
   if (USE_MOCK) { await delay(200); NOTIFICATIONS = NOTIFICATIONS.map((n) => ({ ...n, read: true })); return; }
   await api.post('/api/v1/fx/notifications/read-all', {});
 }
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
 
 let SETTINGS: FxSettings = {
   defaultCurrency: 'NGN',

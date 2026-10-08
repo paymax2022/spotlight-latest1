@@ -1,7 +1,5 @@
-// ── Arena (Driver Contest) — shared types ────────────────────────────────────
 // Mirrors the Go backend contract at /api/arena. Enums match the backend so
 // screens branch on them without remapping (see ARENA-PRD §8 lifecycle).
-//
 // NDC-1 (the iron rule surfaced across this module): the crown / advancement is
 // derived ONLY from Merit. Support money and Play-Along engagement never affect
 // judging — they feed the prize pot and the People's Champion award only.
@@ -25,8 +23,6 @@ export type TheoryBatch = 'B1' | 'B2' | 'B3';
 
 /** Merit source stages (crown reads ONLY these — NDC-1). */
 export type MeritStage = 'SCREENING' | 'THEORY' | 'PRACTICAL' | 'FIRST_AID';
-
-// ─── Public competition ─────────────────────────────────────────────────────
 
 export interface Competition {
   id: string;
@@ -92,8 +88,6 @@ export interface CredentialVerification {
   reason?: string | null;
 }
 
-// ─── Member (auth) ──────────────────────────────────────────────────────────
-
 /** The signed-in user's contestant record for a competition. */
 export interface Contestant {
   id: string;
@@ -140,7 +134,6 @@ export interface TrainingModule {
   order: number;
 }
 
-// ─── Play-Along quiz (S2) — engagement, NOT merit ───────────────────────────
 // Naija Driver bank: 90 questions, 3 stages × 30, 120s per question. The backend
 // serves CONTESTANT-SAFE questions (no correct answer / explanation) and scores
 // server-side on submit, returning a per-question breakdown for the teaching
@@ -203,8 +196,6 @@ export interface PlayAlongAttemptResult {
   cashbackKobo?: number | null;
 }
 
-// ─── Proctored theory exam (C6) — feeds signed Merit ─────────────────────────
-
 /** GET …/me/exam — the contestant's assigned batch feed (contestant-safe). */
 export interface ExamAssignment {
   batch: TheoryBatch;
@@ -219,8 +210,6 @@ export interface ExamSubmitResult {
   state: 'THEORY_TAKEN';
   submittedAt: string;
 }
-
-// ─── Support / Back-a-Driver (S5) — feeds pot + People's Champion, NOT crown ─
 
 export interface SupportResult {
   ok: true;
@@ -237,8 +226,6 @@ export interface PeoplesChampionTally {
   backers: number;
   rank?: number | null;
 }
-
-// ─── Predictions (S7) ───────────────────────────────────────────────────────
 
 export interface PredictionPick {
   slot: string; // e.g. "champion", "runner_up"

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, ViewStyle } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 interface Props {
   /** 0–100 completion. */

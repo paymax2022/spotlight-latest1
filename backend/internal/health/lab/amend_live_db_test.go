@@ -2,6 +2,7 @@ package healthlab
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -12,14 +13,11 @@ import (
 )
 
 // LR-006 live-DB integration test for the versioned lab-result amendment.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate as the
 // FX / crypto live-DB suites). Bring-up:
-//
 //	supabase start   # or any Postgres with the migrations applied
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/lab/ -run TestAmendResult_LiveDB
-//
 // It seeds a minimal RELEASED order with one NORMAL result, then amends it to a
 // CRITICAL corrected value and asserts the never-destructive version chain:
 //   - a NEW row at version 2 carries the correction (returned + read as latest),
@@ -116,7 +114,7 @@ func TestAmendResult_LiveDB(t *testing.T) {
 	svc := NewService(pool, nil, nil, amendFakeProv{}, nil, notify, nil, nil)
 
 	// Guard: an amendment must state why.
-	if _, err := svc.AmendResult(ctx, scientistID, orderID, AmendResultInput{TestID: testID, Value: "9.9", Status: ResultCritical}); err != ErrNoAmendmentReason {
+	if _, err := svc.AmendResult(ctx, scientistID, orderID, AmendResultInput{TestID: testID, Value: "9.9", Status: ResultCritical}); !errors.Is(err, ErrNoAmendmentReason) {
 		t.Fatalf("empty reason should be rejected with ErrNoAmendmentReason, got %v", err)
 	}
 

@@ -1,10 +1,8 @@
-// ── Types for the EdTech School-Fees admin console (SC-29 … SC-40) ────────────
 // Brownfield extension of the Academy admin. Monetary amounts are integers in
 // minor units (kobo). Times are ISO-8601. Invariants: SF-1 (FeeSchedule
 // immutable once issued), SF-3 (two-approval promotion), SF-9 (human hardship
 // review), SF-11 (opt-in, immutably-logged government export).
 
-// ── SC-29 Setup wizard: school → session → class → fee schedule ───────────────
 export type VerificationTier = 'basic' | 'verified' | 'accredited';
 export type SchoolStatus = 'onboarding' | 'active' | 'suspended';
 
@@ -69,7 +67,6 @@ export type FeeScheduleInput = {
 };
 export type FeeScheduleIssueResult = { id: string; status: 'issued'; issued_at: string; immutable: true };
 
-// ── SC-32 Bulk onboarding ─────────────────────────────────────────────────────
 export type OnboardingRowStatus = 'valid' | 'error';
 export type OnboardingRow = {
   line: number;
@@ -95,7 +92,6 @@ export type OnboardingBatch = {
 };
 export type OnboardingApproveInput = { batch_id: string; decision: 'approve' | 'reject'; note?: string };
 
-// ── SC-33 Collections dashboard ───────────────────────────────────────────────
 export type CollectionsOverview = {
   invoices_issued: number;
   invoices_paid: number;
@@ -118,7 +114,6 @@ export type InvoiceRow = {
   issued_at: string;
 };
 
-// ── SC-34 Defaulters & hardship (SF-9) ────────────────────────────────────────
 export type HardshipStatus = 'pending' | 'approved' | 'denied';
 export type HardshipRequest = {
   id: string;
@@ -135,7 +130,6 @@ export type HardshipRequest = {
 };
 export type HardshipDecisionInput = { request_id: string; decision: 'approve' | 'deny'; note?: string };
 
-// ── SC-35/36 Promotion + rollover (SF-3) ──────────────────────────────────────
 export type PromotionStatus =
   | 'results_finalized' | 'promotion_computed' | 'promotion_reviewed' | 'promotion_approved' | 'applied';
 export type PromotionBatch = {
@@ -156,7 +150,6 @@ export type PromotionBatch = {
 };
 export type PromotionApproveInput = { batch_id: string; role: 'class_teacher' | 'head_teacher'; approver?: string };
 
-// ── SC-37 Competition registration ────────────────────────────────────────────
 export type CompetitionScope = 'class' | 'school' | 'city' | 'state' | 'national';
 export type CompetitionStatus =
   | 'draft' | 'open_registration' | 'registration_closed' | 'in_progress'
@@ -183,7 +176,6 @@ export type CompetitionRegistration = {
 };
 export type CompetitionRegisterInput = { competition_id: string; school_id: string; team_name: string; students: number };
 
-// ── SC-38 Government export center (SF-11) ─────────────────────────────────────
 export type DataCategory = 'roster' | 'attendance' | 'fees' | 'results' | 'welfare';
 export type GovExportOptIn = { school_id: string; category: DataCategory; opted_in: boolean; updated_at: string };
 export type GovExportOptInInput = { school_id: string; category: DataCategory; opted_in: boolean };
@@ -205,7 +197,6 @@ export type ComplianceExportInput = {
   period: string;
 };
 
-// ── SC-40 Staff & bursar role management ──────────────────────────────────────
 export type SchoolRole = 'school-owner' | 'bursar' | 'class-teacher' | 'head-teacher';
 export type SchoolRoleGrant = {
   id: string;

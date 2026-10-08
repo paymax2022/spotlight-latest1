@@ -12,9 +12,7 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 export interface Beneficiary {
   id: string;
@@ -27,9 +25,7 @@ export interface Beneficiary {
   createdAt: string;
 }
 
-// ---------------------------------------------------------------------------
 // listBeneficiaries
-// ---------------------------------------------------------------------------
 
 export async function listBeneficiaries(userId: string): Promise<Beneficiary[]> {
   const supabase = createAdminClient();
@@ -46,9 +42,7 @@ export async function listBeneficiaries(userId: string): Promise<Beneficiary[]> 
   return ((data ?? []) as Array<Record<string, unknown>>).map(mapRow);
 }
 
-// ---------------------------------------------------------------------------
 // saveBeneficiary — mark an existing recipient as saved, optionally set nickname
-// ---------------------------------------------------------------------------
 
 export async function saveBeneficiary(
   userId: string,
@@ -74,10 +68,6 @@ export async function saveBeneficiary(
   return mapRow(data as Record<string, unknown>);
 }
 
-// ---------------------------------------------------------------------------
-// removeBeneficiary — unmark (soft; the recipient row stays for reuse)
-// ---------------------------------------------------------------------------
-
 export async function removeBeneficiary(userId: string, recipientId: string): Promise<void> {
   const supabase = createAdminClient();
 
@@ -90,9 +80,7 @@ export async function removeBeneficiary(userId: string, recipientId: string): Pr
   if (error) throw new ApiError('Failed to remove beneficiary', 500);
 }
 
-// ---------------------------------------------------------------------------
 // touchLastUsed — called internally after every successful bank transfer
-// ---------------------------------------------------------------------------
 
 export async function touchLastUsed(recipientId: string): Promise<void> {
   const supabase = createAdminClient();
@@ -101,10 +89,6 @@ export async function touchLastUsed(recipientId: string): Promise<void> {
     .update({ last_used_at: new Date().toISOString() })
     .eq('id', recipientId);
 }
-
-// ---------------------------------------------------------------------------
-// autoSaveBeneficiary — set is_favorite=true when save_beneficiary=true on transfer
-// ---------------------------------------------------------------------------
 
 export async function autoSaveBeneficiary(
   userId: string,
@@ -118,9 +102,7 @@ export async function autoSaveBeneficiary(
     .eq('user_id', userId);
 }
 
-// ---------------------------------------------------------------------------
 // Mapper
-// ---------------------------------------------------------------------------
 
 function mapRow(row: Record<string, unknown>): Beneficiary {
   return {

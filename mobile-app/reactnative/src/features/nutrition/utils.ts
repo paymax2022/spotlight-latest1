@@ -1,4 +1,3 @@
-// ── Nutrition — Formatters & honest-precision helpers ────────────────────────
 // The display rules live here so every surface (dish row, detail, cart, vendor
 // confirm) renders provenance identically. THE central rule: never emit a bare
 // number — always pair it with source + confidence.
@@ -11,10 +10,7 @@ import type {
   AllergenDeclarationType,
 } from './types';
 
-// ─── Status labels (buyer-facing, honest precision) ──────────────────────────
-// v2: the label is driven by the honesty STATUS, never the raw grounding. The
 // cardinal rule — approval ≠ measurement — is encoded here: RESTAURANT_CONFIRMED
-// shows a point value but ALWAYS carries the "(estimate)" qualifier; only EXACT
 // (a real label) may read as a precise figure.
 export const STATUS_LABEL: Record<NutritionStatus, string> = {
   AI_ESTIMATE: 'AI estimate',
@@ -74,7 +70,6 @@ export function formatMacro(v: NutrientValue, status: NutritionStatus): string {
   return formatNutrient(v, 'g', status);
 }
 
-// ─── Traffic lights ─────────────────────────────────────────────────────────
 export const TRAFFIC_COLOR: Record<TrafficLight, string> = {
   // Pulled from the palette's semantic anchors so dots stay on-brand.
   green: '#16A34A',
@@ -112,7 +107,6 @@ export function worstTrafficLights(lights: TrafficLights[]): TrafficLights {
   );
 }
 
-// ─── Allergen presentation ──────────────────────────────────────────────────
 export const DECLARATION_LABEL: Record<AllergenDeclarationType, string> = {
   CONTAINS: 'Contains',
   MAY_CONTAIN: 'May contain',

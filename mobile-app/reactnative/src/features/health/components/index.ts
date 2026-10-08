@@ -1,4 +1,3 @@
-// ── Paymax Health — Shared component barrel ──────────────────────────────────
 // Reused by the shared screens and by the pharmacy/lab/vet verticals.
 
 export { default as HealthHubTile } from './HealthHubTile';

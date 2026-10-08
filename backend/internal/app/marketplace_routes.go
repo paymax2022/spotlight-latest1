@@ -12,6 +12,8 @@ import (
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
+
 	// referrals is retained ONLY for the RegisterMarketplace signature: router.go
 	// still passes referralRewardsSvc, but the escrow settle/refund emit was removed
 	// in the listings-and-connect pivot (ADR-023), so the param is now a no-op.
@@ -25,10 +27,9 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// searchAdapter bridges Agent A's type-erased marketplace.Searcher seam
-// (Search(ctx, any) (any, error)) to Agent B's concrete *search.Client, which
+// searchAdapter bridges the type-erased marketplace.Searcher seam
+// (Search(ctx, any) (any, error)) to the concrete *search.Client, which
 // speaks Search(ctx, search.SearchRequest) (search.SearchResults, error).
-//
 // The two packages deliberately never share a type at compile time (no import
 // cycle: marketplace never imports search). This adapter — the ONE place that
 // imports both — decodes the provider-agnostic request map the handler builds
@@ -148,13 +149,11 @@ func (a commissionRecorderAdapter) RecordExact(ctx context.Context, category, se
 // It mirrors RegisterPlacement: a member group (auth), an admin group (per-route
 // RBAC guard "marketplace.admin.*"), and a PUBLIC webhook group (HMAC-verified, no
 // Bearer). Base path: /v1/marketplace.
-//
 // The money path REUSES the finance ledger (ledger.AccountEscrow / AccountCommission
 // / AccountProviderClearing) — the marketplace never stores a balance. The ledger
 // service is constructed here from the shared pool + redis (the same primitives the
 // finance orchestrator builds), so this registration is self-contained and callable
 // from router.go with one feature-flag-guarded line.
-//
 // Agent B's *search.Client is injected post-construction via svc.SetSearcher(...) by
 // app-wiring; until then GET /search returns 501 SEARCH_NOT_WIRED (never a compile
 // error — marketplace defines a local Searcher interface and does NOT import search).
@@ -178,7 +177,18 @@ func RegisterMarketplace(
 
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
 
-	// ── Realtime (SSE) live-push seam for chat. Shared hub built once at the router
+	// Fail-closed KYC-tier gate on the boost wallet debit (§6 "Tier/KYC gate"
+	// FINDING in docs/qa/modules/marketplace.md) — every wallet debit must pass
+	// it, boost included. Built self-contained from
+	// the shared pool here — mirroring ledgerSvc above — rather than threading
+	// app-wiring's single tiersSvc instance out of registerFinanceRoutes,
+	// since RegisterMarketplace is deliberately callable as one
+	// feature-flag-guarded line from router.go (see doc comment above).
+	// tiers.NewService only needs the pool; the checkout-allowance variant
+	// (WithCheckoutAllowance) is irrelevant here — a boost purchase is a
+	// direct wallet debit, not a checkout/escrow allowance case.
+	svc.WithTiers(tiers.NewService(pool))
+
 	// level (so other modules — events' check-in feed — can share the same
 	// /api/v1/realtime/stream connection) and passed in here. Fans events across
 	// backend instances via Redis pub/sub (in-process when redis is nil).
@@ -187,18 +197,13 @@ func RegisterMarketplace(
 	// FEATURE_REALTIME_ENABLED.
 	svc.WithRealtime(rtHub)
 
-	// ── Central Commission & Profit recording (§ profit registry) ──
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// marketplace profit (the boost purchase — the live revenue-capture point after
-	// ADR-023 retired escrow settlement) lands in commission_earnings for the profit
-	// report. The recorder is built WITHOUT a ledger (nil ledgerService) on purpose:
-	// the boost charge already posts the money into ledger.AccountCommission, so a
-	// second ledger post would double-count the commission revenue account. RecordFor
-	// therefore appends the earning ROW only. Recording is best-effort and can never
-	// fail or reverse a boost (see marketplace.recordCommissionSafe). Flag off ⇒ no
-	// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+	// Commission recording for marketplace profit (the boost purchase — the live
+	// revenue-capture point after ADR-023 retired escrow settlement). Ledger-less
+	// recorder — the boost charge already posts to ledger.AccountCommission, so
+	// RecordFor appends the earning ROW only; best-effort, never fails a boost
+	// (marketplace.recordCommissionSafe). Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
-		commissionSvc := commission.NewService(commission.NewRepository(pool), nil)
+		commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commissionSvc})
 		log.Println("[marketplace] commission recording wired → Lifestyle/Marketplace (earning-row only; no ledger re-post)")
 	}
@@ -210,7 +215,6 @@ func RegisterMarketplace(
 	// without an edit to a non-owned file. Discard it explicitly.
 	_ = referralRewards
 
-	// ── Search wiring (§ integration contract) ──
 	// Inject Agent B's Elasticsearch read-model client via the type-erased
 	// Searcher seam when an ES URL is configured. When ELASTICSEARCH_URL is empty
 	// we leave the searcher nil, so GET /search returns 501 SEARCH_NOT_WIRED
@@ -246,7 +250,6 @@ func RegisterMarketplace(
 	auth := func() gin.HandlerFunc { return middleware.RequireAuthContext(supabase, rbac) }
 	guard := func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) }
 
-	// ── Shared realtime SSE stream (marketplace chat is the first consumer). Mounted
 	// at /api/v1/realtime/stream, authed, gated by FEATURE_REALTIME_ENABLED. The
 	// mobile connects here (via the Next.js streaming proxy) and falls back to polling
 	// when the flag is off or the stream drops.
@@ -258,6 +261,12 @@ func RegisterMarketplace(
 	}
 
 	base := r.Group("/v1/marketplace")
+	// Shape-gate every uuid-typed route param (:id/:mediaId/:categoryId) once,
+	// up front — a malformed id answers 404 instead of letting Postgres's
+	// "invalid input syntax for type uuid" escape as a 500. Runs before auth on
+	// member/admin routes too, which is safe: the route shape is public
+	// knowledge and a non-uuid can never match a row.
+	base.Use(marketplace.UUIDParams())
 
 	// ── Escrow webhooks REMOVED (ADR-023 listings-and-connect pivot) ──
 	// The two inbound webhooks (POST /webhooks/logistics/delivery-confirmed and
@@ -265,7 +274,6 @@ func RegisterMarketplace(
 	// escrow orders they have no state to advance; both the routes and their handlers
 	// (webhooks.go / webhook_handler.go) have been deleted.
 
-	// ── Public read (listing detail, search, categories, seller profile) ──
 	// Auth-optional reads: listing detail + search + categories + seller pages are
 	// browsable without a Bearer (KYC tier0_browse). They still enforce OLA where a
 	// write is implied.
@@ -279,7 +287,6 @@ func RegisterMarketplace(
 	base.GET("/boosts/tiers", h.BoostTiers)
 	base.GET("/boosts/quote", h.GetBoostQuote)
 
-	// ── Member group (auth) ──
 	m := base.Group("")
 	m.Use(auth())
 
@@ -308,6 +315,12 @@ func RegisterMarketplace(
 	m.PUT("/listings/:id/media/reorder", h.ReorderListingMedia)
 
 	// Offers
+	// Appeals — member-facing filing (MKT-007). createAppeal has no admin-only
+	// gate in the frontend service layer and no admin call site: a real member
+	// files their own appeal, auth-only, no RBAC. Admin review/decide/approve
+	// routes are registered separately below under the /admin group.
+	m.POST("/appeals", h.FileAppeal)
+
 	m.GET("/offers", h.ListOffers) // ?listing_id= — negotiation history (participant-scoped)
 	m.POST("/offers", h.CreateOffer)
 	m.POST("/offers/:id/accept", h.AcceptOffer)
@@ -323,7 +336,6 @@ func RegisterMarketplace(
 	// FSM code (service_order.go, service_dispute.go, fsm_order.go, fsm_dispute.go,
 	// their handlers and the logistics/payments webhooks) has been deleted
 	// (additive-only; mkt_orders/mkt_disputes tables are retained but unused).
-	//
 	// Reviews: SubmitReview was gated on OrderReleased (an escrow-completed order).
 	// With no orders it has no valid completion signal, so POST /orders/:id/review is
 	// left UNREGISTERED until a non-order "deal completed" signal is introduced
@@ -353,7 +365,6 @@ func RegisterMarketplace(
 	m.POST("/deals/:id/review", h.SubmitDealReview)
 	m.GET("/deals/:id/review", h.GetDealReview)
 
-	// Saved searches
 	m.POST("/saved-searches", h.CreateSavedSearch)
 	m.GET("/saved-searches", h.ListSavedSearches)
 	m.DELETE("/saved-searches/:id", h.DeleteSavedSearch)
@@ -363,7 +374,6 @@ func RegisterMarketplace(
 	m.POST("/verification/id", h.VerifyID)
 	m.POST("/verification/business", h.VerifyBusiness)
 
-	// ── Trust & Account gap endpoints (§28–34; non-money metadata) ──
 	// Listing media presign (Sell agent's photo upload). NOTE: mounted at
 	// /media/presign, NOT /listings/media/presign — Gin's radix router forbids a
 	// static "media" segment alongside the existing /listings/:id param at the same
@@ -397,7 +407,6 @@ func RegisterMarketplace(
 	m.DELETE("/sellers/:id/follow", h.UnfollowSeller)
 	m.GET("/followed-sellers", h.ListFollowedSellers)
 
-	// ── Admin group (auth + per-route RBAC guard) ──
 	a := base.Group("/admin")
 	a.Use(auth())
 	// Slugs are the AUTHORITATIVE set seeded by
@@ -434,6 +443,61 @@ func RegisterMarketplace(
 	a.PUT("/pricing/boosts", guard("marketplace.admin.pricing"), h.AdminUpsertBoostPackage)
 	a.GET("/pricing/boosts/daily-rate", guard("marketplace.admin.pricing"), h.AdminGetBoostDailyRate)
 	a.PUT("/pricing/boosts/daily-rate", guard("marketplace.admin.pricing"), h.AdminSetBoostDailyRate)
+
+	// Analytics (MKT-007) — admin console dashboard KPIs/funnel/GMV series.
+	// Gated on marketplace.admin.analytics (seeded; confirmed via SQL — see
+	// admin_analytics_handler.go).
+	a.GET("/analytics", guard("marketplace.admin.analytics"), h.AdminAnalytics)
+
+	// Taxonomy (MKT-007) — category CRUD over the pre-existing mkt_categories
+	// table. Gated on marketplace.admin.taxonomy (seeded; confirmed via SQL —
+	// see admin_taxonomy_handler.go / repository_admin_taxonomy.go).
+	a.GET("/taxonomy/categories", guard("marketplace.admin.taxonomy"), h.AdminListCategories)
+	a.GET("/taxonomy/categories/:id", guard("marketplace.admin.taxonomy"), h.AdminGetCategory)
+	a.POST("/taxonomy/categories", guard("marketplace.admin.taxonomy"), h.AdminCreateCategory)
+	a.PATCH("/taxonomy/categories/:id", guard("marketplace.admin.taxonomy"), h.AdminUpdateCategory)
+	a.PATCH("/taxonomy/categories/:id/active", guard("marketplace.admin.taxonomy"), h.AdminSetCategoryActive)
+
+	// CMS (MKT-007) — home banners (ADM-003) + per-category landing/SEO content
+	// (ADM-004). Gated on marketplace.admin.cms, seeded by
+	// 20261028000500_marketplace_cms_rbac_perm.sql. See cms.go.
+	a.GET("/cms/banners", guard("marketplace.admin.cms"), h.AdminListBanners)
+	a.POST("/cms/banners", guard("marketplace.admin.cms"), h.AdminCreateBanner)
+	a.PATCH("/cms/banners/:id", guard("marketplace.admin.cms"), h.AdminUpdateBanner)
+	a.PATCH("/cms/banners/:id/status", guard("marketplace.admin.cms"), h.AdminSetBannerStatus)
+	a.GET("/cms/categories/:categoryId/content", guard("marketplace.admin.cms"), h.AdminGetCategoryContent)
+	a.PUT("/cms/categories/:categoryId/content", guard("marketplace.admin.cms"), h.AdminUpsertCategoryContent)
+
+	// Users / Trust & Safety (MKT-007) — gated on marketplace.admin.users.view
+	// (read) / marketplace.admin.users.action (write), seeded by
+	// 20261028000300_marketplace_users_ts_rbac_perms.sql. A ban is maker-checker
+	// (see admin_handler_users.go / service_admin_users.go): POST .../status
+	// PROPOSES, POST .../action/approve is the second, DIFFERENT admin's sign-off
+	// (SAME_APPROVER_NOT_ALLOWED enforced server-side + DB CHECK constraint).
+	a.GET("/users", guard("marketplace.admin.users.view"), h.AdminSearchUsers)
+	a.GET("/users/:id", guard("marketplace.admin.users.view"), h.AdminGetUser)
+	a.POST("/users/:id/status", guard("marketplace.admin.users.action"), h.AdminSetUserStatus)
+	a.POST("/users/:id/action/approve", guard("marketplace.admin.users.action"), h.AdminApproveUserAction)
+	a.POST("/users/:id/kyc/review", guard("marketplace.admin.users.action"), h.AdminReviewKYC)
+	a.POST("/users/:id/blacklist", guard("marketplace.admin.users.action"), h.AdminBlacklistUser)
+	a.POST("/users/:id/audit/view-as", guard("marketplace.admin.users.action"), h.AdminLogViewAs)
+
+	// Fraud signals (MKT-007) — read-only, derived from real mkt_flags/mkt_listings
+	// data (see service_admin_fraud.go for exactly which signals and why). The
+	// permission-seeding migration's own comment documents this route as gated on
+	// marketplace.admin.users.view — no new permission slug was introduced.
+	a.GET("/fraud/signals", guard("marketplace.admin.users.view"), h.AdminFraudSignals)
+
+	// Appeals (MKT-007) — gated on marketplace.admin.appeals.review (read) /
+	// marketplace.admin.appeals.decide (write), seeded by
+	// 20261028000200_marketplace_appeals_rbac_perms.sql. Overturning a policy
+	// action is maker-checker (uphold executes immediately) — see
+	// admin_handler_appeals.go / service_admin_appeals.go.
+	a.GET("/appeals", guard("marketplace.admin.appeals.review"), h.AdminListAppeals)
+	a.GET("/appeals/:id", guard("marketplace.admin.appeals.review"), h.AdminGetAppeal)
+	a.PATCH("/appeals/:id/status", guard("marketplace.admin.appeals.review"), h.AdminSetAppealStatus)
+	a.POST("/appeals/:id/decide", guard("marketplace.admin.appeals.decide"), h.AdminDecideAppeal)
+	a.POST("/appeals/:id/approve", guard("marketplace.admin.appeals.decide"), h.AdminApproveAppeal)
 
 	log.Println("[marketplace] routes registered — listings/offers/boosts + trust/account + admin moderation + real-time audit (listings-and-connect; no escrow)")
 	return svc

@@ -6,9 +6,26 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/middleware"
 )
+
+const keyError = "error"
+
+// uuidOK reports whether s is a syntactically valid uuid — path params feed
+// uuid-typed columns, so handlers gate on it and answer 400 rather than a 22P02 500.
+func uuidOK(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+// badID writes the stable 400 invalid_input body for a malformed uuid path param.
+func badID(c *gin.Context) {
+	c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid_id", "message": "id must be a uuid"})
+}
 
 // Handler exposes the read-only platform EdTech oversight endpoints. Every response
 // is wrapped in {"data": ...} to match the console client (getJson unwraps
@@ -31,10 +48,9 @@ func rfcPtr(t *time.Time) any {
 }
 
 func fail(c *gin.Context, err error) {
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 }
 
-// ── SU-01 GET /schools → PlatformSchool[] ─────────────────────────────────────
 func (h *Handler) ListSchools(c *gin.Context) {
 	rows, err := h.repo.ListSchools(c.Request.Context())
 	if err != nil {
@@ -60,7 +76,6 @@ func (h *Handler) ListSchools(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-02 GET /verification-queue → VerificationSubmission[] ───────────────────
 func (h *Handler) ListVerificationQueue(c *gin.Context) {
 	rows, err := h.repo.ListVerificationQueue(c.Request.Context())
 	if err != nil {
@@ -84,7 +99,6 @@ func (h *Handler) ListVerificationQueue(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-02 POST /schools/:id/verify → VerificationSubmission ────────────────────
 // Advances verification_tier on the money-free academy_schools column. Body may
 // carry {granted_tier, reason}; defaults to 'verified' when absent.
 func (h *Handler) VerifySchool(c *gin.Context) {
@@ -92,6 +106,10 @@ func (h *Handler) VerifySchool(c *gin.Context) {
 	// live route (POST /verification-queue/:id/review, where :id is the school id in the
 	// derived queue). Whichever param is present wins.
 	schoolID := c.Param("id")
+	if !uuidOK(schoolID) {
+		badID(c)
+		return
+	}
 	var body struct {
 		Decision    string `json:"decision"` // console sends 'approve' | 'reject'
 		GrantedTier string `json:"granted_tier"`
@@ -138,14 +156,8 @@ func (h *Handler) VerifySchool(c *gin.Context) {
 	}})
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
+func firstNonEmpty(a, b string) string { return strutil.FirstNonEmpty(a, b) }
 
-// ── SU-03 GET /collections → CollectionsOverview ──────────────────────────────
 func (h *Handler) Collections(c *gin.Context) {
 	ctx := c.Request.Context()
 	agg, err := h.repo.CollectionsOverview(ctx)
@@ -210,7 +222,6 @@ func topByGMV(rows []gin.H, n int) []gin.H {
 	return rows
 }
 
-// ── SU-04 GET /risk → RiskCase[] ──────────────────────────────────────────────
 func (h *Handler) ListRisk(c *gin.Context) {
 	rows, err := h.repo.ListRiskCases(c.Request.Context())
 	if err != nil {
@@ -234,7 +245,6 @@ func (h *Handler) ListRisk(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-05 GET /gov-sync → GovSyncRow[] ────────────────────────────────────────
 func (h *Handler) ListGovSync(c *gin.Context) {
 	rows, err := h.repo.ListGovSync(c.Request.Context())
 	if err != nil {
@@ -260,7 +270,6 @@ func (h *Handler) ListGovSync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-05 GET /compliance-exports → ComplianceExportLog[] ─────────────────────
 func (h *Handler) ListComplianceExports(c *gin.Context) {
 	rows, err := h.repo.ListComplianceExports(c.Request.Context())
 	if err != nil {
@@ -289,7 +298,6 @@ func (h *Handler) ListComplianceExports(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-06 GET /competitions → Competition[] ───────────────────────────────────
 func (h *Handler) ListCompetitions(c *gin.Context) {
 	rows, err := h.repo.ListCompetitions(c.Request.Context())
 	if err != nil {
@@ -320,7 +328,6 @@ func dateOrEmpty(t *time.Time) string {
 	return t.UTC().Format("2006-01-02")
 }
 
-// ── SU-07 GET /trust-scores → TrustScoreRow[] ─────────────────────────────────
 func (h *Handler) ListTrustScores(c *gin.Context) {
 	rows, err := h.repo.ListTrustScores(c.Request.Context())
 	if err != nil {
@@ -334,7 +341,6 @@ func (h *Handler) ListTrustScores(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-07 POST /trust-scores/:schoolId/override → TrustScoreRow ───────────────
 func (h *Handler) OverrideTrustScore(c *gin.Context) {
 	schoolID := c.Param("schoolId")
 	var body struct {
@@ -343,11 +349,15 @@ func (h *Handler) OverrideTrustScore(c *gin.Context) {
 		Reason   string  `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 	if schoolID == "" {
 		schoolID = body.SchoolID
+	}
+	if !uuidOK(schoolID) {
+		badID(c)
+		return
 	}
 	actorID := ""
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
@@ -388,7 +398,6 @@ func trustJSON(t TrustRow) gin.H {
 	}
 }
 
-// ── SU-08 GET /scholarship-pledges → ScholarshipPledge[] ──────────────────────
 func (h *Handler) ListScholarships(c *gin.Context) {
 	rows, err := h.repo.ListScholarships(c.Request.Context())
 	if err != nil {
@@ -428,13 +437,11 @@ func (h *Handler) ListScholarships(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-09 GET /support-tickets → SupportTicket[] (no backing table) ───────────
 // There is no support-ticket table in the schema. Returns a documented empty list.
 func (h *Handler) ListSupportTickets(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": []any{}})
 }
 
-// ── SU-10 GET /flags → FeatureFlag[] (real runtime store) ─────────────────────
 // Reads the persisted public.academy_feature_flags store. Rows here are authoritative;
 // the composition root additionally falls back to the compile-time default for any flag
 // with no row (fail-closed). Read-only; no money.
@@ -459,7 +466,6 @@ func (h *Handler) ListFlags(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-10 PUT/POST /flags/toggle → FeatureFlag (real persisted toggle) ────────
 // Persists the requested enabled state to academy_feature_flags and appends an immutable
 // audit row (academy_commerce_audit, surfaced by SU-11). RBAC (platform_edtech_admin) is
 // enforced at the route group; the actor is the authenticated operator. No money path.
@@ -471,11 +477,11 @@ func (h *Handler) ToggleFlag(c *gin.Context) {
 		Enabled   bool   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 	if body.Key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "key is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "key is required"})
 		return
 	}
 	actorID := ""
@@ -498,7 +504,6 @@ func (h *Handler) ToggleFlag(c *gin.Context) {
 	}})
 }
 
-// ── SU-11 GET /audit-log → AuditLogEntry[] ────────────────────────────────────
 func (h *Handler) SearchAudit(c *gin.Context) {
 	entity := c.Query("entity")
 	schoolID := c.Query("school_id")
@@ -532,7 +537,6 @@ func (h *Handler) SearchAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-12 GET /compliance-posture → CompliancePosture ─────────────────────────
 func (h *Handler) CompliancePosture(c *gin.Context) {
 	drift, err := h.repo.DriftSignals(c.Request.Context())
 	if err != nil {

@@ -4,13 +4,14 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapSession } from '@/src/server/visitor/gate.service';
 
-// POST /api/v1/visitor/gate/handover — end the guard's shift and record handover notes.
+// End the guard's shift and record handover notes.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const notes: string | null = body?.notes ?? null;
 
     const { data: session, error } = await supabase

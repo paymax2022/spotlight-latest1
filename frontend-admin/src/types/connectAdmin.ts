@@ -1,4 +1,3 @@
-// ── Admin — Paymax Connect types ─────────────────────────────────────────────
 // Field names mirror the Go JSON (snake_case) from /api/connect/admin/*.
 
 export type ConnectCaseStatus = 'open' | 'investigating' | 'resolved' | 'closed';
@@ -29,7 +28,6 @@ export interface ConnectAuditEntry {
   created_at: string;
 }
 
-// ── §11.1 Dashboard ──────────────────────────────────────────────────────────
 export interface ConnectDashboardActivity {
   id: string;
   kind: string;        // case_opened | aml_alert | payout_requested | str_filed | identity_review …
@@ -53,7 +51,6 @@ export interface ConnectDashboard {
   activity: ConnectDashboardActivity[];
 }
 
-// ── §11.2 User & identity ────────────────────────────────────────────────────
 export type ConnectUserStatus = 'active' | 'suspended' | 'banned' | 'restricted' | 'pending';
 export type ConnectVerificationBadge = 'unverified' | 'selfie' | 'bvn' | 'nin' | 'id' | 'full';
 
@@ -110,11 +107,10 @@ export interface UnderageFlag {
   created_at: string;
 }
 
-// ── §11.4 Moderation ─────────────────────────────────────────────────────────
 export type ModerationStatus = 'open' | 'investigating' | 'actioned' | 'dismissed';
 export interface ModerationCaseSummary {
   id: string;
-  case_id: string;              // each report = a case
+  case_id: string;
   content_type: 'message' | 'profile' | 'photo' | 'stream' | 'bio' | 'comment';
   reason: string;
   ai_reason_codes: string[];    // AI moderation reason codes — reviewable
@@ -143,7 +139,6 @@ export interface MediaReviewItem {
   submitted_at: string;
 }
 
-// ── §11.5 Finance, gifting & AML ─────────────────────────────────────────────
 export interface ConnectFinanceSummary {
   gift_volume_today_kobo: number;
   gift_volume_30d_kobo: number;
@@ -174,7 +169,10 @@ export interface AmlAlert {
   id: string;
   subject_id: string;
   reason_codes: string[];       // AML reason codes ONLY — no raw PII
-  rule: 'velocity' | 'structuring' | 'smurfing' | 'gifting_ring' | 'sanctions_hit' | 'pep_match';
+  // 'threshold_exceeded' added for the real backend's THRESHOLD_EXCEEDED
+  // reason code (connect_aml_alerts.reason_code) — the mock fixtures never
+  // exercised it, but the live rules engine raises it (service.go score()).
+  rule: 'velocity' | 'structuring' | 'smurfing' | 'gifting_ring' | 'sanctions_hit' | 'pep_match' | 'threshold_exceeded';
   amount_kobo: number;          // money in kobo
   severity: string;
   status: AmlAlertStatus;
@@ -203,11 +201,12 @@ export interface ConnectPayout {
   amount_kobo: number;          // money in kobo
   fee_kobo: number;
   tier: number;
-  status: 'pending' | 'approved' | 'paid' | 'rejected' | 'review';
+  // Real connect_payouts.status values (backend CHECK constraint) — see
+  // GET /api/connect/admin/payouts (backend/internal/connect/payouts/handlers.go).
+  status: 'requested' | 'processing' | 'settled' | 'failed';
   requested_at: string;
 }
 
-// ── §11.6 Voting integrity ───────────────────────────────────────────────────
 export type VotingContestStatus = 'scheduled' | 'live' | 'closed' | 'finalized';
 export interface VotingContestSummary {
   id: string;

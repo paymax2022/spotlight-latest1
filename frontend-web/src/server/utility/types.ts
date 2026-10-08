@@ -84,6 +84,7 @@ export interface UtilityTransactionRow {
   token: string | null;
   receipt_number: string | null;
   idempotency_key: string;
+  payment_source: 'wallet' | 'paystack';
   failure_reason: string | null;
   provider_response: Record<string, unknown> | null;
   metadata: Record<string, unknown>;

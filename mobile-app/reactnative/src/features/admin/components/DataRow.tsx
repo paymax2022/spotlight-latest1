@@ -1,4 +1,3 @@
-// ── Paymax · Admin — DataRow ─────────────────────────────────────────────────
 // Generic left-label + right-value/badge row, used to compose tables inside a
 // ListCard. The right side can be a string (rendered as a value) or any node
 // (badge, toggle, button). Optionally pressable for drill-down navigation.
@@ -6,9 +5,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   label: string;

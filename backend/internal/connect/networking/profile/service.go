@@ -33,8 +33,6 @@ func NewService(repo *Repository, audit Auditor) *Service {
 	return &Service{repo: repo, audit: audit}
 }
 
-// ─────────────────────────────── Experience ──────────────────────────────────
-
 func (s *Service) AddExperience(ctx context.Context, userID string, in ExperienceInput, idemKey string) (*Experience, error) {
 	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Company) == "" || in.StartDate == "" {
 		return nil, ErrInvalidInput
@@ -71,8 +69,6 @@ func (s *Service) DeleteExperience(ctx context.Context, userID, id string) error
 func (s *Service) ListExperience(ctx context.Context, userID string) ([]Experience, error) {
 	return s.repo.ListExperience(ctx, userID)
 }
-
-// ─────────────────────────────── Education ───────────────────────────────────
 
 func (s *Service) AddEducation(ctx context.Context, userID string, in EducationInput, idemKey string) (*Education, error) {
 	if strings.TrimSpace(in.Institution) == "" || in.StartDate == "" {
@@ -111,8 +107,6 @@ func (s *Service) ListEducation(ctx context.Context, userID string) ([]Education
 	return s.repo.ListEducation(ctx, userID)
 }
 
-// ─────────────────────────────────── About ───────────────────────────────────
-
 func (s *Service) GetAbout(ctx context.Context, userID string) (*About, error) {
 	return s.repo.GetAbout(ctx, userID)
 }
@@ -125,8 +119,6 @@ func (s *Service) SetAbout(ctx context.Context, userID string, in AboutInput) (*
 	_ = s.audit.WriteAudit(ctx, "connect.network.about.set", userID, "connect_network_about", userID, nil)
 	return a, nil
 }
-
-// ──────────────────────────── Recommendations ────────────────────────────────
 
 // WriteRecommendation is RC-01. The author creates a recommendation about the
 // subject. It starts DRAFTED (author may send later) or SENT (default). It is
@@ -254,8 +246,6 @@ func (s *Service) RequestRecommendation(ctx context.Context, requesterID string,
 	return req, nil
 }
 
-// ──────────────────────── Profile strength (PR-11) ───────────────────────────
-
 // Strength gathers signals from the user's own data and returns a PN-1-safe view
 // (coarse band + missing sections). The raw numeric score never leaves this
 // process. The verified badge is gathered server-side (never client-supplied);
@@ -290,8 +280,6 @@ func (s *Service) Strength(ctx context.Context, userID string) (StrengthView, er
 	}
 	return BuildStrengthView(signals), nil
 }
-
-// ─────────────────────────────────── Admin ───────────────────────────────────
 
 func (s *Service) AdminListRecommendations(ctx context.Context, state string, limit int) ([]Recommendation, error) {
 	return s.repo.AdminList(ctx, state, limit)

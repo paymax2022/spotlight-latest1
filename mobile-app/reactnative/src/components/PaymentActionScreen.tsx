@@ -21,16 +21,17 @@ import {
 } from '@/api/beneficiaries.api';
 import { fetchBanks } from '@/features/transfers/api';
 import BankPicker from '@/features/transfers/components/BankPicker';
+import TripPinInput from '@/features/mobility/components/TripPinInput';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
 import { alertAsync } from '@/lib/confirm';
 import { showToast } from '@/store/toastStore';
 import { normalizeApiError } from '@/utils/errorMapper';
 import { sanitizeMoneyInput } from '@/utils/money';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow2 } from '@/constants/shadows';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 
 type ActionKind = 'fund' | 'transfer' | 'withdraw' | 'cards' | 'fx';
 
@@ -60,8 +61,12 @@ const ACTIONS: Record<ActionKind, ActionConfig> = {
     icon: 'Send',
     accent: Colors.secondary,
     eyebrow: 'Transfer',
-    primaryAction: 'Save Transfer Draft',
-    helper: 'Transfers are held as a secure placeholder until wallet-to-wallet settlement is enabled.',
+    // WAL-001: this used to say transfers were "held as a secure placeholder
+    // until wallet-to-wallet settlement is enabled" — stale copy from before
+    // wallet-to-wallet went live. It settles immediately (atomic RPC) once the
+    // PIN below is verified.
+    primaryAction: 'Preview Transfer',
+    helper: 'Enter an amount and recipient, then confirm with your transaction PIN to send instantly.',
   },
   withdraw: {
     title: 'Withdraw',
@@ -69,8 +74,8 @@ const ACTIONS: Record<ActionKind, ActionConfig> = {
     icon: 'ArrowDownToLine',
     accent: Colors.teal,
     eyebrow: 'Payout',
-    primaryAction: 'Save Withdrawal Draft',
-    helper: 'Withdrawals require payout beneficiary verification before release.',
+    primaryAction: 'Continue',
+    helper: 'Withdrawals require payout beneficiary verification and your transaction PIN before release.',
   },
   cards: {
     title: 'Cards & Methods',
@@ -173,6 +178,12 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const [saveBeneficiary, setSaveBeneficiary] = useState(false);
   const [completedBankTransfer, setCompletedBankTransfer] = useState<BankTransferResult | null>(null);
 
+  // Transaction PIN — required to authorise both transfer and withdraw debits
+  // (WAL-001: previously neither flow collected or sent one at all). Shared
+  // across the transfer and bank-transfer confirm steps; cleared on reset.
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState<string | undefined>();
+
   // Fetch saved beneficiaries when on the withdraw tab
   const beneficiariesQuery = useQuery({
     queryKey: ['beneficiaries'],
@@ -193,7 +204,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const amountKobo = useMemo(() => Math.round(amountValue * 100), [amountValue]);
   const feeKobo = useMemo(() => calculateTransferFee(amountKobo), [amountKobo]);
 
-  // ── Wallet funding mutation ─────────────────────────────────────────────────
   const fundMutation = useMutation({
     mutationFn: async () => {
       if (!amountValue || amountValue < 100) {
@@ -218,7 +228,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  // ── Transfer: step 1 — resolve recipient ───────────────────────────────────
   const resolveMutation = useMutation({
     mutationFn: async () => {
       if (!recipient.trim()) throw new Error('Enter a phone number or email address.');
@@ -232,33 +241,39 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     onError: (error) => showTransferError(error, 'Could not look up recipient'),
   });
 
-  // ── Transfer: step 2 — execute transfer ────────────────────────────────────
   const transferMutation = useMutation({
     mutationFn: async () => {
       if (!recipient.trim() || !amountKobo) throw new Error('Invalid transfer details.');
+      if (!/^\d{4}$/.test(pin)) throw new Error('Enter your 4-digit transaction PIN.');
       return initiateWalletTransfer({
         recipientIdentifier: recipient.trim(),
         amountKobo,
         narration: narration.trim() || undefined,
+        pin,
       });
     },
     onSuccess: (data) => {
       setCompletedTransfer(data);
       setTransferStep('success');
+      setPin('');
+      setPinError(undefined);
     },
     onError: (error) => {
       const msg = error instanceof Error ? error.message : 'Transfer failed. Please try again.';
-      if (msg.toLowerCase().includes('insufficient')) {
+      const lower = msg.toLowerCase();
+      if (lower.includes('insufficient')) {
         void alertAsync({ title: 'Insufficient Balance', message: 'Fund your wallet to continue.' });
-      } else if (msg.toLowerCase().includes('limit')) {
+      } else if (lower.includes('limit')) {
         void alertAsync({ title: 'Daily Limit Reached', message: 'You have reached your daily transfer limit. Upgrade your KYC to increase limits.' });
+      } else if (lower.includes('pin')) {
+        setPinError(msg);
+        setPin('');
       } else {
         void alertAsync({ title: 'Transfer Failed', message: msg });
       }
     },
   });
 
-  // ── Bank transfer: resolve account name via provider validation API ─────────
   // Runs inline (see auto-resolve effect below) so the user sees the verified
   // account name before continuing — no separate "verify" tap required.
   const resolveAccountMutation = useMutation({
@@ -301,40 +316,46 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     if (resolvedAccount) setResolvedAccount(null);
   };
 
-  // ── Bank transfer: select saved beneficiary ─────────────────────────────────
   const selectBeneficiary = (b: Beneficiary) => {
     setSelectedBeneficiary(b);
     setBankCode(b.bankCode);
-    setAccountNumber(b.accountNumberLast4); // display only; actual number from beneficiary
+    setAccountNumber(b.accountNumberLast4);
     setResolvedAccount({ accountName: b.accountName, bankName: b.bankName });
     setBankStep('confirm');
   };
 
-  // ── Bank transfer: execute ──────────────────────────────────────────────────
   const bankTransferMutation = useMutation({
     mutationFn: async () => {
       if (!amountKobo || amountKobo < 100_000) throw new Error('Minimum bank transfer is ₦1,000.');
       if (!resolvedAccount) throw new Error('Resolve the account first.');
+      if (!/^\d{4}$/.test(pin)) throw new Error('Enter your 4-digit transaction PIN.');
       return initiateBankTransfer({
         bankCode:        bankCode.trim(),
         bankName:        resolvedAccount.bankName,
-        accountNumber:   selectedBeneficiary ? '' : accountNumber.trim(), // server re-resolves for manual; beneficiary stores full number
+        accountNumber:   selectedBeneficiary ? '' : accountNumber.trim(),
         accountName:     resolvedAccount.accountName,
         amountKobo,
         narration:       narration.trim() || undefined,
         saveBeneficiary,
+        pin,
       });
     },
     onSuccess: (data) => {
       setCompletedBankTransfer(data);
       setBankStep('success');
+      setPin('');
+      setPinError(undefined);
     },
     onError: (error) => {
       const msg = error instanceof Error ? error.message : 'Transfer failed. Please try again.';
-      if (msg.toLowerCase().includes('insufficient')) {
+      const lower = msg.toLowerCase();
+      if (lower.includes('insufficient')) {
         void alertAsync({ title: 'Insufficient Balance', message: 'Top up your wallet to continue.' });
-      } else if (msg.toLowerCase().includes('limit')) {
+      } else if (lower.includes('limit')) {
         void alertAsync({ title: 'Daily Limit Reached', message: 'Upgrade your KYC to increase your daily limit.' });
+      } else if (lower.includes('pin')) {
+        setPinError(msg);
+        setPin('');
       } else {
         void alertAsync({ title: 'Transfer Failed', message: msg });
       }
@@ -355,6 +376,8 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     setAmount('');
     setNarration('');
     setCompletedBankTransfer(null);
+    setPin('');
+    setPinError(undefined);
     void beneficiariesQuery.refetch();
   };
 
@@ -370,6 +393,8 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
         setNarration('');
         setResolvedRecipient(null);
         setCompletedTransfer(null);
+        setPin('');
+        setPinError(undefined);
         return;
       }
     }
@@ -400,7 +425,12 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconButton}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.iconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>{config.title}</Text>
@@ -430,20 +460,30 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
         {kind === 'withdraw' && bankStep === 'success' && completedBankTransfer ? (
           <BankTransferSuccessCard transfer={completedBankTransfer} />
         ) : kind === 'withdraw' && bankStep === 'confirm' && resolvedAccount ? (
-          <BankTransferConfirmCard
-            accountName={resolvedAccount.accountName}
-            bankName={resolvedAccount.bankName}
-            accountNumberLast4={selectedBeneficiary ? selectedBeneficiary.accountNumberLast4 : accountNumber.slice(-4)}
-            amountKobo={amountKobo}
-            feeKobo={calculateBankTransferFee(amountKobo)}
-            narration={narration}
-            onNarrationChange={setNarration}
-            saveBeneficiary={saveBeneficiary}
-            onToggleSave={setSaveBeneficiary}
-            onBack={() => setBankStep(selectedBeneficiary ? 'pick' : 'manual')}
-            amount={amount}
-            onAmountChange={setAmount}
-          />
+          <>
+            <BankTransferConfirmCard
+              accountName={resolvedAccount.accountName}
+              bankName={resolvedAccount.bankName}
+              accountNumberLast4={selectedBeneficiary ? selectedBeneficiary.accountNumberLast4 : accountNumber.slice(-4)}
+              amountKobo={amountKobo}
+              feeKobo={calculateBankTransferFee(amountKobo)}
+              narration={narration}
+              onNarrationChange={setNarration}
+              saveBeneficiary={saveBeneficiary}
+              onToggleSave={setSaveBeneficiary}
+              onBack={() => setBankStep(selectedBeneficiary ? 'pick' : 'manual')}
+              amount={amount}
+              onAmountChange={setAmount}
+            />
+            <View style={styles.pinSection}>
+              <Text style={styles.pinLabel}>Transaction PIN</Text>
+              <TripPinInput
+                value={pin}
+                onChange={(v) => { setPin(v); setPinError(undefined); }}
+                error={pinError}
+              />
+            </View>
+          </>
         ) : kind === 'withdraw' && bankStep === 'manual' ? (
           <BankAccountEntryCard
             banks={banksQuery.data ?? []}
@@ -473,14 +513,24 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
         ) : kind === 'transfer' && transferStep === 'success' && completedTransfer ? (
           <TransferSuccessCard transfer={completedTransfer} />
         ) : kind === 'transfer' && transferStep === 'confirm' && resolvedRecipient ? (
-          <TransferConfirmCard
-            recipient={resolvedRecipient}
-            amountKobo={amountKobo}
-            feeKobo={feeKobo}
-            narration={narration}
-            onNarrationChange={setNarration}
-            onBack={() => setTransferStep('form')}
-          />
+          <>
+            <TransferConfirmCard
+              recipient={resolvedRecipient}
+              amountKobo={amountKobo}
+              feeKobo={feeKobo}
+              narration={narration}
+              onNarrationChange={setNarration}
+              onBack={() => setTransferStep('form')}
+            />
+            <View style={styles.pinSection}>
+              <Text style={styles.pinLabel}>Transaction PIN</Text>
+              <TripPinInput
+                value={pin}
+                onChange={(v) => { setPin(v); setPinError(undefined); }}
+                error={pinError}
+              />
+            </View>
+          </>
         ) : kind === 'cards' ? (
           <CardsPanel />
         ) : (
@@ -554,7 +604,11 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
               label={primaryLabel()}
               onPress={handlePrimary}
               loading={isPending}
-              disabled={kind === 'withdraw' && bankStep === 'manual' && !resolvedAccount}
+              disabled={
+                (kind === 'withdraw' && bankStep === 'manual' && !resolvedAccount) ||
+                (kind === 'withdraw' && bankStep === 'confirm' && pin.length !== 4) ||
+                (kind === 'transfer' && transferStep === 'confirm' && pin.length !== 4)
+              }
             />
           </View>
         )}
@@ -569,8 +623,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     </SafeAreaView>
   );
 }
-
-// ── Transfer sub-components ────────────────────────────────────────────────
 
 function TransferConfirmCard({
   recipient,
@@ -725,8 +777,6 @@ function CardsPanel() {
     </View>
   );
 }
-
-// ── Bank Transfer sub-components ──────────────────────────────────────────
 
 function BeneficiaryPickerCard({
   beneficiaries,
@@ -1036,6 +1086,8 @@ function SecurityPanel() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  pinSection: { marginTop: Spacing.lg, alignItems: 'center', gap: Spacing.sm },
+  pinLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   topBar: {
     height: 64,
     paddingHorizontal: Spacing.containerMargin,
@@ -1155,7 +1207,6 @@ const styles = StyleSheet.create({
   securityText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
   actionWrap: { marginBottom: Spacing.lg },
 
-  // ── Transfer confirm card ─────────────────────────────────────────────────
   confirmHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1221,12 +1272,10 @@ const styles = StyleSheet.create({
   },
   warningText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
 
-  // ── Transfer success card ─────────────────────────────────────────────────
   successIcon: { alignItems: 'center', paddingVertical: Spacing.lg },
   successTitle: { ...Typography.headlineMd, color: Colors.onSurface, textAlign: 'center' },
   successSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.xs, marginBottom: Spacing.md },
 
-  // ── Beneficiary picker ────────────────────────────────────────────────────
   beneficiaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1253,7 +1302,6 @@ const styles = StyleSheet.create({
   },
   newAccountText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
 
-  // ── Inline account resolution feedback ────────────────────────────────────
   resolveRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1270,7 +1318,6 @@ const styles = StyleSheet.create({
   resolveName:      { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
   resolveErrorText: { ...Typography.bodySm, color: Colors.error, flex: 1 },
 
-  // ── Save beneficiary toggle ───────────────────────────────────────────────
   saveRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -5,7 +5,6 @@ package association_test
 //   - BulkImportMembers   (cross-org WRITE: insert ACTIVE memberships into any org)
 //   - GetApprovalQueue     (cross-org READ: every org's pending applicant PII)
 //   - GetOfflinePayments   (cross-org READ: every org's offline-payment financial PII)
-//
 // Gated on TEST_DATABASE_URL exactly like idor_scope_test.go — reuses
 // its shared liveDBPool + seed helpers. Run:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres"

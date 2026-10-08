@@ -1,8 +1,5 @@
 // Pure-logic unit tests for merchant workspace resolution.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/merchantws/*.spec.ts"
-//
 // The defect these close: on approval the Go service writes
-// workspace_route = "/merchant/<slug>", every capability row links there, and no
 // such route existed — app/(merchant) is a route GROUP and parentheses are not a
 // path segment. Approved merchants tapped their capability and went nowhere.
 
@@ -61,7 +58,6 @@ describe('resolveWorkspace', () => {
   });
 
   it('routes a practitioner to the doctor tab group, not a dashboard screen', () => {
-    // The old guess used /(doctor)/(tabs)/dashboard; the tab is named `index`
     // and merely titled "Dashboard", so that route does not resolve.
     const r = resolveWorkspace('medical-practitioner', [
       profile({ workspaceRoute: '/merchant/medical-practitioner' }),

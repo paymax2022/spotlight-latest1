@@ -1,4 +1,4 @@
-import { legacyUtilityPurchase, firstProductId } from '../../_utils';
+import { legacyUtilityPurchase, firstProductId, nairaToKobo } from '../../_utils';
 
 export async function POST(request: Request) {
   return legacyUtilityPurchase(request, {
@@ -6,7 +6,7 @@ export async function POST(request: Request) {
     billerCode: (body) => String(body.networkCode || body.network_code || ''),
     customerReference: (body) => String(body.phoneNumber || body.phone_number || ''),
     productId: (_body, billerId) => firstProductId(billerId, 'variable'),
-    amountKobo: (body) => Math.round(Number(body.amount || 0) * 100),
+    amountKobo: (body) => nairaToKobo(body.amount),
     metadata: (body) => ({
       customer_phone: String(body.phoneNumber || body.phone_number || ''),
       payment_method: body.paymentMethod || body.payment_method || 'WALLET',

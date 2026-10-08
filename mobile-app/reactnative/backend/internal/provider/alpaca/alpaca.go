@@ -4,11 +4,9 @@
 // computes fills locally, this adapter submits the order to the end-user's Alpaca
 // account and reports it as accepted; the actual fill is delivered ASYNCHRONOUSLY
 // by Alpaca (via webhook), so Place never synthesizes a synchronous fill.
-//
 // The BACKEND drives which venue powers the stocks module: credentials arrive only
 // through config.ProviderCreds (never os.Getenv, never hardcoded here). If the
 // creds are not enabled the adapter refuses to place orders.
-//
 // Endpoint contract (Broker API, relative to the configured base URL, e.g.
 // https://broker-api.sandbox.alpaca.markets):
 //
@@ -19,7 +17,6 @@
 // accountId is the end-user's Alpaca account: BrokerRequest.AccountID when set,
 // else the configured default (ALPACA_ACCOUNT_ID) so the sandbox works end-to-end
 // before per-user account provisioning lands.
-//
 // Every call passes through a circuit breaker so a persistently unhealthy venue
 // fails fast instead of stacking 10s timeouts. Only transport errors and 5xx
 // responses count against the breaker; a 4xx means Alpaca is healthy but rejected
@@ -152,7 +149,6 @@ func mapOrderType(t string) string {
 // postOrder POSTs the order body to the account's Broker API orders endpoint under
 // the circuit breaker, enforces a 2xx status and decodes the Alpaca order object
 // into out.
-//
 // Breaker accounting mirrors httpadapter: transport errors and 5xx responses are
 // counted as failures (a venue-down signal); a 4xx means Alpaca is healthy but
 // rejected the request, so it does not trip the breaker. When the breaker is open

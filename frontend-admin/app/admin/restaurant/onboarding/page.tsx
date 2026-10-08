@@ -22,6 +22,15 @@ function StatusBadge({ status, label }: { status: string; label?: string }) {
   return <Badge text={label ?? status} color={STATUS_COLOR[status] ?? colors.secondary} />;
 }
 
+/** E2E-PROV-020: status 'pending' covers both "never submitted" and "submitted,
+ *  awaiting review" — the raw kyb_status distinguishes them on the badge. */
+function onboardingLabel(a: RestaurantApplication): string {
+  if (a.status !== 'pending') return a.status;
+  if (a.kyb_status == null) return 'not submitted';
+  if (a.kyb_status === 'draft') return 'draft — not submitted';
+  return 'pending review';
+}
+
 function KpiTile({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <Card style={{ padding: 14 }}>
@@ -83,7 +92,10 @@ export default function OnboardingReviewPage() {
     }
   }
 
-  const pending = apps.filter((a) => a.status === 'pending' || a.status === 'in_review').length;
+  // "Awaiting review" = actually submitted work: in_review rows plus pending
+  // rows that carry a KYB submission. Never-submitted stores (kyb_status null)
+  // are not awaiting anything (E2E-PROV-020).
+  const pending = apps.filter((a) => a.status === 'in_review' || (a.status === 'pending' && a.kyb_status != null)).length;
   const approved = apps.filter((a) => a.status === 'approved').length;
   const rejected = apps.filter((a) => a.status === 'rejected').length;
 
@@ -154,7 +166,7 @@ export default function OnboardingReviewPage() {
                     <td style={tdCell}>{a.cuisine ?? '—'}</td>
                     <td style={tdCell}>{a.cac_number ?? <span style={{ color: colors.danger }}>missing</span>}</td>
                     <td style={tdCell}>{a.documents.filter((d) => d.verified).length}/{a.documents.length} verified</td>
-                    <td style={tdCell}><StatusBadge status={a.status} label={a.status} /></td>
+                    <td style={tdCell}><StatusBadge status={a.status} label={onboardingLabel(a)} /></td>
                     <td style={tdCell}>{new Date(a.submitted_at).toLocaleDateString('en-NG')}</td>
                     <td style={tdCell}>
                       <Button sm variant="outline" onClick={() => { setSelected(a); setNote(a.review_note ?? ''); }}>Review</Button>

@@ -2,6 +2,7 @@ package feesscholarship
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -16,8 +17,6 @@ import (
 //     and NEVER writes a balance (the invoice port has no balance-write method — it only records
 //     an invoice payment; the balance stays derived per SF-2),
 //   - the fund flow is audited.
-
-// ── in-memory Store fake (also serves as its own Tx) ────────────────────────────
 
 type fakeStore struct {
 	pledges map[string]*Pledge
@@ -121,8 +120,6 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(tx Tx) error) error {
 	return fn(f)
 }
 
-// ── fake LedgerPoster (idempotent on idemKey) ───────────────────────────────────
-
 type fakeLedger struct {
 	calls map[string]int // idemKey → count
 	refs  map[string]string
@@ -141,8 +138,6 @@ func (f *fakeLedger) PostFunding(_ context.Context, _, _, idemKey string, _ int6
 	f.refs[idemKey] = r
 	return r, nil
 }
-
-// ── fake InvoicePayer (records an invoice payment; idempotent; NO balance write) ─
 
 type invoicePaymentCall struct {
 	invoiceID       string
@@ -170,8 +165,6 @@ func (f *fakeInvoicePayer) RecordPayment(_ context.Context, _, invoiceID, guardi
 	return id, false, nil
 }
 
-// ── helper to reach the funded state ─────────────────────────────────────────────
-
 func fundedPledge(t *testing.T, store *fakeStore, ledger *fakeLedger, invoice *fakeInvoicePayer, amount int64) (*Service, *Pledge) {
 	t.Helper()
 	svc := NewServiceWithDeps(store, ledger, invoice)
@@ -186,8 +179,6 @@ func fundedPledge(t *testing.T, store *fakeStore, ledger *fakeLedger, invoice *f
 	fp, _ := store.GetPledge(ctx, p.ID)
 	return svc, fp
 }
-
-// ── FundPledge idempotency: one ledger move ──────────────────────────────────────
 
 func TestFundPledge_Idempotent_SingleLedgerMove(t *testing.T) {
 	ctx := context.Background()
@@ -227,12 +218,10 @@ func TestFundPledge_RequiresIdempotencyKey(t *testing.T) {
 	store := newFakeStore()
 	svc := NewServiceWithDeps(store, newFakeLedger(), newFakeInvoicePayer())
 	p, _ := svc.CreatePledge(ctx, "sponsor-1", CreatePledgeRequest{TargetStudentID: "stu-1", AmountMinor: 1000})
-	if _, err := svc.FundPledge(ctx, "sponsor-1", p.ID, ""); err != ErrIdempotencyRequired {
+	if _, err := svc.FundPledge(ctx, "sponsor-1", p.ID, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Fatalf("missing idempotency key must be rejected, got %v", err)
 	}
 }
-
-// ── ApplyAward: records an invoice payment (never a balance write); idempotent ────
 
 func TestApplyAward_RecordsInvoicePayment_NoBalanceWrite(t *testing.T) {
 	ctx := context.Background()
@@ -318,8 +307,6 @@ func TestApplyAward_Idempotent_SingleInvoicePaymentSingleAward(t *testing.T) {
 	}
 }
 
-// ── ApplyAward guards: unfunded + over-headroom rejected ─────────────────────────
-
 func TestApplyAward_RejectsUnfundedPledge(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -327,7 +314,7 @@ func TestApplyAward_RejectsUnfundedPledge(t *testing.T) {
 	p, _ := svc.CreatePledge(ctx, "sponsor-1", CreatePledgeRequest{TargetStudentID: "stu-1", AmountMinor: 5000})
 	// Not funded yet.
 	_, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{PledgeID: p.ID, InvoiceID: "inv-1", AmountMinor: 1000}, "idem-x")
-	if err != ErrPledgeNotFunded {
+	if !errors.Is(err, ErrPledgeNotFunded) {
 		t.Fatalf("applying an unfunded pledge must be rejected, got %v", err)
 	}
 }
@@ -337,7 +324,7 @@ func TestApplyAward_RejectsOverHeadroom(t *testing.T) {
 	store := newFakeStore()
 	svc, fp := fundedPledge(t, store, newFakeLedger(), newFakeInvoicePayer(), 10000)
 	_, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{PledgeID: fp.ID, InvoiceID: "inv-1", AmountMinor: 15000}, "idem-y")
-	if err != ErrPledgeExhausted {
+	if !errors.Is(err, ErrPledgeExhausted) {
 		t.Fatalf("applying more than the pledged amount must be rejected, got %v", err)
 	}
 }
@@ -346,8 +333,6 @@ func TestApplyAward_RejectsOverHeadroom(t *testing.T) {
 var _ Store = (*fakeStore)(nil)
 var _ Tx = (*fakeStore)(nil)
 
-// ── helpers ──────────────────────────────────────────────────────────────────────
-
 func hasAudit(s *fakeStore, action string) bool {
 	for _, a := range s.audits {
 		if a.action == action {
@@ -355,4 +340,43 @@ func hasAudit(s *fakeStore, action string) bool {
 		}
 	}
 	return false
+}
+
+// academy_scholarship_awards.user_id is an auth.users FK — the award stores the
+// guardian-of-record, never the academy_students id; falls back to the actor.
+func TestApplyAward_StoresGuardianUserID(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	svc, fp := fundedPledge(t, store, newFakeLedger(), newFakeInvoicePayer(), 100000)
+
+	res, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{
+		PledgeID:       fp.ID,
+		InvoiceID:      "inv-1",
+		StudentID:      "stu-1",
+		GuardianUserID: "guardian-1",
+		AmountMinor:    40000,
+	}, "apply-guardian-1")
+	if err != nil {
+		t.Fatalf("apply award: %v", err)
+	}
+	if res.Award.UserID != "guardian-1" {
+		t.Errorf("award.user_id must be the guardian auth user, got %q", res.Award.UserID)
+	}
+	if res.Award.StudentID != "stu-1" {
+		t.Errorf("award.student_id must stay the academy student, got %q", res.Award.StudentID)
+	}
+
+	// No guardian → the actor is the auth party of record.
+	res2, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{
+		PledgeID:    fp.ID,
+		InvoiceID:   "inv-1",
+		StudentID:   "stu-1",
+		AmountMinor: 10000,
+	}, "apply-guardian-2")
+	if err != nil {
+		t.Fatalf("apply award (no guardian): %v", err)
+	}
+	if res2.Award.UserID != "admin-1" {
+		t.Errorf("award.user_id must fall back to the actor, got %q", res2.Award.UserID)
+	}
 }

@@ -1,8 +1,23 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Test script for Marketplace & Voting Live Features
-
-set -e
+# Manual diagnostic for Marketplace & Voting Live Features.
+#
+# ⚠️  This is NOT a read-only smoke test: it performs real writes
+#     (saves a listing, creates a saved search, opens a support ticket).
+#     Run it against a LOCAL or STAGING stack only — never production.
+#
+# Usage:
+#   BEARER_TOKEN=<supabase-jwt> ./TEST_ENDPOINTS.sh
+#   API_BASE=http://localhost:8080/api/v1 BEARER_TOKEN=<jwt> ./TEST_ENDPOINTS.sh
+#
+# Default API_BASE matches docker-compose.yml (api on :8080). The previous
+# hardcoded :8000 never matched any documented local port.
+#
+# Deliberately NOT `set -e`: a single curl failure should not abort the
+# whole diagnostic — every probe reports independently and the summary
+# exits non-zero if anything failed. For the liveness-only check (no
+# writes, no token) use ./smoke.sh instead.
+set -uo pipefail
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -11,8 +26,16 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Test configuration
-API_BASE="http://localhost:8000/api/v1"
-BEARER_TOKEN="YOUR_VALID_TOKEN_HERE"
+API_BASE="${API_BASE:-http://localhost:8080/api/v1}"
+BEARER_TOKEN="${BEARER_TOKEN:-}"
+if [ -z "$BEARER_TOKEN" ]; then
+    echo "ERROR: BEARER_TOKEN env var is required (a Supabase JWT for the target env)." >&2
+    echo "       This script never made sense with the YOUR_VALID_TOKEN_HERE placeholder —" >&2
+    echo "       every authenticated call just 401'd under it." >&2
+    exit 2
+fi
+PASS=0
+FAIL=0
 USER_ID="test-user-$(date +%s)"
 LISTING_ID="test-listing-$(date +%s)"
 OFFER_ID="test-offer-$(date +%s)"
@@ -34,25 +57,29 @@ test_endpoint() {
     echo -e "   ${method} ${API_BASE}${path}"
 
     if [ -z "$data" ]; then
-        response=$(curl -s -X "$method" \
+        response=$(curl -s --max-time 15 -X "$method" \
             -H "Authorization: Bearer $BEARER_TOKEN" \
             -H "Content-Type: application/json" \
-            "${API_BASE}${path}")
+            "${API_BASE}${path}") || response=""
     else
         echo -e "   Data: $data"
-        response=$(curl -s -X "$method" \
+        response=$(curl -s --max-time 15 -X "$method" \
             -H "Authorization: Bearer $BEARER_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$data" \
-            "${API_BASE}${path}")
+            "${API_BASE}${path}") || response=""
     fi
 
-    # Check if response contains error
-    if echo "$response" | grep -q '"error"'; then
+    if [ -z "$response" ]; then
+        echo -e "${RED}   ❌ No response (connection refused / timeout)${NC}"
+        FAIL=$((FAIL + 1))
+    elif echo "$response" | grep -q '"error"'; then
         echo -e "${RED}   ❌ Error: $response${NC}"
+        FAIL=$((FAIL + 1))
     else
         echo -e "${GREEN}   ✅ Success${NC}"
-        echo -e "   Response: $(echo $response | head -c 200)..."
+        echo -e "   Response: $(echo "$response" | head -c 200)..."
+        PASS=$((PASS + 1))
     fi
     echo ""
 }
@@ -89,7 +116,7 @@ echo ""
 SEARCH_ID=""
 
 # Create a saved search
-response=$(curl -s -X POST \
+response=$(curl -s --max-time 15 -X POST \
     -H "Authorization: Bearer $BEARER_TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -144,7 +171,7 @@ echo -e "${BLUE}═ VOTING SUPPORT TICKETS (Help System) ═${NC}"
 echo ""
 
 # Create a support ticket
-response=$(curl -s -X POST \
+response=$(curl -s --max-time 15 -X POST \
     -H "Authorization: Bearer $BEARER_TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -196,8 +223,13 @@ fi
 # ─────────────────────────────────────────────────────────────────
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}✨ Test script completed!${NC}"
+if [ "$FAIL" -eq 0 ]; then
+    echo -e "${GREEN}✨ All $PASS probes passed against ${API_BASE}${NC}"
+else
+    echo -e "${RED}✨ $PASS passed, $FAIL failed against ${API_BASE}${NC}"
+fi
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo -e "Note: Replace YOUR_VALID_TOKEN_HERE with actual Bearer token"
-echo -e "Server running at: http://localhost:8000"
+echo "Reminder: this script created real rows (saved search, support ticket)"
+echo "in whatever environment API_BASE points at — clean up if it was shared."
+[ "$FAIL" -eq 0 ]

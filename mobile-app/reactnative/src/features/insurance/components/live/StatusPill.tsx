@@ -1,14 +1,13 @@
-// ── Insurance (live) — policy / claim status pills ──────────────────────────
 // Statuses come straight off the contract (`pending|active|expired|cancelled|
 // lapsed`, `submitted|under_review|approved|rejected|paid`), so this is the one
 // place they become words and colour.
 
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import type { ClaimStatus, PolicyStatus } from '../../live/types';
 

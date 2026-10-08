@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Veterinary vertical stack (HEALTH-BUILD Phase 3). Mounts under the shared

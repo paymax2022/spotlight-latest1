@@ -1,15 +1,11 @@
 // Package adminext implements the crowdfunding ADMIN domain slice:
 // finance/refunds/settlement, disputes, withdrawal approval, fraud, KYC/KYB,
 // compliance and user management.
-//
 // All DTOs are camelCase to match the admin web client TS shapes in
 // frontend-admin/src/types/crowdfunding.ts exactly. All money is BIGINT kobo.
-//
 // Admin decisions are guarded transitions: reject/freeze REQUIRE a note, every
 // mutation is transactional, and each writes an immutable audit row.
 package adminext
-
-// ─── Finance: refunds / settlement / summary ─────────────────────────────────
 
 // RefundRequest matches CfRefundRequest.
 type RefundRequest struct {
@@ -75,8 +71,6 @@ type FinanceSummary struct {
 	DemoSettlementRows int `json:"demoSettlementRows"`
 }
 
-// ─── Disputes ────────────────────────────────────────────────────────────────
-
 // Dispute matches CfDispute.
 type Dispute struct {
 	ID            string  `json:"id"`
@@ -92,8 +86,6 @@ type Dispute struct {
 	Resolution    *string `json:"resolution"`
 	AdminNote     *string `json:"adminNote"`
 }
-
-// ─── Withdrawals ─────────────────────────────────────────────────────────────
 
 // Withdrawal matches CfWithdrawal.
 type Withdrawal struct {
@@ -111,8 +103,6 @@ type Withdrawal struct {
 	Note                *string `json:"note"`
 }
 
-// ─── Fraud ───────────────────────────────────────────────────────────────────
-
 // FraudAlert matches CfFraudAlert.
 type FraudAlert struct {
 	ID            string   `json:"id"`
@@ -125,8 +115,6 @@ type FraudAlert struct {
 	RaisedKobo    int64    `json:"raisedKobo"`
 	CreatedAt     string   `json:"createdAt"`
 }
-
-// ─── KYC / KYB ───────────────────────────────────────────────────────────────
 
 // KycCase matches CfKycCase — the crowdfunding console's view onto the
 // platform-wide finance/kyc queue (backend/internal/finance/kyc), scoped to
@@ -143,8 +131,6 @@ type KycCase struct {
 	SubmittedAt   string  `json:"submittedAt"`
 	VerifiedAt    *string `json:"verifiedAt"`
 }
-
-// ─── Compliance ──────────────────────────────────────────────────────────────
 
 // AuditLog matches CfAuditLog.
 type AuditLog struct {
@@ -178,8 +164,6 @@ type ComplianceSummary struct {
 	AuditEventsToday     int    `json:"auditEventsToday"`
 }
 
-// ─── Users ───────────────────────────────────────────────────────────────────
-
 // UserActivity matches CfUserActivity.
 type UserActivity struct {
 	ID        string `json:"id"`
@@ -205,8 +189,6 @@ type User struct {
 	LastActiveAt         string         `json:"lastActiveAt"`
 	Activity             []UserActivity `json:"activity"`
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // NoteRequest is the common {note} body for approve/reject/freeze decisions.
 type NoteRequest struct {

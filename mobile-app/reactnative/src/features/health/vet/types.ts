@@ -1,20 +1,16 @@
-// ── Paymax Health — Veterinary types (Phase 3) ───────────────────────────────
 // Self-contained domain types for the Vet vertical. Mirrors the pharmacy/lab
 // feature-lib structure and reuses shared health primitives where it makes sense.
-//
 // IRON RULES (HEALTH-BUILD §7C):
 //   · kobo only — every monetary amount is an integer in minor units.
 //   · HL-2 credential-gated — vets discoverable only when VCN-verified.
 //   · HL-3 prescription discipline — e-Rx is issued by the vet, dispense-once.
 //   · HL-8 NDPA — pet records & e-Rx are sensitive: consent-gated, access-logged.
-//   · HL-9 held payment — booking/checkout carries an Idempotency-Key; money held,
 //     released on completion, refunded on cancel.
 //   · HL-11 emergency safety — tele-consult is not emergency care; SOS routes to
 //     the nearest in-person option with a clear disclaimer.
 
 import type { ProviderCredential } from '../types';
 
-// ── Pets ─────────────────────────────────────────────────────────────────────
 export type PetSpecies = 'dog' | 'cat' | 'bird' | 'rabbit' | 'reptile' | 'other';
 export type PetSex = 'male' | 'female' | 'unknown';
 
@@ -45,7 +41,6 @@ export interface PetInput {
   notes?: string;
 }
 
-// ── Pet health record (reuses the shared vault concept, scoped to a pet) ──────
 export type PetRecordKind =
   | 'consult_note'
   | 'prescription'
@@ -66,7 +61,6 @@ export interface PetRecordEntry {
   flagged?: boolean;
 }
 
-// ── Vaccinations ─────────────────────────────────────────────────────────────
 export type VaccinationStatus = 'up_to_date' | 'due_soon' | 'overdue' | 'scheduled';
 
 export interface VaccinationEntry {
@@ -79,7 +73,6 @@ export interface VaccinationEntry {
   notes?: string;
 }
 
-// ── Vets (HL-2 credential-gated discovery + geo) ─────────────────────────────
 export type AppointmentType = 'tele' | 'home' | 'clinic';
 
 export interface Vet {
@@ -110,7 +103,6 @@ export interface VetQuery {
   species?: PetSpecies;
 }
 
-// ── Availability / slots ─────────────────────────────────────────────────────
 export interface AvailabilitySlot {
   id: string;
   start: string;
@@ -125,9 +117,7 @@ export interface AvailabilityDay {
   slots: AvailabilitySlot[];
 }
 
-// ── Appointment state machine ────────────────────────────────────────────────
 // REQUESTED → ACCEPTED → CONFIRMED → IN_PROGRESS → COMPLETED
-// (any) → CANCELLED | NO_SHOW ; CONFIRMED → RESCHEDULED → CONFIRMED
 export type AppointmentStatus =
   | 'REQUESTED'
   | 'ACCEPTED'
@@ -177,7 +167,6 @@ export interface RescheduleInput {
   scheduledFor: string;
 }
 
-// ── Tele-consult room state ──────────────────────────────────────────────────
 export type VetConsultMode = 'video' | 'voice' | 'chat';
 
 export interface VetConsultMessage {
@@ -202,7 +191,6 @@ export interface VetConsult {
   messages: VetConsultMessage[];
 }
 
-// ── SOAP consult summary ─────────────────────────────────────────────────────
 export interface SoapNote {
   subjective: string;
   objective: string;
@@ -226,7 +214,6 @@ export interface ConsultSummary {
   labOrderId?: string;
 }
 
-// ── e-Prescription (HL-3 dispense-once · HL-8 consent-gated) ──────────────────
 export type RxStatus = 'ISSUED' | 'SENT_TO_PHARMACY' | 'DISPENSED' | 'EXPIRED';
 
 export interface RxItem {
@@ -257,7 +244,6 @@ export interface EPrescription {
   sensitive: boolean;
 }
 
-// ── Pet meds & refills ───────────────────────────────────────────────────────
 export interface PetMedication {
   id: string;
   petId: string;
@@ -271,7 +257,6 @@ export interface PetMedication {
   active: boolean;
 }
 
-// ── Home-visit tracking ──────────────────────────────────────────────────────
 export type HomeVisitStage = 'assigned' | 'en_route' | 'arrived' | 'in_progress' | 'completed';
 
 export interface HomeVisitTracking {
@@ -288,7 +273,6 @@ export interface HomeVisitTracking {
   address: string;
 }
 
-// ── Reviews ──────────────────────────────────────────────────────────────────
 export interface VetReview {
   id: string;
   author: string;
@@ -304,7 +288,6 @@ export interface SubmitReviewInput {
   body: string;
 }
 
-// ── Emergency SOS ────────────────────────────────────────────────────────────
 export interface EmergencyVetOption {
   id: string;
   name: string;
@@ -316,7 +299,6 @@ export interface EmergencyVetOption {
   lng: number;
 }
 
-// ── Provider side ────────────────────────────────────────────────────────────
 export type ProviderOnboardingStatus =
   | 'draft'
   | 'submitted'
@@ -341,10 +323,7 @@ export interface ProviderProfile {
   credential: ProviderCredential;
 }
 
-// ── Mode B (assisted) VCN verification ───────────────────────────────────────
 // HL-2 assisted path: the vet is verified WITHOUT ever seeing the VCN portal.
-// The member submits credentials + documents + consent; ops confirms out-of-band
-// and records a decision; the member only ever sees a coarse stage — never the
 // VCN/register data, matched-field detail, reviewer identity, or notes.
 export type VcnStage = 'pending_review' | 'more_info_needed' | 'verified' | 'not_verified';
 

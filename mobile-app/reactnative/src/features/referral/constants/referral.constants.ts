@@ -1,8 +1,7 @@
-// ── Referral (Earn hub) — Constants ──────────────────────────────────────────
 // Mirrors the Connect mock-first convention. Money is ALWAYS integer kobo.
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Flip to false once the live Go-backend /referral endpoints are reachable from
 // the app (or set EXPO_PUBLIC_REFERRAL_USE_MOCK=false). Phase 0 stays mock-first.
@@ -34,11 +33,9 @@ export const ReferralColors = {
 
 export const REFERRAL_FEATURE_FLAG = 'referral';
 
-// Late code-claim grace window (§7A.3). Display/UX default; the server is the
 // source of truth for the actual window and lock state.
 export const GRACE_WINDOW_HOURS = 24;
 
-// ── Compliant copy (load-bearing) ────────────────────────────────────────────
 // Theme 1 (the pyramid-scheme line): every naira earned ties to a friend's real,
 // verified product activity/revenue — NEVER to recruitment or signups alone.
 export const COMPLIANT_EARN_LINE =
@@ -56,7 +53,6 @@ export const RESPONSIBLE_EARNING_POINTS: string[] = [
   'Suspected fraud (fake accounts, self-referral, bought signups) leads to clawbacks and review.',
 ];
 
-// ── Earn-state pill catalogue (reward ledger states, PRD §7) ─────────────────
 export type EarnStateKey =
   | 'earned'
   | 'pending'
@@ -74,7 +70,6 @@ export const EARN_STATE_META: Record<EarnStateKey, { label: string; tone: 'ok' |
   clawed_back: { label: 'Clawed back',  tone: 'danger' },
 };
 
-// ── Roles / contexts (PRD §3, §5) ────────────────────────────────────────────
 export type ReferralRole = 'referrer' | 'ambassador' | 'agent' | 'merchant';
 
 export const ROLE_META: Record<ReferralRole, { label: string; icon: string; blurb: string }> = {

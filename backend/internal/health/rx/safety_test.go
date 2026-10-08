@@ -55,8 +55,7 @@ func TestScreenRxCleanPasses(t *testing.T) {
 func TestScreenRxVetSpeciesToxicBlocks(t *testing.T) {
 	pc := clinicalsafety.PatientContext{Species: "cat", WeightKg: 4}
 	_, err := screenRx(pc, []Item{{DrugName: "Paracetamol", Quantity: 1}}, "")
-	var sb *SafetyBlockError
-	if !errors.As(err, &sb) {
+	if _, ok := errors.AsType[*SafetyBlockError](err); !ok {
 		t.Fatalf("paracetamol for a cat must be blocked, got %v", err)
 	}
 }

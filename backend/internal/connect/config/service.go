@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
+	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,4 +64,43 @@ func (s *Service) AllConfig(ctx context.Context) ([]Entry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Entry is a single backend-owned config row.
+type Entry struct {
+	Key         string          `json:"key"`
+	Value       json.RawMessage `json:"value"`
+	Scope       string          `json:"scope"`
+	Visibility  string          `json:"visibility"`
+	Description string          `json:"description,omitempty"`
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Health is an unauthenticated module liveness probe.
+func (h *Handler) Health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "module": "connect"})
+}
+
+// Config serves the backend-owned, mobile-readable config (public rows only).
+func (h *Handler) Config(c *gin.Context) {
+	cfg, err := h.svc.PublicConfig(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": cfg})
+}
+
+// AdminConfig serves all config entries (public + internal) for admin tooling.
+// Route layer gates this behind the connect.config.view permission.
+func (h *Handler) AdminConfig(c *gin.Context) {
+	entries, err := h.svc.AllConfig(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": entries})
 }

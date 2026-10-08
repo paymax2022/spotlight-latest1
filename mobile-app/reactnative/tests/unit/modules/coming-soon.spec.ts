@@ -1,10 +1,6 @@
 // Pure-logic tests for the 'coming soon' module state.
-// Run: npm run test:modules
-//
 // The state exists so ops can put a module in front of users as a teaser without it
 // being tappable. Three failure directions are pinned here:
-//   • a teaser silently disappearing (treated as hidden);
-//   • a teaser rendering as fully functional (treated as visible → broken screen);
 //   • the whole grid blanking when the registry is unreachable.
 
 import { test, describe } from 'node:test';

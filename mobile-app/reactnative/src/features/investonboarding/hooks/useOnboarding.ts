@@ -1,4 +1,3 @@
-// ── Paymax Invest · Onboarding — Data hooks ──────────────────────────────────
 // React Query hooks mirroring useCrypto.ts so screens stay declarative and share
 // the same caching / loading / error contracts. Mutations invalidate the
 // onboarding-state + status queries on success so gated UI re-reads cleanly.
@@ -12,8 +11,6 @@ import type {
 
 const KEY = 'onboarding';
 
-// ─── Eligibility & overview ───────────────────────────────────────────────────
-
 export function useEligibility() {
   return useQuery({ queryKey: [KEY, 'eligibility'], queryFn: onboarding.getEligibility, staleTime: 60_000 });
 }
@@ -21,8 +18,6 @@ export function useEligibility() {
 export function useOnboardingState() {
   return useQuery({ queryKey: [KEY, 'state'], queryFn: onboarding.getOnboardingState, staleTime: 15_000 });
 }
-
-// ─── KYC ──────────────────────────────────────────────────────────────────────
 
 export function useKycStatus() {
   return useQuery({ queryKey: [KEY, 'kyc-status'], queryFn: onboarding.getKycStatus, staleTime: 15_000 });
@@ -38,8 +33,6 @@ export function useSubmitKyc() {
     },
   });
 }
-
-// ─── Suitability ────────────────────────────────────────────────────────────--
 
 export function useSuitabilityQuestions() {
   return useQuery({ queryKey: [KEY, 'suitability-questions'], queryFn: onboarding.getSuitabilityQuestions, staleTime: 5 * 60_000 });
@@ -59,8 +52,6 @@ export function useSubmitSuitability() {
     },
   });
 }
-
-// ─── Agreements ─────────────────────────────────────────────────────────────--
 
 export function useAgreements() {
   return useQuery({ queryKey: [KEY, 'agreements'], queryFn: onboarding.getAgreements, staleTime: 5 * 60_000 });

@@ -23,7 +23,6 @@ export interface CoverUploadResult {
 
 function fileNameFor(uri: string): string {
   const fromUri = uri.split('?')[0].split('/').pop() || '';
-  // A blob: URI has no filename and no extension; the server validates on
   // extension, so give it one rather than letting the upload 400.
   if (/\.(jpe?g|png|webp)$/i.test(fromUri)) return fromUri;
   return `cover-${Date.now()}.jpg`;
@@ -45,12 +44,10 @@ export async function uploadCampaignCover(uri: string): Promise<CoverUploadResul
   const form = new FormData();
 
   if (uri.startsWith('blob:') || uri.startsWith('data:')) {
-    // Web: turn the picker's object URL back into real bytes. RN's FormData
     // blob-descriptor form does not apply here — the DOM FormData needs a Blob.
     const blob = await (await fetch(uri)).blob();
     form.append('file', new File([blob], name, { type: blob.type || type }));
   } else {
-    // Native: RN FormData accepts a { uri, name, type } descriptor and streams
     // the file itself. Casting because RN's typings declare only (name, value).
     form.append('file', { uri, name, type } as unknown as Blob);
   }

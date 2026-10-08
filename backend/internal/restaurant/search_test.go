@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-func f(v float64) *float64 { return &v }
+//go:fix inline
+func f(v float64) *float64 { return new(v) }
 
 func TestBuildSearchQuery_Defaults(t *testing.T) {
 	sql, args := buildSearchQuery(SearchParams{}, time.Now(), time.UTC)
@@ -66,7 +67,7 @@ func TestBuildSearchQuery_ClampsLimit(t *testing.T) {
 
 func TestBuildSearchQuery_Near(t *testing.T) {
 	sql, args := buildSearchQuery(SearchParams{
-		NearLat: f(6.5), NearLng: f(3.4), RadiusKm: 3, Sort: "distance",
+		NearLat: new(6.5), NearLng: new(3.4), RadiusKm: 3, Sort: "distance",
 	}, time.Now(), time.UTC)
 	if !strings.Contains(sql, "ST_Distance(ml.geog") {
 		t.Error("near search must project a real distance")
@@ -90,7 +91,7 @@ func TestBuildSearchQuery_Near(t *testing.T) {
 }
 
 func TestBuildSearchQuery_RadiusClamped(t *testing.T) {
-	_, args := buildSearchQuery(SearchParams{NearLat: f(6.5), NearLng: f(3.4), RadiusKm: 999}, time.Now(), time.UTC)
+	_, args := buildSearchQuery(SearchParams{NearLat: new(6.5), NearLng: new(3.4), RadiusKm: 999}, time.Now(), time.UTC)
 	hasMax := false
 	for _, a := range args {
 		if a == maxRadiusKm*1000 {

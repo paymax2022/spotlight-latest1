@@ -35,7 +35,8 @@ export async function POST(request: Request) {
     // unauthenticated caller learns nothing about which payloads are valid.
     await assertAdminPermission(request, 'programs:manage');
 
-    const formData = await request.formData();
+    const formData = await request.formData().catch(() => null);
+    if (!formData) return errorResponse('Expected multipart/form-data', 415);
     const file = formData.get('file');
     if (!(file instanceof File)) return errorResponse('file is required', 400);
 
@@ -65,7 +66,10 @@ export async function POST(request: Request) {
 
     // ABSOLUTE, not relative. The mobile app renders this straight into an
     // <Image>; a relative path resolves against the phone, not this server.
-    const origin = new URL(request.url).origin;
+    // request.url on Railway is the bind address (http://0.0.0.0:PORT) — use
+    // the configured public origin instead, same as contestants/share and
+    // vote-page.
+    const origin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
     const fileKeyParam = Buffer.from(objectKey, 'utf8').toString('base64url');
     const url = `${origin}/api/admin/contests/banner/${fileKeyParam}`;
 

@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for availability (Phase 11): holiday overrides + the
 // accept-SLA sweeper (auto-cancel + refund of never-accepted orders). Skipped unless
 // TEST_DATABASE_URL is set. Requires the availability migration.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -64,7 +62,6 @@ func TestLiveDB_AvailabilityHolidayAndSweep(t *testing.T) {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 
-	// --- Holiday overrides ---
 	today := time.Now().In(lagosTZ).Format("2006-01-02")
 	if err := svc.SetHoliday(ctx, restID, stranger, HolidayHour{Date: today, IsClosed: true}); err == nil {
 		t.Fatal("stranger must not set a holiday")
@@ -87,7 +84,6 @@ func TestLiveDB_AvailabilityHolidayAndSweep(t *testing.T) {
 		t.Fatal("holiday should be gone after delete")
 	}
 
-	// --- Accept-SLA sweeper ---
 	// An escrowed settlement + a pending order created 30 min ago (past the 5-min SLA).
 	oldSett := seedEscrow(t, ctx, pool, customer)
 	oldOrder := seedPendingOrderAt(t, ctx, pool, restID, customer, oldSett, time.Now().Add(-30*time.Minute))

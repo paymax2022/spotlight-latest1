@@ -1,12 +1,7 @@
 // ── Telemedicine — booking price mapping (ADR-040) ───────────────────────────
-//
 // The platform booking fee is computed by the Go backend. This module's whole job
 // is to carry the server's numbers to the screens WITHOUT the app ever deriving a
-// price of its own — that derivation is what let the confirm screen display one
-// total while the backend escrowed another, and let the card rail collect a fee
 // that had no ledger entry behind it.
-//
-// The Go backend speaks snake_case. Only MONEY fields are mapped here; the rest of
 // this module's live field mapping is a known, pre-existing gap.
 
 import type { Appointment, BookingQuote, Doctor } from '@/types/telemedicine';

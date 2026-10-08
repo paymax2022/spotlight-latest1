@@ -1,7 +1,6 @@
 'use client';
 
 // A1 — Competition config (list + create).
-// RBAC: arena.admin.manage (Competition Admin). Lists competitions; create a new
 // DRAFT; open one to configure rails, award bindings, schema versions, publish.
 
 import { useCallback, useEffect, useState } from 'react';

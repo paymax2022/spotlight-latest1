@@ -6,6 +6,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes the hotelier extranet routes. Authorization is object-level
@@ -20,8 +23,6 @@ type Handler struct {
 // NewHandler constructs the extranet handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
 func mapErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
@@ -31,9 +32,9 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrInviteNotValid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "this invite is not valid"})
 	case errors.Is(err, ErrValidation):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -51,23 +52,19 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	g.GET("/verification/business", h.GetBusinessVerification)
 	g.POST("/verification/submit", h.SubmitForReview)
 
-	// Property content.
 	g.GET("/properties/:propertyId", h.GetProperty)
 	g.PATCH("/properties/:propertyId", h.UpdateContent)
 	g.PATCH("/properties/:propertyId/details", h.UpdateDetails)
-	// Photos (property_photos.go).
 	g.POST("/properties/:propertyId/photos/presign", h.PresignPhoto)
 	g.GET("/properties/:propertyId/photos", h.ListPhotos)
 	g.POST("/properties/:propertyId/photos", h.CreatePhoto)
 	g.PATCH("/properties/:propertyId/photos/:photoId", h.UpdatePhoto)
 	g.DELETE("/properties/:propertyId/photos/:photoId", h.DeletePhoto)
-	// Room types + rate plans.
 	g.GET("/properties/:propertyId/room-types", h.ListRoomTypes)
 	g.POST("/properties/:propertyId/room-types", h.CreateRoomType)
 	g.GET("/properties/:propertyId/rate-plans", h.ListRatePlans)
 	g.POST("/properties/:propertyId/rate-plans", h.CreateRatePlan)
 
-	// Reservations dashboard.
 	g.GET("/properties/:propertyId/reservations", h.ListReservations)
 	g.GET("/properties/:propertyId/arrivals", h.Arrivals)
 	g.GET("/properties/:propertyId/departures", h.Departures)
@@ -80,14 +77,11 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	g.POST("/properties/:propertyId/reservations/:reservationId/messages", h.SendMessage)
 	g.GET("/properties/:propertyId/reservations/:reservationId/messages", h.ListMessages)
 
-	// Finance reads.
 	g.GET("/properties/:propertyId/payouts", h.Payouts)
 	g.GET("/properties/:propertyId/commission", h.Commission)
 
-	// Analytics.
 	g.GET("/properties/:propertyId/analytics", h.Analytics)
 
-	// Account / staff.
 	g.GET("/properties/:propertyId/staff", h.ListStaff)
 	g.POST("/properties/:propertyId/staff", h.UpsertStaff)
 	g.POST("/properties/:propertyId/staff/invite", h.InviteStaffByEmail)
@@ -99,7 +93,7 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 
 // MyProperties: GET /me/properties
 func (h *Handler) MyProperties(c *gin.Context) {
-	out, err := h.svc.MyProperties(c.Request.Context(), uid(c))
+	out, err := h.svc.MyProperties(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -107,7 +101,6 @@ func (h *Handler) MyProperties(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// CreateProperty: POST /properties {name, property_type, address, city, star_rating}
 func (h *Handler) CreateProperty(c *gin.Context) {
 	var b struct {
 		Name         string `json:"name" binding:"required"`
@@ -117,13 +110,13 @@ func (h *Handler) CreateProperty(c *gin.Context) {
 		StarRating   int    `json:"star_rating"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if b.StarRating < 0 || b.StarRating > 5 {
 		b.StarRating = 0
 	}
-	id, err := h.svc.CreateProperty(c.Request.Context(), uid(c), b.Name, b.PropertyType, b.Address, b.City, b.StarRating)
+	id, err := h.svc.CreateProperty(c.Request.Context(), ginutil.UserID(c), b.Name, b.PropertyType, b.Address, b.City, b.StarRating)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -133,7 +126,7 @@ func (h *Handler) CreateProperty(c *gin.Context) {
 
 // GetProperty: GET /properties/:propertyId
 func (h *Handler) GetProperty(c *gin.Context) {
-	p, err := h.svc.GetProperty(c.Request.Context(), uid(c), c.Param("propertyId"))
+	p, err := h.svc.GetProperty(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -152,10 +145,10 @@ func (h *Handler) UpdateContent(c *gin.Context) {
 		PropertyType string `json:"property_type"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.UpdateContent(c.Request.Context(), uid(c), c.Param("propertyId"),
+	if err := h.svc.UpdateContent(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"),
 		b.Name, b.Description, b.Address, b.City, b.StarRating, b.PropertyType); err != nil {
 		mapErr(c, err)
 		return
@@ -181,7 +174,7 @@ func (h *Handler) UpdateDetails(c *gin.Context) {
 		ContactEmail       *string   `json:"contact_email"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	patch := PropertyDetailsPatch{
@@ -189,7 +182,7 @@ func (h *Handler) UpdateDetails(c *gin.Context) {
 		CancellationPolicy: b.CancellationPolicy, CheckInFrom: b.CheckInFrom,
 		CheckOutUntil: b.CheckOutUntil, ContactPhone: b.ContactPhone, ContactEmail: b.ContactEmail,
 	}
-	if err := h.svc.UpdateDetails(c.Request.Context(), uid(c), c.Param("propertyId"), patch); err != nil {
+	if err := h.svc.UpdateDetails(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), patch); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -198,7 +191,7 @@ func (h *Handler) UpdateDetails(c *gin.Context) {
 
 // ListRoomTypes: GET /properties/:propertyId/room-types
 func (h *Handler) ListRoomTypes(c *gin.Context) {
-	out, err := h.svc.ListRoomTypes(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.ListRoomTypes(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -214,13 +207,13 @@ func (h *Handler) CreateRoomType(c *gin.Context) {
 		Bedding   string `json:"bedding"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if b.Occupancy <= 0 {
 		b.Occupancy = 2
 	}
-	id, err := h.svc.CreateRoomType(c.Request.Context(), uid(c), c.Param("propertyId"), b.Name, b.Occupancy, b.Bedding)
+	id, err := h.svc.CreateRoomType(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.Name, b.Occupancy, b.Bedding)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -230,7 +223,7 @@ func (h *Handler) CreateRoomType(c *gin.Context) {
 
 // ListRatePlans: GET /properties/:propertyId/rate-plans
 func (h *Handler) ListRatePlans(c *gin.Context) {
-	out, err := h.svc.ListRatePlans(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.ListRatePlans(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -249,10 +242,10 @@ func (h *Handler) CreateRatePlan(c *gin.Context) {
 		Currency         string `json:"currency"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	id, err := h.svc.CreateRatePlan(c.Request.Context(), uid(c), c.Param("propertyId"),
+	id, err := h.svc.CreateRatePlan(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"),
 		b.RoomTypeID, b.RatePlanType, b.Board, b.Refundable, b.BaseSellRateKobo, b.Currency)
 	if err != nil {
 		mapErr(c, err)
@@ -265,7 +258,7 @@ func (h *Handler) CreateRatePlan(c *gin.Context) {
 func (h *Handler) ListReservations(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	out, err := h.svc.ListReservations(c.Request.Context(), uid(c), c.Param("propertyId"), c.Query("state"), limit, offset)
+	out, err := h.svc.ListReservations(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Query("state"), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -275,7 +268,7 @@ func (h *Handler) ListReservations(c *gin.Context) {
 
 // Arrivals: GET /properties/:propertyId/arrivals?date
 func (h *Handler) Arrivals(c *gin.Context) {
-	out, err := h.svc.Arrivals(c.Request.Context(), uid(c), c.Param("propertyId"), c.Query("date"))
+	out, err := h.svc.Arrivals(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Query("date"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -285,7 +278,7 @@ func (h *Handler) Arrivals(c *gin.Context) {
 
 // Departures: GET /properties/:propertyId/departures?date
 func (h *Handler) Departures(c *gin.Context) {
-	out, err := h.svc.Departures(c.Request.Context(), uid(c), c.Param("propertyId"), c.Query("date"))
+	out, err := h.svc.Departures(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Query("date"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -295,7 +288,7 @@ func (h *Handler) Departures(c *gin.Context) {
 
 // InHouse: GET /properties/:propertyId/in-house?date
 func (h *Handler) InHouse(c *gin.Context) {
-	out, err := h.svc.InHouse(c.Request.Context(), uid(c), c.Param("propertyId"), c.Query("date"))
+	out, err := h.svc.InHouse(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Query("date"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -305,7 +298,7 @@ func (h *Handler) InHouse(c *gin.Context) {
 
 // ReservationDetail: GET /properties/:propertyId/reservations/:reservationId
 func (h *Handler) ReservationDetail(c *gin.Context) {
-	d, err := h.svc.ReservationDetail(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId"))
+	d, err := h.svc.ReservationDetail(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("reservationId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -315,7 +308,7 @@ func (h *Handler) ReservationDetail(c *gin.Context) {
 
 // MarkNoShow: POST /properties/:propertyId/reservations/:reservationId/no-show
 func (h *Handler) MarkNoShow(c *gin.Context) {
-	if err := h.svc.MarkNoShow(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId")); err != nil {
+	if err := h.svc.MarkNoShow(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("reservationId")); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -328,7 +321,7 @@ func (h *Handler) CancelByHotel(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&b)
-	if err := h.svc.CancelByHotel(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId"), b.Reason); err != nil {
+	if err := h.svc.CancelByHotel(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("reservationId"), b.Reason); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -343,10 +336,10 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		Body string `json:"body" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	msg, err := h.svc.PostMessage(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId"), b.Body)
+	msg, err := h.svc.PostMessage(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("reservationId"), b.Body)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -356,7 +349,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 
 // ListMessages: GET .../messages — the reservation's persisted thread, oldest-first.
 func (h *Handler) ListMessages(c *gin.Context) {
-	out, err := h.svc.ListMessages(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId"))
+	out, err := h.svc.ListMessages(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("reservationId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -366,7 +359,7 @@ func (h *Handler) ListMessages(c *gin.Context) {
 
 // Payouts: GET /properties/:propertyId/payouts
 func (h *Handler) Payouts(c *gin.Context) {
-	out, err := h.svc.Payouts(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.Payouts(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -376,7 +369,7 @@ func (h *Handler) Payouts(c *gin.Context) {
 
 // Commission: GET /properties/:propertyId/commission
 func (h *Handler) Commission(c *gin.Context) {
-	out, err := h.svc.Commission(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.Commission(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -386,7 +379,7 @@ func (h *Handler) Commission(c *gin.Context) {
 
 // Analytics: GET /properties/:propertyId/analytics?from&to
 func (h *Handler) Analytics(c *gin.Context) {
-	a, err := h.svc.Analytics(c.Request.Context(), uid(c), c.Param("propertyId"), c.Query("from"), c.Query("to"))
+	a, err := h.svc.Analytics(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Query("from"), c.Query("to"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -396,7 +389,7 @@ func (h *Handler) Analytics(c *gin.Context) {
 
 // ListStaff: GET /properties/:propertyId/staff
 func (h *Handler) ListStaff(c *gin.Context) {
-	out, err := h.svc.ListStaff(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.ListStaff(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -412,10 +405,10 @@ func (h *Handler) UpsertStaff(c *gin.Context) {
 		Status string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.UpsertStaff(c.Request.Context(), uid(c), c.Param("propertyId"), b.UserID, b.Role, b.Status); err != nil {
+	if err := h.svc.UpsertStaff(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.UserID, b.Role, b.Status); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -432,10 +425,10 @@ func (h *Handler) InviteStaffByEmail(c *gin.Context) {
 		Role  string `json:"role"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.InviteStaffByEmail(c.Request.Context(), uid(c), c.Param("propertyId"), b.Name, b.Email, b.Role)
+	out, err := h.svc.InviteStaffByEmail(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.Name, b.Email, b.Role)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -443,7 +436,6 @@ func (h *Handler) InviteStaffByEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// AcceptStaffInvite: POST /staff/invite/accept {token}
 // The invitee must already be signed in — the invite's email is matched
 // against their own authenticated identity, never a client-supplied value.
 func (h *Handler) AcceptStaffInvite(c *gin.Context) {
@@ -451,10 +443,10 @@ func (h *Handler) AcceptStaffInvite(c *gin.Context) {
 		Token string `json:"token" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.AcceptStaffInvite(c.Request.Context(), uid(c), c.GetString("user_email"), b.Token); err != nil {
+	if err := h.svc.AcceptStaffInvite(c.Request.Context(), ginutil.UserID(c), c.GetString("user_email"), b.Token); err != nil {
 		mapErr(c, err)
 		return
 	}

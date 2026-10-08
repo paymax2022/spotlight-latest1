@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ptr"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
@@ -13,7 +14,6 @@ import (
 // raw update — every state change goes through feesstatemachine.PromotionTransition and
 // then the guarded Store.SetPromotionState / RecordXxxApproval. No money moves here;
 // every mutation is audit-logged (module 'academy.fees').
-//
 // SF-3 (release blocker) is enforced in FOUR layers, all active on the apply path:
 //  1. feesstatemachine has no computed→applied / reviewed→applied edge; an attempt
 //     returns ErrApprovalRequired (surfaced to callers/tests unchanged).
@@ -37,8 +37,6 @@ func NewService(db *pgxpool.Pool) *Service {
 func NewServiceWithStore(store Store) *Service {
 	return &Service{store: store, rollover: NewRollover(store)}
 }
-
-// ── 1. Score import → results_finalized ───────────────────────────────────────
 
 // ImportScores accepts per-student exam scores for a class+session and, once EVERY
 // rostered student has a score, advances that class's promotion records
@@ -95,8 +93,6 @@ func (s *Service) ImportScores(ctx context.Context, actorID string, req ImportSc
 	return nil
 }
 
-// ── 2. Promotion computation (PROPOSAL ONLY) → promotion_computed ──────────────
-
 // Compute proposes a decision per student per the school's own pass-mark policy and
 // advances results_finalized → promotion_computed. It PROPOSES ONLY — it sets no
 // student class and never advances past promotion_computed. Auto-apply is impossible
@@ -130,7 +126,7 @@ func (s *Service) Compute(ctx context.Context, actorID, sessionID, classID strin
 		}
 		if err := s.store.WriteAudit(ctx, actorID, "promotion_decision_proposed", "academy_promotion_record", rec.ID,
 			string(rec.State), string(StateComputed),
-			map[string]any{"decision": string(decision), "score": derefF(rec.ExamScore)}); err != nil {
+			map[string]any{"decision": string(decision), "score": ptr.DerefZero(rec.ExamScore)}); err != nil {
 			return nil, err
 		}
 		// Persist proposed decision + destination, then guarded-advance to computed.
@@ -149,7 +145,7 @@ func (s *Service) Compute(ctx context.Context, actorID, sessionID, classID strin
 //	ConditionalFloor > 0 && PassMark > score >= floor    ⇒ conditional
 //	otherwise                                            ⇒ repeated
 func (s *Service) decide(score *float64, req ComputeRequest) Decision {
-	sc := derefF(score)
+	sc := ptr.DerefZero(score)
 	if sc >= req.PassMark {
 		return DecisionPromoted
 	}
@@ -174,8 +170,6 @@ func (s *Service) setProposalAndAdvance(ctx context.Context, actorID string, rec
 	}
 	return s.store.GetPromotion(ctx, rec.ID)
 }
-
-// ── 3. SF-3 two-step approval ─────────────────────────────────────────────────
 
 // TeacherApprove is approval #1 (promotion_computed → promotion_reviewed). It stamps
 // teacher_approved_by/at in the SAME guarded update as the state change.
@@ -235,8 +229,6 @@ func (s *Service) AdminApprove(ctx context.Context, adminID, promotionID string)
 	return out, nil
 }
 
-// ── 4. Apply (promotion_approved → applied) + rollover ─────────────────────────
-
 // Apply executes the final promotion_approved → applied transition and runs the
 // rollover (class + fee-schedule reassignment). SF-3 is enforced here in depth:
 //   - PromotionTransition(cur, EvAdminApply) returns ErrApprovalRequired unless
@@ -282,11 +274,9 @@ func (s *Service) Apply(ctx context.Context, actorID, promotionID string) (*Prom
 		return nil, err
 	}
 	_ = s.store.WriteAudit(ctx, actorID, "promotion_applied", "academy_promotion_record",
-		promotionID, string(cur.State), string(to), map[string]any{"decision": decStr(cur.Decision)})
+		promotionID, string(cur.State), string(to), map[string]any{"decision": string(ptr.DerefZero(cur.Decision))})
 	return s.store.GetPromotion(ctx, promotionID)
 }
-
-// ── shared guarded advance ─────────────────────────────────────────────────────
 
 // guardedAdvance runs event → target through the pure state machine, then applies the
 // guarded DB update. It is the ONLY way this package changes promotion state.
@@ -306,20 +296,4 @@ func (s *Service) guardedAdvance(ctx context.Context, actorID, id string, from S
 // Get returns a promotion record.
 func (s *Service) Get(ctx context.Context, id string) (*PromotionRecord, error) {
 	return s.store.GetPromotion(ctx, id)
-}
-
-// ── tiny helpers ────────────────────────────────────────────────────────────
-
-func derefF(p *float64) float64 {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
-func decStr(d *Decision) string {
-	if d == nil {
-		return ""
-	}
-	return string(*d)
 }

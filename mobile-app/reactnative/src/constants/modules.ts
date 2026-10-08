@@ -1,8 +1,5 @@
-// ── Paymax — Service Modules ──────────────────────────────────────────────────
-//
 // Information architecture (All Services grid). Categories drive the section
 // bands + filter chips in app/(tabs)/services.tsx.
-//
 // NOTE: several capabilities are intentionally NOT top-level service icons:
 //   • Invest Settings → lives under Profile → Settings (not the grid).
 //   • Estate Admin → an RBAC profile/role, not a service.
@@ -12,8 +9,7 @@
 //   • Register / Apply → a sub-section inside the Contest hub.
 // These still exist as routes; they're just reached from their parent module.
 
-import { Colors } from './colors';
-
+import { Colors } from './tokens';
 
 export type ServiceCategory =
   | 'financial'
@@ -38,8 +34,6 @@ export interface ServiceModule {
   comingSoon?: boolean;
 }
 
-// ── Property Management sub-module IA ────────────────────────────────────────
-// The /property hub renders these. Pillars group the experience; the Estate &
 // Visitor Access pillar is itself a sub-hub (/property/estate) that links the
 // existing estate-ops routes. `phase` lets the hub badge what's shipped vs next.
 export type PropertyPillar =
@@ -86,7 +80,6 @@ export const PROPERTY_SUBMODULES: PropertySubModule[] = [
 ];
 
 export const SERVICE_MODULES: ServiceModule[] = [
-  // ── Financial ────────────────────────────────────────────────────────────────
   { id: 'wallet',          label: 'Wallet',          icon: 'Wallet',          iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/(tabs)/wallet',        category: 'financial' },
   { id: 'transfer',        label: 'Money Transfer',  icon: 'ArrowLeftRight',  iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/services/transfer',    category: 'financial' },
   { id: 'fx-exchange',     label: 'FX Exchange',     icon: 'RefreshCw',       iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/fx',                   category: 'financial', badge: 'New' },
@@ -95,7 +88,6 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'savings',         label: 'Savings',         icon: 'PiggyBank',       iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/savings',              category: 'financial', badge: 'New' },
   { id: 'social-pay',      label: 'Social Pay',      icon: 'Send',            iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/social',               category: 'financial', badge: 'New' },
 
-  // ── Investment (Stock + Crypto share one tabbed landing) ──────────────────────
   { id: 'investment',      label: 'Investment',      icon: 'TrendingUp',      iconColor: '#16A34A',         bgColor: 'rgba(22,163,74,0.10)', route: '/investment',         category: 'investment', badge: 'New' },
   { id: 'crypto',          label: 'Crypto',          icon: 'Bitcoin',         iconColor: '#F7931A',         bgColor: 'rgba(247,147,26,0.10)', route: '/crypto',            category: 'investment', badge: 'New' },
   { id: 'learn',           label: 'Learn',           icon: 'GraduationCap',   iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/learn',                category: 'investment' },
@@ -106,7 +98,6 @@ export const SERVICE_MODULES: ServiceModule[] = [
   // Landing screen carries the honest risk/fee framing; nothing places a real order.
   { id: 'ai-trading',      label: 'AI Trading',      icon: 'BrainCircuit',    iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/ai-trading',           category: 'investment', badge: 'Beta' },
 
-  // ── Utility ──────────────────────────────────────────────────────────────────
   { id: 'bills',           label: 'Bill Payments',   icon: 'ReceiptText',     iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/services/bills',       category: 'utility' },
   { id: 'airtime',         label: 'Airtime',         icon: 'Smartphone',      iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/services/airtime',     category: 'utility' },
   { id: 'data',            label: 'Data / Internet', icon: 'Wifi',            iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/services/data',        category: 'utility' },
@@ -114,13 +105,11 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'cable-tv',        label: 'Cable TV',        icon: 'Tv',              iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/services/cable-tv',    category: 'utility' },
   { id: 'education',       label: 'Education',       icon: 'GraduationCap',   iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/services/education',   category: 'utility' },
 
-  // ── Health ────────────────────────────────────────────────────────────────────
   { id: 'telemedicine',    label: 'Telemedicine',    icon: 'Stethoscope',     iconColor: '#EF4444',         bgColor: 'rgba(239,68,68,0.08)', route: '/services/telemedicine', category: 'health', badge: 'New' },
   { id: 'pharmacy',        label: 'Pharmacy',        icon: 'Pill',            iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/health/pharmacy',      category: 'health', badge: 'New' },
   { id: 'laboratory',      label: 'Laboratory',      icon: 'FlaskConical',    iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/health/lab',           category: 'health', badge: 'New' },
   { id: 'veterinary',      label: 'Veterinary',      icon: 'PawPrint',        iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/health/vet',           category: 'health', badge: 'New' },
 
-  // ── Lifestyle ──────────────────────────────────────────────────────────────────
   { id: 'creators',        label: 'Creators',        icon: 'Sparkles',        iconColor: Colors.primary,    bgColor: Colors.iconBgPurple,  route: '/creators',             category: 'lifestyle', badge: 'New' },
   { id: 'food',            label: 'Food',            icon: 'UtensilsCrossed', iconColor: '#EF4444',         bgColor: 'rgba(239,68,68,0.08)',   route: '/services/food',        category: 'lifestyle' },
   { id: 'ride',            label: 'Ride',            icon: 'Car',             iconColor: '#F97316',         bgColor: 'rgba(249,115,22,0.08)',   route: '/mobility',             category: 'lifestyle', badge: 'New' },
@@ -128,35 +117,28 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'parcel',          label: 'Parcel',          icon: 'Package',         iconColor: '#EAB308',         bgColor: 'rgba(234,179,8,0.10)',    route: '/services/parcel',      category: 'lifestyle', comingSoon: true },
   { id: 'marketplace',     label: 'Marketplace',     icon: 'Store',           iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,    route: '/marketplace',          category: 'lifestyle', badge: 'New' },
 
-  // ── Contest (Register / Apply lives INSIDE the Contest hub) ───────────────────
   { id: 'contest',         label: 'Contest',         icon: 'Trophy',          iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,    route: '/voting',               category: 'contest', badge: 'Live' },
   // Naija Driver — the Arena competition engine (driver challenge). Routes to the
   // Arena spectator/contestant home (app/arena).
   { id: 'naija-driver',    label: 'Naija Driver',    icon: 'CarFront',        iconColor: '#F97316',         bgColor: 'rgba(249,115,22,0.08)', route: '/arena',            category: 'contest', badge: 'New' },
 
-  // ── Academy ───────────────────────────────────────────────────────────────────
   // Film Academy used to sit under Contest, which described how it is RUN (an
   // application + selection cycle) rather than what it IS. Learning now has its
   // own band, shared with StudyHub, which moved here out of Investment.
-  //
   // Film Academy is a NATIVE screen. The app and the web app are separate
-  // interfaces: a tile must never hand the user off to a browser. The screen
   // calls the same academy endpoints the web uses (/api/academy/*) — sharing an
   // API is fine, sharing an interface is not.
   { id: 'film-academy',    label: 'Film Academy',    icon: 'Clapperboard',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/film-academy',         category: 'academy', badge: 'New' },
   { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'academy', badge: 'New' },
 
-  // ── Property Management (super-module) ────────────────────────────────────────
   // Per the new PRD, Property Management is a single top-level parent. Its four
   // pillars — Marketplace, Stays (Shortlet/Hotel), Rent & Tenancy, and Estate &
   // Visitor Access — plus the estate-ops sub-hub are SUB-modules surfaced inside
   // the /property hub (see PROPERTY_SUBMODULES below), NOT flat service icons.
-  // The individual routes (/realtor, /visitor, /guard, /dues, …) still work; this
   // only changes how they're grouped/surfaced on the All Services grid.
   { id: 'property',        label: 'Property Mgmt',   icon: 'Building2',       iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,    route: '/property',             category: 'property', badge: 'New' },
   { id: 'dues',            label: 'Dues & Rent',     icon: 'ReceiptText',     iconColor: Colors.primary,    bgColor: Colors.iconBgPurple,  route: '/dues',                 category: 'property' },
 
-  // ── Community & Business ──────────────────────────────────────────────────────
   { id: 'associations',    label: 'Associations',    icon: 'UsersRound',      iconColor: Colors.primary,    bgColor: Colors.iconBgPurple,  route: '/association',          category: 'community', badge: 'New' },
   { id: 'crowdfunding',    label: 'Crowdfunding',    icon: 'HandHeart',       iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,    route: '/crowdfunding',         category: 'community', badge: 'New' },
   { id: 'connect',         label: 'Connect',         icon: 'Heart',           iconColor: '#E11D74',         bgColor: 'rgba(225,29,116,0.08)',   route: '/connect',              category: 'community', badge: 'New' },

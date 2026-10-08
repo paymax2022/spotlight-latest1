@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/gate/overstays — open visits checked in more than 4 hours ago.
+// Open visits checked in more than 4 hours ago.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

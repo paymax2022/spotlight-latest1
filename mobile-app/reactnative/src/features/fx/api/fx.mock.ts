@@ -1,6 +1,4 @@
-// ── FX Exchange — Mock seed data ─────────────────────────────────────────────
 // Realistic deterministic fixtures so loading/empty/populated states render in
-// USE_MOCK mode. All money is minor units (integer). Flip USE_MOCK=false in
 // fx.api.ts once the real /v1 endpoints land.
 
 import type {
@@ -17,16 +15,12 @@ import { midRate } from '../utils/fxFormatters';
 const now = Date.now();
 const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
 
-// ─── Balances ─────────────────────────────────────────────────────────────────
-
 export const MOCK_BALANCES: WalletBalance[] = [
   { currency: 'NGN', available: 2_450_000_00, ledger: 2_450_000_00 },
   { currency: 'USD', available: 3_420_00,     ledger: 3_620_00 },     // $200 pending hold
   { currency: 'EUR', available: 1_180_00,     ledger: 1_180_00 },
   { currency: 'GBP', available: 0,            ledger: 0 },
 ];
-
-// ─── Indicative rates (display / ticker / alerts only) ────────────────────────
 
 export const MOCK_RATES: IndicativeRate[] = [
   { pair: 'USD-NGN', from: 'USD', to: 'NGN', mid: midRate('USD', 'NGN'), sell: 1581.43, change24hPct: 0.42,  updatedAt: iso(60_000) },
@@ -35,8 +29,6 @@ export const MOCK_RATES: IndicativeRate[] = [
   { pair: 'USD-GHS', from: 'USD', to: 'GHS', mid: midRate('USD', 'GHS'), sell: 14.72,   change24hPct: 0.10,  updatedAt: iso(60_000) },
   { pair: 'USD-KES', from: 'USD', to: 'KES', mid: midRate('USD', 'KES'), sell: 128.90,  change24hPct: -0.32, updatedAt: iso(60_000) },
 ];
-
-// ─── Beneficiaries ────────────────────────────────────────────────────────────
 
 export const MOCK_BENEFICIARIES: Beneficiary[] = [
   {
@@ -66,8 +58,6 @@ export const MOCK_BENEFICIARIES: Beneficiary[] = [
   },
 ];
 
-// ─── Virtual accounts (collections) ───────────────────────────────────────────
-
 export const MOCK_VIRTUAL_ACCOUNTS: VirtualAccount[] = [
   {
     id: 'va_ngn_1', currency: 'NGN', type: 'virtual_account', status: 'active',
@@ -93,15 +83,11 @@ export const MOCK_COLLECTIONS: CollectionEvent[] = [
   { id: 'col_3', virtualAccountId: 'va_usd_1', amount: { amount: 500_00, currency: 'USD' }, senderName: 'Upwork', reference: 'Milestone 4', createdAt: iso(86_400_000 * 9) },
 ];
 
-// ─── Rate alerts ────────────────────────────────────────────────────────────────
-
 export const MOCK_RATE_ALERTS: RateAlert[] = [
   { id: 'al_1', pair: 'USD-NGN', from: 'USD', to: 'NGN', direction: 'above', target: 1650, active: true, createdAt: iso(86_400_000 * 4), triggeredAt: null },
   { id: 'al_2', pair: 'GBP-NGN', from: 'GBP', to: 'NGN', direction: 'below', target: 1950, active: true, createdAt: iso(86_400_000 * 6), triggeredAt: null },
   { id: 'al_3', pair: 'EUR-NGN', from: 'EUR', to: 'NGN', direction: 'above', target: 1700, active: false, createdAt: iso(86_400_000 * 20), triggeredAt: iso(86_400_000 * 2) },
 ];
-
-// ─── Transactions (unified ledger) ────────────────────────────────────────────
 
 export const MOCK_TRANSACTIONS: TransactionDetail[] = [
   {

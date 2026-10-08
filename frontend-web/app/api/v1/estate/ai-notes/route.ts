@@ -16,7 +16,6 @@ export function mapNote(row: any, names: Record<string, string>, meetingTitle?: 
   };
 }
 
-// GET /api/v1/estate/ai-notes
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

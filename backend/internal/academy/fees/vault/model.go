@@ -1,5 +1,4 @@
 // Package feesvault owns the FeesVault entity of the EdTech School-Fees module.
-//
 // The FeesVault is the guardian's goal-based savings pot for school fees. It is a
 // BROWNFIELD EXTENSION of academy/edupay: it reuses the existing
 // public.academy_savings_pots table (+ append-only public.academy_pot_contributions)
@@ -8,7 +7,6 @@
 // widened academy_savings_pots.status to the FeesVault state set
 // (active / target_reached / applied_to_invoice / withdrawn / locked) and reused
 // the append-only contributions table.
-//
 // Golden-rule discipline mirrored from edupay:
 //   - saved_minor is a DERIVED PROJECTION = SUM(academy_pot_contributions.amount_minor).
 //     It is NEVER written directly as a shadow balance. InsertVault seeds it 0 and it
@@ -24,7 +22,6 @@
 // accounts. Segregation is by a DEDICATED ledger AccountType (the ledger has no
 // free-form purpose column — verified in finance/ledger/model.go), so vault funds
 // reconcile separately from general float. See ledgerSvc + AccountEdtechFeesVault.
-//
 // Money is int64 minor units (kobo). Never floats, never strings for math.
 package feesvault
 
@@ -79,8 +76,6 @@ type Contribution struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreateVaultRequest opens a FeesVault toward a fee goal (optionally a fee schedule).
 type CreateVaultRequest struct {
 	GoalName      string `json:"goalName" binding:"required"`
@@ -99,8 +94,6 @@ type ContributeRequest struct {
 type ApplyToInvoiceRequest struct {
 	InvoiceID string `json:"invoiceId" binding:"required"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound             = errors.New("not_found")

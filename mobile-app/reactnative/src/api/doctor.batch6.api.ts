@@ -1,18 +1,12 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 6 API client ────────────────
-// Batch 6 = spec sections W · X · Y · Z (Medical Records · Notifications ·
-// Earnings/Wallet/Payout · Ratings/Reputation). Phase A style: every function
-// resolves demo data so screens render without a live API; `DEMO_*` exports
 // double as `placeholderData` in useQuery. ADDITIVE to the Phase 1 / Phase 2 /
 // Section B / Phase 3 / Batch 1-5 api files — nothing earlier changes.
-//
 // CONSOLIDATED + heavy REUSE of the Phase 1 notification/earnings demo data, the
 // Phase 2 reputation/payout-report/record-hub demo data and the Phase 3 quality
 // analytics. Money is always an integer in kobo.
-//
 // TODO(Phase C): replace each body with the live endpoint and pass the
 //   Idempotency-Key header on every mutation below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { DEMO_NOTIFICATIONS } from '@/api/doctor.api';
 import { DEMO_REPUTATION } from '@/api/doctor.phase2.api';
 import type {
@@ -86,9 +80,7 @@ const DEMO_BANK_ACCOUNT: BankAccount = {
   bankName: 'GTBank', bankCode: '058', accountNumber: '0123456789', accountName: 'Dr. Amaka Obi', isVerified: true,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION W — MEDICAL RECORDS
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_RECORDS_DASHBOARD: DoctorRecordsDashboard = {
   totalPatients: 128,
@@ -154,9 +146,7 @@ export const DEMO_RECORD_SHARES: RecordShare[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION X — NOTIFICATIONS
-// ═══════════════════════════════════════════════════════════════════════════
 // Rich notifications COMPOSE the Phase 1 DoctorNotification set, adding kind /
 // category / severity / cta. The first few derive from DEMO_NOTIFICATIONS so the
 // existing centre and the rich centre stay consistent.
@@ -278,9 +268,7 @@ function groupNotifications(list: RichNotification[]): NotificationGroup[] {
 
 export const DEMO_NOTIFICATION_GROUPS: NotificationGroup[] = groupNotifications(DEMO_RICH_NOTIFICATIONS);
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION Y — EARNINGS, WALLET & PAYOUT
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_EARNINGS_BREAKDOWN: EarningsBreakdown = {
   todayKobo: 600000, weekKobo: 3150000, monthKobo: 12400000, lifetimeKobo: 28500000,
@@ -383,9 +371,7 @@ export const DEMO_SETTLEMENT_DISPUTES: SettlementDispute[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION Z — RATINGS, REVIEWS & REPUTATION
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_CONSULT_FEEDBACK: ConsultationFeedback[] = [
   {
@@ -435,11 +421,8 @@ export const DEMO_REVIEW_DISPUTES: ReviewDispute[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // READ ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section W ──
 export async function getRecordsDashboard(): Promise<DoctorRecordsDashboard> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_RECORDS_DASHBOARD);
   return doctorGet<DoctorRecordsDashboard>('/records/dashboard');
@@ -465,7 +448,6 @@ export async function getRecordShares(): Promise<RecordShare[]> {
   return doctorGet<RecordShare[]>('/records/shares');
 }
 
-// ── Section X ──
 export async function getRichNotifications(): Promise<RichNotification[]> {
   if (DOCTOR_USE_MOCK) {
     void DEMO_NOTIFICATIONS;
@@ -484,7 +466,6 @@ export async function getNotificationPreferences(): Promise<NotificationPreferen
   return doctorGet<NotificationPreference[]>('/notifications/preferences');
 }
 
-// ── Section Y ──
 export async function getEarningsBreakdown(): Promise<EarningsBreakdown> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_EARNINGS_BREAKDOWN);
   return doctorGet<EarningsBreakdown>('/earnings/breakdown');
@@ -525,7 +506,6 @@ export async function getSettlementDisputes(): Promise<SettlementDispute[]> {
   return doctorGet<SettlementDispute[]>('/payouts/disputes');
 }
 
-// ── Section Z ──
 export async function getConsultationFeedback(): Promise<ConsultationFeedback[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_CONSULT_FEEDBACK);
   return doctorGet<ConsultationFeedback[]>('/feedback');
@@ -554,11 +534,8 @@ export async function getReviewDisputes(): Promise<ReviewDispute[]> {
   return doctorGet<ReviewDispute[]>('/reviews/disputes');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATIONS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section W ──
 export async function downloadPatientRecord(input: DownloadPatientRecordInput): Promise<DownloadPatientRecordResult> {
   if (!DOCTOR_USE_MOCK) return doctorPost<DownloadPatientRecordResult>(`/records/${input.patientId}/export`, input, input.idempotencyKey);
   return wait({
@@ -589,7 +566,6 @@ export async function requestRecordAccess(input: RequestRecordAccessInput): Prom
   return doctorPost<RequestRecordAccessResult>(`/records/${input.patientId}/access-request`, input, input.idempotencyKey);
 }
 
-// ── Section X ──
 export async function markNotificationRead(input: MarkNotificationReadInput): Promise<MarkNotificationReadResult> {
   if (DOCTOR_USE_MOCK) return wait({ notificationId: input.notificationId, read: true }, 350);
   return doctorPost<MarkNotificationReadResult>(`/notifications/${input.notificationId}/read`, input, input.idempotencyKey);
@@ -610,7 +586,6 @@ export async function updateNotificationPrefs(input: UpdateNotificationPrefsInpu
   return doctorPut<UpdateNotificationPrefsResult>('/notifications/preferences', input, input.idempotencyKey);
 }
 
-// ── Section Y ──
 export async function withdrawEarnings(input: WithdrawEarningsInput): Promise<WithdrawEarningsResult> {
   if (DOCTOR_USE_MOCK) {
     void input.bankAccount;
@@ -644,7 +619,6 @@ export async function raiseSettlementDispute(input: RaiseSettlementDisputeInput)
   return doctorPost<RaiseSettlementDisputeResult>(`/payouts/${input.payoutId}/dispute`, input, input.idempotencyKey);
 }
 
-// ── Section Z ──
 export async function disputeReview(input: DisputeReviewInput): Promise<DisputeReviewResult> {
   if (DOCTOR_USE_MOCK) {
     void input.detail;

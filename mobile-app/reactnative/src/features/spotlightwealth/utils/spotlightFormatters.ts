@@ -1,4 +1,3 @@
-// ── Spotlight Wealth — Display formatters ────────────────────────────────────
 // Reward credit is in major units (this surface never executes trades, so it
 // skips the crypto module's minor-unit math). Helpers stay self-contained.
 

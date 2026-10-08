@@ -1,4 +1,3 @@
-// ── Paymax Health — Pre-Consult Intake mock dataset ──────────────────────────
 // Self-contained mock backing for the patient Pre-Consultation Health Intake
 // wizard (M1–M17). Mirrors the conventions in health.mock.ts. Used while
 // USE_MOCK is true so the wizard runs fully offline — no backend required.
@@ -23,7 +22,6 @@ export const CONSENT_BODY =
   'access-logged, and visible only within this care relationship. Every doctor access ' +
   'is recorded. You can review or update your details any time before the consult starts.';
 
-// ── Clinical vocabularies (would come from Admin A3 in production) ─────────────
 export const ALLERGEN_OPTIONS = [
   { value: 'penicillin', label: 'Penicillin' },
   { value: 'sulfa', label: 'Sulfa drugs' },
@@ -46,7 +44,6 @@ export const CHRONIC_CONDITION_OPTIONS = [
   { value: 'other', label: 'Other (note below)' },
 ];
 
-// ── The Pre-Consult intake schema (conditional steps, M4–M12) ─────────────────
 export const PRECONSULT_SCHEMA: PreConsultIntakeSchema = {
   id: 'preconsult_v1',
   version: 1,
@@ -295,7 +292,6 @@ export const PRECONSULT_PREFILL: IntakeResponseValues = {
   conditions_none: true,
 };
 
-// ── In-session intake store, keyed by appointment id ──────────────────────────
 const intakeStore: Record<string, PreConsultIntake> = {
   // A seeded SUBMITTED intake demonstrating M16 (edit submitted) on appt "apt-2".
   'apt-2': {
@@ -411,7 +407,6 @@ export function mockSubmitIntake(appointmentId: string, answers: IntakeResponseV
   return { status: 'SUBMITTED' as const, red_flag, intake: submitted };
 }
 
-// ── M17 — longitudinal health profile aggregated from prior intakes ───────────
 export function mockGetHealthProfile(): HealthProfile {
   // Aggregate from any submitted intakes in the store, falling back to seed data.
   const submitted = Object.values(intakeStore).filter((i) => i.status === 'SUBMITTED');

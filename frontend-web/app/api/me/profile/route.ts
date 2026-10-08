@@ -16,7 +16,8 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const profile = await updateUserProfile(user, body);
     return successResponse({ success: true, profile, completion: calculateProfileCompletion(profile) });
   } catch (error) {

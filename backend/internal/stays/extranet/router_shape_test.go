@@ -1,7 +1,6 @@
 package extranet
 
 // Registration-time guard for the extranet route tree.
-//
 // gin panics when a static segment conflicts with a wildcard at the same
 // position, and it does so at REGISTRATION — i.e. at boot, not under test.
 // staff_invite.go adds "/staff/invite/accept" (static, root-level) beside

@@ -5,13 +5,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"testing"
 
 	"spotlight/backend/internal/arena"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/platform/crypto"
 )
-
-// ── Fakes for the repo interfaces (no DB) ────────────────────────────────────
 
 type fakeAudit struct{ n int }
 
@@ -90,7 +90,7 @@ func TestFirewall_VerifyBeforeAppend(t *testing.T) {
 	rp := p
 	rp.AdapterID = rogue.ID()
 	rentry := arena.SignScore(rogue, rp, nil)
-	if err := ms.Append(context.Background(), "actor", rentry); err != ErrUnauthorizedSig {
+	if err := ms.Append(context.Background(), "actor", rentry); !errors.Is(err, ErrUnauthorizedSig) {
 		t.Fatalf("rogue signer must be rejected with ErrUnauthorizedSig, got %v", err)
 	}
 	if len(repo.inserted) != 1 {
@@ -109,7 +109,7 @@ func TestFirewall_Replay(t *testing.T) {
 	if err := ms.Append(context.Background(), "actor", entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.Append(context.Background(), "actor", entry); err != ErrReplay {
+	if err := ms.Append(context.Background(), "actor", entry); !errors.Is(err, ErrReplay) {
 		t.Fatalf("replay must be rejected with ErrReplay, got %v", err)
 	}
 }
@@ -120,7 +120,7 @@ func TestFirewall_Replay(t *testing.T) {
 func TestFirewall_MoneyRailsHaveNoSigner(t *testing.T) {
 	led := newFakeLedger()
 	repo := &fakeSupportRepo{}
-	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{})
+	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{}).WithDebitLimiter(allowAllDebitLimit{})
 	// The type has no field or method that yields a *crypto.Signer / SignedMeritEntry.
 	// The only capability it holds is money movement + tagging. A contribute posts
 	// money and tags a row, never touching merit.
@@ -131,8 +131,6 @@ func TestFirewall_MoneyRailsHaveNoSigner(t *testing.T) {
 		t.Fatal("support must post exactly one money movement + one tag")
 	}
 }
-
-// ── Fakes for the money rails ────────────────────────────────────────────────
 
 type fakeLedger struct {
 	debits, credits int
@@ -164,6 +162,12 @@ type fakeTier struct{ tier int }
 
 func (f fakeTier) UserTier(context.Context, string) (int, error) { return f.tier, nil }
 
+// allowAllDebitLimit is the DebitLimitPort fake for pre-existing rail tests:
+// it always allows. The gate's own behavior is pinned by tier_gate_test.go.
+type allowAllDebitLimit struct{}
+
+func (allowAllDebitLimit) EnforceWalletDebitLimit(context.Context, string, int64) error { return nil }
+
 type fakeCfg struct{ c Config }
 
 func (f fakeCfg) CurrentConfig(context.Context, string) (*Config, error) { return &f.c, nil }
@@ -181,8 +185,8 @@ func (f *fakeSupportRepo) Rows(context.Context, string) ([]SupportRow, error) { 
 func TestSupport_Idempotent(t *testing.T) {
 	led := newFakeLedger()
 	repo := &fakeSupportRepo{}
-	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{})
-	for i := 0; i < 3; i++ {
+	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{}).WithDebitLimiter(allowAllDebitLimit{})
+	for range 3 {
 		if err := svc.Contribute(context.Background(), "u1", "same-idem", "c1", "k1", 1000); err != nil {
 			t.Fatal(err)
 		}
@@ -192,10 +196,68 @@ func TestSupport_Idempotent(t *testing.T) {
 	}
 }
 
+// realReplayLedger is a fakeLedger that returns the REAL ledger.ErrDuplicate
+// on a replayed idempotency key, instead of the plain fakeLedger's silent
+// no-op — the plain fake is why TestSupport_Idempotent never caught the live
+// UAT defect: it tests the fake's own behavior, not what the real
+// finance/ledger.Service actually returns on a redis-lock-detected replay
+// (see internal/finance/ledger/service.go Debit/Credit). This double
+// reproduces the real contract so Contribute's isLedgerReplay branch is
+// actually exercised.
+type realReplayLedger struct {
+	debits, credits int
+	seen            map[string]bool
+}
+
+func newRealReplayLedger() *realReplayLedger { return &realReplayLedger{seen: map[string]bool{}} }
+func (f *realReplayLedger) Debit(_ context.Context, _, _, idem, _ string, _ int64) error {
+	if f.seen[idem] {
+		return ledger.ErrDuplicate
+	}
+	f.seen[idem] = true
+	f.debits++
+	return nil
+}
+func (f *realReplayLedger) Credit(_ context.Context, _, _, idem, _ string, _ int64) error {
+	if f.seen[idem] {
+		return ledger.ErrDuplicate
+	}
+	f.seen[idem] = true
+	f.credits++
+	return nil
+}
+func (f *realReplayLedger) StandingAccountID(context.Context, string) (string, error) {
+	return "acct-pot", nil
+}
+
+// TestSupport_ReplayReturnsSuccessNotRawLedgerError locks the contract: a
+// Contribute call replayed with the same idempotency key against a ledger
+// that returns the REAL ledger.ErrDuplicate signal must succeed (nil), not
+// bubble the raw internal error into an unmapped 500 on a genuine client
+// retry.
+func TestSupport_ReplayReturnsSuccessNotRawLedgerError(t *testing.T) {
+	led := newRealReplayLedger()
+	repo := &fakeSupportRepo{}
+	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{}).WithDebitLimiter(allowAllDebitLimit{})
+
+	if err := svc.Contribute(context.Background(), "u1", "same-idem", "c1", "k1", 1000); err != nil {
+		t.Fatalf("first Contribute: %v", err)
+	}
+	if err := svc.Contribute(context.Background(), "u1", "same-idem", "c1", "k1", 1000); err != nil {
+		t.Fatalf("replayed Contribute must succeed (idempotent no-op), got: %v", err)
+	}
+	if led.debits != 1 {
+		t.Fatalf("expected exactly 1 real debit, got %d", led.debits)
+	}
+	if len(repo.rows) != 1 {
+		t.Fatalf("expected exactly 1 tagged support row (no re-tag on replay), got %d", len(repo.rows))
+	}
+}
+
 // TestSupport_KYCGate proves the NDC-3 identity gate fails closed below tier.
 func TestSupport_KYCGate(t *testing.T) {
 	svc := NewSupportService(&fakeSupportRepo{}, newFakeLedger(), fakeTier{0}, fakeCfg{Config{RequiredKYCTier: 2}}, &fakeAudit{})
-	if err := svc.Contribute(context.Background(), "u1", "idem", "c1", "k1", 1000); err != ErrKYCTierTooLow {
+	if err := svc.Contribute(context.Background(), "u1", "idem", "c1", "k1", 1000); !errors.Is(err, ErrKYCTierTooLow) {
 		t.Fatalf("below-tier support must be ErrKYCTierTooLow, got %v", err)
 	}
 }
@@ -222,8 +284,6 @@ func TestPotTotal_DerivedFromSupportRows(t *testing.T) {
 		}
 	}
 }
-
-// ── Credential verify-by-hash (pure, no DB via a fake repo) ──────────────────
 
 type fakeCredRepo struct{ store map[string]*Credential }
 

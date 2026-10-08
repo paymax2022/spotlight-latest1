@@ -77,7 +77,7 @@ source. Based on the config surface, rotate at minimum:
 - Supabase: `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, anon key, DB password (`DATABASE_URL`).
 - Payment/rails providers: Paystack (`sk_*`), Maplerad (`mpr_*`), Monnify, Eversend.
 - KYC providers: Dojah, Smile ID, Youverify keys.
-- Messaging/media: Resend, Termii, Cloudflare R2 (`R2_*`), Agora/VideoSDK.
+- Messaging/media: Resend, Termii, Cloudflare R2 (`R2_*`), VideoSDK.
 - AI: `ANTHROPIC_API_KEY`.
 - Signing seeds / PII key: any Arena Ed25519 seeds, `KYC_PII_ENC_KEY` (re-key + re-encrypt affected blobs).
 

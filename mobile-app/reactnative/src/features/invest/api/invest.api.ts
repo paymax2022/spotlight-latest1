@@ -1,8 +1,4 @@
-// ── Invest — typed API layer the screens code against ────────────────────────
-// Mock-flagged (INVEST_USE_MOCK). Flip with EXPO_PUBLIC_INVEST_USE_MOCK=false to
 // hit the Go backend (/api/v1/invest, /api/v1/stocks).
-//
-// IRON RULES honoured: money is integer kobo; every order/funding mutation
 // carries an Idempotency-Key; the client never computes fees/limits itself.
 
 import {
@@ -18,8 +14,6 @@ import {
   MOCK_SUITABILITY_QUESTIONS, MOCK_PORTFOLIO, MOCK_WALLET, MOCK_WATCHLISTS,
   MOCK_ORDERS, MOCK_PUBLIC_OFFERS,
 } from './invest.mock';
-
-// ── Profile / onboarding ─────────────────────────────────────────────────────
 
 export async function getProfile(): Promise<Profile> {
   if (INVEST_USE_MOCK) return waitMock(MOCK_PROFILE);
@@ -46,8 +40,6 @@ export async function acceptAgreements(): Promise<void> {
   await investPost('/invest/agreements/accept');
 }
 
-// ── Suitability ──────────────────────────────────────────────────────────────
-
 export async function getSuitabilityQuestions(): Promise<SuitabilityQuestion[]> {
   if (INVEST_USE_MOCK) return waitMock(MOCK_SUITABILITY_QUESTIONS);
   return investGet<SuitabilityQuestion[]>('/invest/suitability/questions');
@@ -61,8 +53,6 @@ export async function submitSuitability(answers: Record<string, number>): Promis
   return investPost<SuitabilityResult>('/invest/suitability/submit', { answers });
 }
 
-// ── Transaction PIN ──────────────────────────────────────────────────────────
-
 export async function getPINStatus(): Promise<{ pin_set: boolean }> {
   if (INVEST_USE_MOCK) return waitMock({ pin_set: true });
   return investGet<{ pin_set: boolean }>('/invest/security/pin');
@@ -72,8 +62,6 @@ export async function setPIN(pin: string, currentPin?: string): Promise<{ pin_se
   if (INVEST_USE_MOCK) return waitMock({ pin_set: true });
   return investPost<{ pin_set: boolean }>('/invest/security/pin', { pin, current_pin: currentPin });
 }
-
-// ── Stocks / discovery ───────────────────────────────────────────────────────
 
 export async function listStocks(query?: string, sector?: string): Promise<StockWithQuote[]> {
   if (INVEST_USE_MOCK) {
@@ -89,7 +77,7 @@ export async function getStock(symbol: string): Promise<StockWithQuote> {
     const s = MOCK_STOCKS.find((x) => x.symbol === symbol) ?? MOCK_STOCKS[0];
     return waitMock(s);
   }
-  return investGet<StockWithQuote>(`/stocks/ticker/${symbol}`);
+  return investGet<StockWithQuote>(`/stocks/${symbol}`);
 }
 
 export async function getStockChart(symbol: string, range = '1m'): Promise<Candle[]> {
@@ -102,15 +90,13 @@ export async function getStockChart(symbol: string, range = '1m'): Promise<Candl
       return { t: Math.floor(Date.now() / 1000) - (n - i) * 86400, o: c - base / 200, h: c + base / 100, l: c - base / 100, c, v: 100000 };
     }));
   }
-  return investGet<Candle[]>(`/stocks/ticker/${symbol}/chart`, { range });
+  return investGet<Candle[]>(`/stocks/${symbol}/chart`, { range });
 }
 
 export async function getMarketStatus(): Promise<{ market_status: string }> {
   if (INVEST_USE_MOCK) return waitMock({ market_status: 'open' });
   return investGet<{ market_status: string }>('/stocks/market-status');
 }
-
-// ── Orders ───────────────────────────────────────────────────────────────────
 
 export async function placeBuyOrder(req: BuyOrderRequest, idempotencyKey: string): Promise<Receipt> {
   if (INVEST_USE_MOCK) {
@@ -164,8 +150,6 @@ export async function cancelOrder(id: string): Promise<Order> {
   return investPost<Order>(`/stocks/orders/${id}/cancel`);
 }
 
-// ── Portfolio / wallet ───────────────────────────────────────────────────────
-
 export async function getPortfolio(): Promise<PortfolioView> {
   if (INVEST_USE_MOCK) return waitMock(MOCK_PORTFOLIO);
   return investGet<PortfolioView>('/invest/portfolio');
@@ -181,12 +165,10 @@ export async function depositToWallet(amountKobo: number, idempotencyKey: string
   return investPost<WalletView>('/invest/wallet/deposit', { amount_kobo: amountKobo, source: 'paymax_wallet' }, idempotencyKey);
 }
 
-export async function withdrawFromWallet(amountKobo: number, idempotencyKey: string): Promise<WalletView> {
+export async function withdrawFromWallet(amountKobo: number, idempotencyKey: string, pin: string): Promise<WalletView> {
   if (INVEST_USE_MOCK) return waitMock({ ...MOCK_WALLET, available_cash_kobo: Math.max(0, MOCK_WALLET.available_cash_kobo - amountKobo) });
-  return investPost<WalletView>('/invest/wallet/withdraw', { amount_kobo: amountKobo, destination: 'paymax_wallet' }, idempotencyKey);
+  return investPost<WalletView>('/invest/wallet/withdraw', { amount_kobo: amountKobo, destination: 'paymax_wallet', pin }, idempotencyKey);
 }
-
-// ── Watchlists ───────────────────────────────────────────────────────────────
 
 export async function getWatchlists(): Promise<Watchlist[]> {
   if (INVEST_USE_MOCK) return waitMock(MOCK_WATCHLISTS);
@@ -202,8 +184,6 @@ export async function removeFromWatchlist(watchlistId: string, assetId: string):
   if (INVEST_USE_MOCK) return waitMock(undefined);
   await investDelete(`/invest/watchlists/${watchlistId}/stocks/${assetId}`);
 }
-
-// ── Public offers ────────────────────────────────────────────────────────────
 
 export async function listPublicOffers(): Promise<PublicOffer[]> {
   if (INVEST_USE_MOCK) return waitMock(MOCK_PUBLIC_OFFERS);

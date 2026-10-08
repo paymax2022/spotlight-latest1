@@ -11,13 +11,11 @@ import (
 )
 
 // redflag.go — submit-time triage for the pre-consult intake (ADR-010 §5).
-//
 // Two layers, both can ONLY RAISE urgency (triage.ApplyRedFlag / LayeredRedFlag):
 //  1. triage.DefaultRedFlagEngine — the deterministic safety net on Evidence
 //     extracted from the free-text answers (always runs).
 //  2. dbRuleEngine — the admin-configurable health_redflag_rule rows
 //     (any_field + contains case-insensitive substring; equals; evidence codes).
-//
 // A hit never silently queues a routine consult: the caller surfaces guidance/
 // routing (urgent_guidance / crisis_guidance from health_intake_config) and the
 // intake is flagged. The SELF-HARM rule (code self_harm) routes CRISIS with the
@@ -36,9 +34,9 @@ type RedFlagHit struct {
 // RedFlagOutcome is the aggregate evaluation result for one submit.
 type RedFlagOutcome struct {
 	Triggered bool         `json:"triggered"`
-	Level     int          `json:"level"`             // most urgent (lowest) level across hits
-	Severity  string       `json:"severity"`          // emergency | urgent (worst)
-	Routing   string       `json:"routing,omitempty"` // EMERGENCY | URGENT_CARE | CRISIS (worst)
+	Level     int          `json:"level"` // most urgent (lowest) level across hits
+	Severity  string       `json:"severity"`
+	Routing   string       `json:"routing,omitempty"`
 	Hits      []RedFlagHit `json:"hits"`
 }
 

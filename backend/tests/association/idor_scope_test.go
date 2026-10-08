@@ -1,13 +1,11 @@
 package association_test
 
 // Live-DB authorization / IDOR-scope suite for the association module.
-//
 // These tests prove the cross-group data-isolation, admin org-scoping, and
 // invite-only discovery invariants from the Groups & Associations test plan
 // (SEC-001, DR-004, GR-004, GR-010, CH-005, AI-007, EC-013). They drive the
 // REAL Service against a live Postgres and assert fail-closed denials across
 // organisation boundaries.
-//
 // Gated on TEST_DATABASE_URL exactly like live_db_integration_test.go
 // (shared liveDBPool + seed helpers). Run:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres"
@@ -22,8 +20,6 @@ import (
 
 	"spotlight/backend/internal/association"
 )
-
-// ── local seed helpers (build on live_db_integration_test.go helpers) ──────────
 
 func seedOrgOfType(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, groupType string) string {
 	t.Helper()
@@ -41,7 +37,7 @@ func seedOrgOfType(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, 
 // member-detail reads inner-join on. jsonb columns rely on their schema defaults.
 func seedMemberProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool, membershipID, fullName string) {
 	t.Helper()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_member_profiles (membership_id, full_name)
 		VALUES ($1, $2) ON CONFLICT (membership_id) DO NOTHING`, membershipID, fullName); err != nil {
 		t.Fatalf("seed member profile: %v", err)
@@ -51,7 +47,7 @@ func seedMemberProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool, me
 func seedChatThread(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID string) string {
 	t.Helper()
 	threadID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_chat_threads (id, organisation_id, title, scope)
 		VALUES ($1, $2, 'General', 'GENERAL')`, threadID, orgID); err != nil {
 		t.Fatalf("seed chat thread: %v", err)
@@ -62,7 +58,7 @@ func seedChatThread(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID
 func seedApplication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID string) string {
 	t.Helper()
 	appID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_applications (id, organisation_id, user_id, status)
 		VALUES ($1, $2, $3, 'PENDING')`, appID, orgID, userID); err != nil {
 		t.Fatalf("seed application: %v", err)
@@ -73,7 +69,7 @@ func seedApplication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgI
 func seedOfflinePayment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, membershipID, invoiceID string, amountKobo int64) string {
 	t.Helper()
 	paymentID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, status, offline)
 		VALUES ($1, $2, $3, $4, 'BANK_TRANSFER', 'PENDING', true)`,
 		paymentID, invoiceID, membershipID, amountKobo); err != nil {
@@ -81,8 +77,6 @@ func seedOfflinePayment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, m
 	}
 	return paymentID
 }
-
-// ── Group 1: cross-org data isolation ─────────────────────────────────────────
 
 func TestLiveDB_IDOR_GetChatThread_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
@@ -128,7 +122,7 @@ func TestLiveDB_IDOR_SendChatMessage_CrossOrgForbidden(t *testing.T) {
 	}
 	// And no foreign message was written.
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_chat_messages WHERE thread_id=$1 AND body='intrusion'`, threadA).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_chat_messages WHERE thread_id=$1 AND body='intrusion'`, threadA).Scan(&n); err != nil {
 		t.Fatalf("count messages: %v", err)
 	}
 	if n != 0 {
@@ -163,7 +157,7 @@ func TestLiveDB_IDOR_ReactToMessage_CrossOrgForbidden(t *testing.T) {
 		t.Fatal("CROSS-ORG IDOR: member of org B reacted to org A's message (want error)")
 	}
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_chat_message_reactions WHERE message_id=$1 AND emoji='🔥'`, msg.ID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_chat_message_reactions WHERE message_id=$1 AND emoji='🔥'`, msg.ID).Scan(&n); err != nil {
 		t.Fatalf("count reactions: %v", err)
 	}
 	if n != 0 {
@@ -249,8 +243,6 @@ func TestLiveDB_IDOR_GetMember_CrossOrgForbidden(t *testing.T) {
 		t.Fatal("CROSS-ORG IDOR: member of org B fetched a member of org A (want error)")
 	}
 }
-
-// ── Group 2: admin cross-org authorization ────────────────────────────────────
 
 func TestLiveDB_IDOR_DecideApplication_RequiresSameOrgAdmin(t *testing.T) {
 	pool := liveDBPool(t)
@@ -362,8 +354,6 @@ func TestLiveDB_IDOR_AssignRole_CrossOrgForbidden(t *testing.T) {
 		t.Fatalf("role granted in foreign org despite forbidden action (%d rows)", n)
 	}
 }
-
-// ── Group 3: invite-only discovery hiding ─────────────────────────────────────
 
 func TestLiveDB_IDOR_Discovery_HidesInviteOnly(t *testing.T) {
 	pool := liveDBPool(t)

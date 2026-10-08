@@ -1,12 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Spotlight SME Pitch Contest — registration form (slug: sme-pitch-contest)
-//
 // SELF-CONTAINED. Editing anything here affects ONLY the SME Pitch form.
-//
 // Contest shape: free entry, business/startup focused, supports group entry,
 // public voting and pitch audition scheduling. NO medical, NO bootcamp, NO
 // payment. Collects business, product, revenue and CAC details.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES } from '../reference-data';
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from '../types';
 

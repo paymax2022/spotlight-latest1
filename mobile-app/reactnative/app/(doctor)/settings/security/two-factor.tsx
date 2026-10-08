@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -14,7 +14,6 @@ import { useSecuritySettings, useSetTwoFactor } from '@/features/doctor/hooks';
 import { TWO_FACTOR_METHODS, TWO_FACTOR_METHOD_LABELS } from '@/features/doctor/constants';
 import type { TwoFactorMethod, TwoFactorSetup } from '@/types/doctor.batch7';
 
-// ── Section AC — Two-factor authentication setup (AC.10) ──────────────────────
 // NEW screen: choose a 2FA method, start enrolment (returns a TwoFactorSetup
 // with masked target / recovery codes) and confirm with a code, or turn 2FA off.
 // Reuses SelectField / TextInputField / PrimaryButton.

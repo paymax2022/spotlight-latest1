@@ -1,9 +1,4 @@
-// ── Marketplace feature — public barrel ──────────────────────────────────────
-// The single import surface for the marketplace feature. Sibling domain agents
 // (Sell, Transact, Trust/Account) should import types and the client from here.
-//
-//   import { mktGet, mktPost, newMktIdempotencyKey } from '@/features/marketplace';
-//   import type { Order, OrderStatus, Listing } from '@/features/marketplace';
 
 export * from './types';
 export * from './constants';

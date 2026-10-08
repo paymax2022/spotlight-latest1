@@ -3,9 +3,9 @@ import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Receipt } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatKobo } from '@/api/doctor.batch6.api';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, StatusBadge } from '@/features/doctor/components';
@@ -21,7 +21,6 @@ const STATUS_TONE: Record<InvoiceStatus, StatusTone> = {
   void:   'danger',
 };
 
-// Y.18: invoice detail. Reuses useInvoices (no single-invoice endpoint); finds
 // the invoice by id from the list (placeholderData seeds it instantly).
 export default function InvoiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

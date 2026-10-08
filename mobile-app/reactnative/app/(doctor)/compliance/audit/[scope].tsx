@@ -2,18 +2,16 @@ import React from 'react';
 import { Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, AuditEntryRow, EdgeStateView } from '@/features/doctor/components';
 import { useAuditTrail } from '@/features/doctor/hooks';
 import { AUDIT_SCOPE_LABELS } from '@/features/doctor/constants';
 import type { AuditScope } from '@/types/doctor.batch7';
 
-// ── Section AB — Scoped audit trail (AB.7-10, one AuditTrail by AuditScope) ─────
 // NEW screen: the four audit screens (prescription / consultation / lab / HMO)
-// collapse to one screen keyed by the `scope` param. Reuses AuditEntryRow; empty
 // state renders via the shared EdgeStateView (no_prescriptions-style empty).
 
 const VALID: AuditScope[] = ['prescription', 'consultation', 'lab', 'hmo'];

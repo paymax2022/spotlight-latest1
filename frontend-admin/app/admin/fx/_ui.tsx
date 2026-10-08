@@ -4,7 +4,6 @@ import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { colors, tint } from '@/components/ui/vuexy';
 
-// Shared presentational helpers for the FX console. Matches the existing admin
 // pages' light-card inline-style convention (see crowdfunding/page.tsx).
 
 export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });

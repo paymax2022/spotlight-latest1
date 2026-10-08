@@ -2,7 +2,9 @@ package gamification
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	referralledger "spotlight/backend/internal/referral/ledger"
 )
@@ -61,11 +63,11 @@ func (s *Service) MyProgress(ctx context.Context, userID string) ([]MissionProgr
 // money grant is also idempotent. Points are non-cash and require no ledger entry.
 func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) (*ClaimResult, error) {
 	if idemKey == "" {
-		return nil, fmt.Errorf("gamification: Idempotency-Key required to claim")
+		return nil, errors.New("gamification: Idempotency-Key required to claim")
 	}
 	m, err := s.repo.GetMission(ctx, missionID)
 	if err != nil {
-		return nil, fmt.Errorf("gamification: mission not found")
+		return nil, errors.New("gamification: mission not found")
 	}
 	claimed, err := s.repo.MarkClaimed(ctx, missionID, userID, idemKey)
 	if err != nil {
@@ -75,9 +77,16 @@ func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) 
 		// Either not yet completed, or already claimed — report current state.
 		p, _ := s.repo.GetProgress(ctx, missionID, userID)
 		if p != nil && p.Status == ProgressClaimed {
-			return &ClaimResult{MissionID: missionID, Status: ProgressClaimed}, nil
+			res := &ClaimResult{MissionID: missionID, Status: ProgressClaimed}
+			// A prior claim may have committed 'claimed' before the cash accrue
+			// landed — retry the idempotent accrue so that failed grant heals on
+			// replay instead of reporting claimed-forever without the reward.
+			if err := s.accrueCashReward(ctx, m, userID, res); err != nil {
+				return nil, err
+			}
+			return res, nil
 		}
-		return nil, fmt.Errorf("gamification: mission not completed yet")
+		return nil, errors.New("gamification: mission not completed yet")
 	}
 
 	res := &ClaimResult{
@@ -85,24 +94,33 @@ func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) 
 		PointsAwarded: m.PointsReward,
 		Status:        ProgressClaimed,
 	}
-
-	// Optional cash reward → RB0 ledger.Accrue (idempotent on the claim key).
-	if m.CashRewardKobo > 0 && s.reward != nil {
-		rewardID, err := s.reward.Accrue(ctx, referralledger.AccrueInput{
-			BeneficiaryID:  userID,
-			CampaignID:     m.CampaignID,
-			Kind:           referralledger.KindMission,
-			AmountKobo:     m.CashRewardKobo,
-			Currency:       "NGN",
-			IdempotencyKey: "mission_claim:" + missionID + ":" + userID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("gamification: accrue cash reward: %w", err)
-		}
-		res.CashRewardKobo = m.CashRewardKobo
-		res.RewardLedgerID = rewardID
+	if err := s.accrueCashReward(ctx, m, userID, res); err != nil {
+		return nil, err
 	}
 	return res, nil
+}
+
+// accrueCashReward grants the optional cash reward through the RB0 reward
+// ledger, idempotent on the deterministic claim key, so it is safe to call on
+// both the first claim and any replay.
+func (s *Service) accrueCashReward(ctx context.Context, m *Mission, userID string, res *ClaimResult) error {
+	if m.CashRewardKobo <= 0 || s.reward == nil {
+		return nil
+	}
+	rewardID, err := s.reward.Accrue(ctx, referralledger.AccrueInput{
+		BeneficiaryID:  userID,
+		CampaignID:     m.CampaignID,
+		Kind:           referralledger.KindMission,
+		AmountKobo:     m.CashRewardKobo,
+		Currency:       "NGN",
+		IdempotencyKey: "mission_claim:" + m.ID + ":" + userID,
+	})
+	if err != nil {
+		return fmt.Errorf("gamification: accrue cash reward: %w", err)
+	}
+	res.CashRewardKobo = m.CashRewardKobo
+	res.RewardLedgerID = rewardID
+	return nil
 }
 
 // ListRanks / ListBadges / Leaderboard / Contests are read-throughs.
@@ -123,18 +141,16 @@ func (s *Service) ListContests(ctx context.Context, onlyActive bool) ([]Contest,
 	return s.repo.ListContests(ctx, onlyActive)
 }
 
-// --- admin builders ---
-
 func (s *Service) CreateMission(ctx context.Context, in MissionInput) (*Mission, error) {
 	if in.Slug == "" || in.Title == "" {
-		return nil, fmt.Errorf("gamification: slug and title required")
+		return nil, errors.New("gamification: slug and title required")
 	}
 	return s.repo.CreateMission(ctx, in)
 }
 
 func (s *Service) CreateRank(ctx context.Context, in RankInput) (*Rank, error) {
 	if in.Slug == "" || in.Name == "" {
-		return nil, fmt.Errorf("gamification: slug and name required")
+		return nil, errors.New("gamification: slug and name required")
 	}
 	return s.repo.CreateRank(ctx, in)
 }
@@ -157,4 +173,113 @@ func (s *Service) MyRank(ctx context.Context, userID string) (*Rank, int, error)
 		}
 	}
 	return cur, pts, nil
+}
+
+// Mission progress statuses.
+const (
+	ProgressInProgress = "in_progress"
+	ProgressCompleted  = "completed"
+	ProgressClaimed    = "claimed"
+)
+
+// Mission is a quest/mission/streak/challenge definition.
+type Mission struct {
+	ID             string     `json:"id"`
+	Slug           string     `json:"slug"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description,omitempty"`
+	MissionType    string     `json:"mission_type"`
+	TargetCount    int        `json:"target_count"`
+	PointsReward   int        `json:"points_reward"`    // NON-CASH
+	CashRewardKobo int64      `json:"cash_reward_kobo"` // OPTIONAL; granted via RB0 ledger
+	CampaignID     string     `json:"campaign_id,omitempty"`
+	IsActive       bool       `json:"is_active"`
+	StartsAt       *time.Time `json:"starts_at,omitempty"`
+	EndsAt         *time.Time `json:"ends_at,omitempty"`
+}
+
+// MissionProgress is a user's progress against a mission.
+type MissionProgress struct {
+	ID        string     `json:"id"`
+	MissionID string     `json:"mission_id"`
+	UserID    string     `json:"user_id"`
+	Progress  int        `json:"progress"`
+	Status    string     `json:"status"`
+	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+}
+
+// Rank is a non-cash tier with a points threshold.
+type Rank struct {
+	ID        string         `json:"id"`
+	Slug      string         `json:"slug"`
+	Name      string         `json:"name"`
+	TierOrder int            `json:"tier_order"`
+	MinPoints int            `json:"min_points"`
+	Perks     map[string]any `json:"perks"`
+}
+
+// Badge is a non-cash award.
+type Badge struct {
+	ID          string         `json:"id"`
+	Slug        string         `json:"slug"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Icon        string         `json:"icon,omitempty"`
+	Criteria    map[string]any `json:"criteria"`
+}
+
+// LeaderboardEntry is one materialised standing (non-cash).
+type LeaderboardEntry struct {
+	Period       string         `json:"period"`
+	Scope        string         `json:"scope"`
+	UserID       string         `json:"user_id"`
+	RankPosition int            `json:"rank_position"`
+	Points       int            `json:"points"`
+	Metric       map[string]any `json:"metric"`
+}
+
+// Contest is a time-boxed competition.
+type Contest struct {
+	ID          string         `json:"id"`
+	Slug        string         `json:"slug"`
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status"`
+	StartsAt    *time.Time     `json:"starts_at,omitempty"`
+	EndsAt      *time.Time     `json:"ends_at,omitempty"`
+	PrizeConfig map[string]any `json:"prize_config"`
+	CampaignID  string         `json:"campaign_id,omitempty"`
+}
+
+// MissionInput is the admin mission-builder payload.
+type MissionInput struct {
+	Slug           string     `json:"slug"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	MissionType    string     `json:"mission_type"`
+	TargetCount    int        `json:"target_count"`
+	PointsReward   int        `json:"points_reward"`
+	CashRewardKobo int64      `json:"cash_reward_kobo"`
+	CampaignID     string     `json:"campaign_id"`
+	StartsAt       *time.Time `json:"starts_at"`
+	EndsAt         *time.Time `json:"ends_at"`
+	IsActive       bool       `json:"is_active"`
+}
+
+// RankInput is the admin rank-builder payload.
+type RankInput struct {
+	Slug      string         `json:"slug"`
+	Name      string         `json:"name"`
+	TierOrder int            `json:"tier_order"`
+	MinPoints int            `json:"min_points"`
+	Perks     map[string]any `json:"perks"`
+}
+
+// ClaimResult is returned when a mission reward is claimed.
+type ClaimResult struct {
+	MissionID      string `json:"mission_id"`
+	PointsAwarded  int    `json:"points_awarded"`
+	CashRewardKobo int64  `json:"cash_reward_kobo"`
+	RewardLedgerID string `json:"reward_ledger_id,omitempty"`
+	Status         string `json:"status"`
 }

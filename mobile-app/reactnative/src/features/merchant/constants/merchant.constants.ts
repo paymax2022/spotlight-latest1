@@ -1,12 +1,9 @@
-// ── Merchant Onboarding — seed catalogue & form schemas ──────────────────────
 // Config-driven, not hard-coded into screens (PRD §8.4, FR-14). The mock API
 // reads from here; the live API will serve the same shapes from the DB.
 // Demonstrates the canonical PRD scenario: Health module → Medical Practitioner.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { FormSchema, MerchantModule, MerchantType } from '@/types/merchant';
-
-// ─── Modules (PRD §10) ───────────────────────────────────────────────────────
 
 export const MERCHANT_MODULES: MerchantModule[] = [
   {
@@ -28,8 +25,6 @@ export const MERCHANT_MODULES: MerchantModule[] = [
     status: 'open', typeCount: 1,
   },
 ];
-
-// ─── Merchant types (PRD §10, FR-6/FR-16/FR-18) ──────────────────────────────
 
 export const MERCHANT_TYPES: MerchantType[] = [
   {
@@ -65,8 +60,6 @@ export const MERCHANT_TYPES: MerchantType[] = [
     roleToGrant: 'restaurant_merchant', currentFormSchemaId: 'fs-restaurant-v1', status: 'open',
   },
 ];
-
-// ─── Versioned form schemas (PRD §8.3, FR-8 … FR-13) ─────────────────────────
 
 const DOCTOR_SCHEMA_V2: FormSchema = {
   id: 'fs-doctor-v2', merchantTypeId: 'mt-doctor', version: 2, status: 'published',

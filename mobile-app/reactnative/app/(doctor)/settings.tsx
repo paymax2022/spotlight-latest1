@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CalendarDays, MessageSquare, Wallet, Bell, Mail, MessageCircle, Eye, Zap } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import ProfileMenuItem from '@/components/ProfileMenuItem';
 import { TeleHeader, DoctorAvatar, RatingStars } from '@/features/telemedicine/components';
 import { SectionCard, ToggleRow, InfoRow, StateView } from '@/features/doctor/components';
@@ -14,7 +14,6 @@ import { useDoctorProfile, useSettings, useUpdateSettings, useLogout } from '@/f
 import type { DoctorSettings } from '@/types/doctor';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
-// ── Section AC — Settings hub (AC.1-16) ───────────────────────────────────────
 // EXTENDED into the full settings hub. Quick notification/channel/availability
 // toggles REUSE the Phase 1 useSettings / useUpdateSettings. The hub links every
 // AC sub-screen (profile / pricing / availability / bank / notifications /

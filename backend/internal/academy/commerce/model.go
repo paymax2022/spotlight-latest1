@@ -7,8 +7,6 @@ import (
 
 // Money is always integer MINOR UNITS + a currency code (conventions.md). Never floats.
 
-// ── Catalog ───────────────────────────────────────────────────────────────────
-
 // Plan mirrors academy_plans.
 type Plan struct {
 	ID         string          `json:"id"`
@@ -30,8 +28,6 @@ type ExamBundle struct {
 	Season     *string         `json:"season,omitempty"`
 	Status     string          `json:"status"`
 }
-
-// ── Orders / entitlements ──────────────────────────────────────────────────────
 
 // Order mirrors academy_orders.
 type Order struct {
@@ -83,8 +79,6 @@ type AccessCard struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 }
 
-// ── Admin oversight aggregates (read-only) ─────────────────────────────────────
-
 // OrderStateSummary is one state bucket in the payments overview: count + summed
 // amount (minor units) of orders in that state.
 type OrderStateSummary struct {
@@ -100,8 +94,6 @@ type OrdersOverview struct {
 	ByState          []OrderStateSummary `json:"byState"`
 }
 
-// ── Offline bundle manifest (academy_content_bundles, read-only) ───────────────
-
 // BundleManifest is the download descriptor for an offline content bundle.
 type BundleManifest struct {
 	ID              string          `json:"id"`
@@ -113,8 +105,6 @@ type BundleManifest struct {
 	Status          string          `json:"status"`
 	Manifest        json.RawMessage `json:"manifest"`
 }
-
-// ── Offline sync envelope (nfr.md §Offline) ────────────────────────────────────
 
 // SyncRequest is the deterministic, idempotent sync envelope. Each event carries a
 // stable clientEventId; server is authoritative for scoring/timing/money. LWW only
@@ -144,8 +134,6 @@ type SyncResolution struct {
 	ServerTS      time.Time `json:"serverTs"`
 	Note          string    `json:"note,omitempty"`
 }
-
-// ── Request DTOs ───────────────────────────────────────────────────────────────
 
 // CreateOrderRequest starts an order in checkout (price locked from catalog).
 type CreateOrderRequest struct {
@@ -186,13 +174,4 @@ type ActivateCardRequest struct {
 // SubscribeRequest creates a subscription via the pay-now path.
 type SubscribeRequest struct {
 	PlanID string `json:"planId" binding:"required"`
-}
-
-// ── helpers ────────────────────────────────────────────────────────────────────
-
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
 }

@@ -5,19 +5,19 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   Sparkles, Gavel, ListChecks, AlertCircle, Wallet, Users, Check, Pencil, ArrowRightCircle, RefreshCw, FileDown, Share2,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useAiNote, useApproveAiNote, usePublishAiNote, useConvertActionItem, useRegenerateSummary } from '@/features/association/hooks/useAiNotes';
-import { formatNaira } from '@/features/association/utils/associationFormatters';
-import { AI_REVIEW_SEGMENTS, AI_STATUS_STYLE } from '@/features/association/constants/ainotes.constants';
-import type { AiNoteStatus } from '@/features/association/types/ainotes.types';
+import { useAiNote, useApproveAiNote, usePublishAiNote, useConvertActionItem, useRegenerateSummary } from '@/features/association/hooks';
+import { formatNaira } from '@/features/association/utils';
+import { AI_REVIEW_SEGMENTS, AI_STATUS_STYLE } from '@/features/association/constants';
+import type { AiNoteStatus } from '@/features/association/types';
 
 export default function AiNoteReview() {
   const { id } = useLocalSearchParams<{ id: string }>();

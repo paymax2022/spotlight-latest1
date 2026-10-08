@@ -1,7 +1,4 @@
-// ── Marketplace bottom tab bar ───────────────────────────────────────────────
-// A CUSTOM tab bar (passed to <Tabs tabBar={…}>) that renders EXACTLY the three
 // intended destinations — Discover, Sell, Deals — and nothing else.
-//
 // Why custom instead of the default bar: every file under app/marketplace/* is
 // registered in this Tabs navigator (detail screens, the account sub-pages,
 // deals threads, boost, …). Relying on `href: null` to hide ~15 of them is
@@ -14,14 +11,13 @@ import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Compass, Tag, MessagesSquare, type LucideIcon } from 'lucide-react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 type TabDef = { name: string; label: string; icon: LucideIcon };
 
-// The canonical footer. Order = left→right. `name` MUST match the route file
 // name under app/marketplace/ (index.tsx, sell.tsx, deals.tsx).
 const TABS: readonly TabDef[] = [
   { name: 'index', label: 'Discover', icon: Compass },

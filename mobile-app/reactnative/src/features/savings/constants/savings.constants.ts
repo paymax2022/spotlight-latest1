@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Flip to false once the live /api/v1/savings endpoints are reachable
 // (or set EXPO_PUBLIC_SAVINGS_USE_MOCK=false). Mock-first convention.
@@ -27,7 +27,6 @@ export const SavingsColors = {
   border:   Colors.outlineVariant,
 };
 
-// ── Compliance copy (NL-2 no yield, NL-7 Ajo peer rotation) ──────────────────
 // These strings are surfaced verbatim on the relevant screens.
 export const NO_YIELD_DISCLOSURE =
   'Savings vaults earn no interest or returns. Paymax safely holds your money; ' +

@@ -9,23 +9,18 @@ import (
 
 // These tests cover the pure, DB-free decision surface of the Connect AML
 // package:
-//
 //   - DefaultThresholds — the backend-owned CBN/NFIU-aligned policy constants
 //     that drive every allow/flag boundary (threshold, velocity, structuring);
 //   - NewService — the fail-safe default-injection logic (nil screener -> Noop,
 //     zero thresholds -> DefaultThresholds, provided values preserved);
 //   - NoopScreener.Screen — the documented fail-open default (never blocks);
 //   - OpenCase — the report-type classifier (str/sar allowed, everything else
-//     -> ErrInvalidType, fail-closed before any persistence);
 //   - the persisted ReasonCode / EventKind string contracts (stored in the DB,
 //     so their exact wire values are a stability guarantee).
-//
 // Service.score (the velocity/structuring/threshold rules engine) is
 // intentionally NOT unit-tested here: it dereferences a concrete *Repository
 // backed by *pgxpool.Pool with no seam to fake, so exercising it needs a live
 // DB. See the coverage note at the end of this file.
-
-// ---- DefaultThresholds -------------------------------------------------------
 
 func TestDefaultThresholds_Values(t *testing.T) {
 	got := DefaultThresholds()
@@ -72,8 +67,6 @@ func TestDefaultThresholds_PureAndIndependent(t *testing.T) {
 		t.Errorf("DefaultThresholds leaked mutation: got %+v", b)
 	}
 }
-
-// ---- NewService: fail-safe default injection --------------------------------
 
 // fakeScreener is a controllable SanctionsScreener for constructor identity checks.
 type fakeScreener struct {
@@ -129,8 +122,6 @@ func TestNewService_NonZeroThresholdsPreserved(t *testing.T) {
 	}
 }
 
-// ---- NoopScreener: documented fail-open default ------------------------------
-
 func TestNoopScreener_NeverHits(t *testing.T) {
 	res, err := NoopScreener{}.Screen(context.Background(), "any-subject")
 	if err != nil {
@@ -143,8 +134,6 @@ func TestNoopScreener_NeverHits(t *testing.T) {
 		t.Errorf("NoopScreener must not carry match metadata: %+v", res)
 	}
 }
-
-// ---- OpenCase: report-type classifier (fail-closed before persistence) -------
 
 // OpenCase validates the report type BEFORE touching the repository, so the
 // invalid-type branch is reachable with a nil repo. Valid types are not exercised
@@ -179,8 +168,6 @@ func TestOpenCase_ReportTypeValidation(t *testing.T) {
 	}
 }
 
-// ---- Sentinel errors ---------------------------------------------------------
-
 func TestSentinelErrors_DistinctAndStable(t *testing.T) {
 	if errors.Is(ErrInvalidType, ErrCaseNotFound) {
 		t.Error("ErrInvalidType and ErrCaseNotFound must be distinct sentinels")
@@ -192,8 +179,6 @@ func TestSentinelErrors_DistinctAndStable(t *testing.T) {
 		t.Errorf("ErrCaseNotFound message drifted: %q", ErrCaseNotFound.Error())
 	}
 }
-
-// ---- Persisted string contracts ---------------------------------------------
 
 // ReasonCode and EventKind values are written verbatim into connect_aml_alerts /
 // connect_aml_events. Changing any of these strings silently breaks historical

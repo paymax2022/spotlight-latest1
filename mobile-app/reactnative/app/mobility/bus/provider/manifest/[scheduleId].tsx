@@ -3,20 +3,19 @@ import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Armchair, Phone } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useProviderManifest } from '@/features/mobility/hooks/useBusMarketplace';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusManifestEntry } from '@/features/mobility/types/busProvider.types';
 
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 export default function BusProviderManifestScreen() {
   const { scheduleId } = useLocalSearchParams<{ scheduleId: string }>();

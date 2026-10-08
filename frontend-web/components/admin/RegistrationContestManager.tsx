@@ -119,7 +119,6 @@ export default function RegistrationContestManager() {
   const [form, setForm] = useState(defaultForm);
   const [slugTouched, setSlugTouched] = useState(false);
 
-  // ── Form-builder (per-contest input mapping) state ─────────────────────────
   const [includedFields, setIncludedFields] = useState<Set<string>>(
     () => new Set(getCategoryFieldPreset(defaultForm.contestCategory)),
   );

@@ -15,12 +15,10 @@ import type { SpendLimit } from '@/features/payments/paymentFlow';
  */
 export async function getSpendLimit(): Promise<SpendLimit | null> {
   try {
-    // skipAuthRedirect: this is an advisory read. A 401 here (expired session, or a
     // deployment without the route) must not sign the user out of their checkout —
     // their next real request will surface it.
     const res = await api.get('/api/v1/me/tier', { skipAuthRedirect: true });
     const data = (res.data?.data ?? res.data) as Record<string, unknown>;
-    // The allowance fields travel together; if the server could not compute usage it
     // omits all of them, and a partial payload is not something to guess from.
     if (data?.remainingKobo == null || data?.dailyLimitKobo == null) return null;
     return {

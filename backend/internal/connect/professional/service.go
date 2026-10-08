@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -71,7 +72,7 @@ func (s *Service) RequestBusinessVerification(ctx context.Context, userID, evide
 		return fmt.Errorf("connect: request business verification: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: verification already pending or verified")
+		return errors.New("connect: verification already pending or verified")
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.business.verification.request", userID,
 		"connect_professional_profile", userID, map[string]any{"status": "pending"})
@@ -92,7 +93,7 @@ func (s *Service) ReviewBusinessVerification(ctx context.Context, adminID, profi
 		return fmt.Errorf("connect: review business verification: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: no pending verification for user")
+		return errors.New("connect: no pending verification for user")
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.business.verification.review", adminID,
 		"connect_professional_profile", profileUserID,
@@ -156,7 +157,6 @@ func (s *Service) SendIntro(ctx context.Context, fromUserID string, in IntroInpu
 
 // RespondIntro lets the recipient accept/decline a pending intro (object-level authz).
 func (s *Service) RespondIntro(ctx context.Context, recipientID, introID string, accept bool) (*IntroRequest, error) {
-	// Verify the responder is the recipient and the request is pending.
 	var fromID string
 	var status IntroStatus
 	if err := s.db.QueryRow(ctx,
@@ -266,7 +266,7 @@ func (s *Service) CreateRoom(ctx context.Context, ownerID string, in RoomInput) 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	id := uuid.New().String()
 	const q = `INSERT INTO connect_rooms (id, owner_id, name, topic, visibility)
 		VALUES ($1,$2,$3,$4,$5)
@@ -303,7 +303,7 @@ func (s *Service) JoinRoom(ctx context.Context, userID, roomID string) error {
 		_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM connect_room_members WHERE room_id=$1 AND user_id=$2`,
 			roomID, userID).Scan(&exists)
 		if exists == 0 {
-			return fmt.Errorf("connect: room not joinable")
+			return errors.New("connect: room not joinable")
 		}
 	}
 	return nil
@@ -335,4 +335,123 @@ func (s *Service) ModerateRoom(ctx context.Context, actorID, roomID string, in R
 	_ = s.audit.WriteAudit(ctx, "connect.room.moderate", actorID, "connect_room", roomID,
 		map[string]any{"target": in.UserID, "action": in.Action})
 	return nil
+}
+
+// IntroStatus enumerates the intro-request lifecycle. Consent-before-messaging:
+// only 'accepted' unlocks the card exchange / contact save.
+type IntroStatus string
+
+const (
+	IntroPending   IntroStatus = "pending"
+	IntroAccepted  IntroStatus = "accepted"
+	IntroDeclined  IntroStatus = "declined"
+	IntroWithdrawn IntroStatus = "withdrawn"
+)
+
+// VerificationStatus is the business-verification state machine.
+type VerificationStatus string
+
+const (
+	VerUnverified VerificationStatus = "unverified"
+	VerPending    VerificationStatus = "pending"
+	VerVerified   VerificationStatus = "verified"
+	VerRejected   VerificationStatus = "rejected"
+)
+
+type Profile struct {
+	ID                 string    `json:"id"`
+	UserID             string    `json:"user_id"`
+	Headline           string    `json:"headline,omitempty"`
+	Company            string    `json:"company,omitempty"`
+	RoleTitle          string    `json:"role_title,omitempty"`
+	Industry           string    `json:"industry,omitempty"`
+	Bio                string    `json:"bio,omitempty"`
+	VerificationStatus string    `json:"verification_status"`
+	Visible            bool      `json:"visible"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type IntroRequest struct {
+	ID         string    `json:"id"`
+	FromUserID string    `json:"from_user_id"`
+	ToUserID   string    `json:"to_user_id"`
+	Message    string    `json:"message,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type BusinessCard struct {
+	ID      string `json:"id"`
+	UserID  string `json:"user_id"`
+	Name    string `json:"name"`
+	Title   string `json:"title,omitempty"`
+	Company string `json:"company,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Phone   string `json:"phone,omitempty"`
+}
+
+type SavedContact struct {
+	ID        string    `json:"id"`
+	OwnerID   string    `json:"owner_id"`
+	ContactID string    `json:"contact_id"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Room struct {
+	ID         string    `json:"id"`
+	OwnerID    string    `json:"owner_id"`
+	Name       string    `json:"name"`
+	Topic      string    `json:"topic,omitempty"`
+	Visibility string    `json:"visibility"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type ProfileInput struct {
+	Headline  string `json:"headline"`
+	Company   string `json:"company"`
+	RoleTitle string `json:"role_title"`
+	Industry  string `json:"industry"`
+	Bio       string `json:"bio"`
+}
+
+type IntroInput struct {
+	ToUserID string `json:"to_user_id" binding:"required"`
+	Message  string `json:"message"`
+}
+
+type IntroResponse struct {
+	Accept bool `json:"accept"`
+}
+
+type CardInput struct {
+	Name    string `json:"name" binding:"required"`
+	Title   string `json:"title"`
+	Company string `json:"company"`
+	Email   string `json:"email"`
+	Phone   string `json:"phone"`
+}
+
+type RoomInput struct {
+	Name       string `json:"name" binding:"required"`
+	Topic      string `json:"topic"`
+	Visibility string `json:"visibility"`
+}
+
+type RoomModerationInput struct {
+	UserID string `json:"user_id" binding:"required"`
+	Action string `json:"action" binding:"required"` // mute | remove | promote
+}
+
+// validIntroTransition guards the intro state machine (deny-by-default).
+func validIntroTransition(from IntroStatus, to IntroStatus) bool {
+	if from != IntroPending {
+		return false // only a pending request may transition
+	}
+	switch to {
+	case IntroAccepted, IntroDeclined, IntroWithdrawn:
+		return true
+	}
+	return false
 }

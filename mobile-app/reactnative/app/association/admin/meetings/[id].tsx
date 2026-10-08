@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import AdminContentEditor from '@/features/association/components/AdminContentEditor';
+import {AdminContentEditor} from '@/features/association/components';
 import MeetingForm from '@/features/association/components/forms/MeetingForm';
 
 export default function EditMeeting() {

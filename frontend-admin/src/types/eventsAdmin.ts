@@ -1,15 +1,12 @@
-// ── Admin — Paymax Events (Ticketing + Cashless event wallet) ops console types ─
 // Field names mirror the Go JSON (snake_case) from /api/events/admin/*.
 // Money is BIGINT kobo (minor units) throughout — display via formatNaira (kobo → ₦).
 // Invariants surfaced in the UI:
 //   NL-3  — closed-loop value: event wallet (cashless) spendable only inside the
 //           ecosystem; residual MUST be refunded to the funding wallet at close.
-//   NL-10 — KYC gates & AML: vendor/organiser payouts require the right KYC tier;
 //           payout is gated fail-closed until KYC clears.
 //   NL-12 — immutable audit on every state change (approval, payout, settlement,
 //           refund, fraud action).
 
-// ── Event state machine: DRAFT → SUBMITTED → APPROVED → LIVE → CLOSED | SUSPENDED
 export type EventStatus = 'draft' | 'submitted' | 'approved' | 'live' | 'closed' | 'suspended';
 export type EventApprovalDecision = 'approve' | 'reject' | 'request_changes' | 'suspend';
 export type TicketTierStatus = 'on_sale' | 'sold_out' | 'paused' | 'scheduled' | 'ended';
@@ -19,9 +16,7 @@ export type VendorPayoutStatus = 'pending' | 'kyc_hold' | 'approved' | 'paid' | 
 export type SettlementBreakStatus = 'open' | 'investigating' | 'resolved' | 'reconciled';
 export type FraudStatus = 'open' | 'investigating' | 'cleared' | 'blocked';
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 export interface EventsDashboardActivity {
   id: string;
   kind: string; // event_approved | ticket_sale | cashless_topup | vendor_payout | settlement_break | residual_refund | fraud_flag …
@@ -57,9 +52,7 @@ export interface EventsDashboard {
   activity: EventsDashboardActivity[];
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Event approval / CMS queue
-// ════════════════════════════════════════════════════════════════════════════
 export interface EventApprovalItem {
   id: string;
   title: string;
@@ -83,9 +76,7 @@ export interface EventDecisionResult {
   message: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Event catalog + detail
-// ════════════════════════════════════════════════════════════════════════════
 export interface EventSummary {
   id: string;
   title: string;
@@ -119,9 +110,7 @@ export interface EventDetail extends EventSummary {
   timeline: EventTimelineEntry[];
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Ticket inventory / tiers / promo
-// ════════════════════════════════════════════════════════════════════════════
 export interface TicketTier {
   id: string;
   event_id: string;
@@ -143,9 +132,7 @@ export interface PromoCode {
   active: boolean;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Cashless — closed-loop float & liability + residual refunds (NL-3)
-// ════════════════════════════════════════════════════════════════════════════
 export interface CashlessEventLine {
   event_id: string;
   event_title: string;
@@ -169,9 +156,7 @@ export interface CashlessFloat {
   lines: CashlessEventLine[];
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Vendors + KYC payout gate (NL-10)
-// ════════════════════════════════════════════════════════════════════════════
 export interface VendorRecord {
   id: string;
   name_masked: string;
@@ -193,9 +178,7 @@ export interface VendorPayoutResult {
   message: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Settlement + reconciliation
-// ════════════════════════════════════════════════════════════════════════════
 export interface SettlementLine {
   id: string;
   event_id: string;
@@ -226,9 +209,7 @@ export interface SettlementResolveResult {
   message: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // H · Fraud — dup-scan / abnormal top-up
-// ════════════════════════════════════════════════════════════════════════════
 export interface EventFraudSignal {
   id: string;
   event_id: string;

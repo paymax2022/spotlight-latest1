@@ -1,7 +1,6 @@
 'use client';
 
 // Task assignment.
-//
 // assigneeId, committeeId and meetingId are all foreign keys the backend
 // verifies belong to THIS organisation before it will write the row
 // (assertBelongsToOrg — a foreign one is a 403). So all three are pickers
@@ -60,7 +59,6 @@ export default function AssociationTasksPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY);
 
-  // ── Pickers ──
   // Loaded once per organisation, not per keystroke, and only when the editor
   // is actually opened would be nicer still — but the assignee name is also
   // wanted for the table when the listing's LEFT JOIN finds no profile row.

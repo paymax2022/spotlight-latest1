@@ -1,7 +1,6 @@
 'use client';
 
 // AK10 — Provider health dashboard (SCAFFOLD).
-// RBAC: finance.admin.kyc (role: Admin). Per provider: success rate, latency,
 // failover events, wallet balance, cost/check. Shell: cards + empty metrics.
 // Backend endpoint TBD (e.g. GET /kyc/provider-health).
 

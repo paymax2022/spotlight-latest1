@@ -9,13 +9,10 @@ import (
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Provider adapter interfaces (the spine — architecture.md).
-//
 // Business logic depends ONLY on these interfaces, never a provider SDK.
 // Mock implementations ship first; real broker / market-data adapters are wired
 // later behind the same contracts after sandbox validation.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Quote is a point-in-time price snapshot from the market-data adapter.
 type Quote struct {
@@ -74,13 +71,10 @@ type PublicOfferAdapter interface {
 	SubmitApplication(ctx context.Context, offer PublicOffer, userID string, amountKobo int64, idem string) (string, error)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Deterministic mock market-data adapter.
-//
 // Prices are derived deterministically from the symbol so dev/CI is stable and
 // reproducible (no external calls, no randomness across restarts). Treat the
 // data as "delayed" — every market-data status is clearly labelled.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type MockMarketData struct {
 	// marketOpen lets tests/admin force market state; nil → derive from clock.
@@ -186,14 +180,11 @@ func (m *MockMarketData) status() string {
 // SetForceStatus is used by admin/tests to override market state.
 func (m *MockMarketData) SetForceStatus(s string) { m.forceStatus = s }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Mock broker adapter.
-//
 // Synchronously "accepts and fills" market orders at the reference quote price
 // and returns a unique provider reference. Limit orders fill only when the limit
 // is marketable vs the reference price, otherwise they are accepted (resting).
 // This keeps the order state machine + settlement path exercisable end-to-end.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type MockBroker struct{}
 
@@ -248,9 +239,7 @@ func (b *MockBroker) CancelOrder(ctx context.Context, providerReference string) 
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Mock public-offer adapter.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type MockPublicOffer struct{}
 

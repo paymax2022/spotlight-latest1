@@ -24,8 +24,11 @@ import { join } from 'node:path';
 
 const ROOTS = ['app', 'src'];
 // Paths intentionally excluded from the gate:
-//  - crowdfunding: its Alert.alert usage is being migrated on a separate branch.
 //  - lib/confirm.ts: the helper itself references the words in its own comments.
+//
+// app/crowdfunding used to be excluded while its Alert.alert usage was migrated
+// on a separate branch — that migration has landed (no Alert.alert calls remain
+// under app/crowdfunding), so the tree is back under the gate.
 //
 // marketplace/sell.tsx was excluded for a 3-option "Mark as sold" chooser that
 // confirmAsync could not express. The exclusion was file-wide, so it also let a
@@ -34,7 +37,6 @@ const ROOTS = ['app', 'src'];
 // sequential confirmAsync calls (sold? then how?), which keeps the abort path,
 // so the file is back under the gate.
 const EXCLUDE = [
-  join('app', 'crowdfunding'),
   join('src', 'lib', 'confirm.ts'),
 ];
 

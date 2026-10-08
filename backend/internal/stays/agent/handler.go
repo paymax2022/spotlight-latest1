@@ -1,13 +1,17 @@
 package agent
 
 import (
+	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/stays/gateway"
 	"spotlight/backend/internal/stays/reservation"
 )
@@ -22,8 +26,6 @@ type Handler struct {
 // NewHandler constructs the agent handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func agentUserID(c *gin.Context) string { return c.GetString("user_id") }
-
 // mapErr reuses the reservation error taxonomy so the agent channel returns the
 // same normalised codes as self-service booking.
 func mapErr(c *gin.Context, err error) {
@@ -33,19 +35,19 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, reservation.ErrConsentRequired):
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "ndpa_consent_required", "code": "consent_required"})
 	case errors.Is(err, reservation.ErrPrebookFailed):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "PREBOOK_FAILED"})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "code": "PREBOOK_FAILED"})
 	case errors.Is(err, reservation.ErrInsufficient):
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error(), "code": "INSUFFICIENT_FUNDS"})
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err), "code": "INSUFFICIENT_FUNDS"})
 	case errors.Is(err, reservation.ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
 // Quote (member/agent): POST /agent/quote — search + priced hold for a customer.
 func (h *Handler) Quote(c *gin.Context) {
-	uid := agentUserID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -72,7 +74,7 @@ func (h *Handler) Quote(c *gin.Context) {
 		PaymentMethod       string         `json:"payment_method"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ci, err1 := time.Parse("2006-01-02", body.CheckIn)
@@ -110,12 +112,12 @@ func (h *Handler) Quote(c *gin.Context) {
 // Book (member/agent): POST /agent/book — book the held quote for the customer.
 // Idempotency-Key header REQUIRED.
 func (h *Handler) Book(c *gin.Context) {
-	uid := agentUserID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -133,7 +135,7 @@ func (h *Handler) Book(c *gin.Context) {
 		} `json:"guest"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.Book(c.Request.Context(), uid, BookInput{
@@ -152,7 +154,16 @@ func (h *Handler) Book(c *gin.Context) {
 	if err != nil {
 		// A book that auto-released returns the VOID reservation plus an error.
 		if res != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "data": res})
+			// Insufficient funds → 402, checked before the generic 409.
+			if errors.Is(err, reservation.ErrInsufficient) {
+				c.JSON(http.StatusPaymentRequired, gin.H{
+					"error": httperr.Msg(c, http.StatusPaymentRequired, err),
+					"code":  "INSUFFICIENT_FUNDS",
+					"data":  res,
+				})
+				return
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": res})
 			return
 		}
 		mapErr(c, err)
@@ -163,7 +174,7 @@ func (h *Handler) Book(c *gin.Context) {
 
 // Bookings (member/agent): GET /agent/bookings — reservations this agent booked.
 func (h *Handler) Bookings(c *gin.Context) {
-	uid := agentUserID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -180,7 +191,7 @@ func (h *Handler) Bookings(c *gin.Context) {
 
 // Commissions (member/agent): GET /agent/commissions — commission totals.
 func (h *Handler) Commissions(c *gin.Context) {
-	uid := agentUserID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -191,4 +202,176 @@ func (h *Handler) Commissions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": totals})
+}
+
+// RegisterStaysAgent mounts the agent-assisted booking channel onto the EXISTING
+// member stays group (the orchestrator passes the same group it built in
+// RegisterStays, so the final paths are /api/finance/stays/agent/*). It is
+// nil-safe: a nil service (e.g. nil pool at wiring time) skips registration.
+// POST /agent/book requires an Idempotency-Key.
+func RegisterStaysAgent(rg *gin.RouterGroup, svc *Service) {
+	if svc == nil {
+		log.Println("[stays.agent] nil service — skipping agent routes")
+		return
+	}
+	h := NewHandler(svc)
+	ag := rg.Group("/agent")
+	ag.POST("/quote", h.Quote)
+	ag.POST("/book", h.Book) // Idempotency-Key REQUIRED (enforced in handler)
+	ag.GET("/bookings", h.Bookings)
+	ag.GET("/commissions", h.Commissions)
+	log.Println("[stays.agent] routes registered — quote/book saga + bookings/commissions live")
+}
+
+// Package agent implements the travel-agent-assisted stays booking channel.
+// A member acting as a booking agent searches + prices a stay for a walk-in
+// customer (quote), then books it on the customer's behalf. The money path is the
+// SAME reservation.Book saga (escrow→settle) used by self-service booking — this
+// package does NOT duplicate the booking logic. The agent's commission is the SAME
+// DirectCommission settlement split the reservation saga already posts; we do not
+// invent a new ledger account. We only TAG the reservation with the booking
+// agent_user_id + walk-in customer contact so an agent can list their bookings and
+// sum their earned commission.
+
+// Service is the agent-channel façade over the reservation saga. It holds NO money
+// primitives of its own — every mutation delegates to reservation.Service.
+type Service struct {
+	res *reservation.Service
+	// resRepo is used only to TAG + query the agent_* columns (annotation, no money).
+	resRepo *reservation.Repository
+}
+
+// NewService constructs the agent service. Both deps are required; a nil pool at
+// the wiring layer skips registration entirely (see RegisterStaysAgent).
+func NewService(res *reservation.Service, resRepo *reservation.Repository) *Service {
+	return &Service{res: res, resRepo: resRepo}
+}
+
+// QuoteInput is the agent's priced-quote request. It mirrors the self-service
+// PrebookInput (same offer selection) plus the walk-in customer identity the agent
+// captured. NO money moves on quote — it reuses reservation.Prebook (hold token +
+// re-validated price only).
+type QuoteInput struct {
+	CustomerName        string
+	CustomerContact     string
+	Rail                gateway.SourceRail
+	SupplierCode        string
+	PropertyID          string
+	RoomTypeID          string
+	RatePlanID          string
+	SupplierPropertyRef string
+	SupplierRoomTypeRef string
+	SupplierRatePlanRef string
+	OfferToken          string
+	CheckIn             string // YYYY-MM-DD (parsed by the handler)
+	CheckOut            string
+	Rooms               int
+	Occupancy           map[string]any
+	Currency            string
+	LoyaltyTier         string
+	PromoBps            int64
+	PaymentMethod       gateway.PaymentMethod
+}
+
+// Quote is the agent-facing priced hold: the reservation id doubles as the hold
+// reference the agent passes to Book, the book_token gates the supplier book, and
+// commission_kobo is the agent commission preview (the DirectCommission split that
+// will settle when the booking confirms).
+type Quote struct {
+	ReservationID  string `json:"reservation_id"` // hold reference → pass to Book
+	BookToken      string `json:"book_token"`
+	CustomerName   string `json:"customer_name"`
+	PropertyID     string `json:"property_id"`
+	CheckIn        string `json:"check_in"`
+	CheckOut       string `json:"check_out"`
+	Currency       string `json:"currency"`
+	GrossKobo      int64  `json:"gross_kobo"`
+	TaxKobo        int64  `json:"tax_kobo"`
+	NetRateKobo    int64  `json:"net_rate_kobo"`
+	CommissionKobo int64  `json:"commission_kobo"` // agent commission preview
+}
+
+// Quote runs a search+prebook for the customer and returns a priced hold. It
+// delegates to reservation.Prebook (the two-step gate); the agent identity is the
+// authenticated member id and the walk-in customer contact is echoed back so the
+// agent UI can confirm before booking. No money moves here.
+func (s *Service) Quote(ctx context.Context, agentUserID string, in reservation.PrebookInput, customerName, customerContact string) (*Quote, error) {
+	if agentUserID == "" {
+		return nil, errors.New("agent: unauthenticated")
+	}
+	// The reservation is created under the WALK-IN CUSTOMER via the agent's member
+	// session. Per the reservation saga's object-level authZ, the booking lives on
+	// the agent's authenticated id (there is no separate customer account for a
+	// walk-in); the agent_user_id tag + customer contact preserve provenance.
+	pre, err := s.res.Prebook(ctx, agentUserID, in)
+	if err != nil {
+		return nil, err
+	}
+	return &Quote{
+		ReservationID:  pre.Reservation.ID,
+		BookToken:      pre.BookToken,
+		CustomerName:   customerName,
+		PropertyID:     pre.Reservation.PropertyID,
+		CheckIn:        pre.Reservation.CheckIn.Format("2006-01-02"),
+		CheckOut:       pre.Reservation.CheckOut.Format("2006-01-02"),
+		Currency:       pre.Reservation.Currency,
+		GrossKobo:      pre.Breakdown.GrossKobo,
+		TaxKobo:        pre.Breakdown.TaxKobo,
+		NetRateKobo:    pre.Breakdown.NetRateKobo,
+		CommissionKobo: pre.Breakdown.CommissionKobo,
+	}, nil
+}
+
+// BookInput books a held quote. Idempotency-Key is REQUIRED (enforced at the
+// handler). The money path is the SAME reservation.Book saga; afterwards we TAG the
+// row with the agent + customer.
+type BookInput struct {
+	ReservationID   string
+	BookToken       string
+	IdempotencyKey  string
+	CustomerName    string
+	CustomerContact string
+	Guest           gateway.GuestInfo
+}
+
+// Book runs the reservation.Book saga on the held quote, then tags the confirmed
+// reservation with the booking agent + walk-in customer. The commission is the
+// reservation saga's existing DirectCommission settlement split — nothing new is
+// posted here. Tagging is best-effort AFTER a confirmed book: a tag failure never
+// unwinds a confirmed, paid booking (it is logged by the caller path).
+func (s *Service) Book(ctx context.Context, agentUserID string, in BookInput) (*reservation.Reservation, error) {
+	if agentUserID == "" {
+		return nil, errors.New("agent: unauthenticated")
+	}
+	if in.IdempotencyKey == "" {
+		return nil, errors.New("agent: Idempotency-Key required for book")
+	}
+	res, err := s.res.Book(ctx, agentUserID, in.ReservationID, in.BookToken, in.IdempotencyKey, in.Guest)
+	if err != nil {
+		return res, err
+	}
+	// CONFIRMED — tag provenance. Best-effort: never fail a confirmed booking on a
+	// tagging error (the money already moved through the saga).
+	_ = s.resRepo.TagAgentBooking(ctx, res.ID, reservation.AgentReservationTag{
+		AgentUserID:     agentUserID,
+		CustomerName:    in.CustomerName,
+		CustomerContact: in.CustomerContact,
+	})
+	return res, nil
+}
+
+// Bookings lists reservations this agent booked.
+func (s *Service) Bookings(ctx context.Context, agentUserID string, limit, offset int) ([]reservation.Reservation, error) {
+	if agentUserID == "" {
+		return nil, errors.New("agent: unauthenticated")
+	}
+	return s.resRepo.ListByAgent(ctx, agentUserID, limit, offset)
+}
+
+// Commissions sums the agent's commission across booked+settled reservations.
+func (s *Service) Commissions(ctx context.Context, agentUserID string) (reservation.AgentCommissionTotals, error) {
+	if agentUserID == "" {
+		return reservation.AgentCommissionTotals{}, errors.New("agent: unauthenticated")
+	}
+	return s.resRepo.SumAgentCommission(ctx, agentUserID)
 }

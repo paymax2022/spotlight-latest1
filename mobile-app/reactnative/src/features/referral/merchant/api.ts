@@ -1,6 +1,4 @@
-// ── Referral Merchant Zone (lite) API (M-MER-01..03) ─────────────────────────
 // Mock-first (USE_MOCK). Money is ALWAYS integer kobo.
-//
 // READ-ONLY member self-view is now live: GET /api/finance/referral/merchant/
 // {dashboard, campaigns/:id/performance} (scoped to the caller's owned merchant
 // via referral_merchants.owner_user_id). Campaign FUNDING remains an admin/back-
@@ -131,7 +129,6 @@ export async function getMerchantPerformance(campaignId: string): Promise<Mercha
     const p = MOCK_PERFORMANCE[campaignId] ?? MOCK_PERFORMANCE.mc1;
     return { ...p, series: p.series.map((s) => ({ ...s })) };
   }
-  // Live: owner-scoped campaign performance.
   const res = await api.get(`${REFERRAL_API_BASE}/merchant/campaigns/${encodeURIComponent(campaignId)}/performance`);
   const b = unwrap<{
     campaign_id?: string; campaign_name?: string; budget_kobo?: number; spent_kobo?: number;

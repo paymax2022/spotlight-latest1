@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { ShoppingCart } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Colors } from '@/constants/colors';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Colors } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
 
 interface Props {

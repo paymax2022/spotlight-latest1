@@ -1,9 +1,7 @@
 package telemedicine_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: a doctor with no `about` (or no `bio`) must not take the
 // whole doctor list down.
-//
 // doctors.about and doctors.bio are NULLABLE text columns read into PLAIN Go
 // strings (Doctor.About, Doctor.Bio) — unlike sub_specialty/avatar_url/
 // mdcn_number/phone, which are already *string. pgx fails the whole scan on
@@ -11,9 +9,7 @@ package telemedicine_test
 // returned 500 for the ENTIRE list. Every doctor in the local database had
 // about=NULL, so GET /v1/telemedicine/doctors — the front door of the module —
 // was 500 outright while the specialties list beside it worked fine.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

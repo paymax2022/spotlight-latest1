@@ -2,10 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Zap, CircleCheck, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -72,7 +72,6 @@ export default function BoostScreen() {
 
   function onBuy() {
     if (!offer) return;
-    // Mint ONE Idempotency-Key for this purchase attempt; the same key rides the
     // wallet charge so a retry (wallet or card fallback) is idempotent server-side.
     const idemKey = generateIdempotencyKey();
     pay.start({

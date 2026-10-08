@@ -3,7 +3,6 @@ package extranet
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,17 +13,17 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/strutil"
 )
 
-// ── Email-based staff invites ────────────────────────────────────────────────
-//
 // UpsertStaff (handler.go/service.go) grants a role to an EXISTING platform
 // user_id — it has no path for onboarding someone who doesn't hold a Spotlight
 // account yet. InviteStaffByEmail closes that gap: if a platform user already
 // owns the email, the grant is applied immediately (same UpsertStaff write);
 // otherwise a pending invite is persisted and an accept-link email is sent, and
 // the grant lands once the invitee signs up or logs in and opens that link.
-//
 // Modeled on the restaurant module's staff-invite credential handling
 // (backend/internal/restaurant/staff_invite.go): only a SHA-256 hash of the
 // invite token is stored, never the plaintext, and accept returns ONE message
@@ -67,9 +66,9 @@ func (s *Service) InviteStaffByEmail(ctx context.Context, actorUserID, propertyI
 	}
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
-		return nil, fmt.Errorf("extranet: email is required")
+		return nil, errors.New("extranet: email is required")
 	}
-	role = orStr(strings.ToUpper(strings.TrimSpace(role)), "READ_ONLY")
+	role = strutil.FirstNonEmpty(strings.ToUpper(strings.TrimSpace(role)), "READ_ONLY")
 	if !grantableInviteRoles[role] {
 		return nil, fmt.Errorf("extranet: %s cannot be granted through a staff invite", role)
 	}
@@ -113,11 +112,7 @@ func (s *Service) AcceptStaffInvite(ctx context.Context, callerUserID, callerEma
 }
 
 func newStaffInviteToken() (plain, hash string, err error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", "", fmt.Errorf("extranet: could not generate an invite token: %w", err)
-	}
-	plain = hex.EncodeToString(b)
+	plain = cryptox.RandHex(32)
 	return plain, hashStaffInviteToken(plain), nil
 }
 
@@ -125,8 +120,6 @@ func hashStaffInviteToken(plain string) string {
 	sum := sha256.Sum256([]byte(plain))
 	return hex.EncodeToString(sum[:])
 }
-
-// --- repository ---
 
 func (r *Repository) propertyNameForInvite(ctx context.Context, propertyID string) (string, error) {
 	var name string
@@ -178,7 +171,7 @@ func (r *Repository) acceptStaffInvite(ctx context.Context, tokenHash, callerUse
 	if err != nil {
 		return fmt.Errorf("extranet: begin accept-invite tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var inviteID, propertyID, invEmail, invRole string
 	var expiresAt time.Time
@@ -216,8 +209,6 @@ func (r *Repository) acceptStaffInvite(ctx context.Context, tokenHash, callerUse
 	return nil
 }
 
-// --- email delivery ---
-
 // StaffInviteMailer sends the two hotelier-staff transactional emails. Resend,
 // no queue, failures silent (CLAUDE.md email policy: "fire-and-forget") — it
 // must never block or fail the API response on delivery.
@@ -252,7 +243,7 @@ func NewResendStaffInviteMailer(apiKey, from string) StaffInviteMailer {
 }
 
 func (m *resendStaffInviteMailer) SendInvite(email, name, propertyName, role, acceptURL string) {
-	greet := orStr(name, email)
+	greet := strutil.FirstNonEmpty(name, email)
 	subject := fmt.Sprintf("You've been invited to join %s on Paymax Stays", propertyName)
 	body := fmt.Sprintf(
 		"Hi %s,\n\n%s has invited you to help manage their property on Paymax Stays as %s.\n\n"+
@@ -263,7 +254,7 @@ func (m *resendStaffInviteMailer) SendInvite(email, name, propertyName, role, ac
 }
 
 func (m *resendStaffInviteMailer) SendGrantNotice(email, name, propertyName, role string) {
-	greet := orStr(name, email)
+	greet := strutil.FirstNonEmpty(name, email)
 	subject := fmt.Sprintf("You now have access to %s on Paymax Stays", propertyName)
 	body := fmt.Sprintf(
 		"Hi %s,\n\nYou've been added as %s on %s's Paymax Stays extranet. Log in to get started.",
@@ -276,7 +267,7 @@ func (m *resendStaffInviteMailer) send(to, subject, body string) {
 		defer func() { _ = recover() }() // never let email delivery crash the request goroutine
 		payload := map[string]any{"from": m.from, "to": []string{to}, "subject": subject, "text": body}
 		b, _ := json.Marshal(payload)
-		req, err := http.NewRequest(http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
 		if err != nil {
 			return
 		}

@@ -245,8 +245,9 @@ already drives directly.
 
 ### `create_and_list_load.js`
 Exercises `POST /api/finance/mobility/scheduled` (create) +
-`GET /api/finance/mobility/scheduled` (list), mirroring the house pattern in
-`tools/loadtest/marketplace/checkout_mutation_load.js`: each VU iteration (1)
+`GET /api/finance/mobility/scheduled` (list), using the create+replay+list
+house pattern (the original marketplace exemplar was removed with its routes,
+ADR-023): each VU iteration (1)
 creates a booking with a fresh Idempotency-Key across a weighted mix of all 6
 modes, (2) **replays** the identical create call with the SAME key and asserts
 byte-identical id/status (idempotent-create proxy — a mismatch is a P0 counter,

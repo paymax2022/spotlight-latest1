@@ -1,15 +1,14 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the cash-ride payment workflow: no escrow on
 // request, a driver-wallet balance gate on the open-requests feed + accept,
 // and a driver-wallet platform-fee debit at trip completion (no escrow to
 // split for a fare the rider paid the driver directly). Skipped unless
 // TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"testing"
@@ -64,6 +63,32 @@ func seedCashTestDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool) s
 	return userID
 }
 
+// cashFeeRevenueLegKobo returns the kobo credited to the standing paymax_revenue
+// account for ONE cash trip's platform fee: the CREDIT leg posted under
+// "cash_fee:<tripID>" (cash_settlement.go debits the driver wallet with that base
+// idempotency key; PostJournal writes the sides as ":debit"/":credit"). 0 means the
+// fee was never posted.
+// Deliberately NOT a before/after read of the account's BALANCE. paymax_revenue is a
+// single global standing account, and `go test ./...` runs packages concurrently
+// against one database (make test / CI), with ~40 other suites moving it — a balance
+// delta both flakes and misattributes their commission to this trip. Scoping to the
+// trip's own leg reads exactly what this test caused, and its absence just as exactly.
+func cashFeeRevenueLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, tripID string) int64 {
+	t.Helper()
+	acc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
+	var credited int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
+		  WHERE idempotency_key=$1 AND type='CREDIT' AND account_id=$2`,
+		"cash_fee:"+tripID+":credit", acc.ID).Scan(&credited); err != nil {
+		t.Fatalf("read cash fee revenue leg: %v", err)
+	}
+	return credited
+}
+
 // TestLiveDB_CashRideNoEscrowAndBalanceGate proves the full cash-ride redesign
 // against real Postgres: requesting a cash ride never touches the rider's
 // wallet; a driver whose wallet can't cover the platform fee never sees the
@@ -94,7 +119,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Fatalf("fund rich driver: %v", err)
 	}
 
-	// ── Step 1: requesting a cash ride escrows NOTHING. ──────────────────────
 	req := RequestRideRequest{
 		Pickup:        Place{Lat: 6.50, Lng: 3.40, Address: "Pickup"},
 		Dest:          Place{Lat: 6.55, Lng: 3.45, Address: "Dest"},
@@ -134,7 +158,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Fatalf("expected a positive fare_kobo, got %d", fareKobo)
 	}
 
-	// ── Step 2: the poor driver never sees it, and accept is rejected. ──────
 	openForPoor, err := svc.OpenRequests(ctx, poorDriver)
 	if err != nil {
 		t.Fatalf("OpenRequests (poor): %v", err)
@@ -146,11 +169,10 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 	}
 	if _, err := svc.DriverAccept(ctx, tripID, poorDriver); err == nil {
 		t.Fatal("expected DriverAccept to reject the poor driver")
-	} else if ce, ok := err.(*CodedError); !ok || ce.Code != CodeInsufficientDriverBalance {
+	} else if ce := new(CodedError); !errors.As(err, &ce) || ce.Code != CodeInsufficientDriverBalance {
 		t.Errorf("expected CodeInsufficientDriverBalance, got %v", err)
 	}
 
-	// ── Step 3: the rich driver sees it and can accept. ──────────────────────
 	openForRich, err := svc.OpenRequests(ctx, richDriver)
 	if err != nil {
 		t.Fatalf("OpenRequests (rich): %v", err)
@@ -168,7 +190,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Fatalf("DriverAccept (rich): %v", err)
 	}
 
-	// ── Step 4: drive the trip to completion via the real state machine. ────
 	if err := svc.DriverArrive(ctx, tripID, richDriver); err != nil {
 		t.Fatalf("DriverArrive: %v", err)
 	}
@@ -187,11 +208,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("balance before: %v", err)
 	}
-	revenueBefore, err := ledgerSvc.GetAccountBalance(ctx, revAcc.ID)
-	if err != nil {
-		t.Fatalf("revenue before: %v", err)
-	}
-
 	if err := svc.CompleteTrip(ctx, tripID, richDriver); err != nil {
 		t.Fatalf("CompleteTrip: %v", err)
 	}
@@ -208,16 +224,11 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("balance after: %v", err)
 	}
-	revenueAfter, err := ledgerSvc.GetAccountBalance(ctx, revAcc.ID)
-	if err != nil {
-		t.Fatalf("revenue after: %v", err)
-	}
-
 	if got := balanceBefore - balanceAfter; got != wantFee {
 		t.Errorf("driver wallet debited %d kobo, want %d kobo (20%% of fare %d)", got, wantFee, fareKobo)
 	}
-	if got := revenueAfter - revenueBefore; got != wantFee {
-		t.Errorf("platform revenue credited %d kobo, want %d kobo", got, wantFee)
+	if got := cashFeeRevenueLegKobo(t, ctx, pool, ledgerSvc, tripID); got != wantFee {
+		t.Errorf("platform revenue credited %d kobo for this trip, want %d kobo", got, wantFee)
 	}
 
 	// The rider's wallet was never touched at any point in a cash ride.

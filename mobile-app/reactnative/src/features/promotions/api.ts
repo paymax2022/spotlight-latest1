@@ -1,8 +1,9 @@
 import axios, { AxiosInstance } from 'axios';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import type { PromotionalBanner } from './types';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8091';
+const API_BASE_URL = resolveApiBaseUrl('http://localhost:8091');
 const PROMOTIONS_BASE = '/api/v1/promotions';
 
 class PromotionsAPIClient {

@@ -3,19 +3,19 @@ import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ChevronRight, CalendarClock, Users, Plus, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { useTasks } from '@/features/association/hooks/useEngagement';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
-import { dueLabel } from '@/features/association/utils/associationFormatters';
-import { TASK_SEGMENTS, TASK_STATUS_STYLE, TASK_PRIORITY_STYLE } from '@/features/association/constants/engagement.constants';
-import type { TaskScope, TaskSummary } from '@/features/association/types/engagement.types';
+import { useTasks } from '@/features/association/hooks';
+import { useAdminAccess } from '@/features/association/hooks';
+import { dueLabel } from '@/features/association/utils';
+import { TASK_SEGMENTS, TASK_STATUS_STYLE, TASK_PRIORITY_STYLE } from '@/features/association/constants';
+import type { TaskScope, TaskSummary } from '@/features/association/types';
 
 export default function TasksDashboard() {
   const [scope, setScope] = useState<string>('mine');
@@ -25,7 +25,6 @@ export default function TasksDashboard() {
 
   // The organisation-wide view is a management one — who has been given what
   // and who is late — so the segment only exists for an admin. The server
-  // refuses the scope for anyone else regardless; this keeps a member from
   // being offered a tab that would only 403.
   const segments = useMemo(
     () => (isAdmin ? [...TASK_SEGMENTS, { value: 'org', label: 'All tasks' }] : TASK_SEGMENTS),

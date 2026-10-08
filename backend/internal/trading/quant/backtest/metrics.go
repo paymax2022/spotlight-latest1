@@ -98,7 +98,7 @@ func equityReturns(curve []int64) []float64 {
 }
 
 func maxDrawdownFrac(curve []int64) float64 {
-	var peak int64 = curve[0]
+	var peak = curve[0]
 	var maxDD float64
 	for _, v := range curve {
 		if v > peak {
@@ -115,7 +115,7 @@ func maxDrawdownFrac(curve []int64) float64 {
 }
 
 func ulcerIndexFrac(curve []int64) float64 {
-	var peak int64 = curve[0]
+	var peak = curve[0]
 	var ss float64
 	for _, v := range curve {
 		if v > peak {
@@ -147,10 +147,7 @@ func percentile(sorted []float64, p float64) float64 {
 	if len(sorted) == 0 {
 		return 0
 	}
-	idx := int(math.Floor(p * float64(len(sorted)-1)))
-	if idx < 0 {
-		idx = 0
-	}
+	idx := max(int(math.Floor(p*float64(len(sorted)-1))), 0)
 	if idx >= len(sorted) {
 		idx = len(sorted) - 1
 	}

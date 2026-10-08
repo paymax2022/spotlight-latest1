@@ -1,5 +1,4 @@
 // Package identity is the Spotlight Academy identity-bridge sub-package.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech/CLAUDE.md):
 //   - Single Paymax identity. Roles are ADDITIVE capabilities layered onto the
 //     existing auth.users record — never a parallel auth store.
@@ -53,23 +52,23 @@ type RoleGrant struct {
 
 // Profile is one academy_profiles row (one per (user_id, role)).
 type Profile struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	Role        Role      `json:"role"`
-	ClassID     *string   `json:"class_id,omitempty"`
-	Stream      *string   `json:"stream,omitempty"`
-	TradeTrack  *string   `json:"trade_track,omitempty"`
-	School      *string   `json:"school,omitempty"`
-	DisplayName *string   `json:"display_name,omitempty"`
-	AvatarURL   *string   `json:"avatar_url,omitempty"`
-	EntryYear   *int      `json:"entry_year,omitempty"`
+	ID          string  `json:"id"`
+	UserID      string  `json:"user_id"`
+	Role        Role    `json:"role"`
+	ClassID     *string `json:"class_id,omitempty"`
+	Stream      *string `json:"stream,omitempty"`
+	TradeTrack  *string `json:"trade_track,omitempty"`
+	School      *string `json:"school,omitempty"`
+	DisplayName *string `json:"display_name,omitempty"`
+	AvatarURL   *string `json:"avatar_url,omitempty"`
+	EntryYear   *int    `json:"entry_year,omitempty"`
 	// Minor-safety attributes — the consent gate keys off IsMinor, so these must
 	// round-trip on the profile (dob is an ISO yyyy-mm-dd date).
-	Dob         *string   `json:"dob,omitempty"`
-	IsMinor     bool      `json:"is_minor"`
-	KycTier     int       `json:"kyc_tier"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Dob       *string   `json:"dob,omitempty"`
+	IsMinor   bool      `json:"is_minor"`
+	KycTier   int       `json:"kyc_tier"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // GuardianLink binds a guardian (parent) to a minor learner. Guarded lifecycle.
@@ -93,8 +92,6 @@ type ConsentRecord struct {
 	ActorUserID    *string        `json:"actor_user_id,omitempty"`
 	GrantedAt      time.Time      `json:"granted_at"`
 }
-
-// ── Request DTOs ──────────────────────────────────────────────────────────────
 
 // GrantRoleRequest is the body for POST /academy/roles.
 type GrantRoleRequest struct {

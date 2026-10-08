@@ -1,7 +1,6 @@
 'use client';
 
 // AK7 — Thresholds & tier policy (SCAFFOLD).
-// RBAC: finance.admin.kyc (role: Compliance). Facial-match threshold, which
 // checks each CBN tier requires, EDD rules. This reads the routing rules'
 // thresholds read-only; per-tier required-check matrix + EDD rules are TBD.
 

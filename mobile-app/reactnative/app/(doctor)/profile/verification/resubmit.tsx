@@ -1,4 +1,3 @@
-// PRIVACY: Assisted Mode B verification. Serves both the "rejected" resubmit and
 // the "more information needed" (needs_info) re-submission flow. It shows the
 // doctor only their own document slots + guidance. It must NEVER render MDCN/
 // register data, reviewer identity, internal reviewer notes, or matched-field
@@ -7,9 +6,9 @@ import React, { useState } from 'react';
 import { Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, UploadField } from '@/features/doctor/components';

@@ -5,7 +5,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractAccessCode, buildPaystackMetadata } from '../paystackGateway.ts';
 
-// ── extractAccessCode ─────────────────────────────────────────────────────────
 test('extracts the access code from a standard authorization_url', () => {
   assert.equal(
     extractAccessCode('https://checkout.paystack.com/abc123XYZ'),
@@ -49,7 +48,6 @@ test('returns null for empty or non-string input', () => {
   assert.equal(extractAccessCode(null), null);
 });
 
-// ── buildPaystackMetadata ─────────────────────────────────────────────────────
 test('always tags the charge for the gateway webhook', () => {
   const meta = buildPaystackMetadata({
     email: 'a@b.com',

@@ -3,7 +3,6 @@ package restaurant
 import "testing"
 
 // The listing-review state machine (foodhub A6 / §6.3).
-//
 // Exhaustive over the transition table, because the failure mode is silent:
 // nothing crashes when a rejected listing quietly becomes publishable.
 

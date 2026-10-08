@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from '@/src/server/utility/routing';
+import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from '@/src/server/utility/helpers';
 import type { UtilityProductRow, UtilityProviderRow } from '@/src/server/utility/types';
 
 const product: UtilityProductRow = {

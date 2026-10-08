@@ -1,14 +1,23 @@
-// ── Admin — Estate control plane types ───────────────────────────────────────
 // All money is integer minor units (kobo). Mirrors realtorAdmin.ts conventions.
 
+// Mirrors the live AdminDashboard struct (backend/internal/estate/admin.go
+// GetAdminDashboard) exactly — {estate_id, residents, banned_residents,
+// open_repairs, open_incidents, defaulters, outstanding_dues_kobo,
+// verified_vendors, pending_transfers}. `units`, `collectionsThisCycleKobo`
+// and `expectedThisCycleKobo` were part of the old mock-only shape and have
+// NO backend source on this endpoint (no billing-cycle concept exists here)
+// — dropped rather than left silently undefined. `arrearsKobo` maps to
+// outstanding_dues_kobo and `activeVendors` to verified_vendors, the closest
+// real semantics available.
 export interface EstateKpis {
   residents: number;
-  units: number;
-  collectionsThisCycleKobo: number; // collected so far this billing cycle
-  expectedThisCycleKobo: number;    // total billed this cycle
+  bannedResidents: number;
+  openRepairs: number;
   openIncidents: number;
-  activeVendors: number;
-  arrearsKobo: number;
+  defaulters: number;
+  arrearsKobo: number;   // outstanding_dues_kobo
+  activeVendors: number; // verified_vendors
+  pendingTransfers: number;
 }
 
 export interface EstateActivity {
@@ -24,13 +33,14 @@ export type ResidentStatus = 'active' | 'banned';
 
 export interface AdminResident {
   id: string;
+  userId: string;
   name: string;
   unit: string;        // e.g. "Block B · Flat 4"
   role: ResidentRole;
   phone: string;
   status: ResidentStatus;
   arrearsKobo: number;
-  joinedAt: string;
+  createdAt: string;
 }
 
 export type DuesStatus = 'paid' | 'pending' | 'overdue' | 'restricted';
@@ -95,7 +105,6 @@ export interface AdminVendor {
   submittedAt: string;
 }
 
-// ── Property suite (cross-vertical context + rent passport) ───────────────────
 export type PropertyRole = 'resident' | 'tenant' | 'owner' | 'agent' | 'guard' | 'estate_admin' | 'agency';
 
 export interface PropertyContext {
@@ -120,7 +129,6 @@ export interface RentPassport {
   issuedAt: string;
 }
 
-// ── Platform estate oversight (backend /api/finance/estate-admin/*) ───────────
 // Read-only cross-estate oversight surfaces, RBAC-gated on estate.admin.*.
 // Every row carries estateId so HQ can scope or sweep across estates.
 
@@ -302,4 +310,36 @@ export interface ElectionAudit {
   candidates: number;
   status: string | null;
   doubleVoteDetected: boolean;
+}
+
+export type OccupancyStatus = 'vacant' | 'occupied' | 'reserved';
+export type TransferType = 'ownership' | 'tenancy';
+export type TransferStatus = 'pending' | 'approved' | 'rejected';
+
+export interface AdminProperty {
+  id: string;
+  estateId: string;
+  unitLabel: string;
+  propertyType: string; // apartment | house | commercial | land | other
+  floor: string;
+  block: string;
+  occupancyStatus: OccupancyStatus;
+  landlordId: string | null;
+  tenantId: string | null;
+  archived: boolean;
+  createdAt: string;
+}
+
+export interface PropertyTransferRequest {
+  id: string;
+  estateId: string;
+  propertyId: string;
+  requestedBy: string;
+  toUserId: string;
+  transferType: TransferType;
+  reason: string;
+  status: TransferStatus;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
 }

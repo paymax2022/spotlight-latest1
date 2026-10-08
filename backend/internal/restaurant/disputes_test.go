@@ -174,7 +174,7 @@ func TestFoodRefundExhaustedBudget(t *testing.T) {
 }
 
 func TestFoodDisputeResolvable(t *testing.T) {
-	for _, ok := range []string{"open", "investigating"} {
+	for _, ok := range []string{"open", "in_review"} {
 		if !foodDisputeResolvable(ok) {
 			t.Errorf("%q should be resolvable", ok)
 		}

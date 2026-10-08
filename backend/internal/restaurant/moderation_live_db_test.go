@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for review moderation + PII (Phase 16): auto-flag,
 // hide-excludes-from-average, public reviews anonymized, and offered-rider address
 // masking. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

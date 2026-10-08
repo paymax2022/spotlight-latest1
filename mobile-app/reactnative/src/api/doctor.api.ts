@@ -1,12 +1,8 @@
-// ── Doctor (Telemedicine, provider-side) — API client ────────────────────────
-// Phase A: every function resolves demo data so screens render without a live
 // API. `DEMO_*` exports are also used as `placeholderData` in useQuery.
-//
 // TODO(Phase C): replace each function body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/appointments'); return res.data.data;
 // and pass the Idempotency-Key header on every mutation below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   DoctorProfile,
   VerificationSubmission,
@@ -57,8 +53,6 @@ import {
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ms));
-
-// ─── Demo data ───────────────────────────────────────────────────────────────
 
 export const DEMO_DOCTOR_PROFILE: DoctorProfile = {
   id: 'doc-1', name: 'Dr. Amaka Obi', title: 'MBBS, FWACP', specialtyId: 'gp',
@@ -273,8 +267,6 @@ export const DEMO_SETTINGS: DoctorSettings = {
   payoutBankName: 'GTBank', payoutAccountMasked: '****4821', preferredCurrency: 'NGN',
 };
 
-// ─── Read endpoints ──────────────────────────────────────────────────────────
-
 export async function getDoctorProfile(): Promise<DoctorProfile> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_DOCTOR_PROFILE);
   return doctorGet<DoctorProfile>('/profile');
@@ -372,8 +364,6 @@ export async function getSettings(): Promise<DoctorSettings> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_SETTINGS);
   return doctorGet<DoctorSettings>('/settings');
 }
-
-// ─── Mutations ───────────────────────────────────────────────────────────────
 
 export async function submitVerification(input: SubmitVerificationInput): Promise<SubmitVerificationResult> {
   if (DOCTOR_USE_MOCK) {

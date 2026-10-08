@@ -9,10 +9,10 @@ import {
   Dimensions,
 } from 'react-native';
 import { Calendar } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 const ITEM_HEIGHT = 48;
 const VISIBLE_ITEMS = 5;

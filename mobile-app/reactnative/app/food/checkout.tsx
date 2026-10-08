@@ -9,23 +9,24 @@ import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
 import type { LatLng } from '@/features/food/types';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { usePlaceOrder, useDeliveryQuote } from '@/features/food/hooks';
 import {
   useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
 } from '@/features/food/cartStore';
 import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
-import { formatNaira } from '@/features/food/utils';
+import { formatNaira, newIdempotencyKey } from '@/features/food/utils';
 import { resolveDeliveryFee } from '@/features/food/deliveryFee';
 import { resolvePackagingFee } from '@/features/food/packagingFee';
 import { estimateTotalKobo } from '@/features/food/estimate';
 import { useRestaurant, useRestaurantNames, useCartRestaurantAvailability } from '@/features/food/hooks';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { initiateFoodOrderPaystack } from '@/features/food/api';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
@@ -71,7 +72,6 @@ export default function CheckoutScreen() {
   const goneRestaurantIdList = useCartRestaurantAvailability(cartRestaurantIds);
 
   // Remove them. A cart persists locally AND on the server, so it outlives the
-  // menu it was built from; the food of a deleted kitchen sits here looking
   // ordinary — named, priced, adding to the total — while PlaceOrder can never
   // accept it and its delivery leg can never be quoted. Only a 404 gets here
   // (see availability.ts); a server error leaves the cart alone.
@@ -92,9 +92,7 @@ export default function CheckoutScreen() {
   }, [goneRestaurantIdList, removeRestaurants]);
 
   // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
-  // this session carry their own name; the per-id lookup below covers carts
   // hydrated from storage or the server, whose lines predate that field.
-  //
   // This used to seed the map from the WHOLE discovery list. That list is now
   // paged, so it would have named only the restaurants that happened to be on
   // page 1 — and the by-id fetch already covers every case it did, without
@@ -113,7 +111,6 @@ export default function CheckoutScreen() {
 
   // Ids that neither a captured line name nor the cart's own primary restaurant
   // can name. Fetched by id, which has no is_open filter and no paging — a cart
-  // outlives opening hours, and discovery is `WHERE is_open = TRUE`. Usually
   // empty, in which case no request is made.
   const unresolvedRestaurantIds = useMemo(
     () =>
@@ -135,6 +132,12 @@ export default function CheckoutScreen() {
   const placeOrder = usePlaceOrder();
   // Two-option checkout modal: Pay with Wallet, or Pay with Card/Transfer (Paystack gateway).
   const pay = usePurchasePayment<Awaited<ReturnType<typeof placeOrder.mutateAsync>>>();
+  // Card/Transfer runs through a genuinely separate, server-initiated Paystack
+  // rail (paystackcheckout on the Go side) — NOT usePurchasePayment's built-in
+  // wallet debit ever occurs, so this works even without KYC (see onCard below
+  // and initiateFoodOrderPaystack's doc comment).
+  const paystackCheckout = useGatewayCheckout();
+  const [paystackError, setPaystackError] = useState('');
   const [address, setAddress] = useState('');
   const [addressLocation, setAddressLocation] = useState<LatLng | null>(null);
   const [addressPlusCode, setAddressPlusCode] = useState<string>('');
@@ -148,7 +151,6 @@ export default function CheckoutScreen() {
   // authoritative on placeOrder — this only drives the pre-payment estimate.
   const quoteQ = useDeliveryQuote(restaurantId ?? undefined, addressLocation);
   const quote = quoteQ.data;
-  // A quote is a SERVER price and is always used; flat_fallback only means it is
   // not distance-based. The old rule discarded a flat-fallback quote in favour of
   // restaurant.deliveryFeeKobo — a field with no column and no DTO behind it —
   // so the fee rendered as ₦0 for every restaurant without coordinates while
@@ -210,13 +212,14 @@ export default function CheckoutScreen() {
 
   const onPlace = () => {
     if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
-    // PlaceOrder reads the restaurant row for pricing and open-hours; if we could
     // not load it, the order cannot be placed and taking a payment first would
     // charge for something the server is about to refuse.
     if (restaurantUnavailable) return;
-    // Open the two-option modal. Wallet pays from balance; Card/Transfer charges
-    // on the Paystack gateway. Either way placeOrder (the fulfilment) runs on
-    // confirmation, with its own Idempotency-Key.
+    setPaystackError('');
+    // Open the two-option modal. Wallet pays from balance and PlaceOrder runs on
+    // confirmation. Card/Transfer runs onCard below — a separate server-initiated
+    // Paystack rail that places the order itself once payment is verified, so
+    // there is no `charge` call to make for that rail.
     pay.start({
       amountKobo: estTotal,
       title: 'Pay & place order',
@@ -242,8 +245,41 @@ export default function CheckoutScreen() {
           router.replace(`/food/orders/${order.id}`);
         }, 1400);
       },
+      onCard: async () => {
+        await paystackCheckout.start({
+          domain: 'food_order',
+          initialize: async () => {
+            const r = await initiateFoodOrderPaystack({
+              restaurantId: restaurantId || '',
+              items: aggregated.map((l) => ({
+                itemId: l.itemId,
+                qty: l.qty,
+                restaurantId: l.restaurantId,
+              })),
+              packageCount: packCount,
+              packages: cartPackagesPayload(packages),
+              deliveryAddress: withPlusCode(address.trim(), addressPlusCode),
+              deliveryLocation: addressLocation,
+              idempotencyKey: newIdempotencyKey('food-order-paystack'),
+            });
+            if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+            return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+          },
+          onResolved: (res) => {
+            // The order is placed server-side only once the charge is verified —
+            // this screen hands off to a status resolver, same shape as the
+            // utility-bills Paystack flow (app/services/paystack/[reference]).
+            clear();
+            router.replace(`/food/paystack/${encodeURIComponent(res.reference)}` as never);
+          },
+        });
+      },
     });
   };
+
+  useEffect(() => {
+    if (paystackCheckout.error) setPaystackError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
 
   // Payment confirmation screen — shown after the wallet is charged.
   if (paid) {
@@ -514,10 +550,13 @@ export default function CheckoutScreen() {
           disabled={!address.trim() || belowMin || restaurantUnavailable}
         />
         <Text style={s.payHint}>You'll be taken to the secure payment gateway (Paystack) to complete payment.</Text>
+        {paystackError ? <Text style={s.warn}>{paystackError}</Text> : null}
       </View>
 
       {/* Two-option payment modal (wallet / card-transfer via Paystack). */}
       <PaymentSheet controller={pay} />
+      {/* Hosts the in-app Paystack checkout for the card/transfer rail. */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }

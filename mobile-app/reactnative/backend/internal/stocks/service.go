@@ -61,8 +61,6 @@ func (s *Service) WithBroker(b Broker) *Service {
 	return s
 }
 
-// ── Assets / market data ─────────────────────────────────────────────────────--
-
 // Assets returns a copy of the whitelisted catalogue.
 func (s *Service) Assets() []Stock {
 	s.mu.Lock()
@@ -131,8 +129,6 @@ func (s *Service) CorporateActions(symbol string) []CorporateAction {
 	return out
 }
 
-// ── Portfolio / positions ────────────────────────────────────────────────────--
-
 // Positions returns the computed holdings.
 func (s *Service) Positions() []StockPosition {
 	s.mu.Lock()
@@ -174,8 +170,6 @@ func (s *Service) Portfolio() StockPortfolio {
 		Positions:         positions,
 	}
 }
-
-// ── Place order ──────────────────────────────────────────────────────────────--
 
 // PlaceOrder runs the pre-trade checks then records a Filled (market) or
 // Submitted (limit) order. Mirrors stocks.api.ts placeOrder + the iron rules:
@@ -290,8 +284,6 @@ func (s *Service) PlaceOrder(d OrderDraft, idempotencyKey string) (StockOrder, *
 	return order, nil
 }
 
-// ── Orders ───────────────────────────────────────────────────────────────────--
-
 // Orders returns the order history newest-first, optionally filtered by side.
 func (s *Service) Orders(side string) []StockOrder {
 	s.mu.Lock()
@@ -355,8 +347,6 @@ func (s *Service) CancelOrder(id string) (StockOrder, bool) {
 	}
 	return StockOrder{}, false
 }
-
-// ── Public offers ────────────────────────────────────────────────────────────--
 
 // PublicOffers returns the open/upcoming IPO + rights offers.
 func (s *Service) PublicOffers() []PublicOffer {

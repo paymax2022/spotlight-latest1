@@ -3,20 +3,20 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import DatePickerField from '@/components/DatePickerField';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { OptionSelect, type Option } from '@/features/association/components/AdminFormControls';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import { useAdminAccess } from '@/features/association/hooks';
 import { createTask, listOrgMembers } from '@/features/association/api/authoring.api';
 import { alertAsync } from '@/lib/confirm';
-import type { TaskPriority } from '@/features/association/types/engagement.types';
+import type { TaskPriority } from '@/features/association/types';
 
 const PRIORITIES: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
 const PRIORITY_LABEL: Record<TaskPriority, string> = { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High' };
@@ -92,7 +92,6 @@ export default function NewTaskScreen() {
     }
   };
 
-  // Creating and assigning work is a management action; the server gates it the
   // same way, so this is a clearer refusal rather than the only one.
   if (access.isLoading) {
     return (

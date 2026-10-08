@@ -1,12 +1,8 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: the crowdfunding finance summary reports measured figures.
-//
 // WHY THIS EXISTS
-// ---------------
 // Three of the seven cards on /admin/crowdfunding/finance were not measurements:
-//
 //   - "Platform revenue" was `gmv_kobo / 40`, an assumed 2.5%. The only authority
 //     for the crowdfunding split is crowdfunding.PlatformFeePct = 0.10, and the
 //     money path posts that 10% through settlement.Split and records the realized
@@ -19,28 +15,21 @@ package crowdfunding_test
 //     timed-out query left the field at its zero value and the console rendered a
 //     clean ₦0 across the board. A broken database and a quiet day looked
 //     identical on the page whose purpose is telling them apart.
-//
 // None of that failed. It rendered.
-//
 // The test runs the EXPORTED production SQL (adminext.SQLPlatformRevenue and
 // friends), not a copy, so the queries under test cannot drift from the ones the
 // console serves.
-//
 // EVERYTHING RUNS IN A ROLLED-BACK TRANSACTION. commission_earnings carries an
 // append-only trigger (commission_earnings_immutable) that forbids UPDATE and
 // DELETE, so an inserted earnings row could not be cleaned up afterwards — it
 // would pollute the shared dev database permanently and skew this very summary.
 // A transaction is the only safe way to exercise it.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_FinanceSummary -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -249,7 +238,6 @@ func TestLiveDB_FinanceSummaryDemoRowsAreCounted(t *testing.T) {
 // that could not answer produced a summary of zeros and a nil error — which the
 // console rendered as a page of clean ₦0 figures. A cancelled context is the
 // deterministic way to make every query fail at once.
-//
 // It reads only; nothing is written, so it needs no transaction.
 func TestLiveDB_FinanceSummaryFailsLoudlyWhenTheDatabaseCannotAnswer(t *testing.T) {
 	pool := liveDBPool(t)

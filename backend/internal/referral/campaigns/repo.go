@@ -2,11 +2,15 @@ package campaigns
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/strutil"
 )
 
 // Repository is the parameterized data access layer for campaign tables.
@@ -45,16 +49,8 @@ func scanCampaign(row pgx.Row) (*Campaign, error) {
 	if createdBy != nil {
 		c.CreatedBy = *createdBy
 	}
-	c.RewardConfig = decodeJSON(rawCfg)
+	c.RewardConfig = jsonx.UnmarshalOr(rawCfg, map[string]any{})
 	return &c, nil
-}
-
-func decodeJSON(raw []byte) map[string]any {
-	out := map[string]any{}
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &out)
-	}
-	return out
 }
 
 // ListActive returns active campaigns for the member view.
@@ -98,12 +94,9 @@ func (r *Repository) Get(ctx context.Context, id string) (*Campaign, error) {
 
 // Create inserts a campaign and its (zeroed) budget row.
 func (r *Repository) Create(ctx context.Context, in CreateInput, createdBy string) (*Campaign, error) {
-	cfg, err := json.Marshal(in.RewardConfig)
+	cfg, err := jsonx.MarshalObject(in.RewardConfig)
 	if err != nil {
 		return nil, fmt.Errorf("campaigns: marshal reward_config: %w", err)
-	}
-	if len(cfg) == 0 || string(cfg) == "null" {
-		cfg = []byte("{}")
 	}
 	const q = `
 		INSERT INTO referral_campaigns
@@ -112,9 +105,9 @@ func (r *Repository) Create(ctx context.Context, in CreateInput, createdBy strin
 		VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9,$10)
 		RETURNING ` + campaignCols
 	c, err := scanCampaign(r.db.QueryRow(ctx, q,
-		in.Name, in.Slug, nullable(in.Description), in.RewardModel, cfg,
-		nullable(in.VestingScheduleID), in.StartsAt, in.EndsAt,
-		defaultStr(in.FundingSource, FundingHouse), nullable(createdBy)))
+		in.Name, in.Slug, dbutil.NullStr(in.Description), in.RewardModel, cfg,
+		dbutil.NullStr(in.VestingScheduleID), in.StartsAt, in.EndsAt,
+		strutil.Or(in.FundingSource, FundingHouse), dbutil.NullStr(createdBy)))
 	if err != nil {
 		return nil, fmt.Errorf("campaigns: create: %w", err)
 	}
@@ -130,7 +123,7 @@ func (r *Repository) Create(ctx context.Context, in CreateInput, createdBy strin
 func (r *Repository) Update(ctx context.Context, id string, in UpdateInput) (*Campaign, error) {
 	var rawCfg []byte
 	if in.RewardConfig != nil {
-		b, err := json.Marshal(*in.RewardConfig)
+		b, err := jsonx.MarshalObject(*in.RewardConfig)
 		if err != nil {
 			return nil, fmt.Errorf("campaigns: marshal reward_config: %w", err)
 		}
@@ -224,7 +217,7 @@ func (r *Repository) SetThrottle(ctx context.Context, campaignID string, pct int
 func (r *Repository) SetAutoPause(ctx context.Context, campaignID string, paused bool, reason string) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE referral_campaign_budgets SET auto_paused = $2, auto_pause_reason = $3, updated_at = now()
-		 WHERE campaign_id = $1`, campaignID, paused, nullable(reason))
+		 WHERE campaign_id = $1`, campaignID, paused, dbutil.NullStr(reason))
 	if err != nil {
 		return fmt.Errorf("campaigns: set auto pause: %w", err)
 	}
@@ -257,16 +250,114 @@ func (r *Repository) RewardStats(ctx context.Context, campaignID string) (count,
 	return count, beneficiaries, sumKobo, nil
 }
 
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
+// Campaign statuses.
+const (
+	StatusDraft     = "draft"
+	StatusActive    = "active"
+	StatusThrottled = "throttled"
+	StatusPaused    = "paused"
+	StatusEnded     = "ended"
+)
+
+// Reward models.
+const (
+	RewardFlat    = "flat"
+	RewardDynamic = "dynamic"
+	RewardLTV     = "ltv"
+)
+
+// Funding sources.
+const (
+	FundingHouse    = "house"
+	FundingMerchant = "merchant"
+	FundingPartner  = "partner"
+)
+
+// Campaign is a referral campaign definition.
+type Campaign struct {
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Slug               string         `json:"slug"`
+	Description        string         `json:"description,omitempty"`
+	Status             string         `json:"status"`
+	RewardModel        string         `json:"reward_model"`
+	RewardConfig       map[string]any `json:"reward_config"`
+	VestingScheduleID  string         `json:"vesting_schedule_id,omitempty"`
+	StartsAt           *time.Time     `json:"starts_at,omitempty"`
+	EndsAt             *time.Time     `json:"ends_at,omitempty"`
+	FundingSource      string         `json:"funding_source"`
+	MerchantCampaignID string         `json:"merchant_campaign_id,omitempty"`
+	CreatedBy          string         `json:"created_by,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
-func defaultStr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
+// Budget is the budget governor row for one campaign.
+type Budget struct {
+	CampaignID      string `json:"campaign_id"`
+	TotalBudgetKobo int64  `json:"total_budget_kobo"`
+	SpentKobo       int64  `json:"spent_kobo"`
+	PerUserCapKobo  int64  `json:"per_user_cap_kobo"`
+	DailyCapKobo    int64  `json:"daily_cap_kobo"`
+	MaxCACKobo      int64  `json:"max_cac_kobo"`
+	FraudPauseBps   int    `json:"fraud_pause_bps"`
+	AutoPaused      bool   `json:"auto_paused"`
+	AutoPauseReason string `json:"auto_pause_reason,omitempty"`
+	ThrottlePct     int    `json:"throttle_pct"`
+}
+
+// Variant is one A/B reward-config variant of a campaign.
+type Variant struct {
+	ID           string         `json:"id"`
+	CampaignID   string         `json:"campaign_id"`
+	VariantKey   string         `json:"variant_key"`
+	WeightPct    int            `json:"weight_pct"`
+	RewardConfig map[string]any `json:"reward_config"`
+	IsActive     bool           `json:"is_active"`
+}
+
+// CreateInput is the admin campaign-create payload.
+type CreateInput struct {
+	Name              string         `json:"name"`
+	Slug              string         `json:"slug"`
+	Description       string         `json:"description"`
+	RewardModel       string         `json:"reward_model"`
+	RewardConfig      map[string]any `json:"reward_config"`
+	VestingScheduleID string         `json:"vesting_schedule_id"`
+	StartsAt          *time.Time     `json:"starts_at"`
+	EndsAt            *time.Time     `json:"ends_at"`
+	FundingSource     string         `json:"funding_source"`
+}
+
+// UpdateInput patches a campaign's mutable fields (nil = leave unchanged).
+type UpdateInput struct {
+	Name         *string         `json:"name"`
+	Description  *string         `json:"description"`
+	RewardModel  *string         `json:"reward_model"`
+	RewardConfig *map[string]any `json:"reward_config"`
+	StartsAt     *time.Time      `json:"starts_at"`
+	EndsAt       *time.Time      `json:"ends_at"`
+}
+
+// BudgetInput sets/updates the budget governor row for a campaign.
+type BudgetInput struct {
+	TotalBudgetKobo int64 `json:"total_budget_kobo"`
+	PerUserCapKobo  int64 `json:"per_user_cap_kobo"`
+	DailyCapKobo    int64 `json:"daily_cap_kobo"`
+	MaxCACKobo      int64 `json:"max_cac_kobo"`
+	FraudPauseBps   int   `json:"fraud_pause_bps"`
+}
+
+// Analytics summarises a campaign's burn and ROI position (A-CMP analytics).
+type Analytics struct {
+	CampaignID      string  `json:"campaign_id"`
+	TotalBudgetKobo int64   `json:"total_budget_kobo"`
+	SpentKobo       int64   `json:"spent_kobo"`
+	RemainingKobo   int64   `json:"remaining_kobo"`
+	BurnPct         float64 `json:"burn_pct"`
+	RewardCount     int64   `json:"reward_count"`
+	BeneficiaryCnt  int64   `json:"beneficiary_count"`
+	AutoPaused      bool    `json:"auto_paused"`
+	AutoPauseReason string  `json:"auto_pause_reason,omitempty"`
+	Status          string  `json:"status"`
 }

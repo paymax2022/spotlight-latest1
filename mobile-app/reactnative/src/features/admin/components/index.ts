@@ -1,4 +1,3 @@
-// ── Paymax · Admin — component barrel ─────────────────────────────────────────
 // One import surface for the admin screens.
 
 export { default as KpiCard } from './KpiCard';

@@ -1,6 +1,4 @@
-// ── Paymax Stays (SM2) — Agent-assisted booking data layer ───────────────────
 // Self-contained, mock-first. ADDS to SM1; never edits SM1's owned files.
-//
 // PRD §20: the agent acts on the CUSTOMER's identity — the booking always lives
 // on the customer's account, never the agent's. Payment is collected as
 // cash → agent float → customer wallet, OR a pay-link the customer settles.
@@ -26,7 +24,6 @@ function unwrap<T>(body: any): T {
   return body && typeof body === 'object' && 'data' in body ? body.data : body;
 }
 
-// ── Live backend agent channel (mounted under /api/finance/stays/agent) ───────
 // POST /agent/quote · POST /agent/book · GET /agent/bookings · GET /agent/commissions
 const AGENT_API_BASE = `${STAYS_API_BASE}/agent`;
 
@@ -87,7 +84,6 @@ function mapBEReservationToBooking(r: BEAgentReservation): AgentBooking {
   };
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────--
 export interface Customer {
   id: string;
   fullName: string;
@@ -177,7 +173,6 @@ export interface AgentCommissionSummary {
   floatBalanceKobo: number;
 }
 
-// ── Mock data ────────────────────────────────────────────────────────────────
 const MOCK_CUSTOMERS: Customer[] = [
   { id: 'cust_1', fullName: 'Bola Adeyemi', phone: '+2348022223333', email: 'bola.a@example.com', kycTier: 2, walletKobo: 5_000_000, city: 'Lagos' },
   { id: 'cust_2', fullName: 'Emeka Nwosu', phone: '+2348144445555', email: 'emeka.n@example.com', kycTier: 1, walletKobo: 0, city: 'Enugu' },
@@ -206,7 +201,6 @@ const MOCK_AGENT_PROPERTIES: PropertyCard[] = [
 ];
 
 const quotes = new Map<string, AgentQuote>();
-// Live: the supplier book_token returned by /agent/quote, keyed by reservation id
 // (the quoteId). Book passes it back to /agent/book.
 const bookTokens = new Map<string, string>();
 const agentBookings: AgentBooking[] = [
@@ -230,7 +224,6 @@ function isoTs(n: number): string {
 
 const COMMISSION_PCT = 0.08;
 
-// ── API ──────────────────────────────────────────────────────────────────────
 export async function lookupCustomers(q: string): Promise<Customer[]> {
   if (USE_MOCK) {
     await delay(220);
@@ -332,7 +325,7 @@ export async function buildQuote(input: AgentQuoteInput): Promise<AgentQuote> {
   const { data } = await api.post(
     `${AGENT_API_BASE}/quote`,
     {
-      customer_name: input.customerId, // caller supplies the customer name via lookup; id doubles as label for walk-ins
+      customer_name: input.customerId,
       customer_contact: '',
       // Direct own-supply rail: property_id doubles as the supplier property ref.
       rail: 'DIRECT',
@@ -387,7 +380,6 @@ export async function getQuote(quoteId: string): Promise<AgentQuote> {
     if (!q) throw new Error('Quote expired');
     return q;
   }
-  // Live: the quote is a short-lived hold cached client-side after buildQuote
   // (the backend has no GET /agent/quote/:id — the hold lives on the reservation).
   const cached = quotes.get(quoteId);
   if (!cached) throw new Error('Quote expired — please re-quote.');
@@ -436,7 +428,6 @@ export async function agentBook(quoteId: string): Promise<AgentBooking> {
     quotes.delete(quoteId);
     return booking;
   }
-  // Live: book the held quote on the customer's behalf — SAME reservation.Book
   // saga (escrow→settle). Idempotency-Key REQUIRED (money-path).
   const q = quotes.get(quoteId);
   const bookToken = bookTokens.get(quoteId);
@@ -537,7 +528,6 @@ export async function getCommissionSummary(): Promise<AgentCommissionSummary> {
     bookingsCount: be.bookings_count ?? 0,
     grossSalesKobo: be.gross_sales_kobo ?? 0,
     commissionKobo: be.commission_kobo ?? 0,
-    // Backend does not yet split paid/pending/float; surface the full commission
     // as pending and leave float unknown (0) rather than fabricating a payout state.
     paidKobo: 0,
     pendingKobo: be.commission_kobo ?? 0,
@@ -545,7 +535,6 @@ export async function getCommissionSummary(): Promise<AgentCommissionSummary> {
   };
 }
 
-// ── Hooks ──────────────────────────────────────────────────────────────────--
 export function useCustomerLookup(q: string) {
   return useQuery({ queryKey: [KEY, 'agent', 'customers', q], queryFn: () => lookupCustomers(q), staleTime: 30_000 });
 }

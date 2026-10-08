@@ -4,10 +4,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Camera, CheckCircle2, Save, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -64,7 +64,6 @@ export default function ApplyScreen() {
     if (capturing) return;
     setCapturing(true);
     // ── REAL CAPTURE: replace stub with the license-photo capture SDK / picker.
-    //    const uri = await ImagePicker.launchCameraAsync(...); const b64 = ...;
     setTimeout(() => {
       const b64 = stubCaptureBase64('license');
       setLicenseB64(b64);

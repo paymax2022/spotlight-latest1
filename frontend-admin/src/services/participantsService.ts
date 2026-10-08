@@ -1,9 +1,7 @@
-// ── Admin — registration review queue (participants & entries) ───────────────
 // Talks to the Go backend at /api/v1/admin/registrations. Approving an entry
 // promotes it onto the voting roster server-side, in the same transaction as
 // the status change, so the admin never has to do a second call to publish a
 // contestant.
-//
 // This deliberately does NOT read Supabase REST directly: the status change is
 // a guarded, audited, transactional operation, and going straight to the table
 // would skip the RBAC check, the audit event and the promotion.
@@ -82,10 +80,7 @@ function base(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 /** Surfaces the backend's own error text — "missing permission: contestant.approve"

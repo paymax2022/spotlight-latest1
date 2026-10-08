@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Supabase row mappers ─────────────────────────────────
 // Maps realtor_* table rows (snake_case, joined graph) → domain types used by
 // the screens. Mirrors src/api/mappers/*.mapper.ts. Money columns are BIGINT
 // minor units (kobo) and pass through unchanged.
@@ -31,6 +30,7 @@ function mapAgent(row: any): AgentRef {
     rating: Number(row.rating ?? 0),
     reviewCount: Number(row.review_count ?? 0),
     responseTime: row.response_time ?? undefined,
+    phone: row.phone || undefined,
   };
 }
 
@@ -156,5 +156,5 @@ export function mapApplication(row: any): RentalApplication {
 export const LISTING_SELECT = `
   *,
   unit:realtor_units!unit_id(*, property:realtor_properties!property_id(*)),
-  agent:user_profiles!agent_id(id, full_name, avatar_url)
+  agent:user_profiles!agent_id(id, full_name, avatar_url, phone)
 `.trim();
