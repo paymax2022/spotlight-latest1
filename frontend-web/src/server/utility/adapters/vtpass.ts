@@ -62,7 +62,9 @@ const SANDBOX_NO_RESPONSE_METER = '400000000000';
 const SANDBOX_TIMEOUT_METER = '300000000000';
 
 function isSandboxEnv(): boolean {
-  return process.env.VTPASS_ENVIRONMENT === 'sandbox';
+  // Case-insensitive — VTPASS_ENVIRONMENT=SANDBOX must not silently become
+  // live (it did: sandbox keys were fired at the live endpoint → HTTP 401).
+  return (process.env.VTPASS_ENVIRONMENT ?? '').trim().toLowerCase() === 'sandbox';
 }
 
 // for any other meter (which VTPass sandbox treats as a failed validation).
@@ -131,7 +133,7 @@ function sandboxPurchase(request: UtilityPurchaseRequest, requestId: string): Ut
 }
 
 function readCredentials(): VtpassCredentials {
-  const environment = (process.env.VTPASS_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'live') satisfies VtpassEnvironment;
+  const environment = (isSandboxEnv() ? 'sandbox' : 'live') satisfies VtpassEnvironment;
   const apiKey = process.env.VTPASS_API_KEY;
   const publicKey = process.env.VTPASS_PUBLIC_KEY;
   const secretKey = process.env.VTPASS_SECRET_KEY;
