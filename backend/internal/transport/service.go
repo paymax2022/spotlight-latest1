@@ -51,6 +51,7 @@ type Service struct {
 	// ("parcel", later "bus"…), set once at wiring (SetDomainExternalRefunder).
 	// Read-only afterwards, so no lock. See external_funding.go.
 	domainRefunders map[string]ExternalRefunder
+	bus             BusConfig // wallet bus path: deferred settlement / cancel cutoff / booking lead (WithBusConfig)
 }
 
 // ExternalRefunder is the nil-safe seam transport.Service uses to correctly
@@ -90,7 +91,7 @@ func (s *Service) SetExternalRefunder(r ExternalRefunder) { s.externalRefunder =
 // only the DB), so no extra wiring is required at the call site. If a future
 // refactor centralises the tiers service, inject it here and drop this line.
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
-	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps()}
+	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps(), bus: DefaultBusConfig()}
 }
 
 // WithTiers injects a pre-configured tier gate, taking the refactor the comment
@@ -179,6 +180,33 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
 		"transport", sourceRef, userID, sourceRef); err != nil {
 		log.Printf("[transport] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
+}
+
+// ExactCommissionRecorder is the optional exact-fee seam (the app adapter implements
+// it next to RecordFor): the caller's ACTUAL realized platform cut is recorded
+// verbatim instead of re-deriving it from the live rate card.
+type ExactCommissionRecorder interface {
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// recordCommissionExactSafe records the realized profit using platformKobo (the cut
+// the settlement legs really moved) when the recorder supports it, else falls back
+// to the rate-card RecordFor. Best-effort; never affects the caller.
+func (s *Service) recordCommissionExactSafe(ctx context.Context, category, service, subtype string, grossKobo, platformKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	ex, ok := s.commission.(ExactCommissionRecorder)
+	if !ok {
+		s.recordCommissionSafe(ctx, category, service, subtype, grossKobo, sourceRef, userID)
+		return
+	}
+	if err := ex.RecordExact(ctx, category, service, subtype, grossKobo, platformKobo,
+		"transport", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[transport] commission record exact (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
 	}
 }
 

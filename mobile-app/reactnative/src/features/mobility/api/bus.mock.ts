@@ -83,6 +83,7 @@ export const busTicketStore: { tickets: BusTicket[] } = {
       departAt: iso(86_400_000 * 5), arriveAt: iso(86_400_000 * 5 - 9_000_000),
       seatNumber: 'B3', passengerName: 'Tunde Bello', fareKobo: 4_200_00, currency: 'NGN',
       qrCode: 'PMX-BUS-tkt_h1', paymentStatus: 'settled', createdAt: iso(86_400_000 * 6),
+      refundStatus: 'none', cancelDeadline: null, cancelCutoffMinutes: null, cancellable: false,
     },
   ],
 };
@@ -107,5 +108,9 @@ export function makeBusTicket(req: BusBookRequest): BusTicket {
     qrCode: `PMX-BUS-${id}`,
     paymentStatus: 'settled',
     createdAt: iso(),
+    refundStatus: 'none',
+    cancelDeadline: new Date(Date.parse(schedule?.departAt ?? isoAhead(6 * 3_600_000)) - 2 * 3_600_000).toISOString(),
+    cancelCutoffMinutes: 120,
+    cancellable: true,
   };
 }

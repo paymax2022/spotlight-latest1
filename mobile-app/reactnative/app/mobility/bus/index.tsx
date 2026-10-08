@@ -21,6 +21,7 @@ import { BUS_ENABLED, BUS_PHASE_LABEL } from '@/features/mobility/constants/mode
 import { useBusSearch, useBusProviders, useProviderMe } from '@/features/mobility/hooks/useBusMarketplace';
 import { useBusTickets } from '@/features/mobility/hooks/useModes';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import { busPhaseTone } from '@/features/mobility/utils/busTicket';
 import type { BusTrip, BusProviderListItem, BusSearchParams, BusTripKind } from '@/features/mobility/types/busProvider.types';
 
 type Tab = 'book' | 'providers' | 'tickets';
@@ -354,7 +355,7 @@ function TicketsTab() {
             <Text style={styles.routeLine}>{t.routeLabel}</Text>
             <Text style={styles.meta}>{time(t.departAt)} · Seat {t.seatNumber} · {formatNairaWhole(t.fareKobo)}</Text>
             <View style={styles.badgeRow}>
-              <StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={t.phase === 'completed' ? 'success' : t.phase === 'cancelled' || t.phase === 'refunded' ? 'danger' : 'info'} />
+              <StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={busPhaseTone(t.phase)} />
             </View>
           </View>
           <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />

@@ -171,8 +171,8 @@ services:
       - key: LOG_LEVEL
         value: info
 
-  # The binary exits 0 immediately when FEATURE_TRANSPORT_SCHEDULING_ENABLED is
-  # unset (cmd/transport-scheduler/main.go); on Render that is a restart loop,
+  # The binary exits 0 immediately when FEATURE_TRANSPORT_SCHEDULING_ENABLED (and the
+  # bus sweeper flags) are unset (cmd/transport-scheduler/main.go); on Render that is a restart loop,
   # so the wrapper idles until the flag ships with the module.
   - type: worker
     name: spotlight-transport-scheduler
@@ -180,8 +180,8 @@ services:
     runtime: docker
     region: ohio
     startCommand: >-
-      /bin/sh -c 'if [ "$FEATURE_TRANSPORT_SCHEDULING_ENABLED" != "true" ]; then
-      echo "transport-scheduler: flag off — idling until enabled";
+      /bin/sh -c 'if [ "$FEATURE_TRANSPORT_SCHEDULING_ENABLED" != "true" ] && [ "$FEATURE_TRANSPORT_MODES_ENABLED" != "true" ] && [ "$FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT" != "true" ] && [ "$FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER" != "true" ]; then
+      echo "transport-scheduler: flags off — idling until enabled";
       while true; do sleep 86400; done; fi;
       exec /app/transport-scheduler'
     dockerfile: ./Dockerfile
@@ -198,6 +198,16 @@ services:
           name: spotlight-redis
           property: connectionString
       - key: FEATURE_TRANSPORT_SCHEDULING_ENABLED
+        value: "false"
+      # Wallet bus sweeper (ADR-PR559-bus-wallet-fixes): deferred settlement at
+      # departure+grace, refund retries, schedule/ticket lifecycle. Keep in sync
+      # with the API service's FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT.
+      # Bus refund retries / orphan-escrow reversal run whenever modes are on.
+      - key: FEATURE_TRANSPORT_MODES_ENABLED
+        value: "false"
+      - key: FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT
+        value: "false"
+      - key: FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER
         value: "false"
       - key: ENVIRONMENT
         value: production

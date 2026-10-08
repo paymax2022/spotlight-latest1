@@ -70,6 +70,9 @@ type BusProviderScheduleRequest struct {
 	DepartureTime string `json:"departure_time" binding:"required"` // RFC3339
 	TotalSeats    int    `json:"total_seats" binding:"required,min=1,max=80"`
 	FareKobo      int64  `json:"fare_kobo" binding:"required,min=0"`
+	// CancelCutoffMinutes optionally overrides the self-service cancel cutoff for
+	// deferred-settlement tickets on this schedule (60-1440; default 120).
+	CancelCutoffMinutes *int `json:"cancel_cutoff_minutes"`
 }
 
 // providerForUser resolves the caller's provider row id. Returns a 403 when the
@@ -276,12 +279,15 @@ func (s *Service) CreateProviderSchedule(ctx context.Context, userID, routeID st
 	if err != nil {
 		return nil, codedErr(http.StatusBadRequest, "INVALID_TIME", "departure_time must be RFC3339")
 	}
+	if err := validateCancelCutoff(req.CancelCutoffMinutes); err != nil {
+		return nil, err
+	}
 	id := uuid.New().String()
 	const q = `
 		INSERT INTO bus_schedules
-			(id, route_id, departure_time, total_seats, fare_kobo, fare_approved, status)
-		VALUES ($1,$2,$3,$4,$5,TRUE,'scheduled')`
-	if _, err := s.db.Exec(ctx, q, id, routeID, dep, req.TotalSeats, req.FareKobo); err != nil {
+			(id, route_id, departure_time, total_seats, fare_kobo, fare_approved, status, cancel_cutoff_minutes)
+		VALUES ($1,$2,$3,$4,$5,TRUE,'scheduled',$6)`
+	if _, err := s.db.Exec(ctx, q, id, routeID, dep, req.TotalSeats, req.FareKobo, req.CancelCutoffMinutes); err != nil {
 		return nil, fmt.Errorf("transport: create provider schedule: %w", err)
 	}
 	s.recordModeEvent(ctx, userID, "bus.provider.schedule.create", "bus_schedule", id, "", "scheduled",
