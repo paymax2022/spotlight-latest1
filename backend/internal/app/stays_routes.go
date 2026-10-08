@@ -172,6 +172,7 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	ag.GET("/mapping-queue", guard("stays.admin.mapping"), adminHandler.ListMappingQueue)
 	ag.POST("/mapping-queue/:id/decision", guard("stays.admin.mapping"), adminHandler.DecideMapping)
 	// Property moderation.
+	ag.GET("/properties", guard("stays.admin.moderation"), adminHandler.ListModeration)
 	ag.POST("/properties/:id/status", guard("stays.admin.moderation"), adminHandler.ModerateProperty)
 	// Reservation search (ops support).
 	ag.GET("/reservations", guard("stays.admin.reservation"), reservationHandler.AdminSearch)

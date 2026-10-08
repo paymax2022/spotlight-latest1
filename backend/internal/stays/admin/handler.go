@@ -129,7 +129,7 @@ func (h *Handler) DecideMapping(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
 
-// ModerateProperty (admin): POST /properties/:id/status {status}
+// ModerateProperty (admin): POST /properties/:id/status {status} — console or DB vocabulary (see moderation.go).
 func (h *Handler) ModerateProperty(c *gin.Context) {
 	var body struct {
 		Status string `json:"status" binding:"required"` // ACTIVE | SUSPENDED | PENDING_REVIEW | DRAFT
@@ -138,9 +138,14 @@ func (h *Handler) ModerateProperty(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	dbStatus, ok := moderationDBStatus(body.Status)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "unknown status"})
+		return
+	}
 	ct, err := h.db.Exec(c.Request.Context(), `
 		UPDATE public.stays_property SET status = $2, updated_at = now() WHERE id = $1`,
-		c.Param("id"), body.Status)
+		c.Param("id"), dbStatus)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
