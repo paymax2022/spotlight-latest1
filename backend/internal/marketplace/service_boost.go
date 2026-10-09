@@ -21,6 +21,13 @@ const (
 	maxCustomBoostDays = 90
 )
 
+// boostSellerCancelReason is the rejection_reason_code CancelBoost stamps when
+// a seller stops their own boost. It is what separates a seller-chosen
+// cancellation from an admin policy rejection on the shared auto_refunded
+// terminal status — FileAppeal's standing-action gate reads it to refuse
+// appeals against boosts the seller cancelled themself.
+const boostSellerCancelReason = "seller_cancelled"
+
 // service_boost.go implements the §2.4 Boost FSM: wallet-direct charge on purchase
 // (no separate ad-balance) and an automatic refund on admin/system reject.
 // Ledger refs / idem keys:
@@ -334,7 +341,7 @@ func (s *Service) CancelBoost(ctx context.Context, sellerID, boostID string) (*B
 			return nil, err
 		}
 	}
-	cancelReason := "seller_cancelled"
+	cancelReason := boostSellerCancelReason
 
 	// proratedBoostRefund reads only the ORIGINAL boost row already loaded above
 	// (b.StartsAt/b.EndsAt/b.PriceKobo) plus the current time — computed here, in

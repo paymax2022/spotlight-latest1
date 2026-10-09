@@ -501,6 +501,16 @@ func (s *Service) ResumeListing(ctx context.Context, sellerID, id string) (*List
 	if !l.ExpiresAt.IsZero() && time.Now().After(l.ExpiresAt) {
 		return nil, newErr(422, CodeListingNotActive, "listing has expired; renew instead")
 	}
+	// Resume is specifically paused → active. guardListingTransition(l.Status,
+	// ListingActive) alone would also pass for draft/pending_review/expired —
+	// those have their own, differently-gated edges to active (auto-approve /
+	// approve / renew) — letting a never-paused listing fall through to a 0-row
+	// UPDATE that reports ErrConflict "conflicting concurrent write": a phantom
+	// race on a transition that was simply illegal. Check the FROM status
+	// explicitly here, the same pattern RenewListing applies to expired.
+	if l.Status != ListingPaused {
+		return nil, illegalListingTransition(l.Status, ListingActive)
+	}
 	return s.sellerListingTransition(ctx, sellerID, id, ListingPaused, ListingActive)
 }
 
@@ -793,14 +803,22 @@ var listingTransitions = fsm.Table[ListingStatus]{
 	),
 }
 
+// illegalListingTransition builds the typed 409 for a forbidden from → to edge —
+// shared by the FSM guard and by call sites that must refuse a transition whose
+// TARGET is reachable through a different edge (e.g. resume on a listing that
+// was never paused).
+func illegalListingTransition(from, to ListingStatus) *CodedError {
+	return &CodedError{
+		Status:  http.StatusConflict,
+		Code:    CodeInvalidListingTransition,
+		Message: "illegal listing transition " + string(from) + " → " + string(to),
+	}
+}
+
 // guardListingTransition returns a typed error when from → to is illegal.
 func guardListingTransition(from, to ListingStatus) error {
 	if !listingTransitions.Can(from, to) {
-		return &CodedError{
-			Status:  http.StatusConflict,
-			Code:    CodeInvalidListingTransition,
-			Message: "illegal listing transition " + string(from) + " → " + string(to),
-		}
+		return illegalListingTransition(from, to)
 	}
 	return nil
 }

@@ -293,6 +293,46 @@ func (s *Service) LogViewAs(ctx context.Context, adminID, adminRole, userID, rea
 // an 'overturn' decision — an 'uphold' executes immediately (see
 // repository_admin_appeals.go ProposeAppealDecision doc comment).
 
+// appealableActions is the closed vocab of moderation actions a member may
+// claim per target_type — the same values mkt_appeals.original_action's own
+// doc comment cites ('removed_policy', 'rejected_with_reason', 'suspended'),
+// extended to the full standing-action vocabulary each target type can
+// actually be left in (a banned user appeals 'banned'; a rejected boost sits
+// at rejected_with_reason or its auto_refunded terminal). A claim outside
+// this list is fabricated — no moderation path can produce it — so the queue
+// should never see it.
+var appealableActions = map[AppealTargetType]map[string]bool{
+	AppealTargetListing: {
+		string(ListingRemovedPolicy): true,
+	},
+	AppealTargetBoost: {
+		string(BoostRejectedWithReason): true,
+		string(BoostAutoRefunded):       true,
+	},
+	AppealTargetUser: {
+		string(UserStatusSuspended): true,
+		string(UserStatusBanned):    true,
+	},
+}
+
+// boostHasStandingRejection reports whether a boost currently carries a real
+// moderation rejection — the state an appeal can legitimately contest.
+// auto_refunded is the terminal state for BOTH an admin policy rejection and
+// a seller self-cancel (CancelBoost stamps boostSellerCancelReason), so the
+// reason code is what separates "a moderator took this down" from "the seller
+// stopped it themself" — appealing your own cancellation is the same forgery
+// class as a fabricated action string.
+func boostHasStandingRejection(b *Boost) bool {
+	switch b.Status {
+	case BoostRejectedWithReason:
+		return true
+	case BoostAutoRefunded:
+		return b.RejectionReasonCode != nil && *b.RejectionReasonCode != boostSellerCancelReason
+	default:
+		return false
+	}
+}
+
 // FileAppeal is the member-facing POST /appeals (auth, no RBAC) AND the
 // admin-on-behalf-of-member path — same method, different caller context.
 func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateAppealInput) (*Appeal, error) {
@@ -305,6 +345,12 @@ func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateA
 	if _, err := uuid.Parse(in.TargetID); err != nil {
 		return nil, fieldErr(CodeValidation, "target_id must be a uuid", colTargetId)
 	}
+	if in.OriginalAction == "" {
+		return nil, fieldErr(CodeValidation, "original_action is required", "original_action")
+	}
+	if !appealableActions[AppealTargetType(in.TargetType)][in.OriginalAction] {
+		return nil, fieldErr(CodeValidation, "original_action is not a moderation action that applies to this target_type", "original_action")
+	}
 	if in.OriginalReasonCode == "" {
 		return nil, fieldErr(CodeValidation, "original_reason_code is required", "original_reason_code")
 	}
@@ -313,9 +359,11 @@ func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateA
 	}
 	// Existence + standing: an appeal is filed by the member the moderation
 	// action was taken AGAINST, so the target must resolve to a real row the
-	// appellant owns (a 'user' target can only ever be the appellant themself).
-	// Without this a fabricated target_id/original_action pair creates an
-	// appeal against a listing/user the caller has no relation to.
+	// appellant owns (a 'user' target can only ever be the appellant themself)
+	// AND must currently carry the moderation action being appealed — a member
+	// who was never suspended cannot appeal a suspension. Without this a
+	// fabricated target_id/original_action pair creates an appeal against a
+	// listing/user the caller has no relation to, flooding the admin queue.
 	switch AppealTargetType(in.TargetType) {
 	case AppealTargetListing:
 		l, err := s.repo.GetListing(ctx, in.TargetID)
@@ -325,6 +373,9 @@ func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateA
 		if l.SellerID != appellantID {
 			return nil, ErrForbidden
 		}
+		if l.Status != ListingRemovedPolicy {
+			return nil, ErrNoAppealableAction
+		}
 	case AppealTargetBoost:
 		b, err := s.repo.GetBoost(ctx, in.TargetID)
 		if err != nil {
@@ -333,12 +384,25 @@ func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateA
 		if b.SellerID != appellantID {
 			return nil, ErrForbidden
 		}
+		if !boostHasStandingRejection(b) {
+			return nil, ErrNoAppealableAction
+		}
 	case AppealTargetUser:
+		// Self-check BEFORE the platform_users read: a member can only appeal a
+		// moderation action against their own account, so a foreign id is 403
+		// without revealing whether that user row exists.
+		if in.TargetID != appellantID {
+			return nil, ErrForbidden
+		}
 		if _, err := s.repo.GetPlatformUserBasics(ctx, in.TargetID); err != nil {
 			return nil, err
 		}
-		if in.TargetID != appellantID {
-			return nil, ErrForbidden
+		mod, err := s.repo.GetUserModeration(ctx, in.TargetID, DefaultMarketID)
+		if err != nil {
+			return nil, err
+		}
+		if mod == nil || (mod.Status != string(UserStatusSuspended) && mod.Status != string(UserStatusBanned)) {
+			return nil, ErrNoAppealableAction
 		}
 	}
 	a, err := s.repo.InsertAppeal(ctx, DefaultMarketID, appellantID, in.TargetType, in.TargetID, in.OriginalAction, in.OriginalReasonCode, in.AppellantNote)
