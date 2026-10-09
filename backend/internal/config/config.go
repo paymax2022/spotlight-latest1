@@ -102,6 +102,10 @@ type Config struct {
 	MapleradPublicKey     string
 	MapleradProd          bool
 	MapleradWebhookSecret string
+	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
+	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
+	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
+	MapleradBaseURL string
 	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
@@ -799,6 +803,7 @@ func Load() Config {
 		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
 		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
 		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
 		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 

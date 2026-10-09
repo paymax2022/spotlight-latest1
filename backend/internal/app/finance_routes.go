@@ -249,7 +249,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// no issuer is configured (store then keeps synthesized card material).
 	var cardIssuer providerInterfaces.CardIssuer
 	if mapleradKey != "" {
-		mapleradClient = maplerad.New(mapleradKey, cfg.MapleradProd)
+		mapleradClient = maplerad.New(mapleradKey, cfg.MapleradProd).WithBaseURL(cfg.MapleradBaseURL)
 		vaProvider = mapleradClient
 		paymentProvider = mapleradClient // use Maplerad as payment provider too when available
 		cardIssuer = mapleradClient
@@ -760,7 +760,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		var mplProvider orchestration.Provider
 		if cfg.MapleradSecretKey != "" {
 			mplProvider = adapters.NewMapleradLive(
-				maplerad.New(cfg.MapleradSecretKey, cfg.MapleradProd),
+				maplerad.New(cfg.MapleradSecretKey, cfg.MapleradProd).WithBaseURL(cfg.MapleradBaseURL),
 				cfg.MapleradWebhookSecret, cfg.MapleradProd,
 			)
 			log.Println("[finance] FX orchestration: Maplerad LIVE adapter enabled")
@@ -955,6 +955,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// reconcile + orphan-sweep jobs run as ctx-scoped goroutines.
 	if cfg.FeatureMapleradEnabled && pool != nil {
 		mplClient := maplerad.New(cfg.MapleradSecretKey, cfg.MapleradProd).
+			WithBaseURL(cfg.MapleradBaseURL).
 			WithWebhookSecret(cfg.MapleradWebhookSecret)
 		mplSvc := mapleraddomain.NewService(mapleraddomain.Deps{
 			Pool:         pool,
