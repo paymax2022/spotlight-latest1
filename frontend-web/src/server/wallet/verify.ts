@@ -1,4 +1,5 @@
 import { findTopupIntent, settleTopupIntent, type SettlementResult } from './settle';
+import { paystackApiBase } from '@/src/server/payments/paystack-base';
 
 /**
  * Verify-on-read settlement.
@@ -18,7 +19,10 @@ import { findTopupIntent, settleTopupIntent, type SettlementResult } from './set
  * marking it failed would strand money that is really there.
  */
 
-const PAYSTACK_VERIFY_URL = 'https://api.paystack.co/transaction/verify';
+// The verify endpoint is the settlement authority. PAYSTACK_BASE_URL (see
+// payments/paystack-base) retargets it at the tools/fakes rail for local e2e.
+const paystackVerifyUrl = (reference: string) =>
+  `${paystackApiBase()}/transaction/verify/${encodeURIComponent(reference)}`;
 
 export interface VerifyResult extends SettlementResult {
   /** Whether Paystack could be reached and gave a usable answer. */
@@ -60,7 +64,7 @@ export async function verifyAndSettleTopup(
 
   let payload: { status?: boolean; data?: { status?: string; amount?: number } | null };
   try {
-    const res = await fetch(`${PAYSTACK_VERIFY_URL}/${encodeURIComponent(reference)}`, {
+    const res = await fetch(paystackVerifyUrl(reference), {
       headers: { Authorization: `Bearer ${secretKey}` },
       cache: 'no-store',
     });

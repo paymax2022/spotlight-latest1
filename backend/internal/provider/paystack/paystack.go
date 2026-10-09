@@ -17,18 +17,34 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-const baseURL = "https://api.paystack.co"
+const defaultBaseURL = "https://api.paystack.co"
 
 // Client implements provider.PaymentProvider and provider.VirtualAccountProvider.
 type Client struct {
 	secretKey  string
+	baseURL    string
 	httpClient *http.Client
 }
 
-// New creates a Paystack client.
+// New creates a Paystack client against the live API.
 func New(secretKey string) *Client {
+	return NewWithBaseURL(secretKey, "")
+}
+
+// NewWithBaseURL creates a Paystack client against a non-default API base URL —
+// the seam a local/dev environment uses to point the whole provider surface
+// (initialize/verify/refund/transfers/VA) at the Paystack fake (tools/fakes)
+// via PAYSTACK_BASE_URL instead of api.paystack.co. An empty baseURL keeps the
+// live default; a configured one has any trailing slash trimmed so request
+// paths stay "/transaction/verify/..." shaped.
+func NewWithBaseURL(secretKey, baseURL string) *Client {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
 	return &Client{
 		secretKey:  secretKey,
+		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -485,7 +501,7 @@ func (c *Client) post(ctx context.Context, path string, body, dst any) error {
 	if err != nil {
 		return fmt.Errorf("paystack: marshal request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -495,7 +511,7 @@ func (c *Client) post(ctx context.Context, path string, body, dst any) error {
 }
 
 func (c *Client) get(ctx context.Context, path string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}

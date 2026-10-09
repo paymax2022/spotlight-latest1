@@ -413,6 +413,9 @@ var (
 	// ErrOfferingSoldOut means units_sold + requested units would exceed the
 	// offering's share_count — a round can never issue more units than exist.
 	ErrOfferingSoldOut = errors.New("fractionalre: offering has insufficient units remaining")
+	// ErrNoCapTable means a distribution was scheduled for an asset whose cap
+	// table is empty — a lifecycle precondition failure, not a server fault.
+	ErrNoCapTable = errors.New("fractionalre: no cap-table holders to distribute to")
 	// ErrAmountOverflow means an integer-kobo multiplication would wrap —
 	// fail-closed before any ticket/cap check can be bypassed by a wrapped sum.
 	ErrAmountOverflow = errors.New("fractionalre: amount computation overflow")

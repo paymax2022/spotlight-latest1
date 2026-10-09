@@ -622,7 +622,7 @@ func (r *Repository) GradeAttempt(
 			INSERT INTO public.academy_skill_attempts
 				(id, user_id, assessment_id, score, passed, state, idempotency_key)
 			VALUES ($1,$2,$3,$4,$5,'graded',$6)
-			ON CONFLICT (idempotency_key) DO NOTHING
+			ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 			RETURNING id`
 		err := tx.QueryRow(ctx, ins, id, userID, assessmentID, score, passed, dbutil.NullStr(idemKey)).Scan(&attemptID)
 		if errors.Is(err, pgx.ErrNoRows) {

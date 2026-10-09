@@ -618,7 +618,11 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrChargeNotSuccessful):
 		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
-	case errors.Is(err, ErrAmountMismatch):
+	case errors.Is(err, ErrAmountMismatch), errors.Is(err, restaurant.ErrExternalAmountMismatch):
+		// Either the gateway verified a different amount than the frozen quote,
+		// or the order's recomputed total drifted between payment and
+		// placement. Both auto-refund before surfacing — a conflict, not a
+		// server fault (the restaurant handler maps the same sentinel to 409).
 		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, restaurant.ErrPromoInvalid):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "promo_invalid", keyMessage: httperr.Msg(c, http.StatusUnprocessableEntity, err)})

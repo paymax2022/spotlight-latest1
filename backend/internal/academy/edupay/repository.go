@@ -508,9 +508,12 @@ func (r *Repository) ListScholarships(ctx context.Context) ([]Scholarship, error
 func insertAward(ctx context.Context, q querier, scholarshipID, userID, feeScheduleID string, amountMinor int64, idemKey string) (*ScholarshipAward, bool, error) {
 	id := uuid.New().String()
 	now := time.Now()
+	// uq_academy_scholaward_idem is a partial unique index, so the arbiter must
+	// repeat the index predicate — a bare ON CONFLICT (idempotency_key) matches
+	// no index and raises 42P10.
 	const ins = `INSERT INTO academy_scholarship_awards (id, scholarship_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, created_at)
 	             VALUES ($1,$2,$3,$4,$5,'granted',$6,$7)
-	             ON CONFLICT (idempotency_key) DO NOTHING`
+	             ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	tag, err := q.Exec(ctx, ins, id, scholarshipID, userID, dbutil.NullStr(feeScheduleID), amountMinor, dbutil.NullStr(idemKey), now)
 	if err != nil {
 		return nil, false, err
