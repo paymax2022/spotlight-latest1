@@ -158,8 +158,36 @@ func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision Dispu
 		}
 		return fmt.Errorf("escrow: load hold for arbitration: %w", err)
 	}
-	if State(state) != StateDisputed {
-		return fmt.Errorf("escrow: hold not in DISPUTED state (%s)", state)
+	st := State(state)
+	if st != StateDisputed {
+		// Convergent heal (mirrors resolve's from==to path): a prior Arbitrate
+		// may have committed the hold's terminal state — and its money leg —
+		// then died before marking the dispute RESOLVED. From then on this
+		// guard rejected every retry and the dispute stayed OPEN forever even
+		// though the decision already took effect. When the stored terminal
+		// state MATCHES the decision AND an OPEN dispute is still waiting, fall
+		// through: resolve() re-verifies the money leg (healing it if the prior
+		// attempt died even earlier, between the state commit and the credit)
+		// and the dispute closes below. A terminal state contradicting the
+		// decision still fails closed — resolve's FSM rejects RELEASED ->
+		// REFUNDED and vice versa before any money moves.
+		terminalMatch := (decision == DecisionRelease && st == StateReleased) ||
+			(decision == DecisionRefund && st == StateRefunded)
+		if !terminalMatch {
+			return fmt.Errorf("escrow: hold not in DISPUTED state (%s)", state)
+		}
+		if s.hasOpenDispute(ctx, escrowID) {
+			// Wedge heal: the decision took effect but the dispute row never
+			// closed — fall through so resolve() re-verifies the money leg and
+			// the update below marks it RESOLVED.
+		} else if s.disputeResolvedAs(ctx, escrowID, decision) {
+			// Fully-converged replay: the hold is terminal AND the dispute is
+			// already RESOLVED with this exact decision — a retry of a
+			// completed arbitration is a no-op success, not an error.
+			return nil
+		} else {
+			return fmt.Errorf("escrow: hold not in DISPUTED state (%s)", state)
+		}
 	}
 	// Separation of duties (NL-12): an arbiter cannot rule on their own escrow.
 	if arbiterID == payerID || (payeeID != nil && arbiterID == *payeeID) {
@@ -184,8 +212,16 @@ func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision Dispu
 	dec := string(decision)
 	const upd = `UPDATE escrow_disputes SET state='RESOLVED', decision=$2, arbiter_id=$3, resolved_at=$4
 	             WHERE escrow_id=$1 AND state='OPEN'`
-	if _, err := s.db.Exec(ctx, upd, escrowID, dec, arbiterID, now); err != nil {
+	ct, err := s.db.Exec(ctx, upd, escrowID, dec, arbiterID, now)
+	if err != nil {
 		return fmt.Errorf("escrow: resolve dispute: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// A racing arbiter closed the dispute between the hasOpenDispute check
+		// and this update. The hold already converged through resolve() and the
+		// winner's row carries their arbiter identity — return success but emit
+		// NO audit, so a loser never misattributes the ruling to themselves.
+		return nil
 	}
 
 	if s.audit != nil {
@@ -195,6 +231,34 @@ func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision Dispu
 			"", "", "warning")
 	}
 	return nil
+}
+
+// hasOpenDispute reports whether an OPEN dispute row still waits on this hold.
+// It gates the Arbitrate heal path, so it fails CLOSED: a lookup error reads as
+// "no wedge to heal" and the caller keeps the original not-DISPUTED refusal.
+func (s *Service) hasOpenDispute(ctx context.Context, escrowID string) bool {
+	var exists bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM escrow_disputes WHERE escrow_id=$1 AND state='OPEN')`,
+		escrowID).Scan(&exists); err != nil {
+		return false
+	}
+	return exists
+}
+
+// disputeResolvedAs reports whether the most recent RESOLVED dispute for this
+// hold carries exactly this decision — the idempotent-replay check that lets a
+// retry of a fully-completed Arbitrate no-op instead of erroring. Fails CLOSED:
+// any lookup error or absent decision reads as "not resolved that way" and the
+// caller keeps the original not-DISPUTED refusal.
+func (s *Service) disputeResolvedAs(ctx context.Context, escrowID string, decision DisputeDecision) bool {
+	var dec string
+	err := s.db.QueryRow(ctx,
+		`SELECT decision FROM escrow_disputes
+		 WHERE escrow_id=$1 AND state='RESOLVED'
+		 ORDER BY resolved_at DESC LIMIT 1`,
+		escrowID).Scan(&dec)
+	return err == nil && dec == string(decision)
 }
 
 // GetDispute returns the latest dispute for a hold (callers/RLS enforce scoping).

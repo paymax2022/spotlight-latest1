@@ -119,7 +119,7 @@ func (h *Handler) Checkout(c *gin.Context) {
 		switch {
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
-		case errors.Is(err, escrow.ErrTierGateUnwired):
+		case errors.Is(err, escrow.ErrTierGateUnwired), errors.Is(err, escrow.ErrReconPending):
 			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
@@ -182,6 +182,8 @@ func (h *Handler) Arbitrate(c *gin.Context) {
 		status := http.StatusBadRequest
 		if errors.Is(err, escrow.ErrArbiterConflict) {
 			status = http.StatusForbidden
+		} else if errors.Is(err, escrow.ErrReconPending) {
+			status = http.StatusServiceUnavailable
 		}
 		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
 		return

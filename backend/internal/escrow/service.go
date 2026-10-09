@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -33,6 +34,15 @@ type walletDebitLimiter interface {
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("escrow: money path requires a tier gate (not wired)")
+
+// ErrReconPending marks a transient ledger/idempotency inconsistency: a store
+// reported ErrDuplicate for a key whose journal is NOT durably posted (e.g.
+// the Redis idem-lock TTL outliving a failed post). It is RETRYABLE — callers
+// should map it to a 503-style response so the client retries; a later attempt
+// either posts the leg or heals it (same convention as ErrTierGateUnwired ->
+// 503 in p2pmarket/handler.go). Distinct from ledger.ErrDuplicate, which is a
+// permanent identity conflict and must stay non-retryable.
+var ErrReconPending = errors.New("escrow: ledger reported duplicate but the journal is not posted — retryable inconsistency")
 
 // Service is a generic, ledger-backed funds-hold state machine reusable by
 // social / events / creators. It extends the finance ledger directly: a HELD
@@ -83,7 +93,18 @@ func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKo
 
 // Hold debits the payer's wallet into the escrow account and records a HELD hold.
 // idemKey makes the whole operation replay-safe: the ledger debit is suffixed
-// per-leg and the hold row carries a UNIQUE idempotency_key.
+// per-leg ("<idemKey>:hold") and the hold row carries a UNIQUE idempotency_key.
+//
+// Commit ordering (same constraint as resolve): the ledger API opens its own
+// transaction, so the debit posts BEFORE the escrow_holds insert rather than
+// atomically with it. A crash between the two leaves the payer's money parked
+// in the escrow standing account with no hold row — and a naive retry then
+// wedges twice: the Redis idem-lock reports ErrDuplicate inside its TTL, and
+// the tier gate re-counts the already-posted debit against today's cap
+// (getDailyDebited sums ledger_entries), refusing the very replay meant to
+// heal. The replay converges by probing the ledger of record FIRST: an
+// already-posted leg skips both the gate and the re-debit, is verified to be
+// THIS journal, and the missing row is healed by the insert below.
 func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idemKey string, amountKobo int64) (*Hold, error) {
 	if amountKobo <= 0 {
 		return nil, fmt.Errorf("escrow: amount must be positive kobo, got %d", amountKobo)
@@ -97,22 +118,40 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 		return existing, nil
 	}
 
-	// Tier gate (fail-closed, E2E-FIN-046): a hold is a wallet debit, so the
-	// same EnforceWalletDebitLimit the transfer rail applies runs BEFORE money
-	// moves — a refused attempt posts zero ledger legs and no hold row. Replays
-	// already returned the existing hold above, so a completed key never
-	// reaches this gate.
-	if err := s.enforceDebitLimit(ctx, payerID, amountKobo); err != nil {
-		return nil, err
-	}
-
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
 	}
-	// NL-1: ledger.Debit fails closed on insufficient funds — no negative balance.
-	if err := s.led.Debit(ctx, payerID, "escrow:"+reference, idemKey+":hold", escrowAcc.ID, amountKobo); err != nil {
-		return nil, fmt.Errorf("escrow: hold debit: %w", err)
+
+	holdKey := idemKey + ":hold"
+	posted, err := s.led.Posted(ctx, holdKey)
+	if err != nil {
+		return nil, fmt.Errorf("escrow: verify hold debit: %w", err)
+	}
+	if posted {
+		// Heal path: the debit committed on a prior attempt that died before the
+		// insert. Confirm the recorded pair is THIS journal — BOTH legs, since
+		// the credit leg (escrow standing account) is identical for every payer —
+		// then skip both the tier gate (the money already moved; re-counting it
+		// would refuse a same-day replay on the daily cap) and the re-debit, and
+		// let the row insert below heal the missing hold.
+		if err := s.verifyHoldDebitLeg(ctx, payerID, holdKey, reference, escrowAcc.ID, amountKobo); err != nil {
+			return nil, err
+		}
+	} else {
+		// Tier gate (fail-closed, E2E-FIN-046): a hold is a wallet debit, so the
+		// same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
+		// money moves — a refused attempt posts zero ledger legs and no hold
+		// row. Fresh attempts only: replays of a completed key already returned
+		// the existing hold above, and replays of a debit-only crash take the
+		// heal branch.
+		if err := s.enforceDebitLimit(ctx, payerID, amountKobo); err != nil {
+			return nil, err
+		}
+		// NL-1: ledger.Debit fails closed on insufficient funds — no negative balance.
+		if err := s.postHoldDebit(ctx, payerID, reference, holdKey, escrowAcc.ID, amountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	h := &Hold{
@@ -129,10 +168,84 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 		INSERT INTO escrow_holds (id, reference, module_type, payer_id, amount_kobo, state, idempotency_key, held_at)
 		VALUES ($1,$2,$3,$4,$5,'HELD',$6,$7)`
 	if _, err := s.db.Exec(ctx, ins, h.ID, h.Reference, h.ModuleType, h.PayerID, h.AmountKobo, h.IdempotencyKey, h.HeldAt); err != nil {
+		// A concurrent Hold with the same key won the insert race — converge on
+		// its persisted row instead of surfacing a raw unique violation (the
+		// shared ledger leg is keyed on idemKey, so the winner's row correctly
+		// represents the posted debit either way).
+		if dbutil.IsUniqueViolation(err) {
+			if existing, gerr := s.getByIdem(ctx, idemKey); gerr == nil && existing != nil {
+				return existing, nil
+			}
+		}
 		return nil, fmt.Errorf("escrow: insert hold: %w", err)
 	}
 	s.logTransition("", h, StateHeld, "escrow.hold")
 	return h, nil
+}
+
+// postHoldDebit posts the payer->escrow debit leg for a fresh hold. On
+// ledger.ErrDuplicate the ledger of record is re-probed — the Redis idem-lock
+// can report a duplicate within its TTL for a posting the DB never recorded,
+// and a racing poster may have committed the identical journal. A durably
+// posted matching leg is a no-op success; a foreign claim under the key fails
+// closed via verifyHoldDebitLeg (mirrors ensureResolutionCredit).
+func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey, escrowAccID string, amountKobo int64) error {
+	err := s.led.Debit(ctx, payerID, "escrow:"+reference, holdKey, escrowAccID, amountKobo)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ledger.ErrDuplicate) {
+		return fmt.Errorf("escrow: hold debit: %w", err)
+	}
+	posted, perr := s.led.Posted(ctx, holdKey)
+	if perr != nil {
+		return fmt.Errorf("escrow: verify hold debit after duplicate: %w", perr)
+	}
+	if !posted {
+		return fmt.Errorf("%w: hold debit for key %s", ErrReconPending, holdKey)
+	}
+	return s.verifyHoldDebitLeg(ctx, payerID, holdKey, reference, escrowAccID, amountKobo)
+}
+
+// verifyHoldDebitLeg confirms the balanced pair under holdKey is THIS hold's
+// journal, checking BOTH legs (the in-repo standard set by
+// repository.journalLegsMatchTx):
+//   - "<holdKey>:credit" must credit the escrow standing account the exact
+//     amount under the "escrow:<reference>" reference;
+//   - "<holdKey>:debit" must debit THIS caller's user_wallet — the credit leg
+//     is constant across payers, so checking it alone would let a replay
+//     carrying another payer's key adopt THEIR parked debit and write a hold
+//     row naming this caller as payer_id, handing them RaiseDispute/Refund
+//     control over funds they never paid.
+//
+// The payer's wallet resolves via GetOrCreateUserWallet — the same path Debit
+// uses internally — so the comparison is against the account the debit would
+// have hit. Any mismatch fails closed with ErrDuplicate semantics: never heal
+// a hold onto a caller whose debit wasn't theirs.
+func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, reference, escrowAccID string, amountKobo int64) error {
+	credit, found, err := s.led.EntryByKey(ctx, holdKey+":credit")
+	if err != nil {
+		return fmt.Errorf("escrow: read hold credit leg: %w", err)
+	}
+	if !found || credit.AccountID != escrowAccID || credit.Type != ledger.EntryCredit ||
+		credit.Reference != "escrow:"+reference || credit.AmountKobo != amountKobo {
+		return fmt.Errorf("%w: key %s held by a different journal — refusing to attach a hold row",
+			ledger.ErrDuplicate, holdKey)
+	}
+	payerAcc, err := s.led.GetOrCreateUserWallet(ctx, payerID)
+	if err != nil {
+		return fmt.Errorf("escrow: resolve payer wallet for debit-leg verification: %w", err)
+	}
+	debit, found, err := s.led.EntryByKey(ctx, holdKey+":debit")
+	if err != nil {
+		return fmt.Errorf("escrow: read hold debit leg: %w", err)
+	}
+	if !found || debit.AccountID != payerAcc.ID || debit.Type != ledger.EntryDebit ||
+		debit.Reference != "escrow:"+reference || debit.AmountKobo != amountKobo {
+		return fmt.Errorf("%w: key %s debit leg is not this payer's journal — refusing to attach a hold row",
+			ledger.ErrDuplicate, holdKey)
+	}
+	return nil
 }
 
 // Release moves the held amount from escrow to the payee (HELD|DISPUTED → RELEASED).
@@ -269,7 +382,7 @@ func (s *Service) ensureResolutionCredit(ctx context.Context, h *Hold, to State)
 				return false, fmt.Errorf("escrow: verify %s credit after duplicate: %w", leg, perr)
 			}
 			if !posted {
-				return false, fmt.Errorf("escrow: %s credit claimed duplicate but is not posted", leg)
+				return false, fmt.Errorf("%w: %s credit for key %s", ErrReconPending, leg, key)
 			}
 			return false, nil
 		}

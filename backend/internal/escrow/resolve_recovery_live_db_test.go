@@ -256,3 +256,131 @@ func TestLiveDB_Resolve_HappyPathStillExactlyOnce(t *testing.T) {
 		t.Fatalf("release credit entries = %d, want exactly 1", n)
 	}
 }
+
+// TestLiveDB_Arbitrate_HealsStuckOpenDispute plants the worst-case crash inside
+// Arbitrate: the prior attempt committed the hold's terminal state (RELEASED,
+// payee recorded) but died before BOTH the money leg and the dispute-row update.
+// A naive retry errored on "hold not in DISPUTED state" — leaving the dispute
+// OPEN forever even though the decision already took effect. The fix lets a
+// decision-consistent terminal state fall through: resolve() heals the missing
+// credit and the dispute is marked RESOLVED.
+func TestLiveDB_Arbitrate_HealsStuckOpenDispute(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 210_000
+	f.fund(t, f.payer, 800_000)
+
+	idem := "escrow-arb-heal-" + uuid.New().String()
+	h, err := f.svc.Hold(ctx, f.payer, "p2p:listing-arb", "p2pmarket", idem, amount)
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	if _, err := f.svc.RaiseDispute(ctx, h.ID, f.payer, "item not delivered"); err != nil {
+		t.Fatalf("raise dispute: %v", err)
+	}
+
+	// Simulate the crash mid-Arbitrate: the state commit landed (RELEASED +
+	// recorded payee), the credit and the dispute update never did.
+	if _, err := f.pool.Exec(ctx,
+		`UPDATE escrow_holds SET state='RELEASED', payee_id=$2, resolved_at=now() WHERE id=$1`,
+		h.ID, f.payee); err != nil {
+		t.Fatalf("plant crashed arbitration state: %v", err)
+	}
+
+	// Retry the same decision. The arbiter is the decoy (a non-party —
+	// separation of duties still applies on the heal path).
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRelease, f.decoy); err != nil {
+		t.Fatalf("arbitrate retry must heal money leg + dispute row, got %v", err)
+	}
+
+	if got := f.walletBalance(t, f.payee); got != amount {
+		t.Fatalf("payee balance = %d, want %d — crashed arbitration must heal the credit", got, amount)
+	}
+	if n := f.entryCount(t, idem+":release:credit"); n != 1 {
+		t.Fatalf("release credit entries = %d, want exactly 1", n)
+	}
+	d, err := f.svc.GetDispute(ctx, h.ID)
+	if err != nil {
+		t.Fatalf("load dispute: %v", err)
+	}
+	if d.State != "RESOLVED" || d.Decision == nil || *d.Decision != string(DecisionRelease) {
+		t.Fatalf("dispute = state %s decision %v, want RESOLVED/RELEASE", d.State, d.Decision)
+	}
+	if d.ArbiterID == nil || *d.ArbiterID != f.decoy {
+		t.Fatalf("dispute arbiter = %v, want %s", d.ArbiterID, f.decoy)
+	}
+}
+
+// TestLiveDB_Arbitrate_TerminalMismatchFailsClosed pins the fail-closed half:
+// a decision that contradicts the committed terminal state must NOT heal —
+// RELEASED+REFUND (or REFUNDED+RELEASE) is rejected before any money moves.
+func TestLiveDB_Arbitrate_TerminalMismatchFailsClosed(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 45_000
+	f.fund(t, f.payer, 200_000)
+
+	h, err := f.svc.Hold(ctx, f.payer, "p2p:listing-mismatch", "p2pmarket",
+		"escrow-arb-mismatch-"+uuid.New().String(), amount)
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	if _, err := f.svc.RaiseDispute(ctx, h.ID, f.payer, "changed my mind"); err != nil {
+		t.Fatalf("raise dispute: %v", err)
+	}
+
+	// Plant a REFUNDED terminal state (a prior arbitration ruled refund) with
+	// its credit posted — then a retry arriving with the OPPOSITE decision.
+	if err := f.svc.Refund(ctx, h.ID); err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRelease, f.decoy); err == nil {
+		t.Fatal("arbitrate RELEASE on a REFUNDED hold must fail closed")
+	}
+	if got := f.walletBalance(t, f.payee); got != 0 {
+		t.Fatalf("payee balance = %d, want 0 — a contradicting decision must not move money", got)
+	}
+}
+
+// TestLiveDB_Arbitrate_CompletedReplayNoOp pins full idempotency for Arbitrate:
+// a retry of a COMPLETED arbitration (terminal hold + dispute already RESOLVED)
+// is a no-op success when the requested decision matches the recorded ruling —
+// not a "not in DISPUTED state" error — while a contradicting decision still
+// fails closed. Runs the REAL path end-to-end (no planted state).
+func TestLiveDB_Arbitrate_CompletedReplayNoOp(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 95_000
+	f.fund(t, f.payer, 300_000)
+
+	idem := "escrow-arb-replay-" + uuid.New().String()
+	h, err := f.svc.Hold(ctx, f.payer, "p2p:listing-done", "p2pmarket", idem, amount)
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	if _, err := f.svc.RaiseDispute(ctx, h.ID, f.payer, "not as described"); err != nil {
+		t.Fatalf("raise dispute: %v", err)
+	}
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRefund, f.decoy); err != nil {
+		t.Fatalf("arbitrate: %v", err)
+	}
+	if got := f.walletBalance(t, f.payer); got != 300_000 {
+		t.Fatalf("payer balance after refund = %d, want %d", got, 300_000)
+	}
+
+	// Same decision again → no-op success; the refund leg stays exactly-once.
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRefund, f.decoy); err != nil {
+		t.Fatalf("completed-arbitration replay must be a no-op success, got %v", err)
+	}
+	if n := f.entryCount(t, idem+":refund:credit"); n != 1 {
+		t.Fatalf("refund credit entries = %d, want exactly 1", n)
+	}
+
+	// A contradicting decision on the resolved dispute still fails closed.
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRelease, f.decoy); err == nil {
+		t.Fatal("arbitrate RELEASE on a refund-resolved dispute must fail closed")
+	}
+	if got := f.walletBalance(t, f.payee); got != 0 {
+		t.Fatalf("payee balance = %d, want 0", got)
+	}
+}
