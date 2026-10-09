@@ -26,7 +26,7 @@ A third problem is semantic: "not finished" is wider than "waiting on an admin".
 1. **A queue belongs on the dashboard only if an admin must decide it.** Predicates name exactly the
    admin-actionable statuses, taken from the column's own CHECK/enum, not from a generic `status='pending'`.
 2. **Every queue links to the page that resolves it, or says it has none.** `attention.href` is a real admin page.
-   Where no working screen exists (stays hotelier KYB, health provider applications) `href` is empty and
+   Where no working screen exists (today: health provider applications) `href` is empty and
    `attention.note` states why; the dashboard renders the count and the note, never a link to a dead end.
    Showing the count is preferred to hiding real work.
 3. **Registry rows use named fields.** Positional literals compile when two SQL strings are swapped.
