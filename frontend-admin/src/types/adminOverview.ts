@@ -14,8 +14,10 @@ export type OverviewValue = {
 };
 
 export type OverviewAttention = OverviewValue & {
-  /** Deep link to the filtered queue, not just the module's home page. */
+  /** The page where an admin resolves the queue. Empty only when `note` explains why there is none. */
   href: string;
+  /** Present instead of `href` when the queue is real but no working review screen exists yet. */
+  note?: string;
   /** critical = money or compliance is blocked; warn = content/ops backlog. */
   severity: 'critical' | 'warn';
 };
