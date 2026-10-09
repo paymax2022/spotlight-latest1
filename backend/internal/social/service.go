@@ -589,8 +589,20 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	return nil
 }
 
-// GetSplit returns a bill + its shares (object-level authZ in handler).
-func (s *Service) GetSplit(ctx context.Context, splitID string) (*SplitBill, []SplitShare, error) {
+// GetSplit returns a bill + its shares to a participant only (object-level
+// authZ, caller-scoped in the service — the same doctrine PoolBalance
+// applies). A bill the caller has no stake in answers ErrNotFound, identical
+// to one that never existed: share rows reveal who owes whom how much, so
+// even confirming "a split with this id exists" is a leak the route must
+// not offer.
+func (s *Service) GetSplit(ctx context.Context, callerID, splitID string) (*SplitBill, []SplitShare, error) {
+	ok, err := s.IsSplitParticipant(ctx, splitID, callerID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, nil, ErrNotFound
+	}
 	bill, err := s.getSplit(ctx, splitID)
 	if err != nil {
 		return nil, nil, err
@@ -643,6 +655,31 @@ func (s *Service) CreatePool(ctx context.Context, organiserID, title string, ben
 	return p, nil
 }
 
+// callerPool returns the pool only when the caller has a stake in it — the
+// organiser, the beneficiary, or an existing contributor (the same
+// visibility rule ListPools applies). A pool the caller has no stake in
+// answers ErrNotFound, identical to one that never existed, so no route
+// built on it can enumerate pool ids or balances. This is THE pool-read
+// gate: every pool read service method must go through it.
+func (s *Service) callerPool(ctx context.Context, callerID, poolID string) (*GroupPool, error) {
+	p, err := s.getPool(ctx, poolID)
+	if err != nil {
+		return nil, err
+	}
+	member := p.OrganiserID == callerID || (p.BeneficiaryID != nil && *p.BeneficiaryID == callerID)
+	if !member {
+		var n int
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM pool_contributions WHERE pool_id=$1 AND user_id=$2`, poolID, callerID).Scan(&n); err != nil {
+			return nil, err
+		}
+		member = n > 0
+	}
+	if !member {
+		return nil, ErrNotFound
+	}
+	return p, nil
+}
+
 // PoolBalance returns the derived pool balance in kobo (NL-8). Contributions are
 // positive rows and the payout drain is a single negative row, so SUM is the live
 // balance (zero after payout). Caller-scoped (object-level authZ): only the
@@ -651,20 +688,8 @@ func (s *Service) CreatePool(ctx context.Context, organiserID, title string, ben
 // answers ErrNotFound, identical to a pool that never existed, so the route
 // cannot enumerate pool ids or balances.
 func (s *Service) PoolBalance(ctx context.Context, callerID, poolID string) (int64, error) {
-	p, err := s.getPool(ctx, poolID)
-	if err != nil {
+	if _, err := s.callerPool(ctx, callerID, poolID); err != nil {
 		return 0, err
-	}
-	member := p.OrganiserID == callerID || (p.BeneficiaryID != nil && *p.BeneficiaryID == callerID)
-	if !member {
-		var n int
-		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM pool_contributions WHERE pool_id=$1 AND user_id=$2`, poolID, callerID).Scan(&n); err != nil {
-			return 0, err
-		}
-		member = n > 0
-	}
-	if !member {
-		return 0, ErrNotFound
 	}
 	const q = `SELECT COALESCE(SUM(amount_kobo),0) FROM pool_contributions WHERE pool_id=$1`
 	var bal int64
@@ -894,9 +919,13 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 	return nil
 }
 
-// GetPool returns a pool (object-level authZ in handler/RLS).
-func (s *Service) GetPool(ctx context.Context, poolID string) (*GroupPool, error) {
-	return s.getPool(ctx, poolID)
+// GetPool returns a pool to a caller with a stake in it (object-level
+// authZ): organiser, beneficiary, or contributor — callerPool enforces the
+// ListPools visibility rule and answers ErrNotFound otherwise. Never expose
+// the unscoped getPool on a route: a bare pool read leaks title, organiser
+// and state to any authenticated caller.
+func (s *Service) GetPool(ctx context.Context, callerID, poolID string) (*GroupPool, error) {
+	return s.callerPool(ctx, callerID, poolID)
 }
 
 func (s *Service) paymentByIdem(ctx context.Context, senderID, idemKey string) (*Payment, error) {

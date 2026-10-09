@@ -162,17 +162,10 @@ func (h *Handler) CreateSplit(c *gin.Context) {
 }
 
 func (h *Handler) GetSplit(c *gin.Context) {
-	splitID := c.Param("id")
-	ok, err := h.svc.IsSplitParticipant(c.Request.Context(), splitID, ginutil.UserID(c))
-	if err != nil {
-		errMap.WriteOK(c, err)
-		return
-	}
-	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "not a participant"})
-		return
-	}
-	bill, shares, err := h.svc.GetSplit(c.Request.Context(), splitID)
+	// Caller-scoped in the service: a non-participant receives the same 404
+	// a nonexistent bill receives — a 403 here would confirm the split id
+	// exists (share rosters are financial data, not a public directory).
+	bill, shares, err := h.svc.GetSplit(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
