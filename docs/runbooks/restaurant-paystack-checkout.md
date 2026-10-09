@@ -65,6 +65,26 @@ Notes:
   `app/food/checkout.tsx` always offers "Pay with Card/Transfer" and the
   503 surfaces as the card-option error when the rail is dark.
 
+## Local e2e against the Paystack fake
+
+The `tools/fakes` service also exposes the `api.paystack.co` surface the
+provider client calls (`/transaction/initialize`, `/transaction/verify/{ref}`,
+`/refund`), so the whole rail runs locally with no real keys:
+
+- Backend env: `PAYSTACK_SECRET_KEY=<shared dev secret>` (any `sk_…` value —
+  the fake signs webhooks with the same value),
+  `PAYSTACK_BASE_URL=http://localhost:9100`, plus the two restaurant flags.
+  `PAYSTACK_BASE_URL` is dev-only — `config.Validate()` fails boot if it is set
+  outside development.
+- Fake env: `PAYSTACK_SECRET_KEY=<same secret>`,
+  `PAYSTACK_FAKE_WEBHOOK_URL=http://localhost:<api-port>/api/webhooks/paystack/go`
+  (leave unset to exercise only the status-poll self-heal).
+- Drive it: initiate → `POST /_paystack/complete {"reference":"foodorder:…"}`
+  flips the charge to `success` and fires a signed `charge.success`;
+  `{"webhook":false}` skips the delivery so `GET …/status` self-heals instead.
+  An un-completed charge verifies `pending`, so the unpaid fail-closed path is
+  real; `POST /refund` is what the amount-mismatch/order-failed reversals hit.
+
 ## Test plan after enabling
 
 Unit/integration (no flag needed — they construct the service directly):
@@ -90,11 +110,10 @@ Manual smoke (staging, Paystack test keys `sk_test_…`/`pk_test_…`):
 6. Kill-switch check: set the Go flag off, restart → initiate 404s; BFF flag
    off → `/api/v1` initiate 503s.
 
-## Template gap (housekeeping)
+## Template status
 
 `FEATURE_RESTAURANT_ENABLED` / `FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED`
-are absent from `backend/.env.example`, and the latter is absent from
-`frontend-web/.env.example` (only `FEATURE_RESTAURANT_ENABLED=false` is there).
-Templates stay OFF by rule, but adding the `=false` placeholders keeps the
-runbook's "flags live in templates" claim true. Not done in this change —
-outside the food lane's file claims.
+are in `backend/.env.example` (both `=false`). The latter remains absent from
+`frontend-web/.env.example` (only `FEATURE_RESTAURANT_ENABLED=false` is there)
+— templates stay OFF by rule; adding the BFF flag's `=false` placeholder is a
+frontend-web lane change, not done here.
