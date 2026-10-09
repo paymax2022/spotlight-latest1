@@ -43,6 +43,26 @@ func (r *Repository) GetOrInitUserModeration(ctx context.Context, userID, market
 	return scanUserMod(row)
 }
 
+// GetUserModeration reads the mkt_user_moderation row WITHOUT creating one —
+// for read-only checks (FileAppeal's standing-action gate) where
+// GetOrInitUserModeration's INSERT side effect would write a row into a
+// moderation table just because a member probed the appeals endpoint. A nil
+// row means no moderation record exists, i.e. the user is in the default
+// 'active' state the table doc comment assigns to absent rows.
+func (r *Repository) GetUserModeration(ctx context.Context, userID, marketID string) (*UserModerationRow, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT `+userModCols+` FROM public.mkt_user_moderation
+		WHERE user_id=$1 AND market_id=$2`, userID, marketID)
+	m, err := scanUserMod(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, wrapInternal("get user moderation", err)
+	}
+	return m, nil
+}
+
 // ProposeUserStatus records a maker's proposed action. When requiresDualApproval
 // is false the caller (service layer) has ALREADY decided to execute
 // immediately — status flips right away and pending_action stays nil.
