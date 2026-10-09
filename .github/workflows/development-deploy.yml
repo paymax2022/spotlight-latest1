@@ -79,7 +79,7 @@ jobs:
           echo "  deploying $SHA ($(git log -1 --format=%s | cut -c1-70)); failed check runs: ${failed:-0}"
           [ "${failed:-0}" = "0" ] || { echo "::error::$failed check run(s) failed on $SHA"; exit 1; }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
 
