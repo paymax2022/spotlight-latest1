@@ -21,6 +21,8 @@ const ALL_FLAGS = [
   'FEATURE_REFERRALS_ENABLED',
   'FEATURE_FINTECH_ADMIN_ENABLED',
   'FEATURE_TIER_LIMITS_ENABLED',
+  'FEATURE_FX_ORCHESTRATION_ENABLED',
+  'FEATURE_FX_ENABLED',
 ] as const;
 
 describe('Feature flags', () => {
@@ -101,5 +103,19 @@ describe('Feature flags', () => {
     expect(featureFlags.wallet()).toBe(true);
     expect(featureFlags.kyc()).toBe(false);
     expect(featureFlags.votesBridge()).toBe(false);
+  });
+
+  it('fx flag is OFF by default', () => expect(featureFlags.fx()).toBe(false));
+
+  it('fx flag tracks the orchestration mount flag, with the legacy var as fallback', () => {
+    // The Go mount gate for /api/v1/fx/* is FEATURE_FX_ORCHESTRATION_ENABLED.
+    process.env.FEATURE_FX_ORCHESTRATION_ENABLED = 'true';
+    expect(featureFlags.fx()).toBe(true);
+    delete process.env.FEATURE_FX_ORCHESTRATION_ENABLED;
+    // Deployments that only set the legacy FEATURE_FX_ENABLED still pass.
+    process.env.FEATURE_FX_ENABLED = 'true';
+    expect(featureFlags.fx()).toBe(true);
+    delete process.env.FEATURE_FX_ENABLED;
+    expect(featureFlags.fx()).toBe(false);
   });
 });

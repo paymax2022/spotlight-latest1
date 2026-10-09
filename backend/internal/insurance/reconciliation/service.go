@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // Service is the premium↔provider-statement matcher + commission confirm/reverse
@@ -189,6 +190,20 @@ func mapErr(c *gin.Context, err error) {
 	}
 }
 
+// uuidParamOK gates a named path parameter that must be a UUID — the same
+// convention the policy/claims handlers use for :id. The reconciliation-record
+// and commission policy_id columns are uuid-typed, so a malformed value used
+// to reach Postgres as invalid-input-syntax and surface as a 500. A malformed
+// id can never name a real row, so it returns the same not_found a missing
+// row does.
+func uuidParamOK(c *gin.Context, name string) bool {
+	if _, err := uuid.Parse(c.Param(name)); err != nil {
+		mapErr(c, ErrNotFound)
+		return false
+	}
+	return true
+}
+
 // MatchStatement (admin): POST /reconciliation/match
 // body: {provider, lines:[{policy_id, statement_ref, amount_kobo}]}
 func (h *Handler) MatchStatement(c *gin.Context) {
@@ -199,6 +214,15 @@ func (h *Handler) MatchStatement(c *gin.Context) {
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
+	}
+	// Each line's policy_id feeds the uuid-typed premium lookup — a malformed
+	// value used to 500 mid-batch. As request input (not a resource id) a bad
+	// value is a client error: 400, naming the offending line.
+	for i, line := range body.Lines {
+		if _, err := uuid.Parse(line.PolicyID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("lines[%d].policy_id must be a UUID", i)})
+			return
+		}
 	}
 	recs, err := h.svc.MatchStatement(c.Request.Context(), body.Provider, body.Lines)
 	if err != nil {
@@ -222,6 +246,9 @@ func (h *Handler) ListRecords(c *gin.Context) {
 
 // ResolveBreak (admin): POST /reconciliation/:id/resolve {note}
 func (h *Handler) ResolveBreak(c *gin.Context) {
+	if !uuidParamOK(c, "id") {
+		return
+	}
 	var body struct {
 		Note string `json:"note"`
 	}
@@ -235,6 +262,9 @@ func (h *Handler) ResolveBreak(c *gin.Context) {
 
 // ConfirmCommission (admin): POST /commission/:policy_id/confirm
 func (h *Handler) ConfirmCommission(c *gin.Context) {
+	if !uuidParamOK(c, "policy_id") {
+		return
+	}
 	ce, err := h.svc.ConfirmCommission(c.Request.Context(), c.Param("policy_id"))
 	if err != nil {
 		mapErr(c, err)
@@ -245,6 +275,9 @@ func (h *Handler) ConfirmCommission(c *gin.Context) {
 
 // ReverseCommission (admin): POST /commission/:policy_id/reverse {reason}
 func (h *Handler) ReverseCommission(c *gin.Context) {
+	if !uuidParamOK(c, "policy_id") {
+		return
+	}
 	var body struct {
 		Reason string `json:"reason"`
 	}

@@ -112,6 +112,14 @@ func TestLiveDB_MakerChecker_AppealOverturn_DifferentAdminApproves(t *testing.T)
 	makerID := uuid.New().String()
 	checkerID := uuid.New().String()
 
+	// FileAppeal requires a moderation action to actually stand on the target
+	// (the queue-spam fix) — suspend the appellant first or the filing is
+	// refused with 422 NO_APPEALABLE_ACTION.
+	if _, err := svc.ProposeUserStatus(ctx, makerID, "test-role", appellantID,
+		SetUserStatusInput{Action: "suspend", ReasonCode: "TEST_SUSPEND"}); err != nil {
+		t.Fatalf("suspend appellant: %v", err)
+	}
+
 	// 'user' target = the appellant themself (the only 'user' appeal FileAppeal
 	// accepts — a member can only appeal a moderation action against themself).
 	a, err := svc.FileAppeal(ctx, appellantID, CreateAppealInput{
@@ -165,6 +173,13 @@ func TestLiveDB_MakerChecker_AppealUphold_ExecutesImmediately(t *testing.T) {
 
 	appellantID := seedMakercheckPlatformUser(t, ctx, pool)
 	makerID := uuid.New().String()
+
+	// Same standing-action requirement as the overturn test above: no real
+	// suspension on the appellant → FileAppeal refuses before it ever inserts.
+	if _, err := svc.ProposeUserStatus(ctx, makerID, "test-role", appellantID,
+		SetUserStatusInput{Action: "suspend", ReasonCode: "TEST_SUSPEND"}); err != nil {
+		t.Fatalf("suspend appellant: %v", err)
+	}
 
 	a, err := svc.FileAppeal(ctx, appellantID, CreateAppealInput{
 		TargetType: "user", TargetID: appellantID,

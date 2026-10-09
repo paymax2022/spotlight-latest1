@@ -107,6 +107,12 @@ func (h *Handler) GetCompetition(c *gin.Context) {
 
 // MeritLeaderboard: GET /api/arena/competitions/:id/leaderboard/merit
 func (h *Handler) MeritLeaderboard(c *gin.Context) {
+	// Existence check (F3 drift): a random competition id used to get an empty
+	// 200 with a fabricated stage while the detail read 404s — same semantics now.
+	if _, err := h.s.Competition.Get(c.Request.Context(), c.Param("id")); err != nil {
+		mapErr(c, err)
+		return
+	}
 	stage := arena.Stage(c.DefaultQuery("stage", string(arena.StageFinalePractical)))
 	rows, err := h.s.Merit.Leaderboard(c.Request.Context(), c.Param("id"), stage)
 	if err != nil {
@@ -119,6 +125,12 @@ func (h *Handler) MeritLeaderboard(c *gin.Context) {
 // Pot: GET /api/arena/competitions/:id/pot  (derived total + display tallies)
 func (h *Handler) Pot(c *gin.Context) {
 	id := c.Param("id")
+	// Existence check (F3 drift): a random competition id used to get a zeroed
+	// pot 200 while the detail read 404s — same semantics now.
+	if _, err := h.s.Competition.Get(c.Request.Context(), id); err != nil {
+		mapErr(c, err)
+		return
+	}
 	total, err := h.s.Support.PotTotal(c.Request.Context(), id)
 	if err != nil {
 		mapErr(c, err)

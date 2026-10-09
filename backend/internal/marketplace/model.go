@@ -882,6 +882,10 @@ const (
 	CodeAwaitingSecondApproval   = "AWAITING_SECOND_APPROVAL"
 	CodeSameApproverNotAllowed   = "SAME_APPROVER_NOT_ALLOWED"
 
+	// CodeNoAppealableAction — Appeals (MKT-007): the claim has no standing
+	// moderation action on the target to contest.
+	CodeNoAppealableAction = "NO_APPEALABLE_ACTION"
+
 	// CodeBoostNotFound — Boosts
 	CodeBoostNotFound          = "BOOST_NOT_FOUND"
 	CodeInvalidBoostTransition = "INVALID_BOOST_TRANSITION"
@@ -947,6 +951,12 @@ var (
 	ErrNotFound = newErr(http.StatusNotFound, CodeNotFound, "not found")
 	// ErrAppealNotFound — MKT-007 appeals admin.
 	ErrAppealNotFound = newErr(http.StatusNotFound, CodeNotFound, "appeal not found")
+	// ErrNoAppealableAction — POST /appeals: the target exists and belongs to the
+	// appellant, but no moderation action currently stands on it (e.g. claiming
+	// 'removed_policy' on a listing that was never moderated, or appealing a
+	// boost the seller cancelled themself). 422 — same class as
+	// ErrCannotMessageSelf: the entity is real, the claim is unprocessable.
+	ErrNoAppealableAction = newErr(422, CodeNoAppealableAction, "no appealable moderation action is recorded on this target")
 	// ErrNoPendingAction — MKT-007 maker-checker second-sign attempted with
 	// nothing PENDING (already approved/rejected, or never proposed).
 	ErrNoPendingAction = newErr(http.StatusConflict, CodeConflict, "no pending action awaiting approval")

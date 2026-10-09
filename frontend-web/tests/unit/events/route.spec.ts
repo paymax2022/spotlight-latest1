@@ -13,6 +13,10 @@ import { makeRequest, withAuth } from '../golden-path/_fixtures';
  *   GET  /api/v1/events/my/tickets → 405 ([id]/tickets is the more-specific match
  *                                    for the 2-segment path; it exported only POST) —
  *                                    mobile's listMyTickets() was dead via the BFF.
+ *   POST /api/v1/events/scan       → 405 ([id] shadows the catch-all for the
+ *                                    single-segment path and exported only GET) —
+ *                                    steward ticket scan was dead via the BFF
+ *                                    while /api/finance/events/scan worked.
  *
  * A real event id on the tickets leaf still proxies through and gets the
  * honest upstream answer (Go has no GET /:id/tickets → 404), identical to
@@ -47,6 +51,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { GET as rootGET, POST as rootPOST, HEAD as rootHEAD } from '../../../app/api/v1/events/route';
 import { GET as ticketsGET, POST as ticketsPOST } from '../../../app/api/v1/events/[id]/tickets/route';
+import { POST as scanPOST } from '../../../app/api/v1/events/scan/route';
 
 const TEST_USER = { id: 'user-ev-1', email: 'ev@example.com' };
 
@@ -106,6 +111,17 @@ describe('events BFF route → Go upstream mapping', () => {
     expect(vi.mocked(proxyToGoBackend)).toHaveBeenCalledWith(
       expect.anything(),
       '/api/finance/events/ev-1/tickets'
+    );
+  });
+
+  it('un-shadows POST /api/v1/events/scan → Go POST /api/finance/events/scan', async () => {
+    const res = await scanPOST(
+      makeRequest('/api/v1/events/scan', { method: 'POST', headers: withAuth(), body: {} })
+    );
+    expect(res.status).toBe(200);
+    expect(vi.mocked(proxyToGoBackend)).toHaveBeenCalledWith(
+      expect.anything(),
+      '/api/finance/events/scan'
     );
   });
 

@@ -2,18 +2,21 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
-// fakeEngagementRepo lets a test drive the pass total and the "already granted
-// today" cashback count that the per-day rate limit reads.
+// fakeEngagementRepo lets a test drive the pass total, the "already granted
+// today" cashback count that the per-day rate limit reads, and a forced repo
+// error (e.g. ErrNotFound on an unresolvable competition).
 type fakeEngagementRepo struct {
 	total         int
 	cashbackToday int
+	err           error
 }
 
 func (f *fakeEngagementRepo) Record(_ context.Context, _, _, _, _, _ string, _ int) (int, bool, error) {
-	return f.total, false, nil
+	return f.total, false, f.err
 }
 func (f *fakeEngagementRepo) CashbackCountToday(_ context.Context, _, _ string) (int, error) {
 	return f.cashbackToday, nil
@@ -63,5 +66,22 @@ func TestPlayAlong_CashbackDailyCapIsExact(t *testing.T) {
 				t.Fatalf("expected no ledger credit when over cap, got %d", led.credits)
 			}
 		})
+	}
+}
+
+// TestPrediction_MissingCompetitionIsNotFound pins the contract behind the
+// wave-9 prod fix: POST /predictions on a well-formed but nonexistent
+// competition must surface ErrNotFound (handler → 404), never an unmapped repo
+// error (was a 500 via the FK violation). The mapping itself lives in
+// repo.EngagementRepo.Record (FK 23503 / SQLSTATE 22P02 → ErrNotFound); this
+// test asserts the service propagates that sentinel unwrapped so errors.Is —
+// and therefore the 404 mapping — keeps working.
+func TestPrediction_MissingCompetitionIsNotFound(t *testing.T) {
+	svc := NewPredictionService(&fakeEngagementRepo{err: ErrNotFound}, &fakeAudit{})
+
+	_, _, err := svc.Submit(context.Background(), "spectator-1", "idem-1", "comp-missing",
+		PredictionPayload{Points: 1})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound to propagate unwrapped, got %v", err)
 	}
 }

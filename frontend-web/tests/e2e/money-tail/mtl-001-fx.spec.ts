@@ -378,8 +378,20 @@ test.describe('MTL-001 fx orchestration core', () => {
     const v0 = await goFetch(request, '/api/v1/fx/customers/verification', { token });
     expect(v0.status).toBe(200);
 
+    // An empty/malformed KYC body must refuse — the write is persistent.
+    const badSubmit = await goFetch(request, '/api/v1/fx/customers', {
+      method: 'POST', token, data: {},
+    });
+    expect(badSubmit.status).toBe(400);
+
     const submit = await goFetch(request, '/api/v1/fx/customers', {
-      method: 'POST', token, data: { accountType: 'individual', firstName: 'E2E', lastName: 'User' },
+      method: 'POST',
+      token,
+      data: {
+        accountType: 'individual',
+        consents: { terms: true, privacy: true, fxDisclosure: true },
+        identity: { docType: 'nin', idNumber: '12345678901', dateOfBirth: '1990-01-01' },
+      },
     });
     expect(submit.status).toBe(200);
     expect(['pending', 'review']).toContain(submit.body?.data?.status);
@@ -390,10 +402,11 @@ test.describe('MTL-001 fx orchestration core', () => {
     const restart = await goFetch(request, '/api/v1/fx/customers/verification/restart', { method: 'POST', token, data: {} });
     expect(restart.status).toBe(200);
 
+    // Disputes have no persistence yet: a nonexistent transaction answers 404
+    // and a real one would refuse 501 — never a fabricated "submitted" echo.
     const dsp = await goFetch(request, `/api/v1/fx/transactions/${crypto.randomUUID()}/dispute`, {
-      method: 'POST', token, data: { reason: 'e2e_probe', note: 'dispute surface' },
+      method: 'POST', token, data: { reason: 'not_received', note: 'dispute surface' },
     });
-    expect(dsp.status).toBe(201);
-    expect(dsp.body.status).toBe('submitted');
+    expect(dsp.status).toBe(404);
   });
 });
