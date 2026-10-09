@@ -166,3 +166,54 @@ func TestLiveDB_Hold_ForeignKeyClaimFailsClosed(t *testing.T) {
 		t.Fatalf("foreign-claim replays attached %d hold rows, want 0", n)
 	}
 }
+
+// TestLiveDB_Hold_CrossPayerKeyClaimFailsClosed pins the blocking case the
+// credit-leg-only check missed: the "<idem>:hold:credit" leg (escrow standing
+// account, same reference, same amount) is IDENTICAL for every payer, so a
+// replay carrying another payer's key could adopt their parked debit and write
+// payer_id = <caller> — handing the caller RaiseDispute/Refund control over
+// funds they never paid. The debit leg's account must be the CALLER's wallet.
+func TestLiveDB_Hold_CrossPayerKeyClaimFailsClosed(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 140_000
+	f.fund(t, f.payer, 500_000)
+
+	ref := "p2p:shared-listing"
+	idem := "escrow-hold-crosspayer-" + uuid.New().String()
+	// payer's crashed hold: debit committed under payer's wallet, row absent.
+	if err := f.led.Debit(ctx, f.payer, "escrow:"+ref, idem+":hold", f.escrow.ID, amount); err != nil {
+		t.Fatalf("plant crashed hold debit: %v", err)
+	}
+
+	// A DIFFERENT user replays the same key/reference/amount. The credit leg
+	// matches perfectly — only the debit-leg account exposes that the parked
+	// funds were never theirs.
+	if _, err := f.svc.Hold(ctx, f.decoy, ref, "p2pmarket", idem, amount); !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("cross-payer replay must fail closed (ErrDuplicate), got %v", err)
+	}
+	var n int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM escrow_holds WHERE idempotency_key=$1`, idem).Scan(&n); err != nil {
+		t.Fatalf("count hold rows: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cross-payer replay attached %d hold rows, want 0", n)
+	}
+	if got := f.walletBalance(t, f.decoy); got != 0 {
+		t.Fatalf("decoy balance = %d, want 0 — the failed claim must not move money", got)
+	}
+
+	// The honest retry still heals: the SAME payer, same key → row written,
+	// payer_id bound to the wallet that actually funded the debit.
+	h, err := f.svc.Hold(ctx, f.payer, ref, "p2pmarket", idem, amount)
+	if err != nil {
+		t.Fatalf("honest retry must heal the missing row, got %v", err)
+	}
+	if h.PayerID != f.payer {
+		t.Fatalf("healed hold payer = %s, want %s", h.PayerID, f.payer)
+	}
+	if n := f.entryCount(t, idem+":hold:debit"); n != 1 {
+		t.Fatalf("hold debit entries = %d, want exactly 1", n)
+	}
+}

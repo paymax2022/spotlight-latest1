@@ -341,3 +341,46 @@ func TestLiveDB_Arbitrate_TerminalMismatchFailsClosed(t *testing.T) {
 		t.Fatalf("payee balance = %d, want 0 — a contradicting decision must not move money", got)
 	}
 }
+
+// TestLiveDB_Arbitrate_CompletedReplayNoOp pins full idempotency for Arbitrate:
+// a retry of a COMPLETED arbitration (terminal hold + dispute already RESOLVED)
+// is a no-op success when the requested decision matches the recorded ruling —
+// not a "not in DISPUTED state" error — while a contradicting decision still
+// fails closed. Runs the REAL path end-to-end (no planted state).
+func TestLiveDB_Arbitrate_CompletedReplayNoOp(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 95_000
+	f.fund(t, f.payer, 300_000)
+
+	idem := "escrow-arb-replay-" + uuid.New().String()
+	h, err := f.svc.Hold(ctx, f.payer, "p2p:listing-done", "p2pmarket", idem, amount)
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	if _, err := f.svc.RaiseDispute(ctx, h.ID, f.payer, "not as described"); err != nil {
+		t.Fatalf("raise dispute: %v", err)
+	}
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRefund, f.decoy); err != nil {
+		t.Fatalf("arbitrate: %v", err)
+	}
+	if got := f.walletBalance(t, f.payer); got != 300_000 {
+		t.Fatalf("payer balance after refund = %d, want %d", got, 300_000)
+	}
+
+	// Same decision again → no-op success; the refund leg stays exactly-once.
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRefund, f.decoy); err != nil {
+		t.Fatalf("completed-arbitration replay must be a no-op success, got %v", err)
+	}
+	if n := f.entryCount(t, idem+":refund:credit"); n != 1 {
+		t.Fatalf("refund credit entries = %d, want exactly 1", n)
+	}
+
+	// A contradicting decision on the resolved dispute still fails closed.
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRelease, f.decoy); err == nil {
+		t.Fatal("arbitrate RELEASE on a refund-resolved dispute must fail closed")
+	}
+	if got := f.walletBalance(t, f.payee); got != 0 {
+		t.Fatalf("payee balance = %d, want 0", got)
+	}
+}

@@ -22,15 +22,19 @@ import "testing"
 
 // holdLog models the durable side effects as idempotent stores, mirroring the
 // production idempotency keys: the "<idem>:hold" ledger pair (applied at most
-// once per key) and the escrow_holds row (UNIQUE idempotency_key).
+// once per key, and carrying the DEBITED payer's wallet identity — the heal
+// path must verify the claimant is that payer) and the escrow_holds row
+// (UNIQUE idempotency_key).
 type holdLog struct {
-	debited map[string]int   // hold leg key -> times applied (invariant: <= 1)
-	rows    map[string]bool  // idemKey -> escrow_holds row exists
-	balance map[string]int64 // user -> wallet balance
+	debited   map[string]int    // hold leg key -> times applied (invariant: <= 1)
+	debitedBy map[string]string // hold leg key -> payer wallet that funded it
+	rows      map[string]bool   // idemKey -> escrow_holds row exists
+	balance   map[string]int64  // user -> wallet balance
 }
 
 func newHoldLog() *holdLog {
-	return &holdLog{debited: map[string]int{}, rows: map[string]bool{}, balance: map[string]int64{}}
+	return &holdLog{debited: map[string]int{}, debitedBy: map[string]string{},
+		rows: map[string]bool{}, balance: map[string]int64{}}
 }
 
 // debit mirrors an idempotent ledger debit: first call applies (balance moves);
@@ -40,6 +44,7 @@ func newHoldLog() *holdLog {
 func (e *holdLog) debit(key, payer string, amount int64) {
 	if e.debited[key] == 0 {
 		e.debited[key] = 1
+		e.debitedBy[key] = payer
 		e.balance[payer] -= amount
 	}
 }
@@ -47,8 +52,11 @@ func (e *holdLog) debitPosted(key string) bool { return e.debited[key] > 0 }
 
 // runHold mirrors the FIXED Hold(): on a getByIdem miss it probes the ledger of
 // record; an already-posted leg skips the tier gate + re-debit and heals the
-// row. tierRefused simulates the cap refusal (the posted debit counts toward
-// the daily total — re-running the gate on a heal replay can only refuse).
+// row — but only when BOTH legs verify as THIS caller's journal (the credit
+// leg is payer-agnostic, so the debit leg's wallet is the binding check:
+// verifyHoldDebitLeg). tierRefused simulates the cap refusal (the posted debit
+// counts toward the daily total — re-running the gate on a heal replay can
+// only refuse).
 func runHold(e *holdLog, idem, payer string, amount int64, tierRefused bool, cc *crashClock) {
 	if e.rows[idem] {
 		return // full replay: existing row returned
@@ -62,6 +70,8 @@ func runHold(e *holdLog, idem, payer string, amount int64, tierRefused bool, cc 
 			return
 		}
 		e.debit(key, payer, amount)
+	} else if e.debitedBy[key] != payer {
+		return // fail closed: the parked debit was funded by a DIFFERENT wallet
 	}
 	// Ledger leg durable (posted now or on a prior attempt) — the row insert.
 	if !cc.tick() {
@@ -143,5 +153,35 @@ func TestHold_OldOrdering_WedgesRowInsert(t *testing.T) {
 	runHoldOldBroken(e, "idem-W", "payer-1", amount, true, &crashClock{at: -1})
 	if e.rows["idem-W"] {
 		t.Fatal("old path unexpectedly healed the row; mirror does not reproduce the bug")
+	}
+}
+
+// TestHold_CrossPayerClaimFailsClosed pins the ledger-auditor blocking finding:
+// the "<idem>:hold:credit" leg (escrow standing account + reference + amount)
+// is IDENTICAL for every payer, so a heal that verified only the credit leg
+// would let a different user adopt payer-A's parked debit and write a hold row
+// naming THEMSELVES as payer_id — RaiseDispute/Refund control over funds they
+// never paid. The debit leg's wallet must bind the claim.
+func TestHold_CrossPayerClaimFailsClosed(t *testing.T) {
+	const amount int64 = 140_000
+	e := newHoldLog()
+	runHold(e, "idem-X", "payer-A", amount, false, &crashClock{at: 1}) // crash after A's debit
+
+	// A DIFFERENT user replays the same key/reference/amount — must NOT heal.
+	runHold(e, "idem-X", "payer-B", amount, false, &crashClock{at: -1})
+	if e.rows["idem-X"] {
+		t.Fatal("cross-payer replay attached a hold row to funds it never paid")
+	}
+	if e.balance["payer-B"] != 0 {
+		t.Fatalf("claimant balance %d, want 0 — the failed claim must not move money", e.balance["payer-B"])
+	}
+
+	// The honest retry still heals: same payer, same key.
+	runHold(e, "idem-X", "payer-A", amount, false, &crashClock{at: -1})
+	if !e.rows["idem-X"] {
+		t.Fatal("honest payer retry must heal the missing row")
+	}
+	if e.debited["idem-X:hold"] != 1 {
+		t.Fatalf("hold debit applied %d times, want exactly 1", e.debited["idem-X:hold"])
 	}
 }

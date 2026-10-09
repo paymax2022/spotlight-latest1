@@ -35,6 +35,15 @@ type walletDebitLimiter interface {
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("escrow: money path requires a tier gate (not wired)")
 
+// ErrReconPending marks a transient ledger/idempotency inconsistency: a store
+// reported ErrDuplicate for a key whose journal is NOT durably posted (e.g.
+// the Redis idem-lock TTL outliving a failed post). It is RETRYABLE — callers
+// should map it to a 503-style response so the client retries; a later attempt
+// either posts the leg or heals it (same convention as ErrTierGateUnwired ->
+// 503 in p2pmarket/handler.go). Distinct from ledger.ErrDuplicate, which is a
+// permanent identity conflict and must stay non-retryable.
+var ErrReconPending = errors.New("escrow: ledger reported duplicate but the journal is not posted — retryable inconsistency")
+
 // Service is a generic, ledger-backed funds-hold state machine reusable by
 // social / events / creators. It extends the finance ledger directly: a HELD
 // hold debits the payer's wallet into the shared escrow standing account; RELEASE
@@ -121,11 +130,12 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 	}
 	if posted {
 		// Heal path: the debit committed on a prior attempt that died before the
-		// insert. Confirm the recorded leg is THIS journal — then skip both the
-		// tier gate (the money already moved; re-counting it would refuse a
-		// same-day replay on the daily cap) and the re-debit, and let the row
-		// insert below heal the missing hold.
-		if err := s.verifyHoldDebitLeg(ctx, holdKey, reference, escrowAcc.ID, amountKobo); err != nil {
+		// insert. Confirm the recorded pair is THIS journal — BOTH legs, since
+		// the credit leg (escrow standing account) is identical for every payer —
+		// then skip both the tier gate (the money already moved; re-counting it
+		// would refuse a same-day replay on the daily cap) and the re-debit, and
+		// let the row insert below heal the missing hold.
+		if err := s.verifyHoldDebitLeg(ctx, payerID, holdKey, reference, escrowAcc.ID, amountKobo); err != nil {
 			return nil, err
 		}
 	} else {
@@ -192,25 +202,47 @@ func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey
 		return fmt.Errorf("escrow: verify hold debit after duplicate: %w", perr)
 	}
 	if !posted {
-		return errors.New("escrow: hold debit claimed duplicate but is not posted")
+		return fmt.Errorf("%w: hold debit for key %s", ErrReconPending, holdKey)
 	}
-	return s.verifyHoldDebitLeg(ctx, holdKey, reference, escrowAccID, amountKobo)
+	return s.verifyHoldDebitLeg(ctx, payerID, holdKey, reference, escrowAccID, amountKobo)
 }
 
-// verifyHoldDebitLeg confirms the ledger entry holding "<holdKey>:credit" is
-// THIS hold's journal — the escrow standing account credited the exact amount
-// under the "escrow:<reference>" reference. Key existence alone never proves
-// the caller's own posting landed (see ledger.EntryByKey), so a replay whose
-// params differ from the recorded leg fails closed instead of attaching a hold
-// row to money that was never moved for it.
-func (s *Service) verifyHoldDebitLeg(ctx context.Context, holdKey, reference, escrowAccID string, amountKobo int64) error {
-	leg, found, err := s.led.EntryByKey(ctx, holdKey+":credit")
+// verifyHoldDebitLeg confirms the balanced pair under holdKey is THIS hold's
+// journal, checking BOTH legs (the in-repo standard set by
+// repository.journalLegsMatchTx):
+//   - "<holdKey>:credit" must credit the escrow standing account the exact
+//     amount under the "escrow:<reference>" reference;
+//   - "<holdKey>:debit" must debit THIS caller's user_wallet — the credit leg
+//     is constant across payers, so checking it alone would let a replay
+//     carrying another payer's key adopt THEIR parked debit and write a hold
+//     row naming this caller as payer_id, handing them RaiseDispute/Refund
+//     control over funds they never paid.
+//
+// The payer's wallet resolves via GetOrCreateUserWallet — the same path Debit
+// uses internally — so the comparison is against the account the debit would
+// have hit. Any mismatch fails closed with ErrDuplicate semantics: never heal
+// a hold onto a caller whose debit wasn't theirs.
+func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, reference, escrowAccID string, amountKobo int64) error {
+	credit, found, err := s.led.EntryByKey(ctx, holdKey+":credit")
+	if err != nil {
+		return fmt.Errorf("escrow: read hold credit leg: %w", err)
+	}
+	if !found || credit.AccountID != escrowAccID || credit.Type != ledger.EntryCredit ||
+		credit.Reference != "escrow:"+reference || credit.AmountKobo != amountKobo {
+		return fmt.Errorf("%w: key %s held by a different journal — refusing to attach a hold row",
+			ledger.ErrDuplicate, holdKey)
+	}
+	payerAcc, err := s.led.GetOrCreateUserWallet(ctx, payerID)
+	if err != nil {
+		return fmt.Errorf("escrow: resolve payer wallet for debit-leg verification: %w", err)
+	}
+	debit, found, err := s.led.EntryByKey(ctx, holdKey+":debit")
 	if err != nil {
 		return fmt.Errorf("escrow: read hold debit leg: %w", err)
 	}
-	if !found || leg.AccountID != escrowAccID || leg.Type != ledger.EntryCredit ||
-		leg.Reference != "escrow:"+reference || leg.AmountKobo != amountKobo {
-		return fmt.Errorf("%w: key %s held by a different journal — refusing to attach a hold row",
+	if !found || debit.AccountID != payerAcc.ID || debit.Type != ledger.EntryDebit ||
+		debit.Reference != "escrow:"+reference || debit.AmountKobo != amountKobo {
+		return fmt.Errorf("%w: key %s debit leg is not this payer's journal — refusing to attach a hold row",
 			ledger.ErrDuplicate, holdKey)
 	}
 	return nil
@@ -350,7 +382,7 @@ func (s *Service) ensureResolutionCredit(ctx context.Context, h *Hold, to State)
 				return false, fmt.Errorf("escrow: verify %s credit after duplicate: %w", leg, perr)
 			}
 			if !posted {
-				return false, fmt.Errorf("escrow: %s credit claimed duplicate but is not posted", leg)
+				return false, fmt.Errorf("%w: %s credit for key %s", ErrReconPending, leg, key)
 			}
 			return false, nil
 		}
