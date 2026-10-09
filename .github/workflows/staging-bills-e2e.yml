@@ -69,6 +69,9 @@ jobs:
           rm -f be.json
           [ -n "$SB_URL" ] && [ -n "$SB_KEY" ] || { echo "SUPABASE_URL/SERVICE_ROLE_KEY missing on backend"; exit 1; }
           echo "  supabase host: $(node -e 'try{console.log(new URL(process.env.SB_URL).host)}catch{console.log("(unparseable)")}')"
+          # Mask BEFORE exporting — GITHUB_ENV values echo in the step env dump
+          # (the ADMIN_API_KEY leak pattern from run 32545670584).
+          echo "::add-mask::$SB_KEY"
           echo "SB_URL=$SB_URL" >> "$GITHUB_ENV"
           echo "SB_KEY=$SB_KEY" >> "$GITHUB_ENV"
 
@@ -92,6 +95,7 @@ jobs:
               body:JSON.stringify({email,password:pw})}).then(r=>r.json()).then(j=>process.stdout.write(j.access_token||"")).catch(()=>process.stdout.write(""));
           ' "$EMAIL" "$PW")"
           [ -n "$TOKEN" ] || { echo "  password grant returned no access_token"; exit 1; }
+          echo "::add-mask::$TOKEN"
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "UID_=$UID_" >> "$GITHUB_ENV"
 
@@ -103,16 +107,18 @@ jobs:
           # path create it; fall back to a direct insert if it doesn't.
           curl -s -o /dev/null -H "Authorization: Bearer $TOKEN" --max-time 45 \
             "$WEB_BASE/api/finance/wallet/balance" || true
+          # The Go plane's member wallet account type is `user_wallet` — NOT
+          # `wallet` (that is the Next.js topup plane; see ledger/repository.go:485).
           WALLET_ID="$(curl -s --max-time 30 \
             -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
-            "$SB_URL/rest/v1/ledger_accounts?user_id=eq.$UID_&type=eq.wallet&select=id" \
+            "$SB_URL/rest/v1/ledger_accounts?user_id=eq.$UID_&type=eq.user_wallet&select=id" \
             | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d);process.stdout.write(String((r[0]||{}).id||""))}catch{process.stdout.write("")}})')"
           if [ -z "$WALLET_ID" ]; then
             WALLET_ID="$(curl -s --max-time 30 -X POST \
               -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
               -H "Content-Type: application/json" -H "Prefer: return=representation" \
               "$SB_URL/rest/v1/ledger_accounts" \
-              -d "{\"user_id\":\"$UID_\",\"type\":\"wallet\",\"currency\":\"NGN\"}" \
+              -d "{\"user_id\":\"$UID_\",\"type\":\"user_wallet\",\"currency\":\"NGN\"}" \
               | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d);process.stdout.write(String((r[0]||{}).id||""))}catch{process.stdout.write("")}})')"
           fi
           [ -n "$WALLET_ID" ] || { echo "  could not resolve/create wallet account"; exit 1; }
