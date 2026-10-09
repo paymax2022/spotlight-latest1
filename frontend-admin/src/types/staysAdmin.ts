@@ -443,23 +443,31 @@ export interface Agent {
   tier: string;
 }
 
-export type KycStatus = 'pending' | 'approved' | 'rejected' | 'needs_info';
+// Mirrors backend/internal/stays/extranet/kyb_queue.go (KYBQueueItem) — the
+// stays_hotelier_kyb review queue. Sensitive fields arrive masked; the reviewer
+// never reads back a full RC/TIN/BVN.
+export type KycStatus = 'pending' | 'in_progress' | 'submitted' | 'approved' | 'rejected' | 'needs_changes';
+export type KycDecisionVerb = 'approve' | 'reject' | 'needs_changes';
 export interface KycCase {
-  id: string;
-  hotelier_masked: string;
-  business_name: string;
+  property_id: string;
+  property_name: string;
   city: string;
-  doc_types: string[];
-  cac_number_masked: string;
-  bank_verified: boolean;
+  legal_name: string;
+  business_type: string;
+  rc_number_masked: string;
+  has_tin: boolean;
+  director_masked: string;
+  director_bvn_last4: string;
+  kyc_status: KycStatus;
+  business_doc_status: KycStatus;
   status: KycStatus;
-  risk_flags: string[];
-  submitted_at: string;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  reviewer_note?: string;
 }
 export interface KycDecision {
   id: string;
   status: KycStatus;
-  decided_at: string;
 }
 
 export interface AdminUserRole {

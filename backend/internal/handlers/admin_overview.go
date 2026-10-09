@@ -116,7 +116,7 @@ var overviewSpecs = []moduleSpec{
 	{"stays-kyb", "Stays hotelier KYB", "Travel", "/admin/stays",
 		"Approved", `SELECT count(*) FROM public.stays_hotelier_kyb WHERE status='approved'`,
 		"Submitted, awaiting KYB", `SELECT count(*) FROM public.stays_hotelier_kyb WHERE status='submitted'`,
-		"/admin/stays/kyb", "critical"},
+		"/admin/stays/kyc", "critical"},
 	{"health", "Health providers", "Health", "/admin/health",
 		"Approved providers", `SELECT count(*) FROM public.health_provider_applications WHERE state='APPROVED'`,
 		"Applications to review", `SELECT count(*) FROM public.health_provider_applications WHERE state IN ('SUBMITTED','UNDER_REVIEW')`,

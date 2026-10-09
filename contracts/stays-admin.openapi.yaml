@@ -1,0 +1,57 @@
+openapi: 3.0.3
+info:
+  title: Stays admin — hotelier KYB + listing moderation
+  version: 0.1.0
+  description: >
+    Admin review queues mounted on /api/stays/admin (behind FeatureStaysEnabled).
+    Implementation: backend/internal/stays/extranet/kyb_queue.go and
+    backend/internal/stays/admin/moderation.go.
+paths:
+  /api/stays/admin/kyb:
+    get:
+      summary: Hotelier KYB review queue (RBAC stays.admin.hotelier)
+      description: Sensitive fields (RC, TIN, director name, BVN) are masked; never returned in full.
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, in_progress, submitted, approved, rejected, needs_changes] }
+      responses:
+        '200': { description: Queue, oldest submission first (max 200) }
+        '400': { description: Unknown status filter }
+  /api/stays/admin/hoteliers/{propertyId}/kyb/decision:
+    post:
+      summary: Decide a property's KYB (RBAC stays.admin.hotelier)
+      parameters:
+        - { in: path, name: propertyId, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject, needs_changes] }
+                note: { type: string, description: Required for reject and needs_changes }
+      responses:
+        '200': { description: Updated verification status }
+        '400': { description: Bad decision or missing note }
+  /api/stays/admin/properties:
+    get:
+      summary: Direct-rail listing moderation queue (RBAC stays.admin.moderation)
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending_review, approved, rejected, needs_changes] }
+      responses:
+        '200': { description: Listings (max 200) }
+        '400': { description: Unknown status filter }
+  /api/stays/admin/properties/{id}/status:
+    post:
+      summary: Moderate a listing (RBAC stays.admin.moderation)
+      description: Maps approved→ACTIVE, rejected→SUSPENDED, needs_changes→DRAFT, pending_review→PENDING_REVIEW. Raw DB values also accepted.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: ok }
+        '400': { description: Unknown status }
+        '404': { description: Property not found }
