@@ -227,6 +227,8 @@ const (
 	ErrConflict            ErrorType = "conflict"
 	ErrRateLimited         ErrorType = "rate_limited"
 	ErrLimitExceeded       ErrorType = "limit_exceeded"
+	ErrNotFound            ErrorType = "not_found"
+	ErrNotImplemented      ErrorType = "not_implemented"
 	ErrInternal            ErrorType = "internal"
 )
 
@@ -266,6 +268,10 @@ func (e *APIError) HTTPStatus() int {
 		return http.StatusUnprocessableEntity
 	case ErrRateLimited:
 		return http.StatusTooManyRequests
+	case ErrNotFound:
+		return http.StatusNotFound
+	case ErrNotImplemented:
+		return http.StatusNotImplemented
 	case ErrProviderError:
 		return http.StatusBadGateway
 	default:

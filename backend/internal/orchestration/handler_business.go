@@ -241,6 +241,10 @@ func generateAPIKey(mode string) (plaintext, prefix, hash string, err error) {
 }
 
 // CreateAPIKey handles POST /api-keys — mint a new key; plaintext returned once.
+// label is required: an unlabeled key is unidentifiable in the console and in the
+// audit log, so an empty body must 400 rather than mint a real credential named
+// "API key". mode defaults to sandbox; an explicit unknown mode is a 400, not a
+// silent downgrade.
 func (h *Handler) CreateAPIKey(c *gin.Context) {
 	var body struct {
 		Label string `json:"label"`
@@ -252,11 +256,17 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 	}
 	label := strings.TrimSpace(body.Label)
 	if label == "" {
-		label = "API key"
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "label is required").WithParam("label"))
+		return
 	}
 	mode := strings.ToLower(strings.TrimSpace(body.Mode))
-	if mode != "live" {
+	switch mode {
+	case "", "sandbox", "test":
 		mode = "sandbox"
+	case "live":
+	default:
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "mode must be live or sandbox").WithParam("mode"))
+		return
 	}
 	plaintext, prefix, hash, err := generateAPIKey(mode)
 	if err != nil {
