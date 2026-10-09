@@ -100,11 +100,13 @@ func TestLiveDB_ReverseTransaction_DuplicateKeyWithoutMemberLegFailsClosed(t *te
 		// cascades from the account delete would violate that trigger.
 	})
 
-	// The member-side debit leg the probe requires.
+	// The member-side debit leg the probe requires, paired with its clearing
+	// credit so the shared ledger still conserves (ADR-040).
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO public.ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
-		VALUES ($1, 'DEBIT', $2, $3, $4)`,
-		walletAcc.ID, 100_000, "utility:debit:"+tx.ID, "utility:"+tx.ID+":DEBIT"); err != nil {
+		VALUES ($1, 'DEBIT', $2, $3, $4), ($5, 'CREDIT', $2, $3, $6)`,
+		walletAcc.ID, 100_000, "utility:debit:"+tx.ID, "utility:"+tx.ID+":DEBIT",
+		clearing.ID, "utility:"+tx.ID+":DEBIT:credit"); err != nil {
 		t.Fatalf("seed debit leg: %v", err)
 	}
 	// A FOREIGN sibling leg claiming the admin-reversal family's :rev_credit
@@ -112,11 +114,14 @@ func TestLiveDB_ReverseTransaction_DuplicateKeyWithoutMemberLegFailsClosed(t *te
 	// :rev_debit half (the member restore), so compensationPosted stays false
 	// and PostReversal runs — its own :rev_debit insert then rolls back on the
 	// rev_credit unique violation → ErrDuplicate with NO durable legs.
+	// The foreign family gets its own :rev_debit half (key-scoped elsewhere, so
+	// the probe still reads the family as unposted) to keep the pair balanced.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO public.ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
-		VALUES ($1, 'REVERSAL_CREDIT', $2, $3, $4)`,
-		clearing.ID, 100_000, "utility:foreign:"+tx.ID, "utility:"+tx.ID+":ADMIN_REVERSAL_DEBIT:rev_credit"); err != nil {
-		t.Fatalf("seed foreign sibling leg: %v", err)
+		VALUES ($1, 'REVERSAL_DEBIT', $2, $3, $4), ($5, 'REVERSAL_CREDIT', $2, $3, $6)`,
+		walletAcc.ID, 100_000, "utility:foreign:"+tx.ID, "utility:foreign:"+tx.ID+":rev_debit",
+		clearing.ID, "utility:"+tx.ID+":ADMIN_REVERSAL_DEBIT:rev_credit"); err != nil {
+		t.Fatalf("seed foreign sibling legs: %v", err)
 	}
 
 	got, err := svc.ReverseTransaction(ctx, "admin-1", tx.ID, "test reversal")
@@ -201,8 +206,9 @@ func TestLiveDB_ReverseTransaction_PostsBalancedReversal(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO public.ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
-		VALUES ($1, 'DEBIT', $2, $3, $4)`,
-		walletAcc.ID, 100_000, "utility:debit:"+tx.ID, "utility:"+tx.ID+":DEBIT"); err != nil {
+		VALUES ($1, 'DEBIT', $2, $3, $4), ($5, 'CREDIT', $2, $3, $6)`,
+		walletAcc.ID, 100_000, "utility:debit:"+tx.ID, "utility:"+tx.ID+":DEBIT",
+		clearing.ID, "utility:"+tx.ID+":DEBIT:credit"); err != nil {
 		t.Fatalf("seed debit leg: %v", err)
 	}
 
