@@ -52,6 +52,10 @@ on:
         description: 'List pending migrations only — do not apply'
         type: boolean
         default: true
+      include_all:
+        description: 'Staging only: pass --include-all so migrations older than the last applied one are applied too (needed when a back-dated migration was skipped; plain db push refuses)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -169,7 +173,8 @@ jobs:
 
       - name: Apply migrations (db push)
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
-        run: supabase db push --linked
+        # --include-all only on an explicit dispatch; push-triggered runs stay a plain db push.
+        run: supabase db push --linked ${{ (github.event_name == 'workflow_dispatch' && inputs.include_all) && '--include-all' || '' }}
 
       - name: Dry-run notice
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
