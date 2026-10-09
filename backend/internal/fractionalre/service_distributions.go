@@ -60,7 +60,7 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 		return nil, err
 	}
 	if len(caps) == 0 {
-		return nil, errors.New("fractionalre: no cap-table holders to distribute to")
+		return nil, ErrNoCapTable
 	}
 	var totalUnits int64
 	for _, c := range caps {
