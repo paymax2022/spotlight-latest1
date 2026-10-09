@@ -1877,7 +1877,24 @@ func (s *Service) ReverseTransaction(ctx context.Context, actorUserID, transacti
 		}
 		revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearing.ID, t.RetailAmountKobo,
 			reference, "utility:"+t.ID+":ADMIN_REVERSAL_DEBIT")
-		if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+		if errors.Is(revErr, ledger.ErrDuplicate) {
+			// ErrDuplicate can be a Redis-lock TTL dup or a unique violation on
+			// either leg of the pair — neither proves OUR reversal is durable.
+			// Verify the :rev_debit leg on the member's wallet in the ledger of
+			// record before claiming 'reversed' (the same verified-adopt rule
+			// autoReverse applies). Anything else leaves the row 'failed' and
+			// returns the error so a retry after the settle window can reclaim
+			// it — 'reversed' is terminal and would strand an unrefunded debit.
+			_, posted, perr := s.ledger.EntryAmount(ctx, userWallet.ID, "utility:"+t.ID+":ADMIN_REVERSAL_DEBIT:rev_debit")
+			if perr != nil {
+				return nil, fmt.Errorf("utilitybills: verify admin reversal leg: %w", perr)
+			}
+			if !posted {
+				return nil, fmt.Errorf("utilitybills: admin reversal of %s hit a duplicate key but no durable reversal leg exists — refusing to mark reversed", t.ID)
+			}
+			revErr = nil
+		}
+		if revErr != nil {
 			return nil, fmt.Errorf("utilitybills: admin reversal failed: %w", revErr)
 		}
 	} else {

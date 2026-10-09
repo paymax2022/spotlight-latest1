@@ -14,6 +14,10 @@ name: adr guard
 #      different PR and the rewrite would mislabel it.
 #   3. A new ADR MAY carry a concrete number, but only one that is still free on
 #      the base branch. (Escape hatch for backfills and deliberate slots.)
+#   4. A promotion PR (e.g. main -> staging) re-adds ADRs that already merged to
+#      main. Those were checked in their own PR, so an added file that is
+#      byte-identical to the copy on origin/main is skipped. Anything new or
+#      altered in the PR is still checked in full.
 #
 # Only ADDED files are checked, so historic duplicates do not fail every PR.
 
@@ -67,6 +71,12 @@ jobs:
           fail=0
           for f in $added; do
             base=$(basename "$f")
+            # Promotion: already on main with identical content (see rule 4).
+            if [ "$BASE_REF" != "main" ] \
+               && [ "$(git rev-parse -q --verify "origin/main:$f" || true)" = "$(git rev-parse "HEAD:$f")" ]; then
+              echo "SKIP $base (identical to origin/main — promoted, checked in its own PR)"
+              continue
+            fi
 
             if printf '%s' "$base" | grep -qE '^ADR-PR[0-9]+-'; then
               n=$(printf '%s' "$base" | grep -oE '^ADR-PR[0-9]+' | sed 's/ADR-PR//')

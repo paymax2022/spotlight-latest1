@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -25,6 +26,7 @@ import (
 	"spotlight/backend/internal/insurance/webhooks"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/r2"
+	"spotlight/backend/internal/provider/dojah"
 	"spotlight/backend/internal/provider/mycover"
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
@@ -60,7 +62,7 @@ type InsuranceServices struct {
 	Consent *consent.Service
 }
 
-func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, presigner *r2.Presigner, bucket string) *InsuranceServices {
+func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, presigner *r2.Presigner, bucket string, cfg config.Config) *InsuranceServices {
 	if pool == nil {
 		log.Println("[insurance] nil pool — skipping insurance routes")
 		return nil
@@ -99,6 +101,15 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Router resolves an adapter from the data-driven catalog (product.provider).
 	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
 
+	// Purchase NIN gate (FEATURE_INSURANCE_NIN_REQUIRED — DEFAULT ON): the member
+	// POST /policies bind verifies the policyholder's NIN via Dojah BEFORE the
+	// policy row or any ledger leg exists. Same adapter + env credentials the
+	// kycverify gateway routes through — wired here directly so the gate does
+	// not depend on FEATURE_KYC_VERIFY_ENABLED. Unconfigured creds make the
+	// adapter return a non-verdict (PENDING), which the gate treats as
+	// "could not answer" and refuses — fail-CLOSED, never a silent skip.
+	dojahID := dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd)
+
 	// Catalog sync. Form schemas are FETCHED from the provider's public
 	// per-product schema endpoint rather than maintained here, so adding a
 	// product is a sync run and nothing in this repo needs editing.
@@ -121,6 +132,9 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		// ledger money still moves correctly, but the workbench has no row to
 		// confirm/reverse against — see commissionRecorder below.
 		Commission: commissionRecorder{repo: reconciliation.NewRepository(pool)},
+		// Member purchase NIN gate — verified via Dojah before the saga starts.
+		NINVerifier: dojahID,
+		NINRequired: cfg.FeatureInsuranceNINRequired,
 		// Notifier / Auditor are optional (nil-safe); IB1/orchestrator may inject
 		// the real notifications + audit sinks.
 	})

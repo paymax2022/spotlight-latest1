@@ -52,6 +52,11 @@ var ErrTierGateUnwired = errors.New("fx: money path requires a tier gate (not wi
 // never name a row, so it gets the same 404, never a raw driver error → 500).
 var ErrQuoteNotFound = errors.New("fx: quote not found")
 
+// ErrConversionNotFound is returned when a conversion lookup by id or
+// idempotency key misses. Convert's replay paths surface it as a clean 404 —
+// never a raw pgx.ErrNoRows → 500.
+var ErrConversionNotFound = errors.New("fx: conversion not found")
+
 // ErrInvalidCurrency is returned when a currency code is not a 3-letter ISO
 // 4217 code. Currency is normalized (trimmed + uppercased) BEFORE the check so
 // 'ngn' and 'NGN' resolve to the same row — the CHECK constraint on
@@ -156,31 +161,29 @@ func (s *Service) recordCommissionSafe(ctx context.Context, grossKobo, feeKobo i
 	}
 }
 
-// GetOrCreateCurrencyWallet returns the user's wallet for a currency, creating it if absent.
-// The currency is normalized + validated first: the upsert is idempotent-safe
-// (ON CONFLICT DO NOTHING on (user_id, currency)) but only the canonical
-// uppercase code may ever reach it, so 'ngn'/'NGN' can never split into two
-// wallets and a non-code like 'ZZZ9' is refused before the CHECK constraint.
-func (s *Service) GetOrCreateCurrencyWallet(ctx context.Context, userID, currency string) (*CurrencyWallet, error) {
+// GetCurrencyWallet reads the user's wallet projection for a currency.
+// PURE READ — a GET must never write (a SELECT…else-INSERT here was a side
+// effect on a read). The row is materialised lazily by the first conversion's
+// mirror (mirrorCurrencyWalletTx), so an absent row is not an error: its
+// balance projection is genuinely zero and a zero-balance view is returned
+// unpersisted.
+// The currency is normalized + validated first, so 'ngn'/'NGN' resolve to the
+// same row and a non-code like 'ZZZ9' is refused before it can ever reach the
+// CHECK constraint.
+func (s *Service) GetCurrencyWallet(ctx context.Context, userID, currency string) (*CurrencyWallet, error) {
 	currency = normalizeCurrency(currency)
 	if !validCurrency(currency) {
 		return nil, ErrInvalidCurrency
 	}
-	const upsert = `
-		INSERT INTO currency_wallets (user_id, currency, balance_minor)
-		VALUES ($1, $2, 0)
-		ON CONFLICT (user_id, currency) DO NOTHING
-		RETURNING id, user_id, currency, balance_minor, created_at`
+	const fetch = `SELECT id, user_id, currency, balance_minor, created_at FROM currency_wallets WHERE user_id=$1 AND currency=$2`
 	w := &CurrencyWallet{}
-	err := s.db.QueryRow(ctx, upsert, userID, currency).
+	err := s.db.QueryRow(ctx, fetch, userID, currency).
 		Scan(&w.ID, &w.UserID, &w.Currency, &w.BalanceMinor, &w.CreatedAt)
-	if err != nil {
-		const fetch = `SELECT id, user_id, currency, balance_minor, created_at FROM currency_wallets WHERE user_id=$1 AND currency=$2`
-		err = s.db.QueryRow(ctx, fetch, userID, currency).
-			Scan(&w.ID, &w.UserID, &w.Currency, &w.BalanceMinor, &w.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &CurrencyWallet{UserID: userID, Currency: currency}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("fx: get/create currency wallet user=%s currency=%s: %w", userID, currency, err)
+		return nil, fmt.Errorf("fx: get currency wallet user=%s currency=%s: %w", userID, currency, err)
 	}
 	return w, nil
 }
@@ -430,17 +433,22 @@ func (s *Service) getQuote(ctx context.Context, id, userID string) (*FXQuote, er
 func (s *Service) getConversion(ctx context.Context, id string) (*FXConversion, error) {
 	const q = `SELECT id, user_id, quote_id, provider_txn_id, source_currency, target_currency, source_amount_kobo, target_amount_minor, rate, fee_kobo, status, reference, idempotency_key, created_at FROM fx_conversions WHERE id=$1`
 	c := &FXConversion{}
-	return c, s.db.QueryRow(ctx, q, id).Scan(
+	err := s.db.QueryRow(ctx, q, id).Scan(
 		&c.ID, &c.UserID, &c.QuoteID, &c.ProviderTxnID, &c.SourceCurrency, &c.TargetCurrency,
 		&c.SourceAmountKobo, &c.TargetAmountMinor, &c.Rate, &c.FeeKobo, &c.Status, &c.Reference, &c.IdempotencyKey, &c.CreatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrConversionNotFound
+	}
+	return c, err
 }
 
 // mirrorCurrencyWalletTx updates the currency_wallets projection as a MIRROR of
 // the posted target-leg entry, inside the caller's tx with the fx_conversions
 // insert (UNIQUE idempotency key). It is never called on its own: the row moves
 // only when a ledger post + conversion record commit together (RISK-FX-1/2/3).
-// Upsert semantics mirror GetOrCreateCurrencyWallet.
+// This upsert is also what materialises the wallet row lazily — the GET
+// surface (GetCurrencyWallet) is a pure read and never writes it.
 func (s *Service) mirrorCurrencyWalletTx(ctx context.Context, tx pgx.Tx, userID, currency string, amountMinor int64) error {
 	currency = normalizeCurrency(currency) // canonical code — never a lowercase twin row
 	const upsert = `
@@ -455,10 +463,14 @@ func (s *Service) mirrorCurrencyWalletTx(ctx context.Context, tx pgx.Tx, userID,
 func (s *Service) getConversionByKey(ctx context.Context, idempotencyKey string) (*FXConversion, error) {
 	const q = `SELECT id, user_id, quote_id, provider_txn_id, source_currency, target_currency, source_amount_kobo, target_amount_minor, rate, fee_kobo, status, reference, idempotency_key, created_at FROM fx_conversions WHERE idempotency_key=$1`
 	c := &FXConversion{}
-	return c, s.db.QueryRow(ctx, q, idempotencyKey).Scan(
+	err := s.db.QueryRow(ctx, q, idempotencyKey).Scan(
 		&c.ID, &c.UserID, &c.QuoteID, &c.ProviderTxnID, &c.SourceCurrency, &c.TargetCurrency,
 		&c.SourceAmountKobo, &c.TargetAmountMinor, &c.Rate, &c.FeeKobo, &c.Status, &c.Reference, &c.IdempotencyKey, &c.CreatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrConversionNotFound
+	}
+	return c, err
 }
 
 func (s *Service) postReversal(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64, creditAccountID string) error {
@@ -471,7 +483,9 @@ func (s *Service) postReversal(ctx context.Context, userID, reference, idempoten
 
 // CurrencyWallet is a user's balance in a non-NGN currency.
 type CurrencyWallet struct {
-	ID           string    `json:"id"`
+	// id is omitted on the unpersisted zero-balance view GetCurrencyWallet
+	// returns for a currency with no row yet — "" would masquerade as a real id.
+	ID           string    `json:"id,omitempty"`
 	UserID       string    `json:"user_id"`
 	Currency     string    `json:"currency"`      // ISO 4217: "USD", "GBP", "EUR"
 	BalanceMinor int64     `json:"balance_minor"` // cents/pence/cents in minor units
@@ -587,7 +601,7 @@ func (h *Handler) Convert(c *gin.Context) {
 		// Tier-limit refusals → 403 (same mapping the transfer rail uses);
 		// an unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
 		switch {
-		case errors.Is(err, ErrQuoteNotFound):
+		case errors.Is(err, ErrQuoteNotFound), errors.Is(err, ErrConversionNotFound):
 			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
@@ -618,11 +632,16 @@ func (h *Handler) ListHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"conversions": history, "limit": limit, "offset": offset})
 }
 
-// GetWallet handles GET /finance/fx/wallets/:currency
+// GetWallet handles GET /finance/fx/wallets/:currency — a pure read (never
+// creates the row; the projection is zero until the first conversion writes it).
 func (h *Handler) GetWallet(c *gin.Context) {
 	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
+		return
+	}
 	currency := c.Param("currency")
-	w, err := h.svc.GetOrCreateCurrencyWallet(c.Request.Context(), userID, currency)
+	w, err := h.svc.GetCurrencyWallet(c.Request.Context(), userID, currency)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCurrency) {
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})

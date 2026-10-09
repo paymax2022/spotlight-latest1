@@ -545,11 +545,17 @@ func purchasePayload(req provider.BillRequest, requestID string) map[string]any 
 // outcomes (https://vtpass.com/documentation/eko-electricity-ekedc-payment-api/).
 // When environment == EnvironmentSandbox this is honoured LOCALLY — no network
 // round-trip to VTpass's real sandbox — so purchase works for testing without
-// live credentials. This table is keyed on Params["customerReference"]
-// UNCONDITIONALLY, for every category, exactly matching the TS source (which
-// calls sandboxPurchase(request, requestId) before any category branch is
-// consulted at all — it is not gated to electricity even though the meter
-// numbers are EKEDC's).
+// live credentials.
+//
+// The table is gated to ELECTRICITY, matching the TS source (sandboxPurchase
+// returns a plain success for every other category before the meter switch is
+// consulted): VTPass documents those numbers as EKEDC test METERS, and a phone
+// number, decoder serial, or smart-card ID is not one. Applying the table
+// unconditionally meant every non-electricity sandbox purchase fell through to
+// "meter not recognised" — and worse, a real customer reference that happened
+// to collide with a simulator sentinel inherited its outcome (a smartcard
+// equal to the no-response meter parked the transaction provider_pending with
+// the member debited).
 
 const (
 	sandboxMeterPrepaid    = "1111111111111"
@@ -560,10 +566,13 @@ const (
 	sandboxMeterNoResponse = "400000000000"
 
 	sandboxPrepaidToken = "1178-6621-9027-6821-0244"
+
+	// sandboxSuccessMessage is the canned success text every simulated vend
+	// reports — the TS source's literal 'TRANSACTION SUCCESSFUL'.
+	sandboxSuccessMessage = "TRANSACTION SUCCESSFUL"
 )
 
 func (c *Client) sandboxPurchase(req provider.BillRequest, requestID string) *provider.Bill {
-	meter := req.Params["customerReference"]
 	base := provider.Bill{
 		Ref:         req.Ref,
 		ProviderRef: requestID,
@@ -571,15 +580,25 @@ func (c *Client) sandboxPurchase(req provider.BillRequest, requestID string) *pr
 		AmountKobo:  req.AmountKobo,
 	}
 
+	// Non-electricity categories never consult the meter table — the TS
+	// source returns this same unconditional success for them.
+	if req.Type != "electricity" {
+		base.Status = StatusSuccess
+		base.Message = sandboxSuccessMessage
+		base.Raw = json.RawMessage(fmt.Sprintf(`{"sandbox":true,"category":%q}`, req.Type))
+		return &base
+	}
+
+	meter := req.Params["customerReference"]
 	switch meter {
 	case sandboxMeterPrepaid:
 		base.Status = StatusSuccess
 		base.Token = sandboxPrepaidToken
-		base.Message = "TRANSACTION SUCCESSFUL"
+		base.Message = sandboxSuccessMessage
 		base.Raw = json.RawMessage(`{"code":"000","sandbox":true,"meter_type":"PREPAID"}`)
 	case sandboxMeterPostpaid:
 		base.Status = StatusSuccess
-		base.Message = "TRANSACTION SUCCESSFUL"
+		base.Message = sandboxSuccessMessage
 		base.Raw = json.RawMessage(`{"code":"000","sandbox":true,"meter_type":"POSTPAID"}`)
 	case sandboxMeterPending, sandboxMeterTimeout:
 		base.Status = StatusPending
@@ -660,7 +679,7 @@ func (c *Client) GetBill(ctx context.Context, ref string) (*provider.Bill, error
 		return &provider.Bill{
 			ProviderRef: ref,
 			Status:      StatusSuccess,
-			Message:     "TRANSACTION SUCCESSFUL",
+			Message:     sandboxSuccessMessage,
 			Raw:         json.RawMessage(`{"sandbox":true}`),
 		}, nil
 	}
@@ -880,6 +899,18 @@ func (c *Client) ValidateCustomer(ctx context.Context, req provider.BillValidati
 	}
 
 	if c.environment == EnvironmentSandbox {
+		// TS-adapter parity: the meter-verify stub is documented for
+		// ELECTRICITY (EKEDC) only — VTPass publishes no smartcard/account
+		// test-number matrix for cable_tv/internet, so applying the
+		// electricity stub to them meant a real smartcard number could never
+		// match and validation failed 100% of the time in sandbox.
+		if req.Type != "electricity" {
+			return &provider.BillValidation{
+				Valid:   true,
+				Message: strCustomerVerified,
+				Raw:     json.RawMessage(fmt.Sprintf(`{"sandbox":true,"category":%q}`, req.Type)),
+			}, nil
+		}
 		return sandboxVerify(req.CustomerReference), nil
 	}
 

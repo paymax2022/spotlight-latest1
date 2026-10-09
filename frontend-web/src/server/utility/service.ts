@@ -879,6 +879,40 @@ export async function quoteUtilityPayment(input: {
   return { biller, product, route, pricing };
 }
 
+// replayMatchesRequest ports the Go plane's replayMatchesRequest
+// (backend/internal/utilitybills/service.go): a caller-scoped idempotency hit
+// is the SAME purchase ONLY when every material param agrees — what is being
+// bought (category + biller + product), for whom (customer reference), through
+// which rail (payment source), and — when the caller priced it explicitly —
+// for how much. An omitted amountKobo can't be compared (the row stores the
+// RESOLVED amount), but a missing amount alone never passes a divergent
+// request. Adopting a divergent key would ack a purchase the request never
+// made — e.g. a ₦1,000 airtime vend returned for a ₦5,000 data request — so a
+// same-caller divergent reuse gets the same 409 a cross-member clash does.
+function replayMatchesRequest(
+  existing: UtilityTransactionRow,
+  input: {
+    category: string;
+    billerId: string;
+    productId: string;
+    customerReference: string;
+    paymentSource: string;
+    amountKobo?: number;
+  },
+): boolean {
+  if (
+    existing.category !== input.category
+    || existing.biller_id !== input.billerId
+    || existing.customer_reference !== input.customerReference
+    || existing.payment_source !== input.paymentSource
+  ) {
+    return false;
+  }
+  if (!existing.product_id || existing.product_id !== input.productId) return false;
+  if (input.amountKobo !== undefined && Number(existing.amount_kobo) !== input.amountKobo) return false;
+  return true;
+}
+
 export async function payUtility(userId: string, input: UtilityPayInput & { idempotencyKey: string }) {
   const category = assertCategory(input.category);
   const billerId = assertString(input.billerId, 'biller_id');
@@ -899,6 +933,15 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     // amount). Mirror the Go rail + transfers: a foreign key is a 409, never
     // a replay.
     if (existingRow.user_id !== userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
+    // A same-caller hit is a true replay ONLY when the request is the same
+    // purchase — see replayMatchesRequest. A divergent reuse is key misuse
+    // and gets the same 409 (post-merge audit D4 on the Go side).
+    if (!replayMatchesRequest(existingRow, {
+      category, billerId, productId, customerReference, paymentSource,
+      amountKobo: input.amountKobo,
+    })) {
       throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
     }
     // AUD-BILL-005: a non-terminal row means the original request died
@@ -1002,6 +1045,16 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
       if (duplicate) {
         const dupRow = duplicate as UtilityTransactionRow;
         if (dupRow.user_id !== userId) {
+          throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+        }
+        // The unique constraint is the second idempotency layer — the same
+        // param check the pre-check applies, so a divergent request that
+        // slipped past it (crash window between the two reads) still gets a
+        // 409 instead of adopting a purchase it never made.
+        if (!replayMatchesRequest(dupRow, {
+          category, billerId, productId, customerReference, paymentSource,
+          amountKobo: input.amountKobo,
+        })) {
           throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
         }
         return { alreadyProcessed: true, transaction: dupRow };
