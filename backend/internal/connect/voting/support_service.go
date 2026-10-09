@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,6 +21,34 @@ import (
 // foreign ticket id is indistinguishable from a nonexistent one). Handlers map
 // it to 404 TICKET_NOT_FOUND — same as the sibling ticket GET.
 var ErrTicketNotFound = errors.New("ticket not found")
+
+// ticketNotFoundIfBadUUID refuses a malformed ticket id before it reaches a
+// Postgres uuid comparison — a 22P02 driver error would otherwise surface as
+// a 500 where the resource simply cannot exist (404, same convention as
+// notFoundIfBadUUID on the contest surface).
+func ticketNotFoundIfBadUUID(id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return ErrTicketNotFound
+	}
+	return nil
+}
+
+// Enum/check domains mirrored from migration
+// 20270198000000_marketplace_notifications_and_voting_support.sql. Values
+// outside these sets fail the Postgres enum cast / CHECK constraint and
+// surface as a 500 — validating them here turns that into a 400.
+var (
+	ticketCategories = map[string]bool{
+		"account_issue": true, "voting_problem": true, "contest_question": true,
+		"billing_issue": true, "bug_report": true, "feature_request": true, "other": true,
+	}
+	ticketPriorities = map[string]bool{
+		"low": true, "normal": true, "high": true, "urgent": true,
+	}
+	// ticketUserStatuses is the user-writable subset of voting_ticket_status —
+	// the agent-only transitions (in_progress, resolved) stay server-side.
+	ticketUserStatuses = map[string]bool{"waiting": true, "closed": true}
+)
 
 // SupportService handles voting support ticket operations
 type SupportService struct {
@@ -100,6 +129,9 @@ func (s *SupportService) ListSupportTickets(ctx context.Context, userID, status 
 
 // GetSupportTicket retrieves a single support ticket (owner-scoped)
 func (s *SupportService) GetSupportTicket(ctx context.Context, userID, ticketID string) (*SupportTicket, error) {
+	if err := ticketNotFoundIfBadUUID(ticketID); err != nil {
+		return nil, err
+	}
 	query := `
 		SELECT id, user_id, contest_id, category, status, subject, description, priority, source,
 		       assigned_to, resolution_notes, created_at, updated_at, resolved_at
@@ -113,12 +145,18 @@ func (s *SupportService) GetSupportTicket(ctx context.Context, userID, ticketID 
 		&ticket.Subject, &ticket.Description, &ticket.Priority, &ticket.Source,
 		&ticket.AssignedTo, &ticket.ResolutionNotes, &ticket.CreatedAt, &ticket.UpdatedAt, &ticket.ResolvedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTicketNotFound
+	}
 
 	return ticket, err
 }
 
 // UpdateSupportTicket updates a support ticket (limited fields for users)
 func (s *SupportService) UpdateSupportTicket(ctx context.Context, userID, ticketID, status, priority, description string) (*SupportTicket, error) {
+	if err := ticketNotFoundIfBadUUID(ticketID); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 
 	query := `
@@ -139,15 +177,24 @@ func (s *SupportService) UpdateSupportTicket(ctx context.Context, userID, ticket
 		&ticket.Subject, &ticket.Description, &ticket.Priority, &ticket.Source,
 		&ticket.AssignedTo, &ticket.ResolutionNotes, &ticket.CreatedAt, &ticket.UpdatedAt, &ticket.ResolvedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTicketNotFound
+	}
 
 	return ticket, err
 }
 
 // AddTicketMessage adds a message to a support ticket
 func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID, message string, attachments []string) (*TicketMessage, error) {
+	if err := ticketNotFoundIfBadUUID(ticketID); err != nil {
+		return nil, err
+	}
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
-	if err != nil || !exists {
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return nil, ErrTicketNotFound
 	}
 
@@ -174,9 +221,15 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 
 // ListTicketMessages lists all messages in a ticket (owner-scoped)
 func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketID string) ([]TicketMessage, error) {
+	if err := ticketNotFoundIfBadUUID(ticketID); err != nil {
+		return nil, err
+	}
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
-	if err != nil || !exists {
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return nil, ErrTicketNotFound
 	}
 
@@ -207,9 +260,12 @@ func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketI
 
 // SupportTicket represents a user support request
 type SupportTicket struct {
-	ID              string     `json:"id"`
-	UserID          string     `json:"user_id"`
-	ContestID       string     `json:"contest_id,omitempty"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// ContestID is *string because the column is nullable: the client field is
+	// optional, and pgx scans NULL into **string as nil (a bare string would
+	// error). omitempty keeps the wire shape identical to the old "" case.
+	ContestID       *string    `json:"contest_id,omitempty"`
 	Category        string     `json:"category"` // 'account_issue','voting_problem',etc
 	Status          string     `json:"status"`   // 'open','in_progress','waiting','resolved','closed'
 	Subject         string     `json:"subject"`
@@ -263,6 +319,24 @@ func (h *Handler) CreateSupportTicket(c *gin.Context) {
 		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
+	// contest_id is optional but must be a uuid when present — it lands in a
+	// uuid column, where "" or a malformed value is a 22P02 → 500, not a 400.
+	var contestID *string
+	if in.ContestID != "" {
+		if _, err := uuid.Parse(in.ContestID); err != nil {
+			respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", "contest_id must be a valid UUID")
+			return
+		}
+		contestID = &in.ContestID
+	}
+	if !ticketCategories[in.Category] {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", "category is not a supported ticket category")
+		return
+	}
+	if in.Priority != "" && !ticketPriorities[in.Priority] {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", "priority must be one of low|normal|high|urgent")
+		return
+	}
 
 	ticket := SupportTicket{
 		UserID:      uid,
@@ -270,7 +344,7 @@ func (h *Handler) CreateSupportTicket(c *gin.Context) {
 		Subject:     in.Subject,
 		Description: in.Description,
 		Priority:    in.Priority,
-		ContestID:   in.ContestID,
+		ContestID:   contestID,
 		Source:      in.Source,
 		Status:      "open",
 	}
@@ -328,7 +402,11 @@ func (h *Handler) GetSupportTicket(c *gin.Context) {
 
 	ticket, err := h.svc.getSupportTicket(c.Request.Context(), uid, c.Param("id"))
 	if err != nil {
-		respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+		if errors.Is(err, ErrTicketNotFound) {
+			respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+			return
+		}
+		respondErr(c, http.StatusInternalServerError, "TICKET_GET_FAILED", err.Error())
 		return
 	}
 
@@ -352,9 +430,23 @@ func (h *Handler) UpdateSupportTicket(c *gin.Context) {
 		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
+	// Users may only move a ticket to 'waiting' or 'closed'; any other status
+	// is an agent-only transition, and a value outside the enum is a 22P02 → 500.
+	if in.Status != "" && !ticketUserStatuses[in.Status] {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", "status must be one of waiting|closed")
+		return
+	}
+	if in.Priority != "" && !ticketPriorities[in.Priority] {
+		respondErr(c, http.StatusBadRequest, "VALIDATION_ERROR", "priority must be one of low|normal|high|urgent")
+		return
+	}
 
 	ticket, err := h.svc.updateSupportTicket(c.Request.Context(), uid, c.Param("id"), in.Status, in.Priority, in.Description)
 	if err != nil {
+		if errors.Is(err, ErrTicketNotFound) {
+			respondErr(c, http.StatusNotFound, "TICKET_NOT_FOUND", err.Error())
+			return
+		}
 		respondErr(c, http.StatusInternalServerError, "TICKET_UPDATE_FAILED", err.Error())
 		return
 	}
