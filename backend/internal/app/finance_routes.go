@@ -236,7 +236,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	var paystackClient *paystack.Client
 
 	if cfg.PaystackSecretKey != "" {
-		ps := paystack.New(cfg.PaystackSecretKey)
+		ps := paystack.NewWithBaseURL(cfg.PaystackSecretKey, cfg.PaystackBaseURL)
 		paymentProvider = ps
 		vaProvider = ps
 		paystackClient = ps
@@ -260,7 +260,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// holds them by Name, picks a configurable default, and auto-fails-over.
 	var paystackDisb providerInterfaces.DisbursementProvider
 	if cfg.PaystackSecretKey != "" {
-		paystackDisb = paystack.New(cfg.PaystackSecretKey)
+		paystackDisb = paystack.NewWithBaseURL(cfg.PaystackSecretKey, cfg.PaystackBaseURL)
 	}
 	var monnifyDisb providerInterfaces.DisbursementProvider
 	if cfg.MonnifyAPIKey != "" && cfg.MonnifySecretKey != "" {

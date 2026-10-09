@@ -78,6 +78,12 @@ type Config struct {
 	// Paystack credentials.
 	PaystackSecretKey  string
 	PaystackWebhookKey string
+	// PaystackBaseURL overrides the Paystack API base URL (default
+	// https://api.paystack.co). Local/dev only: set it to the Paystack fake
+	// (tools/fakes, e.g. http://localhost:9100) so the full
+	// initialize/verify/refund surface runs without real keys. Never set this
+	// in production — it reroutes every Paystack call the process makes.
+	PaystackBaseURL string
 
 	// Crypto real provider (retail crypto price feed + on-chain withdrawal broadcast).
 	// CryptoProvider selects the implementation: "mock" (default, deterministic, no
@@ -781,6 +787,7 @@ func Load() Config {
 		SchedulerPollIntervalSeconds: getEnvInt("SCHEDULER_POLL_INTERVAL_SECONDS", 5),
 		PaystackSecretKey:            getEnv("PAYSTACK_SECRET_KEY", ""),
 		PaystackWebhookKey:           getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+		PaystackBaseURL:              getEnv("PAYSTACK_BASE_URL", ""),
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
 		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
@@ -1219,6 +1226,9 @@ func (c Config) Validate() error {
 			if isPlaceholder(c.PaystackSecretKey) {
 				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
 			}
+		}
+		if c.PaystackBaseURL != "" {
+			strict = append(strict, "PAYSTACK_BASE_URL must not be set outside development — it reroutes every Paystack call away from api.paystack.co")
 		}
 		if c.FeatureAcademyEnabled {
 			switch strings.ToLower(strings.TrimSpace(c.RailsMode)) {
