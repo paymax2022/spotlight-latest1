@@ -160,6 +160,79 @@ func TestLiveDB_SocialPayShare_StalePaidClaim_Heals(t *testing.T) {
 	}
 }
 
+// A stale-PAID share must never be settled by a SIBLING share's legs. Every
+// share of one bill posts under the same "split:<bill>" reference, so a
+// (reference, amount) probe treats an equal-amount sibling's posted legs as
+// this share's — the wave-10 equal-amount PayShare false-positive: the second
+// share reads "paid" while no money ever moved for it. The heal probes must
+// key on the share's own deterministic ledger keys (split:<shareID>:…), never
+// on (reference, amount).
+func TestLiveDB_SocialPayShare_EqualSibling_DoesNotPhantomSettle(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+	svc := socialService(pool)
+
+	organiser := socialTestUser(t, pool)
+	payerA := socialTestUser(t, pool)
+	payerB := socialTestUser(t, pool)
+	setKycTier(t, pool, payerA, 1)
+	setKycTier(t, pool, payerB, 1)
+	handleA := "esa" + shortTag()
+	handleB := "esb" + shortTag()
+	if _, err := svc.tags.Claim(ctx, payerA, handleA); err != nil {
+		t.Fatalf("claim handle A: %v", err)
+	}
+	if _, err := svc.tags.Claim(ctx, payerB, handleB); err != nil {
+		t.Fatalf("claim handle B: %v", err)
+	}
+
+	// EQUAL split, two identical 400_00 shares — the collision shape.
+	_, shares, err := svc.CreateSplit(ctx, organiser, "dinner", 800_00, SplitEqual,
+		[]ShareInput{{Handle: handleA}, {Handle: handleB}})
+	if err != nil {
+		t.Fatalf("create split: %v", err)
+	}
+	var shareA, shareB string
+	for _, sh := range shares {
+		switch sh.UserID {
+		case payerA:
+			shareA = sh.ID
+		case payerB:
+			shareB = sh.ID
+		}
+	}
+	if shareA == "" || shareB == "" {
+		t.Fatalf("shares not mapped to payers: %+v", shares)
+	}
+
+	fundWallet(t, ctx, led, payerA, 5_000_00)
+	fundWallet(t, ctx, led, payerB, 5_000_00)
+
+	// Share A settles genuinely — posts "split:<bill>" legs of 400_00.
+	if err := svc.PayShare(ctx, payerA, shareA, "a-"+shortTag()); err != nil {
+		t.Fatalf("pay share A err = %v, want nil", err)
+	}
+
+	// Pre-fix crash residue on share B: a settled row with zero legs of its
+	// own (the old claim-flip-then-debit ordering left exactly this).
+	if _, err := pool.Exec(ctx, `UPDATE split_shares SET state='PAID', paid_at=now() WHERE id=$1`, shareB); err != nil {
+		t.Fatalf("seed stale claim: %v", err)
+	}
+
+	// Re-entry must heal share B by moving B's money — never read A's legs as
+	// B's and report "paid" over an uncollected share.
+	if err := svc.PayShare(ctx, payerB, shareB, "b-"+shortTag()); err != nil {
+		t.Fatalf("heal-entry pay share B err = %v, want nil", err)
+	}
+	if bal, _ := led.GetBalance(ctx, organiser); bal != 800_00 {
+		t.Fatalf("organiser balance = %d, want 80000 — sibling legs must not phantom-settle share B", bal)
+	}
+	if bal, _ := led.GetBalance(ctx, payerB); bal != 4_600_00 {
+		t.Fatalf("payer B balance = %d, want 460000 (exactly one debit)", bal)
+	}
+}
+
 func TestLiveDB_SocialPayRequest_StalePaidClaim_Heals(t *testing.T) {
 	pool := socialTestPool(t)
 	ctx := context.Background()
