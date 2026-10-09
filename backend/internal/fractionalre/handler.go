@@ -36,7 +36,8 @@ var errMap = httperr.New(http.StatusInternalServerError,
 		ErrMasterRiskRequired, ErrProfileInactive),
 	httperr.R(http.StatusConflict, ErrOfferingNotOpen, ErrMarketHalted,
 		ErrInsufficientUnits, ErrInvalidTransition, ErrMakerChecker, ErrTitleSoD,
-		ErrThresholdNotMet),
+		ErrThresholdNotMet, ErrIdempotencyConflict, ErrOfferingSoldOut),
+	httperr.R(http.StatusUnprocessableEntity, ErrAmountOverflow),
 	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),
 )
 
