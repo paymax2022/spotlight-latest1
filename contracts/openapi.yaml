@@ -13432,6 +13432,17 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: OK }
+  /api/finance/fractionalre/admin/rounds/{id}/open:
+    post:
+      operationId: freAdminOpenRound
+      summary: Open a draft round for subscription (RBAC fractionalre.asset_manage)
+      tags: [FractionalREAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Opened }
+        '409': { description: Round is not in draft }
   /api/finance/fractionalre/admin/rounds/{id}/extend:
     post:
       operationId: freAdminExtendRound
