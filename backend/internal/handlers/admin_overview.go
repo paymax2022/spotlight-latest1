@@ -61,78 +61,228 @@ type moduleSpec struct {
 	VolSQL   string
 	Attn     string // human label for the work queue
 	AttnSQL  string
-	AttnHref string
+	AttnHref string // the page where an admin RESOLVES the queue; "" only with AttnNote
 	Severity string // "critical" (money/compliance) | "warn" (content/ops)
+	// AttnNote is set INSTEAD of AttnHref when the queue is real but no working
+	// review screen exists yet. The dashboard shows the count and this note rather
+	// than a link to a page that cannot act (or to the legacy bridge).
+	AttnNote string
 }
 
 // specs is the registry. Adding a module means adding one row — and verifying
-// its predicate against that module's CHECK constraint, not assuming.
+// its predicate against that module's CHECK constraint, not assuming. Fields are
+// NAMED on purpose: with positional literals, two swapped SQL strings compile and
+// silently report each other's counts. admin_overview_test.go enforces that every
+// status literal is accepted by its column and every link resolves to a real page.
+//
+// WHAT BELONGS HERE: a queue where a human admin must decide something, that has a
+// screen able to resolve it. "Waiting on admin" is narrower than "not finished":
+// a needs_more_info / CHANGES_REQUESTED row is waiting on the user, and a draft is
+// not submitted yet — counting those would show work nobody can do.
 var overviewSpecs = []moduleSpec{
-	{"marketplace", "Marketplace", "Commerce", "/admin/marketplace",
-		"Live listings", `SELECT count(*) FROM public.mkt_listings WHERE status='active'`,
-		"Awaiting moderation", `SELECT count(*) FROM public.mkt_listings WHERE status='pending_review'`,
-		"/admin/marketplace?status=pending_review", "warn"},
-	{"mkt-disputes", "Marketplace disputes", "Commerce", "/admin/marketplace/disputes",
-		"Open cases", `SELECT count(*) FROM public.mkt_disputes WHERE status IN ('opened','evidence_window','under_review')`,
-		"Needs a decision", `SELECT count(*) FROM public.mkt_disputes WHERE status='under_review'`,
-		"/admin/marketplace/disputes?status=under_review", "critical"},
-	{"restaurant", "Restaurant", "Commerce", "/admin/restaurant",
-		"Withdrawals paid", `SELECT count(*) FROM public.restaurant_withdrawals WHERE status='paid'`,
-		"Withdrawals pending", `SELECT count(*) FROM public.restaurant_withdrawals WHERE status='pending'`,
-		"/admin/restaurant/withdrawals?status=pending", "critical"},
-	{"crowdfunding", "Crowdfunding", "Money", "/admin/crowdfunding",
-		"Disputes open", `SELECT count(*) FROM public.cf_disputes WHERE status IN ('OPEN','INVESTIGATING','ESCALATED')`,
-		"Withdrawals pending", `SELECT count(*) FROM public.cf_withdrawals WHERE status='PENDING'`,
-		"/admin/crowdfunding/withdrawals", "critical"},
-	{"crypto", "Crypto", "Money", "/admin/crypto",
-		"Withdrawals confirmed", `SELECT count(*) FROM public.crypto_withdrawals WHERE status='confirmed'`,
-		"Awaiting review", `SELECT count(*) FROM public.crypto_withdrawals WHERE status IN ('requested','pending_review')`,
-		"/admin/crypto/withdrawals", "critical"},
-	{"referral", "Referrals", "Money", "/admin/referral",
-		"Payouts paid", `SELECT count(*) FROM public.referral_payouts WHERE status='paid'`,
-		"Payouts queued", `SELECT count(*) FROM public.referral_payouts WHERE status='queued'`,
-		"/admin/referral-rewards", "critical"},
-	{"payouts", "Platform payouts", "Money", "/admin/payments-finance",
-		"Completed", `SELECT count(*) FROM public.payouts WHERE status='completed'`,
-		"Pending release", `SELECT count(*) FROM public.payouts WHERE status='pending'`,
-		"/admin/payments-finance", "critical"},
-	{"creators", "Creators", "Community", "/admin/creators",
-		"Payouts paid", `SELECT count(*) FROM public.creator_payouts WHERE state='PAID'`,
-		"Payout requests", `SELECT count(*) FROM public.creator_payouts WHERE state='REQUESTED'`,
-		"/admin/creators", "critical"},
-	{"escrow", "Social escrow", "Money", "/admin/social-escrow",
-		"Disputes resolved", `SELECT count(*) FROM public.escrow_disputes WHERE state='RESOLVED'`,
-		"Disputes open", `SELECT count(*) FROM public.escrow_disputes WHERE state='OPEN'`,
-		"/admin/social-escrow", "critical"},
-	{"disputes", "Disputes desk", "Money", "/admin/disputes",
-		"In review", `SELECT count(*) FROM public.disputes WHERE status='in_review'`,
-		"Open, unassigned", `SELECT count(*) FROM public.disputes WHERE status='open'`,
-		"/admin/disputes", "critical"},
+	// ------------------------------- Money --------------------------------
+	{Key: "kyc-verify", Label: "Identity verification", Group: "Money", Href: "/admin/finance/kyc-verify",
+		Volume: "Sessions approved", VolSQL: `SELECT count(*) FROM public.verification_session WHERE status='APPROVED'`,
+		Attn: "Needs a human review", AttnSQL: `SELECT count(*) FROM public.verification_session WHERE status='NEEDS_REVIEW'`,
+		AttnHref: "/admin/finance/kyc-verify", Severity: "critical"},
+	{Key: "trading-kyc", Label: "Trading KYC", Group: "Money", Href: "/admin/trading/kyc",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.trading_kyc WHERE status='APPROVED'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.trading_kyc WHERE status IN ('SUBMITTED','UNDER_REVIEW')`,
+		AttnHref: "/admin/trading/kyc", Severity: "critical"},
+	{Key: "adjustments", Label: "Wallet adjustments", Group: "Money", Href: "/admin/payments-finance/adjustments",
+		Volume: "Executed", VolSQL: `SELECT count(*) FROM public.admin_adjustments WHERE status='executed'`,
+		Attn: "Awaiting a second approver", AttnSQL: `SELECT count(*) FROM public.admin_adjustments WHERE status='pending_approval'`,
+		AttnHref: "/admin/payments-finance/adjustments", Severity: "critical"},
+	{Key: "crowdfunding", Label: "Crowdfunding", Group: "Money", Href: "/admin/crowdfunding",
+		Volume: "Disputes open", VolSQL: `SELECT count(*) FROM public.cf_disputes WHERE status IN ('OPEN','INVESTIGATING','ESCALATED')`,
+		Attn: "Withdrawals pending", AttnSQL: `SELECT count(*) FROM public.cf_withdrawals WHERE status='PENDING'`,
+		AttnHref: "/admin/crowdfunding/withdrawals", Severity: "critical"},
+	{Key: "cf-review", Label: "Campaign review", Group: "Money", Href: "/admin/crowdfunding/review",
+		Volume: "Live campaigns", VolSQL: `SELECT count(*) FROM public.campaigns WHERE review_status='ACTIVE'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.campaigns WHERE review_status='PENDING_REVIEW'`,
+		AttnHref: "/admin/crowdfunding/review", Severity: "warn"},
+	{Key: "cf-featured", Label: "Featured requests", Group: "Money", Href: "/admin/crowdfunding/featured",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.cf_feature_requests WHERE status='APPROVED'`,
+		Attn: "Awaiting a decision", AttnSQL: `SELECT count(*) FROM public.cf_feature_requests WHERE status='PENDING'`,
+		AttnHref: "/admin/crowdfunding/featured", Severity: "warn"},
+	{Key: "cf-refunds", Label: "Crowdfunding refunds", Group: "Money", Href: "/admin/crowdfunding/finance",
+		Volume: "Refunded", VolSQL: `SELECT count(*) FROM public.cf_refund_requests WHERE status='REFUNDED'`,
+		Attn: "Refund requests", AttnSQL: `SELECT count(*) FROM public.cf_refund_requests WHERE status='REFUND_REQUESTED'`,
+		AttnHref: "/admin/crowdfunding/finance", Severity: "critical"},
+	{Key: "cf-fraud", Label: "Crowdfunding fraud", Group: "Money", Href: "/admin/crowdfunding/fraud",
+		Volume: "Resolved", VolSQL: `SELECT count(*) FROM public.cf_fraud_alerts WHERE status='RESOLVED'`,
+		Attn: "Alerts to investigate", AttnSQL: `SELECT count(*) FROM public.cf_fraud_alerts WHERE status IN ('OPEN','INVESTIGATING')`,
+		AttnHref: "/admin/crowdfunding/fraud", Severity: "critical"},
+	{Key: "cf-compliance", Label: "Data-subject requests", Group: "Money", Href: "/admin/crowdfunding/compliance",
+		Volume: "Completed", VolSQL: `SELECT count(*) FROM public.cf_data_requests WHERE status='COMPLETED'`,
+		Attn: "Requests to fulfil", AttnSQL: `SELECT count(*) FROM public.cf_data_requests WHERE status IN ('PENDING','IN_PROGRESS')`,
+		AttnHref: "/admin/crowdfunding/compliance", Severity: "critical"},
+	// requested is a pre-park state; the page only acts on pending_review.
+	{Key: "crypto", Label: "Crypto", Group: "Money", Href: "/admin/crypto",
+		Volume: "Withdrawals confirmed", VolSQL: `SELECT count(*) FROM public.crypto_withdrawals WHERE status='confirmed'`,
+		Attn: "Awaiting AML review", AttnSQL: `SELECT count(*) FROM public.crypto_withdrawals WHERE status='pending_review'`,
+		AttnHref: "/admin/crypto/withdrawals", Severity: "critical"},
+	{Key: "referral", Label: "Referrals", Group: "Money", Href: "/admin/referral",
+		Volume: "Payouts paid", VolSQL: `SELECT count(*) FROM public.referral_payouts WHERE status='paid'`,
+		Attn: "Payouts queued", AttnSQL: `SELECT count(*) FROM public.referral_payouts WHERE status='queued'`,
+		AttnHref: "/admin/referral-rewards", Severity: "critical"},
+	{Key: "referral-ambassadors", Label: "Referral ambassadors", Group: "Money", Href: "/admin/referral/ambassadors/queue",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.referral_ambassadors WHERE status='approved'`,
+		Attn: "Applications", AttnSQL: `SELECT count(*) FROM public.referral_ambassadors WHERE status='applied'`,
+		AttnHref: "/admin/referral/ambassadors/queue", Severity: "warn"},
+	{Key: "referral-aml", Label: "Referral AML flags", Group: "Money", Href: "/admin/referral/compliance",
+		Volume: "Cleared", VolSQL: `SELECT count(*) FROM public.referral_aml_flags WHERE status='cleared'`,
+		Attn: "Flags to review", AttnSQL: `SELECT count(*) FROM public.referral_aml_flags WHERE status IN ('open','reviewing')`,
+		AttnHref: "/admin/referral/compliance", Severity: "critical"},
+	{Key: "payouts", Label: "Platform payouts", Group: "Money", Href: "/admin/payments-finance",
+		Volume: "Completed", VolSQL: `SELECT count(*) FROM public.payouts WHERE status='completed'`,
+		Attn: "Pending release", AttnSQL: `SELECT count(*) FROM public.payouts WHERE status='pending'`,
+		AttnHref: "/admin/payments-finance", Severity: "critical"},
+	{Key: "escrow", Label: "Social escrow", Group: "Money", Href: "/admin/social-escrow/dashboard",
+		Volume: "Disputes resolved", VolSQL: `SELECT count(*) FROM public.escrow_disputes WHERE state='RESOLVED'`,
+		Attn: "Disputes open", AttnSQL: `SELECT count(*) FROM public.escrow_disputes WHERE state='OPEN'`,
+		AttnHref: "/admin/social-escrow/disputes", Severity: "critical"},
+	{Key: "disputes", Label: "Disputes desk", Group: "Money", Href: "/admin/finance/disputes",
+		Volume: "In review", VolSQL: `SELECT count(*) FROM public.disputes WHERE status='in_review'`,
+		Attn: "Open, unassigned", AttnSQL: `SELECT count(*) FROM public.disputes WHERE status='open'`,
+		AttnHref: "/admin/finance/disputes", Severity: "critical"},
+	{Key: "insurance", Label: "Insurance claims", Group: "Money", Href: "/admin/insurance/dashboard",
+		Volume: "Policies live", VolSQL: `SELECT count(*) FROM public.insurance_policy WHERE state='ACTIVE'`,
+		Attn: "Claims to assess", AttnSQL: `SELECT count(*) FROM public.insurance_claim WHERE state IN ('FNOL_SUBMITTED','UNDER_ASSESSMENT')`,
+		AttnHref: "/admin/insurance/claims", Severity: "critical"},
 
-	{"stays", "Stays", "Travel", "/admin/stays",
-		"Active properties", `SELECT count(*) FROM public.stays_property WHERE status='ACTIVE'`,
-		"Properties to review", `SELECT count(*) FROM public.stays_property WHERE status='PENDING_REVIEW'`,
-		"/admin/stays/properties", "warn"},
-	{"stays-kyb", "Stays hotelier KYB", "Travel", "/admin/stays",
-		"Approved", `SELECT count(*) FROM public.stays_hotelier_kyb WHERE status='approved'`,
-		"Submitted, awaiting KYB", `SELECT count(*) FROM public.stays_hotelier_kyb WHERE status='submitted'`,
-		"/admin/stays/kyc", "critical"},
-	{"health", "Health providers", "Health", "/admin/health",
-		"Approved providers", `SELECT count(*) FROM public.health_provider_applications WHERE state='APPROVED'`,
-		"Applications to review", `SELECT count(*) FROM public.health_provider_applications WHERE state IN ('SUBMITTED','UNDER_REVIEW')`,
-		"/admin/health/providers", "warn"},
-	{"telemedicine", "Telemedicine payouts", "Health", "/admin/telemedicine",
-		"Paid", `SELECT count(*) FROM public.doctor_payouts WHERE status='paid'`,
-		"Pending", `SELECT count(*) FROM public.doctor_payouts WHERE status='pending'`,
-		"/admin/telemedicine/dashboard", "critical"},
-	{"insurance", "Insurance claims", "Money", "/admin/insurance",
-		"Policies live", `SELECT count(*) FROM public.insurance_policy WHERE state='ACTIVE'`,
-		"Claims to assess", `SELECT count(*) FROM public.insurance_claim WHERE state IN ('FNOL_SUBMITTED','UNDER_ASSESSMENT')`,
-		"/admin/insurance/claims", "critical"},
-	{"registration", "Registrations", "Programs", "/admin/registration",
-		"Approved", `SELECT count(*) FROM public.registrations WHERE status='approved'`,
-		"Awaiting review", `SELECT count(*) FROM public.registrations WHERE status IN ('submitted','under_review')`,
-		"/admin/registration?status=submitted", "warn"},
+	// ------------------------------ Commerce ------------------------------
+	// Business verification (KYB) and merchant onboarding. kyb_status is read RAW:
+	// the onboarding page derives its own status in Go where draft and never-
+	// submitted both read "pending", which would count work that does not exist.
+	{Key: "restaurant-kyb", Label: "Restaurant business verification", Group: "Commerce", Href: "/admin/restaurant/onboarding",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.restaurants WHERE kyb_status='approved'`,
+		Attn: "Submitted, awaiting verification", AttnSQL: `SELECT count(*) FROM public.restaurants WHERE kyb_status IN ('submitted','under_review')`,
+		AttnHref: "/admin/restaurant/onboarding", Severity: "critical"},
+	{Key: "merchant-onboarding", Label: "Merchant onboarding", Group: "Commerce", Href: "/admin/merchant-onboarding",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.onb_application WHERE status='APPROVED'`,
+		Attn: "Applications to review", AttnSQL: `SELECT count(*) FROM public.onb_application WHERE status IN ('SUBMITTED','UNDER_REVIEW')`,
+		AttnHref: "/admin/merchant-onboarding", Severity: "critical"},
+	{Key: "business", Label: "Business registry", Group: "Commerce", Href: "/admin/business",
+		Volume: "Verified or registered", VolSQL: `SELECT count(*) FROM public.business_profiles WHERE status IN ('verified','registered')`,
+		Attn: "Verifications awaiting review", AttnSQL: `SELECT count(*) FROM public.business_profiles WHERE status IN ('submitted','under_review')`,
+		AttnHref: "/admin/business", Severity: "critical"},
+	{Key: "restaurant", Label: "Restaurant", Group: "Commerce", Href: "/admin/restaurant",
+		Volume: "Withdrawals paid", VolSQL: `SELECT count(*) FROM public.restaurant_withdrawals WHERE status='paid'`,
+		// Nothing ever writes 'pending': the only INSERT sets 'processing', which is
+		// the state an admin settles from (Mark paid / Reverse). Counting 'pending'
+		// alone read 0 while cash-outs waited.
+		Attn: "Withdrawals to settle", AttnSQL: `SELECT count(*) FROM public.restaurant_withdrawals WHERE status IN ('pending','processing')`,
+		AttnHref: "/admin/restaurant/withdrawals", Severity: "critical"},
+	{Key: "restaurant-listings", Label: "Restaurant listings", Group: "Commerce", Href: "/admin/restaurant/moderation",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.restaurants WHERE listing_review_status='APPROVED'`,
+		Attn: "Listings awaiting review", AttnSQL: `SELECT count(*) FROM public.restaurants WHERE listing_review_status='PENDING'`,
+		AttnHref: "/admin/restaurant/moderation", Severity: "warn"},
+	{Key: "marketplace", Label: "Marketplace", Group: "Commerce", Href: "/admin/marketplace",
+		Volume: "Live listings", VolSQL: `SELECT count(*) FROM public.mkt_listings WHERE status='active'`,
+		Attn: "Awaiting moderation", AttnSQL: `SELECT count(*) FROM public.mkt_listings WHERE status='pending_review'`,
+		AttnHref: "/admin/marketplace/moderation", Severity: "warn"},
+	{Key: "mkt-verification", Label: "Marketplace seller verification", Group: "Commerce", Href: "/admin/marketplace/users",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.mkt_verification_requests WHERE status='approved'`,
+		Attn: "Verification requests", AttnSQL: `SELECT count(*) FROM public.mkt_verification_requests WHERE status='pending'`,
+		AttnHref: "/admin/marketplace/users", Severity: "critical"},
+	{Key: "mkt-appeals", Label: "Marketplace appeals", Group: "Commerce", Href: "/admin/marketplace/appeals",
+		Volume: "Decided", VolSQL: `SELECT count(*) FROM public.mkt_appeals WHERE status IN ('decided','executed','closed')`,
+		Attn: "Appeals to decide", AttnSQL: `SELECT count(*) FROM public.mkt_appeals WHERE status IN ('opened','under_review')`,
+		AttnHref: "/admin/marketplace/appeals", Severity: "critical"},
+	{Key: "mkt-flags", Label: "Marketplace flags", Group: "Commerce", Href: "/admin/marketplace/flags",
+		Volume: "Actioned", VolSQL: `SELECT count(*) FROM public.mkt_flags WHERE status='actioned'`,
+		Attn: "Open flags", AttnSQL: `SELECT count(*) FROM public.mkt_flags WHERE status='open'`,
+		AttnHref: "/admin/marketplace/flags", Severity: "warn"},
+	{Key: "featured-placement", Label: "Featured placement", Group: "Commerce", Href: "/admin/featured-placement",
+		Volume: "Active campaigns", VolSQL: `SELECT count(*) FROM public.featured_campaign WHERE state='ACTIVE'`,
+		Attn: "Campaigns under review", AttnSQL: `SELECT count(*) FROM public.featured_campaign WHERE state='UNDER_REVIEW'`,
+		AttnHref: "/admin/featured-placement", Severity: "warn"},
+	{Key: "realtor", Label: "Realtor listings", Group: "Commerce", Href: "/admin/realtor/moderation",
+		Volume: "Published", VolSQL: `SELECT count(*) FROM public.realtor_listings WHERE status='published'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.realtor_listings WHERE status='pending_verification'`,
+		AttnHref: "/admin/realtor/moderation", Severity: "warn"},
+	{Key: "property-roles", Label: "Property role verification", Group: "Commerce", Href: "/admin/property-roles",
+		Volume: "Verified", VolSQL: `SELECT count(*) FROM public.property_role_profiles WHERE verification_status='verified'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.property_role_profiles WHERE verification_status='pending' AND status <> 'suspended'`,
+		AttnHref: "/admin/property-roles", Severity: "warn"},
+
+	// ------------------------------- Travel -------------------------------
+	{Key: "stays", Label: "Stays", Group: "Travel", Href: "/admin/stays/dashboard",
+		Volume: "Active properties", VolSQL: `SELECT count(*) FROM public.stays_property WHERE status='ACTIVE'`,
+		Attn: "Properties to review", AttnSQL: `SELECT count(*) FROM public.stays_property WHERE status='PENDING_REVIEW'`,
+		AttnHref: "/admin/stays/moderation", Severity: "warn"},
+	{Key: "stays-kyb", Label: "Stays hotelier business verification", Group: "Travel", Href: "/admin/stays/dashboard",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.stays_hotelier_kyb WHERE status='approved'`,
+		Attn: "Submitted, awaiting verification", AttnSQL: `SELECT count(*) FROM public.stays_hotelier_kyb WHERE status='submitted'`,
+		AttnHref: "/admin/stays/kyc", Severity: "critical"},
+	{Key: "mobility-drivers", Label: "Mobility driver verification", Group: "Travel", Href: "/admin/mobility/drivers",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.drivers WHERE verification_status='approved'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.drivers WHERE verification_status IN ('submitted','under_review')`,
+		AttnHref: "/admin/mobility/drivers", Severity: "critical"},
+	{Key: "bus-operators", Label: "Bus operator verification", Group: "Travel", Href: "/admin/mobility/bus",
+		Volume: "Verified", VolSQL: `SELECT count(*) FROM public.bus_providers WHERE verification_status='verified'`,
+		Attn: "Operators pending", AttnSQL: `SELECT count(*) FROM public.bus_providers WHERE verification_status='pending'`,
+		AttnHref: "/admin/mobility/bus", Severity: "warn"},
+
+	// ------------------------------- Health -------------------------------
+	// Applications are decided over POST /providers/applications/:id/decision, but
+	// no admin screen calls it — count shown, no link.
+	{Key: "health", Label: "Health providers", Group: "Health", Href: "/admin/health/vet/dashboard",
+		Volume: "Approved providers", VolSQL: `SELECT count(*) FROM public.health_provider_applications WHERE state='APPROVED'`,
+		Attn: "Applications to review", AttnSQL: `SELECT count(*) FROM public.health_provider_applications WHERE state IN ('SUBMITTED','UNDER_REVIEW')`,
+		Severity: "warn",
+		AttnNote: "No review screen yet — applications are decided over the API only"},
+	{Key: "doctor-verification", Label: "Doctor verification (MDCN)", Group: "Health", Href: "/admin/health/doctor/verification",
+		Volume: "Verified", VolSQL: `SELECT count(*) FROM public.doctor_verifications WHERE status='approved'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.doctor_verifications WHERE status='pending'`,
+		AttnHref: "/admin/health/doctor/verification", Severity: "critical"},
+	{Key: "vet-credentials", Label: "Vet credential verification", Group: "Health", Href: "/admin/health/vet/verification",
+		Volume: "Verified", VolSQL: `SELECT count(*) FROM public.health_verification_records WHERE status='VERIFIED'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.health_verification_records WHERE status='PENDING'`,
+		AttnHref: "/admin/health/vet/verification", Severity: "critical"},
+	{Key: "telemedicine", Label: "Telemedicine payouts", Group: "Health", Href: "/admin/telemedicine/dashboard",
+		Volume: "Paid", VolSQL: `SELECT count(*) FROM public.doctor_payouts WHERE status='paid'`,
+		Attn: "Pending", AttnSQL: `SELECT count(*) FROM public.doctor_payouts WHERE status='pending'`,
+		AttnHref: "/admin/telemedicine/dashboard", Severity: "critical"},
+
+	// ------------------------------ Community -----------------------------
+	{Key: "creators", Label: "Creators", Group: "Community", Href: "/admin/creators/dashboard",
+		Volume: "Payouts paid", VolSQL: `SELECT count(*) FROM public.creator_payouts WHERE state='PAID'`,
+		Attn: "Payout requests", AttnSQL: `SELECT count(*) FROM public.creator_payouts WHERE state='REQUESTED'`,
+		AttnHref: "/admin/creators/payouts", Severity: "critical"},
+	{Key: "events", Label: "Events", Group: "Community", Href: "/admin/events/approval",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.events WHERE state='APPROVED'`,
+		Attn: "Events awaiting approval", AttnSQL: `SELECT count(*) FROM public.events WHERE state='SUBMITTED'`,
+		AttnHref: "/admin/events/approval", Severity: "warn"},
+
+	// ------------------------------ Programs ------------------------------
+	{Key: "registration", Label: "Registrations", Group: "Programs", Href: "/admin/registration",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.registrations WHERE status='approved'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.registrations WHERE status IN ('submitted','under_review')`,
+		AttnHref: "/admin/registration", Severity: "warn"},
+	// STEM status columns are free text (no CHECK) and the Go code compares them
+	// case-insensitively, so these two normalise case instead of trusting it.
+	{Key: "stem-schools", Label: "STEM school verification", Group: "Programs", Href: "/admin/schools",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.stem_schools WHERE upper(verification_status)='APPROVED'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.stem_schools WHERE upper(verification_status) IN ('PENDING','UNDER_REVIEW')`,
+		AttnHref: "/admin/schools", Severity: "warn"},
+	{Key: "stem-submissions", Label: "STEM submissions", Group: "Programs", Href: "/admin/stem/submissions",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.stem_applications_v2 WHERE lower(status)='approved'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.stem_applications_v2 WHERE lower(status) IN ('submitted','under_review')`,
+		AttnHref: "/admin/stem/submissions", Severity: "warn"},
+	{Key: "sme-pitch", Label: "SME pitch applications", Group: "Programs", Href: "/admin/sme-pitch",
+		Volume: "Selected", VolSQL: `SELECT count(*) FROM public.sme_pitch_applications WHERE status='selected'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.sme_pitch_applications WHERE status IN ('submitted','under_review')`,
+		AttnHref: "/admin/sme-pitch", Severity: "warn"},
+	{Key: "academy-tutors", Label: "Academy tutors", Group: "Programs", Href: "/admin/academy/tutors",
+		Volume: "Verified", VolSQL: `SELECT count(*) FROM public.academy_tutors WHERE status='verified'`,
+		Attn: "Awaiting verification", AttnSQL: `SELECT count(*) FROM public.academy_tutors WHERE status='pending'`,
+		AttnHref: "/admin/academy/tutors", Severity: "warn"},
+	{Key: "academy-questions", Label: "Academy question bank", Group: "Programs", Href: "/admin/academy/question-bank",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.academy_question_items WHERE status='approved'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.academy_question_items WHERE status='review'`,
+		AttnHref: "/admin/academy/question-bank", Severity: "warn"},
 }
 
 type overviewValue struct {
@@ -148,6 +298,7 @@ type overviewAttention struct {
 
 	Href     string `json:"href"`
 	Severity string `json:"severity"`
+	Note     string `json:"note,omitempty"`
 }
 
 type overviewModule struct {
@@ -193,7 +344,7 @@ func (h *AdminOverviewHandler) Overview(c *gin.Context) {
 				Volume: overviewValue{Label: s.Volume, Value: h.count(c.Request.Context(), s.VolSQL)},
 				Attention: overviewAttention{
 					overviewValue{Label: s.Attn, Value: h.count(c.Request.Context(), s.AttnSQL)},
-					s.AttnHref, s.Severity,
+					s.AttnHref, s.Severity, s.AttnNote,
 				},
 			}
 		}(i, spec)
