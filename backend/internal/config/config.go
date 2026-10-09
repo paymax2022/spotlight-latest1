@@ -457,6 +457,16 @@ type Config struct {
 	// and money-free; default OFF so it ships dark and is switched on per environment.
 	FeatureInsuranceProviderImportEnabled bool
 
+	// FeatureInsuranceNINRequired gates the member policy-purchase path
+	// (POST /api/finance/insurance/policies) on a Dojah-verified NIN. DEFAULT
+	// TRUE — it is a compliance rail, not a feature toggle: a bind without a
+	// verified identity must be an explicit per-environment opt-out, not the
+	// forgotten default (same precedent as FeatureTierLimitsEnabled /
+	// TRANSFER_FAILOVER_ENABLED). When on and Dojah cannot answer
+	// (unconfigured creds, outage, non-verdict) the purchase fails CLOSED
+	// before the policy row or any ledger leg exists.
+	FeatureInsuranceNINRequired bool
+
 	// Hotel Booking / Stays module (Property Suite). Dual-rail supply-gateway
 	// (bedbank + direct extranet). DEFAULT OFF. Gates /api/finance/stays,
 	// /api/stays/{admin,extranet} and /internal/webhooks/stays-supplier
@@ -923,34 +933,38 @@ func Load() Config {
 		FeatureSpotlightwealthEnabled:                getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
 		FeatureInsuranceEnabled:                      getEnvBool("FEATURE_INSURANCE_ENABLED", false),
 		FeatureInsuranceProviderImportEnabled:        getEnvBool("FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED", false),
-		FeatureStaysEnabled:                          getEnvBool("FEATURE_STAYS_ENABLED", false),
-		FeaturePlacementEnabled:                      getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
-		FeatureMarketplaceEnabled:                    getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
-		ElasticsearchURL:                             getEnv("ELASTICSEARCH_URL", ""),
-		RunWorkersInProcess:                          getEnvBool("RUN_WORKERS_INPROCESS", false),
-		FeatureSocialPayEnabled:                      getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
-		FeatureP2PMarketEnabled:                      getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
-		FeatureSavingsEnabled:                        getEnvBool("FEATURE_SAVINGS_ENABLED", false),
-		FeatureTradingEnabled:                        getEnvBool("FEATURE_TRADING_ENABLED", false),
-		FeatureAITradingEnabled:                      getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
-		TradingFeeBps:                                getEnvInt("TRADING_FEE_BPS", 2000),
-		TradingHurdleBps:                             getEnvInt("TRADING_HURDLE_BPS", 0),
-		SavingsEarlyBreakPenaltyBps:                  getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
-		FeatureCreatorsEnabled:                       getEnvBool("FEATURE_CREATORS_ENABLED", false),
-		FeatureLoyaltyEnabled:                        getEnvBool("FEATURE_LOYALTY_ENABLED", false),
-		FeatureCommissionEnabled:                     getEnvBool("FEATURE_COMMISSION_ENABLED", false),
-		FeatureHealthEnabled:                         getEnvBool("FEATURE_HEALTH_ENABLED", false),
-		FeatureHealthPharmacyEnabled:                 getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
-		FeatureHealthLabEnabled:                      getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
-		FeatureHealthVetEnabled:                      getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
-		FeatureHealthIntakeEnabled:                   getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
-		FeatureHealthTriageEnabled:                   getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
-		FeatureHealthTriageWhatsAppEnabled:           getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
-		TriageEngine:                                 getEnv("TRIAGE_ENGINE", "mock"),
-		InfermedicaAppID:                             getEnv("INFERMEDICA_APP_ID", ""),
-		InfermedicaAppKey:                            getEnv("INFERMEDICA_APP_KEY", ""),
-		InfermedicaBaseURL:                           getEnv("INFERMEDICA_BASE_URL", ""),
-		TriageWhatsAppSecret:                         getEnv("TRIAGE_WHATSAPP_SECRET", ""),
+		// Compliance rail — DEFAULT TRUE like FeatureTierLimitsEnabled above.
+		// Set FEATURE_INSURANCE_NIN_REQUIRED=false only for explicit per-env
+		// opt-out (e.g. a dev box with no Dojah credentials).
+		FeatureInsuranceNINRequired:        getEnvBool("FEATURE_INSURANCE_NIN_REQUIRED", true),
+		FeatureStaysEnabled:                getEnvBool("FEATURE_STAYS_ENABLED", false),
+		FeaturePlacementEnabled:            getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
+		FeatureMarketplaceEnabled:          getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
+		ElasticsearchURL:                   getEnv("ELASTICSEARCH_URL", ""),
+		RunWorkersInProcess:                getEnvBool("RUN_WORKERS_INPROCESS", false),
+		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
+		FeatureP2PMarketEnabled:            getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
+		FeatureSavingsEnabled:              getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:              getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:            getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                      getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                   getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:        getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
+		FeatureCreatorsEnabled:             getEnvBool("FEATURE_CREATORS_ENABLED", false),
+		FeatureLoyaltyEnabled:              getEnvBool("FEATURE_LOYALTY_ENABLED", false),
+		FeatureCommissionEnabled:           getEnvBool("FEATURE_COMMISSION_ENABLED", false),
+		FeatureHealthEnabled:               getEnvBool("FEATURE_HEALTH_ENABLED", false),
+		FeatureHealthPharmacyEnabled:       getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
+		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
+		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
+		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
+		FeatureHealthTriageWhatsAppEnabled: getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
+		TriageEngine:                       getEnv("TRIAGE_ENGINE", "mock"),
+		InfermedicaAppID:                   getEnv("INFERMEDICA_APP_ID", ""),
+		InfermedicaAppKey:                  getEnv("INFERMEDICA_APP_KEY", ""),
+		InfermedicaBaseURL:                 getEnv("INFERMEDICA_BASE_URL", ""),
+		TriageWhatsAppSecret:               getEnv("TRIAGE_WHATSAPP_SECRET", ""),
 
 		MapsConfigPath:            getEnv("MAPS_CONFIG_PATH", ""),
 		MapsDefaultSurface:        getEnv("MAPS_DEFAULT_SURFACE", "default"),

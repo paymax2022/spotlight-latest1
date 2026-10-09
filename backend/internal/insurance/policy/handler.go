@@ -37,6 +37,18 @@ func mapErr(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrConsentRequired):
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "ndpa_consent_required", "code": "consent_required"})
+	case errors.Is(err, ErrNINRequired):
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), "code": "nin_required"})
+	case errors.Is(err, ErrNINInvalid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), "code": "nin_invalid"})
+	case errors.Is(err, ErrNINRejected):
+		// The identity provider ANSWERED: this NIN does not verify. 400 — the
+		// member's input is the thing to fix, so it must not read as an outage.
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), "code": "nin_verification_failed"})
+	case errors.Is(err, ErrNINUnavailable):
+		// The gate could not get an answer (no provider wired, transport error,
+		// non-verdict). Fail-closed 503 — retry later, never "skip the check".
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err), "code": "nin_verification_unavailable"})
 	case errors.Is(err, ErrBadState):
 		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
@@ -112,7 +124,10 @@ func (h *Handler) GetQuote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": qr})
 }
 
-// Bind (member): POST /policies {quote_id} — Idempotency-Key header REQUIRED.
+// Bind (member): POST /policies {quote_id, nin} — Idempotency-Key header
+// REQUIRED. `nin` is the policyholder's National Identity Number; when the
+// purchase NIN gate is on (FEATURE_INSURANCE_NIN_REQUIRED, default ON) it is
+// required and must verify via the identity provider before the saga runs.
 // Runs the premium-debit→bind saga with mandatory auto-reverse.
 func (h *Handler) Bind(c *gin.Context) {
 	uid, ok := ginutil.RequireUser(c)
@@ -126,6 +141,10 @@ func (h *Handler) Bind(c *gin.Context) {
 	}
 	var body struct {
 		QuoteID string `json:"quote_id" binding:"required"`
+		// Optional in the binding tag deliberately: when the gate is on, a
+		// missing NIN must surface as the domain's own nin_required 400 — not a
+		// generic bind error — and when it is off the field is ignored entirely.
+		NIN string `json:"nin"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
@@ -137,7 +156,7 @@ func (h *Handler) Bind(c *gin.Context) {
 		mapErr(c, ErrNotFound)
 		return
 	}
-	p, err := h.svc.BindFromQuote(c.Request.Context(), uid, body.QuoteID, idemKey)
+	p, err := h.svc.BindFromQuoteWithNIN(c.Request.Context(), uid, body.QuoteID, body.NIN, idemKey)
 	if err != nil {
 		// A bind that auto-reversed returns the VOID policy plus an error; surface
 		// the policy state so the client can show "refunded".
