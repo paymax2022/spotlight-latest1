@@ -51,15 +51,20 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (contestErr) {
-      // A malformed slug surfaces as a PostgREST request error: PGRST1xx when
-      // the `eq.` operand can't be parsed, and PGRST2xx / SQLSTATE 42601/42703
-      // when a crafted `or`/`and` fragment is instead resolved as logic or an
-      // identifier (e.g. `?contestSlug=' OR 1=1`). All are bad client input →
-      // 400. Any other error is a real backend fault; collapsing it into
-      // "Contest not found" 404 hides outages.
-      const code = contestErr.code ?? '';
-      if (/^PGRST[12]/.test(code) || /^(42601|42703)$/.test(code)) {
-        return errorResponse('Invalid contestSlug', 400);
+      // A malformed or unresolvable slug surfaces as a PostgREST error whose
+      // code varies by parse stage: PGRST1xx when the `eq.` operand can't be
+      // parsed, PGRST2xx / SQLSTATE (42601/42703/…) when a crafted `or`/`and`
+      // fragment is instead resolved as logic or an identifier (e.g.
+      // `?contestSlug=' OR 1=1`). Enumerating those codes missed the class
+      // before and leaked 500s, so ANY coded PostgREST/Postgres error on this
+      // lookup now answers "Contest not found" (404) — the same convention the
+      // contestantSlug lookup below already uses (its error is ignored and
+      // falls through to the not-found branch). An error carrying NO code is
+      // a transport/backend fault rather than bad input and still rethrows
+      // to 500, so a real outage isn't masked as "not found".
+      const code = typeof contestErr.code === 'string' ? contestErr.code : '';
+      if (/^PGRST/.test(code) || /^[0-9A-Z]{5}$/.test(code)) {
+        return errorResponse('Contest not found', 404);
       }
       throw contestErr;
     }

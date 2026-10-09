@@ -2,6 +2,7 @@ package top5events
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"slices"
 	"strconv"
@@ -98,6 +99,16 @@ func uid(c *gin.Context) (string, bool) {
 	return u, true
 }
 
+// bindFail answers a malformed/invalid JSON body with a generic 400. The raw
+// encoding/json or go-playground validator text ("Key: 'giftRequest.Recipient'
+// Error:Field validation …", "invalid character 'b' …") leaks Go struct and
+// field names, so the detail stays in the server log and the client gets the
+// same envelope every other module's bad-body gate uses.
+func bindFail(c *gin.Context, err error) {
+	log.Printf("[top5events] rejected request body %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+}
+
 func idemKey(c *gin.Context) string {
 	return c.GetHeader("Idempotency-Key")
 }
@@ -111,7 +122,7 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 	}
 	var e Event
 	if err := c.ShouldBindJSON(&e); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.CreateEvent(c.Request.Context(), u, e)
@@ -225,7 +236,7 @@ func (h *Handler) AddTier(c *gin.Context) {
 	}
 	var t TicketTier
 	if err := c.ShouldBindJSON(&t); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.AddTier(c.Request.Context(), u, c.Param("id"), t)
@@ -239,7 +250,7 @@ func (h *Handler) AddPromo(c *gin.Context) {
 	}
 	var p PromoCode
 	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.AddPromo(c.Request.Context(), u, c.Param("id"), p)
@@ -253,7 +264,7 @@ func (h *Handler) AddVendor(c *gin.Context) {
 	}
 	var v Vendor
 	if err := c.ShouldBindJSON(&v); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.AddVendor(c.Request.Context(), u, c.Param("id"), v)
@@ -279,7 +290,7 @@ func (h *Handler) Purchase(c *gin.Context) {
 	}
 	var req purchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.Purchase(c.Request.Context(), u, c.Param("id"), req.TierID, req.Promo, key)
@@ -297,7 +308,7 @@ func (h *Handler) GiftTicket(c *gin.Context) {
 	}
 	var req giftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.GiftTicket(c.Request.Context(), u, c.Param("ticketId"), req.Recipient)
@@ -340,7 +351,7 @@ func (h *Handler) Scan(c *gin.Context) {
 	}
 	var req scanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	res, err := h.svc.ScanTicket(c.Request.Context(), u, req.Token, req.Gate)
@@ -365,7 +376,7 @@ func (h *Handler) AddSteward(c *gin.Context) {
 	}
 	var req stewardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	err := h.svc.AddSteward(c.Request.Context(), u, c.Param("id"), req.UserID)
@@ -407,6 +418,12 @@ func (h *Handler) Vendors(c *gin.Context) {
 	if _, ok := uid(c); !ok {
 		return
 	}
+	// Existence check (F3 drift): a random id used to get an empty 200 while the
+	// sibling detail read 404s — same existence semantics now.
+	if _, err := h.svc.GetEvent(c.Request.Context(), c.Param("id")); err != nil {
+		respond(c, nil, err)
+		return
+	}
 	out, err := h.svc.VendorsForEvent(c.Request.Context(), c.Param("id"))
 	respond(c, out, err)
 }
@@ -439,7 +456,7 @@ func (h *Handler) TopUp(c *gin.Context) {
 	}
 	var req topUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	src := TopUpSource(req.Source)
@@ -494,7 +511,7 @@ func (h *Handler) TapCharge(c *gin.Context) {
 	}
 	var req tapChargeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		bindFail(c, err)
 		return
 	}
 	out, err := h.svc.TapCharge(c.Request.Context(), caller, c.Param("vendorId"), req.WalletID, req.AmountKobo, key)
