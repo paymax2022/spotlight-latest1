@@ -427,12 +427,15 @@ func (s *Service) Wallet(ctx context.Context, userID string) (*WalletView, error
 // view and posts zero additional legs. An ErrDuplicate from the main-ledger
 // debit is only a lock signal (the Redis fast-path holds the key even after a
 // failed attempt), so it is confirmed via Posted before treated as a replay.
+// The key MUST be client-supplied — synthesizing one server-side would turn a
+// key-less client retry into a second, real debit, the exact failure the iron
+// rule's Idempotency-Key requirement exists to prevent.
 func (s *Service) Deposit(ctx context.Context, userID, idem string, amountKobo int64, source string) (*WalletView, error) {
+	if idem == "" {
+		return nil, fmt.Errorf("%w: idempotency key required", ErrInvalidOrder)
+	}
 	if amountKobo <= 0 {
 		return nil, ErrInvalidOrder
-	}
-	if idem == "" {
-		idem = fmt.Sprintf("invdep:%s:%d", userID, s.now().UnixNano())
 	}
 	mainKey := idem + ":main"
 	invKey := idem + ":inv"
@@ -485,20 +488,21 @@ func (s *Service) Deposit(ctx context.Context, userID, idem string, amountKobo i
 }
 
 // Withdraw moves invest cash back to the main Paymax wallet. Same idempotency
-// contract as Deposit; the Posted pre-check also keeps a replay from re-running
-// the in-tx balance check, which would refuse a completed withdrawal once the
-// cash has been spent.
+// contract as Deposit — the key is REQUIRED, never synthesized server-side; the
+// Posted pre-check also keeps a replay from re-running the in-tx balance check,
+// which would refuse a completed withdrawal once the cash has been spent.
 func (s *Service) Withdraw(ctx context.Context, userID, idem string, amountKobo int64, dest, pin string) (*WalletView, error) {
+	if idem == "" {
+		return nil, fmt.Errorf("%w: idempotency key required", ErrInvalidOrder)
+	}
 	if amountKobo <= 0 {
 		return nil, ErrInvalidOrder
 	}
 	// Bearer + idem alone must not move invest cash to the main wallet — the same
-	// PIN gate Buy/Sell enforce runs before ANY ledger write.
+	// PIN gate Buy/Sell enforce runs before ANY ledger write. It runs AFTER the
+	// key check so a malformed request never burns a PIN-verification attempt.
 	if err := s.pin.Verify(ctx, userID, pin); err != nil {
 		return nil, err
-	}
-	if idem == "" {
-		idem = fmt.Sprintf("invwd:%s:%d", userID, s.now().UnixNano())
 	}
 	invKey := idem + ":inv"
 	mainKey := idem + ":main"
