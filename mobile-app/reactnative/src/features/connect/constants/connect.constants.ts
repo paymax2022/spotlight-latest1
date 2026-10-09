@@ -25,7 +25,7 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 // so the loopback host is never rewritten in a release build.
 const CONNECT_API_HOST =
   process.env.EXPO_PUBLIC_CONNECT_API_HOST ??
-  resolveApiBaseUrl('http://localhost:8091');
+  resolveApiBaseUrl(__DEV__ ? 'http://localhost:8091' : undefined);
 export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
