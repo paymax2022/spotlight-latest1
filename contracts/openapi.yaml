@@ -16088,3 +16088,93 @@ paths:
       responses:
         '200': { description: Unresolved bind count }
         '403': { description: Missing finance.admin.utilitybills }
+  /insurance/admin/provider-policies:
+    get:
+      operationId: insuranceAdminListProviderPolicies
+      summary: Policies the provider (MyCover) holds for us, and whether Paymax's own book has each
+      description: >-
+        Read-only mirror populated by POST .../sync. NOT Paymax's book: these rows
+        are never added to the dashboard's gross premium or commission, because a
+        policy bought directly at the provider moved no money through our ledger.
+        Carries no personal data (the provider's own rows include the holder's
+        name, email, phone and date of birth; none of it is stored).
+        Mounted only when FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED is on.
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: in_paymax, in: query, description: Filter to policies that are (true) or are not (false) in insurance_policy, schema: { type: boolean } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Mirror overview plus a page of provider policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      overview:
+                        type: object
+                        properties:
+                          provider: { type: string }
+                          total: { type: integer }
+                          in_paymax: { type: integer }
+                          not_in_paymax: { type: integer }
+                          not_in_paymax_premium_kobo: { type: integer, format: int64, description: Informational only; not revenue }
+                          last_synced_at: { type: string, format: date-time, nullable: true }
+                      policies:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            provider_policy_ref: { type: string }
+                            policy_number: { type: string }
+                            provider_product_id: { type: string }
+                            product_name: { type: string }
+                            underwriter: { type: string }
+                            status: { type: string, description: 'active | expired | inactive | empty when unknown' }
+                            premium_kobo: { type: integer, format: int64 }
+                            starts_at: { type: string, format: date-time }
+                            expires_at: { type: string, format: date-time }
+                            certificate_url: { type: string }
+                            provider_created_at: { type: string, format: date-time }
+                            first_seen_at: { type: string, format: date-time }
+                            last_seen_at: { type: string, format: date-time }
+                            in_paymax: { type: boolean }
+                            paymax_policy_id: { type: string }
+                            paymax_state: { type: string }
+        '400': { description: in_paymax is not true/false }
+        '403': { description: Missing insurance.reconciliation.view }
+  /insurance/admin/provider-policies/sync:
+    post:
+      operationId: insuranceAdminSyncProviderPolicies
+      summary: Pull the provider's policy list into the mirror
+      description: >-
+        Idempotent upsert keyed on the provider's own policy id, so re-running never
+        duplicates. Creates, charges and moves nothing at the provider, writes nothing
+        to the ledger or any wallet, and never writes to insurance_policy.
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      provider: { type: string }
+                      provider_total: { type: integer }
+                      fetched: { type: integer }
+                      inserted: { type: integer }
+                      updated: { type: integer }
+                      synced_at: { type: string, format: date-time }
+        '403': { description: Missing insurance.reconciliation.resolve }
+        '502': { description: Provider or network failure; body.data reports what was written before it broke }
+        '503': { description: Provider API key not configured on this server }
