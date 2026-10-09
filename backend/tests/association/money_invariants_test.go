@@ -297,9 +297,13 @@ func TestPayInvoice_DifferentIdempotencyKeySameInvoice_StillOnlyOnePayment(t *te
 //     the REJECT path does NOT require a key, since no money moves).
 //   - requireCap(ManageFinance) — only FINANCE_ADMIN/SUPER_ADMIN/NATIONAL_ADMIN
 //     capable roles (see capabilitiesFor in service.go) may decide.
-//   - Approve: assoc_payments.status='SUCCESS', assoc_dues_invoices.status='PAID',
-//     THEN posts ledger.PostJournal with DR=provider_clearing, CR=settlement,
-//     tolerating ledger.ErrDuplicate as a success (idempotent retry).
+//   - Approve: probes the payment's settlement legs by the deterministic
+//     reference "assoc_offline_approval:<paymentID>", posts ledger.PostJournal
+//     (DR provider_clearing → CR settlement) only when absent, and treats a
+//     residual ledger.ErrDuplicate as a FOREIGN key claim →
+//     ErrIdempotencyKeyConflict (409) — never a swallowed no-op (w10 fix).
+//     Terminal states refuse: approve on FAILED/REVERSED and reject on
+//     SUCCESS/REVERSED → ErrPaymentAlreadyDecided (409).
 //   - Reject: assoc_payments.status='FAILED', audits
 //     "OFFLINE_PAYMENT_REJECTED", NO ledger call at all.
 
@@ -324,9 +328,12 @@ func TestDecideOfflinePayment_RejectDoesNotRequireIdempotencyKey(t *testing.T) {
 	}
 }
 
-// fakeOfflineLedger models ledger.PostJournal's duplicate-tolerant contract:
-// DecideOfflinePayment treats ledger.ErrDuplicate as a successful no-op retry
-// (service_actions.go L258-260: `err != nil && !errors.Is(err, ledger.ErrDuplicate)`).
+// fakeOfflineLedger models ledger.PostJournal's duplicate-reporting contract.
+// In production the same-key replay no longer reaches PostJournal — the
+// deterministic-reference probe finds the posted legs first — and a residual
+// ErrDuplicate is a foreign key claim refused as ErrIdempotencyKeyConflict
+// (service_actions.go DecideOfflinePayment, w10 fix). The fake below keeps the
+// ledger-level property: one key posts at most one journal.
 type fakeOfflineLedger struct {
 	postedKeys map[string]bool
 	postCount  int
@@ -349,7 +356,8 @@ func (f *fakeOfflineLedger) postJournal(idemKey string, amount int64) (duplicate
 
 // TestDecideOfflinePayment_ApproveIdempotentSinglePosting proves that approving
 // the SAME offline payment twice with the SAME Idempotency-Key results in
-// exactly one ledger posting (the second is swallowed as ledger.ErrDuplicate).
+// exactly one ledger posting — the second call is a verified replay (the
+// reference probe finds the legs) or, at the ledger layer, reports duplicate.
 func TestDecideOfflinePayment_ApproveIdempotentSinglePosting(t *testing.T) {
 	led := newFakeOfflineLedger()
 	const idemKey = "assoc_offline_approval:pay-1"

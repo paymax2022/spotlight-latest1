@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/r2"
 	platformWS "spotlight/backend/internal/platform/ws"
@@ -30,7 +31,13 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
-	httperr.R(http.StatusConflict, ErrElectionState),
+	// Conflicts: decided-state payment actions, and ledger key claims that
+	// prove a foreign journal holds the caller's Idempotency-Key (verified in
+	// the service before it surfaces — see DecideOfflinePayment). A same-key
+	// retry inside the Redis dedup window also lands here; the client retries
+	// and the verified replay converges.
+	httperr.R(http.StatusConflict, ErrElectionState, ErrIdempotencyKeyConflict,
+		ErrPaymentAlreadyDecided, ledger.ErrDuplicate),
 	httperr.R(http.StatusNotFound, ErrNoMembership, pgx.ErrNoRows),
 	// SQLSTATE classes that are always caller-caused on this module's surface.
 	// 22P02 "invalid input syntax for type uuid" on a malformed :id / :childId /
