@@ -130,6 +130,7 @@ jobs:
             FEATURE_REFERRALS_ENABLED=true \
             FEATURE_REFERRAL_REWARDS_ENABLED=true \
             FEATURE_INSURANCE_ENABLED=true \
+            FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED=true \
             FEATURE_SOCIAL_PAY_ENABLED=true \
             FEATURE_LOYALTY_ENABLED=true \
             FEATURE_RESTAURANT_ENABLED=true \
@@ -156,6 +157,7 @@ jobs:
             FEATURE_CONNECT_ENABLED=true \
             FEATURE_MARKETPLACE_ENABLED=true \
             FEATURE_PROPERTY_ROLES_ENABLED=true \
+            FEATURE_ONBOARDING_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -194,7 +196,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES",
+              "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES","ONBOARDING",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {

@@ -904,3 +904,99 @@ export async function getReconciliation(): Promise<ReconciliationReport> {
 export async function probe<T>(path: string): Promise<T> {
   return request<T>('GET', path);
 }
+
+// ── Provider (MyCover) policy mirror ──────────────────────────────────────────
+// Read-only mirror of the policies the PROVIDER holds for our account. It is NOT
+// Paymax's book: these never feed the dashboard's premium/commission figures,
+// because a policy bought directly at the provider moved no money through our
+// ledger. Backend: backend/internal/insurance/providerimport. The routes exist
+// only when FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED is on; otherwise they 404.
+
+export interface ProviderPolicy {
+  provider_policy_ref: string;
+  policy_number: string | null;
+  product_name: string | null;
+  underwriter: string | null;
+  status: string | null;
+  premium_kobo: number | null;
+  starts_at: string | null;
+  expires_at: string | null;
+  provider_created_at: string | null;
+  in_paymax: boolean;
+}
+
+export interface ProviderPolicyOverview {
+  provider: string;
+  total: number;
+  in_paymax: number;
+  not_in_paymax: number;
+  not_in_paymax_premium_kobo: number;
+  last_synced_at: string | null;
+}
+
+export interface ProviderPoliciesReport {
+  overview: ProviderPolicyOverview;
+  policies: ProviderPolicy[];
+}
+
+export interface ProviderSyncResult {
+  provider: string;
+  provider_total: number;
+  fetched: number;
+  inserted: number;
+  updated: number;
+  synced_at: string;
+}
+
+// Go time.Time zero value serialises as 0001-01-01…; that means "not set".
+const unsetDate = (v: unknown): string | null => {
+  const s = str(v);
+  return s && !s.startsWith('0001-') ? s : null;
+};
+
+export async function getProviderPolicies(opts?: { in_paymax?: boolean; limit?: number }): Promise<ProviderPoliciesReport> {
+  const raw = await request<unknown>(
+    'GET',
+    `/provider-policies${qs({ in_paymax: opts?.in_paymax, limit: opts?.limit ?? 100 })}`,
+  );
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const ov = (o.overview && typeof o.overview === 'object' ? o.overview : {}) as Record<string, unknown>;
+  return {
+    overview: {
+      provider: String(pick(ov, 'provider') ?? 'mycover'),
+      total: num(pick(ov, 'total')) ?? 0,
+      in_paymax: num(pick(ov, 'in_paymax')) ?? 0,
+      not_in_paymax: num(pick(ov, 'not_in_paymax')) ?? 0,
+      not_in_paymax_premium_kobo: num(pick(ov, 'not_in_paymax_premium_kobo')) ?? 0,
+      last_synced_at: unsetDate(pick(ov, 'last_synced_at')),
+    },
+    policies: asArray(o, 'policies').map((r) => {
+      const p = (r ?? {}) as Record<string, unknown>;
+      return {
+        provider_policy_ref: String(pick(p, 'provider_policy_ref') ?? ''),
+        policy_number: str(pick(p, 'policy_number')),
+        product_name: str(pick(p, 'product_name')),
+        underwriter: str(pick(p, 'underwriter')),
+        status: str(pick(p, 'status')),
+        premium_kobo: num(pick(p, 'premium_kobo')),
+        starts_at: unsetDate(pick(p, 'starts_at')),
+        expires_at: unsetDate(pick(p, 'expires_at')),
+        provider_created_at: unsetDate(pick(p, 'provider_created_at')),
+        in_paymax: pick(p, 'in_paymax') === true,
+      };
+    }),
+  };
+}
+
+export async function syncProviderPolicies(): Promise<ProviderSyncResult> {
+  const raw = await request<unknown>('POST', '/provider-policies/sync', { idempotencyPrefix: 'provider-sync' });
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    provider: String(pick(o, 'provider') ?? 'mycover'),
+    provider_total: num(pick(o, 'provider_total')) ?? 0,
+    fetched: num(pick(o, 'fetched')) ?? 0,
+    inserted: num(pick(o, 'inserted')) ?? 0,
+    updated: num(pick(o, 'updated')) ?? 0,
+    synced_at: String(pick(o, 'synced_at') ?? ''),
+  };
+}

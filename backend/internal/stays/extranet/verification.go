@@ -113,11 +113,12 @@ func kybDecisionStatus(decision string) (VerificationItemStatus, bool) {
 	}
 }
 
-// RegisterAdmin wires the ops KYB review route onto the admin group. guard is the
+// RegisterAdmin wires the ops KYB review routes (queue + decision) onto the admin group. guard is the
 // per-route RBAC middleware factory the aggregator supplies. Reuses the existing
 // stays.admin.hotelier permission ("Approve/suspend hotelier profiles + grants") —
 // deciding a property's business verification is exactly that.
 func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string) gin.HandlerFunc) {
+	g.GET("/kyb", guard("stays.admin.hotelier"), h.AdminListKYB)
 	g.POST("/hoteliers/:propertyId/kyb/decision", guard("stays.admin.hotelier"), h.AdminDecideKYB)
 }
 

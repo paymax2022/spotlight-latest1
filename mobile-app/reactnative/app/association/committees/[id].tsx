@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus, Trash2 } from 'lucide-react-native';
+import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus, Trash2, UserPlus } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -11,8 +11,9 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useCommittee, useRequestJoinCommittee, useUpdateCommittee, useDeleteCommittee } from '@/features/association/hooks';
+import { useCommittee, useRequestJoinCommittee, useUpdateCommittee, useDeleteCommittee, useAddCommitteeMembers } from '@/features/association/hooks';
 import {CommitteeFormModal} from '@/features/association/components';
+import CommitteeMemberPicker from '@/features/association/components/CommitteeMemberPicker';
 import { canManageCommittees } from '@/features/association/utils';
 import { useAdminAccess } from '@/features/association/hooks';
 import { useQueryClient } from '@tanstack/react-query';
@@ -33,6 +34,8 @@ export default function CommitteeDetail() {
   const update = useUpdateCommittee();
   const del = useDeleteCommittee();
   const [editOpen, setEditOpen] = React.useState(false);
+  const addMembers = useAddCommitteeMembers();
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   const qc = useQueryClient();
   const [busy, setBusy] = React.useState(false);
 
@@ -86,6 +89,23 @@ export default function CommitteeDetail() {
       router.back();
     } catch {
       await alertAsync({ title: "Couldn't delete that committee", message: 'Please try again.' });
+    }
+  };
+
+  const addPicked = async (membershipIds: string[]) => {
+    try {
+      const res = await addMembers.mutateAsync({ id: id as string, membershipIds });
+      setPickerOpen(false);
+      // The server drops anyone outside this committee's organisation or not
+      // ACTIVE rather than failing the batch, so say how many actually landed.
+      if (res.added < res.requested) {
+        await alertAsync({
+          title: res.added === 0 ? 'No one was added' : `Added ${res.added} of ${res.requested}`,
+          message: 'Only active members of this organisation can join a committee.',
+        });
+      }
+    } catch {
+      await alertAsync({ title: "Couldn't add members", message: 'Please try again.' });
     }
   };
 
@@ -172,6 +192,13 @@ export default function CommitteeDetail() {
         onCancel={() => setEditOpen(false)}
         onSubmit={saveEdit}
       />
+      <CommitteeMemberPicker
+        visible={pickerOpen}
+        excludeIds={members.map((m) => m.membershipId).filter((v): v is string => Boolean(v))}
+        busy={addMembers.isPending}
+        onCancel={() => setPickerOpen(false)}
+        onSubmit={addPicked}
+      />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <Text style={styles.name}>{c.name}</Text>
         <Text style={styles.purpose}>{c.purpose} · {formatCount(c.memberCount, 'members')}</Text>
@@ -215,7 +242,21 @@ export default function CommitteeDetail() {
         ) : null}
 
         {/* Members */}
-        <Text style={styles.sectionTitle}>Members</Text>
+        <View style={styles.sectionHead}>
+          <Text style={styles.sectionTitle}>Members</Text>
+          {isAdmin ? (
+            <Pressable
+              onPress={() => setPickerOpen(true)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Add members to this committee"
+              style={({ pressed }) => [styles.addBtn, pressed && styles.pressedBtn]}
+            >
+              <UserPlus size={16} color={Colors.primary} strokeWidth={2.2} />
+              <Text style={styles.addBtnText}>Add members</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <View style={[styles.card, shadow1]}>
           {members.length === 0 ? (
             <Text style={styles.emptyText}>No members listed for this committee yet.</Text>
@@ -291,6 +332,9 @@ const styles = StyleSheet.create({
   emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   chatRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.iconBgPurple, borderRadius: Radius.lg, padding: Spacing.md },
   chatText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: Spacing.sm },
+  addBtnText: { ...Typography.labelMd, color: Colors.primary },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
   pendingTag: { ...Typography.labelSm, color: Colors.onWarning },

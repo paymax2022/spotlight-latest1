@@ -44,6 +44,7 @@ import type {
   Agent,
   KycCase,
   KycDecision,
+  KycDecisionVerb,
   KycStatus,
   AdminUserRole,
   AuditLog,
@@ -239,11 +240,10 @@ export async function listModeration(opts?: { status?: string }): Promise<Modera
     return r;
   }
   const qs = opts?.status ? `?status=${encodeURIComponent(opts.status)}` : '';
-  return getJson<ModerationItem[]>(`/moderation${qs}`);
+  return getJson<ModerationItem[]>(`/properties${qs}`);
 }
 export async function approveProperty(id: string, payload: { status: ModerationStatus; note?: string }): Promise<ModerationDecision> {
   if (USE_MOCK) throw new Error(`Deciding a property listing ${NOT_IN_FIXTURE_MODE}`);
-  // /moderation/:id/decide path here matched no route; fixed to the real one.
   return sendJson<ModerationDecision>('POST', `/properties/${encodeURIComponent(id)}/status`, payload);
 }
 
@@ -739,26 +739,33 @@ export async function listAgents(opts?: { status?: string }): Promise<Agent[]> {
 }
 
 const KYC: KycCase[] = [
-  { id: 'kyc_1', hotelier_masked: 'Femi O••••', business_name: 'Nordic Hospitality Ltd', city: 'Lagos', doc_types: ['CAC', 'Director ID', 'Bank statement'], cac_number_masked: 'RC ••••4421', bank_verified: false, status: 'pending', risk_flags: ['bank_name_mismatch'], submitted_at: iso(20) },
-  { id: 'kyc_2', hotelier_masked: 'Aisha M••••', business_name: 'BON Hotels Nigeria', city: 'Abuja', doc_types: ['CAC', 'TIN', 'Director ID'], cac_number_masked: 'RC ••••8810', bank_verified: true, status: 'pending', risk_flags: [], submitted_at: iso(40) },
-  { id: 'kyc_3', hotelier_masked: 'Bola A••••', business_name: 'Wheatbaker Ltd', city: 'Lagos', doc_types: ['CAC', 'TIN', 'Director ID', 'Proof of address'], cac_number_masked: 'RC ••••2201', bank_verified: true, status: 'approved', risk_flags: [], submitted_at: iso(120) },
-  { id: 'kyc_4', hotelier_masked: 'Chika E••••', business_name: 'VI Lodge Ventures', city: 'Lagos', doc_types: ['CAC'], cac_number_masked: 'RC ••••0099', bank_verified: false, status: 'rejected', risk_flags: ['cac_unverified', 'pep_match'], submitted_at: iso(200) },
+  { property_id: 'prop_1', property_name: 'Nordic Hotel Lekki', city: 'Lagos', legal_name: 'Nordic Hospitality Ltd', business_type: 'limited_company', rc_number_masked: 'RC ••••4421', has_tin: true, director_masked: 'Femi O••••', director_bvn_last4: '8901', kyc_status: 'submitted', business_doc_status: 'submitted', status: 'submitted', submitted_at: iso(20) },
+  { property_id: 'prop_2', property_name: 'BON Hotel Abuja', city: 'Abuja', legal_name: 'BON Hotels Nigeria', business_type: 'limited_company', rc_number_masked: 'RC ••••8810', has_tin: true, director_masked: 'Aisha M••••', director_bvn_last4: '1122', kyc_status: 'submitted', business_doc_status: 'submitted', status: 'submitted', submitted_at: iso(40) },
+  { property_id: 'prop_3', property_name: 'The Wheatbaker Ikoyi', city: 'Lagos', legal_name: 'Wheatbaker Ltd', business_type: 'limited_company', rc_number_masked: 'RC ••••2201', has_tin: true, director_masked: 'Bola A••••', director_bvn_last4: '3344', kyc_status: 'approved', business_doc_status: 'approved', status: 'approved', submitted_at: iso(120), reviewed_at: iso(100) },
 ];
+/** Live: the KYB review queue — GET /api/stays/admin/kyb (stays.admin.hotelier). */
 export async function listKyc(opts?: { status?: string }): Promise<KycCase[]> {
   if (USE_MOCK) {
     await delay();
-    let r = KYC.map((x) => ({ ...x, doc_types: [...x.doc_types], risk_flags: [...x.risk_flags] }));
+    let r = KYC.map((x) => ({ ...x }));
     if (opts?.status) r = r.filter((x) => x.status === opts.status);
     return r;
   }
   const qs = opts?.status ? `?status=${encodeURIComponent(opts.status)}` : '';
-  return getJson<KycCase[]>(`/kyc${qs}`);
+  return getJson<KycCase[]>(`/kyb${qs}`);
 }
-export async function decideKyc(id: string, payload: { status: KycStatus; note?: string }): Promise<KycDecision> {
-  // No backend at all: no KYC route anywhere in backend/internal/stays (confirmed
-  // by grep) — stays has no KYC subsystem of its own.
-  if (USE_MOCK) throw new Error(`Deciding a KYC case ${NO_BACKEND_YET}`);
-  return sendJson<KycDecision>('POST', `/kyc/${encodeURIComponent(id)}/decide`, payload);
+/**
+ * Live: POST /api/stays/admin/hoteliers/:propertyId/kyb/decision. The backend
+ * requires a note to reject or request changes; refuse here too so the operator
+ * gets the reason before a round-trip.
+ */
+export async function decideKyc(propertyId: string, payload: { decision: KycDecisionVerb; note?: string }): Promise<KycDecision> {
+  if (USE_MOCK) throw new Error(`Deciding a KYB case ${NOT_IN_FIXTURE_MODE}`);
+  if (payload.decision !== 'approve' && !payload.note?.trim()) {
+    throw new Error('A note is required to reject or request changes.');
+  }
+  const out = await sendJson<{ overall?: KycStatus }>('POST', `/hoteliers/${encodeURIComponent(propertyId)}/kyb/decision`, payload);
+  return { id: propertyId, status: out?.overall ?? 'pending' };
 }
 
 // F · Platform

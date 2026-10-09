@@ -452,6 +452,11 @@ type Config struct {
 	// and /internal/webhooks/{mycover,octamile} (internal/insurance).
 	FeatureInsuranceEnabled bool
 
+	// FeatureInsuranceProviderImportEnabled mounts the admin routes that mirror the
+	// policies the provider (MyCover) holds into insurance_provider_policy. Read-only
+	// and money-free; default OFF so it ships dark and is switched on per environment.
+	FeatureInsuranceProviderImportEnabled bool
+
 	// Hotel Booking / Stays module (Property Suite). Dual-rail supply-gateway
 	// (bedbank + direct extranet). DEFAULT OFF. Gates /api/finance/stays,
 	// /api/stays/{admin,extranet} and /internal/webhooks/stays-supplier
@@ -917,6 +922,7 @@ func Load() Config {
 		FeatureInvestaiEnabled:                       getEnvBool("FEATURE_INVESTAI_ENABLED", false),
 		FeatureSpotlightwealthEnabled:                getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
 		FeatureInsuranceEnabled:                      getEnvBool("FEATURE_INSURANCE_ENABLED", false),
+		FeatureInsuranceProviderImportEnabled:        getEnvBool("FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED", false),
 		FeatureStaysEnabled:                          getEnvBool("FEATURE_STAYS_ENABLED", false),
 		FeaturePlacementEnabled:                      getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
 		FeatureMarketplaceEnabled:                    getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
