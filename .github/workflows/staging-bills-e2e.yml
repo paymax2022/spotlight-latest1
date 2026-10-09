@@ -99,6 +99,20 @@ jobs:
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "UID_=$UID_" >> "$GITHUB_ENV"
 
+      - name: Grant the probe user KYC tier 1 (wallet gate is fail-closed on tier 0)
+        run: |
+          set -euo pipefail
+          # user_profiles is auto-created by the handle_new_user trigger; upsert
+          # in case it has not landed yet.
+          code="$(curl -s -o /tmp/prof.json -w "%{http_code}" --max-time 30 -X POST \
+            -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates,return=minimal" \
+            "$SB_URL/rest/v1/user_profiles" \
+            -d "{\"id\":\"$UID_\",\"email\":\"bills-probe-${GITHUB_RUN_ID}@spotlightng.com\",\"kyc_tier\":1,\"kyc_status\":\"verified\",\"kyc_verified_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}")"
+          [ "$code" = "201" ] || [ "$code" = "200" ] || { echo "  profile upsert failed (HTTP $code):"; head -c 300 /tmp/prof.json; exit 1; }
+          echo "  probe user promoted to kyc_tier=1"
+
       - name: Ensure wallet account + seed balanced funding pair
         id: fund
         run: |
