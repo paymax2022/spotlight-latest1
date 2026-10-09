@@ -52,10 +52,15 @@ export async function GET(request: Request) {
     const toParam = url.searchParams.get('to'); // ISO date/datetime, inclusive
     const referrerId = url.searchParams.get('referrerId');
 
+    // SAFE integers only: .range() serializes these verbatim into PostgREST's
+    // offset/limit params, and a fractional or unsafe value (offset=1.5,
+    // offset=1e25, limit=2.5) came back as a PostgREST error → thrown → 500
+    // (the wave-9 "referral list 500s on offset" residual). Anything that is
+    // not a usable page coordinate falls back to the default page.
     const limitParam = Number(url.searchParams.get('limit'));
     const offsetParam = Number(url.searchParams.get('offset'));
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIMIT) : DEFAULT_LIMIT;
-    const offset = Number.isFinite(offsetParam) && offsetParam >= 0 ? offsetParam : 0;
+    const limit = Number.isSafeInteger(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIMIT) : DEFAULT_LIMIT;
+    const offset = Number.isSafeInteger(offsetParam) && offsetParam >= 0 ? offsetParam : 0;
 
     const supabase = createAdminClient();
 
