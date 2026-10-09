@@ -2,7 +2,7 @@ import { confirmImport, decideApplication, decideOfflinePayment, getAdminKpis, g
 import { assignRole, getMyAdminAccess, restoreMember, suspendMember, transferMember } from '../api/adminMembers.api';
 import { approveAiNote, awaitProcessing, convertActionItem, createAiNote, getAiNote, getAiNotes, publishAiNote, regenerateSummary } from '../api/ainotes.api';
 import { castVote, getDashboard, getDirectory, getDues, getElection, getElections, getMember, getMembershipCard, getOrganisation, getOrganisations, getReceipt, payInvoice, submitApplication, verifyMembershipCard } from '../api/association.api';
-import { CommitteeInput, createCommittee, deleteCommittee, updateCommittee } from '../api/authoring.api';
+import { CommitteeInput, addCommitteeMembers, createCommittee, deleteCommittee, updateCommittee } from '../api/authoring.api';
 import { getThread, getThreads, muteThread, reactToMessage, sendMessage } from '../api/chat.api';
 import { getCommittee, getCommittees, getEvent, getEvents, registerEvent, requestJoinCommittee, rsvpEvent, submitEventFeedback } from '../api/community.api';
 import { acknowledgeAnnouncement, acknowledgeDocument, checkInMeeting, decideMeeting, getAnnouncement, getAnnouncements, getDocument, getDocuments, getMeeting, getMeetings, getNotifications, getPendingMeetings, getTask, getTasks, markNotificationsRead, proposeMeeting, rsvpMeeting, updateTaskStatus } from '../api/engagement.api';
@@ -584,6 +584,18 @@ export function useUpdateCommittee() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, input }: { id: string; input: CommitteeInput }) => updateCommittee(id, input),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'committee', id] });
+      qc.invalidateQueries({ queryKey: [KEY, 'committees'] });
+    },
+  });
+}
+
+export function useAddCommitteeMembers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, membershipIds }: { id: string; membershipIds: string[] }) =>
+      addCommitteeMembers(id, membershipIds),
     onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: [KEY, 'committee', id] });
       qc.invalidateQueries({ queryKey: [KEY, 'committees'] });
