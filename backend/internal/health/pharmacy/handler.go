@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // Handler exposes the HEALTH-BUILD §6 Pharmacy API. AuthN is the finance auth
@@ -68,7 +69,17 @@ func (h *Handler) ListMyPrescriptions(c *gin.Context) {
 // ListProducts — GET /products?pharmacy_provider_id=&q=  (NAFDAC-gated, Rx flag, HL-5)
 // q is an optional case-insensitive search on the medicine name or owning pharmacy name.
 func (h *Handler) ListProducts(c *gin.Context) {
-	products, err := h.svc.ListProducts(c.Request.Context(), c.Query("pharmacy_provider_id"), c.Query("q"))
+	// pharmacy_provider_id is optional, but once supplied it feeds a
+	// uuid-column filter — a malformed value must be a 400, never a driver
+	// error → 500.
+	provID := c.Query("pharmacy_provider_id")
+	if provID != "" {
+		if _, err := uuid.Parse(provID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "pharmacy_provider_id must be a uuid")
+			return
+		}
+	}
+	products, err := h.svc.ListProducts(c.Request.Context(), provID, c.Query("q"))
 	if err != nil {
 		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
@@ -97,6 +108,19 @@ func (h *Handler) UpsertProduct(c *gin.Context) {
 	if err := c.ShouldBindJSON(&p); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
+	}
+	// pharmacy_provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid);
+	// an empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(p.PharmacyProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "pharmacy_provider_id must be a uuid")
+		return
+	}
+	// A caller-pinned id feeds the pharmacy_products PK (uuid); malformed → 400.
+	if p.ID != "" {
+		if _, err := uuid.Parse(p.ID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+			return
+		}
 	}
 	out, err := h.svc.UpsertProduct(c.Request.Context(), id, p)
 	if err != nil {
@@ -143,6 +167,33 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
+	}
+	// pharmacy_provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid);
+	// an empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(req.PharmacyProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "pharmacy_provider_id must be a uuid")
+		return
+	}
+	// The optional link ids and every line's product_id feed uuid columns
+	// (health_prescriptions.id, symptom_search_events.id, pharmacy_products.id) —
+	// when present a malformed value must be a 400, never a driver error.
+	if req.PrescriptionID != nil && *req.PrescriptionID != "" {
+		if _, err := uuid.Parse(*req.PrescriptionID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "prescription_id must be a uuid")
+			return
+		}
+	}
+	if req.SearchEventID != nil && *req.SearchEventID != "" {
+		if _, err := uuid.Parse(*req.SearchEventID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "search_event_id must be a uuid")
+			return
+		}
+	}
+	for _, l := range req.Lines {
+		if _, err := uuid.Parse(l.ProductID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "lines.product_id must be a uuid")
+			return
+		}
 	}
 	idem := strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
 	in := CreateOrderInput{
@@ -338,6 +389,12 @@ func (h *Handler) GetPharmacy(c *gin.Context) {
 
 // ListPharmacyReviews — GET /pharmacies/:id/reviews  public rating feed.
 func (h *Handler) ListPharmacyReviews(c *gin.Context) {
+	// :id feeds a uuid-column filter (pharmacy_provider_id=$1) — malformed →
+	// 400, never a driver error → 500.
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "pharmacy id must be a uuid")
+		return
+	}
 	rows, err := h.svc.ListReviews(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
@@ -356,6 +413,12 @@ func (h *Handler) UpsertPharmacyProfile(c *gin.Context) {
 	var req UpsertPharmacyProfileInput
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// :id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid) — malformed →
+	// 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "pharmacy id must be a uuid")
 		return
 	}
 	p, err := h.svc.UpsertPharmacyProfile(c.Request.Context(), id, c.Param("id"), req)

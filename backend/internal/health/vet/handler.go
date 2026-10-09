@@ -137,6 +137,14 @@ func (h *Handler) UpsertService(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
 		return
 	}
+	// A caller-pinned id feeds the vet_services PK (uuid); malformed → 400,
+	// never a driver error → 422/500. Empty is fine — the service mints one.
+	if req.ID != "" {
+		if _, err := uuid.Parse(req.ID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+			return
+		}
+	}
 	out, err := h.svc.UpsertService(c.Request.Context(), id, VetService{
 		ID: req.ID, ProviderID: req.ProviderID, Code: req.Code, Name: req.Name,
 		VisitType: VisitType(req.VisitType), PriceKobo: req.PriceKobo, Active: req.Active,
@@ -172,6 +180,17 @@ func (h *Handler) Book(c *gin.Context) {
 	// empty/malformed value must be a 400, never a driver error → 422/500.
 	if _, err := uuid.Parse(req.ProviderID); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
+		return
+	}
+	// pet_id/service_id feed uuid columns (pets.id ownership check, the
+	// vet_services price lookup) — a malformed value must be a 400, never a
+	// driver error → 422/500.
+	if _, err := uuid.Parse(req.PetID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "pet_id must be a uuid")
+		return
+	}
+	if _, err := uuid.Parse(req.ServiceID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "service_id must be a uuid")
 		return
 	}
 	start, err := time.Parse(time.RFC3339, req.SlotStart)
@@ -319,6 +338,20 @@ func (h *Handler) CompleteConsult(c *gin.Context) {
 			Dosage: it.Dosage, Quantity: it.Quantity,
 		})
 	}
+	// The optional handoff ids feed uuid columns on the rx/lab referral rails —
+	// when present a malformed value must be a 400, never a driver error.
+	if req.PharmacyProviderID != "" {
+		if _, err := uuid.Parse(req.PharmacyProviderID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "pharmacy_provider_id must be a uuid")
+			return
+		}
+	}
+	if req.LabProviderID != "" {
+		if _, err := uuid.Parse(req.LabProviderID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
+			return
+		}
+	}
 	in := CompleteInput{
 		Subjective: req.Subjective, Objective: req.Objective,
 		Assessment: req.Assessment, Plan: req.Plan,
@@ -346,6 +379,12 @@ func (h *Handler) ScheduleVaccination(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// :id feeds the pets.id ownership check (WHERE id=$1::uuid) — malformed →
+	// 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "pet id must be a uuid")
 		return
 	}
 	dueAt, err := time.Parse(time.RFC3339, req.DueAt)
