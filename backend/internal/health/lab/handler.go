@@ -30,7 +30,16 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 
 // ListTests — GET /tests?lab_provider_id=  (catalog: prep, TAT, price)
 func (h *Handler) ListTests(c *gin.Context) {
-	tests, err := h.svc.ListTests(c.Request.Context(), c.Query("lab_provider_id"))
+	// lab_provider_id is optional, but once supplied it feeds a uuid-column
+	// filter — a malformed value must be a 400, never a driver error → 500.
+	provID := c.Query("lab_provider_id")
+	if provID != "" {
+		if _, err := uuid.Parse(provID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
+			return
+		}
+	}
+	tests, err := h.svc.ListTests(c.Request.Context(), provID)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
@@ -40,7 +49,15 @@ func (h *Handler) ListTests(c *gin.Context) {
 
 // ListPackages — GET /packages?lab_provider_id=  (bundle catalog, same shape as ListTests)
 func (h *Handler) ListPackages(c *gin.Context) {
-	packages, err := h.svc.ListPackages(c.Request.Context(), c.Query("lab_provider_id"))
+	// Same uuid-column filter guard as ListTests.
+	provID := c.Query("lab_provider_id")
+	if provID != "" {
+		if _, err := uuid.Parse(provID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
+			return
+		}
+	}
+	packages, err := h.svc.ListPackages(c.Request.Context(), provID)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
@@ -80,6 +97,14 @@ func (h *Handler) UpsertTest(c *gin.Context) {
 	if _, err := uuid.Parse(t.LabProviderID); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
 		return
+	}
+	// A caller-pinned id feeds the lab_tests PK (uuid); malformed → 400, never a
+	// driver error → 422/500. Empty is fine — the service mints one.
+	if t.ID != "" {
+		if _, err := uuid.Parse(t.ID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+			return
+		}
 	}
 	out, err := h.svc.UpsertTest(c.Request.Context(), id, t)
 	if err != nil {
@@ -133,6 +158,14 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	if _, err := uuid.Parse(req.LabProviderID); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
 		return
+	}
+	// Every test id feeds the catalog price lookup (WHERE id=$1::uuid) — a
+	// malformed entry must be a 400, never a driver error → 422/500.
+	for _, testID := range req.TestIDs {
+		if _, err := uuid.Parse(testID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "test_ids must be uuids")
+			return
+		}
 	}
 	idem := strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
 	in := CreateOrderInput{
