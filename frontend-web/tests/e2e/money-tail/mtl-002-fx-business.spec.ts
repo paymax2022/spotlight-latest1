@@ -64,8 +64,14 @@ test.describe('MTL-002 fx business console', () => {
   test('api keys create → rotate → list', async ({ request }) => {
     const { token } = await user(request, 'mtl002b');
 
+    // label is required — an unlabeled key is unidentifiable in console + audit.
+    const noLabel = await goFetch(request, '/api/v1/fx/api-keys', {
+      method: 'POST', token, data: {},
+    });
+    expect(noLabel.status).toBe(400);
+
     const created = await goFetch(request, '/api/v1/fx/api-keys', {
-      method: 'POST', token, data: { name: 'mtl-e2e-key', permissions: ['read'] },
+      method: 'POST', token, data: { label: 'mtl-e2e-key', mode: 'sandbox' },
     });
     expect([200, 201]).toContain(created.status);
 
@@ -134,8 +140,16 @@ test.describe('MTL-002 fx business console', () => {
     const list = await goFetch(request, '/api/v1/fx/cards', { token });
     expect(list.status).toBe(200);
 
+    // Contract-required fields + Idempotency-Key: a partial body refuses.
+    const partial = await goFetch(request, '/api/v1/fx/cards', {
+      method: 'POST', token, data: { currency: 'USD' },
+    });
+    expect(partial.status).toBe(400);
+
     const created = await goFetch(request, '/api/v1/fx/cards', {
-      method: 'POST', token, data: { currency: 'USD', type: 'virtual' },
+      method: 'POST', token,
+      headers: { 'Idempotency-Key': `mtl-card-${Date.now()}` },
+      data: { label: 'e2e card', brand: 'visa', currency: 'USD', color: 'purple', fundingAmount: 0 },
     });
     // No card issuer is wired locally (MAPLERAD_SECRET_KEY unset → cardIssuer nil):
     // the route must answer honestly — success with a stored row, or a

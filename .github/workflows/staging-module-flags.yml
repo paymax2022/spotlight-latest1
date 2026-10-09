@@ -263,8 +263,12 @@ jobs:
       - name: Set the gateway-side module flags
         run: |
           set -euo pipefail
+          # FEATURE_FX_ORCHESTRATION_ENABLED is the BFF leaf flag for /api/v1/fx/*
+          # (featureFlags.fx); FEATURE_FX_ENABLED gates the legacy Go mount and is
+          # only a fallback on the web side.
           railway variable set \
             FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_FX_ORCHESTRATION_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 

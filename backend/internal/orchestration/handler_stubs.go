@@ -1,8 +1,12 @@
 package orchestration
 
 // handler_stubs.go — placeholder endpoints for FX features the mobile app calls
-// but that are not yet persistence-backed (beneficiaries, rate alerts, rate
-// history, add-wallet, transfer-by-reference, collections list, disputes).
+// but that are not yet persistence-backed (rate history, add-wallet, collections
+// list). Read-only stubs may echo contract-shaped display data, but anything
+// that looks like a persisted object must not be fabricated: transfer-by-
+// reference is a real ledger lookup (404 on a miss) and disputes refuse with
+// 501 until a disputes store lands — a fake "processing" transfer or a
+// "submitted" dispute that records nothing is worse than an honest error.
 // WHY: the mobile FX module is governed by a single flag (EXPO_PUBLIC_FX_USE_MOCK).
 // Flipping it to false to test the REAL exchange path (rates→quote→lock→convert)
 // also routes these secondary calls at the backend; without these handlers they
@@ -136,18 +140,25 @@ func indicativeBase(from, to string) float64 {
 	return 100 + float64(h%900) // 100..999, stable per pair
 }
 
-// The mobile polls this after POST /transfers. This is now a REAL lookup: the
-// reference is resolved against the orchestration transaction ledger (the same
-// store CreateTransfer persists to). We return the actual status, amounts, rates,
-// route and status history. Only when no transfer is found for the caller do we
-// fall back to a schema-complete placeholder so the polling screen still renders.
+// GetTransferByReference handles GET /transfers/:reference — the mobile polls
+// this after POST /transfers. This is a REAL lookup: the reference is resolved
+// against the orchestration transaction ledger (the same store CreateTransfer
+// persists to). We return the actual status, amounts, rates, route and status
+// history. An unresolvable reference answers 404 — a phantom "processing"
+// transfer is worse than an honest miss because a poller can never distinguish
+// a fat-fingered reference from an in-flight payout.
 func (h *Handler) GetTransferByReference(c *gin.Context) {
 	ref := c.Param("reference")
 
 	// Resolve the persisted transaction for THIS customer by reference. Transaction
 	// matches on either id or reference and is object-scoped to the caller (no
 	// cross-customer leakage). A transfer is Type == "transfer".
-	if tx, ok, err := h.svc.Transaction(c.Request.Context(), ginutil.UserID(c), ref); err == nil && ok && tx.Type == "transfer" {
+	tx, ok, err := h.svc.Transaction(c.Request.Context(), ginutil.UserID(c), ref)
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	if ok && tx.Type == "transfer" {
 		history := make([]gin.H, 0)
 		if len(tx.Fees) == 0 {
 			tx.Fees = []Fee{}
@@ -175,28 +186,8 @@ func (h *Handler) GetTransferByReference(c *gin.Context) {
 		return
 	}
 
-	// Not found (e.g. reference not yet persisted, or wrong customer): honest,
-	// clearly-placeholder Transfer so the polling screen renders without a 404.
-	zero := gin.H{"amount": 0, "currency": "NGN"}
-	c.JSON(http.StatusOK, gin.H{
-		"id":           stubID("tr"),
-		"reference":    ref,
-		"status":       "processing", // honest: not resolvable to a persisted transfer
-		"source":       zero,
-		"destination":  zero,
-		"quotedRate":   nil,
-		"executedRate": nil,
-		"fees":         []any{},
-		"route":        gin.H{"provider": "maplerad", "corridor": "", "rail": "bank_transfer"},
-		"beneficiary": gin.H{
-			"id": "", "name": "Beneficiary", "rail": "bank_transfer", "scheme": "BANK",
-			"currency": "NGN", "accountNumber": "", "bankName": nil, "countryCode": "NG",
-		},
-		"narration":     nil,
-		"transactionId": "",
-		"createdAt":     timeutil.RFC3339(time.Now()),
-		"statusHistory": []gin.H{{"status": "processing", "at": timeutil.RFC3339(time.Now())}},
-	})
+	// Not found: the reference is not a persisted transfer for this customer.
+	writeErr(c, NewError(ErrNotFound, "not_found", "Transfer not found.").WithParam("reference"))
 }
 
 // NOTE: beneficiary handlers (List/Create/Validate/Update/Favorite/Delete) are
@@ -235,8 +226,18 @@ func (h *Handler) ListVirtualAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": vas})
 }
 
-// Records nothing yet; echoes a "submitted" dispute so the support flow renders.
+// disputeReasons mirrors DisputeReason in mobile src/features/fx/types/fx.types.ts.
+var disputeReasons = map[string]bool{
+	"not_received": true, "wrong_amount": true, "duplicate": true,
+	"unauthorized": true, "wrong_rate": true, "other": true,
+}
 
+// DisputeTransaction handles POST /transactions/:id/dispute. Disputes have no
+// persistence yet (no orch_fx_disputes table, no provider dispute rail), so
+// this endpoint refuses honestly instead of echoing a "submitted" dispute that
+// records nothing: a valid request on a real transaction gets 501
+// not_implemented; anything else gets the usual typed 400/404.
+// FxDisputeRequest requires transactionId + reason (contract).
 func (h *Handler) DisputeTransaction(c *gin.Context) {
 	var req struct {
 		TransactionID string `json:"transactionId"`
@@ -245,14 +246,30 @@ func (h *Handler) DisputeTransaction(c *gin.Context) {
 		Note          string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	txID := req.TransactionID
+	txID := strings.TrimSpace(req.TransactionID)
 	if txID == "" {
-		txID = c.Param("id")
+		txID = strings.TrimSpace(c.Param("id"))
 	}
-	c.JSON(http.StatusCreated, gin.H{
-		"id": stubID("dsp"), "transactionId": txID, "reference": req.Reference,
-		"reason": req.Reason, "note": req.Note, "status": "submitted", "createdAt": timeutil.RFC3339(time.Now()),
-	})
+	if txID == "" {
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "transactionId is required").WithParam("transactionId"))
+		return
+	}
+	if !disputeReasons[strings.ToLower(strings.TrimSpace(req.Reason))] {
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "unsupported reason").WithParam("reason"))
+		return
+	}
+	if h.svc != nil {
+		_, ok, err := h.svc.Transaction(c.Request.Context(), ginutil.UserID(c), txID)
+		if err != nil {
+			writeErr(c, asAPIError(err))
+			return
+		}
+		if !ok {
+			writeErr(c, NewError(ErrNotFound, "not_found", "Transaction not found.").WithParam("transactionId"))
+			return
+		}
+	}
+	writeErr(c, NewError(ErrNotImplemented, "not_implemented", "Transaction disputes are not yet supported — nothing was recorded."))
 }
 
 // Contract-shaped placeholders so the mobile FX KYC screens render against the

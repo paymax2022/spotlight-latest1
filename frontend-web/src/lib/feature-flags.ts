@@ -191,8 +191,13 @@ export const featureFlags = {
   /** P3 Lane H — Wallet-paid votes via Go vote-bridge debit endpoint */
   voteBridge: () => envFlag('FEATURE_VOTE_BRIDGE_ENABLED'),
 
-  /** FX currency exchange via Maplerad */
-  fx: () => envFlag('FEATURE_FX_ENABLED'),
+  /** FX orchestration (/api/v1/fx/*) — the Go mount gate is
+   *  FEATURE_FX_ORCHESTRATION_ENABLED; FEATURE_FX_ENABLED gates the legacy
+   *  /api/finance/fx mount (a different surface). Kept as a fallback so
+   *  deployments that only ever set the legacy var don't 503 — new
+   *  deployments should set the orchestration flag (platform_modules.fx
+   *  points at it too). */
+  fx: () => envFlag('FEATURE_FX_ORCHESTRATION_ENABLED') || envFlag('FEATURE_FX_ENABLED'),
 
   /** Realtor — property graph, listings, inspections, leases, shortlet, AI assist */
   realtor: () => envFlag('FEATURE_REALTOR_ENABLED'),

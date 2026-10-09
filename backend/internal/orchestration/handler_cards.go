@@ -106,38 +106,81 @@ func (h *Handler) GetCard(c *gin.Context) {
 	c.JSON(http.StatusOK, card)
 }
 
-// POST /cards — creates a card, then applies the initial funding load (money path)
-// via the idempotent FundCard so the load carries the request Idempotency-Key.
+// cardBrands / cardColors / cardCurrencies mirror CardBrand, CardColor and the
+// fiat CurrencyCodes in mobile src/features/fx/types/fx.types.ts (stablecoins
+// can't denominate a card). Closed sets: FxCreateCardRequest marks label, brand,
+// currency, color and fundingAmount required, so an empty or partial body must
+// 400 rather than mint a default-USD "Virtual card" the caller never asked for.
+var cardBrands = map[string]bool{"visa": true, "mastercard": true, "verve": true}
+var cardColors = map[string]bool{"purple": true, "blue": true, "teal": true, "graphite": true}
+var cardCurrencies = map[string]bool{
+	"NGN": true, "USD": true, "EUR": true, "GBP": true,
+	"GHS": true, "KES": true, "XAF": true, "ZAR": true,
+}
+
+// CreateCard handles POST /cards — creates a card, then applies the initial
+// funding load (money path) via the idempotent FundCard so the load carries the
+// request Idempotency-Key. Idempotency-Key is contract-required on the whole
+// endpoint: create-then-fund is one client operation and a retried request must
+// never double-fund.
 func (h *Handler) CreateCard(c *gin.Context) {
 	var d struct {
 		Label         string `json:"label"`
 		Brand         string `json:"brand"`
 		Currency      string `json:"currency"`
 		Color         string `json:"color"`
-		FundingAmount int64  `json:"fundingAmount"`
+		FundingAmount *int64 `json:"fundingAmount"`
 	}
 	if err := c.ShouldBindJSON(&d); err != nil {
 		bindErr(c, err)
 		return
 	}
-	cur := d.Currency
-	if cur == "" {
-		cur = "USD"
+	bad := func(param, msg string) {
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", msg).WithParam(param))
 	}
+	if ginutil.IdempotencyKey(c) == "" {
+		writeErr(c, NewError(ErrInvalidRequest, "missing_idempotency_key", "Idempotency-Key header is required to create a card."))
+		return
+	}
+	label := strings.TrimSpace(d.Label)
+	if label == "" {
+		bad("label", "label is required")
+		return
+	}
+	brand := strings.ToLower(strings.TrimSpace(d.Brand))
+	if !cardBrands[brand] {
+		bad("brand", "unsupported brand")
+		return
+	}
+	cur := strings.ToUpper(strings.TrimSpace(d.Currency))
+	if !cardCurrencies[cur] {
+		bad("currency", "unsupported currency")
+		return
+	}
+	color := strings.ToLower(strings.TrimSpace(d.Color))
+	if !cardColors[color] {
+		bad("color", "unsupported color")
+		return
+	}
+	if d.FundingAmount == nil || *d.FundingAmount < 0 {
+		bad("fundingAmount", "fundingAmount is required and must be non-negative")
+		return
+	}
+	funding := *d.FundingAmount
 	if h.cards == nil {
-		c.JSON(http.StatusCreated, cardJSON(stubID("card"), d.Label, d.Brand, cur, d.Color, "active", d.FundingAmount, nil))
+		c.JSON(http.StatusCreated, cardJSON(stubID("card"), label, brand, cur, color, "active", funding, nil))
 		return
 	}
 	ctx := c.Request.Context()
 	card, err := h.cards.CreateCard(ctx, ginutil.UserID(c), CardDraft{
-		Label: d.Label, Brand: d.Brand, Currency: cur, Color: d.Color, FundingAmount: d.FundingAmount,
+		Label: label, Brand: brand, Currency: cur, Color: color, FundingAmount: funding,
 	})
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
 	}
-	if d.FundingAmount > 0 {
-		funded, ferr := h.cards.FundCard(ctx, ginutil.UserID(c), card.ID, d.FundingAmount, ginutil.IdempotencyKey(c))
+	if funding > 0 {
+		funded, ferr := h.cards.FundCard(ctx, ginutil.UserID(c), card.ID, funding, ginutil.IdempotencyKey(c))
 		if ferr != nil {
 			if errors.Is(ferr, ErrInsufficientCardBalance) {
 				writeInsufficientCardFunds(c)

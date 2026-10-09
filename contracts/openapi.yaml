@@ -6667,7 +6667,12 @@ paths:
   /api/v1/fx/transactions/{id}/dispute:
     post:
       operationId: fxDisputeTransaction
-      summary: Open a dispute against a transaction (stub — echoes submitted dispute)
+      summary: Open a dispute against a transaction (NOT YET PERSISTED — honest refusal)
+      description: >-
+        There is no disputes store yet, so this endpoint never fabricates a
+        "submitted" dispute: a malformed body is a 400, a transaction that does
+        not exist for the caller is a 404, and a valid request on a real
+        transaction is a 501 not_implemented until persistence lands.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -6678,11 +6683,21 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/FxDisputeRequest' }
       responses:
-        '201':
-          description: Dispute submitted
+        '400':
+          description: Missing transactionId, or an unsupported reason
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FxDispute' }
+              schema: { $ref: '#/components/schemas/FxError' }
+        '404':
+          description: Transaction not found for the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+        '501':
+          description: Disputes are not yet supported — nothing was recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
   /api/v1/fx/rates/history:
     get:
       operationId: fxGetRateHistory
@@ -6706,6 +6721,11 @@ paths:
     get:
       operationId: fxGetTransferByReference
       summary: Look up a transfer by reference (poll status)
+      description: >-
+        Real lookup against the orchestration transaction ledger, scoped to the
+        caller. An unresolvable reference is a 404 — never a fabricated
+        "processing" transfer, so a poller can distinguish a lost reference from
+        an in-flight payout.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -6716,6 +6736,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FxTransfer' }
+        '404':
+          description: No transfer with that reference exists for the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
   /api/v1/fx/collections:
     get:
       operationId: fxListCollections
@@ -6899,6 +6924,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FxCard' }
+        '400':
+          description: Missing Idempotency-Key, or a missing/unsupported required field
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
   /api/v1/fx/cards/{id}:
     get:
       operationId: fxGetCard
