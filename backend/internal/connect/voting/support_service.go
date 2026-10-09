@@ -161,7 +161,7 @@ func (s *SupportService) UpdateSupportTicket(ctx context.Context, userID, ticket
 
 	query := `
 		UPDATE voting_support_tickets
-		SET status = COALESCE(NULLIF($3, ''), status),
+		SET status = COALESCE(NULLIF($3, '')::voting_ticket_status, status),
 		    priority = COALESCE(NULLIF($4, ''), priority),
 		    description = COALESCE(NULLIF($5, ''), description),
 		    updated_at = $6,
