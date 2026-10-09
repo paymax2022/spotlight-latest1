@@ -475,7 +475,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Capture the engine service so the Phase-1 revenue modules (bills, marketplace)
 		// can emit PurchaseSettled/PurchaseRefunded into it (PRD §2.5/§7.1). rewardSvc
 		// stays nil if the engine returns nil (nil pool), keeping all emits nil-safe.
-		rewardSvc = RegisterReferralRewards(r, pool, rbac, mapsAuth(), cfg.ReferralRewardsInternalSecret)
+		rewardSvc = RegisterReferralRewards(r, pool, rbac, mapsAuth(), cfg.ReferralRewardsInternalSecret,
+			middleware.PerUserRateLimit(redisClient, "referrals-attribute", cfg.ReferralAttributeRatePerMin))
 	}
 
 	// Member routes under /api/finance/insurance/* (auth via finance group);

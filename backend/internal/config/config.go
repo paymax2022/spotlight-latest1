@@ -195,6 +195,12 @@ type Config struct {
 	// Shared secret guarding /internal/referrals/* (service-to-service purchase
 	// hooks). Empty ⇒ those endpoints fail closed (503).
 	ReferralRewardsInternalSecret string
+	// ReferralAttributeRatePerMin caps per-user POSTs/min on
+	// /v1/referrals/attribute. The endpoint's 200-vs-400 answer is an
+	// unavoidable code-validity signal (signup UX needs it), so the
+	// enumeration defence is a rate budget, not error uniformity — 5-char
+	// codes are a ~33M space and one account cannot grind it at this rate.
+	ReferralAttributeRatePerMin int
 	// Referral purchase-commission-split: a flat 20% of Spotlight's realised
 	// commission on a purchase, paid to the referred payer's referrer, capped at
 	// referral_links.reward_cap rewarded purchases per CODE (not per referred
@@ -857,6 +863,7 @@ func Load() Config {
 		FeatureReferralsEnabled:               getEnvBool("FEATURE_REFERRALS_ENABLED", false),
 		FeatureReferralRewardsEnabled:         getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
 		ReferralRewardsInternalSecret:         getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
+		ReferralAttributeRatePerMin:           getEnvInt("REFERRAL_ATTRIBUTE_RATE_PER_MIN", 20),
 		FeatureReferralCommissionSplitEnabled: getEnvBool("FEATURE_REFERRAL_COMMISSION_SPLIT_ENABLED", false),
 		// Iron Rule: every money mutation must pass tier-limit checks fail-closed.
 		// Defaults TRUE so limits are enforced by default; set FEATURE_TIER_LIMITS_ENABLED=false

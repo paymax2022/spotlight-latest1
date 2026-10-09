@@ -169,13 +169,19 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 // reward id; refunds post a balanced REVERSAL; milestone bonuses credit once,
 // idempotently. Nothing here edits an existing file beyond the single call site.
 // internalSecret guards the /internal hooks (empty ⇒ hooks fail closed). authMW is
-// RequireAuthContext (validates the bearer + mirrors user_id).
+// RequireAuthContext (validates the bearer + mirrors user_id). attrRL is the
+// per-user rate limit middleware applied to POST /attribute only: its 200-vs-400
+// answer is a code-validity oracle BY DESIGN (the BFF needs the verdict for
+// signup UX — uniform errors cannot hide it), so enumeration is bounded by a
+// rate budget instead (middleware.PerUserRateLimit, Redis-backed). Pass nil to
+// mount unthrottled.
 func RegisterReferralRewards(
 	r *gin.Engine,
 	pool *pgxpool.Pool,
 	rbac services.RBACService,
 	authMW gin.HandlerFunc,
 	internalSecret string,
+	attrRL gin.HandlerFunc,
 ) *referrals.RewardService {
 	if pool == nil {
 		log.Println("[referral-rewards] nil pool — skipping engine routes")
@@ -197,7 +203,10 @@ func RegisterReferralRewards(
 	user.Use(authMW)
 	user.Use(requireUserID())
 	user.POST("/link", h.PostLink)
-	user.POST("/attribute", h.PostAttribute)
+	if attrRL == nil {
+		attrRL = func(c *gin.Context) { c.Next() }
+	}
+	user.POST("/attribute", attrRL, h.PostAttribute)
 	user.GET("/me/dashboard", h.GetDashboard)
 	user.GET("/me/referrals", h.GetReferrals)
 	user.GET("/me/earnings", h.GetEarnings)
