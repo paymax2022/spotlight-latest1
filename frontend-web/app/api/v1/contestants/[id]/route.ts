@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { createAdminClient } from '@/lib/supabase/server';
+import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -38,6 +39,10 @@ export async function GET(
         ranking
       `)
       .eq('id', contestantId)
+      // Same visibility gate the public list applies: only approved/active
+      // contestants are public — a pending/rejected contestant resolvable by
+      // id is "not found" (404, not 403, so existence isn't leaked either).
+      .in('status', ['approved', 'active'])
       .maybeSingle();
 
     if (error) throw error;
@@ -45,7 +50,7 @@ export async function GET(
 
     const contestId = (enrollment as any).contest_id;
 
-    const [{ data: totals }, { data: contestTotals }] = await Promise.all([
+    const [{ data: totals }, { data: contestTotals }, visibility] = await Promise.all([
       supabase
         .from('vote_totals')
         .select('total_confirmed_votes, free_votes, paid_votes, rank')
@@ -56,6 +61,9 @@ export async function GET(
         .from('vote_totals')
         .select('total_confirmed_votes')
         .eq('contest_id', contestId),
+      // Phase-aware effective visibility (D-004 convention): a phase can hide
+      // counts/rank even when the contest-level flags are permissive.
+      getEffectiveVisibility(contestId),
     ]);
 
     const grandTotal = (contestTotals ?? []).reduce(
@@ -65,6 +73,10 @@ export async function GET(
     const voteCount = (totals as any)?.total_confirmed_votes ?? 0;
     const rank = (totals as any)?.rank ?? null;
 
+    // Never leak hidden vote counts / rank through this public endpoint —
+    // the same redaction /api/leaderboard/[contestId] (VV-007) and
+    // /api/vote-page (D-004) apply. Fields are omitted, not nulled, so a
+    // caller can't distinguish "hidden" from "zero".
     return NextResponse.json({
       id: enrollment.id,
       contestId,
@@ -75,12 +87,17 @@ export async function GET(
       photoUrl: (enrollment as any).photo_url || null,
       bio: (enrollment as any).bio || null,
       socialLinks: {},
-      rank,
-      voteCount,
-      votePercent: grandTotal > 0 ? Math.round((voteCount / grandTotal) * 1000) / 10 : 0,
-      isTopContestant: rank !== null && rank <= 3,
       highlights: [],
-      recentVotes: (totals as any)?.free_votes ?? 0,
+      ...(visibility.showRank
+        ? { rank, isTopContestant: rank !== null && rank <= 3 }
+        : {}),
+      ...(visibility.showVoteCount
+        ? {
+            voteCount,
+            votePercent: grandTotal > 0 ? Math.round((voteCount / grandTotal) * 1000) / 10 : 0,
+            recentVotes: (totals as any)?.free_votes ?? 0,
+          }
+        : {}),
     });
   } catch (error) {
     return handleApiError(error, 'Failed to load contestant');
