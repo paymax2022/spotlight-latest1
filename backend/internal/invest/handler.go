@@ -208,7 +208,14 @@ func (h *Handler) Buy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	rec, err := h.svc.Buy(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
+	// Iron rule: the caller's Idempotency-Key is REQUIRED at the edge (same
+	// gate as transfers). The service-level check stays as the fail-closed
+	// backstop for any caller that bypasses the handler.
+	idem, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	rec, err := h.svc.Buy(c.Request.Context(), ginutil.UserID(c), idem, req)
 	if err != nil {
 		// Failed orders still return the receipt where available (status visible).
 		if rec != nil {
@@ -227,7 +234,11 @@ func (h *Handler) Sell(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	rec, err := h.svc.Sell(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
+	idem, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	rec, err := h.svc.Sell(c.Request.Context(), ginutil.UserID(c), idem, req)
 	if err != nil {
 		if rec != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err), "receipt": rec})
@@ -312,7 +323,11 @@ func (h *Handler) Deposit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	w, err := h.svc.Deposit(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req.AmountKobo, req.Source)
+	idem, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	w, err := h.svc.Deposit(c.Request.Context(), ginutil.UserID(c), idem, req.AmountKobo, req.Source)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -326,7 +341,11 @@ func (h *Handler) Withdraw(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	w, err := h.svc.Withdraw(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req.AmountKobo, req.Destination, req.PIN)
+	idem, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	w, err := h.svc.Withdraw(c.Request.Context(), ginutil.UserID(c), idem, req.AmountKobo, req.Destination, req.PIN)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -488,7 +507,11 @@ func (h *Handler) ApplyPublicOffer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	app, err := h.svc.ApplyPublicOffer(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), body.AmountKobo)
+	idem, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	app, err := h.svc.ApplyPublicOffer(c.Request.Context(), ginutil.UserID(c), idem, c.Param("id"), body.AmountKobo)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -531,7 +554,11 @@ func (h *Handler) AcceptRightsIssue(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	app, err := h.svc.AcceptRightsIssue(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), body.Units)
+	idem, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	app, err := h.svc.AcceptRightsIssue(c.Request.Context(), ginutil.UserID(c), idem, c.Param("id"), body.Units)
 	if err != nil {
 		httpErr(c, err)
 		return
