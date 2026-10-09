@@ -175,6 +175,9 @@ export async function recordConsent(payload: ConsentPayload): Promise<{ ok: true
 // single most important invariant, PRD §10.1).
 export async function bindPolicy(args: {
   quoteId: string;
+  /** Policyholder NIN — verified via Dojah at the Go purchase gate before any
+   * money moves (FEATURE_INSURANCE_NIN_REQUIRED, default ON). */
+  nin: string;
   idempotencyKey: string;
 }): Promise<BindResult> {
   if (USE_MOCK) {
@@ -228,10 +231,11 @@ export async function bindPolicy(args: {
     return { ok: true, policy };
   }
 
-  // Live: Idempotency-Key REQUIRED on bind (PRD §12.1).
+  // Live: Idempotency-Key REQUIRED on bind (PRD §12.1). Go binds on `quote_id`
+  // (snake_case) and requires `nin` at the Dojah purchase gate.
   const { data } = await api.post<BindResult>(
     `${INSURANCE_API_BASE}/policies`,
-    { quoteId: args.quoteId },
+    { quote_id: args.quoteId, nin: args.nin },
     { headers: { 'Idempotency-Key': args.idempotencyKey } },
   );
   return data;

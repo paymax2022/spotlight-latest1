@@ -107,10 +107,15 @@ export default function ReviewAndConfirm() {
 
   const confirm = async () => {
     try {
+      // The purchase gate verifies the policyholder's NIN via Dojah before any
+      // money moves. Schemas that ask for it carry it as a `nin`-typed field;
+      // products that never ask send '' and the backend gate decides.
+      const ninField = fields.find((f) => f.type === 'nin' || /^nin(_?number)?$/i.test(f.name));
       const policy = await purchase.mutateAsync({
         quoteRef: quote.quoteRef,
         productCode: product.code,
         inputs: buildInputs(fields, values),
+        nin: ninField ? asText(values[ninField.name]).replace(/\D/g, '') : '',
         idempotencyKey: draft.idempotencyKey,
       });
       // Success is the CONFIRMED policy, not the payment leg. Anything short of
