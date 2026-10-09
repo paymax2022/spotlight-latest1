@@ -350,7 +350,14 @@ func (s *Service) DecideApplication(ctx context.Context, adminID, appID string, 
 
 	// Authorization (was previously ABSENT — any caller could decide any
 	// application): the caller must be a ManageMembers admin OF THE APPLICATION'S
-	// organisation. Resolve the org from the application, then org-scope the check.
+	// organisation. The coarse admin check runs BEFORE the existence lookup —
+	// resolving the org first made the endpoint an oracle: a caller with no
+	// admin role anywhere could enumerate application ids by watching for
+	// 404 (doesn't exist) vs 403 (exists, wrong org). Now every non-admin
+	// probe gets the same 403.
+	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return err
+	}
 	var appOrg string
 	if err := s.db.QueryRow(ctx, `SELECT organisation_id FROM assoc_applications WHERE id=$1`, appID).Scan(&appOrg); err != nil {
 		return fmt.Errorf("association: application not found: %w", err)
@@ -662,7 +669,50 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*MyProfile, er
 	return &p, nil
 }
 
-// GetPrivacy returns the caller's privacy settings (stored in assoc_member_profiles.privacy jsonb).
+// effectivePrivacy is the per-field visibility the member-facing read paths
+// (GetDirectory, GetMember) actually honour.
+type effectivePrivacy struct {
+	InDirectory bool
+	Profession  bool
+	Email       bool
+	Phone       bool
+}
+
+// memberPrivacy decodes assoc_member_profiles.privacy into effective flags.
+// The column defaults to '{}' — rows written before the privacy screen
+// existed — so an ABSENT key means "never set", not "off", and the defaults
+// differ per flag: directory presence and profession are the product surface
+// a member joins an association for (default visible), while email and phone
+// are personal contact data the privacy UI has always displayed as OFF
+// (default hidden). An explicitly stored boolean always wins. The member's
+// own view and org admins bypass these flags entirely — the settings screen
+// itself states "Admins always retain access for verification".
+func memberPrivacy(raw []byte) effectivePrivacy {
+	ep := effectivePrivacy{InDirectory: true, Profession: true}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return ep
+	}
+	if v, ok := m["showInDirectory"].(bool); ok {
+		ep.InDirectory = v
+	}
+	if v, ok := m["showProfession"].(bool); ok {
+		ep.Profession = v
+	}
+	if v, ok := m["showEmail"].(bool); ok {
+		ep.Email = v
+	}
+	if v, ok := m["showPhone"].(bool); ok {
+		ep.Phone = v
+	}
+	return ep
+}
+
+// GetPrivacy returns the caller's EFFECTIVE privacy settings — what the
+// member-facing reads honour, not the raw stored blob. A '{}' profile
+// surfaced as all-false here while the reads showed everything, so the
+// toggles the member saw were the inverse of reality; reporting the
+// effective flags keeps the switch positions honest.
 func (s *Service) GetPrivacy(ctx context.Context, userID string) (*PrivacySettings, error) {
 	var raw []byte
 	if err := s.db.QueryRow(ctx, `
@@ -671,9 +721,13 @@ func (s *Service) GetPrivacy(ctx context.Context, userID string) (*PrivacySettin
 		WHERE m.user_id=$1 LIMIT 1`, userID).Scan(&raw); err != nil {
 		return nil, fmt.Errorf("association: privacy not found: %w", err)
 	}
-	var ps PrivacySettings
-	json.Unmarshal(raw, &ps) //nolint:errcheck
-	return &ps, nil
+	ep := memberPrivacy(raw)
+	return &PrivacySettings{
+		ShowPhone:       ep.Phone,
+		ShowEmail:       ep.Email,
+		ShowInDirectory: ep.InDirectory,
+		ShowProfession:  ep.Profession,
+	}, nil
 }
 
 // UpdatePrivacy persists privacy settings for the caller.
@@ -682,12 +736,17 @@ func (s *Service) UpdatePrivacy(ctx context.Context, userID string, ps PrivacySe
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.db.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		UPDATE assoc_member_profiles SET privacy=$2, updated_at=now()
 		WHERE membership_id=(SELECT id FROM assoc_memberships WHERE user_id=$1 AND status='ACTIVE' LIMIT 1)`,
 		userID, b)
 	if err != nil {
 		return nil, fmt.Errorf("association: update privacy: %w", err)
+	}
+	// A caller with no ACTIVE membership/profile updated zero rows and got a
+	// 200 anyway — a silent no-op the client read back as "saved".
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNoMembership
 	}
 	return &ps, nil
 }
@@ -942,7 +1001,7 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	query := `
 		SELECT m.id, COALESCE(mp.full_name, m.member_code, ''), m.member_code, mp.photo_url,
 		       COALESCE(mc.label,'Member'), ch.name, m.status, mp.profession,
-		       m.organisation_id::text
+		       m.organisation_id::text, m.user_id::text, mp.privacy
 		FROM assoc_memberships m
 		JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
@@ -990,7 +1049,15 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	}
 	// Respect the viewer's privacy: don't expose contact-restricted profiles to non-self.
 	args = append(args, userID)
-	query += fmt.Sprintf(` AND (mp.contact_restricted=false OR m.user_id=$%d)`, len(args))
+	viewerArg := len(args)
+	query += fmt.Sprintf(` AND (mp.contact_restricted=false OR m.user_id=$%d)`, viewerArg)
+	if q.OrgID == "" {
+		// Honour showInDirectory on the member-facing listing: a member who
+		// turned it off does not appear to co-members (self always does).
+		// The admin org-picker path skips this — admins retain access for
+		// verification, the same rule GetMember applies.
+		query += fmt.Sprintf(` AND (m.user_id=$%d OR COALESCE((mp.privacy->>'showInDirectory')::boolean, true))`, viewerArg)
+	}
 	query += ` ORDER BY mp.full_name LIMIT 200`
 
 	rows, err := s.db.Query(ctx, query, args...)
@@ -1001,12 +1068,19 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	var out []MemberProfileSummary
 	for rows.Next() {
 		var m MemberProfileSummary
+		var rowUserID string
+		var privacyRaw []byte
 		if err := rows.Scan(&m.ID, &m.FullName, &m.MemberID, &m.PhotoURL,
 			&m.CategoryLabel, &m.ChapterName, &m.Status, &m.Profession,
-			&m.OrganisationID); err != nil {
+			&m.OrganisationID, &rowUserID, &privacyRaw); err != nil {
 			// A scan failure here used to be swallowed, which silently dropped the
 			// row from the caller's list; surface it instead (matches GetEvents).
 			return nil, fmt.Errorf("association: directory: scan: %w", err)
+		}
+		// Honour showProfession for member viewers (see memberPrivacy); the
+		// admin org-picker view and the member's own row are exempt.
+		if q.OrgID == "" && rowUserID != userID && !memberPrivacy(privacyRaw).Profession {
+			m.Profession = nil
 		}
 		out = append(out, m)
 	}
@@ -1042,7 +1116,7 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 		       COALESCE(mc.label,'Member'), ch.name, m.status, mp.profession,
 		       mp.email, mp.phone, mp.location, m.joined_at::text,
 		       m.payment_standing, mp.bio, mp.contact_restricted,
-		       m.organisation_id::text
+		       m.organisation_id::text, m.user_id::text, mp.privacy
 		FROM assoc_memberships m
 		JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
@@ -1060,20 +1134,39 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 	}
 	var mp MemberProfile
 	var restricted bool
+	var targetUserID string
+	var privacyRaw []byte
 	if err := s.db.QueryRow(ctx, q, targetID, viewerID).Scan(
 		&mp.ID, &mp.FullName, &mp.MemberID, &mp.PhotoURL,
 		&mp.CategoryLabel, &mp.ChapterName, &mp.Status, &mp.Profession,
 		&mp.Email, &mp.Phone, &mp.Location, &mp.JoinedAt,
 		&mp.PaymentStanding, &mp.Bio, &restricted, &mp.OrganisationID,
+		&targetUserID, &privacyRaw,
 	); err != nil {
 		return nil, fmt.Errorf("association: member not found: %w", err)
 	}
 	mp.ContactRestricted = restricted
-	// An admin acting on the member needs their contact details to act; a peer
-	// viewer does not. Self always sees their own.
-	if restricted && viewerID != targetID && !isAdminViewer {
-		mp.Email = nil
-		mp.Phone = nil
+	// Honour the member's privacy flags for non-privileged viewers (peer
+	// co-members): hidden fields come back blank, and a member who left the
+	// directory answers exactly like an id that never existed. An admin of
+	// the member's org and the member themself always see the full record —
+	// "Admins always retain access for verification". The old guard compared
+	// viewerID to the MEMBERSHIP id, so self-view was masked too; it now
+	// compares against the row's user id.
+	if viewerID != targetUserID && !isAdminViewer {
+		ep := memberPrivacy(privacyRaw)
+		if !ep.InDirectory {
+			return nil, fmt.Errorf("association: member not found: %w", pgx.ErrNoRows)
+		}
+		if restricted || !ep.Email {
+			mp.Email = nil
+		}
+		if restricted || !ep.Phone {
+			mp.Phone = nil
+		}
+		if !ep.Profession {
+			mp.Profession = nil
+		}
 	}
 	return &mp, nil
 }
@@ -1519,6 +1612,13 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction, o
 
 // GetApplication returns a single application with full detail for the admin review screen.
 func (s *Service) GetApplication(ctx context.Context, adminID, appID string) (*AdminApplication, error) {
+	// Authz BEFORE existence: a caller holding no association admin role
+	// anywhere gets a uniform 403 whether or not appID names a row — the old
+	// ordering (resolve the application's org first) leaked existence through
+	// the 404-vs-403 distinction to any member probing ids.
+	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return nil, err
+	}
 	// Org-scoped: the caller must be an admin of the application's own
 	// organisation (not merely an admin of some org). Prevents cross-org PII read.
 	var appOrg string
