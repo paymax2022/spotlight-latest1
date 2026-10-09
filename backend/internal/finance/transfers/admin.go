@@ -144,8 +144,25 @@ func (s *Service) AdminRetry(ctx context.Context, id, actorID string) (*BankTran
 }
 
 // AdminReverse manually reverses a held transfer back to its source. Only valid
-// before settlement (never from successful/failed/reversed). Posts the same
-// REVERSAL_DEBIT/CREDIT pair as a failed webhook (idempotent).
+// before settlement (never from successful/failed/reversed).
+//
+// The reverse is claim-then-act on the SAME per-transfer advisory lock the
+// payout leg uses, and the status is re-read under it — closing two holes the
+// unlocked version had:
+//
+//   - A reverse racing an in-flight provider call could flip the row to
+//     reversed while the payout was mid-flight; the payout then landed on an
+//     already-refunded row (refund + payout double spend). A held lock now
+//     answers ErrPayoutLegInFlight (409) and holding it across the settle
+//     means no leg can fire between the fresh read and the CAS commit.
+//   - provider_initiated means a payout already fired at the provider.
+//     Reversing blindly refunded the user while the payout could still land —
+//     the same double spend. That status now reconciles the fired payout by
+//     provider_transfer_ref (reconcileFiredLeg): only a provider-confirmed
+//     failure settles the reversal; anything else is ErrPayoutAlreadyFired.
+//
+// A bank→bank row still at awaiting_funding holds no money — the reverse is a
+// bare cancellation (status flip, no ledger legs; see settleTransfer).
 func (s *Service) AdminReverse(ctx context.Context, id, actorID string) (*BankTransfer, error) {
 	bt, err := s.getBankTransfer(ctx, id)
 	if err != nil {
@@ -155,8 +172,38 @@ func (s *Service) AdminReverse(ctx context.Context, id, actorID string) (*BankTr
 		return nil, fmt.Errorf("transfers admin: cannot reverse from terminal status %q", bt.Status)
 	}
 	s.audit(ctx, actorID, "transfer.admin.reverse", bt.ID, string(bt.Status))
-	if err := s.settleTransfer(ctx, bt, BankTransferReversed); err != nil {
+
+	release, err := s.acquirePayoutLegLock(ctx, bt.ID)
+	if err != nil {
 		return nil, err
+	}
+	defer release()
+
+	// Bound the locked section (fresh read + optional provider status check +
+	// settle tx) the same way the payout leg is bounded.
+	legCtx, legCancel := context.WithTimeout(ctx, payoutLegTimeout)
+	defer legCancel()
+
+	fresh, err := s.getBankTransfer(legCtx, id)
+	if err != nil {
+		return nil, fmt.Errorf("transfers admin: reverse re-read: %w", err)
+	}
+	switch fresh.Status {
+	case BankTransferSuccessful, BankTransferFailed, BankTransferReversed:
+		return nil, fmt.Errorf("transfers admin: cannot reverse from terminal status %q", fresh.Status)
+	case BankTransferProviderInitiated:
+		if s.registry == nil {
+			return nil, ErrProviderUnavailable // cannot verify the fired payout — fail closed
+		}
+		if err := s.reconcileFiredLeg(legCtx, fresh); err != nil {
+			return nil, err
+		}
+	case BankTransferFundsReserved, BankTransferAwaitingFunding, BankTransferFunded:
+		if err := s.settleTransfer(legCtx, fresh, BankTransferReversed); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("transfers admin: cannot reverse from unknown status %q", fresh.Status)
 	}
 	return s.getBankTransfer(ctx, id)
 }
