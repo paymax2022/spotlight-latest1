@@ -23,10 +23,24 @@ type ScheduleDistributionRequest struct {
 // ScheduleDistribution is the MAKER step: it creates a distribution run and
 // computes the per-investor pro-rata payment lines (net of fees + withholding
 // tax). It does NOT move money — that happens only after a different CHECKER
-// approves. The run-level Idempotency-Key is required (money path).
+// approves. The run-level Idempotency-Key is required (money path) and scoped
+// to this module + maker; a replay of the same payload returns the existing
+// run and the same key on a different asset/gross conflicts.
 func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotencyKey string, req ScheduleDistributionRequest) (*Distribution, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
 		return nil, ErrIdempotencyKey
+	}
+	key := scopedIdemKey(makerID, idempotencyKey)
+	if existing, replay, err := fetchReplay(func() (*Distribution, error) {
+		return s.repo.GetDistributionByKey(ctx, key)
+	}); err != nil {
+		return nil, err
+	} else if replay {
+		if existing.AssetID != req.AssetID || existing.GrossKobo != req.GrossKobo ||
+			existing.FeeKobo != req.FeeKobo || existing.WithholdingKobo != req.WithholdingKobo {
+			return nil, ErrIdempotencyConflict
+		}
+		return existing, nil
 	}
 	if req.GrossKobo <= 0 {
 		return nil, errors.New("fractionalre: gross_kobo must be positive")
@@ -34,10 +48,12 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 	if req.FeeKobo < 0 || req.WithholdingKobo < 0 {
 		return nil, errors.New("fractionalre: fee/withholding must be non-negative")
 	}
-	netPool := req.GrossKobo - req.FeeKobo - req.WithholdingKobo
-	if netPool <= 0 {
+	if req.FeeKobo+req.WithholdingKobo < 0 || req.FeeKobo+req.WithholdingKobo >= req.GrossKobo {
+		// fee+withholding can themselves overflow int64 in addition; the >=
+		// gross comparison also catches a sum that merely wipes out the pool.
 		return nil, errors.New("fractionalre: net distributable must be positive")
 	}
+	netPool := req.GrossKobo - req.FeeKobo - req.WithholdingKobo
 
 	caps, err := s.repo.GetCapTable(ctx, req.AssetID)
 	if err != nil {
@@ -64,32 +80,51 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 		NetKobo:         netPool,
 		Status:          DistSubmitted,
 		MakerID:         &makerID,
-		IdempotencyKey:  idempotencyKey,
+		IdempotencyKey:  key,
 	}
 	now := s.now()
 	dist.SubmittedAt = &now
 	if err := s.repo.InsertDistribution(ctx, dist); err != nil {
 		if isUniqueViolation(err) {
+			if existing, gerr := s.repo.GetDistributionByKey(ctx, key); gerr == nil {
+				if existing.AssetID != req.AssetID || existing.GrossKobo != req.GrossKobo ||
+					existing.FeeKobo != req.FeeKobo || existing.WithholdingKobo != req.WithholdingKobo {
+					return nil, ErrIdempotencyConflict
+				}
+				return existing, nil
+			}
 			return nil, errors.New("fractionalre: distribution with this idempotency key already exists")
 		}
 		return nil, err
 	}
 
 	// Pro-rata per cap table (integer kobo; remainder goes to the largest holder
-	// so the sum of net lines == netPool exactly — no kobo lost).
+	// so the sum of net lines == netPool exactly — no kobo lost). All products
+	// go through the checked helper: netPool*units can overflow int64 for a
+	// large pool on a large cap table, and a wrapped product would silently
+	// under-pay a line.
 	var allocated int64
 	var withheldGross int64
 	// Per-line withholding is taken proportionally out of the gross share; the
 	// net line is the post-withholding amount. For preview we distribute the
 	// already-net pool pro-rata and the per-line gross/withholding are informational.
 	for i, c := range caps {
-		netLine := netPool * c.Units / totalUnits
+		netLine, err := mulDivKobo(netPool, c.Units, totalUnits)
+		if err != nil {
+			return nil, err
+		}
 		if i == len(caps)-1 {
 			netLine = netPool - allocated // remainder to last holder
 		}
 		allocated += netLine
-		grossLine := req.GrossKobo * c.Units / totalUnits
-		whLine := req.WithholdingKobo * c.Units / totalUnits
+		grossLine, err := mulDivKobo(req.GrossKobo, c.Units, totalUnits)
+		if err != nil {
+			return nil, err
+		}
+		whLine, err := mulDivKobo(req.WithholdingKobo, c.Units, totalUnits)
+		if err != nil {
+			return nil, err
+		}
 		withheldGross += whLine
 		p := &DistributionPayment{
 			DistributionID:  dist.ID,
@@ -99,7 +134,7 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 			WithholdingKobo: whLine,
 			NetKobo:         netLine,
 			Status:          "pending",
-			IdempotencyKey:  fmt.Sprintf("%s:%s", idempotencyKey, c.UserID),
+			IdempotencyKey:  fmt.Sprintf("%s:%s", key, c.UserID),
 		}
 		if err := s.repo.InsertDistributionPayment(ctx, p); err != nil {
 			return nil, fmt.Errorf("fractionalre: payment line: %w", err)

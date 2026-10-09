@@ -107,8 +107,19 @@ export async function proxyToGoBackend(
     if (options?.body !== undefined) {
       body = JSON.stringify(options.body);
     } else {
+      // A multipart upload must reach Go as the exact bytes with its own
+      // `multipart/form-data; boundary=...` header. Reading it as text corrupts
+      // the binary and forcing application/json drops the boundary, so the Go
+      // handler's FormFile("file") fails (insurance uploads answered 400).
+      const incomingType = request.headers.get('content-type') ?? '';
+      const isMultipart = /^multipart\/form-data\b/i.test(incomingType);
       try {
-        body = await request.text();
+        if (isMultipart) {
+          body = await request.arrayBuffer();
+          headers['Content-Type'] = incomingType;
+        } else {
+          body = await request.text();
+        }
       } catch {
         body = undefined;
       }

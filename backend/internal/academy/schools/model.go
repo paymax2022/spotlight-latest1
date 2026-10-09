@@ -13,7 +13,7 @@ import (
 // public.audit_logs (module 'academy.schools').
 // Tables map EXACTLY to 20260815001300_academy_schools_tutor.sql:
 //   academy_institutions, academy_licences, academy_class_groups,
-//   academy_enrollments, academy_institution_billing.
+//   academy_edu_enrollments, academy_institution_billing.
 
 // LicenceState is the licence lifecycle state (matches academy_licences.state CHECK
 // constraint exactly: active | suspended | expired).
@@ -75,7 +75,10 @@ type ClassGroup struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
-// Enrollment mirrors academy_enrollments. Rows are idempotent on
+// Enrollment mirrors academy_edu_enrollments (NOT the legacy film-academy
+// academy_enrollments — the migration deliberately chose a distinct name for the
+// B2B2C table; see 20260815001300_academy_schools_tutor.sql lines 42-44). Rows
+// are idempotent on
 // UNIQUE (institution_id, learner_user_id) and on the globally-unique idempotency_key,
 // so a replayed bulk enrolment never double-counts a seat.
 type Enrollment struct {

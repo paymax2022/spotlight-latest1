@@ -93,6 +93,10 @@ const bound = (userId: string, clientKey = 'idem-1', fp = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv('FEATURE_VOTE_BRIDGE_ENABLED', 'true');
+  // #562 moved /reverse behind RequireServiceToken — without this env the
+  // bridge throws before fetch and the saga-compensation assertions below
+  // can never observe the reverse call.
+  vi.stubEnv('GO_INTERNAL_SERVICE_TOKEN', 'svc-token-test');
   stubGo();
   vi.mocked(priceWalletVote).mockResolvedValue(QUOTE as never);
   vi.mocked(creditWalletVotes).mockResolvedValue(CREDIT as never);

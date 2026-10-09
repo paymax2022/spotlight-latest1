@@ -20,6 +20,7 @@ package transfers
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -145,4 +146,36 @@ func insertReversalLegTx(ctx context.Context, tx pgx.Tx, reference, baseIdempote
 // that can fire InitiatePayoutFailover on the same transfer).
 func payoutLegLockKey(transferID string) string {
 	return "transfers:payout-leg:" + transferID
+}
+
+// acquirePayoutLegLock pins a pooled conn and takes the session-scoped
+// per-transfer advisory lock on it. Session- (not transaction-) scoped because
+// the leg spans provider HTTP calls and must not hold a tx open. The conn
+// itself is retained internally — callers only get release, which MUST be
+// deferred: it unlocks with context.WithoutCancel (a dead request ctx must
+// never strand the lock on a conn that goes back into the pool) and then
+// returns the conn.
+// A lost claim returns ErrPayoutLegInFlight (409): another leg (or a reverse)
+// is in-flight and the caller must not act on the transfer.
+func (s *Service) acquirePayoutLegLock(ctx context.Context, transferID string) (func(), error) {
+	conn, err := s.db.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("transfers: payout leg acquire conn: %w", err)
+	}
+	var claimed bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, payoutLegLockKey(transferID)).Scan(&claimed); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("transfers: payout leg lock: %w", err)
+	}
+	if !claimed {
+		conn.Release()
+		return nil, ErrPayoutLegInFlight
+	}
+	release := func() {
+		if _, err := conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtext($1))`, payoutLegLockKey(transferID)); err != nil {
+			log.Printf("[transfers] payout leg unlock transfer=%s failed: %v", transferID, err)
+		}
+		conn.Release()
+	}
+	return release, nil
 }

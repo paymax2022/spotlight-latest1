@@ -629,7 +629,11 @@ func (s *Service) CreateOffering(ctx context.Context, actorID string, o *Offerin
 		return nil, errors.New("fractionalre: unit_price_kobo and share_count must be positive")
 	}
 	if o.TargetKobo == 0 {
-		o.TargetKobo = o.UnitPriceKobo * o.ShareCount
+		target, err := mulKobo(o.UnitPriceKobo, o.ShareCount)
+		if err != nil {
+			return nil, err
+		}
+		o.TargetKobo = target
 	}
 	if o.MinThresholdKobo > o.TargetKobo {
 		return nil, errors.New("fractionalre: min_threshold_kobo cannot exceed target_kobo")

@@ -583,15 +583,17 @@ jobs:
             path: backend
             root_flag: --path-as-root
           # The staging frontend services carry a Railway `rootDirectory` of
-          # their own folder, so they must be uploaded from the repo root:
-          # `--path-as-root` on the folder makes Railway look for
-          # `frontend-*/` inside an archive that already IS that folder and
-          # fail with "Root directory ... was not found in the deployed source".
+          # their own folder, so they must be uploaded from the repo root —
+          # but with NO positional path argument at all: `railway up .` dies
+          # client-side with "prefix not found" during indexing (CLI bug with
+          # an explicit `.` when rootDirectory is set), and
+          # `frontend-web --path-as-root` makes Railway look for `frontend-*/`
+          # inside an archive that already IS that folder.
           - service: frontend-web
-            path: .
+            path: ''
             root_flag: ''
           - service: frontend-admin
-            path: .
+            path: ''
             root_flag: ''
     steps:
       - uses: actions/checkout@v4

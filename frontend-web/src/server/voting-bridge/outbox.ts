@@ -167,11 +167,19 @@ async function handleOutboxEvent(event: OutboxEvent): Promise<boolean> {
       case 'votes.analytics':
         return await handleVoteAnalytics(event.payload);
 
+      // Wallet-cast votes are analytics events like their free/paid siblings.
+      // Without a case they fell into the default branch, burned 3 retries on
+      // "Unknown event type" and landed in `failed` — noise that masks the
+      // genuine votes.wallet.reversal_failed reconciliation records, which are
+      // the ONLY rows meant to end up there.
+      case 'votes.wallet.cast':
+        return await handleVoteAnalytics(event.payload);
+
       case 'leaderboard.updated':
         return await handleLeaderboardUpdated(event.payload);
 
       case 'votes.paid.tally_skipped':
-      return handleTallySkipped(event.payload);
+        return handleTallySkipped(event.payload);
 
     default:
         console.warn(`[Outbox] Unknown event type: ${event.event_type}`);
