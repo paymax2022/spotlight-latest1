@@ -1227,6 +1227,9 @@ func (c Config) Validate() error {
 		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
 			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
 		}
+		if c.MapleradBaseURL != "" {
+			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
+		}
 		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
 			if isPlaceholder(c.PaystackSecretKey) {
 				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
