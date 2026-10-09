@@ -22,7 +22,6 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/svg+xml': 'svg',
 };
 
-// GET /api/admin/voting/contest-templates?connectContestId=<uuid>&status=<draft|active|archived>
 // Lists templates (optionally filtered), each with its slots + text overlays
 // embedded so the admin UI can render everything from a single call.
 export async function GET(request: Request) {
@@ -42,7 +41,10 @@ export async function GET(request: Request) {
     if (status) query = query.eq('status', status);
 
     const { data: templateRows, error } = await query;
-    if (error) return errorResponse(`Failed to load templates: ${error.message}`, 500);
+    if (error) {
+      console.error('[admin/voting/contest-templates GET]', error.message);
+      return errorResponse('Failed to load templates', 500);
+    }
 
     const templates = templateRows ?? [];
     const templateIds = templates.map((t: any) => t.id);
@@ -65,8 +67,14 @@ export async function GET(request: Request) {
             .order('z_index', { ascending: true }),
         ]);
 
-      if (slotsError) return errorResponse(`Failed to load template slots: ${slotsError.message}`, 500);
-      if (overlaysError) return errorResponse(`Failed to load template overlays: ${overlaysError.message}`, 500);
+      if (slotsError) {
+        console.error('[admin/voting/contest-templates GET] slots:', slotsError.message);
+        return errorResponse('Failed to load template slots', 500);
+      }
+      if (overlaysError) {
+        console.error('[admin/voting/contest-templates GET] overlays:', overlaysError.message);
+        return errorResponse('Failed to load template overlays', 500);
+      }
 
       slotsByTemplate = groupBy(slotRows ?? [], 'template_id');
       overlaysByTemplate = groupBy(overlayRows ?? [], 'template_id');
@@ -85,7 +93,6 @@ export async function GET(request: Request) {
 }
 
 // POST /api/admin/voting/contest-templates — multipart/form-data
-// Fields: name (required), connectContestId (required uuid), file (required
 // image), width/height/aspectRatio (optional, default 1080/1080/'1:1').
 // Uploads the file to the contest-templates Supabase Storage bucket and
 // inserts a new contest_templates row with status:'draft' (never 'active' on
@@ -94,7 +101,8 @@ export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
 
-    const formData = await request.formData();
+    const formData = await request.formData().catch(() => null);
+    if (!formData) return errorResponse('Expected multipart/form-data', 415);
     const name = formData.get('name');
     const connectContestId = formData.get('connectContestId');
     const file = formData.get('file');
@@ -135,7 +143,8 @@ export async function POST(request: Request) {
       upsert: false,
     });
     if (uploadError) {
-      return errorResponse(`Failed to upload template image: ${uploadError.message}`, 500);
+      console.error('[admin/voting/contest-templates POST] storage upload:', uploadError.message);
+      return errorResponse('Failed to upload template image', 500);
     }
 
     const { data: publicUrlData } = supabase.storage.from(BUCKET).getPublicUrl(objectKey);
@@ -162,7 +171,8 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError) {
-      return errorResponse(`Failed to create template: ${insertError.message}`, 500);
+      console.error('[admin/voting/contest-templates POST]', insertError.message);
+      return errorResponse('Failed to create template', 500);
     }
 
     return successResponse(

@@ -1,6 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Schema-driven form builder.
-//
 // When a contest has an admin-defined `formSchema`, the contestant form is built
 // here from the field catalog + the admin's selections, rather than from a
 // hand-written forms/<slug>.ts template. The contestant sees EXACTLY:
@@ -9,7 +7,6 @@
 //     overrides, in the two configurable steps
 //   • any custom questions the admin added
 // Guardian-consent catalog fields only render for applicants under legal age.
-// ─────────────────────────────────────────────────────────────────────────────
 import {
   buildFixedContestSelectionStep,
   buildFixedReviewSubmitStep,

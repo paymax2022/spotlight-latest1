@@ -12,7 +12,6 @@ import (
 // unit-testable with an in-memory fake), sentinel errors mapped to snake_case codes by the
 // handler, and guarded invoice-status changes routed THROUGH feesstatemachine via the
 // injected invoice service — never a raw status write.
-//
 // SF-9 (CRITICAL — the reason this package exists): hardship/freeze requests route to a
 // HUMAN review queue. There is NO automated terminal transition on a hardship request.
 //   - SubmitRequest ONLY creates a `pending` request. It NEVER approves, denies, or freezes
@@ -22,7 +21,6 @@ import (
 //   - The overdue→frozen invoice transition happens ONLY on a human Approve, and only via
 //     the injected invoice service's guarded state machine (EvInvoiceFreeze). Deny leaves the
 //     invoice exactly as-is.
-//
 // This package moves NO money. Every state change is audit-logged (module 'academy.fees').
 
 // RequestStatus is the hardship-request review status. It is DISTINCT from the invoice
@@ -58,13 +56,10 @@ type HardshipRequest struct {
 	RequestedAt    time.Time     `json:"requestedAt"`
 	Status         RequestStatus `json:"status"`
 
-	// ── Filled ONLY by a human review (Approve/Deny) — nil while pending (SF-9) ──
 	ReviewedBy *string    `json:"reviewedBy,omitempty"`
 	ReviewedAt *time.Time `json:"reviewedAt,omitempty"`
 	ReviewNote *string    `json:"reviewNote,omitempty"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // SubmitRequestRequest is the guardian-facing submission. guardian_user_id is the
 // authenticated caller (set by the service, never trusted from the body). Submission only
@@ -79,8 +74,6 @@ type SubmitRequestRequest struct {
 type ReviewRequest struct {
 	Note string `json:"note"`
 }
-
-// ── Sentinel errors (mapped to snake_case codes by the handler) ──────────────────
 
 var (
 	ErrNotFound        = errors.New("not_found")

@@ -1,13 +1,11 @@
 import type { AccessCode, AccessCodeStatus } from '../types/visitor.types';
 
-// ── Money ────────────────────────────────────────────────────────────────────
 // Amounts are integers in minor units (kobo). Never do float math on money.
 export function formatNairaFromKobo(kobo: number): string {
   const naira = Math.round(kobo) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// ── Codes ────────────────────────────────────────────────────────────────────
 // Render a numeric code grouped for readability, e.g. "482 913".
 export function formatCodeValue(code: string): string {
   if (code.length === 6) return `${code.slice(0, 3)} ${code.slice(3)}`;
@@ -15,7 +13,6 @@ export function formatCodeValue(code: string): string {
   return code;
 }
 
-// ── Time ─────────────────────────────────────────────────────────────────────
 export function formatDateTime(iso?: string): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('en-NG', {

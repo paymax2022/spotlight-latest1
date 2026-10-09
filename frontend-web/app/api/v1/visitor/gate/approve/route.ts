@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/gate/approve — approve a visitor check-in.
+// Approve a visitor check-in.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     const guard = await getGuardContext(supabase, user.id);
     if (!guard) throw new ApiError('No active gate session', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const accessCodeId: string = body?.accessCodeId;
     const visitorName: string = String(body?.visitorName ?? '').trim();
     const unitLabel: string = String(body?.unitLabel ?? '').trim();
@@ -22,7 +23,6 @@ export async function POST(request: Request) {
 
     if (!accessCodeId) throw new ApiError('accessCodeId is required', 400);
 
-    // Load code to get estate scoping and issuer.
     const { data: code, error: codeErr } = await supabase
       .from('visitor_access_codes')
       .select(ACCESS_CODE_COLUMNS)
@@ -32,7 +32,6 @@ export async function POST(request: Request) {
     if (codeErr) throw codeErr;
     if (!code) throw new ApiError('Access code not found', 404);
 
-    // Insert check-in event.
     const { data: evt, error: evtErr } = await supabase
       .from('visitor_gate_events')
       .insert({
@@ -50,7 +49,6 @@ export async function POST(request: Request) {
       .single();
     if (evtErr) throw evtErr;
 
-    // If one_time code, mark as used.
     if ((code as any).code_type === 'one_time') {
       await supabase
         .from('visitor_access_codes')
@@ -58,7 +56,6 @@ export async function POST(request: Request) {
         .eq('id', accessCodeId);
     }
 
-    // Notify the issuer.
     await supabase.from('visitor_notifications').insert({
       estate_id: guard.estateId,
       user_id: (code as any).issued_by,

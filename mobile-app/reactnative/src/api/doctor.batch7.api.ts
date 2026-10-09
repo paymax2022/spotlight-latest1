@@ -1,23 +1,16 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 7 API client ────────────────
-// Batch 7 = spec sections AA · AB · AC · AD (Support & Dispute · Compliance,
 // Privacy & Audit · Settings · Empty/Error/Edge-State). Phase A style: every
-// function resolves demo data so screens render without a live API; `DEMO_*`
 // exports double as `placeholderData` in useQuery. ADDITIVE to the Phase 1 /
 // Phase 2 / Section B / Phase 3 / Batch 1-6 api files — nothing earlier changes.
-//
 // CONSOLIDATED + heavy REUSE: the support ticket list / status / resolved
-// screens REUSE getSupportTickets + createSupportTicket (doctor.api); the
 // compliance-dashboard / licence / consent / audit screens REUSE
 // getComplianceDashboard + acknowledgePolicy (doctor.phase2.api). Money is
 // always an integer in kobo.
-//
 // TODO(Phase C): replace each body with the live endpoint and pass the
 //   Idempotency-Key header on every mutation below.
 
 // Re-export the shared money formatter so Batch 7 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut, doctorDelete } from '@/api/doctor.client';
-// Re-export the REUSED support / compliance read+write fns so a Batch 7 screen
 // can pull everything from one import site (no re-implementation).
 export {
   getSupportTickets,
@@ -92,9 +85,7 @@ const iso = (daysAgo: number): string => new Date(Date.now() - daysAgo * 8640000
 const isoDate = (daysFromNow: number): string =>
   new Date(Date.now() + daysFromNow * 86400000).toISOString().slice(0, 10);
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AA — SUPPORT & DISPUTE
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_FAQS: FaqItem[] = [
   { id: 'faq-1', category: 'getting_started', question: 'How do I start taking consultations?', answer: 'Once your account is verified, set your availability under Settings → Availability and toggle your online status on.', helpful: 42 },
@@ -168,9 +159,7 @@ export const DEMO_SUPPORT_MESSAGES: SupportMessage[] = [
   { id: 'sm-4', threadId: 'tkt-1', author: 'doctor', body: 'Thank you, appreciate the update.', createdAt: iso(1) },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AB — COMPLIANCE, PRIVACY & AUDIT
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES getComplianceDashboard / acknowledgePolicy (re-exported above) for the
 // dashboard / licence / consent / alerts / policy screens.
 
@@ -240,9 +229,7 @@ export const DEMO_SAFETY_ISSUES: SafetyIssueReport[] = [
 
 export const DEMO_ACCOUNT_REVIEW_NOTICE: AccountReviewNotice | null = null;
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AC — SETTINGS
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES getSettings / updateSettings (re-exported above) for the profile /
 // notification / availability toggle screens. These ADD the security / device /
 // app-preference surface only.
@@ -263,14 +250,11 @@ export const DEMO_APP_PREFERENCES: AppPreferences = {
   language: 'en', theme: 'system', reduceMotion: false, hapticsEnabled: true,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AD — EMPTY, ERROR & EDGE-STATE
-// ═══════════════════════════════════════════════════════════════════════════
 // Pure descriptor map. Screens read EDGE_STATES[kind] (or call getEdgeState) and
 // feed it straight into the shared StateView component.
 
 export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
-  // ── empty states ──
   no_appointments: { kind: 'no_appointments', variant: 'empty', tone: 'neutral', icon: 'calendar-outline',
     title: 'No appointments yet', message: 'Booked consultations will appear here.' },
   no_messages: { kind: 'no_messages', variant: 'empty', tone: 'neutral', icon: 'chatbubble-ellipses-outline',
@@ -284,7 +268,6 @@ export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
   no_reviews: { kind: 'no_reviews', variant: 'empty', tone: 'neutral', icon: 'star-outline',
     title: 'No reviews yet', message: 'Patient reviews will appear here after your consultations.' },
 
-  // ── connectivity / server ──
   no_internet: { kind: 'no_internet', variant: 'error', tone: 'warning', icon: 'cloud-offline-outline',
     title: 'No internet connection', message: 'Check your connection and try again.',
     cta: { label: 'Retry', action: 'retry' } },
@@ -295,7 +278,6 @@ export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
     title: 'Session expired', message: 'For your security, please sign in again.',
     cta: { label: 'Sign in', action: 'login', route: '/(auth)/login' } },
 
-  // ── permissions ──
   camera_permission_denied: { kind: 'camera_permission_denied', variant: 'error', tone: 'warning', icon: 'videocam-off-outline',
     title: 'Camera access needed', message: 'Enable camera access in settings to start a video consult.',
     cta: { label: 'Open settings', action: 'open_settings' } },
@@ -306,7 +288,6 @@ export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
     title: 'Upload failed', message: 'The file could not be uploaded. Check the size and try again.',
     cta: { label: 'Try again', action: 'retry' } },
 
-  // ── consultation / call edge cases ──
   patient_unavailable: { kind: 'patient_unavailable', variant: 'empty', tone: 'info', icon: 'person-outline',
     title: 'Patient unavailable', message: 'The patient has not joined yet. You can wait or mark a no-show.' },
   patient_cancelled: { kind: 'patient_cancelled', variant: 'empty', tone: 'info', icon: 'close-circle-outline',
@@ -318,7 +299,6 @@ export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
     title: 'Call unavailable', message: 'The video provider could not be reached. Try an audio call or reschedule.',
     cta: { label: 'Try again', action: 'retry' }, secondaryCta: { label: 'Contact support', action: 'contact_support', route: '/(doctor)/support' } },
 
-  // ── clinical edge cases ──
   prescription_blocked: { kind: 'prescription_blocked', variant: 'error', tone: 'warning', icon: 'document-lock-outline',
     title: 'Prescription cannot be issued', message: 'This prescription is blocked. Resolve the flagged issue and try again.',
     cta: { label: 'Review', action: 'go_back' } },
@@ -332,7 +312,6 @@ export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
     title: 'HMO verification failed', message: 'We could not verify HMO coverage. Confirm the details and retry.',
     cta: { label: 'Retry', action: 'retry' } },
 
-  // ── account / platform ──
   account_verification_pending: { kind: 'account_verification_pending', variant: 'empty', tone: 'info', icon: 'hourglass-outline',
     title: 'Verification in progress', message: 'Your account is being reviewed. You will be notified once approved.',
     cta: { label: 'Check status', action: 'refresh' } },
@@ -365,11 +344,8 @@ export const DEMO_ACCOUNT_STATUS: AccountStatus = {
   updatedAt: iso(0),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // READ ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section AA ──
 export async function getFaqs(): Promise<FaqItem[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_FAQS);
   return doctorGet<FaqItem[]>('/support/faqs');
@@ -395,7 +371,6 @@ export async function getSupportMessages(threadId: string): Promise<SupportMessa
   return doctorGet<SupportMessage[]>(`/support/${threadId}/messages`);
 }
 
-// ── Section AB ──
 // GET /vet/licence (internal/doctor GetVetLicence) returns Go's own
 // VetLicenceInfo{licenceNumber, verification} — a different struct from this
 // file's client-side VetLicenceInfo (doctor.batch7.ts, extending phase2's
@@ -448,7 +423,6 @@ export async function getAccountReviewNotice(): Promise<AccountReviewNotice | nu
   return doctorGet<AccountReviewNotice | null>('/account/review-notice');
 }
 
-// ── Section AC ──
 export async function getSecuritySettings(): Promise<SecuritySettings> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_SECURITY_SETTINGS);
   return doctorGet<SecuritySettings>('/security');
@@ -464,7 +438,6 @@ export async function getAppPreferences(): Promise<AppPreferences> {
   return doctorGet<AppPreferences>('/preferences');
 }
 
-// ── Section AD ──
 export async function getAppStatus(): Promise<AppStatus> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_APP_STATUS);
   return doctorGet<AppStatus>('/app-status');
@@ -478,7 +451,6 @@ export async function getAppStatus(): Promise<AppStatus> {
 // account-status/index.tsx's `STATE_ICON[status.state]` threw ("Element type
 // is invalid") for every user on the account-status screen the moment mock
 // mode was off — same class of bug as the legal-document endpoint.
-//
 // `verificationStatus` on the wire is exactly the VerificationStatus lifecycle
 // value, a subset of the client's AccountState — 'under_review' is a
 // client-only extension of that vocabulary the backend never emits (there is
@@ -515,11 +487,8 @@ export async function getAccountStatus(): Promise<AccountStatus> {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATIONS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section AA ──
 export async function createDispute(input: CreateDisputeInput): Promise<CreateDisputeResult> {
   if (DOCTOR_USE_MOCK) {
     void input.description;
@@ -560,7 +529,6 @@ export async function sendSupportMessage(input: SendSupportMessageInput): Promis
   return doctorPost<SendSupportMessageResult>(`/support/${input.threadId}/messages`, input, input.idempotencyKey);
 }
 
-// ── Section AB ──
 export async function updatePrivacySettings(input: UpdatePrivacySettingsInput): Promise<UpdatePrivacySettingsResult> {
   if (DOCTOR_USE_MOCK) return wait({ settings: { ...DEMO_PRIVACY_SETTINGS, sharingPreferences: input.sharingPreferences } }, 500);
   return doctorPut<UpdatePrivacySettingsResult>('/privacy', input, input.idempotencyKey);
@@ -589,7 +557,6 @@ export async function requestDataExport(input: RequestDataExportInput): Promise<
 }
 
 export async function requestAccountDeletion(input: RequestAccountDeletionInput): Promise<RequestAccountDeletionResult> {
-  // CONSOLIDATED: this is the SINGLE account-deletion endpoint shared by the
   // AB (privacy) and AC (settings) screens — do not duplicate.
   if (DOCTOR_USE_MOCK) {
     void input.reason;
@@ -598,7 +565,6 @@ export async function requestAccountDeletion(input: RequestAccountDeletionInput)
   return doctorPost<RequestAccountDeletionResult>('/privacy/delete', input, input.idempotencyKey);
 }
 
-// ── Section AC ──
 export async function changePassword(input: ChangePasswordInput): Promise<ChangePasswordResult> {
   if (DOCTOR_USE_MOCK) {
     void input.currentPassword;

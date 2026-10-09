@@ -1,4 +1,3 @@
-// ── Doctor — Batch 3 · Section K · e-prescription hooks ───────────────────────
 // Rich e-prescription (drug lines, strengths/forms, alternatives, safety
 // warnings, lifecycle, digital-signature issue, cancel, share, send-to-pharmacy,
 // refill consultation, audit trail). Reads use the DEMO_* exports as
@@ -34,8 +33,6 @@ export {
   getDrugAlternatives,
 } from '@/api/doctor.batch3.api';
 
-// ─── Reads ───────────────────────────────────────────────────────────────────
-
 export function useIssuedPrescription(id: string) {
   return useQuery({
     queryKey:        ['doctor', 'issued-prescription', id],
@@ -45,8 +42,6 @@ export function useIssuedPrescription(id: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useIssuePrescription() {
   const qc = useQueryClient();

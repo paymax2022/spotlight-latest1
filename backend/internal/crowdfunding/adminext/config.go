@@ -3,28 +3,28 @@ package adminext
 // Platform-configuration admin slice: campaign categories, fee schedule and the
 // feature-flag registry. These back the still-mock "settings" surfaces in
 // frontend-admin/src/services/crowdfundingAdminService.ts:
-//
 //	GET   /config/categories          → category list with live campaign counts
 //	PATCH /config/categories/:id      → toggle enabled / requiresEnhancedReview
 //	GET   /config/fees                → singleton fee schedule
 //	PUT   /config/fees                → replace fee schedule (audited)
 //	GET   /config/flags               → feature-flag registry
 //	PATCH /config/flags/:key          → toggle a (non-locked) flag (audited)
-//
 // Categories are read from the EXISTING crowdfunding_categories table; fees and
 // flags live in cf_fee_config / cf_feature_flags (20260621050000_crowdfunding_live.sql).
 // Every mutation is transactional and writes an immutable cf_audit_logs row.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-)
 
-// ─── DTOs (camelCase to match the admin web client TS shapes) ────────────────
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+)
 
 // CategoryConfig matches CfCategoryConfig.
 type CategoryConfig struct {
@@ -55,8 +55,6 @@ type FeatureFlag struct {
 	Locked      bool   `json:"locked"`
 }
 
-// ─── Request bodies ──────────────────────────────────────────────────────────
-
 // CategoryPatchRequest is the PATCH body for a category toggle. Pointers so the
 // caller can send exactly one field; the other stays unchanged.
 type CategoryPatchRequest struct {
@@ -68,8 +66,6 @@ type CategoryPatchRequest struct {
 type FlagPatchRequest struct {
 	Enabled *bool `json:"enabled"`
 }
-
-// ─── Service: categories ─────────────────────────────────────────────────────
 
 // ListCategories returns the configured categories with a LIVE campaign count
 // (derived from the campaigns table — never a stored counter).
@@ -99,17 +95,17 @@ func (s *Service) ListCategories(ctx context.Context) ([]CategoryConfig, error) 
 // writes an audit row. Exactly one field is expected per call; both are accepted.
 func (s *Service) PatchCategory(ctx context.Context, id, adminID string, req CategoryPatchRequest) error {
 	if req.Enabled == nil && req.RequiresEnhancedReview == nil {
-		return fmt.Errorf("adminext: no category field supplied")
+		return errors.New("adminext: no category field supplied")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var slug string
 	if err := tx.QueryRow(ctx, `SELECT slug FROM crowdfunding_categories WHERE id=$1 FOR UPDATE`, id).Scan(&slug); err != nil {
-		return fmt.Errorf("adminext: category not found")
+		return errors.New("adminext: category not found")
 	}
 	if req.Enabled != nil {
 		if _, err := tx.Exec(ctx, `UPDATE crowdfunding_categories SET enabled=$1 WHERE id=$2`, *req.Enabled, id); err != nil {
@@ -126,8 +122,6 @@ func (s *Service) PatchCategory(ctx context.Context, id, adminID string, req Cat
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Service: fees ───────────────────────────────────────────────────────────
 
 // GetFees returns the singleton fee schedule (row id=1).
 func (s *Service) GetFees(ctx context.Context) (*FeeConfig, error) {
@@ -149,20 +143,20 @@ func (s *Service) GetFees(ctx context.Context) (*FeeConfig, error) {
 func (s *Service) UpdateFees(ctx context.Context, adminID string, f FeeConfig) (*FeeConfig, error) {
 	if f.PlatformFeeBps < 0 || f.PaymentFeeBps < 0 || f.PaymentFeeFlatKobo < 0 ||
 		f.MinContributionKobo < 0 || f.MaxContributionKobo < 0 {
-		return nil, fmt.Errorf("adminext: fee values must be non-negative")
+		return nil, errors.New("adminext: fee values must be non-negative")
 	}
 	if f.MaxContributionKobo > 0 && f.MinContributionKobo > f.MaxContributionKobo {
-		return nil, fmt.Errorf("adminext: minContributionKobo cannot exceed maxContributionKobo")
+		return nil, errors.New("adminext: minContributionKobo cannot exceed maxContributionKobo")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var prevPlatform int
 	if err := tx.QueryRow(ctx, `SELECT platform_fee_bps FROM cf_fee_config WHERE id=1 FOR UPDATE`).Scan(&prevPlatform); err != nil {
-		return nil, fmt.Errorf("adminext: fee config not found")
+		return nil, errors.New("adminext: fee config not found")
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE cf_fee_config SET
@@ -182,8 +176,6 @@ func (s *Service) UpdateFees(ctx context.Context, adminID string, f FeeConfig) (
 	}
 	return &f, nil
 }
-
-// ─── Service: feature flags ──────────────────────────────────────────────────
 
 // ListFlags returns the feature-flag registry in display order.
 func (s *Service) ListFlags(ctx context.Context) ([]FeatureFlag, error) {
@@ -212,11 +204,11 @@ func (s *Service) SetFlag(ctx context.Context, key, adminID string, enabled bool
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var locked bool
 	if err := tx.QueryRow(ctx, `SELECT locked FROM cf_feature_flags WHERE key=$1 FOR UPDATE`, key).Scan(&locked); err != nil {
-		return fmt.Errorf("adminext: feature flag not found")
+		return errors.New("adminext: feature flag not found")
 	}
 	if locked {
 		return fmt.Errorf("adminext: feature flag %q is locked and cannot be changed", key)
@@ -234,13 +226,11 @@ func (s *Service) SetFlag(ctx context.Context, key, adminID string, enabled bool
 	return tx.Commit(ctx)
 }
 
-// ─── Handlers ────────────────────────────────────────────────────────────────
-
 // ListCategories — GET /config/categories.
 func (h *Handler) ListCategories(c *gin.Context) {
 	items, err := h.svc.ListCategories(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"categories": items})
@@ -250,11 +240,11 @@ func (h *Handler) ListCategories(c *gin.Context) {
 func (h *Handler) PatchCategory(c *gin.Context) {
 	var req CategoryPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.PatchCategory(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := h.svc.PatchCategory(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -264,7 +254,7 @@ func (h *Handler) PatchCategory(c *gin.Context) {
 func (h *Handler) GetFees(c *gin.Context) {
 	res, err := h.svc.GetFees(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -274,12 +264,12 @@ func (h *Handler) GetFees(c *gin.Context) {
 func (h *Handler) UpdateFees(c *gin.Context) {
 	var req FeeConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	res, err := h.svc.UpdateFees(c.Request.Context(), c.GetString("user_id"), req)
+	res, err := h.svc.UpdateFees(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -289,7 +279,7 @@ func (h *Handler) UpdateFees(c *gin.Context) {
 func (h *Handler) ListFlags(c *gin.Context) {
 	items, err := h.svc.ListFlags(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"flags": items})
@@ -299,15 +289,15 @@ func (h *Handler) ListFlags(c *gin.Context) {
 func (h *Handler) PatchFlag(c *gin.Context) {
 	var req FlagPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if req.Enabled == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "enabled is required"})
 		return
 	}
-	if err := h.svc.SetFlag(c.Request.Context(), strings.TrimSpace(c.Param("key")), c.GetString("user_id"), *req.Enabled); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := h.svc.SetFlag(c.Request.Context(), strings.TrimSpace(c.Param("key")), ginutil.UserID(c), *req.Enabled); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

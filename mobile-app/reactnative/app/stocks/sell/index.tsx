@@ -2,10 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
@@ -70,7 +70,7 @@ export default function StockSellEntryScreen() {
           title={`You don't own ${a.symbol}`}
           message={`Buy ${a.symbol} first — then you can sell it back to cash anytime.`}
           actionLabel={`Buy ${a.symbol}`}
-          onAction={() => router.replace({ pathname: '/stocks/buy/index', params: { symbol: a.symbol } })}
+          onAction={() => router.replace({ pathname: '/stocks/buy', params: { symbol: a.symbol } })}
         />
       </SafeAreaView>
     );

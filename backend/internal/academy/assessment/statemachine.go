@@ -1,30 +1,25 @@
 package assessment
 
+import "spotlight/backend/go-common/fsm"
+
 // statemachine.go holds the PURE guard logic for the two assessment lifecycles.
 // Keeping the transition tables and threshold math here (no DB, no ctx) makes them
 // trivially unit-testable and reusable from both the service and the tests.
-//
 // Pattern (conventions.md "State-machine guard pattern"): a transition is legal
 // only if it appears in the table; the service then checks business guards, applies
 // the change, emits events and audits. Illegal transitions are rejected + audited.
 
-// ── Question-item lifecycle: draft → review → approved → retired ───────────────
-
 // itemTransitions is the legal adjacency for the question-item lifecycle.
-var itemTransitions = map[ItemStatus]map[ItemStatus]bool{
-	ItemDraft:    {ItemReview: true, ItemRetired: true},
-	ItemReview:   {ItemApproved: true, ItemDraft: true, ItemRetired: true}, // review can bounce back to draft
-	ItemApproved: {ItemRetired: true},
+var itemTransitions = fsm.Table[ItemStatus]{
+	ItemDraft:    fsm.Set(ItemReview, ItemRetired),
+	ItemReview:   fsm.Set(ItemApproved, ItemDraft, ItemRetired), // review can bounce back to draft
+	ItemApproved: fsm.Set(ItemRetired),
 	ItemRetired:  {}, // terminal
 }
 
 // canTransitionItem reports whether the item lifecycle permits from→to.
 func canTransitionItem(from, to ItemStatus) bool {
-	targets, ok := itemTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return itemTransitions.Can(from, to)
 }
 
 // validItemStatus reports whether s is a known item status.
@@ -37,17 +32,16 @@ func validItemStatus(s ItemStatus) bool {
 	}
 }
 
-// ── Learner progression: not_started → in_progress → practiced → mastered → exam_ready
 // plus the "remediate" regression path from any state back to in_progress.
 
 // progressionTransitions is the legal forward adjacency. The remediate regression
 // path is handled separately by canRemediate so it can target in_progress from any
 // non-terminal-failure state.
-var progressionTransitions = map[MasteryState]map[MasteryState]bool{
-	StateNotStarted: {StateInProgress: true},
-	StateInProgress: {StatePracticed: true},
-	StatePracticed:  {StateMastered: true},
-	StateMastered:   {StateExamReady: true},
+var progressionTransitions = fsm.Table[MasteryState]{
+	StateNotStarted: fsm.Set(StateInProgress),
+	StateInProgress: fsm.Set(StatePracticed),
+	StatePracticed:  fsm.Set(StateMastered),
+	StateMastered:   fsm.Set(StateExamReady),
 	StateExamReady:  {},
 }
 
@@ -63,11 +57,7 @@ func canProgress(from, to MasteryState) bool {
 	if to == StateInProgress && from != StateNotStarted {
 		return true
 	}
-	targets, ok := progressionTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return progressionTransitions.Can(from, to)
 }
 
 // validMasteryState reports whether s is a known mastery state.
@@ -83,7 +73,6 @@ func validMasteryState(s MasteryState) bool {
 // nextStateForPractice computes the target mastery state after a practice/mastery
 // run, given the current state, accumulated practice-attempt count, the latest
 // score (0..1), the thresholds and whether the objective is tagged to an exam.
-//
 // This is the THRESHOLD logic factored out of the service so the math is pure:
 //   - not_started → in_progress on the very first practice.
 //   - in_progress → practiced once min practice attempts are met.

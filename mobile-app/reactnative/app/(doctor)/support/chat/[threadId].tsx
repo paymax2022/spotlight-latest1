@@ -3,13 +3,12 @@ import { StyleSheet, Platform, KeyboardAvoidingView, FlatList, Alert } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { MessageSquare } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, ChatComposer, SupportMessageBubble } from '@/features/doctor/components';
 import { useSupportMessages, useSendSupportMessage } from '@/features/doctor/hooks';
 
-// ── Section AA — Support chat thread (AA.16) ───────────────────────────────────
 // NEW screen: the support conversation for a ticket or dispute (threadId is the
 // ticket / dispute id). Reuses ChatComposer for input and SupportMessageBubble
 // for the doctor / agent / system author tones.

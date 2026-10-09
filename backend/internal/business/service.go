@@ -2,13 +2,14 @@ package business
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider"
@@ -28,15 +29,19 @@ const DefaultPlatformFeeKobo int64 = 200_000
 
 // Sentinel errors map to HTTP statuses in the handler.
 var (
-	ErrConflict          = errors.New("business: illegal state transition")        // 409
-	ErrDuplicate         = errors.New("business: business already exists")         // 409
-	ErrForbidden         = errors.New("business: not the owner")                   // 403
-	ErrValidation        = errors.New("business: validation failed")               // 422
-	ErrMissingIdemKey    = errors.New("business: Idempotency-Key header required") // 400
-	ErrFeeNotPaid        = errors.New("business: registration fee not paid")       // 409
-	ErrProvider          = errors.New("business: registry provider error")         // 502
-	ErrInsufficientFunds = errors.New("business: insufficient wallet balance")     // 402
-	ErrCertNotReady      = errors.New("business: certificate not available yet")   // 404
+	ErrConflict       = errors.New("business: illegal state transition")        // 409
+	ErrDuplicate      = errors.New("business: business already exists")         // 409
+	ErrForbidden      = errors.New("business: not the owner")                   // 403
+	ErrValidation     = errors.New("business: validation failed")               // 422
+	ErrMissingIdemKey = errors.New("business: Idempotency-Key header required") // 400
+	ErrFeeNotPaid     = errors.New("business: registration fee not paid")       // 409
+	ErrProvider       = errors.New("business: registry provider error")         // 502
+	// ErrProviderUnavailable means the CAC provider is DISABLED (credentials absent
+	// and sandbox disallowed — i.e. misconfigured production). 503: fail-closed,
+	// distinct from a reachable-but-erroring upstream (ErrProvider → 502).
+	ErrProviderUnavailable = errors.New("business: registry provider unavailable") // 503
+	ErrInsufficientFunds   = errors.New("business: insufficient wallet balance")   // 402
+	ErrCertNotReady        = errors.New("business: certificate not available yet") // 404
 )
 
 // Deps injects the collaborators. Ledger resolves the revenue standing account;
@@ -53,18 +58,25 @@ type Deps struct {
 	// PlatformFeeKobo is the Paymax processing charge added on top of the CAC fee.
 	// Zero falls back to DefaultPlatformFeeKobo.
 	PlatformFeeKobo int64
+	// AllowSandboxVerified lets HasVerifiedBusiness count rows whose
+	// verification_source is the deterministic sandbox provider ('cac-sandbox').
+	// MUST be false in production (zero value fails closed): a sandbox row is a
+	// FABRICATED CAC identity, and counting it would let any user self-mint the
+	// merchant-upgrade gate with a made-up RC/BN number. Dev/test pass true.
+	AllowSandboxVerified bool
 }
 
 // Service holds the business-registry domain logic. It depends on the CAC provider
 // ONLY through the cac.BusinessRegistryProvider port — no HTTP/DTO detail leaks in.
 type Service struct {
-	repo            *Repository
-	ledger          *ledger.Service
-	wallet          *wallet.Service
-	provider        cac.BusinessRegistryProvider
-	payment         provider.PaymentProvider
-	feeKobo         int64
-	platformFeeKobo int64
+	repo                 *Repository
+	ledger               *ledger.Service
+	wallet               *wallet.Service
+	provider             cac.BusinessRegistryProvider
+	payment              provider.PaymentProvider
+	feeKobo              int64
+	platformFeeKobo      int64
+	allowSandboxVerified bool
 }
 
 func NewService(d Deps) *Service {
@@ -72,20 +84,18 @@ func NewService(d Deps) *Service {
 	if fee <= 0 {
 		fee = DefaultRegistrationFeeKobo
 	}
-	// Zero (unset) falls back to the default; callers wanting a genuinely free
-	// registration can set a negative sentinel is not supported — 0 means default.
+	// Zero/unset falls back to the default; a non-positive sentinel is not a
+	// "free registration" escape hatch.
 	platformFee := d.PlatformFeeKobo
 	if platformFee <= 0 {
 		platformFee = DefaultPlatformFeeKobo
 	}
-	return &Service{repo: d.Repo, ledger: d.Ledger, wallet: d.Wallet, provider: d.Provider, payment: d.Payment, feeKobo: fee, platformFeeKobo: platformFee}
+	return &Service{repo: d.Repo, ledger: d.Ledger, wallet: d.Wallet, provider: d.Provider, payment: d.Payment, feeKobo: fee, platformFeeKobo: platformFee, allowSandboxVerified: d.AllowSandboxVerified}
 }
 
 // totalFeeKobo is the full amount charged to the user: CAC registration fee (a
 // pass-through to the registry) plus the Paymax platform processing fee.
 func (s *Service) totalFeeKobo() int64 { return s.feeKobo + s.platformFeeKobo }
-
-// ── Register-new flow ─────────────────────────────────────────────────────────
 
 // StartRegisterNew opens a new register_new draft with the supplied details +
 // proprietors. Proprietor raw BVN/NIN are NEVER persisted — only a masked tail.
@@ -107,7 +117,6 @@ func (s *Service) StartRegisterNew(ctx context.Context, userID string, req Regis
 	if err != nil {
 		return nil, err
 	}
-	// Persist proprietors with masked identity tails only.
 	props := make([]Proprietor, 0, len(req.Proprietors))
 	for _, p := range req.Proprietors {
 		props = append(props, Proprietor{
@@ -316,7 +325,7 @@ func (s *Service) InitiateRegistrationFeePaystack(ctx context.Context, userID, b
 	if prof.Status != StatusNameReserved {
 		return nil, ErrConflict
 	}
-	ref := "cacfee_" + prof.ID + "_" + randToken()
+	ref := "cacfee_" + prof.ID + "_" + cryptox.RandHex(6)
 	resp, err := s.payment.InitializePayment(ctx, provider.InitializePaymentRequest{
 		Email:          email,
 		AmountKobo:     s.totalFeeKobo(), // CAC fee + platform fee
@@ -396,6 +405,7 @@ func (s *Service) VerifyRegistrationFeePaystack(ctx context.Context, userID, ref
 // registration fee. Two legs, both DR the settlement (gateway-held funds) account:
 //   - platform fee → CR paymax_revenue (income recognised)
 //   - CAC fee      → CR provider_clearing (a pass-through payable to the registry)
+//
 // Best-effort and idempotent (unique per-leg idempotency keys); errors are logged via
 // the ledger's own duplicate-tolerant path and never surfaced to the caller.
 func (s *Service) recordPaystackFeeLedger(ctx context.Context, reference string) {
@@ -424,15 +434,6 @@ func (s *Service) recordPaystackFeeLedger(ctx context.Context, reference string)
 		DebitAccountID: settle.ID, CreditAccountID: clearing.ID,
 		Description: "CAC registration fee pass-through (Paystack)",
 	})
-}
-
-// randToken returns a short random hex token for uniqueifying a payment reference.
-func randToken() string {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000")))
-	}
-	return hex.EncodeToString(b)
 }
 
 // SubmitRegistration submits the reserved name + details to CAC (name_reserved →
@@ -537,8 +538,6 @@ func (s *Service) RefreshStatus(ctx context.Context, userID, businessID string) 
 	return s.repo.GetProfile(ctx, prof.ID)
 }
 
-// ── Verify-existing flow ──────────────────────────────────────────────────────
-
 // StartVerifyExisting looks up + verifies an EXISTING registered business by its
 // RC/BN number (draft → submitted → verified | rejected).
 func (s *Service) StartVerifyExisting(ctx context.Context, userID string, req VerifyExistingRequest) (*BusinessProfile, error) {
@@ -574,7 +573,7 @@ func (s *Service) StartVerifyExisting(ctx context.Context, userID string, req Ve
 	if ver.Type != "" {
 		setters["entity_type"] = normalizeEntityType(ver.Type)
 	}
-	if regAt := parseDate(ver.RegisteredAt); regAt != nil {
+	if regAt := timeutil.ParseTimePtr(ver.RegisteredAt); regAt != nil {
 		setters["registered_at"] = *regAt
 	}
 	if err := s.repo.transition(ctx, id, StatusVerified, []Status{StatusSubmitted}, userID, "verify.verified",
@@ -587,8 +586,6 @@ func (s *Service) StartVerifyExisting(ctx context.Context, userID string, req Ve
 	}
 	return s.repo.GetProfile(ctx, id)
 }
-
-// ── Reads ─────────────────────────────────────────────────────────────────────
 
 func (s *Service) GetMyBusiness(ctx context.Context, userID, id string) (*BusinessProfile, error) {
 	return s.ownedProfile(ctx, userID, id)
@@ -634,16 +631,18 @@ func (s *Service) ListMine(ctx context.Context, userID string) ([]BusinessProfil
 
 // HasVerifiedBusiness is the merchant-upgrade gate: true when the user has a
 // verified or registered CAC business. Called by the onboarding/grant path before
-// granting a merchant role.
+// granting a merchant role. Defense-in-depth: when the service was built with
+// AllowSandboxVerified=false (production), rows whose verification_source is the
+// deterministic sandbox ('cac-sandbox') do NOT count — a fabricated verification
+// must never satisfy a privilege grant even if one was persisted before the
+// fail-closed provider shipped.
 func (s *Service) HasVerifiedBusiness(ctx context.Context, userID string) bool {
-	ok, err := s.repo.HasVerified(ctx, userID)
+	ok, err := s.repo.HasVerified(ctx, userID, s.allowSandboxVerified)
 	if err != nil {
 		return false // fail-closed
 	}
 	return ok
 }
-
-// ── Admin ─────────────────────────────────────────────────────────────────────
 
 func (s *Service) AdminList(ctx context.Context, status, mode string, limit int) ([]BusinessProfile, error) {
 	list, err := s.repo.AdminList(ctx, status, mode, limit)
@@ -699,8 +698,6 @@ func (s *Service) AdminReject(ctx context.Context, adminID, id, reason string) (
 	return s.repo.GetProfile(ctx, id)
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 func (s *Service) ownedProfile(ctx context.Context, userID, id string) (*BusinessProfile, error) {
 	prof, err := s.repo.GetProfile(ctx, id)
 	if err != nil {
@@ -715,6 +712,11 @@ func (s *Service) ownedProfile(ctx context.Context, userID, id string) (*Busines
 func wrapProvider(err error) error {
 	if err == nil {
 		return nil
+	}
+	// Disabled provider (production, credentials absent) → 503, not 502: the rail
+	// is unconfigured, not upstream-erroring. Fail-closed either way.
+	if errors.Is(err, cac.ErrUnavailable) {
+		return errors.Join(ErrProviderUnavailable, err)
 	}
 	return errors.Join(ErrProvider, err)
 }
@@ -743,18 +745,6 @@ func normalizeEntityType(t string) string {
 	}
 }
 
-func parseDate(s string) *time.Time {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	for _, layout := range []string{"2006-01-02", time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return &t
-		}
-	}
-	return nil
-}
-
 func metaString(m map[string]any, key string) string {
 	if m == nil {
 		return ""
@@ -769,9 +759,7 @@ func metaString(m map[string]any, key string) string {
 // preserving existing entries (used as a transition setter for metadata).
 func mergeMetaJSON(existing map[string]any, key string, val any) map[string]any {
 	out := map[string]any{}
-	for k, v := range existing {
-		out[k] = v
-	}
+	maps.Copy(out, existing)
 	out[key] = val
 	return out
 }
@@ -779,9 +767,5 @@ func mergeMetaJSON(existing map[string]any, key string, val any) map[string]any 
 // mustJSON marshals v to []byte for a jsonb column. On error it returns an empty
 // JSON object so a metadata encode failure never aborts a transition.
 func mustJSON(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return []byte("{}")
-	}
-	return b
+	return jsonx.MarshalOr(v, []byte("{}"))
 }

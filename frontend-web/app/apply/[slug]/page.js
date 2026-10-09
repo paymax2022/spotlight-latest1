@@ -8,8 +8,9 @@ import AcademyApplyPage from '@/app/film-academy/apply/page';
 import { programPageBySlug, programPages } from '@/src/data/programPages';
 import { createClient } from '@/lib/supabase/server';
 
-export function generateMetadata({ params }) {
-  const program = programPageBySlug[params.slug];
+export async function generateMetadata({ params }) {
+  const { slug } = await params;
+  const program = programPageBySlug[slug];
   if (!program) {
     return { title: 'Application Form | Spotlight' };
   }
@@ -21,13 +22,14 @@ export function generateMetadata({ params }) {
 }
 
 export default async function ProgramApplicationPage({ params }) {
+  const { slug } = await params;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
-    redirect(`/login?next=${encodeURIComponent(`/apply/${params.slug}`)}`);
+    redirect(`/login?next=${encodeURIComponent(`/apply/${slug}`)}`);
   }
 
-  const program = programPageBySlug[params.slug];
+  const program = programPageBySlug[slug];
 
   if (!program) {
     notFound();

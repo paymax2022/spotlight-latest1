@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { RatePoint } from '../types/fx.types';
 
 interface Props {

@@ -27,7 +27,6 @@ export function useDeliveryFeePermissions() {
   return { user, can };
 }
 
-// ── Shared dark-theme inline styles (matches app/admin/nutrition) ────────────
 export const card: CSSProperties = { border: '1px solid #2a2a2a', padding: 14, borderRadius: 6 };
 export const input: CSSProperties = {
   background: '#111',

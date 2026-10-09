@@ -1,26 +1,17 @@
-// ── Admin — Paymax Insurance (MyCover.ai distribution) types ─────────────────
-//
 // These mirror the INTERNAL CONTRACT for `/api/insurance/admin/*` (snake_case
 // over the wire, `{ data: … }` envelope on success, `{ error: {code,message} }`
 // on failure).
-//
-// MONEY: every `*_kobo` field is an INTEGER in minor units. MyCover's own API
-// speaks naira decimal strings ("6000.0000"); the Go adapter converts naira→kobo
 // exactly once at the adapter boundary. The admin console must NEVER re-convert
 // and must never do float arithmetic on these — format at the render boundary
 // only (see `formatNaira` in the service).
-//
-// RATES: a percentage product carries a RATE, not an amount. `is_percentage`
 // products expose `rate_bps` (basis points: 0.5% → 50) and `base_price_kobo` is
 // null for them. Rendering "₦0.50" for a 0.5% rate is a money bug.
-//
 // OPTIONALITY IS DELIBERATE: almost every analytic field is `?: T | null`.
 // The console must be able to tell "the backend reported zero" apart from "the
 // backend did not report this at all", and render the latter as "not reported"
 // rather than inventing a 0. Do not tighten these to non-optional to make a
 // component simpler — that is how fixtures creep back in.
 
-// ── Failure surface ──────────────────────────────────────────────────────────
 // Classification of *why* a live call failed, so pages can explain themselves to
 // an operator instead of printing "Error: [object Object]".
 export type FailureKind =
@@ -32,7 +23,6 @@ export type FailureKind =
   | 'network' // could not reach the API at all
   | 'malformed'; // 2xx with a body we cannot read
 
-// ── Catalog ──────────────────────────────────────────────────────────────────
 export type Aggregator = 'mycover' | 'octamile' | string;
 
 /** MyCover categories seen live: Life, Auto, Health, Content, Gadget, Package, Travel. */
@@ -156,7 +146,6 @@ export interface CatalogSyncResult {
   synced_at?: string | null;
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 export interface DashboardBreakdown {
   /** Category name, underwriter name, … depending on which list this is in. */
   key: string;
@@ -198,7 +187,6 @@ export interface InsuranceDashboard {
   generated_at?: string | null;
 }
 
-// ── Policies ─────────────────────────────────────────────────────────────────
 export type PolicyStatus =
   | 'pending'
   | 'active'
@@ -242,7 +230,6 @@ export interface PolicyDetail extends PolicySummary {
   claims?: ClaimSummary[] | null;
 }
 
-// ── Claims ───────────────────────────────────────────────────────────────────
 export type ClaimStatus =
   | 'submitted'
   | 'under_review'
@@ -282,7 +269,6 @@ export interface ClaimDetail extends ClaimSummary {
   payout_ledger_ref?: string | null;
 }
 
-// ── Pagination ───────────────────────────────────────────────────────────────
 export interface Paged<T> {
   items: T[];
   page: number;
@@ -292,7 +278,6 @@ export interface Paged<T> {
   has_more: boolean;
 }
 
-// ── Commission ───────────────────────────────────────────────────────────────
 /**
  * One row of realised distributor commission. `basis_pct` + `basis` together
  * explain how `commission_kobo` was derived — an operator reconciling against a
@@ -322,7 +307,6 @@ export interface CommissionSummary {
   period_to?: string | null;
 }
 
-// ── Providers ────────────────────────────────────────────────────────────────
 export interface ProviderWebhookStatus {
   url?: string | null;
   /** Whether signature verification is switched on at all. */
@@ -427,7 +411,6 @@ export interface ProviderStatus {
   updated_at?: string | null;
 }
 
-// ── Reconciliation ───────────────────────────────────────────────────────────
 export type DriftKind =
   | 'missing_locally' // provider has a policy we have no record of
   | 'missing_at_provider' // we recorded a policy the provider does not list

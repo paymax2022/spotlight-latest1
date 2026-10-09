@@ -1,31 +1,19 @@
 package property
 
-// ---------------------------------------------------------------------------
 // Pure, DB-free unit tests for the rent-passport scoring formula and the
-// on-time-ratio / realtor-tolerance control flow documented in rentpassport.go
-// and docs/qa/modules/property.md §3/§7.
-//
-// computeRentScore is exercised directly (same package, unexported function).
-// The on-time-ratio accumulation and the estate-vs-realtor error-tolerance
-// asymmetry are NOT their own functions — they are inlined in
-// GetRentPassport, which needs a live *pgxpool.Pool to run at all. Rather than
-// skip them, this file TRANSCRIBES the exact branches from GetRentPassport
-// (cited by line range below) into small local helpers driven by fake
-// query results, following the same "transcribed invariant" convention used
-// in backend/tests/association/money_invariants_test.go for logic a live
-// driver call would otherwise hide from a DB-free suite. Any drift between
-// the helper here and the cited production code is the bug a reviewer should
-// catch — see also context_test.go / property_money_invariant_test.go for the
-// live-DB counterparts that exercise the real SQL.
-// ---------------------------------------------------------------------------
+// on-time-ratio / realtor-tolerance control flow in rentpassport.go.
+// That control flow is inlined in GetRentPassport (needs a live pool), so this
+// file TRANSCRIBES the exact branches into local helpers driven by fake query
+// results — the "transcribed invariant" convention used in
+// tests/association/money_invariants_test.go. Drift between a helper here and
+// the cited production code is the bug a reviewer should catch; context_test.go
+// / property_money_invariant_test.go hold the live-DB counterparts.
 
 import (
 	"errors"
 	"testing"
 	"time"
 )
-
-// ── computeRentScore ──────────────────────────────────────────────────────
 
 func TestComputeRentScore_ZeroComparablePaymentsScoresZero(t *testing.T) {
 	// rentpassport.go L180-182: comparable==0 short-circuits to 0, regardless
@@ -37,7 +25,7 @@ func TestComputeRentScore_ZeroComparablePaymentsScoresZero(t *testing.T) {
 	}{
 		{"no rate, no tenure", 0, nil},
 		{"nonzero rate ignored when comparable=0", 1.0, nil},
-		{"long tenure ignored when comparable=0", 1.0, ptrTime(time.Now().Add(-40 * 30 * 24 * time.Hour))},
+		{"long tenure ignored when comparable=0", 1.0, new(time.Now().Add(-40 * 30 * 24 * time.Hour))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,18 +132,14 @@ func monthsAgo(m int) time.Time {
 	return time.Now().Add(-time.Duration(m)*30*24*time.Hour - time.Minute)
 }
 
-func ptrTime(t time.Time) *time.Time { return &t }
+//go:fix inline
+func ptrTime(t time.Time) *time.Time { return new(t) }
 
-// ── On-time ratio: NULL due date exclusion ────────────────────────────────
-//
 // Transcribed from rentpassport.go L93-100 (estate loop) / L142-148 (realtor
 // loop) — both loops share the identical shape:
-//
 //	if due != nil {
 //	    comparable++
-//	    if !paidAt.After(*due) { met++ }
 //	}
-//
 // A payment with a NULL due date contributes to NEITHER comparable NOR met —
 // it must not be silently counted as "on time" just because it has nothing to
 // be late against.
@@ -184,10 +168,10 @@ func TestOnTimeRatio_ExcludesNullDueDateRows(t *testing.T) {
 	dueTomorrow := now.Add(24 * time.Hour)
 
 	rows := []onTimeRow{
-		{paidAt: now, due: nil},              // no due date: must NOT count toward comparable or met
-		{paidAt: now, due: nil},              // second NULL-due row, same rule
-		{paidAt: now, due: &dueTomorrow},      // paid before due -> on time
-		{paidAt: now, due: &dueYesterday},     // paid after due -> comparable but NOT on time
+		{paidAt: now, due: nil},           // no due date: must NOT count toward comparable or met
+		{paidAt: now, due: nil},           // second NULL-due row, same rule
+		{paidAt: now, due: &dueTomorrow},  // paid before due -> on time
+		{paidAt: now, due: &dueYesterday}, // paid after due -> comparable but NOT on time
 	}
 
 	comparable, met := accumulateOnTime(rows)
@@ -229,26 +213,17 @@ func TestOnTimeRatio_PaidExactlyOnDueDateCountsAsOnTime(t *testing.T) {
 	}
 }
 
-// ── Realtor-schema-absent tolerance asymmetry ─────────────────────────────
-//
 // Transcribed from GetRentPassport (rentpassport.go):
-//   - estate query error (L79-81): `if err != nil { return nil, fmt.Errorf(...) }`
-//     — FATAL, the whole passport request fails.
+//   - estate query error (L79-81): FATAL — the whole passport request fails.
 //   - realtor query error (L129, L167): `if err == nil { ...loop... }` with NO
-//     else branch — a non-nil err is silently swallowed and the function
-//     continues as if the user simply had no realtor history.
-//
-// This is a real, deliberate asymmetry per docs/qa/modules/property.md §6
-// ("Fail-closed on dependency error") — it must NOT be "fixed" into symmetry
-// without that being a deliberate, reviewed decision. Exercising the true
-// "realtor tables absent" case against a live Postgres would require DROPping
-// realtor_payments/realtor_invoices/realtor_leases on the shared local
-// Supabase instance, which the additive-only migration iron rule and the
-// shared-worktree safety rule both forbid (see CLAUDE.md "Brownfield safety"
-// and the "Don't Hot-Patch Shared Worktree" memory note) — so this transcribed
-// control-flow test is the safe, faithful proxy. See
-// property_money_invariant_test.go for the live-DB estate+realtor happy-path
-// sum, which proves the two sources compose correctly when both succeed.
+//     else branch — a non-nil err is silently swallowed, continuing as if the
+//     user had no realtor history.
+// The asymmetry is deliberate per docs/qa/modules/property.md §6 ("fail-closed
+// on dependency error") — do NOT "fix" it into symmetry without a reviewed
+// decision. A live-DB "realtor tables absent" case would require DROPping
+// tables, which the additive-only migration rule forbids, so this transcribed
+// control-flow test is the safe proxy. See property_money_invariant_test.go for
+// the live-DB estate+realtor happy-path sum.
 
 // buildPassportErrorHandling mirrors ONLY the error-handling shape of
 // GetRentPassport's two query blocks (not the actual SQL/scan), returning

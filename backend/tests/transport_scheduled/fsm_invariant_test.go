@@ -1,8 +1,6 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // Transport-scheduling FSM invariants (go-live gate).
-//
 // Backend's scheduledTransitions map + canTransitionScheduled/guardScheduled/
 // isTerminalScheduled (backend/internal/transport/scheduled_fsm.go) are
 // UNEXPORTED. Backend's own in-package scheduled_test.go already asserts them
@@ -19,11 +17,9 @@ package transport_scheduled_test
 // from this table, that drift is either (a) a bug in Backend's code, or (b) an
 // intentional FSM change that must also update SWARM_INTEGRATION_CONTRACT.md's
 // "FROZEN FSM" section and this file together.
-//
 // Verbatim source (cited): backend/internal/transport/scheduled_fsm.go lines
 // 27-59 (ScheduledStatus consts + scheduledTransitions map), as read on the
 // date this file was authored. Re-verify against source on any FSM PR.
-// ---------------------------------------------------------------------------
 
 import "testing"
 

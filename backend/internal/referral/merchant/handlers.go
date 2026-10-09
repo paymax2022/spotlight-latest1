@@ -8,6 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -63,7 +66,7 @@ type memberCampaignRow struct {
 // MemberDashboard: GET /merchant/dashboard — the caller's merchant zone. Returns
 // an empty dashboard when the caller owns no merchant. Money is integer kobo.
 func (h *Handler) MemberDashboard(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -78,12 +81,12 @@ func (h *Handler) MemberDashboard(c *gin.Context) {
 			}})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	camps, err := h.svc.ListCampaigns(c.Request.Context(), m.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	rows := make([]memberCampaignRow, 0, len(camps))
@@ -114,7 +117,7 @@ func (h *Handler) MemberDashboard(c *gin.Context) {
 // MemberPerformance: GET /merchant/campaigns/:mcid/performance — one campaign,
 // owner-scoped (404 if the caller doesn't own it).
 func (h *Handler) MemberPerformance(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -125,12 +128,12 @@ func (h *Handler) MemberPerformance(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "no merchant"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	camps, err := h.svc.ListCampaigns(c.Request.Context(), m.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	mcid := c.Param("mcid")
@@ -151,7 +154,7 @@ func (h *Handler) MemberPerformance(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	list, err := h.svc.ListMerchants(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"merchants": list})
@@ -165,7 +168,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	m, err := h.svc.CreateMerchant(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, m)
@@ -183,7 +186,7 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) ListCampaigns(c *gin.Context) {
 	list, err := h.svc.ListCampaigns(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": list})
@@ -197,14 +200,14 @@ func (h *Handler) CreateCampaign(c *gin.Context) {
 	}
 	mc, err := h.svc.CreateCampaign(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, mc)
 }
 
 func (h *Handler) Fund(c *gin.Context) {
-	idem := c.GetHeader("Idempotency-Key")
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -216,25 +219,34 @@ func (h *Handler) Fund(c *gin.Context) {
 	}
 	mc, err := h.svc.Fund(c.Request.Context(), c.Param("mcid"), in.AmountKobo, idem)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired gate is a dependency failure → 503 (E2E-FIN-046).
+		switch {
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+		case errors.Is(err, ErrTierGateUnwired):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, mc)
 }
 
 func (h *Handler) Settle(c *gin.Context) {
-	idem := c.GetHeader("Idempotency-Key")
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
 	}
-	var in FundInput // reuse {amount_kobo}
+	var in FundInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
 	if err := h.svc.Settle(c.Request.Context(), c.Param("mcid"), in.AmountKobo, idem); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -243,7 +255,7 @@ func (h *Handler) Settle(c *gin.Context) {
 func (h *Handler) ListKeys(c *gin.Context) {
 	list, err := h.svc.ListKeys(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"keys": list})
@@ -257,7 +269,7 @@ func (h *Handler) IssueKey(c *gin.Context) {
 	}
 	k, err := h.svc.IssueKey(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// PlainKey is included exactly once in this response.
@@ -266,7 +278,7 @@ func (h *Handler) IssueKey(c *gin.Context) {
 
 func (h *Handler) RevokeKey(c *gin.Context) {
 	if err := h.svc.RevokeKey(c.Request.Context(), c.Param("keyid")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

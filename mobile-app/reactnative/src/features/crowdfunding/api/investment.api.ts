@@ -1,4 +1,3 @@
-// ── Crowdfunding — Investment (Section L) data layer ─────────────────────────
 // Mock-backed. Money in kobo. The module entry is gated by INVESTMENT_ENABLED.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -82,8 +81,6 @@ const QUIZ: QuizQuestion[] = [
 ];
 
 let MOCK_PORTFOLIO: PortfolioHolding[] = [];
-
-// ─── API ──────────────────────────────────────────────────────────────────────
 
 export async function getInvestorProfile(): Promise<InvestorProfile> {
   if (USE_MOCK) { await delay(160); return { ...PROFILE }; }

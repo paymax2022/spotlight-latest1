@@ -1,4 +1,3 @@
-// ── AI Trading — Strategy maturity (read-only transparency, §12) ──────────────
 // Shows members HOW the fund is managed: which strategies run and at what
 // validated maturity on the promotion ladder. Read-only — promotion is internal
 // governance (separation of duties). Honest framing: nothing touches real capital
@@ -9,10 +8,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldCheck, Info, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useStrategies } from '@/features/aitrading/hooks';
 import type { StrategyStage, StrategyMaturity } from '@/features/aitrading/api';
 import { HomeMenuButton } from '@/components/HomeMenu';

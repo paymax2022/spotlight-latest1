@@ -1,14 +1,27 @@
 package handlers
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/services"
+)
+
+const (
+	strAmountkobo = "amountKobo"
+	keyProduct    = "product"
+	keyRef        = "ref"
+	keyStatus     = "status"
+	keyMessage    = "message"
+	keyCreatedAt  = "createdAt"
 )
 
 // GiftingConnectHandler handles /api/v1/wallet/gifting/* endpoints.
@@ -42,10 +55,10 @@ func (h *GiftingConnectHandler) GetCatalog(c *gin.Context) {
 	data := []gin.H{}
 	for _, item := range items {
 		data = append(data, gin.H{
-			"id":           item.ID,
-			"name":         item.Name,
+			"id":          item.ID,
+			"name":        item.Name,
 			"description": item.Description,
-			"amountKobo":   item.AmountKobo,
+			strAmountkobo: item.AmountKobo,
 			"imageUrl":    item.ImageURL,
 			"available":   item.Available,
 		})
@@ -59,6 +72,13 @@ func (h *GiftingConnectHandler) GetCatalog(c *gin.Context) {
 func (h *GiftingConnectHandler) GetProduct(c *gin.Context) {
 	id := c.Param("id")
 
+	// A non-UUID :id could never name a catalog row — report not-found rather
+	// than letting the "invalid input syntax for type uuid" surface as a 500.
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
+
 	item, err := h.store.GetCatalogItem(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product"})
@@ -70,10 +90,10 @@ func (h *GiftingConnectHandler) GetProduct(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":           item.ID,
-		"name":         item.Name,
+		"id":          item.ID,
+		"name":        item.Name,
 		"description": item.Description,
-		"amountKobo":   item.AmountKobo,
+		strAmountkobo: item.AmountKobo,
 		"imageUrl":    item.ImageURL,
 		"available":   item.Available,
 	}})
@@ -82,7 +102,7 @@ func (h *GiftingConnectHandler) GetProduct(c *gin.Context) {
 // GetRecipients — GET /api/v1/wallet/gifting/recipients
 // Search gift recipients.
 func (h *GiftingConnectHandler) GetRecipients(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -109,7 +129,7 @@ func (h *GiftingConnectHandler) GetRecipients(c *gin.Context) {
 // QuoteGift — GET /api/v1/wallet/gifting/quote
 // Get gift price + fee (server validates tier limit fail-closed).
 func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -117,6 +137,17 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 
 	productID := c.Query("productId")
 	recipientID := c.Query("recipientId")
+
+	// Missing/empty productId is a malformed request; a non-UUID value can
+	// never name a row — without these gates both hit the uuid cast and 500.
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "productId is required"})
+		return
+	}
+	if _, err := uuid.Parse(productID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
 
 	product, err := h.store.GetCatalogItem(c.Request.Context(), productID)
 	if err != nil {
@@ -139,16 +170,13 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 	withinLimit := usage.RemainingKobo < 0 || product.AmountKobo <= usage.RemainingKobo
 	remainingAfter := usage.RemainingKobo
 	if usage.RemainingKobo >= 0 {
-		remainingAfter = usage.RemainingKobo - product.AmountKobo
-		if remainingAfter < 0 {
-			remainingAfter = 0
-		}
+		remainingAfter = max(usage.RemainingKobo-product.AmountKobo, 0)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"product":            gin.H{"id": product.ID, "name": product.Name, "amountKobo": product.AmountKobo},
+		keyProduct:           gin.H{"id": product.ID, "name": product.Name, strAmountkobo: product.AmountKobo},
 		"recipient":          gin.H{"id": recipientID},
-		"amountKobo":         product.AmountKobo,
+		strAmountkobo:        product.AmountKobo,
 		"feeKobo":            0,
 		"totalKobo":          product.AmountKobo,
 		"tier":               tierPayload(usage),
@@ -160,8 +188,8 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 // SendGift — POST /api/v1/wallet/gifting/send (Idempotency-Key required)
 // Send gift (wallet-to-wallet money mutation).
 func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
+	userID := ginutil.UserID(c)
+	idemKey := ginutil.IdempotencyKey(c)
 
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -181,8 +209,6 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-
-	// Get product details
 	product, err := h.store.GetCatalogItem(c.Request.Context(), body.ProductID)
 	if err != nil || product == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
@@ -197,8 +223,38 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "you cannot gift yourself"})
 		return
 	}
+	// A non-UUID recipient can never name a platform user — reject before it
+	// reaches a uuid cast.
+	if _, err := uuid.Parse(body.RecipientID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid recipient"})
+		return
+	}
 
-	reference := fmt.Sprintf("GIFT-%s", generateShortID())
+	// The recipient must actually exist: without this check a bogus id fell
+	// through to GetOrCreateUserWallet and surfaced as a 500.
+	exists, err := h.store.UserExists(c.Request.Context(), body.RecipientID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify recipient"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "recipient not found"})
+		return
+	}
+
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another sender) would
+	// collide on ledger_entries.idempotency_key and the debit would silently
+	// no-op — recording a gift with no money behind it. The derived key keeps
+	// a genuine retry a conflict rather than a phantom no-op.
+	ledgerKey := "connect:wallet-gift:" + userID + ":" + idemKey
+
+	// Deterministic reference derived from the ledger key — see
+	// ledgerDerivedRef: a random ref strands every post-debit crash as a
+	// permanent 409 (same key, different journal → replay refused) while the
+	// money is already moved.
+	reference := ledgerDerivedRef("GIFT-", ledgerKey)
 
 	// Resolve the recipient's wallet so the journal has a real credit side.
 	recipientWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), body.RecipientID)
@@ -206,29 +262,81 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "recipient wallet unavailable"})
 		return
 	}
-
-	// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
-	// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
-	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, idemKey, recipientWallet.ID, product.AmountKobo); err != nil {
-		writeMoneyError(c, err)
-		return
-	}
-
-	// Record gift transaction
-	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, idemKey)
+	senderWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "wallet unavailable"})
 		return
 	}
 
-	// Emit audit event
+	// Identity-verified replay fast-path BEFORE the tier/balance gates inside
+	// wallet.Debit: the original committed debit already counted against both,
+	// so re-running them wedges a true retry (limit consumed / funds moved on).
+	// A key that already holds THIS journal skips the debit and converges on
+	// the recorded row below; a key held by a different journal is not matched
+	// and falls through to the debit, which fails closed.
+	recRef, journalHeld, aerr := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, senderWallet.ID, recipientWallet.ID, product.AmountKobo)
+	if aerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
+		return
+	}
+	if journalHeld {
+		reference = recRef
+	} else {
+		// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
+		// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
+		debitErr := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, recipientWallet.ID, product.AmountKobo)
+		if errors.Is(debitErr, ledger.ErrDuplicate) {
+			// The journal landed between the fast-path probe and the debit
+			// (a racing first attempt). Adopt it only if it is provably
+			// THIS journal; a foreign or tampered claim fails closed.
+			if ref2, ok, aerr2 := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, senderWallet.ID, recipientWallet.ID, product.AmountKobo); aerr2 != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
+				return
+			} else if ok {
+				reference = ref2
+			} else {
+				writeMoneyError(c, debitErr)
+				return
+			}
+		} else if debitErr != nil {
+			writeMoneyError(c, debitErr)
+			return
+		}
+	}
+
+	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, ledgerKey)
+	if err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			// The gift row was already recorded by a first attempt that crashed
+			// AFTER the debit committed — converge on it rather than failing a
+			// true retry. The stored row must still be THIS gift (same sender +
+			// recipient + amount): anything else under the derived key is a
+			// foreign claim.
+			existing, lerr := h.store.GetGiftByIdempotencyKey(c.Request.Context(), ledgerKey)
+			if lerr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
+				return
+			}
+			if existing == nil || existing.SenderID != userID ||
+				existing.RecipientID != body.RecipientID || existing.AmountKobo != product.AmountKobo {
+				c.JSON(http.StatusConflict, gin.H{"error": "idempotency key conflict"})
+				return
+			}
+			gt = existing
+			err = nil
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
+			return
+		}
+	}
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, body.RecipientID, "send_gift", "wallet", "gift",
-			gt.ID, nil, map[string]interface{}{
-				"product":   body.ProductID,
+			gt.ID, nil, map[string]any{
+				keyProduct:  body.ProductID,
 				"amount":    product.AmountKobo,
 				"reference": reference,
-			}, getIPAddress(c), c.Request.UserAgent(), "warning")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 	}
 
 	bal, err := h.walletSvc.GetBalance(c.Request.Context(), userID)
@@ -245,14 +353,14 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok": true,
 		"transaction": gin.H{
-			"id":         gt.ID,
-			"ref":        reference,
-			"product":    gin.H{"id": product.ID, "name": product.Name, "amountKobo": product.AmountKobo},
-			"recipient":  gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
-			"amountKobo": product.AmountKobo,
-			"status":     gt.Status,
-			"message":    body.Message,
-			"createdAt":  gt.CreatedAt,
+			"id":          gt.ID,
+			keyRef:        reference,
+			keyProduct:    gin.H{"id": product.ID, "name": product.Name, strAmountkobo: product.AmountKobo},
+			"recipient":   gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
+			strAmountkobo: product.AmountKobo,
+			keyStatus:     gt.Status,
+			keyMessage:    body.Message,
+			keyCreatedAt:  gt.CreatedAt,
 		},
 		"balanceKobo": bal.BalanceKobo,
 		"tier":        tierPayload(usage),
@@ -262,7 +370,7 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 // GetSentGifts — GET /api/v1/wallet/gifting/sent
 // View sent gifts.
 func (h *GiftingConnectHandler) GetSentGifts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -280,14 +388,14 @@ func (h *GiftingConnectHandler) GetSentGifts(c *gin.Context) {
 	data := []gin.H{}
 	for _, g := range gifts {
 		data = append(data, gin.H{
-			"id":         g.ID,
-			"ref":        g.Reference,
-			"product":    gin.H{"id": g.ItemID, "name": g.ItemName, "amountKobo": g.AmountKobo},
-			"recipient":  gin.H{"id": g.RecipientID, "displayName": g.RecipientName},
-			"amountKobo": g.AmountKobo,
-			"status":     g.Status,
-			"message":    g.Message,
-			"createdAt":  g.CreatedAt,
+			"id":          g.ID,
+			keyRef:        g.Reference,
+			keyProduct:    gin.H{"id": g.ItemID, "name": g.ItemName, strAmountkobo: g.AmountKobo},
+			"recipient":   gin.H{"id": g.RecipientID, "displayName": g.RecipientName},
+			strAmountkobo: g.AmountKobo,
+			keyStatus:     g.Status,
+			keyMessage:    g.Message,
+			keyCreatedAt:  g.CreatedAt,
 		})
 	}
 
@@ -297,7 +405,7 @@ func (h *GiftingConnectHandler) GetSentGifts(c *gin.Context) {
 // GetReceivedGifts — GET /api/v1/wallet/gifting/received
 // View received gifts.
 func (h *GiftingConnectHandler) GetReceivedGifts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -315,14 +423,14 @@ func (h *GiftingConnectHandler) GetReceivedGifts(c *gin.Context) {
 	data := []gin.H{}
 	for _, g := range gifts {
 		data = append(data, gin.H{
-			"id":         g.ID,
-			"ref":        g.Reference,
-			"product":    gin.H{"id": g.ItemID, "name": g.ItemName, "amountKobo": g.AmountKobo},
-			"sender":     gin.H{"id": g.SenderID, "displayName": g.SenderName},
-			"amountKobo": g.AmountKobo,
-			"status":     g.Status,
-			"message":    g.Message,
-			"createdAt":  g.CreatedAt,
+			"id":          g.ID,
+			keyRef:        g.Reference,
+			keyProduct:    gin.H{"id": g.ItemID, "name": g.ItemName, strAmountkobo: g.AmountKobo},
+			"sender":      gin.H{"id": g.SenderID, "displayName": g.SenderName},
+			strAmountkobo: g.AmountKobo,
+			keyStatus:     g.Status,
+			keyMessage:    g.Message,
+			keyCreatedAt:  g.CreatedAt,
 		})
 	}
 
@@ -332,13 +440,19 @@ func (h *GiftingConnectHandler) GetReceivedGifts(c *gin.Context) {
 // GetGiftTransaction — GET /api/v1/wallet/gifting/transactions/:id
 // Single gift transaction detail.
 func (h *GiftingConnectHandler) GetGiftTransaction(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
 	id := c.Param("id")
+
+	// Non-UUID ids can never name a gift transaction — 404, not a 500 cast error.
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
 
 	gt, err := h.store.GetGiftTransaction(c.Request.Context(), userID, id)
 	if err != nil {
@@ -351,14 +465,14 @@ func (h *GiftingConnectHandler) GetGiftTransaction(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":         gt.ID,
-		"ref":        gt.Reference,
-		"product":    gin.H{"id": gt.ItemID, "name": gt.ItemName, "amountKobo": gt.AmountKobo},
-		"sender":     gin.H{"id": gt.SenderID, "displayName": gt.SenderName},
-		"recipient":  gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
-		"amountKobo": gt.AmountKobo,
-		"status":     gt.Status,
-		"message":    gt.Message,
-		"createdAt":  gt.CreatedAt,
+		"id":          gt.ID,
+		keyRef:        gt.Reference,
+		keyProduct:    gin.H{"id": gt.ItemID, "name": gt.ItemName, strAmountkobo: gt.AmountKobo},
+		"sender":      gin.H{"id": gt.SenderID, "displayName": gt.SenderName},
+		"recipient":   gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
+		strAmountkobo: gt.AmountKobo,
+		keyStatus:     gt.Status,
+		keyMessage:    gt.Message,
+		keyCreatedAt:  gt.CreatedAt,
 	}})
 }

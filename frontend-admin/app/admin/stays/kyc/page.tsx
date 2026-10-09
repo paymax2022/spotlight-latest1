@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { listKyc, decideKyc } from '@/services/staysAdminService';
-import type { KycCase, KycStatus } from '@/types/staysAdmin';
+import type { KycCase, KycStatus, KycDecisionVerb } from '@/types/staysAdmin';
 import {
   StaysTabs,
   Badge,
@@ -13,15 +13,15 @@ import {
   select,
   timeAgo,
 } from '../_ui';
-import { Page, PageHeader, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { Page, PageHeader, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
-const STATUSES: KycStatus[] = ['pending', 'approved', 'rejected', 'needs_info'];
+const STATUSES: KycStatus[] = ['submitted', 'pending', 'in_progress', 'approved', 'rejected', 'needs_changes'];
 
 export default function StaysKycPage() {
   const [rows, setRows] = useState<KycCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState('submitted');
   const [busyId, setBusyId] = useState<string | null>(null);
 
   async function load() {
@@ -32,10 +32,20 @@ export default function StaysKycPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
 
-  async function decide(id: string, next: KycStatus) {
+  async function decide(id: string, decision: KycDecisionVerb) {
+    let note: string | undefined;
+    if (decision !== 'approve') {
+      const entered = window.prompt(
+        decision === 'reject' ? 'Reason for rejecting this business verification (shown to the hotelier):' : 'What does the hotelier need to change?',
+      );
+      if (!entered?.trim()) return; // cancelled / blank: the backend requires a note
+      note = entered.trim();
+    } else if (!window.confirm('Approve this business verification?')) {
+      return;
+    }
     setBusyId(id); setError(null);
     try {
-      await decideKyc(id, { status: next });
+      await decideKyc(id, { decision, note });
       await load();
     } catch (e) {
       setError(String(e));
@@ -48,14 +58,14 @@ export default function StaysKycPage() {
     <Page>
       <PageHeader
         title="Hotelier KYC & verification"
-        subtitle="Review business registration, CAC and bank verification for direct-rail hoteliers before they can list inventory and receive Naira payouts."
+        subtitle="Review business (KYB) verification for direct-rail hoteliers before they can go live and receive Naira payouts."
         actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="trust" />
 
       <DisclosureNote>
-        Approval gates listing and payout eligibility. Cases with risk flags are highlighted —
-        verify CAC and bank ownership before approving. All decisions are audit-logged.
+        Approval gates go-live eligibility. RC numbers, director names and BVNs are masked here;
+        the hotelier&apos;s documents are the source of truth. Rejecting or requesting changes requires a reason.
       </DisclosureNote>
 
       <FilterBar>
@@ -73,12 +83,12 @@ export default function StaysKycPage() {
           <thead>
             <tr>
               <th style={thCell}>Business</th>
-              <th style={thCell}>Hotelier</th>
+              <th style={thCell}>Property</th>
               <th style={thCell}>City</th>
-              <th style={thCell}>CAC</th>
-              <th style={thCell}>Docs</th>
-              <th style={thCell}>Bank</th>
-              <th style={thCell}>Risk flags</th>
+              <th style={thCell}>RC</th>
+              <th style={thCell}>Director</th>
+              <th style={thCell}>Identity</th>
+              <th style={thCell}>Documents</th>
               <th style={thCell}>Status</th>
               <th style={thCell}>Submitted</th>
               <th style={thCell}>Actions</th>
@@ -86,32 +96,23 @@ export default function StaysKycPage() {
           </thead>
           <tbody>
             {rows.map((r) => {
-              const flagged = r.risk_flags.length > 0;
-              const busy = busyId === r.id;
+              const busy = busyId === r.property_id;
               return (
-                <tr key={r.id} style={flagged ? { background: tint(colors.danger, 0.08) } : undefined}>
-                  <td style={tdCell}>{r.business_name}</td>
-                  <td style={tdCell}>{r.hotelier_masked}</td>
-                  <td style={tdCell}>{r.city}</td>
-                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{r.cac_number_masked}</code></td>
-                  <td style={tdCell}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
-                      {r.doc_types.length === 0 ? '—' : r.doc_types.map((d) => <Badge key={d} status={d} label={d.replace(/_/g, ' ')} />)}
-                    </div>
-                  </td>
-                  <td style={tdCell}><Badge status={r.bank_verified ? 'bank_verified' : 'pending'} label={r.bank_verified ? 'Verified' : 'Unverified'} /></td>
-                  <td style={tdCell}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
-                      {flagged ? r.risk_flags.map((f) => <Badge key={f} status="high" label={f.replace(/_/g, ' ')} />) : '—'}
-                    </div>
-                  </td>
+                <tr key={r.property_id}>
+                  <td style={tdCell}>{r.legal_name || '—'}</td>
+                  <td style={tdCell}>{r.property_name || r.property_id}</td>
+                  <td style={tdCell}>{r.city || '—'}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{r.rc_number_masked || '—'}</code></td>
+                  <td style={tdCell}>{r.director_masked || '—'}{r.director_bvn_last4 ? <span style={{ color: colors.muted }}> · BVN ••••{r.director_bvn_last4}</span> : null}</td>
+                  <td style={tdCell}><Badge status={r.kyc_status} /></td>
+                  <td style={tdCell}><Badge status={r.business_doc_status} /></td>
                   <td style={tdCell}><Badge status={r.status} /></td>
-                  <td style={tdCell}>{timeAgo(r.submitted_at)}</td>
+                  <td style={tdCell}>{r.submitted_at ? timeAgo(r.submitted_at) : '—'}</td>
                   <td style={tdCell}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                      <Button variant="primary" sm disabled={busy} onClick={() => decide(r.id, 'approved')}>Approve</Button>
-                      <Button variant="danger" sm disabled={busy} onClick={() => decide(r.id, 'rejected')}>Reject</Button>
-                      <Button variant="outline" sm disabled={busy} onClick={() => decide(r.id, 'needs_info')}>Needs info</Button>
+                      <Button variant="primary" sm disabled={busy} onClick={() => decide(r.property_id, 'approve')}>Approve</Button>
+                      <Button variant="danger" sm disabled={busy} onClick={() => decide(r.property_id, 'reject')}>Reject</Button>
+                      <Button variant="outline" sm disabled={busy} onClick={() => decide(r.property_id, 'needs_changes')}>Needs changes</Button>
                     </div>
                   </td>
                 </tr>

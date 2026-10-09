@@ -11,18 +11,14 @@ import (
 	"spotlight/backend/internal/finance/transfers"
 )
 
-// ---------------------------------------------------------------------------
 // Wallet P2P + Bank transfer go-live invariants.
-//
 // These tests exercise the *pure* decision surface of the transfers package
 // (validation + error→HTTP mapping + reversal-entry shape). They require no DB
 // and lock in the acceptance gates from the playbook:
-//
 //	flag-off → 503, resolve → masked phone, self-transfer → 422,
 //	insufficient → 402, Tier 0 → 403, daily-limit → 403,
 //	invalid account → 404, idempotency replay → already_processed,
 //	provider-fail keeps funds_reserved, REVERSAL_DEBIT restores balance.
-// ---------------------------------------------------------------------------
 
 // TestHTTPStatusForError maps every money-path error to its acceptance-gate
 // HTTP status. This is the single source of truth the handler must obey.
@@ -114,14 +110,14 @@ func TestValidateBankTransferRequest(t *testing.T) {
 
 	badAcct := good
 	badAcct.AccountNumber = "123" // not 10 digits
-	if err := transfers.ValidateBankTransferRequest(badAcct); !errors.Is(err, transfers.ErrInvalidAccount) {
-		t.Fatalf("short account number: got %v, want ErrInvalidAccount", err)
+	if err := transfers.ValidateBankTransferRequest(badAcct); !errors.Is(err, transfers.ErrInvalidAccountNumber) {
+		t.Fatalf("short account number: got %v, want ErrInvalidAccountNumber (400)", err)
 	}
 
 	noBank := good
 	noBank.BankCode = ""
-	if err := transfers.ValidateBankTransferRequest(noBank); !errors.Is(err, transfers.ErrInvalidAccount) {
-		t.Fatalf("missing bank code: got %v, want ErrInvalidAccount", err)
+	if err := transfers.ValidateBankTransferRequest(noBank); !errors.Is(err, transfers.ErrInvalidAccountNumber) {
+		t.Fatalf("missing bank code: got %v, want ErrInvalidAccountNumber (400)", err)
 	}
 }
 
@@ -145,7 +141,7 @@ func TestMaskPhone(t *testing.T) {
 			if got[len(got)-4:] != tc.in[len(tc.in)-4:] {
 				t.Errorf("MaskPhone(%q) must preserve only the last 4 digits", tc.in)
 			}
-			for i := 0; i < len(got)-4; i++ {
+			for i := range len(got) - 4 {
 				if got[i] != '*' {
 					t.Errorf("MaskPhone(%q)=%q leaked a digit at position %d", tc.in, got, i)
 				}

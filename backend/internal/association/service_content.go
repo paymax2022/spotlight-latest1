@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/strutil"
 	"strings"
 	"time"
 
@@ -14,7 +16,6 @@ import (
 
 // Content authoring for an organisation: announcements, meetings, documents,
 // events, tasks, dues invoices and member devices.
-//
 // Every table written here previously had a read endpoint and NO writer, so it
 // was permanently empty. Authorization is org-scoped throughout
 // (requireOrgAdmin); each mutation writes an audit row, and creates optionally
@@ -70,8 +71,6 @@ func (s *Service) notifyOrg(ctx context.Context, tx pgx.Tx, orgID, kind, title, 
 	return nil
 }
 
-// ── Announcements ────────────────────────────────────────────────────────────
-
 func (s *Service) CreateAnnouncement(ctx context.Context, adminID, orgID string, r AnnouncementRequest) (string, error) {
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return "", err
@@ -81,7 +80,7 @@ func (s *Service) CreateAnnouncement(ctx context.Context, adminID, orgID string,
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	author := s.actorName(ctx, adminID)
 	if _, err := tx.Exec(ctx, `
@@ -92,7 +91,7 @@ func (s *Service) CreateAnnouncement(ctx context.Context, adminID, orgID string,
 		return "", fmt.Errorf("association: create announcement: %w", err)
 	}
 	if r.Notify {
-		if err := s.notifyOrg(ctx, tx, orgID, "ANNOUNCEMENT", r.Title, deref(r.Body), "/association/announcements/"+id); err != nil {
+		if err := s.notifyOrg(ctx, tx, orgID, "ANNOUNCEMENT", r.Title, ptr.DerefZero(r.Body), "/association/announcements/"+id); err != nil {
 			return "", err
 		}
 	}
@@ -138,17 +137,15 @@ func (s *Service) DeleteAnnouncement(ctx context.Context, adminID, id string) er
 	})
 }
 
-// ── Meetings ─────────────────────────────────────────────────────────────────
-
 func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r MeetingRequest) (string, error) {
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return "", err
 	}
-	mode := nz(r.Mode, "PHYSICAL")
+	mode := strutil.OrBlank(r.Mode, "PHYSICAL")
 	if !validMeetingModes[mode] {
 		return "", fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
 	}
-	state := nz(r.State, "UPCOMING")
+	state := strutil.OrBlank(r.State, "UPCOMING")
 	if !validMeetingStates[state] {
 		return "", fmt.Errorf("%w: association: invalid meeting state %q", ErrInvalidInput, state)
 	}
@@ -178,7 +175,7 @@ func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r Me
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_meetings
 		  (id, organisation_id, title, description, mode, starts_at, ends_at, location, state, agenda, attendance_code, created_by)
@@ -187,7 +184,7 @@ func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r Me
 		return "", fmt.Errorf("association: create meeting: %w", err)
 	}
 	if r.Notify {
-		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", r.Title, deref(r.Description), "/association/meetings/"+id); err != nil {
+		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", r.Title, ptr.DerefZero(r.Description), "/association/meetings/"+id); err != nil {
 			return "", err
 		}
 	}
@@ -206,11 +203,11 @@ func (s *Service) UpdateMeeting(ctx context.Context, adminID, id string, r Meeti
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return err
 	}
-	mode := nz(r.Mode, "PHYSICAL")
+	mode := strutil.OrBlank(r.Mode, "PHYSICAL")
 	if !validMeetingModes[mode] {
 		return fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
 	}
-	state := nz(r.State, "UPCOMING")
+	state := strutil.OrBlank(r.State, "UPCOMING")
 	if !validMeetingStates[state] {
 		return fmt.Errorf("%w: association: invalid meeting state %q", ErrInvalidInput, state)
 	}
@@ -273,13 +270,11 @@ func (s *Service) DeleteMeeting(ctx context.Context, adminID, id string) error {
 	})
 }
 
-// ── Documents ────────────────────────────────────────────────────────────────
-
 func (s *Service) CreateDocument(ctx context.Context, adminID, orgID string, r DocumentRequest) (string, error) {
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return "", err
 	}
-	kind := nz(r.Kind, "pdf")
+	kind := strutil.OrBlank(r.Kind, "pdf")
 	if !validDocKinds[kind] {
 		return "", fmt.Errorf("%w: association: invalid document kind %q", ErrInvalidInput, kind)
 	}
@@ -288,13 +283,13 @@ func (s *Service) CreateDocument(ctx context.Context, adminID, orgID string, r D
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_documents
 		  (id, organisation_id, title, category, kind, storage_key, size_label, version,
 		   restricted, requires_ack, ai_summary, uploaded_by, created_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		id, orgID, r.Title, r.Category, kind, r.StorageKey, r.SizeLabel, nz(r.Version, "v1"),
+		id, orgID, r.Title, r.Category, kind, r.StorageKey, r.SizeLabel, strutil.OrBlank(r.Version, "v1"),
 		r.Restricted, r.RequiresAck, r.AISummary, s.actorName(ctx, adminID), adminID); err != nil {
 		return "", fmt.Errorf("association: create document: %w", err)
 	}
@@ -318,7 +313,7 @@ func (s *Service) UpdateDocument(ctx context.Context, adminID, id string, r Docu
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return err
 	}
-	kind := nz(r.Kind, "pdf")
+	kind := strutil.OrBlank(r.Kind, "pdf")
 	if !validDocKinds[kind] {
 		return fmt.Errorf("%w: association: invalid document kind %q", ErrInvalidInput, kind)
 	}
@@ -328,7 +323,7 @@ func (s *Service) UpdateDocument(ctx context.Context, adminID, id string, r Docu
 			   SET title=$2, category=$3, kind=$4, storage_key=$5, size_label=$6, version=$7,
 			       restricted=$8, requires_ack=$9, ai_summary=$10, updated_at=now()
 			 WHERE id=$1`,
-			id, r.Title, r.Category, kind, r.StorageKey, r.SizeLabel, nz(r.Version, "v1"),
+			id, r.Title, r.Category, kind, r.StorageKey, r.SizeLabel, strutil.OrBlank(r.Version, "v1"),
 			r.Restricted, r.RequiresAck, r.AISummary)
 		return err
 	})
@@ -350,8 +345,6 @@ func (s *Service) DeleteDocument(ctx context.Context, adminID, id string) error 
 		return err
 	})
 }
-
-// ── Events ───────────────────────────────────────────────────────────────────
 
 func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r EventRequest) (string, error) {
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
@@ -388,7 +381,7 @@ func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r Even
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_events
 		  (id, organisation_id, title, description, starts_at, ends_at, location,
@@ -399,7 +392,7 @@ func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r Even
 		return "", fmt.Errorf("association: create event: %w", err)
 	}
 	if r.Notify {
-		if err := s.notifyOrg(ctx, tx, orgID, "EVENT", r.Title, deref(r.Description), "/association/events/"+id); err != nil {
+		if err := s.notifyOrg(ctx, tx, orgID, "EVENT", r.Title, ptr.DerefZero(r.Description), "/association/events/"+id); err != nil {
 			return "", err
 		}
 	}
@@ -472,17 +465,15 @@ func (s *Service) DeleteEvent(ctx context.Context, adminID, id string) error {
 	})
 }
 
-// ── Tasks ────────────────────────────────────────────────────────────────────
-
 func (s *Service) CreateTask(ctx context.Context, adminID, orgID string, r TaskRequest) (string, error) {
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return "", err
 	}
-	status := nz(r.Status, "ASSIGNED")
+	status := strutil.OrBlank(r.Status, "ASSIGNED")
 	if !validTaskStatuses[status] {
 		return "", fmt.Errorf("%w: association: invalid task status %q", ErrInvalidInput, status)
 	}
-	priority := nz(r.Priority, "MEDIUM")
+	priority := strutil.OrBlank(r.Priority, "MEDIUM")
 	if !validTaskPriorities[priority] {
 		return "", fmt.Errorf("%w: association: invalid task priority %q", ErrInvalidInput, priority)
 	}
@@ -511,7 +502,7 @@ func (s *Service) CreateTask(ctx context.Context, adminID, orgID string, r TaskR
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_tasks
 		  (id, organisation_id, title, description, status, priority, due_date,
@@ -526,7 +517,7 @@ func (s *Service) CreateTask(ctx context.Context, adminID, orgID string, r TaskR
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO assoc_notifications (id, membership_id, kind, title, body, route)
 			VALUES (gen_random_uuid(), $1, 'TASK', $2, $3, $4)`,
-			*r.AssigneeID, "New task: "+r.Title, deref(r.Description), "/association/tasks/"+id); err != nil {
+			*r.AssigneeID, "New task: "+r.Title, ptr.DerefZero(r.Description), "/association/tasks/"+id); err != nil {
 			return "", fmt.Errorf("association: notify assignee: %w", err)
 		}
 	}
@@ -545,11 +536,11 @@ func (s *Service) UpdateTask(ctx context.Context, adminID, id string, r TaskRequ
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return err
 	}
-	status := nz(r.Status, "ASSIGNED")
+	status := strutil.OrBlank(r.Status, "ASSIGNED")
 	if !validTaskStatuses[status] {
 		return fmt.Errorf("%w: association: invalid task status %q", ErrInvalidInput, status)
 	}
-	priority := nz(r.Priority, "MEDIUM")
+	priority := strutil.OrBlank(r.Priority, "MEDIUM")
 	if !validTaskPriorities[priority] {
 		return fmt.Errorf("%w: association: invalid task priority %q", ErrInvalidInput, priority)
 	}
@@ -590,8 +581,6 @@ func (s *Service) DeleteTask(ctx context.Context, adminID, id string) error {
 	})
 }
 
-// ── Devices (member self-service) ────────────────────────────────────────────
-
 // RegisterDevice records the caller's device. assoc_devices had no writer, so
 // GET /me/devices always returned [] and DELETE always 403'd on zero rows.
 // Idempotent on (user, name, platform): re-opening the app refreshes last_active
@@ -621,12 +610,9 @@ func (s *Service) RegisterDevice(ctx context.Context, userID string, r DeviceReq
 	return id, nil
 }
 
-// ── Dues invoices (money path input) ─────────────────────────────────────────
-
 // RunDues raises one invoice per matching ACTIVE member, priced from that
 // member's own membership category. This is the input to the money path:
 // PayInvoice previously had nothing it could ever settle.
-//
 // Replay safety is the whole design here. A retried run that re-billed an
 // organisation's entire roster is the worst failure mode in this module, so the
 // idempotency key is a UNIQUE INDEX on assoc_dues_runs and the per-member
@@ -639,7 +625,7 @@ func (s *Service) RunDues(ctx context.Context, adminID, orgID string, r DuesRunR
 	if err := s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ManageFinance }); err != nil {
 		return nil, err
 	}
-	scope := nz(r.Scope, "NATIONAL")
+	scope := strutil.OrBlank(r.Scope, "NATIONAL")
 	if !validInvoiceScopes[scope] {
 		return nil, fmt.Errorf("%w: association: invalid scope %q", ErrInvalidInput, scope)
 	}
@@ -666,7 +652,7 @@ func (s *Service) RunDues(ctx context.Context, adminID, orgID string, r DuesRunR
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_dues_runs
@@ -715,10 +701,7 @@ func (s *Service) RunDues(ctx context.Context, adminID, orgID string, r DuesRunR
 		runID).Scan(&totalKobo); err != nil {
 		return nil, fmt.Errorf("association: sum run: %w", err)
 	}
-	skipped := eligible - invoiced
-	if skipped < 0 {
-		skipped = 0
-	}
+	skipped := max(eligible-invoiced, 0)
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_dues_runs SET invoiced=$2, skipped=$3, total_kobo=$4 WHERE id=$1`,
@@ -751,7 +734,7 @@ func (s *Service) CreateInvoice(ctx context.Context, adminID string, r InvoiceRe
 	if r.AmountKobo <= 0 {
 		return "", fmt.Errorf("%w: association: amountKobo must be greater than zero", ErrInvalidInput)
 	}
-	scope := nz(r.Scope, "NATIONAL")
+	scope := strutil.OrBlank(r.Scope, "NATIONAL")
 	if !validInvoiceScopes[scope] {
 		return "", fmt.Errorf("%w: association: invalid scope %q", ErrInvalidInput, scope)
 	}
@@ -787,7 +770,7 @@ func (s *Service) CreateInvoice(ctx context.Context, adminID string, r InvoiceRe
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_dues_runs (id, organisation_id, title, scope, invoiced, total_kobo, idempotency_key, created_by)
 		VALUES ($1,$2,$3,$4,1,$5,$6,$7)`,
@@ -799,7 +782,7 @@ func (s *Service) CreateInvoice(ctx context.Context, adminID string, r InvoiceRe
 		  (id, membership_id, title, description, amount_kobo, cadence, scope, status, due_date, run_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'DUE',$8,$9)`,
 		invoiceID, r.MembershipID, r.Title, r.Description, r.AmountKobo,
-		nz(r.Cadence, "ONE_OFF"), scope, dueDate, runID); err != nil {
+		strutil.OrBlank(r.Cadence, "ONE_OFF"), scope, dueDate, runID); err != nil {
 		return "", fmt.Errorf("association: create invoice: %w", err)
 	}
 	if r.Notify {
@@ -817,8 +800,6 @@ func (s *Service) CreateInvoice(ctx context.Context, adminID string, r InvoiceRe
 	return invoiceID, tx.Commit(ctx)
 }
 
-// ── Shared helpers ───────────────────────────────────────────────────────────
-
 // simpleUpdate wraps a single-statement mutation in a tx plus an audit row, and
 // treats "no row changed" as not-found rather than reporting success.
 func (s *Service) simpleUpdate(ctx context.Context, adminID, orgID, action, subjectType, id string, fn func(pgx.Tx) error) error {
@@ -826,7 +807,7 @@ func (s *Service) simpleUpdate(ctx context.Context, adminID, orgID, action, subj
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return fmt.Errorf("association: %s: %w", strings.ToLower(action), err)
 	}
@@ -866,13 +847,6 @@ func (s *Service) actorName(ctx context.Context, userID string) string {
 	return "Administrator"
 }
 
-func deref(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
-}
-
 // nonNilStrings guarantees a JSON array rather than null for an empty slice.
 func nonNilStrings(v []string) []string {
 	if v == nil {
@@ -881,8 +855,6 @@ func nonNilStrings(v []string) []string {
 	return v
 }
 
-// ── Member-proposed meetings ─────────────────────────────────────────────────
-
 // MeetingApprovalDecision is the outcome an admin records on a proposal.
 type MeetingApprovalDecision struct {
 	Approve bool   `json:"approve"`
@@ -890,13 +862,11 @@ type MeetingApprovalDecision struct {
 }
 
 // ProposeMeeting lets ANY active member put a meeting forward.
-//
 // The caller's standing decides what happens next, and that is the whole point
 // of the endpoint: an admin scheduling a meeting is scheduling it, so it is
 // APPROVED on insert and behaves exactly like one created through the admin
 // route. A member without admin rights is proposing one, so it starts PENDING
 // and stays invisible to the rest of the organisation until an admin decides.
-//
 // The organisation is resolved from the caller's own membership rather than
 // taken from the request. A body-supplied organisation id would let any member
 // of any organisation file proposals into somebody else's calendar, which is
@@ -914,7 +884,7 @@ func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRe
 		approval = "APPROVED"
 	}
 
-	mode := nz(r.Mode, "PHYSICAL")
+	mode := strutil.OrBlank(r.Mode, "PHYSICAL")
 	if !validMeetingModes[mode] {
 		return "", "", fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
 	}
@@ -944,7 +914,7 @@ func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRe
 	if err != nil {
 		return "", "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_meetings
@@ -960,7 +930,7 @@ func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRe
 	// proposal would tell everyone about a meeting that may never be approved,
 	// and the proposal is not visible to them yet in any case.
 	if approval == "APPROVED" && r.Notify {
-		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", r.Title, deref(r.Description), "/association/meetings/"+id); err != nil {
+		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", r.Title, ptr.DerefZero(r.Description), "/association/meetings/"+id); err != nil {
 			return "", "", err
 		}
 	}
@@ -977,7 +947,6 @@ func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRe
 }
 
 // DecideMeeting records an admin's decision on a proposed meeting.
-//
 // Only a PENDING meeting can be decided. Re-deciding an already-approved or
 // already-rejected meeting is refused rather than silently overwritten: the
 // decision is an audited record of who let a meeting onto the calendar, and
@@ -990,7 +959,7 @@ func (s *Service) DecideMeeting(ctx context.Context, adminID, meetingID string, 
 		`SELECT organisation_id::text, approval_status, title, created_by::text FROM assoc_meetings WHERE id=$1`,
 		meetingID).Scan(&orgID, &current, &title, &createdBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// This package has no ErrNotFound; statusFor maps pgx.ErrNoRows to 404.
+			// This package has no ErrNotFound; errMap maps pgx.ErrNoRows to 404.
 			return "", pgx.ErrNoRows
 		}
 		return "", fmt.Errorf("association: meeting lookup: %w", err)
@@ -1011,7 +980,7 @@ func (s *Service) DecideMeeting(ctx context.Context, adminID, meetingID string, 
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Conditional on still being PENDING so two admins deciding at once cannot
 	// both write a decision — the second finds no row and is told it is decided.
@@ -1034,7 +1003,7 @@ func (s *Service) DecideMeeting(ctx context.Context, adminID, meetingID string, 
 		}
 	}
 	if err := s.audit(ctx, tx, orgID, adminID, "MEETING_DECIDE", "meeting", meetingID,
-		map[string]any{"decision": next, "note": d.Note, "proposedBy": deref(createdBy)}); err != nil {
+		map[string]any{"decision": next, "note": d.Note, "proposedBy": ptr.DerefZero(createdBy)}); err != nil {
 		return "", err
 	}
 	return next, tx.Commit(ctx)
@@ -1071,16 +1040,12 @@ func (s *Service) GetPendingMeetings(ctx context.Context, adminID, orgID string)
 	return out, rows.Err()
 }
 
-// ── Event invitations ────────────────────────────────────────────────────────
-
 // InviteToEvent invites members to an event and returns how many invitations
 // were newly recorded.
-//
 // An invitation is a registration row with invited_at set, not a separate
 // record — see the migration. That means a member who was already registered or
 // had already RSVPed keeps that state and simply becomes "invited" as well; the
 // invitation never resets a response somebody has already given.
-//
 // Every membership is checked against the EVENT'S organisation rather than the
 // caller's. They are normally the same, but validating against the event closes
 // the case where an admin of one organisation passes membership ids belonging
@@ -1106,7 +1071,7 @@ func (s *Service) InviteToEvent(ctx context.Context, adminID, eventID string, me
 	if err != nil {
 		return 0, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// One statement: the SELECT filters the supplied ids down to memberships that
 	// actually belong to this event's organisation, so a foreign id inserts
@@ -1134,8 +1099,6 @@ func (s *Service) InviteToEvent(ctx context.Context, adminID, eventID string, me
 	return int(tag.RowsAffected()), nil
 }
 
-// ── Committee membership management ──────────────────────────────────────────
-
 // validCommitteeRoles are the roles a committee member may hold. CHAIR and
 // SECRETARY are positions, not permissions: they do not grant organisation admin
 // rights, and nothing here checks them for authorisation.
@@ -1161,11 +1124,9 @@ func (s *Service) committeeOrg(ctx context.Context, adminID, committeeID string)
 
 // AddCommitteeMembers puts members straight onto a committee, skipping the
 // request-and-approve step. Returns how many were added.
-//
 // Memberships are filtered against the COMMITTEE'S organisation, so ids from
 // elsewhere write nothing rather than erroring — the same shape as event
 // invitations, and for the same reason: one stale id must not fail the batch.
-//
 // An existing row is left alone apart from being activated. Someone who had
 // already asked to join is accepted rather than duplicated, and their role is
 // preserved: an admin adding a list of people should not silently demote a
@@ -1183,7 +1144,7 @@ func (s *Service) AddCommitteeMembers(ctx context.Context, adminID, committeeID 
 	if err != nil {
 		return 0, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO assoc_committee_members (committee_id, membership_id, role, status, joined_at)
@@ -1208,7 +1169,6 @@ func (s *Service) AddCommitteeMembers(ctx context.Context, adminID, committeeID 
 }
 
 // DecideCommitteeRequest accepts or declines a pending request to join.
-//
 // A decline REMOVES the row rather than parking it in a REJECTED state, so the
 // member can ask again later. A rejection that persisted would silently block
 // every future request without telling anyone why.
@@ -1222,7 +1182,7 @@ func (s *Service) DecideCommitteeRequest(ctx context.Context, adminID, committee
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var tag interface{ RowsAffected() int64 }
 	if approve {
@@ -1264,7 +1224,7 @@ func (s *Service) RemoveCommitteeMember(ctx context.Context, adminID, committeeI
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx,
 		`DELETE FROM assoc_committee_members WHERE committee_id=$1 AND membership_id=$2`, committeeID, membershipID)
@@ -1295,7 +1255,7 @@ func (s *Service) SetCommitteeMemberRole(ctx context.Context, adminID, committee
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Only an ACTIVE member can hold a position: giving a chair's title to
 	// somebody whose request has not been accepted would put a name on the
@@ -1318,14 +1278,12 @@ func (s *Service) SetCommitteeMemberRole(ctx context.Context, adminID, committee
 
 // ResolveDocumentDownload returns the storage key of a document the caller is
 // allowed to read, or an error.
-//
 // The gate is two-part and both parts matter. Membership scopes the vault to the
 // organisation that owns it — a document id is a bare uuid, so without it any
 // authenticated user could fetch any organisation's constitution. The
 // `restricted` flag then narrows further: a restricted document is admin-only,
 // which is what the flag is for, and it is checked HERE rather than in the
 // handler so a signed URL cannot be minted for one by any other caller.
-//
 // An empty key is returned as an empty string, not an error: the document exists
 // and the caller may see it, it simply predates uploads and has no file.
 func (s *Service) ResolveDocumentDownload(ctx context.Context, userID, documentID string) (string, error) {
@@ -1350,4 +1308,172 @@ func (s *Service) ResolveDocumentDownload(ctx context.Context, userID, documentI
 		}
 	}
 	return key, nil
+}
+
+// Admin content listings, scoped by organisation.
+// The member-facing reads (GetAnnouncements, GetMeetings, GetDocuments,
+// GetEvents, GetTasks) all join through the CALLER's own memberships, which is
+// correct for a member but returns nothing for a platform admin — they hold no
+// association membership of their own. The admin console therefore had no way
+// to see the content it can now author. These listings take an explicit org and
+// authorize against it instead.
+
+// AdminContentRow is one row of any admin content listing. The shape is
+// deliberately uniform so the console can render one table component for all
+// five content types; type-specific detail lives in Meta.
+type AdminContentRow struct {
+	ID        string         `json:"id"`
+	Title     string         `json:"title"`
+	Subtitle  string         `json:"subtitle"`
+	Status    string         `json:"status"`
+	At        *string        `json:"at"`
+	CreatedAt *string        `json:"createdAt"`
+	Meta      map[string]any `json:"meta"`
+}
+
+// listContent runs a uniform admin listing against one content table.
+// `query` is an internal constant, never user input.
+func (s *Service) listContent(ctx context.Context, adminID, orgID, query string, limit, offset int) ([]AdminContentRow, error) {
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.db.Query(ctx, query, orgID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("association: admin content list: %w", err)
+	}
+	defer rows.Close()
+	out := []AdminContentRow{}
+	for rows.Next() {
+		var r AdminContentRow
+		var meta []byte
+		if err := rows.Scan(&r.ID, &r.Title, &r.Subtitle, &r.Status, &r.At, &r.CreatedAt, &meta); err != nil {
+			// Surfaced rather than swallowed: a silently skipped row here would
+			// make content the admin just created look like it never saved.
+			return nil, fmt.Errorf("association: admin content list: scan: %w", err)
+		}
+		scanJSONB(meta, &r.Meta)
+		if r.Meta == nil {
+			r.Meta = map[string]any{}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) ListAdminAnnouncements(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
+	const q = `
+		SELECT a.id::text, a.title, COALESCE(a.audience,''),
+		       CASE WHEN a.urgent THEN 'URGENT' ELSE 'POSTED' END,
+		       a.posted_at::text, a.posted_at::text, jsonb_build_object(
+		         'body', a.body, 'audience', a.audience, 'author', a.author,
+		         'urgent', a.urgent, 'requiresAck', a.requires_ack,
+		         'readCount', (SELECT count(*) FROM assoc_announcement_reads r
+		                        WHERE r.announcement_id=a.id AND r.read_at IS NOT NULL),
+		         'ackCount',  (SELECT count(*) FROM assoc_announcement_reads r
+		                        WHERE r.announcement_id=a.id AND r.acknowledged_at IS NOT NULL))
+		FROM assoc_announcements a
+		WHERE a.organisation_id=$1
+		ORDER BY a.posted_at DESC, a.id DESC
+		LIMIT $2 OFFSET $3`
+	return s.listContent(ctx, adminID, orgID, q, limit, offset)
+}
+
+func (s *Service) ListAdminMeetings(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
+	const q = `
+		SELECT m.id::text, m.title, COALESCE(m.location,''), m.state,
+		       m.starts_at::text, m.created_at::text,
+		       jsonb_build_object(
+		         'description', m.description, 'mode', m.mode,
+		         'startsAt', m.starts_at, 'endsAt', m.ends_at,
+		         'location', m.location, 'agenda', m.agenda,
+		         'minutesPublished', m.minutes_published,
+		         'attendanceCode', m.attendance_code,
+		         'rsvpCount',      (SELECT count(*) FROM assoc_meeting_attendance a
+		                             WHERE a.meeting_id=m.id AND a.rsvp='YES'),
+		         'checkedInCount', (SELECT count(*) FROM assoc_meeting_attendance a
+		                             WHERE a.meeting_id=m.id AND a.checked_in_at IS NOT NULL))
+		FROM assoc_meetings m
+		WHERE m.organisation_id=$1
+		ORDER BY m.starts_at DESC, m.id DESC
+		LIMIT $2 OFFSET $3`
+	return s.listContent(ctx, adminID, orgID, q, limit, offset)
+}
+
+func (s *Service) ListAdminDocuments(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
+	const q = `
+		SELECT d.id::text, d.title, d.category,
+		       CASE WHEN d.restricted THEN 'RESTRICTED' ELSE 'OPEN' END,
+		       d.updated_at::text, d.updated_at::text, jsonb_build_object(
+		         'kind', d.kind, 'storageKey', d.storage_key, 'sizeLabel', d.size_label,
+		         'version', d.version, 'restricted', d.restricted,
+		         'requiresAck', d.requires_ack, 'aiSummary', d.ai_summary,
+		         'uploadedBy', d.uploaded_by,
+		         'ackCount', (SELECT count(*) FROM assoc_document_acks k WHERE k.document_id=d.id))
+		FROM assoc_documents d
+		WHERE d.organisation_id=$1
+		ORDER BY d.updated_at DESC, d.id DESC
+		LIMIT $2 OFFSET $3`
+	return s.listContent(ctx, adminID, orgID, q, limit, offset)
+}
+
+func (s *Service) ListAdminEvents(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
+	const q = `
+		SELECT e.id::text, e.title, COALESCE(e.location,''),
+		       CASE WHEN e.starts_at > now() THEN 'UPCOMING' ELSE 'PAST' END,
+		       e.starts_at::text, e.created_at::text,
+		       jsonb_build_object(
+		         'description', e.description, 'startsAt', e.starts_at, 'endsAt', e.ends_at,
+		         'location', e.location, 'paid', e.paid, 'feeKobo', e.fee_kobo,
+		         'capacity', e.capacity, 'organiser', e.organiser, 'coverUrl', e.cover_url,
+		         'registeredCount', (SELECT count(*) FROM assoc_event_registrations r
+		                              WHERE r.event_id=e.id AND r.registered=true),
+		         'awaitingPayment', (SELECT count(*) FROM assoc_event_registrations r
+		                              WHERE r.event_id=e.id AND r.registered=false AND r.invoice_id IS NOT NULL))
+		FROM assoc_events e
+		WHERE e.organisation_id=$1
+		ORDER BY e.starts_at DESC, e.id DESC
+		LIMIT $2 OFFSET $3`
+	return s.listContent(ctx, adminID, orgID, q, limit, offset)
+}
+
+func (s *Service) ListAdminTasks(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
+	const q = `
+		SELECT t.id::text, t.title, COALESCE(mp.full_name, ''), t.status,
+		       t.due_date::text, t.created_at::text,
+		       jsonb_build_object(
+		         'description', t.description, 'priority', t.priority,
+		         'dueDate', t.due_date, 'assigneeId', t.assignee_id,
+		         'assigneeName', mp.full_name, 'committeeId', t.committee_id,
+		         'meetingId', t.meeting_id, 'checklist', t.checklist)
+		FROM assoc_tasks t
+		LEFT JOIN assoc_member_profiles mp ON mp.membership_id = t.assignee_id
+		WHERE t.organisation_id=$1
+		ORDER BY t.created_at DESC, t.id DESC
+		LIMIT $2 OFFSET $3`
+	return s.listContent(ctx, adminID, orgID, q, limit, offset)
+}
+
+// ListAdminDuesRuns shows the dues runs raised for an organisation, so an admin
+// can see what has already been billed before raising more.
+func (s *Service) ListAdminDuesRuns(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
+	const q = `
+		SELECT r.id::text, r.title, r.scope, 'RAISED',
+		       r.created_at::text, r.created_at::text, jsonb_build_object(
+		         'invoiced', r.invoiced, 'skipped', r.skipped, 'totalKobo', r.total_kobo,
+		         'categoryId', r.category_id, 'chapterId', r.chapter_id,
+		         'paidCount', (SELECT count(*) FROM assoc_dues_invoices i
+		                        WHERE i.run_id=r.id AND i.status='PAID'),
+		         'outstandingKobo', (SELECT COALESCE(SUM(i.amount_kobo),0) FROM assoc_dues_invoices i
+		                              WHERE i.run_id=r.id AND i.status IN ('DUE','OVERDUE')))
+		FROM assoc_dues_runs r
+		WHERE r.organisation_id=$1
+		ORDER BY r.created_at DESC, r.id DESC
+		LIMIT $2 OFFSET $3`
+	return s.listContent(ctx, adminID, orgID, q, limit, offset)
 }

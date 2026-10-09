@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/commission"
@@ -25,21 +27,14 @@ import (
 // RegisterHealthPharmacy wires HEALTH-BUILD Phase-1 Pharmacy onto the finance
 // member group + a health pharmacy admin group. It is the ONLY wiring point for
 // the pharmacy vertical and edits no existing file. All reuse is by import:
-//
 //   - escrow.Service      — HL-9 payment HELD→RELEASE→REFUND (idempotent).
-//
 //   - healthrx.Service    — HL-3 pharmacist verify + dispense-once (server-side).
-//
 //   - transport.Service   — last-mile delivery dispatch (no routing rebuild).
-//
 //   - finance/kyc.Service — HL-10 payout KYC gating.
-//
 //   - member: /api/finance/health/pharmacy/*  (member-authenticated; user_id mirrored)
-//
 //   - admin : /api/health/pharmacy/admin/*    (per-route RBAC health.pharmacy.*)
 //
 // Gated by FeatureHealthPharmacyEnabled at the orchestrator. Auditing is nil-safe.
-//
 // Returns the pharmacy service so the orchestrator can hand it optional
 // collaborators (e.g. the symptom-search ReviewCaseOpener seam — PRD §10);
 // nil when the pool is absent.
@@ -55,10 +50,9 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	rxSvc := healthrx.NewService(pool, nil)
 	// transport.Service needs a real settlement instance for its own escrow
 	// (last-mile courier payout) — a nil settlement service isn't a no-op,
-	// it's a nil pointer BookParcel dereferences unconditionally. Found live
-	// via UAT: dispatching any DELIVERY-fulfilment pharmacy order panicked
-	// (500) inside settlement.Service.Escrow, so the entire DELIVERY
-	// lifecycle for this vertical could never progress past DISPENSED.
+	// it's a nil pointer BookParcel dereferences unconditionally, so
+	// dispatching a DELIVERY-fulfilment order would panic inside
+	// settlement.Service.Escrow and never progress past DISPENSED.
 	// Mirrors finance_routes.go's own transport.NewService wiring.
 	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)
@@ -95,7 +89,6 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	// --- Member routes (/api/finance/health/pharmacy) — HEALTH-BUILD §6 ---
 	pg := member.Group("/health/pharmacy")
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
 	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
@@ -114,20 +107,19 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/orders", h.ListMine) // owner-scoped fulfilment queue
 	// The patient's own order history — a distinct path from /orders (the owner
 	// inbox above) so the two never collide. Also declared before /orders/:id.
-	pg.GET("/orders/mine", h.ListMyOrders)         // patient-scoped order history
-	pg.GET("/earnings", h.Earnings)                // owner-scoped money view
-	pg.GET("/orders/:id", h.Get)                   // object-level authZ
-	pg.POST("/orders/:id/confirm", h.Confirm)      // HL-3 verified e-Rx gate
-	pg.POST("/orders/:id/dispense", h.Dispense)    // pharmacist (HL-1/HL-3)
+	pg.GET("/orders/mine", h.ListMyOrders)    // patient-scoped order history
+	pg.GET("/earnings", h.Earnings)           // owner-scoped money view
+	pg.GET("/orders/:id", h.Get)              // object-level authZ
+	pg.POST("/orders/:id/confirm", h.Confirm) // HL-3 verified e-Rx gate
+	pg.POST("/orders/:id/dispense", h.Dispense)
 	pg.POST("/orders/:id/dispatch", h.Dispatch)    // transport last-mile rail
 	pg.POST("/orders/:id/complete", h.Complete)    // release payment (HL-9)
 	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
 	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
 
-	// --- Admin routes (/api/health/pharmacy/admin, RBAC health.pharmacy.*) ---
 	ag := admin.Group("")
 	// PHARMACY-001: `admin` (adminGroupTop5, top5_admin_group.go) applies ONLY
-	// requireUserID() — it checks c.GetString("user_id"), which nothing had
+	// requireUserID() — it checks ginutil.UserID(c), which nothing had
 	// ever set on this group, so EVERY admin.* route here (including the
 	// pre-existing AdminListOrders/AdminDispenseAudit/AdminRecallProduct, not
 	// only the routes this pass adds) 401'd "authentication required" for
@@ -162,15 +154,13 @@ func isHealthPharmacyAdmin(c *gin.Context, rbac services.RBACService) bool {
 	if rbac == nil {
 		return false
 	}
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		return false
 	}
 	ok, err := rbac.CheckPermission(uid, "health.pharmacy.audit", "global", "")
 	return err == nil && ok
 }
-
-// ─── Adapters: bridge the reused rails to the package's narrow interfaces ─────
 
 type escrowAdapter struct{ e *escrow.Service }
 
@@ -295,7 +285,6 @@ func (a *rxItemsAdapter) PrescribedItems(ctx context.Context, rxID string) ([]he
 // last-mile rail (REUSE — no routing rebuild). The pharmacy supplies the route;
 // here the minimal job is booked under the patient as sender. The returned
 // reference is the parcel id tracked by the transport module.
-//
 // Real coordinates + contact are sourced from the order/pharmacy/patient records
 // (never the 0,0 placeholder): the pickup (pharmacy) geo comes from the provider's
 // application, and the dropoff (patient) name/phone from the patient profile. If a

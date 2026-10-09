@@ -1,6 +1,4 @@
-// ── Film Academy — my course ─────────────────────────────────────────────────
 // A NATIVE screen. Modules and lessons for the enrolled learner, with progress.
-//
 // "Locked" is a first-class state, not an error: an applicant who has not been
 // approved or has not paid gets a reason and a way forward, because a blank
 // screen here reads as a broken app.
@@ -12,10 +10,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, CircleCheck, Circle, Lock, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getCurriculum, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
 import { lockCopy } from '@/features/filmAcademy/lockCopy';
 import type { FilmAcademyLesson } from '@/features/filmAcademy/types';

@@ -6,15 +6,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 )
+
+const keyMessage = "message"
 
 // Handler exposes the fees PAYMENT-INTENT routes over Gin. It exposes ONLY the intent-creation
 // endpoints (checkout session start); the confirmation path (OnChargeSuccess) is NOT an HTTP
 // route here — it is driven by the EXISTING academy webhook pipeline (see the integration note
 // in RegisterFeesPayment). Router registration into RegisterAcademy is owned by the integration
 // task, behind FEATURE_ACADEMY_FEES_ENABLED.
-//
 // The member group already carries RequireAuthContext (REUSE-MAP §1), so c.GetString("user_id")
 // is populated. The Idempotency-Key header is REQUIRED on every intent route (money path).
 type Handler struct {
@@ -24,10 +27,9 @@ type Handler struct {
 // NewHandler builds the payment handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,7 +37,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -43,30 +45,28 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 	return u, true
 }
 
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnknownReference):
-		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingInvoice):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_invoice", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_invoice", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrDisclosureRequired):
-		c.JSON(http.StatusConflict, gin.H{"error": "disclosure_required", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "disclosure_required", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrChargeNotSuccessful):
-		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrAmountMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -95,8 +95,6 @@ func RegisterFeesPayment(member *gin.RouterGroup, svc *Service) *Handler {
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateIntent(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -104,10 +102,10 @@ func (h *Handler) CreateIntent(c *gin.Context) {
 	}
 	var req CreatePaymentIntentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.CreatePaymentIntent(c.Request.Context(), u, req, idemKey(c))
+	out, err := h.svc.CreatePaymentIntent(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -122,10 +120,10 @@ func (h *Handler) PayInstallment(c *gin.Context) {
 	}
 	var req PayInstallmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.PayInstallment(c.Request.Context(), u, req, idemKey(c))
+	out, err := h.svc.PayInstallment(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

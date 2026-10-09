@@ -1,17 +1,13 @@
 package otp_test
 
-// ---------------------------------------------------------------------------
 // LIVE test: service_role can actually read auth.users over the SAME
 // connection setup production uses.
-//
 // WHY THIS EXISTS (AUTH-008)
-// --------------------------
 // Every other test in this package builds its pool with plain
 // pgxpool.New(TEST_DATABASE_URL) (see liveDBPool in store_live_db_test.go).
 // That connects as whatever role TEST_DATABASE_URL names — typically a
 // superuser locally — and therefore cannot see a privilege problem that only
 // exists for `service_role`.
-//
 // Production never connects that way. backend/internal/platform/db.New()
 // runs `SET ROLE service_role` in AfterConnect on every pooled connection, to
 // bypass RLS for the app's own queries (see db.go). That role held ZERO
@@ -22,33 +18,26 @@ package otp_test
 // 42501)`, even though the exact same query worked fine in this package's
 // other "live DB" tests, because those tests were never running as
 // service_role in the first place.
-//
 // That gap is what let AUTH-008 reach UAT: the existing live-DB suite was
 // green while the deployed path 500'd on both email verification
 // (ConfirmEmail) and OTP password reset (otp_login.go SetPassword).
-//
 // This test closes the gap by building its pool through db.New() — the real
 // production constructor — so it runs under the same `SET ROLE
 // service_role` every request does, and asserts both:
 //  1. the raw grant (a plain SELECT against auth.users does not 42501), and
 //  2. the actual call site (authUserByEmail, via ConfirmEmail) succeeds
 //     end-to-end against a real GoTrue user.
-//
 // A future revert of the GRANT (e.g. a "cleanup" migration that narrows
 // service_role privileges) fails this test instead of only being discovered
 // against production, the way AUTH-008 was.
-//
 // Gated on TEST_DATABASE_URL, SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY —
 // same gates as confirm_email_live_db_test.go, since this needs both a real
 // Postgres and a real GoTrue to talk to.
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	export SUPABASE_URL="http://127.0.0.1:54321"
 //	export SUPABASE_SERVICE_ROLE_KEY="<local service role key>"
 //	cd backend && go test ./tests/otp/... -run LiveDB_ServiceRole -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

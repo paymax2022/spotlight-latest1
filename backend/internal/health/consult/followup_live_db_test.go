@@ -15,9 +15,7 @@ import (
 // in-progress consult; the new consult is SCHEDULED and LINKED to the parent (and,
 // when supplied, to a referral on that parent). A non-provider cannot schedule one,
 // and a follow-up cannot be scheduled before the consult starts.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset. Bring-up:
-//
 //	supabase start
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/consult/ -run TestFollowUp_LiveDB

@@ -1,10 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { View, TextInput, Text, Pressable, StyleSheet, TextInputProps } from 'react-native';
 import { Eye, EyeOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 interface Props extends TextInputProps {
   label?:   string;

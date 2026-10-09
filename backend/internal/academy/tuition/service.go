@@ -1,7 +1,6 @@
 package tuition
 
 // service.go is the Film Academy tuition payment money path.
-//
 // PAYMENT RAIL: tuition is paid by card via Paystack — NOT a Paymax wallet debit.
 // This mirrors the existing product behavior (frontend-web/app/api/academy/installments/pay,
 // now superseded by this package) rather than introducing a new payment method. The
@@ -10,7 +9,6 @@ package tuition
 // wallet touched, matching ledger.Service.PostJournal's documented non-wallet-posting
 // use case) plus the payment row. This is what closes the ledger gap: today's Next.js
 // path verifies the charge and marks the row paid, but posts nothing to the ledger at all.
-//
 // Idempotency is guarded at TWO layers: a Redis key claim (fast path) plus a conditional
 // UPDATE on the payment row itself (durable fallback — see RecordPaymentWithReference).
 // Audit trail is via the Auditor interface (fire-and-forget, nil-safe).
@@ -21,27 +19,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/provider"
 )
 
-// ── Service-layer errors ────────────────────────────────────────────────────
-
 var (
-	ErrDuplicate            = errors.New("tuition: duplicate idempotency key")
-	ErrZeroPayment          = errors.New("tuition: payment amount must be > 0")
-	ErrInvalidPlanType      = errors.New("tuition: invalid plan type")
-	ErrPlanNotFound         = errors.New("tuition: no active plan found")
-	ErrApplicationNotFound  = errors.New("tuition: application not found")
-	ErrBatchNotFound        = errors.New("tuition: batch not found")
-	ErrInvalidPaymentAmount = errors.New("tuition: payment amount does not match plan")
-	ErrForbidden            = errors.New("tuition: payment does not belong to this user")
-	ErrPaymentNotConfirmed  = errors.New("tuition: payment not confirmed by provider")
-	ErrReferenceReused      = errors.New("tuition: payment reference already used for a different installment")
+	ErrDuplicate             = errors.New("tuition: duplicate idempotency key")
+	ErrZeroPayment           = errors.New("tuition: payment amount must be > 0")
+	ErrInvalidPlanType       = errors.New("tuition: invalid plan type")
+	ErrPlanNotFound          = errors.New("tuition: no active plan found")
+	ErrApplicationNotFound   = errors.New("tuition: application not found")
+	ErrBatchNotFound         = errors.New("tuition: batch not found")
+	ErrInvalidPaymentAmount  = errors.New("tuition: payment amount does not match plan")
+	ErrForbidden             = errors.New("tuition: payment does not belong to this user")
+	ErrPaymentNotConfirmed   = errors.New("tuition: payment not confirmed by provider")
+	ErrReferenceReused       = errors.New("tuition: payment reference already used for a different installment")
+	ErrNoPendingInstallments = errors.New("tuition: no pending installments")
 )
 
 // Auditor is the admin-action audit sink, matching services.AuditService's LogAction.
@@ -76,15 +76,15 @@ type PaymentResult struct {
 
 // TuitionStatus is the query response for enrollment gating.
 type TuitionStatus struct {
-	ApplicationID    string                `json:"applicationId"`
-	UserID           string                `json:"userId"`
-	BatchID          string                `json:"batchId"`
-	TuitionTotalNGN  int64                 `json:"tuitionTotalNgn"`
-	PaymentStatus    string                `json:"paymentStatus"`
-	Plan             *InstallmentPlan      `json:"plan,omitempty"`
-	Payments         []InstallmentPayment  `json:"payments,omitempty"`
-	TotalPaidNGN     int64                 `json:"totalPaidNgn"`
-	IsReadyForAccess bool                  `json:"isReadyForAccess"`
+	ApplicationID    string               `json:"applicationId"`
+	UserID           string               `json:"userId"`
+	BatchID          string               `json:"batchId"`
+	TuitionTotalNGN  int64                `json:"tuitionTotalNgn"`
+	PaymentStatus    string               `json:"paymentStatus"`
+	Plan             *InstallmentPlan     `json:"plan,omitempty"`
+	Payments         []InstallmentPayment `json:"payments,omitempty"`
+	TotalPaidNGN     int64                `json:"totalPaidNgn"`
+	IsReadyForAccess bool                 `json:"isReadyForAccess"`
 }
 
 // Service owns tuition payment logic.
@@ -112,7 +112,6 @@ func NewService(repo *Repository, ledgerSvc *ledger.Service, paymentProvider pro
 // records it: a balanced ledger journal (provider_clearing DR / settlement CR — no user
 // wallet involved) plus the payment row itself. Mirrors (and replaces) the Next.js path
 // at app/api/academy/installments/pay/route.ts.
-//
 // Steps:
 //  1. Idempotency Layer 1 (redis key claim, if configured)
 //  2. Fetch + ownership check (payment must belong to userID and to planID)
@@ -131,14 +130,14 @@ func NewService(repo *Repository, ledgerSvc *ledger.Service, paymentProvider pro
 // leaving revenue recognized for a payment that was never actually marked paid.
 func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, paymentID, reference, userID string) (*PaymentResult, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("tuition: Idempotency-Key header is required")
+		return nil, errors.New("tuition: Idempotency-Key header is required")
 	}
 	if planID == "" || paymentID == "" || reference == "" {
-		return nil, fmt.Errorf("tuition: planId, paymentId, and reference are required")
+		return nil, errors.New("tuition: planId, paymentId, and reference are required")
 	}
 
 	if s.redisClient != nil {
-		idemKey := fmt.Sprintf("tuition:confirm:%s", idempotencyKey)
+		idemKey := "tuition:confirm:" + idempotencyKey
 		claimed, err := redis.SetNX(ctx, s.redisClient, idemKey, "claimed", 24*time.Hour)
 		if err != nil {
 			return nil, fmt.Errorf("idempotency check failed: %w", err)
@@ -166,8 +165,8 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 			PaymentID:       payment.ID,
 			PlanID:          planID,
 			AmountPaidNGN:   payment.AmountNGN,
-			LedgerReference: derefStr(payment.PaymentReference),
-			PaidAt:          derefTime(payment.PaidAt),
+			LedgerReference: ptr.DerefZero(payment.PaymentReference),
+			PaidAt:          dbutil.DerefTime(payment.PaidAt),
 		}, nil
 	}
 	if IsTerminalStatus(payment.Status) {
@@ -230,7 +229,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 		revErr := s.ledgerSvc.PostReversal(ctx, providerClearing.ID, settlement.ID, expectedKobo,
 			ledgerRef+"_reversal", idempotencyKey+"_reversal")
 		if revErr != nil {
-			return fmt.Errorf("%w (reversal also failed: %v)", cause, revErr)
+			return fmt.Errorf("%w (reversal also failed: %w)", cause, revErr)
 		}
 		return cause
 	}
@@ -267,7 +266,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 	isCompleted := HasCompletePayment(updatedPayments)
 	if isCompleted && plan.Status != PlanStatusCompleted {
 		if err := s.repo.MarkPlanCompleted(ctx, planID); err != nil {
-			fmt.Printf("warning: couldn't mark plan complete: %v\n", err)
+			log.Printf("warning: couldn't mark plan complete: %v", err)
 		}
 		if s.auditor != nil {
 			s.auditor.LogAction(userID, userID, actionPlanCompleted, auditModule,
@@ -304,18 +303,19 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 	}, nil
 }
 
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
+// ConfirmPaymentInternal is the service-authenticated variant of ConfirmPayment:
+// the caller holds the internal service token, not the payer's JWT, so the payer
+// is resolved FROM the payment row itself. Every invariant of the member-facing
+// path is unchanged — provider re-verify, amount/currency checks, reference-reuse
+// guard, balanced journal, conditional UPDATE — only the userID source differs.
+// Callers: POST /internal/finance/academy/tuition/confirm (webhook/recover
+// fulfilment when the payer's client never reaches the member confirm route).
+func (s *Service) ConfirmPaymentInternal(ctx context.Context, idempotencyKey, planID, paymentID, reference string) (*PaymentResult, error) {
+	payment, err := s.repo.GetPaymentByID(ctx, paymentID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch payment: %w", err)
 	}
-	return *s
-}
-
-func derefTime(t *time.Time) time.Time {
-	if t == nil {
-		return time.Time{}
-	}
-	return *t
+	return s.ConfirmPayment(ctx, idempotencyKey, planID, paymentID, reference, payment.UserID)
 }
 
 // GetTuitionStatus returns the full payment and plan status for an application.
@@ -381,7 +381,7 @@ func (s *Service) ValidatePayment(ctx context.Context, appID, userID string, amo
 			return fmt.Errorf("fetch batch: %w", err)
 		}
 		if amountNaira > batch.FeeNGN {
-			return fmt.Errorf("tuition: payment exceeds batch fee")
+			return fmt.Errorf("%w: %d exceeds batch fee %d", ErrInvalidPaymentAmount, amountNaira, batch.FeeNGN)
 		}
 		return nil
 	}
@@ -393,13 +393,14 @@ func (s *Service) ValidatePayment(ctx context.Context, appID, userID string, amo
 	for _, p := range payments {
 		if p.Status == PaymentStatusPending {
 			if amountNaira != p.AmountNGN {
-				return fmt.Errorf("tuition: payment amount (%d) does not match next installment (%d)",
-					amountNaira, p.AmountNGN)
+				// Sentinel errors so writeErr's errMap answers 400, not 500.
+				return fmt.Errorf("%w: payment amount (%d) does not match next installment (%d)",
+					ErrInvalidPaymentAmount, amountNaira, p.AmountNGN)
 			}
 			return nil
 		}
 	}
-	return fmt.Errorf("tuition: no pending payments")
+	return ErrNoPendingInstallments
 }
 
 // WaiveTuition marks a payment as waived (admin action).
@@ -426,7 +427,7 @@ func (s *Service) WaiveTuition(ctx context.Context, paymentID, actorUserID strin
 	}
 	if HasCompletePayment(payments) {
 		if err := s.repo.MarkPlanCompleted(ctx, plan.ID); err != nil {
-			fmt.Printf("warning: couldn't mark plan complete after waiver: %v\n", err)
+			log.Printf("warning: couldn't mark plan complete after waiver: %v", err)
 		}
 	}
 

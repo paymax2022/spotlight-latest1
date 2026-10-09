@@ -1,7 +1,6 @@
 // Package tutor is the Spotlight Academy Phase-4 tutor-marketplace sub-package:
 // tutors onboard, get KYC-verified, are assigned to learners/classes, grade work,
 // accrue earnings, and withdraw via guarded, idempotent payouts.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech screens.md §T, paymax-rails.md
 // "payouts", conventions.md):
 //   - Tutor capability is GATED by KYC: VerifyTutor requires the injected KYCChecker
@@ -23,8 +22,6 @@ package tutor
 import "time"
 
 // Money is always integer MINOR UNITS (kobo). Never floats (conventions.md).
-
-// ── Tutor ───────────────────────────────────────────────────────────────────────
 
 // TutorStatus mirrors academy_tutors.status CHECK ('pending','verified','suspended').
 type TutorStatus string
@@ -49,8 +46,6 @@ type Tutor struct {
 	CreatedAt        time.Time   `json:"created_at"`
 }
 
-// ── Assignment ───────────────────────────────────────────────────────────────────
-
 // Assignment kinds mirror academy_tutor_assignments.kind CHECK.
 const (
 	KindLesson     = "lesson"
@@ -72,8 +67,6 @@ type Assignment struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
-// ── Grade ────────────────────────────────────────────────────────────────────────
-
 // GradeState mirrors academy_tutor_grades.state CHECK ('pending','graded').
 type GradeState string
 
@@ -93,8 +86,6 @@ type Grade struct {
 	CreatedAt    time.Time  `json:"created_at"`
 	GradedAt     *time.Time `json:"graded_at,omitempty"`
 }
-
-// ── Earning (append-only; balance DERIVED) ────────────────────────────────────────
 
 // Earning sources mirror academy_tutor_earnings.source CHECK ('consult','class','assignment').
 const (
@@ -125,8 +116,6 @@ type Earning struct {
 	CreatedAt   time.Time    `json:"created_at"`
 }
 
-// ── Payout (guarded SM; money via rail; idempotent) ──────────────────────────────
-
 // PayoutState mirrors academy_tutor_payouts.state CHECK ('requested','paid','failed').
 type PayoutState string
 
@@ -149,13 +138,11 @@ type Payout struct {
 	DecidedAt      *time.Time  `json:"decided_at,omitempty"`
 }
 
-// ── Aggregate views ──────────────────────────────────────────────────────────────
-
 // Earnings is the member earnings dashboard: append-only entries plus the DERIVED
 // withdrawable (pending) balance.
 type Earnings struct {
 	Entries      []Earning `json:"entries"`
-	PendingMinor int64     `json:"pending_minor"` // derived = SUM(pending)
+	PendingMinor int64     `json:"pending_minor"`
 	Payouts      []Payout  `json:"payouts"`
 }
 
@@ -167,8 +154,6 @@ type Cohort struct {
 	ClassGroupID    string `json:"class_group_id"`
 	AssignmentCount int    `json:"assignment_count"`
 }
-
-// ── Request DTOs ─────────────────────────────────────────────────────────────────
 
 // OnboardRequest — member POST /tutor/onboard.
 type OnboardRequest struct {

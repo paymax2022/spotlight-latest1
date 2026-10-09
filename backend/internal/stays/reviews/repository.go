@@ -3,7 +3,6 @@ package reviews
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -152,7 +151,7 @@ func (r *Repository) PropertyOfReview(ctx context.Context, reviewID string) (str
 	var pid string
 	err := r.db.QueryRow(ctx, `SELECT property_id::text FROM public.stays_review WHERE id = $1`, reviewID).Scan(&pid)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("reviews: review not found")
+		return "", errors.New("reviews: review not found")
 	}
 	return pid, err
 }
@@ -166,7 +165,7 @@ func (r *Repository) SetStatus(ctx context.Context, reviewID, status, reason str
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("reviews: review not found")
+		return errors.New("reviews: review not found")
 	}
 	return nil
 }

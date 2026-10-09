@@ -2,14 +2,13 @@ package feestrustscore
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
 // PURE tests — no DB. They prove the score is DETERMINISTIC given fixed inputs, that the
 // component breakdown is explainable and sums to the score, and that an admin override records
 // the actor + reason (and wins for the reported score while preserving the computed score).
-
-// ── in-memory fakes ──────────────────────────────────────────────────────────────
 
 type fakeMetrics struct{ in map[string]TrustInputs }
 
@@ -46,8 +45,6 @@ func (f *fakeOverrides) GetOverride(_ context.Context, schoolID string) (float64
 	return r.score, r.by, r.reason, true, nil
 }
 
-// ── Determinism: same inputs → same score ────────────────────────────────────────
-
 func TestComputeFromInputs_Deterministic(t *testing.T) {
 	in := TrustInputs{
 		TotalBilledMinor:    1_000_000,
@@ -70,8 +67,6 @@ func TestComputeFromInputs_Deterministic(t *testing.T) {
 		t.Errorf("expected band excellent for 88, got %q", a.Band)
 	}
 }
-
-// ── Explainability: components present, weighted, and sum to the score ───────────
 
 func TestComputeFromInputs_ComponentBreakdownSumsToScore(t *testing.T) {
 	in := TrustInputs{
@@ -110,16 +105,12 @@ func TestComputeFromInputs_ComponentBreakdownSumsToScore(t *testing.T) {
 	}
 }
 
-// ── Zero-denominator inputs are neutral (not penalised) ──────────────────────────
-
 func TestComputeFromInputs_ZeroDenominatorsNeutral(t *testing.T) {
 	ts := ComputeFromInputs("new-school", TrustInputs{}) // nothing billed/due/paid
 	if ts.Score != 100 {
 		t.Errorf("a school with no activity must score neutral 100, got %v", ts.Score)
 	}
 }
-
-// ── Override records actor + reason and wins for the reported score ───────────────
 
 func TestOverride_RecordsActorAndReason(t *testing.T) {
 	ctx := context.Background()
@@ -153,18 +144,16 @@ func TestOverride_RecordsActorAndReason(t *testing.T) {
 func TestOverride_RequiresReasonAndValidScore(t *testing.T) {
 	svc := NewService(newFakeMetrics(), newFakeOverrides())
 	ctx := context.Background()
-	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 50}); err != ErrMissingReason {
+	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 50}); !errors.Is(err, ErrMissingReason) {
 		t.Errorf("missing reason must be rejected, got %v", err)
 	}
-	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 150, Reason: "x"}); err != ErrInvalidScore {
+	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 150, Reason: "x"}); !errors.Is(err, ErrInvalidScore) {
 		t.Errorf("out-of-range score must be rejected, got %v", err)
 	}
-	if _, err := svc.Override(ctx, "", OverrideRequest{SchoolID: "s", Score: 50, Reason: "x"}); err != ErrUnauthenticated {
+	if _, err := svc.Override(ctx, "", OverrideRequest{SchoolID: "s", Score: 50, Reason: "x"}); !errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("missing actor must be rejected, got %v", err)
 	}
 }
-
-// ── Compute applies an active override on read ────────────────────────────────────
 
 func TestCompute_AppliesActiveOverride(t *testing.T) {
 	ctx := context.Background()

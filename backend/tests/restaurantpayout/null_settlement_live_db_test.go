@@ -1,19 +1,15 @@
 package restaurantpayout_test
 
-// ---------------------------------------------------------------------------
 // D8 regression (live-DB): an order whose settlement_id is NULL — one created
-// outside the escrow path — must still be transitionable and cancellable.
-//
+// outside the escrow path — must still be transitional and cancellable.
 // Before the fix, restaurant/service.go scanned the NULLABLE settlement_id
 // column into a Go string in transitionInternal and cancelAndRefund; the NULL
 // scan errored and was masked as "restaurant: order not found", so the order
 // could never advance or be cancelled. The fix COALESCEs settlement_id to '' in
 // both reads (mirroring delivery.go) and skips the refund when there is no
 // escrow to return.
-//
 // Skips unless TEST_DATABASE_URL is set (same gate as the sibling
 // live-DB tests). seedPendingOrder deliberately inserts NO settlement_id.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

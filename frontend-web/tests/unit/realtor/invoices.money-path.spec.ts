@@ -32,8 +32,8 @@ const KEY = 'idem-key-abc';
 interface Cfg {
   invoice: any;
   lease: any;
-  priorPayment?: any;         // returned by realtor_payments .maybeSingle() (fast-path + post-finalize refetch)
-  rpcResult?: any;            // returned by supabase.rpc('realtor_pay_invoice', …)
+  priorPayment?: any;
+  rpcResult?: any;
   rpcError?: any;
   postFinalizePayment?: any;  // payment row AFTER a successful rpc call (defaults to rpcResult shape)
   postFinalizeInvoice?: any;  // invoice row AFTER a successful rpc call

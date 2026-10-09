@@ -1,12 +1,10 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Marketplace Boost money path (docs/qa/modules/marketplace.md
 // §4 P0 cases MKT-INT-001, MKT-INV-001/002/003/004, MKT-SEC-001) plus a new case
 // proving the tier-limit gate added to close the §6 "Tier/KYC gate" FINDING
 // (PurchaseBoost previously called s.ledger.Debit directly with no tier-limit/KYC
 // gate at all).
-//
 // service_boost_test.go already covers the ledger EFFECT (postBoostCharge /
 // postBoostRefund) against an in-memory fake boostLedger — real, but not a
 // live-DB money-path UAT case: it never exercises the real Postgres ledger
@@ -17,12 +15,9 @@ package marketplace
 // ledger.NewService(ledger.NewRepository(pool), nil), wallets funded through
 // the ledger (never a direct balance UPDATE — wallet balances are a ledger
 // projection, never mutated directly, per CLAUDE.md).
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -39,8 +34,6 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func boostTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -68,8 +61,6 @@ func newBoostTestService(pool *pgxpool.Pool) (*Service, *ledger.Service) {
 	svc := NewService(pool, led, nil).WithTiers(tiers.NewService(pool))
 	return svc, led
 }
-
-// ── fixture helpers ─────────────────────────────────────────────────────────
 
 // seedBoostSeller inserts a throwaway auth.users + user_profiles row at the
 // given KYC tier and registers cleanup. Tier3 ("full KYC") carries an
@@ -105,7 +96,7 @@ func seedBoostCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool) st
 		id, "boost-test-"+id); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_categories WHERE id=$1`, id) })
 	return id
 }
 
@@ -118,10 +109,10 @@ func seedActiveListing(t *testing.T, ctx context.Context, pool *pgxpool.Pool, se
 			 condition, status, escrow_eligible, state)
 		VALUES ($1,'NG',$2,$3,'Boost Test Listing Title','A perfectly ordinary listing description with eight whole words',
 		        1000000,'NGN','used','active',true,'Lagos')`
-	if _, err := pool.Exec(ctx, q, id, sellerID, categoryID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), q, id, sellerID, categoryID); err != nil {
 		t.Fatalf("seed listing: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_listings WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_listings WHERE id=$1`, id) })
 	return id
 }
 
@@ -142,7 +133,7 @@ func fundBoostWallet(t *testing.T, ctx context.Context, led *ledger.Service, use
 func boostWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) int64 {
 	t.Helper()
 	var bal int64
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_DEBIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
 		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
 		WHERE a.user_id=$1`, userID).Scan(&bal); err != nil {
@@ -155,7 +146,6 @@ func boostWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, u
 // the standing commission account, read from that posting's own leg: the CREDIT side
 // written by postBoostCharge (":credit"), or the REVERSAL_CREDIT side written by
 // postBoostRefund's PostReversalPair (":rev_credit"). 0 means the leg was never posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. commission is a single
 // global standing account also moved by stays, insurance, creators, finance commissions
 // and the admin-txn suites, and `go test ./...` runs packages concurrently against one
@@ -170,7 +160,7 @@ func boostCommissionLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		t.Fatalf("commission account: %v", err)
 	}
 	var moved int64
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
 		  WHERE idempotency_key=$1 AND type=$2 AND account_id=$3`,
 		idempotencyKey, entryType, acc.ID).Scan(&moved); err != nil {
@@ -196,7 +186,7 @@ func boostRefundCommissionKobo(t *testing.T, ctx context.Context, pool *pgxpool.
 func boostRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listingID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM mkt_boosts WHERE listing_id=$1`, listingID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM mkt_boosts WHERE listing_id=$1`, listingID).Scan(&n); err != nil {
 		t.Fatalf("boost row count: %v", err)
 	}
 	return n
@@ -205,7 +195,7 @@ func boostRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listin
 func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, reference string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE reference=$1`, reference).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM ledger_entries WHERE reference=$1`, reference).Scan(&n); err != nil {
 		t.Fatalf("ledger entry count for ref %s: %v", reference, err)
 	}
 	return n
@@ -216,8 +206,6 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 // within Tier1's ₦50k/day limit (5,000,000 kobo), so it never accidentally
 // trips the tier gate in the six cases that are not the tier-gate case itself.
 const startTierPriceKobo int64 = 50000
-
-// ── MKT-INT-001 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger covers
 // MKT-INT-001: boost purchase debits the seller wallet, activates the boost,
@@ -260,8 +248,6 @@ func TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger(t *testi
 		t.Errorf("mkt_boosts rows for listing = %d, want 1", n)
 	}
 }
-
-// ── MKT-INV-001 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge covers
 // MKT-INV-001: replaying the same Idempotency-Key returns the cached 201 body
@@ -307,8 +293,6 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 	}
 }
 
-// ── MKT-INV-002 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_MissingIdempotencyKey covers MKT-INV-002: a missing
 // Idempotency-Key is rejected before any ledger posting.
 func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
@@ -324,7 +308,7 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 	_, err := svc.PurchaseBoost(ctx, seller, "", CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if !errors.Is(err, error(ErrIdemMissing)) {
 		var ce *CodedError
-		if !(errors.As(err, &ce) && ce.Code == CodeIdempotencyMissing) {
+		if !errors.As(err, &ce) || ce.Code != CodeIdempotencyMissing {
 			t.Fatalf("err = %v, want IDEMPOTENCY_KEY_REQUIRED", err)
 		}
 	}
@@ -335,8 +319,6 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 		t.Errorf("commission moved by %d, want 0 (no ledger posting)", got)
 	}
 }
-
-// ── MKT-INV-003 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_RejectBoost_AutoRefundBalancedReversal covers MKT-INV-003: admin
 // reject reverses the exact kobo via a balanced reversal, stamps refund_ref,
@@ -390,14 +372,11 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	}
 }
 
-// ── Coordinator-flagged RejectBoost fixes (UAT follow-up) ───────────────────
-//
 // Three sibling agents independently found RejectBoost's OLD two-UPDATE
 // sequence (status -> rejected_with_reason, committed; THEN post the refund;
 // THEN status -> auto_refunded) was not atomic/resumable. The three tests
 // below reproduce each finding against the FIXED RejectBoost and prove it
 // closed:
-//
 //  1. seller with no ledger_accounts row -> refund fails -> boost must stay
 //     at its ORIGINAL status (never stranded at rejected_with_reason).
 //  2. a boost already stranded at rejected_with_reason with no refund posted
@@ -436,7 +415,9 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	_, err := svc.RejectBoost(ctx, admin, boostID, "policy_violation")
 	if err == nil {
@@ -449,7 +430,7 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	// refund_ref=NULL — the stranded state agent #1 reported live.
 	var status string
 	var refundRef *string
-	if err := pool.QueryRow(ctx, `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
 		t.Fatalf("read boost: %v", err)
 	}
 	if status != string(BoostActive) {
@@ -463,7 +444,7 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	// production; here, just seeding auth.users), a retry must succeed cleanly
 	// — guardBoostTransition still accepts 'active' as the FROM status because
 	// the failed attempt changed nothing.
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users for retry: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, fakeSeller)
@@ -501,10 +482,12 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, rejection_reason_code, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'rejected_with_reason','policy_violation',$5,now(),now()+interval '7 days')`
-	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 
@@ -527,8 +510,6 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 		t.Errorf("seller credited %d, want %d — the missing refund leg must complete on resume", sellerBalAfter-sellerBalBefore, startTierPriceKobo)
 	}
 }
-
-// ── MKT-FSM-015 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp covers the AUTHZ
 // agent's lower-severity finding: re-rejecting an already-auto_refunded boost
@@ -586,8 +567,6 @@ func TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp(t *testing.T) {
 	}
 }
 
-// ── MKT-INV-004 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed covers MKT-INV-004:
 // insufficient wallet balance fails closed — no boost row, no partial ledger entry.
 func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
@@ -618,8 +597,6 @@ func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
 	}
 }
 
-// ── MKT-SEC-001 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge covers MKT-SEC-001:
 // two GENUINELY concurrent PurchaseBoost calls (real goroutines + sync.WaitGroup)
 // for the same seller+listing+tier, with DISTINCT Idempotency-Keys, collide on
@@ -639,7 +616,7 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	results := make([]*Boost, n)
 	errs := make([]error, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			results[i], errs[i] = svc.PurchaseBoost(ctx, seller, uuid.New().String(), CreateBoostInput{ListingID: listingID, Tier: "start"})
@@ -648,7 +625,7 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	wg.Wait()
 
 	successCount := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successCount++
 		} else {
@@ -670,8 +647,6 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 		t.Fatalf("mkt_boosts rows = %d, want at least 1 (the winner's row)", n)
 	}
 }
-
-// ── NEW: tier-limit gate (Task 1 of this UAT pass) ──────────────────────────
 
 // TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller proves the fail-closed
 // tier-limit gate added to close §6's "Tier/KYC gate (FINDING)" actually
@@ -740,7 +715,7 @@ func TestLiveDB_PurchaseBoost_NilTierEnforcer_FailsClosed(t *testing.T) {
 	_, err := svc.PurchaseBoost(ctx, seller, "niltier-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if !errors.Is(err, error(ErrTierGateUnwired)) {
 		var ce *CodedError
-		if !(errors.As(err, &ce) && ce.Code == CodeTierGateUnwired) {
+		if !errors.As(err, &ce) || ce.Code != CodeTierGateUnwired {
 			t.Fatalf("err = %v, want ErrTierGateUnwired (TIER_GATE_UNWIRED)", err)
 		}
 	}
@@ -749,8 +724,6 @@ func TestLiveDB_PurchaseBoost_NilTierEnforcer_FailsClosed(t *testing.T) {
 	}
 }
 
-// ── CancelBoost: same atomicity/resumability fix as RejectBoost ────────────
-//
 // The coordinator independently spotted that CancelBoost (the seller-initiated
 // counterpart to RejectBoost) had the IDENTICAL non-atomic two-UPDATE pattern:
 // status -> cancelled_by_seller committed standalone, THEN the refund posted,
@@ -783,7 +756,9 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	_, err := svc.CancelBoost(ctx, fakeSeller, boostID)
 	if err == nil {
@@ -793,7 +768,7 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 
 	var status string
 	var refundRef *string
-	if err := pool.QueryRow(ctx, `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
 		t.Fatalf("read boost: %v", err)
 	}
 	if status != string(BoostActive) {
@@ -804,7 +779,7 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	}
 
 	// RESUMABLE: once the seller has a real identity, a retry must succeed.
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users for retry: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, fakeSeller)
@@ -844,10 +819,12 @@ func TestLiveDB_CancelBoost_ResumesFromStrandedCancelledBySellerRow(t *testing.T
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, rejection_reason_code, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'cancelled_by_seller','seller_cancelled',$5, now() - interval '1 day', now() + interval '6 days')`
-	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 

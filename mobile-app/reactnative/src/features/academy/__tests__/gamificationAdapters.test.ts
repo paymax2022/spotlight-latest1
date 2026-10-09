@@ -1,5 +1,4 @@
 // Unit tests for the gamification profile adapter (Go → mobile). XP/streak are
-// awarded server-side on assessment/exam completion; the profile read maps to the
 // mobile shape, computing xpToNext from the backend level curve. Run: npm run test:academy
 
 import { test } from 'node:test';

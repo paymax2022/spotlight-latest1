@@ -2,8 +2,6 @@ package maplerad
 
 import "testing"
 
-// ── Allowed forward transitions produce the correct ledger effect ───────────
-
 func TestDecideTransition_AllowedForward(t *testing.T) {
 	cases := []struct {
 		from, to OpStatus
@@ -30,8 +28,6 @@ func TestDecideTransition_AllowedForward(t *testing.T) {
 		}
 	}
 }
-
-// ── Disallowed transitions are rejected ─────────────────────────────────────
 
 func TestDecideTransition_RejectInitiatedToTerminal(t *testing.T) {
 	// INITIATED must never jump straight to a terminal — terminal is webhook-only.
@@ -71,8 +67,6 @@ func TestDecideTransition_RejectTerminalToAnything(t *testing.T) {
 	}
 }
 
-// ── Idempotent terminal replay is a no-op ───────────────────────────────────
-
 func TestDecideTransition_TerminalReplayIsNoOp(t *testing.T) {
 	for _, s := range []OpStatus{StatusSuccess, StatusFailed, StatusReversed, StatusPending, StatusInitiated} {
 		got := DecideTransition(s, s)
@@ -84,8 +78,6 @@ func TestDecideTransition_TerminalReplayIsNoOp(t *testing.T) {
 		}
 	}
 }
-
-// ── Out-of-order: success-after-fail / fail-after-success cannot flip outcome ─
 
 func TestDecideTransition_OutOfOrderCannotFlip(t *testing.T) {
 	// A late SUCCESS webhook arriving after the transfer already FAILED must not
@@ -105,8 +97,6 @@ func TestDecideTransition_OutOfOrderCannotFlip(t *testing.T) {
 		t.Errorf("SUCCESS→REVERSED must be allowed with EffectCompensate, got %+v", rev)
 	}
 }
-
-// ── Webhook status normalization ────────────────────────────────────────────
 
 func TestNormalizeWebhookStatus(t *testing.T) {
 	cases := map[string]OpStatus{
@@ -134,8 +124,6 @@ func TestNormalizeWebhookStatus(t *testing.T) {
 		t.Error("empty status must report known=false")
 	}
 }
-
-// ── Per-leg idempotency keys are distinct ───────────────────────────────────
 
 func TestLegKey_DistinctPerLeg(t *testing.T) {
 	ref := "mpl-abc"

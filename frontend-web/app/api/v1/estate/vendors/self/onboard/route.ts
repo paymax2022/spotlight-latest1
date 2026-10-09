@@ -13,7 +13,7 @@ function mapVendor(row: any) {
   };
 }
 
-// POST /api/v1/estate/vendors/self/onboard — a resident self-registers as a
+// A resident self-registers as a
 // vendor in their own estate (Block 42). Resident-scoped: the estate is resolved
 // server-side; the vendor row is linked to the caller (estate_vendors.user_id).
 // Body: { business_name, category?, phone?, specialties? }.
@@ -24,7 +24,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const businessName = String(body?.business_name ?? body?.businessName ?? '').trim();
     if (!businessName) throw new ApiError('A business name is required', 400);
     const category = body?.category ? String(body.category) : 'general';

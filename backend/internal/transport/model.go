@@ -1,6 +1,10 @@
 package transport
 
-import "time"
+import (
+	"time"
+
+	"spotlight/backend/go-common/fsm"
+)
 
 // DriverStatus tracks driver availability.
 type DriverStatus string
@@ -40,7 +44,7 @@ const (
 
 // allowedTransitions defines the legal phase moves. Any transition not listed
 // is rejected with HTTP 409 (invalid state transition).
-var allowedTransitions = map[TripPhase]map[TripPhase]bool{
+var allowedTransitions = fsm.Table[TripPhase]{
 	PhaseRequested:       {PhaseFareNegotiating: true, PhaseDriverAssigned: true, PhaseCancelled: true, PhaseNoShow: true, PhaseSafetyHold: true},
 	PhaseFareNegotiating: {PhaseFareNegotiating: true, PhaseDriverAssigned: true, PhaseCancelled: true, PhaseNoShow: true, PhaseSafetyHold: true},
 	PhaseDriverAssigned:  {PhaseDriverArriving: true, PhaseCancelled: true, PhaseNoShow: true, PhaseSafetyHold: true},
@@ -52,14 +56,7 @@ var allowedTransitions = map[TripPhase]map[TripPhase]bool{
 
 // canTransition reports whether moving from->to is permitted.
 func canTransition(from, to TripPhase) bool {
-	if from == to {
-		return false
-	}
-	m, ok := allowedTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return allowedTransitions.Can(from, to)
 }
 
 // Error codes returned to clients (BUILD-CONTRACT error conventions).
@@ -85,9 +82,24 @@ type CodedError struct {
 	Status  int
 	Code    string
 	Message string
+	// Details are extra machine-readable fields merged into the error body
+	// (e.g. the reference of an already-open checkout so a client can resume it).
+	Details map[string]any
 }
 
 func (e *CodedError) Error() string { return e.Message }
+
+// Body is the JSON error body: {error, code} plus any Details (which can never
+// override those two keys).
+func (e *CodedError) Body() map[string]any {
+	b := map[string]any{}
+	for k, v := range e.Details {
+		b[k] = v
+	}
+	b["error"] = e.Message
+	b["code"] = e.Code
+	return b
+}
 
 func codedErr(status int, code, msg string) *CodedError {
 	return &CodedError{Status: status, Code: code, Message: msg}
@@ -136,8 +148,6 @@ type RequestTripRequest struct {
 	FareKobo       int64  `json:"fare_kobo" binding:"required,min=1"`
 	IdempotencyKey string `json:"idempotency_key" binding:"required"`
 }
-
-// ─── Mobility domain structs ─────────────────────────────────────────────────
 
 // MobilityProfile is the rider's trust + saved data layer.
 type MobilityProfile struct {
@@ -270,8 +280,6 @@ type FareEstimate struct {
 	OfferMaxKobo   int64  `json:"offerMaxKobo"`
 	Polyline       string `json:"polyline"`
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // Place is a pickup/destination with coordinates + address.
 type Place struct {

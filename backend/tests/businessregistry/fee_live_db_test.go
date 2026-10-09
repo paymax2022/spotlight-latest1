@@ -1,15 +1,12 @@
 package businessregistry_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB money-path test for the CAC business-registry FEE DEBIT (the funded
 // happy path the live-HTTP campaign couldn't reach without funding a wallet):
 // register_new → name-check → reserve → PAY FEE (real wallet debit) → submit.
-//
 // Asserts the money invariant: the fee is debited EXACTLY once (idempotent
 // replay posts no second debit), and — when the sandbox provider registers —
 // the profile reaches a verified/registered state that satisfies the
 // merchant-upgrade gate (HasVerifiedBusiness). Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -70,10 +67,14 @@ func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	tierSvc := tiers.NewService(pool)
 	wal := wallet.NewService(led, tierSvc)
 	svc := business.NewService(business.Deps{
-		Repo:     business.NewRepository(pool),
-		Ledger:   led,
-		Wallet:   wal,
-		Provider: cac.New(cac.Config{}), // empty config → deterministic sandbox
+		Repo:   business.NewRepository(pool),
+		Ledger: led,
+		Wallet: wal,
+		// Empty creds + AllowSandbox → deterministic sandbox (the test env is not
+		// production; the zero-value AllowSandbox=false now fails closed).
+		Provider: cac.New(cac.Config{AllowSandbox: true}),
+		// Sandbox-verified rows must still satisfy the gate in this test env.
+		AllowSandboxVerified: true,
 		// FeeKobo/PlatformFeeKobo zero → defaults (1_500_000 + 200_000).
 	})
 	const totalFee int64 = business.DefaultRegistrationFeeKobo + business.DefaultPlatformFeeKobo
@@ -81,8 +82,8 @@ func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	user := seedUser(t, ctx, pool)
 	// Give the wallet more than the fee. tiers: lift the user so the debit limit
 	// clears the fee (a fresh user may be tier 0 with a low cap).
-	pool.Exec(ctx, `UPDATE public.users SET kyc_tier=3 WHERE id=$1`, user)
-	pool.Exec(ctx, `UPDATE public.user_profiles SET kyc_tier=3 WHERE id=$1`, user)
+	_, _ = pool.Exec(ctx, `UPDATE public.users SET kyc_tier=3 WHERE id=$1`, user)
+	_, _ = pool.Exec(ctx, `UPDATE public.user_profiles SET kyc_tier=3 WHERE id=$1`, user)
 	if err := wal.Credit(ctx, user, "cac-fee-test-fund", "fund-"+user, totalFee+500_000); err != nil {
 		t.Fatalf("fund wallet: %v", err)
 	}

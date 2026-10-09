@@ -6,7 +6,6 @@ import "context"
 // code calls this interface; the concrete vendor adapter (e.g. connect/live's
 // LiveKit/VideoSDK issuer) is wired in at the composition root. NO vendor type ever
 // leaks into this package (paymax-rails.md streaming — "adapter, not SDK leak").
-//
 //   - CreateRoom provisions/returns a room reference for a session.
 //   - Token mints a join credential for (room, user, role).
 //

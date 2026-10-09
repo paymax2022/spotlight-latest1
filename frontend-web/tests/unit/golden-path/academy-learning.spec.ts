@@ -23,7 +23,10 @@ vi.mock('next/server', () => ({
 vi.mock('@/src/lib/auth/request', () => ({ requireRequestUser: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn(), createClient: vi.fn() }));
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission: vi.fn() }));
-vi.mock('@/src/server/services/academy/learner', () => ({ resolveLearner: vi.fn() }));
+vi.mock('@/src/server/services/academy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/src/server/services/academy')>()),
+  resolveLearner: vi.fn(),
+}));
 
 import { POST as PROGRESS } from '../../../app/api/academy/learning/progress/route';
 import { POST as SUBMIT } from '../../../app/api/academy/assignments/submit/route';
@@ -31,7 +34,7 @@ import { PATCH as GRADE } from '../../../app/api/admin/academy/submissions/route
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { resolveLearner } from '@/src/server/services/academy/learner';
+import { resolveLearner } from '@/src/server/services/academy';
 
 const USER = { id: 'user-001', email: 'student@example.com' };
 const LEARNER = { ok: true as const, enrollmentId: 'enr-1', programId: 'prog-1', batchId: 'batch-1' };
@@ -74,7 +77,6 @@ describe('POST /api/academy/learning/progress', () => {
   const body = { lessonId: 'lesson-1', completed: true };
 
   it('refuses a lesson from another programme', async () => {
-    // The id is real; it just is not this learner's. Without the ownership check a
     // learner could mark progress against any lesson in the database.
     const d = db({ academy_lessons: { id: 'lesson-1', academy_modules: { program_id: 'prog-OTHER' } } });
     vi.mocked(createAdminClient).mockReturnValue(d);
@@ -244,8 +246,6 @@ describe('PATCH /api/admin/academy/submissions — grading', () => {
   });
 });
 
-// ── Enrolment: the values written must be ones the database accepts ──────────
-
 describe('ensureEnrollment — the row it writes', () => {
   it('stages a new enrolment as "enrolled", a real academy_candidate_stage label', async () => {
     // current_stage is a Postgres ENUM. An invalid label makes the insert fail, and
@@ -286,7 +286,7 @@ describe('ensureEnrollment — the row it writes', () => {
       },
     };
 
-    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const { ensureEnrollment } = await import('@/src/server/services/academy');
     const result = await ensureEnrollment(supabase, 'app-1');
 
     expect(result.enrolled).toBe(true);
@@ -331,7 +331,7 @@ describe('ensureEnrollment — a missing plan is not proof that nothing is owed'
     // Plan creation CAN fail — it silently did, because 'upfront' is not a legal
     // cadence. Treating "no plan" as "free batch" enrolled someone owing ₦50,000.
     const d = db({ ...APPROVED, tuition_total_ngn: 50000 }, { training_fee_ngn: 0 });
-    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const { ensureEnrollment } = await import('@/src/server/services/academy');
     const gate = await ensureEnrollment(d, 'app-1');
 
     expect(gate).toEqual({ enrolled: false, reason: 'tuition_unpaid' });
@@ -340,7 +340,7 @@ describe('ensureEnrollment — a missing plan is not proof that nothing is owed'
 
   it('also refuses when the debt is on the batch rather than the chosen areas', async () => {
     const d = db({ ...APPROVED, tuition_total_ngn: 0 }, { training_fee_ngn: 150000 });
-    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const { ensureEnrollment } = await import('@/src/server/services/academy');
     const gate = await ensureEnrollment(d, 'app-1');
     expect(gate).toEqual({ enrolled: false, reason: 'tuition_unpaid' });
     expect(d.writes).toHaveLength(0);
@@ -348,7 +348,7 @@ describe('ensureEnrollment — a missing plan is not proof that nothing is owed'
 
   it('enrols on approval when the batch is genuinely free', async () => {
     const d = db({ ...APPROVED, tuition_total_ngn: 0 }, { training_fee_ngn: 0 });
-    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const { ensureEnrollment } = await import('@/src/server/services/academy');
     const gate = await ensureEnrollment(d, 'app-1');
     expect(gate.enrolled).toBe(true);
     expect(d.writes).toHaveLength(1);

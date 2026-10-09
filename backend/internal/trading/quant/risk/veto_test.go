@@ -39,23 +39,28 @@ func TestCheckLimits_EachBreach(t *testing.T) {
 		t.Fatal("no-equity must be NO_EQUITY breach")
 	}
 	// daily loss hit.
-	st := mkState(); st.RealizedTodayKobo = -10_000_000
+	st := mkState()
+	st.RealizedTodayKobo = -10_000_000
 	if b := CheckLimits(st, baseLimits(), cleanCtx()); !has(b, "MAX_DAILY_LOSS") {
 		t.Fatal("daily loss not vetoed")
 	}
 	// drawdown.
-	st = mkState(); st.EquityKobo = 75_000_000 // 25% dd > 20%
+	st = mkState()
+	st.EquityKobo = 75_000_000 // 25% dd > 20%
 	if b := CheckLimits(st, baseLimits(), cleanCtx()); !has(b, "MAX_DRAWDOWN") {
 		t.Fatal("drawdown not vetoed")
 	}
 	// position size cap.
-	tc := cleanCtx(); tc.Trade.NotionalKobo = 40_000_000
+	tc := cleanCtx()
+	tc.Trade.NotionalKobo = 40_000_000
 	if b := CheckLimits(mkState(), baseLimits(), tc); !has(b, "MAX_POSITION_SIZE") {
 		t.Fatal("oversize not vetoed")
 	}
 	// gross leverage: existing 90M + new 40M = 130M / 100M = 1.3x, but cap 2.0x → ok;
 	// push cap down to 1.0x to trip.
-	lim := baseLimits(); lim.MaxGrossLeverageBps = 9000; lim.MaxPositionKobo = 0
+	lim := baseLimits()
+	lim.MaxGrossLeverageBps = 9000
+	lim.MaxPositionKobo = 0
 	if b := CheckLimits(mkState(), lim, cleanCtx()); !has(b, "MAX_GROSS_LEVERAGE") {
 		t.Fatal("leverage not vetoed")
 	}
@@ -64,22 +69,26 @@ func TestCheckLimits_EachBreach(t *testing.T) {
 	if b := CheckLimits(mkState(), baseLimits(), cleanCtx()); has(b, "MAX_CORRELATED_EXPOSURE") {
 		t.Fatal("cluster tripped under the 90% baseline (80M < 90M) — should not")
 	}
-	tight := baseLimits(); tight.MaxCorrelatedFracBps = 6000
+	tight := baseLimits()
+	tight.MaxCorrelatedFracBps = 6000
 	if b := CheckLimits(mkState(), tight, cleanCtx()); !has(b, "MAX_CORRELATED_EXPOSURE") {
 		t.Fatal("cluster over-exposure (80M > 60M) not vetoed under the tight cap")
 	}
 	// min confidence.
-	tc = cleanCtx(); tc.Trade.ConfidenceBps = 5000
+	tc = cleanCtx()
+	tc.Trade.ConfidenceBps = 5000
 	if b := CheckLimits(mkState(), baseLimits(), tc); !has(b, "MIN_CONFIDENCE") {
 		t.Fatal("low confidence not vetoed")
 	}
 	// disallowed asset.
-	tc = cleanCtx(); tc.Trade.Asset = "DOGE"
+	tc = cleanCtx()
+	tc.Trade.Asset = "DOGE"
 	if b := CheckLimits(mkState(), baseLimits(), tc); !has(b, "ASSET_NOT_ALLOWED") {
 		t.Fatal("disallowed asset not vetoed")
 	}
 	// outside trading hours.
-	tc = cleanCtx(); tc.WithinTradingWindow = false
+	tc = cleanCtx()
+	tc.WithinTradingWindow = false
 	if b := CheckLimits(mkState(), baseLimits(), tc); !has(b, "OUTSIDE_TRADING_HOURS") {
 		t.Fatal("out-of-hours not vetoed")
 	}
@@ -109,8 +118,8 @@ func TestCircuitBreakers(t *testing.T) {
 func TestScreen_Pipeline(t *testing.T) {
 	base := ScreenInputs{
 		State: mkState(), Limits: baseLimits(),
-		Ladder:  DrawdownLadderConfig{ReduceAtBps: 500, HedgeAtBps: 1000, FlatAtBps: 1500, HaltAtBps: 2000},
-		Trade:   ProposedTrade{Asset: "BTC", Side: Long, NotionalKobo: 8_000_000, ConfidenceBps: 8000},
+		Ladder:   DrawdownLadderConfig{ReduceAtBps: 500, HedgeAtBps: 1000, FlatAtBps: 1500, HaltAtBps: 2000},
+		Trade:    ProposedTrade{Asset: "BTC", Side: Long, NotionalKobo: 8_000_000, ConfidenceBps: 8000},
 		Clusters: [][]string{{"BTC", "ETH"}}, WithinWindow: true,
 	}
 	// Clean: approved, sized (BTC+ETH cluster 70M + 8M = 78M > 60M cap → actually vetoed!).

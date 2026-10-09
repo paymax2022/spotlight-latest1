@@ -9,15 +9,16 @@ import { NextResponse } from 'next/server';
 export async function POST(request: Request) {
   if (!featureFlags.wallet()) return errorResponse('Wallet feature is not available.', 503);
 
-  const idempotencyKey = request.headers.get('Idempotency-Key');
-  if (!idempotencyKey) {
-    return errorResponse('Idempotency-Key header is required for wallet mutations.', 400);
-  }
-
   try {
     const user = await requireRequestUser(request);
 
-    const body = await request.json() as Record<string, unknown>;
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (!idempotencyKey) {
+      return errorResponse('Idempotency-Key header is required for wallet mutations.', 400);
+    }
+
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const amountKobo = body.amount_kobo;
 
     if (typeof amountKobo !== 'number' || !Number.isInteger(amountKobo) || amountKobo <= 0) {

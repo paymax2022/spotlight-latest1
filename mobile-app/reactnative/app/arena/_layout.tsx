@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Arena (Driver Contest) navigator. Spectator (S1–S9) + contestant (C0–C9)

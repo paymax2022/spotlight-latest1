@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	platformRedis "spotlight/backend/internal/platform/redis"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
-	platformRedis "spotlight/backend/internal/platform/redis"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // AddressGeocoder resolves a typed address to a pin + Plus Code. Satisfied by
@@ -57,7 +61,7 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertEstate = `INSERT INTO estates (id, name, address, admin_id) VALUES ($1,$2,$3,$4)`
 	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID); err != nil {
@@ -112,7 +116,7 @@ func (s *Service) IssueVisitorPass(ctx context.Context, estateID, issuerID strin
 		return nil, err
 	}
 	if req.ValidUntil.Before(req.ValidFrom) {
-		return nil, fmt.Errorf("estate: valid_until must be after valid_from")
+		return nil, errors.New("estate: valid_until must be after valid_from")
 	}
 	p := &VisitorPass{
 		ID:          uuid.New().String(),
@@ -148,7 +152,7 @@ func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCo
 		&p.ID, &p.EstateID, &p.IssuedBy, &p.VisitorName, &p.Purpose,
 		&p.QRCode, &p.ValidFrom, &p.ValidUntil, &p.UsedAt, &p.Status, &p.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: pass not found, already used, or expired")
+		return nil, errors.New("estate: pass not found, already used, or expired")
 	}
 	return p, nil
 }
@@ -159,10 +163,10 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 		return nil, err
 	}
 	if req.EndsAt.Before(req.StartsAt) {
-		return nil, fmt.Errorf("estate: ends_at must be after starts_at")
+		return nil, errors.New("estate: ends_at must be after starts_at")
 	}
 	if len(req.Candidates) < 2 {
-		return nil, fmt.Errorf("estate: election must have at least 2 candidates")
+		return nil, errors.New("estate: election must have at least 2 candidates")
 	}
 
 	el := &Election{
@@ -180,7 +184,7 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertEl = `INSERT INTO elections (id, estate_id, title, description, starts_at, ends_at, status, created_by) VALUES ($1,$2,$3,$4,$5,$6,'draft',$7)`
 	if _, err := tx.Exec(ctx, insertEl, el.ID, el.EstateID, el.Title, el.Description, el.StartsAt, el.EndsAt, el.CreatedBy); err != nil {
@@ -200,7 +204,6 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 // CastVote casts a vote in an open election using a Redlock-protected atomic check.
 // Enforces one-vote-per-resident via UNIQUE(election_id, voter_id).
 func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID string, req CastVoteRequest) (*Vote, error) {
-	// Verify voter is a resident.
 	if err := s.assertResident(ctx, estateID, voterID); err != nil {
 		return nil, err
 	}
@@ -217,16 +220,15 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if !elig.Eligible {
 		return nil, fmt.Errorf("estate: not eligible to vote in this election: %s", strings.Join(elig.Reasons, ", "))
 	}
-	// Verify election is open.
 	var status string
 	var startsAt, endsAt time.Time
 	if err := s.db.QueryRow(ctx, `SELECT status, starts_at, ends_at FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).
 		Scan(&status, &startsAt, &endsAt); err != nil {
-		return nil, fmt.Errorf("estate: election not found")
+		return nil, errors.New("estate: election not found")
 	}
 	now := time.Now()
 	if status != "open" || now.Before(startsAt) || now.After(endsAt) {
-		return nil, fmt.Errorf("estate: election is not currently open for voting")
+		return nil, errors.New("estate: election is not currently open for voting")
 	}
 
 	// Acquire Redlock to prevent duplicate concurrent submissions.
@@ -234,9 +236,9 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if s.redis != nil {
 		ok, token, err := platformRedis.AcquireLock(ctx, s.redis, lockKey, 10*time.Second)
 		if err != nil || !ok {
-			return nil, fmt.Errorf("estate: vote lock contention — try again")
+			return nil, errors.New("estate: vote lock contention — try again")
 		}
-		defer platformRedis.ReleaseLock(ctx, s.redis, lockKey, token)
+		defer func() { _ = platformRedis.ReleaseLock(ctx, s.redis, lockKey, token) }()
 	}
 
 	v := &Vote{
@@ -258,21 +260,26 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	var insertedID string
 	if err := s.db.QueryRow(ctx, q, v.ID, v.ElectionID, v.VoterID, v.CandidateID).Scan(&insertedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("estate: you have already voted in this election")
+			return nil, errors.New("estate: you have already voted in this election")
 		}
-		return nil, fmt.Errorf("estate: invalid candidate for this election")
+		return nil, errors.New("estate: invalid candidate for this election")
 	}
 	return v, nil
 }
 
 // GetResults returns the tally for a closed/tallied election.
-func (s *Service) GetResults(ctx context.Context, estateID, electionID string) ([]Candidate, error) {
+// ESTATE-AUTHZ: caller must be a resident/member — results are estate-private
+// (previously unauthenticated: any authed user could read any estate's tally).
+func (s *Service) GetResults(ctx context.Context, estateID, electionID, userID string) ([]Candidate, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).Scan(&status); err != nil {
-		return nil, fmt.Errorf("estate: election not found")
+		return nil, errors.New("estate: election not found")
 	}
 	if status != "closed" && status != "tallied" {
-		return nil, fmt.Errorf("estate: results only available after election closes")
+		return nil, errors.New("estate: results only available after election closes")
 	}
 	const q = `
 		SELECT ec.id, ec.election_id, ec.name, ec.bio, COUNT(ev.id) AS votes
@@ -296,10 +303,13 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID string) (
 	return out, rows.Err()
 }
 
-// ── Block 28: Security gate / guard app ───────────────────────────────────────
-
+// ListGates — Block 28: Security gate / guard app
 // ListGates returns all active gates for an estate.
-func (s *Service) ListGates(ctx context.Context, estateID string) ([]Gate, error) {
+// ESTATE-AUTHZ: member-only — the gate layout is estate security posture.
+func (s *Service) ListGates(ctx context.Context, estateID, userID string) ([]Gate, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, estate_id, name, gate_type, active, created_at FROM estate_gates WHERE estate_id=$1 AND active=TRUE ORDER BY name`
 	rows, err := s.db.Query(ctx, q, estateID)
 	if err != nil {
@@ -319,7 +329,18 @@ func (s *Service) ListGates(ctx context.Context, estateID string) ([]Gate, error
 
 // LookupCode resolves a numeric or QR code to an access code record.
 // Returns blacklisted status and whether entry is allowed.
-func (s *Service) LookupCode(ctx context.Context, estateID, numericCode, qrCode string) (*CheckinPayload, error) {
+// ESTATE-AUTHZ: member-only — this resolves visitor PII (name/phone/plate) plus
+// the issuing resident's unit; the numeric code space is small enough to brute
+// force, so it must not be callable cross-estate (previously unauthenticated).
+func (s *Service) LookupCode(ctx context.Context, estateID, userID, numericCode, qrCode string) (*CheckinPayload, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
+	return s.lookupCode(ctx, estateID, numericCode, qrCode)
+}
+
+// lookupCode is the ungated inner query — callers must authorize first.
+func (s *Service) lookupCode(ctx context.Context, estateID, numericCode, qrCode string) (*CheckinPayload, error) {
 	var c AccessCode
 	var residentUnit string
 
@@ -341,7 +362,7 @@ func (s *Service) LookupCode(ctx context.Context, estateID, numericCode, qrCode 
 		&c.VehiclePlate, &c.Purpose, &c.CodeType, &c.NumericCode, &c.QRCode,
 		&c.ValidFrom, &c.ValidUntil, &c.UsedCount, &c.MaxUses, &c.Status, &c.Blacklisted, &c.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("access code not found")
+		return nil, errors.New("access code not found")
 	}
 
 	// Resolve the issuing resident's unit for display.
@@ -365,8 +386,13 @@ func (s *Service) LookupCode(ctx context.Context, estateID, numericCode, qrCode 
 }
 
 // CheckInVisitor records a gate arrival and increments used_count.
+// ESTATE-AUTHZ: member-only — was callable by any authed user, letting them
+// consume someone else's visitor codes and forge gate events.
 func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, req GuardCheckinRequest) (*CheckinPayload, error) {
-	payload, err := s.LookupCode(ctx, estateID, req.NumericCode, req.QRCode)
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return nil, err
+	}
+	payload, err := s.lookupCode(ctx, estateID, req.NumericCode, req.QRCode)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +404,7 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	_, err = tx.Exec(ctx,
 		`UPDATE visitor_access_codes SET used_count=used_count+1,
@@ -415,13 +441,16 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 }
 
 // CheckOutVisitor records a gate departure.
+// ESTATE-AUTHZ: member-only (was callable by any authed user).
 func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID, gateID string) error {
-	// Verify code belongs to this estate.
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return err
+	}
 	var cnt int
 	if err := s.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
 	).Scan(&cnt); err != nil || cnt == 0 {
-		return fmt.Errorf("code not found in this estate")
+		return errors.New("code not found in this estate")
 	}
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO visitor_checkins (id, code_id, guard_id, gate_id, event, captured_at)
@@ -432,7 +461,12 @@ func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID
 }
 
 // SubmitIncidentReport saves a guard incident report.
+// ESTATE-AUTHZ: member-only (was callable by any authed user — forged incident
+// reports into any estate's security log).
 func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID string, req SubmitIncidentRequest) (*IncidentReport, error) {
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return nil, err
+	}
 	rep := &IncidentReport{
 		ID: uuid.New().String(), EstateID: estateID, GuardID: guardID,
 		GateID: req.GateID, IncidentType: req.IncidentType,
@@ -440,19 +474,21 @@ func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID st
 		Escalated: req.Escalated, CreatedAt: time.Now(),
 	}
 	const q = `INSERT INTO gate_incident_reports (id, estate_id, guard_id, gate_id, incident_type, description, evidence_url, escalated) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	_, err := s.db.Exec(ctx, q, rep.ID, rep.EstateID, rep.GuardID, nilIfEmpty(rep.GateID), rep.IncidentType, rep.Description, nilIfEmpty(rep.EvidenceURL), rep.Escalated)
+	_, err := s.db.Exec(ctx, q, rep.ID, rep.EstateID, rep.GuardID, dbutil.StrPtr(rep.GateID), rep.IncidentType, rep.Description, dbutil.StrPtr(rep.EvidenceURL), rep.Escalated)
 	return rep, err
 }
 
 // HandoverShift closes the current shift and optionally starts the next.
+// ESTATE-AUTHZ: member-only (was callable by any authed user — forged shifts).
 func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, req HandoverRequest) (*GuardShift, error) {
-	// Close existing open shift if any.
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return nil, err
+	}
 	_, _ = s.db.Exec(ctx,
 		`UPDATE guard_shifts SET ended_at=NOW(), handover_notes=$1, relieved_by=$2
 		WHERE estate_id=$3 AND guard_id=$4 AND ended_at IS NULL`,
-		req.HandoverNotes, nilIfEmpty(req.RelievedBy), estateID, guardID,
+		req.HandoverNotes, dbutil.StrPtr(req.RelievedBy), estateID, guardID,
 	)
-	// Open new shift.
 	shift := &GuardShift{
 		ID: uuid.New().String(), GuardID: guardID, GateID: req.GateID,
 		EstateID: estateID, StartedAt: time.Now(), CreatedAt: time.Now(),
@@ -465,7 +501,13 @@ func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, r
 }
 
 // GetExpectedVisitors returns access codes valid within the next 4 hours.
-func (s *Service) GetExpectedVisitors(ctx context.Context, estateID string) ([]AccessCode, error) {
+// ESTATE-AUTHZ: member-only — this is a bulk PII + credential feed (visitor
+// names/phones/plates and the numeric entry codes); previously any authed user
+// could pull it for any estate id.
+func (s *Service) GetExpectedVisitors(ctx context.Context, estateID, userID string) ([]AccessCode, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, estate_id, issued_by, visitor_name, COALESCE(visitor_phone,''), COALESCE(vehicle_plate,''),
 		COALESCE(purpose,''), code_type, numeric_code, qr_code::TEXT, valid_from, valid_until,
 		used_count, max_uses, status, blacklisted, created_at
@@ -492,7 +534,11 @@ func (s *Service) GetExpectedVisitors(ctx context.Context, estateID string) ([]A
 }
 
 // SyncOfflineLogs bulk-inserts offline gate events (idempotent via client_id UNIQUE).
+// ESTATE-AUTHZ: member-only (was callable by any authed user — forged logs).
 func (s *Service) SyncOfflineLogs(ctx context.Context, estateID, guardID string, logs []OfflineLogEntry) (int, error) {
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return 0, err
+	}
 	synced := 0
 	for _, l := range logs {
 		payloadJSON, _ := json.Marshal(l.Payload)
@@ -552,16 +598,6 @@ func denyReason(c *AccessCode) string {
 	return "code is not yet valid"
 }
 
-// nilIfEmpty returns nil if s is empty, otherwise returns &s.
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// ── Block 27: Extended visitor access codes ───────────────────────────────────
-
 // generateNumericCode produces a random 6-digit string, retrying on collision.
 func generateNumericCode() string {
 	return fmt.Sprintf("%06d", uuid.New().ID()%1_000_000)
@@ -581,12 +617,12 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 		req.MaxUses = 1
 	}
 	if req.ValidUntil.Before(req.ValidFrom) {
-		return nil, fmt.Errorf("valid_until must be after valid_from")
+		return nil, errors.New("valid_until must be after valid_from")
 	}
 
 	// Retry up to 5 times to get a unique numeric code.
 	var code *AccessCode
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		numeric := generateNumericCode()
 		qrID := uuid.New().String()
 		c := &AccessCode{
@@ -608,14 +644,13 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 			req.CodeType, numeric, qrID, req.ValidFrom, req.ValidUntil, req.Recurrence, req.MaxUses,
 		)
 		if err != nil {
-			// If duplicate numeric code, retry.
 			continue
 		}
 		code = c
 		break
 	}
 	if code == nil {
-		return nil, fmt.Errorf("failed to generate unique access code, try again")
+		return nil, errors.New("failed to generate unique access code, try again")
 	}
 	return code, nil
 }
@@ -684,7 +719,7 @@ func (s *Service) RevokeCode(ctx context.Context, estateID, userID, codeID strin
 // ExtendCode pushes the valid_until date forward.
 func (s *Service) ExtendCode(ctx context.Context, estateID, userID, codeID string, validUntil time.Time) error {
 	if validUntil.Before(time.Now()) {
-		return fmt.Errorf("new valid_until must be in the future")
+		return errors.New("new valid_until must be in the future")
 	}
 	_, err := s.db.Exec(ctx,
 		`UPDATE visitor_access_codes SET valid_until=$1 WHERE id=$2 AND estate_id=$3 AND issued_by=$4`,
@@ -710,12 +745,11 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	if _, err := s.getResidentID(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
-	// Verify the code belongs to this user.
 	var ownerID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT issued_by FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
 	).Scan(&ownerID); err != nil || ownerID != userID {
-		return nil, fmt.Errorf("access denied or code not found")
+		return nil, errors.New("access denied or code not found")
 	}
 	const q = `SELECT id, code_id, guard_id, COALESCE(gate_id,''), event, captured_at, COALESCE(photo_url,'')
 		FROM visitor_checkins WHERE code_id=$1 ORDER BY captured_at DESC`
@@ -734,8 +768,6 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	}
 	return out, rows.Err()
 }
-
-// ── Block 26: Resident home dashboard ─────────────────────────────────────────
 
 // alertSeverity maps an emergency-alert kind to a dashboard severity bucket.
 // Pure (no DB) so the mapping is unit-testable.
@@ -850,8 +882,6 @@ SELECT
 	return dash, nil
 }
 
-// ── Block 25: Resident profiles ───────────────────────────────────────────────
-
 // getResidentID resolves the estate_residents.id for a given (estateID, userID) pair.
 // Fails closed on banned/deleted membership, mirroring assertRoles — this was
 // previously missing here, which let a banned or deleted member keep reading/
@@ -864,13 +894,13 @@ func (s *Service) getResidentID(ctx context.Context, estateID, userID string) (s
 	if err := s.db.QueryRow(ctx,
 		`SELECT id, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
 	).Scan(&id, &banned, &deleted); err != nil {
-		return "", fmt.Errorf("estate: not a member of this estate")
+		return "", errors.New("estate: not a member of this estate")
 	}
 	if deleted {
-		return "", fmt.Errorf("estate: this account has been deleted")
+		return "", errors.New("estate: this account has been deleted")
 	}
 	if banned {
-		return "", fmt.Errorf("estate: this account is banned from the estate")
+		return "", errors.New("estate: this account is banned from the estate")
 	}
 	return id, nil
 }
@@ -888,8 +918,8 @@ func (s *Service) UpsertProfile(ctx context.Context, estateID, userID string, re
 		req.OccupancyType = "resident"
 	}
 
-	ecJSON, _ := marshalJSON(req.EmergencyContact)
-	nokJSON, _ := marshalJSON(req.NextOfKin)
+	ecJSON, _ := json.Marshal(req.EmergencyContact)
+	nokJSON, _ := json.Marshal(req.NextOfKin)
 
 	p := &ResidentProfile{}
 	const q = `
@@ -932,7 +962,6 @@ func (s *Service) GetProfile(ctx context.Context, estateID, userID string) (*Res
 	if err := s.db.QueryRow(ctx, q, resID).Scan(&p.ID, &p.ResidentID, &p.Bio, &p.ProfilePhotoURL,
 		&p.Phone, &p.AltPhone, &p.OccupancyType, &p.Visibility, &p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
-		// Return an empty profile if none exists yet.
 		return &ResidentProfile{ResidentID: resID, Visibility: "members", OccupancyType: "resident"}, nil
 	}
 	return p, nil
@@ -1117,19 +1146,12 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 		&card.ResidentID, &card.EstateID, &card.EstateName, &card.Unit, &card.Role,
 		&card.OccupancyType, &card.ProfilePhotoURL, &card.FullName,
 	); err != nil {
-		return nil, fmt.Errorf("estate: resident not found in this estate")
+		return nil, errors.New("estate: resident not found in this estate")
 	}
 	card.QRValue = card.EstateID + ":" + card.ResidentID
 	card.IssuedAt = time.Now().UTC().Format(time.RFC3339)
 	return &card, nil
 }
-
-// marshalJSON serialises a value to JSON bytes for JSONB columns.
-func marshalJSON(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-// ── Block 24: Onboarding & property selection ─────────────────────────────────
 
 // GenerateInviteCode creates a shareable join code (estate admin only).
 func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID string, req GenerateInviteCodeRequest) (*InviteCode, error) {
@@ -1137,7 +1159,7 @@ func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID stri
 		return nil, err
 	}
 	if req.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("estate: expires_at must be in the future")
+		return nil, errors.New("estate: expires_at must be in the future")
 	}
 	// Generate a compact alphanumeric code (12 chars).
 	raw := uuid.New().String()
@@ -1165,7 +1187,7 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var ic InviteCode
 	const lookup = `
@@ -1174,16 +1196,15 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 	if err := tx.QueryRow(ctx, lookup, code).Scan(
 		&ic.ID, &ic.EstateID, &ic.MaxUses, &ic.UsedCount, &ic.ExpiresAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: invalid invite code")
+		return nil, errors.New("estate: invalid invite code")
 	}
 	if time.Now().After(ic.ExpiresAt) {
-		return nil, fmt.Errorf("estate: invite code has expired")
+		return nil, errors.New("estate: invite code has expired")
 	}
 	if ic.UsedCount >= ic.MaxUses {
-		return nil, fmt.Errorf("estate: invite code has reached maximum uses")
+		return nil, errors.New("estate: invite code has reached maximum uses")
 	}
 
-	// Increment use count.
 	if _, err := tx.Exec(ctx, `UPDATE estate_invite_codes SET used_count=used_count+1 WHERE id=$1`, ic.ID); err != nil {
 		return nil, fmt.Errorf("estate: update invite code: %w", err)
 	}
@@ -1231,7 +1252,7 @@ func (s *Service) RequestAccess(ctx context.Context, estateID, userID, message s
 // ReviewJoinRequest approves or rejects a pending join request.
 func (s *Service) ReviewJoinRequest(ctx context.Context, estateID, adminID, requestID, decision string) (*JoinRequest, error) {
 	if decision != "approved" && decision != "rejected" {
-		return nil, fmt.Errorf("estate: decision must be 'approved' or 'rejected'")
+		return nil, errors.New("estate: decision must be 'approved' or 'rejected'")
 	}
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -1241,7 +1262,7 @@ func (s *Service) ReviewJoinRequest(ctx context.Context, estateID, adminID, requ
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	jr := &JoinRequest{}
 	now := time.Now()
@@ -1254,7 +1275,7 @@ func (s *Service) ReviewJoinRequest(ctx context.Context, estateID, adminID, requ
 		&jr.ID, &jr.EstateID, &jr.UserID, &jr.Message, &jr.Status,
 		&jr.ReviewedBy, &jr.ReviewedAt, &jr.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: join request not found or already reviewed")
+		return nil, errors.New("estate: join request not found or already reviewed")
 	}
 
 	if decision == "approved" {
@@ -1306,7 +1327,7 @@ func (s *Service) GetMyJoinRequest(ctx context.Context, estateID, userID string)
 		&jr.ReviewedBy, &jr.ReviewedAt, &jr.CreatedAt,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("estate: no join request found")
+		return nil, errors.New("estate: no join request found")
 	}
 	return jr, nil
 }
@@ -1382,7 +1403,7 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 // ClaimOwnership submits a document-backed ownership claim for a property.
 func (s *Service) ClaimOwnership(ctx context.Context, propertyID, userID, docURL string) (*OwnershipClaim, error) {
 	if strings.TrimSpace(docURL) == "" {
-		return nil, fmt.Errorf("estate: ownership_doc_url is required")
+		return nil, errors.New("estate: ownership_doc_url is required")
 	}
 	c := &OwnershipClaim{
 		ID:              uuid.New().String(),
@@ -1425,12 +1446,32 @@ func (s *Service) ReviewOwnershipClaim(ctx context.Context, claimID, adminID, es
 }
 
 // CreateTenancyRequest submits a tenancy application for a property.
-func (s *Service) CreateTenancyRequest(ctx context.Context, propertyID string, req TenancyRequestBody, tenantID string) (*TenancyRequest, error) {
+// The landlord is resolved SERVER-SIDE from the property — trusting the
+// request body's landlord_id let any user file a request naming THEMSELVES
+// the landlord, then self-approve it through ReviewTenancyRequest to claim
+// the unit's tenancy and gain estate membership.
+func (s *Service) CreateTenancyRequest(ctx context.Context, estateID, propertyID string, req TenancyRequestBody, tenantID string) (*TenancyRequest, error) {
+	if tenantID == "" {
+		return nil, errors.New("estate: unauthenticated")
+	}
+	// Bind the property to the route's estate and pull its real landlord.
+	var propEstate, landlordID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT estate_id, COALESCE(landlord_id::TEXT,'') FROM estate_properties WHERE id=$1`, propertyID,
+	).Scan(&propEstate, &landlordID); err != nil {
+		return nil, errors.New("estate: property not found")
+	}
+	if propEstate != estateID {
+		return nil, errors.New("estate: property does not belong to this estate")
+	}
+	if landlordID == "" {
+		return nil, errors.New("estate: property has no landlord to review the request")
+	}
 	tr := &TenancyRequest{
 		ID:           uuid.New().String(),
 		PropertyID:   propertyID,
 		TenantID:     tenantID,
-		LandlordID:   req.LandlordID,
+		LandlordID:   landlordID,
 		LeaseStart:   req.LeaseStart,
 		LeaseEnd:     req.LeaseEnd,
 		AgreementURL: req.AgreementURL,
@@ -1449,8 +1490,21 @@ func (s *Service) CreateTenancyRequest(ctx context.Context, propertyID string, r
 	return tr, err
 }
 
-// ReviewTenancyRequest allows a landlord to approve or reject a tenancy request.
+// ReviewTenancyRequest allows the property's landlord to approve or reject a
+// tenancy request. Approval side-effects (property occupancy + resident
+// membership) commit in the SAME transaction as the status flip — previously
+// they ran as separate error-discarding Execs, so a partial approval could
+// occupy the unit without admitting the tenant (or vice versa).
 func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordID, estateID, decision string) (*TenancyRequest, error) {
+	if decision != "approved" && decision != "rejected" {
+		return nil, errors.New("estate: decision must be 'approved' or 'rejected'")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	now := time.Now()
 	tr := &TenancyRequest{}
 	const q = `
@@ -1458,32 +1512,35 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 		FROM estate_properties ep
 		WHERE tr.id=$3 AND tr.landlord_id=$4 AND ep.id=tr.property_id AND ep.estate_id=$5 AND tr.status='pending'
 		RETURNING tr.id, tr.property_id, tr.tenant_id, tr.landlord_id, tr.lease_start::TEXT, COALESCE(tr.lease_end::TEXT,''), COALESCE(tr.agreement_url,''), tr.status, tr.reviewed_at, tr.created_at`
-	if err := s.db.QueryRow(ctx, q, decision, now, requestID, landlordID, estateID).Scan(
+	if err := tx.QueryRow(ctx, q, decision, now, requestID, landlordID, estateID).Scan(
 		&tr.ID, &tr.PropertyID, &tr.TenantID, &tr.LandlordID, &tr.LeaseStart, &tr.LeaseEnd,
 		&tr.AgreementURL, &tr.Status, &tr.ReviewedAt, &tr.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: tenancy request not found, not your request, or already reviewed")
+		return nil, errors.New("estate: tenancy request not found, not your request, or already reviewed")
 	}
 
 	// On approval: mark property occupied and upsert a resident record for the tenant.
 	if decision == "approved" {
-		_, _ = s.db.Exec(ctx,
-			`UPDATE estate_properties SET tenant_id=$1, occupancy_status='occupied' WHERE id=$2`,
-			tr.TenantID, tr.PropertyID,
-		)
-		// Resolve estate_id for the property so we can upsert a resident row.
-		var estateIDForProp string
-		_ = s.db.QueryRow(ctx,
-			`SELECT estate_id FROM estate_properties WHERE id=$1`, tr.PropertyID,
-		).Scan(&estateIDForProp)
-		if estateIDForProp != "" {
-			_, _ = s.db.Exec(ctx,
-				`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
-				 VALUES ($1,$2,$3,'','tenant')
-				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='tenant'`,
-				uuid.New().String(), estateIDForProp, tr.TenantID,
-			)
+		if _, err := tx.Exec(ctx,
+			`UPDATE estate_properties SET tenant_id=$1, occupancy_status='occupied' WHERE id=$2 AND estate_id=$3`,
+			tr.TenantID, tr.PropertyID, estateID,
+		); err != nil {
+			return nil, fmt.Errorf("estate: mark property occupied: %w", err)
 		}
+		// estate_residents.role CHECK allows only 'resident'/'estate_admin';
+		// an approved tenant is admitted as a 'resident' (the tenant/owner
+		// distinction lives in resident_profiles.occupancy_type).
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
+			 VALUES ($1,$2,$3,'','resident')
+			 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='resident'`,
+			uuid.New().String(), estateID, tr.TenantID,
+		); err != nil {
+			return nil, fmt.Errorf("estate: admit approved tenant: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 	return tr, nil
 }
@@ -1501,18 +1558,16 @@ func (s *Service) assertRoles(ctx context.Context, estateID, userID string, role
 	var role string
 	var banned, deleted bool
 	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(&role, &banned, &deleted); err != nil {
-		return fmt.Errorf("estate: not a member of this estate")
+		return errors.New("estate: not a member of this estate")
 	}
 	if deleted {
-		return fmt.Errorf("estate: this account has been deleted")
+		return errors.New("estate: this account has been deleted")
 	}
 	if banned {
-		return fmt.Errorf("estate: this account is banned from the estate")
+		return errors.New("estate: this account is banned from the estate")
 	}
-	for _, r := range roles {
-		if role == r {
-			return nil
-		}
+	if slices.Contains(roles, role) {
+		return nil
 	}
-	return fmt.Errorf("estate: insufficient role")
+	return errors.New("estate: insufficient role")
 }

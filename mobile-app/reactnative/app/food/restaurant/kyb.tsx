@@ -11,9 +11,9 @@ import TextInputField from '@/components/TextInputField';
 import SegmentedControl from '@/components/SegmentedControl';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import { alertAsync } from '@/lib/confirm';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useMyStores, useKYB, useSaveKYB, useAddKYBDocument, useSubmitKYB } from '@/features/restaurantmerchant/hooks';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 import { useBanks, useResolveAccount } from '@/features/transfers/hooks';
@@ -26,7 +26,6 @@ const BUSINESS_TYPES: { value: KYBBusinessType; label: string }[] = [
   { value: 'ngo', label: 'NGO' },
 ];
 
-// draft/needs_more_info/rejected can be edited; submitted/under_review/approved are
 // locked until a reviewer acts — mirrors backend editableKYB (kyb_service.go).
 const EDITABLE_STATUSES = new Set(['draft', 'needs_more_info', 'rejected']);
 

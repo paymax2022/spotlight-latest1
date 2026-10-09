@@ -3,10 +3,10 @@ import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useInvestDraft } from '@/features/fractionalre/store/investDraftStore';
@@ -27,7 +27,7 @@ export default function AuthorizeScreen() {
   const checkout = usePurchasePayment<SubscribeResult>();
   const [pin, setPin] = useState('');
 
-  const platformFee = Math.round((draft.amountKobo * 0) / 10_000); // display only; server authoritative
+  const platformFee = Math.round((draft.amountKobo * 0) / 10_000);
   const totalKobo = draft.amountKobo + platformFee;
   const valid = /^\d{4,6}$/.test(pin);
 

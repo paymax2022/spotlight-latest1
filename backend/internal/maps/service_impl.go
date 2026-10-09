@@ -2,6 +2,7 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -19,7 +20,7 @@ type GeocodeCache interface {
 // sourceCache is the optional extension a cache may implement to persist results
 // with a per-source TTL and the v2 spatial columns (CacheV2 does). When the wired
 // cache satisfies it, the orchestrator's write-through uses PutWithSource so the
-// config_v2 per-source TTLs (cache_v2.go) actually take effect; otherwise it falls
+// config.go per-source TTLs (caches.go) actually take effect; otherwise it falls
 // back to the fixed-TTL Put. A ttl<=0 means "use the per-source default".
 type sourceCache interface {
 	PutWithSource(ctx context.Context, normalized string, r GeoResult, ttl time.Duration) error
@@ -58,7 +59,6 @@ type Service struct {
 	codec          PlusCodec
 	defaultSurface string
 
-	// --- MapService v2 (gated by v2Enabled; all nil-safe) ---
 	v2Enabled bool
 	v2cfg     V2Config
 	gaz       GazetteerStore
@@ -82,7 +82,6 @@ type Deps struct {
 	Redis          *platformRedis.Client
 	DefaultSurface string
 
-	// --- MapService v2 (optional; when V2Enabled, the orchestrator runs) ---
 	V2Enabled bool
 	V2Config  *V2Config
 	Gazetteer GazetteerStore
@@ -109,11 +108,11 @@ func NewService(d Deps) *Service {
 	if surface == "" {
 		surface = "default"
 	}
-	var cache GeocodeCache = d.Cache
+	var cache = d.Cache
 	if d.Cache == nil {
 		cache = nopCache{}
 	}
-	var usage CapGuard = d.Usage
+	var usage = d.Usage
 	if d.Usage == nil {
 		usage = nopUsage{}
 	}
@@ -121,7 +120,6 @@ func NewService(d Deps) *Service {
 		cfg: d.Config, reg: d.Registry, cache: cache, repo: d.Repo,
 		usage: usage, redis: d.Redis, codec: NewPlusCodec(), defaultSurface: surface,
 	}
-	// --- v2 wiring (nil-safe defaults so the orchestrator runs standalone) ---
 	s.v2Enabled = d.V2Enabled
 	if d.V2Config != nil {
 		s.v2cfg = *d.V2Config
@@ -255,7 +253,6 @@ func (s *Service) Geocode(ctx context.Context, address, surface string) (GeoResu
 }
 
 // ReverseGeocode resolves a coordinate to an address.
-//
 // Reverse deliberately does NOT use the geocode text cache: the cache table
 // stores no address text, so Cache.Get returns the normalized KEY as the
 // address — which for reverse is the coordinate string ("6.50950 3.40650"),
@@ -288,7 +285,6 @@ func (s *Service) ReverseGeocode(ctx context.Context, lat, lng float64, surface 
 }
 
 // AutocompleteAddress returns suggestions, degrading paid providers at soft cap.
-//
 // Cost control (MS-6/§10): the ProviderGuard budget + circuit breaker gate the
 // primary autocomplete provider (the same guard the geocode chain uses). When the
 // primary is over budget or its breaker is open we pre-emptively degrade to the
@@ -361,7 +357,6 @@ func (s *Service) SearchExternalPlaces(ctx context.Context, query string, near *
 }
 
 // GetRoute computes a single route, degrading on cap/error.
-//
 // Cost controls (MS-6/§10): (1) a short-TTL, cell-keyed result cache dedupes
 // near-identical requests before any paid call; (2) the ProviderGuard budget +
 // circuit breaker gate the primary provider — same guard used in the geocode
@@ -419,17 +414,15 @@ func (s *Service) GetRoute(ctx context.Context, origin, dest Point, opts RouteOp
 }
 
 // GetDistanceMatrix computes a many-to-many ETA/distance grid for dispatch.
-//
 // Cost controls (MS-6/§10): short-TTL cell-keyed result cache + ProviderGuard
 // budget/circuit breaker on the (distance-matrix-heavy, paid) provider — matrix is
 // the most expensive primitive per call, so guarding it matters most.
-//
 // NOTE: the local variable `mx` below shadows the package-level metrics singleton
 // `mx`; cache metric increments therefore use the exported helpers BEFORE `mx` is
 // reassigned to the matrixer. (Matches the pre-existing shadowing in this method.)
 func (s *Service) GetDistanceMatrix(ctx context.Context, origins, dests []Point) (Matrix, error) {
 	if len(origins) == 0 || len(dests) == 0 {
-		return Matrix{}, fmt.Errorf("maps: matrix needs origins and destinations")
+		return Matrix{}, errors.New("maps: matrix needs origins and destinations")
 	}
 	// 1. Short-TTL cache (cost control). These metric calls resolve to the
 	// package-level `mx` singleton because the local `mx` matrixer is not declared
@@ -505,7 +498,7 @@ func (s *Service) MatchToRoad(ctx context.Context, gpsTrace []Point) (Polyline, 
 // FindNearbyOwn returns OUR records near a point — PostGIS, never a maps API.
 func (s *Service) FindNearbyOwn(ctx context.Context, entityType string, p Point, radiusM float64, limit int) ([]OwnEntity, error) {
 	if s.repo == nil {
-		return nil, fmt.Errorf("maps: no geo repo configured")
+		return nil, errors.New("maps: no geo repo configured")
 	}
 	return s.repo.NearbyOwn(ctx, entityType, p, radiusM, limit)
 }
@@ -513,7 +506,7 @@ func (s *Service) FindNearbyOwn(ctx context.Context, entityType string, p Point,
 // IsInZone reports whether a point is inside a service-area polygon — PostGIS.
 func (s *Service) IsInZone(ctx context.Context, p Point, zoneID string) (bool, error) {
 	if s.repo == nil {
-		return false, fmt.Errorf("maps: no geo repo configured")
+		return false, errors.New("maps: no geo repo configured")
 	}
 	return s.repo.InZone(ctx, p, zoneID)
 }
@@ -527,3 +520,153 @@ func (s *Service) UsageSnapshot(ctx context.Context) ([]UsageRow, error) {
 func (s *Service) Repo() GeoRepo { return s.repo }
 
 var _ MapService = (*Service)(nil)
+
+// The provider interfaces below are intentionally small and per-primitive: a
+// provider implements ONLY the capabilities it actually serves. The config map
+// ({primitive -> provider}) decides which provider's method the router calls.
+// This is what makes the layer provider-agnostic: feature code calls MapService;
+// MapService dispatches to one of these by config; swapping a provider for a
+// primitive is a config edit, never a code change.
+
+// Named is implemented by every adapter so usage/metrics + logs can identify it.
+type Named interface {
+	// Name returns a stable provider id, e.g. "geoapify", "osrm", "google".
+	Name() string
+}
+
+// TileProvider serves a MapLibre GL style + attribution for the basemap.
+type TileProvider interface {
+	Named
+	BasemapConfig(ctx context.Context, surface string) (StyleConfig, error)
+}
+
+// Geocoder resolves an address to a coordinate and the reverse.
+type Geocoder interface {
+	Named
+	Geocode(ctx context.Context, address string) (GeoResult, error)
+	ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResult, error)
+}
+
+// Autocompleter returns address suggestions for a partial query.
+type Autocompleter interface {
+	Named
+	Autocomplete(ctx context.Context, query, sessionToken string, near *Point) ([]Suggestion, error)
+}
+
+// PlaceSearcher searches world POIs (third-party data).
+type PlaceSearcher interface {
+	Named
+	SearchPlaces(ctx context.Context, query string, near *Point) ([]Place, error)
+}
+
+// Router computes a single origin→destination route.
+type Router interface {
+	Named
+	Route(ctx context.Context, origin, dest Point, opts RouteOptions) (Route, error)
+}
+
+// Matrixer computes a many-to-many distance/ETA matrix.
+type Matrixer interface {
+	Named
+	Matrix(ctx context.Context, origins, dests []Point) (Matrix, error)
+}
+
+// MapMatcher snaps a raw GPS trace to the road network.
+type MapMatcher interface {
+	Named
+	MatchToRoad(ctx context.Context, trace []Point) (Polyline, error)
+}
+
+// Registry holds the concrete adapters available in this process. A provider may
+// appear under several roles (e.g. an OpenStack adapter is both Router and
+// Matrixer). The config map references providers by Name().
+type Registry struct {
+	Tiles          map[string]TileProvider
+	Geocoders      map[string]Geocoder
+	Autocompleters map[string]Autocompleter
+	PlaceSearchers map[string]PlaceSearcher
+	Routers        map[string]Router
+	Matrixers      map[string]Matrixer
+	MapMatchers    map[string]MapMatcher
+}
+
+// NewRegistry returns an empty registry with initialized maps.
+func NewRegistry() *Registry {
+	return &Registry{
+		Tiles:          map[string]TileProvider{},
+		Geocoders:      map[string]Geocoder{},
+		Autocompleters: map[string]Autocompleter{},
+		PlaceSearchers: map[string]PlaceSearcher{},
+		Routers:        map[string]Router{},
+		Matrixers:      map[string]Matrixer{},
+		MapMatchers:    map[string]MapMatcher{},
+	}
+}
+
+// AddTiles registers a basemap/tile provider.
+func (r *Registry) AddTiles(p TileProvider) { r.Tiles[p.Name()] = p }
+
+// AddGeocoder registers a geocoder.
+func (r *Registry) AddGeocoder(p Geocoder) { r.Geocoders[p.Name()] = p }
+
+// AddAutocompleter registers an autocompleter.
+func (r *Registry) AddAutocompleter(p Autocompleter) { r.Autocompleters[p.Name()] = p }
+
+// AddPlaceSearcher registers a place searcher.
+func (r *Registry) AddPlaceSearcher(p PlaceSearcher) { r.PlaceSearchers[p.Name()] = p }
+
+// AddRouter registers a router.
+func (r *Registry) AddRouter(p Router) { r.Routers[p.Name()] = p }
+
+// AddMatrixer registers a matrixer.
+func (r *Registry) AddMatrixer(p Matrixer) { r.Matrixers[p.Name()] = p }
+
+// AddMapMatcher registers a map-matcher.
+func (r *Registry) AddMapMatcher(p MapMatcher) { r.MapMatchers[p.Name()] = p }
+
+// LocationGeocoder adapts the full MapService down to a minimal "address → pin"
+// helper for modules (restaurant, estate, …) that just need to populate a
+// coordinate from a typed address on write. Geocoding goes through MapService, so
+// it is cache-first (PostGIS, OSM-licensed) and provider-swappable by config.
+// Modules depend on their own tiny one-method interface and accept this adapter,
+// so they never import provider details — only the maps package's seam.
+type LocationGeocoder struct {
+	svc     MapService
+	surface string
+}
+
+// NewLocationGeocoder wraps a MapService for simple address→pin geocoding.
+func NewLocationGeocoder(svc MapService) *LocationGeocoder {
+	return &LocationGeocoder{svc: svc, surface: "default"}
+}
+
+// Geocode returns the resolved lat/lng + Plus Code for an address.
+func (g *LocationGeocoder) Geocode(ctx context.Context, address string) (float64, float64, string, error) {
+	r, e := g.svc.Geocode(ctx, address, g.surface)
+	if e != nil {
+		return 0, 0, "", e
+	}
+	return r.Lat, r.Lng, r.PlusCode, nil
+}
+
+// RouteDistanceKmEta returns real driving distance (km) + ETA (minutes) between
+// two pins via the configured matrix provider (Google Distance Matrix when
+// configured). Used by delivery-fee pricing. Returns an error when no route is
+// available so the caller can fall back to straight-line haversine.
+func (g *LocationGeocoder) RouteDistanceKmEta(ctx context.Context, oLat, oLng, dLat, dLng float64) (float64, float64, error) {
+	m, e := g.svc.GetDistanceMatrix(ctx,
+		[]Point{{Lat: oLat, Lng: oLng}},
+		[]Point{{Lat: dLat, Lng: dLng}},
+	)
+	if e != nil {
+		return 0, 0, e
+	}
+	if len(m.Rows) == 0 || len(m.Rows[0]) == 0 {
+		return 0, 0, errors.New("maps: empty distance matrix")
+	}
+	cell := m.Rows[0][0]
+	if cell.DistanceM <= 0 {
+		return 0, 0, errors.New("maps: no route between points")
+	}
+	return float64(cell.DistanceM) / 1000.0, float64(cell.DurationS) / 60.0, nil
+}

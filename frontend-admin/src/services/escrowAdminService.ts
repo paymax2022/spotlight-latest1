@@ -1,6 +1,4 @@
-// ── Admin — Paymax Social P2P Escrow (dispute arbitration) control-plane ───────
 // Mock by default (mirrors events / savings admin services). Flip with
-// NEXT_PUBLIC_SOCIAL_USE_MOCK=false to hit the live Go backend at
 // /api/p2p/admin/* (escrow) — also reachable as /api/social/admin/escrow*.
 // RBAC: p2p.admin.* gates wired on the sidebar.
 // Money is BIGINT kobo (minor units). Surfaces NL-6 (escrow holds, never lends),
@@ -29,11 +27,8 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 // backend/internal/app/finance_routes.go's RegisterP2PMarket(..., adminGroupTop5(r,
 // "/api/p2p/admin"), ...) and internal/p2pmarket/handler.go's Register doc comment.
 // apiRoot() strips any trailing /api/v1 from the proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin')`,
 // which stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op.
-//
 // ⚠️ Even with the base fixed, the *sub-paths* this file calls under it
 // (/escrow/dashboard, /disputes, /disputes/:id, /disputes/:id/arbitrate,
 // /escrow/fraud*) are NOT registered anywhere in the Go backend today. The only
@@ -47,10 +42,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -73,7 +65,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -92,9 +83,7 @@ const aud = () => 'fixture-no-audit-record';
 // an arbitrator cannot decide a dispute whose release they previously approved.
 const CURRENT_ARBITRATOR = 'admin:you•••';
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard / oversight
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: EscrowDashboard = {
   total_held_kobo: 248_600_000_00,
   held_count: 1_842,
@@ -134,9 +123,7 @@ export async function getEscrowDashboard(): Promise<EscrowDashboard> {
   return getJson<EscrowDashboard>('/escrow/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Disputes list + detail (arbitration console)
-// ════════════════════════════════════════════════════════════════════════════
 const DISPUTES: DisputeListItem[] = [
   { id: 'dsp_5521', escrow_id: 'esc_9001', listing_title: 'iPhone 15 Pro (swap)', buyer_masked: 'Emeka O•••', seller_masked: 'GadgetPlug•••', amount_kobo: 720_000_00, status: 'open', escrow_state: 'disputed', reason: 'not_delivered', opened_at: iso(0.5), sla_due_at: isoAhead(47), evidence_count: 3, assigned_to_masked: null, created_at: iso(0.5) },
   { id: 'dsp_5530', escrow_id: 'esc_9010', listing_title: 'PS5 + 2 pads', buyer_masked: 'Funke A•••', seller_masked: 'ConsoleHub•••', amount_kobo: 480_000_00, status: 'in_review', escrow_state: 'disputed', reason: 'not_as_described', opened_at: iso(20), sla_due_at: isoAhead(28), evidence_count: 5, assigned_to_masked: 'admin:bola•••', created_at: iso(20) },
@@ -215,9 +202,7 @@ export async function arbitrateDispute(id: string, decision: ArbitrationDecision
   return sendJson<ArbitrationResult>('POST', `/disputes/${id}/arbitrate`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Escrow fraud — mule / AML detection
-// ════════════════════════════════════════════════════════════════════════════
 const FRAUD: EscrowFraudSignal[] = [
   { id: 'fr_3310', escrow_id: null, kind: 'mule_account', subject_masked: '7 buyer accounts•••', detail: 'Multiple buyer accounts funnel released escrow into one payout bank account — classic mule pattern', severity: 'critical', amount_kobo: 4_200_000_00, status: 'open', created_at: iso(2) },
   { id: 'fr_3320', escrow_id: 'esc_9010', kind: 'collusive_dispute', subject_masked: 'buyer+seller•••', detail: 'Buyer and seller share device fingerprint — dispute likely collusive to extract refund', severity: 'high', amount_kobo: 480_000_00, status: 'investigating', created_at: iso(8) },

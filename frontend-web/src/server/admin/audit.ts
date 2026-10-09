@@ -8,7 +8,6 @@ import { createAdminClient } from '@/lib/supabase/server';
 // (`frontend-web/src/server/admin/auth.ts`) falls back to the literal string 'system' for
 // `actorId` when no `x-actor-id` header is sent, and a number of call sites pass composite or
 // non-DB-row identifiers as `entityId` (e.g. `${contestId}:${phaseKey}`, category slugs, or
-// empty strings). Rather than let those break or corrupt the durable insert, we store `null`
 // for any value that isn't a syntactically valid UUID — the in-memory event (consumed by
 // `listAuditEvents()`) still keeps the original string untouched.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -52,11 +51,8 @@ export function addAuditEvent(input: Omit<AdminAuditEvent, 'id' | 'timestamp'>) 
   store.events.unshift(event);
   if (store.events.length > 2000) store.events.length = 2000;
 
-  // Durable write, best-effort: fire-and-forget against `admin_audit_logs` so this function
-  // stays synchronous and none of its 26 call sites need to change or `await` it. Any failure
   // (network, RLS, schema drift) is logged and swallowed here — it must never surface as an
   // unhandled rejection or propagate back to the caller. Mirrors the existing
-  // fire-and-forget `.catch(() => {})` convention used for best-effort background writes
   // elsewhere in this codebase (e.g. `app/api/v2/votes/stream/route.ts`).
   void persistAuditEvent(event).catch((err) => {
     console.error('[admin-audit] failed to persist audit event to admin_audit_logs', {

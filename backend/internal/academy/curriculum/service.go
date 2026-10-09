@@ -17,8 +17,6 @@ func NewService(pool *pgxpool.Pool) *Service { return &Service{repo: NewReposito
 // NewServiceWith allows injecting a repository (tests).
 func NewServiceWith(repo *Repository) *Service { return &Service{repo: repo} }
 
-// ── Read APIs ─────────────────────────────────────────────────────────────────
-
 func (s *Service) ListVersions(ctx context.Context) ([]CurriculumVersion, error) {
 	return s.repo.ListVersions(ctx)
 }
@@ -103,8 +101,6 @@ func (s *Service) ListStreams(ctx context.Context) ([]Stream, error) { return s.
 func (s *Service) ListTradeTracks(ctx context.Context) ([]TradeTrack, error) {
 	return s.repo.ListTradeTracks(ctx)
 }
-
-// ── Admin CRUD (audited) ──────────────────────────────────────────────────────
 
 func (s *Service) CreateVersion(ctx context.Context, actorID string, req CreateVersionRequest) (*CurriculumVersion, error) {
 	v, err := s.repo.CreateVersion(ctx, req)

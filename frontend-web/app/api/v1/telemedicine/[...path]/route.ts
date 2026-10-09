@@ -6,10 +6,8 @@ import { handleApiError } from '@/src/lib/api/responses';
 // No matching feature flag exists, so the flag check is intentionally omitted —
 // Go enforces flags/authZ, appointment ownership + the ledger invariants.
 // Money mutations forward the Idempotency-Key.
-//
 // This coexists with the more specific static routes already under
 // app/api/v1/telemedicine/{appointments,doctors}/** (Next.js prefers the more
-// specific route when both match); this catch-all only picks up the sub-paths
 // those don't cover (specialties, doctors/:id, doctors/:id/availability,
 // doctors/:id/reviews, appointments/:id/summary, appointments/:id/confirm,
 // appointments/:id/reschedule, appointments/:id/cancel, appointments/:id/review,
@@ -26,3 +24,4 @@ export async function POST(request: Request, ctx: { params: Promise<{ path: stri
 export async function PUT(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function DELETE(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }

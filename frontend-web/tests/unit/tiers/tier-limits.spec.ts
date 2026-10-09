@@ -13,9 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// ---------------------------------------------------------------------------
 // Module mocks (hoisted — must come before imports that use them)
-// ---------------------------------------------------------------------------
 
 vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
@@ -33,9 +31,7 @@ import {
   enforceVoteLimit,
 } from '@/src/server/tiers/service';
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 const mockAdmin = createAdminClient as ReturnType<typeof vi.fn>;
 const mockGetKycTier = getKycTier as ReturnType<typeof vi.fn>;
@@ -77,9 +73,7 @@ function makeSupabase(overrides: {
         // resolves to the entries list (used for daily-total sum)
         then: undefined,
         [Symbol.asyncIterator]: undefined,
-        // vitest-friendly: return an array via chained awaitable
         ...(async () => overrides.entries ?? { data: [], error: null }),
-        // actual path used by the service: awaited from().select().eq().eq().gte()
         // We intercept at the last call in the chain
         _mockResolvedValue: overrides.entries ?? { data: [], error: null },
       };
@@ -155,9 +149,7 @@ function buildClient(opts: {
   };
 }
 
-// ---------------------------------------------------------------------------
 // getTierConfig
-// ---------------------------------------------------------------------------
 
 describe('getTierConfig', () => {
   it('Tier 0: wallet disabled, vote limit null (existing free-vote only)', () => {
@@ -185,9 +177,7 @@ describe('getTierConfig', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // enforceWalletLimit — flag off
-// ---------------------------------------------------------------------------
 
 describe('enforceWalletLimit — FEATURE_TIER_LIMITS_ENABLED=false', () => {
   beforeEach(() => {
@@ -204,9 +194,7 @@ describe('enforceWalletLimit — FEATURE_TIER_LIMITS_ENABLED=false', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // enforceWalletLimit — per-tier
-// ---------------------------------------------------------------------------
 
 describe('enforceWalletLimit — tier enforcement', () => {
   beforeEach(() => {
@@ -230,7 +218,6 @@ describe('enforceWalletLimit — tier enforcement', () => {
   it('Tier 1: allows debit when under ₦50k daily limit', async () => {
     mockGetKycTier.mockResolvedValue(1);
     // Daily total so far: ₦20k = 2,000,000 kobo. Requesting ₦10k = 1,000,000.
-    // 2,000,000 + 1,000,000 = 3,000,000 < 5,000,000 → allow
     mockAdmin.mockReturnValue(buildClient({ tier: 1, dailyTotalKobo: 2_000_000 }));
 
     const result = await enforceWalletLimit('user-1', 1_000_000);
@@ -240,7 +227,6 @@ describe('enforceWalletLimit — tier enforcement', () => {
   it('Tier 1: throws 403 when debit would exceed ₦50k daily limit', async () => {
     mockGetKycTier.mockResolvedValue(1);
     // Daily total: ₦45k = 4,500,000 kobo. Requesting ₦10k = 1,000,000.
-    // 4,500,000 + 1,000,000 = 5,500,000 > 5,000,000 → deny
     mockAdmin.mockReturnValue(buildClient({ tier: 1, dailyTotalKobo: 4_500_000 }));
 
     await expect(enforceWalletLimit('user-1', 1_000_000)).rejects.toMatchObject({
@@ -250,7 +236,6 @@ describe('enforceWalletLimit — tier enforcement', () => {
 
   it('Tier 1: allows debit exactly at the limit boundary', async () => {
     mockGetKycTier.mockResolvedValue(1);
-    // Daily total: ₦40k. Requesting ₦10k. 4,000,000 + 1,000,000 = 5,000,000 = limit → allow
     mockAdmin.mockReturnValue(buildClient({ tier: 1, dailyTotalKobo: 4_000_000 }));
 
     const result = await enforceWalletLimit('user-1', 1_000_000);
@@ -267,7 +252,6 @@ describe('enforceWalletLimit — tier enforcement', () => {
 
   it('Tier 2: throws 403 when debit would exceed ₦200k daily limit', async () => {
     mockGetKycTier.mockResolvedValue(2);
-    // 19,000,000 + 2,000,000 = 21,000,000 > 20,000,000 → deny
     mockAdmin.mockReturnValue(buildClient({ tier: 2, dailyTotalKobo: 19_000_000 }));
 
     await expect(enforceWalletLimit('user-2', 2_000_000)).rejects.toMatchObject({
@@ -285,17 +269,12 @@ describe('enforceWalletLimit — tier enforcement', () => {
 
   it('Tier 1: new user (no ledger account yet) is allowed — daily total = 0', async () => {
     mockGetKycTier.mockResolvedValue(1);
-    // acctId: null → no account row → early return with limit
     mockAdmin.mockReturnValue(buildClient({ tier: 1, acctId: null }));
 
     const result = await enforceWalletLimit('user-new', 1_000_000);
     expect(result.dailyLimitKobo).toBe(5_000_000);
   });
 });
-
-// ---------------------------------------------------------------------------
-// enforceWalletLimit — fail closed on DB error
-// ---------------------------------------------------------------------------
 
 describe('enforceWalletLimit — fail closed on DB errors', () => {
   beforeEach(() => {
@@ -325,9 +304,7 @@ describe('enforceWalletLimit — fail closed on DB errors', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // enforceVoteLimit — flag off
-// ---------------------------------------------------------------------------
 
 describe('enforceVoteLimit — FEATURE_TIER_LIMITS_ENABLED=false', () => {
   beforeEach(() => {
@@ -343,9 +320,7 @@ describe('enforceVoteLimit — FEATURE_TIER_LIMITS_ENABLED=false', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // enforceVoteLimit — per-tier
-// ---------------------------------------------------------------------------
 
 describe('enforceVoteLimit — tier enforcement', () => {
   beforeEach(() => {
@@ -403,10 +378,6 @@ describe('enforceVoteLimit — tier enforcement', () => {
     await expect(enforceVoteLimit('user-3')).resolves.toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// enforceVoteLimit — fail closed on DB error
-// ---------------------------------------------------------------------------
 
 describe('enforceVoteLimit — fail closed on DB errors', () => {
   beforeEach(() => {

@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Invoice (§3.1, SF-2)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestInvoiceLegalTransitions(t *testing.T) {
 	cases := []struct {
@@ -119,9 +117,7 @@ func TestInvoiceIdempotentPartiallyPaid(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // FeesVault (§3.2)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestVaultLegalTransitions(t *testing.T) {
 	cases := []struct {
@@ -196,9 +192,7 @@ func TestVaultUnknownStateIllegal(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Promotion (§3.3, SF-3 — RELEASE BLOCKER)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestPromotionFullPathWithBothApprovalsSucceeds(t *testing.T) {
 	// The full six-step path with both approvals must succeed end-to-end.
@@ -330,9 +324,7 @@ func TestPromotionWrongOrderApprovalFails(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Competition (§3.4)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestCompetitionLinearForwardPath(t *testing.T) {
 	steps := []struct {

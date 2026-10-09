@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"strings"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,8 +41,6 @@ type querier interface {
 
 type rowScanner interface{ Scan(dest ...any) error }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -62,20 +63,6 @@ func toJSONBArray(v any) []byte {
 	return b
 }
 
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
-}
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 // insertAudit appends an immutable row to public.audit_logs (module 'academy.trade').
 // severity defaults to info; "warning" for rejected transitions. Best-effort on the
 // non-tx path; tx variant returns the error so a guarded write rolls back together.
@@ -91,7 +78,7 @@ func insertAuditTx(ctx context.Context, q querier, actor, action, resourceType, 
 		INSERT INTO public.audit_logs
 			(actor_user_id, action, module, resource_type, resource_id, new_values, severity)
 		VALUES ($1,$2,'academy.trade',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, sql, nullStr(actor), action, resourceType, nullStr(resourceID), toJSONB(newValues), severity)
+	_, err := q.Exec(ctx, sql, dbutil.NullStr(actor), action, resourceType, dbutil.NullStr(resourceID), toJSONB(newValues), severity)
 	return err
 }
 
@@ -101,14 +88,12 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
-
-// ── Trade tracks ──────────────────────────────────────────────────────────────
 
 // ListTracks returns the Phase-0 seeded trade-track catalog, ordered for display.
 // Public catalog read (no owner scope), mirroring the other catalog list queries.
@@ -129,8 +114,6 @@ func (r *Repository) ListTracks(ctx context.Context) ([]TradeTrack, error) {
 	}
 	return out, rows.Err()
 }
-
-// ── Modules ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertModule(ctx context.Context, actor string, req CreateModuleRequest) (*TradeModule, error) {
 	id := uuid.New().String()
@@ -208,8 +191,6 @@ func (r *Repository) UpdateModule(ctx context.Context, actor, id string, req Upd
 	_ = r.insertAudit(ctx, actor, "trade_module.updated", "academy_trade_module", id, nil, "info")
 	return r.GetModule(ctx, id)
 }
-
-// ── Lessons ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertLesson(ctx context.Context, actor string, req CreateLessonRequest) (*TradeLesson, error) {
 	id := uuid.New().String()
@@ -296,8 +277,6 @@ func (r *Repository) UpdateLesson(ctx context.Context, actor, id string, req Upd
 	return r.GetLesson(ctx, id)
 }
 
-// ── Projects ──────────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertProject(ctx context.Context, actor string, req CreateProjectRequest) (*TradeProject, error) {
 	id := uuid.New().String()
 	const q = `
@@ -326,7 +305,7 @@ func scanProject(row rowScanner) (*TradeProject, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.Rubric = rawOrEmptyObject(rubric)
+	p.Rubric = jsonx.RawOrEmptyObject(rubric)
 	return p, nil
 }
 
@@ -375,8 +354,6 @@ func (r *Repository) UpdateProject(ctx context.Context, actor, id string, req Up
 	_ = r.insertAudit(ctx, actor, "trade_project.updated", "academy_trade_project", id, nil, "info")
 	return r.GetProject(ctx, id)
 }
-
-// ── Project submissions ───────────────────────────────────────────────────────
 
 // InsertSubmission opens a submission in 'submitted'. files are signed-URL refs.
 func (r *Repository) InsertSubmission(ctx context.Context, userID, projectID string, files []map[string]any) (*ProjectSubmission, error) {
@@ -469,7 +446,7 @@ func (r *Repository) ReviewSubmission(ctx context.Context, reviewerID, id string
 			UPDATE public.academy_project_submissions
 			SET state = $2, rubric_score = $3, reviewer_id = $4, feedback = $5, reviewed_at = now()
 			WHERE id = $1 AND state = $6`
-		tag, err := tx.Exec(ctx, upd, id, string(final), rubricScore, reviewerID, nullStr(feedback), string(from))
+		tag, err := tx.Exec(ctx, upd, id, string(final), rubricScore, reviewerID, dbutil.NullStr(feedback), string(from))
 		if err != nil {
 			return err
 		}
@@ -493,8 +470,6 @@ func (r *Repository) ReviewSubmission(ctx context.Context, reviewerID, id string
 	out, err = r.GetSubmission(ctx, id)
 	return out, err
 }
-
-// ── Skill assessments ─────────────────────────────────────────────────────────
 
 func (r *Repository) InsertAssessment(ctx context.Context, actor string, req CreateSkillAssessmentRequest) (*SkillAssessment, error) {
 	id := uuid.New().String()
@@ -533,7 +508,7 @@ func scanAssessment(row rowScanner) (*SkillAssessment, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.Rubric = rawOrEmptyObject(rubric)
+	a.Rubric = jsonx.RawOrEmptyObject(rubric)
 	return a, nil
 }
 
@@ -585,8 +560,6 @@ func (r *Repository) UpdateAssessment(ctx context.Context, actor, id string, req
 	_ = r.insertAudit(ctx, actor, "skill_assessment.updated", "academy_skill_assessment", id, nil, "info")
 	return r.GetAssessment(ctx, id)
 }
-
-// ── Skill attempts ────────────────────────────────────────────────────────────
 
 // FindAttemptByIdem returns a prior graded attempt for an idempotency key, or
 // ErrNotFound. Backs the idempotent take-assessment replay.
@@ -649,9 +622,9 @@ func (r *Repository) GradeAttempt(
 			INSERT INTO public.academy_skill_attempts
 				(id, user_id, assessment_id, score, passed, state, idempotency_key)
 			VALUES ($1,$2,$3,$4,$5,'graded',$6)
-			ON CONFLICT (idempotency_key) DO NOTHING
+			ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 			RETURNING id`
-		err := tx.QueryRow(ctx, ins, id, userID, assessmentID, score, passed, nullStr(idemKey)).Scan(&attemptID)
+		err := tx.QueryRow(ctx, ins, id, userID, assessmentID, score, passed, dbutil.NullStr(idemKey)).Scan(&attemptID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Lost the idempotency race: a concurrent attempt with the same key won.
 			// Resolve to that row and do NOT issue a second credential.
@@ -702,8 +675,6 @@ func findAttemptByIdemTx(ctx context.Context, tx pgx.Tx, idemKey string) (*Skill
 	return scanAttempt(tx.QueryRow(ctx, q, idemKey))
 }
 
-// ── Mentors & matches ─────────────────────────────────────────────────────────
-
 func (r *Repository) InsertMentor(ctx context.Context, actor string, req CreateMentorRequest) (*Mentor, error) {
 	id := uuid.New().String()
 	status := req.Status
@@ -747,7 +718,7 @@ func (r *Repository) ListMentors(ctx context.Context, tradeTrack string) ([]Ment
 	args := []any{}
 	if tradeTrack != "" {
 		args = append(args, tradeTrack)
-		sb.WriteString(fmt.Sprintf(" AND trade_track = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND trade_track = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY trade_track ASC")
 	rows, err := r.db.Query(ctx, sb.String(), args...)

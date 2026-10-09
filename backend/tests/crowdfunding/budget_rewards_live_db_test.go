@@ -1,17 +1,13 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for campaign budget lines and reward tiers.
-//
 // Both were the milestones story again: cf_reward_tiers existed and nothing ever
 // wrote it, cf_campaign_budget did not exist at all, and GetDetail returned empty
 // arrays for both. The campaign page therefore said "0 budget items" under a
 // heading promising to explain where the money goes, and offered no rewards on a
 // campaign whose creator had defined them in the wizard.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run 'LiveDB_Budget|LiveDB_Reward' -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -41,9 +37,11 @@ func TestLiveDB_BudgetLinesPersistInOrder(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
-	detail, err := svc.GetDetail(ctx, campaignID)
+	detail, err := svc.GetDetail(ctx, campaignID, creator)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -83,9 +81,11 @@ func TestLiveDB_RewardTierClaimedIsCountedNotDeclared(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	campaignID, _ := res["campaignId"].(string)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE id=$1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
+	})
 
-	detail, _ := svc.GetDetail(ctx, campaignID)
+	detail, _ := svc.GetDetail(ctx, campaignID, creator)
 	tiers, _ := detail["rewardTiers"].([]map[string]any)
 	if len(tiers) != 2 {
 		t.Fatalf("detail carries %d tiers, want 2", len(tiers))
@@ -104,14 +104,16 @@ func TestLiveDB_RewardTierClaimedIsCountedNotDeclared(t *testing.T) {
 	// A REAL backer takes the second tier.
 	tierID, _ := tiers[1]["id"].(string)
 	backerID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO cf_reward_backers (id, tier_id, backer_name, reward_tier_title, amount_kobo, requires_shipping)
 		VALUES ($1,$2,'A Real Backer','Care package',500000,true)`, backerID, tierID); err != nil {
 		t.Fatalf("seed backer: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM cf_reward_backers WHERE id=$1`, backerID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM cf_reward_backers WHERE id=$1`, backerID)
+	})
 
-	detail2, _ := svc.GetDetail(ctx, campaignID)
+	detail2, _ := svc.GetDetail(ctx, campaignID, creator)
 	tiers2, _ := detail2["rewardTiers"].([]map[string]any)
 	if tiers2[1]["claimed"] != 1 {
 		t.Errorf("claimed = %v after one real backer, want 1", tiers2[1]["claimed"])
@@ -123,7 +125,7 @@ func TestLiveDB_RewardTierClaimedIsCountedNotDeclared(t *testing.T) {
 	// The stored counter column stays untouched — the count is derived, so it
 	// cannot drift away from who actually claimed.
 	var stored int
-	if err := pool.QueryRow(ctx, `SELECT claimed FROM cf_reward_tiers WHERE id=$1`, tierID).Scan(&stored); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT claimed FROM cf_reward_tiers WHERE id=$1`, tierID).Scan(&stored); err != nil {
 		t.Fatalf("read stored counter: %v", err)
 	}
 	if stored != 0 {
@@ -171,7 +173,7 @@ func TestLiveDB_BudgetAndRewardValidation(t *testing.T) {
 				t.Errorf("err = %v, want ErrInvalidSubmission", err)
 			}
 			var n int
-			if err := pool.QueryRow(ctx, `SELECT count(*) FROM campaigns WHERE title=$1`, req.Title).Scan(&n); err != nil {
+			if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM campaigns WHERE title=$1`, req.Title).Scan(&n); err != nil {
 				t.Fatalf("count: %v", err)
 			}
 			if n != 0 {

@@ -64,7 +64,6 @@ func NewMarkupStore(db *pgxpool.Pool) *MarkupStore { return &MarkupStore{db: db}
 // scoring exactly — corridor(+2) + tier(+1), most specific wins — so both FX
 // surfaces resolve the same row for the same inputs. The legacy service has no
 // tier concept and passes "", which matches only the tier-agnostic rows.
-//
 // min_bps/max_bps clamp the result, preserving SpreadRule's per-corridor band.
 func (s *MarkupStore) resolveBPS(ctx context.Context, source, target, tier string) (int, error) {
 	const q = `
@@ -138,7 +137,6 @@ func (s *MarkupStore) ListRates(ctx context.Context) ([]*MarkupRate, error) {
 }
 
 // SetRate upserts a corridor's markup and records the change, atomically.
-//
 // The read-modify-write runs inside ONE transaction with the existing row locked
 // FOR UPDATE, so two concurrent admin edits cannot interleave and write an audit
 // row whose "before" never existed. bps is validated by the caller (PercentToBPS)
@@ -150,7 +148,7 @@ func (s *MarkupStore) SetRate(ctx context.Context, corridor, tier string, bps in
 	}
 	corridor = NormalizeCorridor(corridor)
 	if corridor == "" {
-		return nil, fmt.Errorf("fx: corridor is required")
+		return nil, errors.New("fx: corridor is required")
 	}
 	tier = strings.ToLower(strings.TrimSpace(tier))
 
@@ -158,7 +156,7 @@ func (s *MarkupStore) SetRate(ctx context.Context, corridor, tier string, bps in
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var beforeBPS *int
 	var beforeActive *bool

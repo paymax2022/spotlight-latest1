@@ -1,41 +1,32 @@
 package otp_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: the OTP store's atomicity guarantees, against real SQL.
-//
 // WHY THIS EXISTS
-// ---------------
 // The unit suite drives an in-memory store whose Consume and IncrementAttempts
 // are correct BY CONSTRUCTION — they hold a mutex. That proves the service's
 // logic and proves nothing about the property the store was chosen for.
-//
 // Single use and the attempt ceiling are not statements about one request. They
 // are statements about concurrent ones:
-//
 //   - Two simultaneous submissions of the SAME CORRECT code must produce one
 //     success and one failure. If both succeed, the code is replayable and the
 //     mechanism is decorative. Nothing in a single-threaded test can see this.
 //   - Two simultaneous WRONG guesses must produce attempts 1 and 2, never 1 and
 //     1. A lost update there is how an attacker gets unlimited guesses at a
 //     six-digit code while the counter reads 5.
-//
 // Both are guaranteed here by SQL — one DELETE ... WHERE finds the row, and
 // UPDATE ... RETURNING serialises on it — and both are worth pinning, because
 // the tempting refactor (read, check in Go, then write) reintroduces the race
 // and passes every non-concurrent test.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/otp/... -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -71,7 +62,7 @@ func newKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
 	k := "test:" + uuid.NewString()
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM otp_codes WHERE key = $1`, k); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM otp_codes WHERE key = $1`, k); err != nil {
 			t.Errorf("cleanup code %s: %v", k, err)
 		}
 	})
@@ -92,7 +83,7 @@ func put(t *testing.T, ctx context.Context, s *otp.PostgresStore, key, code stri
 	if err := s.Put(ctx, key, rec, ttl); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	for i := 0; i < attempts; i++ {
+	for range attempts {
 		if _, err := s.IncrementAttempts(ctx, key); err != nil {
 			t.Fatalf("seed attempt: %v", err)
 		}
@@ -113,7 +104,7 @@ func TestLiveDB_ConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 	results := make([]bool, racers)
 	start := make(chan struct{})
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -142,16 +133,13 @@ func TestLiveDB_ConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 
 // TestLiveDB_ConsumeNeverSucceedsOnARowAnotherWriterTook is the test that
 // actually has teeth.
-//
 // The plain goroutine race above does NOT discriminate: measured against a
 // read-check-then-delete implementation of Consume it passed 20 runs out of 20,
 // because each racer finishes its read and its delete before the next one is
 // scheduled, so the window it is supposed to exercise never opens. A concurrency
 // test that cannot fail on the broken implementation is decoration.
-//
 // This one forces the window open with a row lock instead of hoping for a
 // scheduler interleaving:
-//
 //  1. A separate transaction takes SELECT ... FOR UPDATE on the row.
 //  2. The racers call Consume. Under MVCC a plain SELECT does not block, so a
 //     read-first implementation reads the row and sees it valid; every
@@ -163,7 +151,6 @@ func TestLiveDB_ConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 // A Consume that reports success from rows-affected returns false for every
 // racer, always. One that decided on its earlier read returns TRUE for a code
 // that no longer exists, which is the same defect as accepting a replay.
-//
 // The assertion is therefore one a correct implementation can never fail,
 // independent of timing.
 func TestLiveDB_ConsumeNeverSucceedsOnARowAnotherWriterTook(t *testing.T) {
@@ -195,7 +182,7 @@ func TestLiveDB_ConsumeNeverSucceedsOnARowAnotherWriterTook(t *testing.T) {
 	const racers = 8
 	var wg sync.WaitGroup
 	results := make([]bool, racers)
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -243,7 +230,7 @@ func TestLiveDB_IncrementAttemptsLosesNoUpdates(t *testing.T) {
 	seen := make([]int, racers)
 	start := make(chan struct{})
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -362,12 +349,10 @@ func TestLiveDB_DeleteExpiredSweeps(t *testing.T) {
 	if _, err := store.DeleteExpired(ctx, 500); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	if _, err := store.Get(ctx, key); err != otp.ErrNotFound {
+	if _, err := store.Get(ctx, key); !errors.Is(err, otp.ErrNotFound) {
 		t.Errorf("expired row survived the sweep (err=%v)", err)
 	}
 }
-
-// ── rate limiter ────────────────────────────────────────────────────────────
 
 func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 	ctx := context.Background()
@@ -376,7 +361,7 @@ func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 
 	key := "test:" + uuid.NewString()
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM otp_rate_limits WHERE key = $1`, key); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM otp_rate_limits WHERE key = $1`, key); err != nil {
 			t.Errorf("cleanup limiter row: %v", err)
 		}
 	})
@@ -387,7 +372,7 @@ func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 	allowed := make([]bool, racers)
 	start := make(chan struct{})
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

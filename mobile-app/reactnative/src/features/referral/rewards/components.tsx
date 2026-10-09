@@ -2,14 +2,13 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { ArrowLeft } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { TIER_COLORS, RewardColors, tierDef } from './constants';
 import type { ReferralTier } from './constants';
 
-// ── Screen header (module-local so it doesn't depend on the legacy referral
 // tree's notification/help routes). ─────────────────────────────────────────
 export function RewardHeader({
   title,
@@ -61,7 +60,6 @@ const hStyles = StyleSheet.create({
   title: { ...Typography.titleLg, color: Colors.onSurface },
 });
 
-// ── Tier badge ───────────────────────────────────────────────────────────────
 export function TierBadge({ tier, size = 'md' }: { tier: ReferralTier; size?: 'sm' | 'md' }) {
   const c = TIER_COLORS[tier];
   const def = tierDef(tier);
@@ -80,7 +78,6 @@ const bStyles = StyleSheet.create({
   badgeTextSm: { ...Typography.labelSm, fontWeight: '700' },
 });
 
-// ── Progress bar ─────────────────────────────────────────────────────────────
 export function ProgressBar({ progress, color = RewardColors.brand }: { progress: number; color?: string }) {
   const pct = Math.max(0, Math.min(1, progress));
   return (
@@ -95,7 +92,6 @@ const pStyles = StyleSheet.create({
   fill: { height: '100%', borderRadius: Radius.full },
 });
 
-// ── Status chip (reused by referrals + earnings) ─────────────────────────────
 export function Chip({ label, fg, bg }: { label: string; fg: string; bg: string }) {
   return (
     <View style={[cStyles.chip, { backgroundColor: bg }]}>
@@ -109,7 +105,6 @@ const cStyles = StyleSheet.create({
   chipText: { ...Typography.labelSm, fontWeight: '700' },
 });
 
-// ── Card ─────────────────────────────────────────────────────────────────────
 export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   return <View style={[dStyles.card, style]}>{children}</View>;
 }

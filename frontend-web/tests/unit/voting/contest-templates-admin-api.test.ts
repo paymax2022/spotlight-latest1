@@ -43,8 +43,8 @@ function multipartReq(fields: Record<string, string | File>) {
  * and .storage.from(bucket) for the upload path.
  */
 function makeSupabase(opts: {
-  templateRow?: any; // returned by .maybeSingle()/.single() for contest_templates
-  contestantSlotExists?: boolean; // for the hasContestantSlot() .limit() query
+  templateRow?: any;
+  contestantSlotExists?: boolean;
   insertedTemplate?: any;
   updatedTemplate?: any;
   uploadError?: any;

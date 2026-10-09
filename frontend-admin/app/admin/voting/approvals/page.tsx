@@ -1,7 +1,6 @@
 'use client';
 
 // Contest maker-checker approvals — SEC-005/G-MC.
-//
 // WHY THIS EXISTS
 // Vote reversal, vote count adjustment, and results publish/lock moved from
 // "execute immediately" to "propose, then a second approver executes"
@@ -11,11 +10,9 @@
 // note input mirrors app/admin/crypto/withdrawals/page.tsx's inline
 // mandatory-textarea decision card, the established convention for "action
 // requires a text reason" in this codebase.
-//
 // Self-approval (the current admin IS the proposer) is blocked server-side
 // (403) — this page does not attempt to hide buttons for that case since
 // there's no established "current admin user id" accessor pattern in this
-// codebase; the server's error message is shown as-is. A 409 (item already
 // decided by someone else since the list loaded) is treated as an expected
 // race in a multi-admin console: the list is refreshed and a plain notice
 // is shown, not an alarming error toast.

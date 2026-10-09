@@ -6,6 +6,11 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
+	"strconv"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -31,14 +36,12 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// ── Schools (CRUD) ──────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertSchool(ctx context.Context, name, code, vaRef, contact string) (*School, error) {
 	id := uuid.New().String()
 	now := time.Now()
 	const q = `INSERT INTO academy_schools (id, name, code, virtual_account_ref, contact, status, created_at)
 	           VALUES ($1,$2,$3,$4,$5,'active',$6)`
-	if _, err := r.db.Exec(ctx, q, id, name, nullStr(code), nullStr(vaRef), nullStr(contact), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, name, dbutil.NullStr(code), dbutil.NullStr(vaRef), dbutil.NullStr(contact), now); err != nil {
 		return nil, err
 	}
 	return r.GetSchool(ctx, id)
@@ -98,8 +101,6 @@ func (r *Repository) ListAllSchools(ctx context.Context) ([]School, error) {
 	return out, rows.Err()
 }
 
-// ── Fee schedules (CRUD / reads) ────────────────────────────────────────────────
-
 func (r *Repository) InsertFeeSchedule(ctx context.Context, schoolID, name, classCode, term string, amountMinor int64, currency string, dueDate *time.Time) (*FeeSchedule, error) {
 	id := uuid.New().String()
 	now := time.Now()
@@ -108,7 +109,7 @@ func (r *Repository) InsertFeeSchedule(ctx context.Context, schoolID, name, clas
 	}
 	const q = `INSERT INTO academy_fee_schedules (id, school_id, class_code, term, name, amount_minor, currency, due_date, status, created_at)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9)`
-	if _, err := r.db.Exec(ctx, q, id, schoolID, nullStr(classCode), nullStr(term), name, amountMinor, currency, dueDate, now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, schoolID, dbutil.NullStr(classCode), dbutil.NullStr(term), name, amountMinor, currency, dueDate, now); err != nil {
 		return nil, err
 	}
 	return r.GetFeeSchedule(ctx, id)
@@ -131,11 +132,11 @@ func (r *Repository) ListFeeSchedules(ctx context.Context, schoolID, classCode s
 	args := []any{}
 	if schoolID != "" {
 		args = append(args, schoolID)
-		q += " AND school_id = $" + itoa(len(args))
+		q += " AND school_id = $" + strconv.Itoa(len(args))
 	}
 	if classCode != "" {
 		args = append(args, classCode)
-		q += " AND class_code = $" + itoa(len(args))
+		q += " AND class_code = $" + strconv.Itoa(len(args))
 	}
 	q += " ORDER BY created_at DESC"
 	rows, err := r.db.Query(ctx, q, args...)
@@ -184,8 +185,6 @@ func scanFeeSchedule(row pgx.Row) (*FeeSchedule, error) {
 	return f, nil
 }
 
-// ── EduPay account link ─────────────────────────────────────────────────────────
-
 // LinkAccount links a payer to a school for a named student. Idempotent on the
 // UNIQUE (user_id, school_id, student_name): a re-link returns the existing row.
 func (r *Repository) LinkAccount(ctx context.Context, userID, schoolID, studentName, studentClass string) (*EduPayAccount, error) {
@@ -196,7 +195,7 @@ func (r *Repository) LinkAccount(ctx context.Context, userID, schoolID, studentN
 	           ON CONFLICT (user_id, school_id, student_name) DO UPDATE SET status = 'active'
 	           RETURNING id, user_id, school_id, student_name, student_class, status, created_at`
 	var a EduPayAccount
-	err := r.db.QueryRow(ctx, q, id, userID, schoolID, studentName, nullStr(studentClass), now).
+	err := r.db.QueryRow(ctx, q, id, userID, schoolID, studentName, dbutil.NullStr(studentClass), now).
 		Scan(&a.ID, &a.UserID, &a.SchoolID, &a.StudentName, &a.StudentClass, &a.Status, &a.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -223,8 +222,6 @@ func (r *Repository) ListAccounts(ctx context.Context, userID string) ([]EduPayA
 	return out, rows.Err()
 }
 
-// ── Savings pots (saved_minor DERIVED from SUM(contributions)) ──────────────────
-
 func (r *Repository) InsertPot(ctx context.Context, userID, goalName string, targetMinor int64, feeScheduleID string) (*SavingsPot, error) {
 	id := uuid.New().String()
 	now := time.Now()
@@ -232,7 +229,7 @@ func (r *Repository) InsertPot(ctx context.Context, userID, goalName string, tar
 	// mutated as a shadow balance (golden rule: no shadow balances).
 	const q = `INSERT INTO academy_savings_pots (id, user_id, goal_name, target_minor, saved_minor, fee_schedule_id, status, created_at)
 	           VALUES ($1,$2,$3,$4,0,$5,'active',$6)`
-	if _, err := r.db.Exec(ctx, q, id, userID, goalName, targetMinor, nullStr(feeScheduleID), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, goalName, targetMinor, dbutil.NullStr(feeScheduleID), now); err != nil {
 		return nil, err
 	}
 	return r.GetPot(ctx, userID, id)
@@ -325,20 +322,12 @@ func appendContribution(ctx context.Context, q querier, potID, userID string, am
 	const ins = `INSERT INTO academy_pot_contributions (id, pot_id, user_id, amount_minor, wallet_ref, idempotency_key, created_at)
 	             VALUES ($1,$2,$3,$4,$5,$6, now())
 	             ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := q.Exec(ctx, ins, id, potID, userID, amountMinor, nullStr(walletRef), idemKey)
+	tag, err := q.Exec(ctx, ins, id, potID, userID, amountMinor, dbutil.NullStr(walletRef), idemKey)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
 }
-
-func setPotStatus(ctx context.Context, q querier, potID, status string) error {
-	const upd = `UPDATE academy_savings_pots SET status = $2 WHERE id = $1`
-	_, err := q.Exec(ctx, upd, potID, status)
-	return err
-}
-
-// ── Disbursements (guarded SM) ──────────────────────────────────────────────────
 
 // InsertDisbursement creates a disbursement in fee_due. idemKey is stored on the row
 // (UNIQUE WHERE NOT NULL) as a second idempotency guard beyond the idem-key store.
@@ -351,14 +340,14 @@ func insertDisbursement(ctx context.Context, q querier, feeScheduleID, schoolID,
 	const ins = `INSERT INTO academy_disbursements
 	    (id, fee_schedule_id, school_id, payer_user_id, student_ref, amount_minor, currency, state, source, idempotency_key, created_at)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,'fee_due',$8,$9,$10)`
-	if _, err := q.Exec(ctx, ins, id, nullStr(feeScheduleID), schoolID, payerUserID, nullStr(studentRef),
-		amountMinor, currency, source, nullStr(idemKey), now); err != nil {
+	if _, err := q.Exec(ctx, ins, id, dbutil.NullStr(feeScheduleID), schoolID, payerUserID, dbutil.NullStr(studentRef),
+		amountMinor, currency, source, dbutil.NullStr(idemKey), now); err != nil {
 		return nil, err
 	}
 	return &Disbursement{
-		ID: id, FeeScheduleID: ptrOrNil(feeScheduleID), SchoolID: schoolID, PayerUserID: payerUserID,
-		StudentRef: ptrOrNil(studentRef), AmountMinor: amountMinor, Currency: currency,
-		State: DisbFeeDue, Source: source, IdempotencyKey: ptrOrNil(idemKey), CreatedAt: now,
+		ID: id, FeeScheduleID: ptr.OrNil(feeScheduleID), SchoolID: schoolID, PayerUserID: payerUserID,
+		StudentRef: ptr.OrNil(studentRef), AmountMinor: amountMinor, Currency: currency,
+		State: DisbFeeDue, Source: source, IdempotencyKey: ptr.OrNil(idemKey), CreatedAt: now,
 	}, nil
 }
 
@@ -466,14 +455,12 @@ func setDisbState(ctx context.Context, tx pgx.Tx, disbID string, from, to DisbSt
 	return nil
 }
 
-// ── Scholarships + awards ───────────────────────────────────────────────────────
-
 func (r *Repository) InsertScholarship(ctx context.Context, sponsorID, name string, criteria json.RawMessage, budgetMinor int64) (*Scholarship, error) {
 	id := uuid.New().String()
 	now := time.Now()
 	const q = `INSERT INTO academy_scholarships (id, sponsor_id, name, criteria, budget_minor, awarded_minor, status, created_at)
 	           VALUES ($1,$2,$3,$4,$5,0,'active',$6)`
-	if _, err := r.db.Exec(ctx, q, id, nullStr(sponsorID), name, toJSON(criteria), budgetMinor, now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, dbutil.NullStr(sponsorID), name, toJSON(criteria), budgetMinor, now); err != nil {
 		return nil, err
 	}
 	return r.GetScholarship(ctx, id)
@@ -491,7 +478,7 @@ func (r *Repository) GetScholarship(ctx context.Context, id string) (*Scholarshi
 	if err != nil {
 		return nil, err
 	}
-	s.Criteria = rawOrEmptyObject(criteria)
+	s.Criteria = jsonx.RawOrEmptyObject(criteria)
 	return &s, nil
 }
 
@@ -510,7 +497,7 @@ func (r *Repository) ListScholarships(ctx context.Context) ([]Scholarship, error
 		if err := rows.Scan(&s.ID, &s.SponsorID, &s.Name, &criteria, &s.BudgetMinor, &s.AwardedMinor, &s.Status, &s.CreatedAt); err != nil {
 			return nil, err
 		}
-		s.Criteria = rawOrEmptyObject(criteria)
+		s.Criteria = jsonx.RawOrEmptyObject(criteria)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -521,10 +508,13 @@ func (r *Repository) ListScholarships(ctx context.Context) ([]Scholarship, error
 func insertAward(ctx context.Context, q querier, scholarshipID, userID, feeScheduleID string, amountMinor int64, idemKey string) (*ScholarshipAward, bool, error) {
 	id := uuid.New().String()
 	now := time.Now()
+	// uq_academy_scholaward_idem is a partial unique index, so the arbiter must
+	// repeat the index predicate — a bare ON CONFLICT (idempotency_key) matches
+	// no index and raises 42P10.
 	const ins = `INSERT INTO academy_scholarship_awards (id, scholarship_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, created_at)
 	             VALUES ($1,$2,$3,$4,$5,'granted',$6,$7)
-	             ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := q.Exec(ctx, ins, id, scholarshipID, userID, nullStr(feeScheduleID), amountMinor, nullStr(idemKey), now)
+	             ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	tag, err := q.Exec(ctx, ins, id, scholarshipID, userID, dbutil.NullStr(feeScheduleID), amountMinor, dbutil.NullStr(idemKey), now)
 	if err != nil {
 		return nil, false, err
 	}
@@ -534,8 +524,8 @@ func insertAward(ctx context.Context, q querier, scholarshipID, userID, feeSched
 		return ex, false, gerr
 	}
 	return &ScholarshipAward{
-		ID: id, ScholarshipID: scholarshipID, UserID: userID, FeeScheduleID: ptrOrNil(feeScheduleID),
-		AmountMinor: amountMinor, State: "granted", IdempotencyKey: ptrOrNil(idemKey), CreatedAt: now,
+		ID: id, ScholarshipID: scholarshipID, UserID: userID, FeeScheduleID: ptr.OrNil(feeScheduleID),
+		AmountMinor: amountMinor, State: "granted", IdempotencyKey: ptr.OrNil(idemKey), CreatedAt: now,
 	}, true, nil
 }
 
@@ -566,8 +556,6 @@ func setAwardState(ctx context.Context, q querier, awardID, state string) error 
 	return err
 }
 
-// ── Idempotency store (reuses academy_idempotency_keys) ─────────────────────────
-
 type idemRecord struct {
 	ResultRef   string
 	RequestHash string
@@ -594,7 +582,7 @@ func (r *Repository) FindIdem(ctx context.Context, key, scope string) (*idemReco
 	if reqHash != nil {
 		rec.RequestHash = *reqHash
 	}
-	rec.Result = rawOrEmptyObject(result)
+	rec.Result = jsonx.RawOrEmptyObject(result)
 	return &rec, nil
 }
 
@@ -603,58 +591,29 @@ func saveIdem(ctx context.Context, q querier, key, scope, userID, requestHash, r
 	const ins = `INSERT INTO academy_idempotency_keys
 		(idempotency_key, scope, user_id, request_hash, result_ref, result)
 		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (idempotency_key, scope) DO NOTHING`
-	_, err := q.Exec(ctx, ins, key, scope, nullStr(userID), nullStr(requestHash), nullStr(resultRef), toJSON(result))
+	_, err := q.Exec(ctx, ins, key, scope, dbutil.NullStr(userID), dbutil.NullStr(requestHash), dbutil.NullStr(resultRef), toJSON(result))
 	return err
 }
-
-// ── Audit (immutable; reuses academy_commerce_audit) ────────────────────────────
 
 func writeAudit(ctx context.Context, q querier, actorID, action, entityType, entityID, fromState, toState, idemKey string, detail any) error {
 	const ins = `INSERT INTO academy_commerce_audit
 		(actor_id, action, entity_type, entity_id, from_state, to_state, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, entityType, nullUUID(entityID),
-		nullStr(fromState), nullStr(toState), toJSON(detail), nullStr(idemKey))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, entityType, dbutil.NullUUID(entityID),
+		dbutil.NullStr(fromState), dbutil.NullStr(toState), toJSON(detail), dbutil.NullStr(idemKey))
 	return err
 }
-
-// ── tx helper ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// ── small helpers ─────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-// nullUUID is for uuid columns where empty string must become NULL (entity_id is uuid).
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }
 
 func toJSON(v any) []byte {
@@ -678,19 +637,4 @@ func toJSON(v any) []byte {
 		return []byte("{}")
 	}
 	return b
-}
-
-// itoa is a tiny dependency-free int→string for positional placeholder numbers.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

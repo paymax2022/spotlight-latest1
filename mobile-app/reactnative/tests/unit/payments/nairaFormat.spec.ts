@@ -1,12 +1,9 @@
 // Pure-logic unit tests for rendering a kobo amount as Naira.
-// Run: npm run test:payments
-//
 // The defect: PaymentSheet and the wallet tab each carried their own copy of
 // this formatter, both with `minimumFractionDigits: 0`. That trims the trailing
 // zero, so ₦13,645.20 rendered as "₦13,645.2" — on the screen where the customer
 // authorises the charge, while the checkout summary immediately behind it said
 // ₦13,645.20. Two different-looking amounts for one payment.
-//
 // Both now call src/utils/money.ts. These tests pin the rule there, since that is
 // the only place a regression can now come from.
 

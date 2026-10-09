@@ -1,11 +1,8 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // The founder-supplied identity fields: acronym, location, website, founded
 // year and logo.
-//
 // WHY THIS EXISTS
-// ---------------
 // assoc_organisations has carried founded_year, location and website since the
 // schema was written, and the admin console's organisation editor has always
 // read and written them. The publish INSERT never listed them, and OrgDraft had
@@ -13,14 +10,11 @@ package association_test
 // them NULL — and the founder had no way to supply them in the first place. The
 // only way an organisation ever got a location was an admin typing one in
 // afterwards.
-//
 // These tests pin both halves: the values survive publish, and the two fields
 // the wizard marks required are refused server-side rather than trusted to the
 // client that happens to be the only publisher today.
-//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -58,7 +52,7 @@ func TestPublishOrganisation_PersistsIdentityFields(t *testing.T) {
 
 	var acronym, location, website, logoURL *string
 	var foundedYear *int
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT acronym, location, website, logo_url, founded_year
 		FROM assoc_organisations WHERE id=$1`, res.OrganisationID,
 	).Scan(&acronym, &location, &website, &logoURL, &foundedYear); err != nil {
@@ -98,7 +92,7 @@ func TestPublishOrganisation_OptionalIdentityFieldsMayBeBlank(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	userID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@blank.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -116,7 +110,7 @@ func TestPublishOrganisation_OptionalIdentityFieldsMayBeBlank(t *testing.T) {
 	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var acronym, location, website *string
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT acronym, location, website FROM assoc_organisations WHERE id=$1`, res.OrganisationID,
 	).Scan(&acronym, &location, &website); err != nil {
 		t.Fatalf("read organisation: %v", err)
@@ -141,7 +135,7 @@ func TestPublishOrganisation_RejectsMissingRequiredIdentity(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	userID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@required.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -174,7 +168,7 @@ func TestPublishOrganisation_RejectsMissingRequiredIdentity(t *testing.T) {
 			// And nothing may be written: a rejected publish that still leaves a
 			// row is worse than one that errors cleanly.
 			var count int
-			if err := pool.QueryRow(ctx,
+			if err := pool.QueryRow(context.WithoutCancel(ctx),
 				`SELECT count(*) FROM assoc_organisations WHERE name=$1`, orgName).Scan(&count); err != nil {
 				t.Fatalf("count orgs: %v", err)
 			}
@@ -195,7 +189,7 @@ func TestPublishOrganisation_AcceptsBoundaryFoundedYears(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	userID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@bounds.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}

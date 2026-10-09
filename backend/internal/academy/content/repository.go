@@ -25,8 +25,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("academy.content: not found")
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -74,8 +72,6 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 }
 
 type rowScanner interface{ Scan(dest ...any) error }
-
-// ── Lessons (publish surface) ───────────────────────────────────────────────────
 
 func scanLesson(row rowScanner) (*Lesson, error) {
 	l := &Lesson{}
@@ -126,27 +122,29 @@ func (r *Repository) ListLiveLessonsForObjective(ctx context.Context, objectiveI
 // ListLessons lists lessons admin-wide (all statuses), newest first, optionally
 // filtered by objective_id / status. Mirrors ListLiveLessonsForObjective without
 // the live-only + single-objective constraints (admin CMS surface).
+// Reads academy_edu_lessons — NOT the brownfield academy_lessons (which has no
+// objective_id column).
 func (r *Repository) ListLessons(ctx context.Context, objectiveID, status string, limit, offset int) ([]Lesson, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var sb strings.Builder
-	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE 1=1`)
+	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_edu_lessons WHERE 1=1`)
 	args := []any{}
 	if objectiveID != "" {
 		args = append(args, objectiveID)
-		sb.WriteString(fmt.Sprintf(" AND objective_id = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND objective_id = $%d", len(args))
 	}
 	if status != "" {
 		args = append(args, status)
-		sb.WriteString(fmt.Sprintf(" AND status = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND status = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY updated_at DESC")
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	fmt.Fprintf(&sb, " LIMIT $%d", len(args))
 	if offset > 0 {
 		args = append(args, offset)
-		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+		fmt.Fprintf(&sb, " OFFSET $%d", len(args))
 	}
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -172,7 +170,7 @@ func (r *Repository) TransitionLesson(ctx context.Context, actor, id string, to 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from PublishStatus
 	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_edu_lessons WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -202,8 +200,6 @@ func (r *Repository) TransitionLesson(ctx context.Context, actor, id string, to 
 	}
 	return r.GetLesson(ctx, id)
 }
-
-// ── Content bundles (publish surface + manifest) ─────────────────────────────────
 
 const bundleCols = `id, name, version_id, arena_code, size_budget_bytes, lesson_ids, access_card_mapping, status, manifest, created_at`
 
@@ -259,7 +255,7 @@ func (r *Repository) TransitionBundle(ctx context.Context, actor, id string, to 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from PublishStatus
 	var lessonIDs []string
@@ -352,8 +348,6 @@ func (r *Repository) buildManifestTx(ctx context.Context, tx pgx.Tx, bundleID st
 	}, nil
 }
 
-// ── Productions (pipeline board) ─────────────────────────────────────────────────
-
 const productionCols = `id, lesson_id, title, stage, owner_id, sla_due, status, notes, created_at, updated_at`
 
 func scanProduction(row rowScanner) (*Production, error) {
@@ -421,7 +415,7 @@ func (r *Repository) AdvanceProduction(ctx context.Context, actor, id string, to
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ProductionStage
 	err = tx.QueryRow(ctx, `SELECT stage FROM public.academy_content_productions WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -466,7 +460,7 @@ func (r *Repository) BlockProduction(ctx context.Context, actor, id string) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ProductionStatus
 	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_content_productions WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -477,7 +471,7 @@ func (r *Repository) BlockProduction(ctx context.Context, actor, id string) (*Pr
 		return nil, err
 	}
 
-	if !canBlock(from) {
+	if from != ProdActive {
 		_ = insertAuditTx(ctx, tx, actor, "production.block_rejected", "academy_content_production", id,
 			map[string]any{"from": string(from), "to": string(ProdBlocked), "reason": "illegal_transition"}, "warning")
 		_ = tx.Commit(ctx)
@@ -505,7 +499,7 @@ func (r *Repository) ListProductions(ctx context.Context, f ProductionFilter) ([
 	args := []any{}
 	add := func(clause string, v any) {
 		args = append(args, v)
-		sb.WriteString(fmt.Sprintf(" AND %s $%d", clause, len(args)))
+		fmt.Fprintf(&sb, " AND %s $%d", clause, len(args))
 	}
 	if f.Stage != "" {
 		add("stage =", f.Stage)
@@ -519,10 +513,10 @@ func (r *Repository) ListProductions(ctx context.Context, f ProductionFilter) ([
 		limit = 50
 	}
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	fmt.Fprintf(&sb, " LIMIT $%d", len(args))
 	if f.Offset > 0 {
 		args = append(args, f.Offset)
-		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+		fmt.Fprintf(&sb, " OFFSET $%d", len(args))
 	}
 
 	rows, err := r.db.Query(ctx, sb.String(), args...)
@@ -540,8 +534,6 @@ func (r *Repository) ListProductions(ctx context.Context, f ProductionFilter) ([
 	}
 	return out, rows.Err()
 }
-
-// ── Localizations ────────────────────────────────────────────────────────────────
 
 const localizationCols = `id, entity_type, entity_id, lang, payload, status, updated_at`
 
@@ -595,11 +587,11 @@ func (r *Repository) ListLocalizations(ctx context.Context, entityType, entityID
 	args := []any{}
 	if entityType != "" {
 		args = append(args, entityType)
-		sb.WriteString(fmt.Sprintf(" AND entity_type = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND entity_type = $%d", len(args))
 	}
 	if entityID != "" {
 		args = append(args, entityID)
-		sb.WriteString(fmt.Sprintf(" AND entity_id = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND entity_id = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY updated_at DESC LIMIT 200")
 	rows, err := r.db.Query(ctx, sb.String(), args...)

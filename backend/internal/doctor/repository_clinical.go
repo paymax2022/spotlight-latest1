@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"spotlight/backend/go-common/jsonx"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,7 +13,6 @@ import (
 // repository_clinical.go — pgx data access for the Wave 3a (human-side CLINICAL)
 // endpoint groups: pharmacy, labs (extended), referrals/collaboration, follow-up
 // care, HMO, medical records.
-//
 // Every read is scoped to the owning doctor's user_id (defence in depth on top of
 // RLS). Mutations on tables carrying a UNIQUE idempotency_key create rows with
 // ON CONFLICT (idempotency_key) DO NOTHING + replay (exactly like the Wave 2 repo,
@@ -20,14 +20,9 @@ import (
 // status-guarded scoped UPDATEs (naturally idempotent, mirroring the MVP
 // UpdateAppointmentStatus / ReviewLabResult). None of these post ledger entries —
 // they are clinical state transitions / document writes, not value movements.
-//
 // Reference directories with no backing table in the migration (pharmacies,
 // pharmacies/preferred, pharmacy stock, delivery alerts, lab catalogue / packages /
 // providers, specialists, lab value comparisons) return an empty projection.
-
-// ══ PHARMACY ════════════════════════════════════════════════════════════════
-
-// ── Fulfilments ──────────────────────────────────────────────────────────────
 
 func (r *Repository) ListPharmacyFulfilments(ctx context.Context, userID string) ([]PharmacyFulfilment, error) {
 	const q = `
@@ -69,7 +64,7 @@ func (r *Repository) ConfirmFulfilmentReceived(ctx context.Context, userID, fulf
 		UPDATE doctor_pharmacy_fulfilments
 		SET status = 'received', detail = detail || $3::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, fulfilmentID, userID, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, fulfilmentID, userID, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +74,6 @@ func (r *Repository) ConfirmFulfilmentReceived(ctx context.Context, userID, fulf
 	return r.GetPharmacyFulfilment(ctx, userID, fulfilmentID)
 }
 
-// ── Substitutes ──────────────────────────────────────────────────────────────
-
 // ReviewSubstitute approves/rejects the latest proposed substitute on a fulfilment.
 // status is 'approved' | 'rejected'. Scoped to the fulfilment's owner; status-guarded.
 func (r *Repository) ReviewSubstitute(ctx context.Context, userID, fulfilmentID, status string, detail []byte) (*PharmacySubstitute, error) {
@@ -88,7 +81,7 @@ func (r *Repository) ReviewSubstitute(ctx context.Context, userID, fulfilmentID,
 		UPDATE doctor_pharmacy_substitutes
 		SET status = $3, reviewed_at = now(), detail = detail || $4::jsonb
 		WHERE fulfilment_id = $1 AND user_id = $2 AND status = 'proposed'`
-	tag, err := r.db.Exec(ctx, q, fulfilmentID, userID, status, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, fulfilmentID, userID, status, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +104,6 @@ func (r *Repository) latestSubstitute(ctx context.Context, userID, fulfilmentID 
 	}
 	return s, err
 }
-
-// ── Drug deliveries ──────────────────────────────────────────────────────────
 
 func (r *Repository) ListDrugDeliveries(ctx context.Context, userID string) ([]DrugDelivery, error) {
 	const q = `
@@ -148,8 +139,6 @@ func (r *Repository) GetDeliveryForFulfilment(ctx context.Context, userID, fulfi
 	}
 	return d, err
 }
-
-// ── Refill requests ──────────────────────────────────────────────────────────
 
 func (r *Repository) ListRefillRequests(ctx context.Context, userID string) ([]RefillRequest, error) {
 	const q = `
@@ -192,13 +181,11 @@ func (r *Repository) ReviewRefill(ctx context.Context, userID, refillID, status 
 		UPDATE doctor_refill_requests
 		SET status = $3, reviewed_at = now(), detail = detail || $4::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2 AND status = 'pending'`
-	if _, err := r.db.Exec(ctx, q, refillID, userID, status, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, refillID, userID, status, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return r.GetRefillRequest(ctx, userID, refillID)
 }
-
-// ── Pharmacy messages (per fulfilment thread) ────────────────────────────────
 
 func (r *Repository) ListPharmacyMessages(ctx context.Context, userID, fulfilmentID string) ([]PharmacyMessage, error) {
 	const q = `
@@ -264,8 +251,6 @@ func (r *Repository) getPharmacyMessageByIdem(ctx context.Context, userID, idemK
 	return m, err
 }
 
-// ══ LABS (extended) ═════════════════════════════════════════════════════════
-
 // ListLabResultInbox returns the doctor's lab results for the inbox view.
 func (r *Repository) ListLabResultInbox(ctx context.Context, userID string) ([]LabResultInbox, error) {
 	const q = `
@@ -322,7 +307,7 @@ func (r *Repository) AddLabInterpretation(ctx context.Context, userID, resultID,
 		INSERT INTO doctor_lab_interpretations (id, result_id, user_id, interpretation, detail, idempotency_key, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6, now())
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, resultID, userID, interpretation, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, resultID, userID, interpretation, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -387,10 +372,6 @@ func (r *Repository) TouchLabOrder(ctx context.Context, userID, orderID string) 
 	return r.getLabOrder(ctx, userID, orderID)
 }
 
-// ══ REFERRALS & COLLABORATION ═══════════════════════════════════════════════
-
-// ── Outgoing referrals ───────────────────────────────────────────────────────
-
 func (r *Repository) ListReferrals(ctx context.Context, userID string) ([]Referral, error) {
 	const q = `
 		SELECT id, user_id, specialist_id, patient_id, direction, status, reason, detail, created_at, updated_at
@@ -432,7 +413,7 @@ func (r *Repository) InsertReferral(ctx context.Context, userID string, speciali
 		INSERT INTO doctor_referrals (id, user_id, specialist_id, patient_id, direction, status, reason, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'outgoing','pending',$5,$6,$7)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, specialistID, patientID, reason, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, specialistID, patientID, reason, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -454,8 +435,6 @@ func (r *Repository) getReferralByIdem(ctx context.Context, userID, idemKey stri
 	}
 	return rf, err
 }
-
-// ── Incoming referrals ───────────────────────────────────────────────────────
 
 func (r *Repository) ListIncomingReferrals(ctx context.Context, userID string) ([]IncomingReferral, error) {
 	const q = `
@@ -497,13 +476,11 @@ func (r *Repository) ReviewIncomingReferral(ctx context.Context, userID, referra
 		UPDATE doctor_incoming_referrals
 		SET status = $3, detail = detail || $4::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2 AND status = 'pending'`
-	if _, err := r.db.Exec(ctx, q, referralID, userID, status, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, referralID, userID, status, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return r.GetIncomingReferral(ctx, userID, referralID)
 }
-
-// ── Opinion requests ─────────────────────────────────────────────────────────
 
 func (r *Repository) ListOpinionRequests(ctx context.Context, userID string) ([]OpinionRequest, error) {
 	const q = `
@@ -546,7 +523,7 @@ func (r *Repository) InsertOpinionRequest(ctx context.Context, userID string, pa
 		INSERT INTO doctor_opinion_requests (id, user_id, patient_id, status, question, detail, idempotency_key)
 		VALUES ($1,$2,$3,'pending',$4,$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, question, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, question, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -568,8 +545,6 @@ func (r *Repository) getOpinionByIdem(ctx context.Context, userID, idemKey strin
 	}
 	return o, err
 }
-
-// ── Care-team messages (per thread) ──────────────────────────────────────────
 
 func (r *Repository) ListCareTeamMessages(ctx context.Context, userID, threadID string) ([]CareTeamMessage, error) {
 	const q = `
@@ -635,8 +610,6 @@ func (r *Repository) getCareTeamMessageByIdem(ctx context.Context, userID, idemK
 	return m, err
 }
 
-// ══ FOLLOW-UP CARE ══════════════════════════════════════════════════════════
-
 func (r *Repository) ListFollowUps(ctx context.Context, userID string) ([]FollowUpPlan, error) {
 	const q = `
 		SELECT id, user_id, patient_id, appointment_id, status, kind, due_at, reminder_set, completed_at, detail, created_at, updated_at
@@ -681,7 +654,7 @@ func (r *Repository) InsertFollowUp(ctx context.Context, userID string, patientI
 		INSERT INTO doctor_follow_up_plans (id, user_id, patient_id, appointment_id, status, kind, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'scheduled',$5,$6,$7)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, appointmentID, kind, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, appointmentID, kind, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +683,7 @@ func (r *Repository) ReviewFollowUp(ctx context.Context, userID, followUpID, sta
 		UPDATE doctor_follow_up_plans
 		SET status = $3, detail = detail || $4::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2 AND status = 'scheduled'`
-	if _, err := r.db.Exec(ctx, q, followUpID, userID, status, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, followUpID, userID, status, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return r.GetFollowUp(ctx, userID, followUpID)
@@ -722,7 +695,7 @@ func (r *Repository) CompleteFollowUp(ctx context.Context, userID, followUpID st
 		UPDATE doctor_follow_up_plans
 		SET status = 'completed', completed_at = now(), detail = detail || $3::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, followUpID, userID, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, followUpID, userID, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -738,7 +711,7 @@ func (r *Repository) SetFollowUpReminder(ctx context.Context, userID, followUpID
 		UPDATE doctor_follow_up_plans
 		SET reminder_set = true, detail = detail || $3::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, followUpID, userID, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, followUpID, userID, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -747,8 +720,6 @@ func (r *Repository) SetFollowUpReminder(ctx context.Context, userID, followUpID
 	}
 	return r.GetFollowUp(ctx, userID, followUpID)
 }
-
-// ── Care plans ───────────────────────────────────────────────────────────────
 
 func (r *Repository) ListCarePlans(ctx context.Context, userID string) ([]CarePlan, error) {
 	const q = `
@@ -791,7 +762,7 @@ func (r *Repository) InsertCarePlan(ctx context.Context, userID string, patientI
 		INSERT INTO doctor_care_plans (id, user_id, patient_id, title, status, plan, idempotency_key)
 		VALUES ($1,$2,$3,$4,'active',$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, title, jsonOrEmptyObject(plan), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, title, jsonx.RawOrEmptyObject(plan), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -813,8 +784,6 @@ func (r *Repository) getCarePlanByIdem(ctx context.Context, userID, idemKey stri
 	}
 	return cp, err
 }
-
-// ── Chronic monitoring ───────────────────────────────────────────────────────
 
 func (r *Repository) ListChronicMonitoring(ctx context.Context, userID string) ([]ChronicMonitoringEntry, error) {
 	const q = `
@@ -844,7 +813,7 @@ func (r *Repository) InsertChronicMonitoring(ctx context.Context, userID string,
 	const q = `
 		INSERT INTO doctor_chronic_monitoring (id, user_id, patient_id, condition, readings, detail)
 		VALUES ($1,$2,$3,$4,$5,$6)`
-	if _, err := r.db.Exec(ctx, q, id, userID, patientID, condition, jsonOrEmptyArray(readings), jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, patientID, condition, jsonx.RawOrEmptyArray(readings), jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	const sel = `
@@ -855,8 +824,6 @@ func (r *Repository) InsertChronicMonitoring(ctx context.Context, userID string,
 		&c.Readings, &c.Detail, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
-
-// ── Adherence checks ─────────────────────────────────────────────────────────
 
 func (r *Repository) ListAdherenceChecks(ctx context.Context, userID string) ([]AdherenceCheck, error) {
 	const q = `
@@ -889,7 +856,7 @@ func (r *Repository) InsertAdherenceCheck(ctx context.Context, userID string, pa
 		INSERT INTO doctor_adherence_checks (id, user_id, patient_id, prescription_id, status, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, prescriptionID, status, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, prescriptionID, status, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -925,8 +892,6 @@ func (r *Repository) getAdherenceByIdem(ctx context.Context, userID, idemKey str
 	return a, err
 }
 
-// ══ HMO ═════════════════════════════════════════════════════════════════════
-
 // GetHMOCoverageForPatient returns the latest plan-coverage row for a patient (scoped).
 func (r *Repository) GetHMOCoverageForPatient(ctx context.Context, userID, patientID string) (*HMOPlanCoverage, error) {
 	const q = `
@@ -940,8 +905,6 @@ func (r *Repository) GetHMOCoverageForPatient(ctx context.Context, userID, patie
 	}
 	return c, err
 }
-
-// ── Pre-auth ─────────────────────────────────────────────────────────────────
 
 func (r *Repository) ListPreAuthRequests(ctx context.Context, userID string) ([]HMOPreAuthRequest, error) {
 	const q = `
@@ -985,7 +948,7 @@ func (r *Repository) InsertPreAuthRequest(ctx context.Context, userID string, pa
 		INSERT INTO doctor_hmo_preauth_requests (id, user_id, patient_id, appointment_id, status, amount_kobo, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'pending',$5,$6,$7)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, appointmentID, amountKobo, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, appointmentID, amountKobo, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,8 +971,6 @@ func (r *Repository) getPreAuthByIdem(ctx context.Context, userID, idemKey strin
 	return p, err
 }
 
-// ── Covered services ─────────────────────────────────────────────────────────
-
 func (r *Repository) ListCoveredServices(ctx context.Context, userID string) ([]HMOCoveredService, error) {
 	const q = `
 		SELECT id, user_id, service_name, provider, covered, detail, created_at
@@ -1031,7 +992,6 @@ func (r *Repository) ListCoveredServices(ctx context.Context, userID string) ([]
 	return out, rows.Err()
 }
 
-// ── Claims (read/get only; submit/dispute are handled by the existing Wave-2/phase2
 //    HMO claim routes — Wave 3a does not re-register them) ──────────────────────
 
 func (r *Repository) ListHMOClaims(ctx context.Context, userID string) ([]HMOClaim, error) {
@@ -1067,8 +1027,6 @@ func (r *Repository) GetHMOClaim(ctx context.Context, userID, id string) (*HMOCl
 	}
 	return c, err
 }
-
-// ── HMO support thread ───────────────────────────────────────────────────────
 
 func (r *Repository) ListHMOSupportMessages(ctx context.Context, userID, threadID string) ([]HMOSupportMessage, error) {
 	const q = `
@@ -1134,8 +1092,6 @@ func (r *Repository) getHMOSupportMessageByIdem(ctx context.Context, userID, ide
 	return m, err
 }
 
-// ── Fraud warnings ───────────────────────────────────────────────────────────
-
 func (r *Repository) ListFraudWarnings(ctx context.Context, userID string) ([]HMOFraudWarning, error) {
 	const q = `
 		SELECT id, user_id, severity, acknowledged, acknowledged_at, detail, created_at
@@ -1188,8 +1144,6 @@ func (r *Repository) AckFraudWarning(ctx context.Context, userID, warningID stri
 	return w, err
 }
 
-// ══ MEDICAL RECORDS ═════════════════════════════════════════════════════════
-
 // ListRecordRestrictions returns the patient's record restrictions (scoped).
 func (r *Repository) ListRecordRestrictions(ctx context.Context, userID, patientID string) ([]RecordRestriction, error) {
 	const q = `
@@ -1241,7 +1195,7 @@ func (r *Repository) InsertRecordShare(ctx context.Context, userID, patientID st
 		INSERT INTO doctor_record_shares (id, user_id, patient_id, shared_with, status, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'active',$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, patientID, sharedWith, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, patientID, sharedWith, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1304,9 +1258,9 @@ func (r *Repository) InsertRecordAccess(ctx context.Context, userID, patientID, 
 	const q = `
 		INSERT INTO doctor_record_access_log (id, user_id, patient_id, action, detail)
 		VALUES ($1,$2,$3,$4,$5)`
-	if _, err := r.db.Exec(ctx, q, id, userID, patientID, action, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, patientID, action, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return &RecordAccessEntry{ID: id, UserID: userID, PatientID: &patientID, Action: action,
-		Detail: jsonOrEmptyObject(detail), CreatedAt: time.Now()}, nil
+		Detail: jsonx.RawOrEmptyObject(detail), CreatedAt: time.Now()}, nil
 }

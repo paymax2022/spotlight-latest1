@@ -1,8 +1,6 @@
-// ── Doctor — Section B profile builder & verification lifecycle hooks ─────────
 // Section B (31-screen Doctor Profile & Verification flow). Reads the draft,
 // document slots, licence-expiry warning and verification decision; mutations
 // auto-generate `idempotencyKey` and invalidate the relevant queries.
-//
 // Reuses (do NOT recreate): `useAvailability`/`useUpdateAvailability` and
 // `useVerification` from `./useDoctorProfile` (screens 19, 25). This file is
 // ADDITIVE to that hook module.
@@ -37,8 +35,6 @@ import type {
   RenewLicenceInput,
   PublishProfileInput,
 } from '@/types/doctor.profile';
-
-// ─── Reads ───────────────────────────────────────────────────────────────────
 
 export function useProfileDraft(draftId?: string) {
   return useQuery({
@@ -75,8 +71,6 @@ export function useVerificationDecision(submissionId?: string) {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useSaveProfileDraft() {
   const qc = useQueryClient();

@@ -1,7 +1,6 @@
 'use client';
 
 // SC-32 · Bulk Onboarding — CSV import preview + approval queue.
-// CSV is parsed client-side into a preview (valid / error rows); real batches
 // route to a human approval queue before students/guardians are created.
 
 import { useEffect, useState } from 'react';

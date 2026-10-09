@@ -7,15 +7,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/config"
+
+	"github.com/gin-gonic/gin"
 )
 
 // TestEvictionHandlersParameterBinding verifies request parameter binding
 func TestEvictionHandlersParameterBinding(t *testing.T) {
 	tests := []struct {
 		name        string
-		request     interface{}
+		request     any
 		expectError bool
 		errorField  string
 	}{
@@ -81,14 +82,13 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 				t.Fatalf("failed to marshal request: %v", err)
 			}
 
-			req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/test", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 
-			// Try to bind the request body to the appropriate type
 			var bindErr error
 			switch tt.request.(type) {
 			case EvictionRequest:
@@ -116,8 +116,8 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 func TestEvictionResponseTypes(t *testing.T) {
 	tests := []struct {
 		name     string
-		response interface{}
-		validate func(interface{}) bool
+		response any
+		validate func(any) bool
 	}{
 		{
 			name: "eviction response",
@@ -127,7 +127,7 @@ func TestEvictionResponseTypes(t *testing.T) {
 				EvictionRank: 50,
 				EvictionID:   "eviction-1",
 			},
-			validate: func(r interface{}) bool {
+			validate: func(r any) bool {
 				er, ok := r.(EvictionResponse)
 				return ok && er.ContestantID == "contestant-1" && er.VoteCount == 100
 			},
@@ -139,7 +139,7 @@ func TestEvictionResponseTypes(t *testing.T) {
 				Message:      "Contestant saved",
 				SaveRecordID: "save-1",
 			},
-			validate: func(r interface{}) bool {
+			validate: func(r any) bool {
 				sr, ok := r.(SaveResponse)
 				return ok && sr.Success && sr.SaveRecordID == "save-1"
 			},
@@ -157,10 +157,8 @@ func TestEvictionResponseTypes(t *testing.T) {
 
 // TestEvictionRequestValidation verifies struct tags work correctly
 func TestEvictionRequestValidation(t *testing.T) {
-	// Verify struct tags are present
 	req := EvictionRequest{}
 
-	// Check that JSON tags are properly set
 	tests := []struct {
 		name      string
 		jsonBytes string
@@ -198,7 +196,6 @@ func TestEvictionRequestValidation(t *testing.T) {
 				return
 			}
 
-			// Validate the parsed request
 			if req.StageNumber <= 0 && tt.expectOK {
 				t.Errorf("expected valid stage_number, got %d", req.StageNumber)
 			}
@@ -208,10 +205,8 @@ func TestEvictionRequestValidation(t *testing.T) {
 
 // TestRouteRegistration verifies routes can be registered without panic
 func TestRouteRegistration(t *testing.T) {
-	// Create a mock service (not fully functional, just for testing registration)
 	mockSvc := &Service{}
 
-	// Test that Register doesn't panic (member routes)
 	t.Run("member_routes", func(t *testing.T) {
 		router := gin.New()
 		defer func() {
@@ -220,11 +215,10 @@ func TestRouteRegistration(t *testing.T) {
 			}
 		}()
 		cfg := config.Config{FeatureContestStageEvictionEnabled: true}
-		Register(router, mockSvc, cfg)
+		Register(router, mockSvc, cfg, nil)
 		t.Log("✓ Register() executed without panic")
 	})
 
-	// Test that RegisterAdmin doesn't panic (admin routes on separate group)
 	t.Run("admin_routes", func(t *testing.T) {
 		router := gin.New()
 		adminGroup := router.Group("/admin")
@@ -277,7 +271,6 @@ func TestErrorResponse(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 
-			// Simulate error response
 			c.JSON(tt.statusCode, gin.H{"error": tt.errorMessage})
 
 			if w.Code != tt.statusCode {
@@ -307,7 +300,7 @@ func TestEvictionMutationsAreNotOnMemberRouter(t *testing.T) {
 	r := gin.New()
 	member := r.Group("")
 
-	Register(member, &Service{}, config.Config{FeatureContestStageEvictionEnabled: true})
+	Register(member, &Service{}, config.Config{FeatureContestStageEvictionEnabled: true}, nil)
 
 	forbidden := []struct{ method, path string }{
 		{"POST", "/contests/:id/stages/:stageNum/evict"},

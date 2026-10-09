@@ -34,6 +34,7 @@ function makeSupabase(opts: {
   aggError?: { message: string } | null;
 }) {
   const filterCalls: { table: string; method: string; args: any[] }[] = [];
+  const rangeCalls: { from: number; to: number }[] = [];
 
   function referralEventsChain(forPage: boolean) {
     const chain: any = {
@@ -42,7 +43,21 @@ function makeSupabase(opts: {
       lte: (...args: any[]) => { filterCalls.push({ table: 'referral_events', method: 'lte', args }); return chain; },
       eq: (...args: any[]) => { filterCalls.push({ table: 'referral_events', method: 'eq', args }); return chain; },
       order: () => chain,
-      range: () => Promise.resolve({ data: opts.pageRows, error: opts.pageError ?? null, count: opts.pageRows.length }),
+      // .range(from, to) lands on PostgREST as `?offset=<from>&limit=<to-from+1>`.
+      // PostgREST rejects non-integer or non-safe-integer bounds with an error —
+      // model that so a fractional/huge `?offset=` reproduces the wave-9 "500 on
+      // paginate" defect instead of silently passing in the mock.
+      range: (from: number, to: number) => {
+        rangeCalls.push({ from, to });
+        if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) {
+          return Promise.resolve({
+            data: null,
+            error: { message: 'invalid range: offset/limit must be integers' },
+            count: null,
+          });
+        }
+        return Promise.resolve({ data: opts.pageRows, error: opts.pageError ?? null, count: opts.pageRows.length });
+      },
       then: (resolve: any) =>
         Promise.resolve({ data: opts.aggRows, error: opts.aggError ?? null }).then(resolve),
     };
@@ -66,7 +81,7 @@ function makeSupabase(opts: {
       throw new Error(`Unexpected table: ${table}`);
     },
   };
-  return { client, filterCalls };
+  return { client, filterCalls, rangeCalls };
 }
 
 beforeEach(() => {
@@ -126,7 +141,6 @@ describe('REF-007: admin/referrals/vote-rewards', () => {
   });
 
   it('computes stats from an unbounded aggregate, not the capped page', async () => {
-    // Page is capped to 1 row; the aggregate (no range/limit) reports 3 rows
     // across 2 distinct referrers. If the route regressed to summing only
     // the page, totalRewardsKobo would be 50000 and distinctReferrersRewarded 1.
     const pageRows = [
@@ -163,6 +177,50 @@ describe('REF-007: admin/referrals/vote-rewards', () => {
     expect(lte[0].args).toEqual(['rewarded_at', '2026-09-10']);
     expect(eq.length).toBeGreaterThan(0);
     expect(eq[0].args).toEqual(['referrer_id', 'ref-9']);
+  });
+
+  it('paginates with integer limit/offset forwarded to .range()', async () => {
+    const { client, rangeCalls } = makeSupabase({ pageRows: [], aggRows: [] });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+
+    const res = await GET(req('?limit=10&offset=20'));
+
+    expect(res.status).toBe(200);
+    expect(rangeCalls).toEqual([{ from: 20, to: 29 }]);
+  });
+
+  // Wave-9 residual defect: a fractional or over-wide offset/limit used to reach
+  // PostgREST's offset/limit params verbatim via .range() → error → thrown → 500.
+  // Safe integers only; anything else falls back to the default page (200).
+  it.each([
+    ['?offset=1.5', 'fractional offset'],
+    ['?offset=1e25', 'unsafe-integer offset'],
+    ['?limit=2.5', 'fractional limit'],
+    ['?offset=abc', 'non-numeric offset'],
+    ['?offset=-3', 'negative offset'],
+    ['?limit=-10', 'negative limit'],
+  ])('does not 500 on %s (%s)', async (qs) => {
+    const { client, rangeCalls } = makeSupabase({ pageRows: [], aggRows: [] });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+
+    const res = await GET(req(qs));
+
+    expect(res.status).toBe(200);
+    // Every value forwarded to .range() must be a safe integer.
+    for (const { from, to } of rangeCalls) {
+      expect(Number.isSafeInteger(from)).toBe(true);
+      expect(Number.isSafeInteger(to)).toBe(true);
+    }
+  });
+
+  it('clamps limit above the max instead of forwarding it verbatim', async () => {
+    const { client, rangeCalls } = makeSupabase({ pageRows: [], aggRows: [] });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+
+    const res = await GET(req('?limit=5000'));
+
+    expect(res.status).toBe(200);
+    expect(rangeCalls).toEqual([{ from: 0, to: 199 }]); // MAX_LIMIT = 200
   });
 
   it('returns empty results with no error when there are no reward events', async () => {

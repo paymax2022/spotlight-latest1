@@ -2,6 +2,7 @@ package savings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -12,8 +13,6 @@ import (
 // is additive and follows the existing owner/member object-level authZ pattern.
 // Money paths keep the ledger-derived-balance + escrow invariants (NL-1/2/8) and
 // require an Idempotency-Key at the handler boundary (NL-9).
-
-// ───────────────────────── Vault reads / early withdraw ─────────────────────────
 
 // GetVault returns a single vault with its derived balance. Object-level authZ:
 // only the owner may read it.
@@ -47,7 +46,7 @@ func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*
 // which let any member break a LOCK vault penalty-free by sending 0.
 func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID string, amountKobo int64, idemKey string) (int64, int64, error) {
 	if amountKobo <= 0 {
-		return 0, 0, fmt.Errorf("savings: withdraw must be positive")
+		return 0, 0, errors.New("savings: withdraw must be positive")
 	}
 	v, err := s.getVault(ctx, vaultID)
 	if err != nil {
@@ -81,6 +80,10 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 	if penalty > 0 {
 		// Then debit the penalty from the member's wallet into the platform
 		// revenue standing account — value is redistributed, never minted (NL-2).
+		// NOTE (E2E-FIN-041): this debit is deliberately NOT tier-gated. It is a
+		// charge levied while returning the member's OWN funds; gating it with
+		// EnforceWalletDebitLimit would strand a Tier-0 member's vault balance —
+		// they could neither deposit (gated) nor withdraw what they already hold.
 		revAcc, rerr := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 		if rerr != nil {
 			return 0, 0, rerr
@@ -150,11 +153,10 @@ func (s *VaultService) BuildSummary(ctx context.Context, ownerID string, ajo *Aj
 	return sum, nil
 }
 
-// ───────────────────────── Circle reads / contribute ─────────────────────────
-
 // CircleView is a circle plus the caller's membership context, for list rows.
 type CircleView struct {
 	Circle
+
 	MemberCount int    `json:"member_count"`
 	MyState     string `json:"my_state"`
 }
@@ -235,7 +237,7 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		return err
 	}
 	if c.State != CircleActive {
-		return fmt.Errorf("savings: circle not active")
+		return errors.New("savings: circle not active")
 	}
 	isMem, err := s.IsMember(ctx, circleID, userID)
 	if err != nil {
@@ -249,14 +251,19 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		return err
 	}
 	if cy == nil {
-		return fmt.Errorf("savings: no pending cycle")
+		return errors.New("savings: no pending cycle")
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a prepay debits the member's wallet —
+	// the same EnforceWalletDebitLimit the transfer rail runs.
+	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+		return err
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
 	}
 	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && derr != ledger.ErrDuplicate {
+	if derr := s.led.Debit(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: circle contribute: %w", derr)
 	}
 	// Credit the collected pot for the current cycle so the scheduled payout picks
@@ -271,11 +278,10 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 	return nil
 }
 
-// ───────────────────────── Target reads ─────────────────────────
-
 // TargetView is a group target plus the caller's context for list rows.
 type TargetView struct {
 	GroupTarget
+
 	BalanceKobo int64 `json:"balance_kobo"`
 	MemberCount int   `json:"member_count"`
 }

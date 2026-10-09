@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   label:     string;
@@ -14,7 +14,6 @@ interface Props {
 }
 
 // New component (Z): a quality-score factor row (label + weight + scored bar +
-// pct). BarRow uses a fixed scale across a series; a factor row is already 0–100
 // and needs an inline weight chip, so a dedicated row is justified (token-only).
 export default function QualityFactorRow({ label, scorePct, weightPct, tint = Colors.primary, border }: Props) {
   const pct = Math.max(0, Math.min(100, Math.round(scorePct)));

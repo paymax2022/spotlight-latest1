@@ -1,4 +1,3 @@
-// ── Merchant Onboarding — status → display mappings ──────────────────────────
 // Single source for badge tone + copy so the dashboard, type picker and status
 // screen render every state identically (reuses StatusBadge tones).
 

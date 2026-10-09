@@ -4,7 +4,6 @@
 // date of birth, a specific result value, or a record/patient id. The notification
 // says "your result is ready" and links via an opaque token; the PHI stays behind
 // the consent-gated, access-logged record vault.
-//
 // Callers assemble the PHI terms for the recipient/context (name, DOB, result
 // value, record id, …) and route notification content through GuardNotification
 // before sending.

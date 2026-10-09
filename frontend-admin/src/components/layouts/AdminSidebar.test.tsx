@@ -6,7 +6,6 @@ import { render, screen } from '@testing-library/react';
 // to it and adding a colleague meant already knowing the signup URL. The entry
 // must appear for the operators routeGuard.ts admits and stay hidden from
 // everyone else — a mismatch between the two either hides the link from an
-// operator the guard would let through, or shows it to one it would bounce to
 // /admin/unauthorized.
 
 vi.mock('next/navigation', () => ({

@@ -1,4 +1,3 @@
-// ── Paymax AI Symptom Checker — Triage domain types ──────────────────────────
 // Scope = TRIAGE + NAVIGATION ONLY (SC-1/SC-11). This is NOT a diagnostic device.
 // The output is framed as "possible causes / what to do next" — never a diagnosis.
 

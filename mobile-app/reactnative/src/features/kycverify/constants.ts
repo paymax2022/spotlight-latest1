@@ -1,4 +1,3 @@
-// ── Multi-provider KYC step-up — tier requirements & labels ──────────────────
 // Single source of truth for "what a target tier needs". Screens derive the
 // checklist (K2), the ordered wizard steps (K14 resume), and the human labels
 // from here so we ask ONLY for the target tier's required checks (UX rule).

@@ -7,9 +7,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler exposes the credentials + earning-bridge surface over Gin.
 //   - member: own credentials, public-ish verify, eligible opportunities, apply.
@@ -22,10 +32,9 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user. The finance group mirrors the auth user into
 // c.Set("user_id", ...); fall back to the auth context if absent.
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,22 +44,21 @@ func uid(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNotEligible):
-		c.JSON(http.StatusForbidden, gin.H{"error": "not_eligible", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "not_eligible", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
 // RegisterAcademyCredentials wires the credentials + earning-bridge routes. Mirrors
 // the project Register pattern: builds its own service from the pool, injects the
 // (nil-safe) roleUpgrader, and gates admin routes with middleware.RequirePermission.
-//
 // Member routes are BARE subpaths (the aggregator passes /api/finance/academy base):
 //
 //	GET  /credentials                       — my credentials
@@ -71,7 +79,6 @@ func RegisterAcademyCredentials(member, admin *gin.RouterGroup, pool *pgxpool.Po
 	svc := NewService(pool, roleUpgrader) // nil roleUpgrader → deterministic no-op (dev)
 	h := NewHandler(svc)
 
-	// ── Member ──
 	member.GET("/credentials", h.ListMine)
 	member.GET("/credentials/verify/:verificationId", h.Verify)
 	member.GET("/credentials/:id", h.GetOne)
@@ -79,7 +86,6 @@ func RegisterAcademyCredentials(member, admin *gin.RouterGroup, pool *pgxpool.Po
 	member.GET("/earning/opportunities/:id", h.GetOpportunity)
 	member.POST("/earning/apply", h.Apply)
 
-	// ── Admin (RBAC academy.credentials) ──
 	guard := middleware.RequirePermission(rbac, "academy.credentials")
 	admin.POST("/credentials/:id/revoke", guard, h.AdminRevoke)
 	admin.GET("/earning/opportunities", guard, h.AdminListOpportunities)
@@ -87,12 +93,10 @@ func RegisterAcademyCredentials(member, admin *gin.RouterGroup, pool *pgxpool.Po
 	admin.PUT("/earning/opportunities/:id", guard, h.AdminUpdateOpportunity)
 }
 
-// ── Member handlers ─────────────────────────────────────────────────────────────
-
 func (h *Handler) ListMine(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.ListMine(c.Request.Context(), u)
@@ -108,9 +112,9 @@ func (h *Handler) ListMine(c *gin.Context) {
 // id returns 404. Registered as a param sibling of /credentials/verify/:verificationId
 // (Gin v1.10 routes the literal "verify" ahead of :id).
 func (h *Handler) GetOne(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetMine(c.Request.Context(), u, c.Param("id"))
@@ -134,9 +138,9 @@ func (h *Handler) Verify(c *gin.Context) {
 }
 
 func (h *Handler) ListEligible(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.EvaluateBridge(c.Request.Context(), u)
@@ -151,9 +155,9 @@ func (h *Handler) ListEligible(c *gin.Context) {
 // (same EarningOpportunity shape as the ListEligible list item). Eligibility is
 // enforced in the service; a non-eligible or missing id returns 404.
 func (h *Handler) GetOpportunity(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetEligibleOpportunity(c.Request.Context(), u, c.Param("id"))
@@ -165,14 +169,14 @@ func (h *Handler) GetOpportunity(c *gin.Context) {
 }
 
 func (h *Handler) Apply(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ApplyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// Prefer the header idempotency key; fall back to the body field.
@@ -188,15 +192,13 @@ func (h *Handler) Apply(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
-// ── Admin handlers ──────────────────────────────────────────────────────────────
-
 func (h *Handler) AdminRevoke(c *gin.Context) {
 	var req RevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.Revoke(c.Request.Context(), uid(c), c.Param("id"), req.Reason)
+	out, err := h.svc.Revoke(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.Reason)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -216,10 +218,10 @@ func (h *Handler) AdminListOpportunities(c *gin.Context) {
 func (h *Handler) AdminCreateOpportunity(c *gin.Context) {
 	var req CreateOpportunityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.CreateOpportunity(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateOpportunity(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -230,10 +232,10 @@ func (h *Handler) AdminCreateOpportunity(c *gin.Context) {
 func (h *Handler) AdminUpdateOpportunity(c *gin.Context) {
 	var req UpdateOpportunityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.UpdateOpportunity(c.Request.Context(), uid(c), c.Param("id"), req)
+	out, err := h.svc.UpdateOpportunity(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return

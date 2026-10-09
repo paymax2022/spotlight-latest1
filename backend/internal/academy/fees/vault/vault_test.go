@@ -14,8 +14,6 @@ import (
 // idempotency and vault state machine are exercised in isolation (mirrors
 // feeschedule_test.go). Tests ACTIVELY attempt the violations they claim to guard.
 
-// ── fakeStore: in-memory academy_savings_pots + append-only contributions ──────────
-
 type fakeContribution struct {
 	amount int64
 	idem   string
@@ -128,8 +126,6 @@ func (f *fakeVaultStore) WriteAudit(_ context.Context, _, action, _, _, _, _ str
 	return nil
 }
 
-// ── fakeLedger: records which account contributions and transfers hit (SF-5) ────────
-
 const fakeGeneralFloatAccount = "acct-general-float"        // the general wallet-float account
 const fakeSegregatedVaultAccount = "acct-edtech-fees-vault" // the SF-5 dedicated sub-account
 
@@ -176,8 +172,6 @@ func (l *fakeLedger) TransferVaultToInvoice(_ context.Context, vaultAccountID, i
 	return nil
 }
 
-// ── fakeInvoice: E2 invoice hook ───────────────────────────────────────────────────
-
 const fakeInvoiceSettlementAccount = "acct-invoice-settlement"
 
 type fakeInvoice struct {
@@ -188,8 +182,6 @@ func (i *fakeInvoice) RecordPayment(_ context.Context, _, _, _, _ string, amount
 	i.recorded = append(i.recorded, amountMinor)
 	return fakeInvoiceSettlementAccount, nil
 }
-
-// ── helpers ────────────────────────────────────────────────────────────────────────
 
 func itoa(n int) string {
 	if n == 0 {
@@ -212,10 +204,8 @@ func newTestService() (*Service, *fakeVaultStore, *fakeLedger, *fakeInvoice) {
 	return NewServiceWithStore(store, led, inv), store, led, inv
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // SF-5: contributions post to the SEGREGATED account, distinct from the general float,
 //        and saved_minor is DERIVED from contributions (never set directly).
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 func TestSF5_ContributionsHitSegregatedAccount(t *testing.T) {
 	svc, store, led, _ := newTestService()
@@ -237,7 +227,6 @@ func TestSF5_ContributionsHitSegregatedAccount(t *testing.T) {
 	if call.dstAcct != fakeSegregatedVaultAccount {
 		t.Fatalf("SF-5: contribution must credit the segregated account %q, got %q", fakeSegregatedVaultAccount, call.dstAcct)
 	}
-	// ...and NEVER in the general wallet-float account.
 	if call.dstAcct == fakeGeneralFloatAccount {
 		t.Fatal("SF-5 VIOLATED: contribution credited the general float account")
 	}
@@ -262,9 +251,7 @@ func TestSF5_AccountTypeIsEdtechFeesVault(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // Idempotency (money path, required): same idempotency_key twice = one contribution.
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 func TestIdempotency_DuplicateContributionIsNoOp(t *testing.T) {
 	svc, store, led, _ := newTestService()
@@ -294,7 +281,7 @@ func TestIdempotency_DuplicateContributionIsNoOp(t *testing.T) {
 }
 
 func TestContribute_RequiresIdempotencyKey(t *testing.T) {
-	svc, _, _, _ := newTestService()
+	svc, _, _, _ := newTestService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	v, _ := svc.CreateVault(ctx, "guardian-1", CreateVaultRequest{GoalName: "T", TargetMinor: 1000})
 	if _, err := svc.Contribute(ctx, "guardian-1", v.ID, 100, ""); !errors.Is(err, ErrIdempotencyRequired) {
@@ -302,13 +289,11 @@ func TestContribute_RequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // State machine: legal transitions succeed; illegal ones rejected.
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 // active → target_reached auto-fires when the derived balance meets the target.
 func TestStateMachine_AutoReachTarget(t *testing.T) {
-	svc, _, _, _ := newTestService()
+	svc, _, _, _ := newTestService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	v, _ := svc.CreateVault(ctx, "g", CreateVaultRequest{GoalName: "T", TargetMinor: 50000})
 
@@ -380,7 +365,6 @@ func TestStateMachine_ApplyOnlyFromTargetReached(t *testing.T) {
 	if len(inv.recorded) != 1 || inv.recorded[0] != 50000 {
 		t.Fatalf("apply must record one invoice payment of 50000, got %v", inv.recorded)
 	}
-	// ...and exactly one vault→invoice transfer, from the segregated account.
 	var transfers int
 	for _, c := range led.calls {
 		if c.kind == "transfer" {
@@ -405,7 +389,7 @@ func TestStateMachine_ApplyOnlyFromTargetReached(t *testing.T) {
 
 // Contribution into a terminal (withdrawn) vault is rejected.
 func TestContribute_RejectedOnTerminalVault(t *testing.T) {
-	svc, _, _, _ := newTestService()
+	svc, _, _, _ := newTestService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	v, _ := svc.CreateVault(ctx, "g", CreateVaultRequest{GoalName: "T", TargetMinor: 50000})
 	if _, err := svc.Withdraw(ctx, "g", v.ID); err != nil {

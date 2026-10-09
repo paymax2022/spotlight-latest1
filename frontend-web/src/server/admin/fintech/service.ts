@@ -17,15 +17,13 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { creditWallet, debitWallet } from '@/src/server/wallet/service';
-import { hasPermission, parseAdminRole } from '@/src/server/admin/rbac';
-import { getRequestUserRole } from '@/src/lib/auth/request';
+import { hasPermission, resolveAdminRoleFromRbacSlugs } from '@/src/server/admin/rbac';
+import { getUserRbacRoleSlugs } from '@/src/server/admin/auth';
 
 /** Adjustments below this threshold execute immediately (no checker required). */
 const AUTO_EXECUTE_THRESHOLD_KOBO = 10_000_000; // ₦100,000
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 export interface AdjustmentRecord {
   id: string;
@@ -45,25 +43,31 @@ export interface AdjustmentRecord {
   createdAt: string;
 }
 
-// ---------------------------------------------------------------------------
 // requireFinanceRole — shared guard
-// ---------------------------------------------------------------------------
 
 async function requireFinanceRole(
   userId: string,
   permission: 'finance:adjust:initiate' | 'finance:adjust:approve',
 ): Promise<string> {
-  const rawRole = await getRequestUserRole(userId);
-  const role = parseAdminRole(rawRole);
+  // E2E-SEC-053: resolve from the authoritative RBAC store (user_roles →
+  // roles.slug), same as assertAdminPermission — never user_profiles.role,
+  // which was user-writable via PUT /api/me/profile and let any user mint a
+  // 'finance_admin' role that could initiate (and sub-₦100k auto-execute)
+  // wallet debits. Fail closed: an unreadable role lookup denies.
+  let slugs: string[];
+  try {
+    slugs = await getUserRbacRoleSlugs(userId);
+  } catch {
+    throw new ApiError(`Could not resolve admin role for permission '${permission}'`, 403);
+  }
+  const role = resolveAdminRoleFromRbacSlugs(slugs, permission);
   if (!hasPermission(role, permission)) {
     throw new ApiError(`Role '${role}' does not have permission '${permission}'`, 403);
   }
-  return rawRole ?? role;
+  return role;
 }
 
-// ---------------------------------------------------------------------------
 // executeAdjustment — shared execution path
-// ---------------------------------------------------------------------------
 
 async function executeAdjustment(
   adjustmentId: string,
@@ -92,7 +96,6 @@ async function executeAdjustment(
       ? await creditWallet(targetUserId, mutationInput)
       : await debitWallet(targetUserId, mutationInput);
 
-  // Update adjustment to executed
   await supabase
     .from('admin_adjustments')
     .update({
@@ -105,9 +108,7 @@ async function executeAdjustment(
   return adjustmentId;
 }
 
-// ---------------------------------------------------------------------------
 // initiateAdjustment
-// ---------------------------------------------------------------------------
 
 export interface InitiateAdjustmentInput {
   initiatorId: string;
@@ -145,12 +146,15 @@ export async function initiateAdjustment(
   // Idempotency check
   const { data: existing } = await supabase
     .from('admin_adjustments')
-    .select('id, status')
+    .select('id, status, initiator_id')
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle();
 
   if (existing) {
-    const row = existing as { id: string; status: string };
+    const row = existing as { id: string; status: string; initiator_id: string };
+    if (row.initiator_id !== input.initiatorId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing adjustment.', 409);
+    }
     return {
       adjustmentId:     row.id,
       status:           row.status as InitiateAdjustmentResult['status'],
@@ -173,7 +177,7 @@ export async function initiateAdjustment(
       type:             input.type,
       amount_kobo:      input.amountKobo,
       reason:           input.reason.trim(),
-      status:           requiresApproval ? 'pending_approval' : 'pending_approval', // always start pending; execute below
+      status:           requiresApproval ? 'pending_approval' : 'pending_approval',
     })
     .select('id')
     .single();
@@ -183,11 +187,14 @@ export async function initiateAdjustment(
       // Race on idempotency_key — re-fetch
       const { data: raced } = await supabase
         .from('admin_adjustments')
-        .select('id, status')
+        .select('id, status, initiator_id')
         .eq('idempotency_key', input.idempotencyKey)
         .maybeSingle();
       if (raced) {
-        const row = raced as { id: string; status: string };
+        const row = raced as { id: string; status: string; initiator_id: string };
+        if (row.initiator_id !== input.initiatorId) {
+          throw new ApiError('Idempotency-Key conflicts with an existing adjustment.', 409);
+        }
         return { adjustmentId: row.id, status: row.status as InitiateAdjustmentResult['status'], requiresApproval: false, alreadyProcessed: true };
       }
     }
@@ -212,9 +219,7 @@ export async function initiateAdjustment(
   return { adjustmentId, status: initialStatus, requiresApproval, alreadyProcessed: false };
 }
 
-// ---------------------------------------------------------------------------
 // approveAdjustment
-// ---------------------------------------------------------------------------
 
 export interface ApproveAdjustmentInput {
   adjustmentId: string;
@@ -277,9 +282,7 @@ export async function approveAdjustment(
   return { adjustmentId: input.adjustmentId, ledgerEntryId: null };
 }
 
-// ---------------------------------------------------------------------------
 // rejectAdjustment
-// ---------------------------------------------------------------------------
 
 export interface RejectAdjustmentInput {
   adjustmentId: string;
@@ -323,9 +326,7 @@ export async function rejectAdjustment(input: RejectAdjustmentInput): Promise<vo
     .eq('id', input.adjustmentId);
 }
 
-// ---------------------------------------------------------------------------
 // listAdjustments
-// ---------------------------------------------------------------------------
 
 export interface ListAdjustmentsOptions {
   status?: string;

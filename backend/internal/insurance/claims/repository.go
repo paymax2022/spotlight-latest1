@@ -2,8 +2,10 @@ package claims
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,8 +22,8 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // Sentinel errors.
 var (
-	ErrConflict = fmt.Errorf("claims: version conflict (concurrent transition)")
-	ErrNotFound = fmt.Errorf("claims: not found")
+	ErrConflict = errors.New("claims: version conflict (concurrent transition)")
+	ErrNotFound = errors.New("claims: not found")
 )
 
 const claimCols = `id, policy_id, claimant_user_id, provider, provider_claim_ref, state,
@@ -68,10 +70,19 @@ func (r *Repository) GetByIdempotencyKey(ctx context.Context, key string) (*Clai
 }
 
 // Get returns a claim by id (no ownership filter; callers enforce object-level
-// authZ in the service).
+// authZ in the service). A missing id returns ErrNotFound — normalising
+// pgx.ErrNoRows here is what lets the handler answer 404 instead of leaking a
+// raw driver error as a 500.
 func (r *Repository) Get(ctx context.Context, id string) (*Claim, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+claimCols+` FROM public.insurance_claim WHERE id = $1`, id)
-	return scanClaim(row)
+	c, err := scanClaim(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return c, nil
 }
 
 // GetByProviderRef returns a claim by (provider, provider_claim_ref) — used by
@@ -100,7 +111,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, limit, offse
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Claim
+	out := []Claim{}
 	for rows.Next() {
 		c, err := scanClaim(rows)
 		if err != nil {
@@ -136,7 +147,7 @@ func (r *Repository) SearchAdmin(ctx context.Context, state, policyID string, li
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Claim
+	out := []Claim{}
 	for rows.Next() {
 		c, err := scanClaim(rows)
 		if err != nil {
@@ -208,8 +219,6 @@ func (r *Repository) SetSettled(ctx context.Context, id, payoutLedgerRef string,
 	return nil
 }
 
-// --- evidence ---
-
 // AddEvidence records an evidence object reference on a claim.
 func (r *Repository) AddEvidence(ctx context.Context, e *Evidence) (*Evidence, error) {
 	row := r.db.QueryRow(ctx, `
@@ -233,7 +242,7 @@ func (r *Repository) ListEvidence(ctx context.Context, claimID string) ([]Eviden
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Evidence
+	out := []Evidence{}
 	for rows.Next() {
 		var e Evidence
 		if err := rows.Scan(&e.ID, &e.ClaimID, &e.FileName, &e.ContentType, &e.StorageRef, &e.CreatedAt); err != nil {
@@ -243,8 +252,6 @@ func (r *Repository) ListEvidence(ctx context.Context, claimID string) ([]Eviden
 	}
 	return out, rows.Err()
 }
-
-// --- payouts ---
 
 // InsertPayout records a claim payout money move. UNIQUE(idempotency_key) makes a
 // retried settlement a safe no-op at the DB layer (ON CONFLICT DO NOTHING).

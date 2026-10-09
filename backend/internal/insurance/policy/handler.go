@@ -3,10 +3,15 @@ package policy
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/insurance/catalog"
 	"spotlight/backend/internal/insurance/gateway"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes member + admin policy/quote routes.
@@ -21,17 +26,31 @@ func NewHandler(svc *Service, signRef func(ref string) (string, error)) *Handler
 	return &Handler{svc: svc, signRef: signRef}
 }
 
-func userID(c *gin.Context) string { return c.GetString("user_id") }
-
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrNotFound), errors.Is(err, catalog.ErrNotFound):
+		// Missing policy/quote id — or, on the quote path, a product code the
+		// catalog does not carry. Without this branch both leaked as 500s.
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 	case errors.Is(err, ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrConsentRequired):
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "ndpa_consent_required", "code": "consent_required"})
+	case errors.Is(err, ErrNINRequired):
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), "code": "nin_required"})
+	case errors.Is(err, ErrNINInvalid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), "code": "nin_invalid"})
+	case errors.Is(err, ErrNINRejected):
+		// The identity provider ANSWERED: this NIN does not verify. 400 — the
+		// member's input is the thing to fix, so it must not read as an outage.
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), "code": "nin_verification_failed"})
+	case errors.Is(err, ErrNINUnavailable):
+		// The gate could not get an answer (no provider wired, transport error,
+		// non-verdict). Fail-closed 503 — retry later, never "skip the check".
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err), "code": "nin_verification_unavailable"})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
 		// A provider rejecting the ANSWERS is the applicant's to fix, so it is a
 		// 422 carrying the insurer's own wording — the client attributes each
@@ -52,15 +71,27 @@ func mapErr(c *gin.Context, err error) {
 			}})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
+}
+
+// uuidParamOK gates a :id path parameter that must be a UUID. The backing
+// columns are uuid-typed, so a malformed id reached Postgres as an
+// invalid-input-syntax error and leaked out of mapErr's default branch as a
+// 500 — a client typo looked like a server fault. A malformed id can never
+// name a real row, so it maps to the same not_found a missing row returns.
+func uuidParamOK(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		mapErr(c, ErrNotFound)
+		return false
+	}
+	return true
 }
 
 // CreateQuote (member): POST /quotes {product_code, sum_insured_kobo, inputs}
 func (h *Handler) CreateQuote(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -69,7 +100,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 		Inputs         map[string]any `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	qr, err := h.svc.CreateQuote(c.Request.Context(), uid, body.ProductCode, body.SumInsuredKobo, body.Inputs)
@@ -82,7 +113,10 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 
 // GetQuote (member): GET /quotes/:id
 func (h *Handler) GetQuote(c *gin.Context) {
-	qr, err := h.svc.GetQuote(c.Request.Context(), userID(c), c.Param("id"))
+	if !uuidParamOK(c) {
+		return
+	}
+	qr, err := h.svc.GetQuote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -90,32 +124,44 @@ func (h *Handler) GetQuote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": qr})
 }
 
-// Bind (member): POST /policies {quote_id} — Idempotency-Key header REQUIRED.
+// Bind (member): POST /policies {quote_id, nin} — Idempotency-Key header
+// REQUIRED. `nin` is the policyholder's National Identity Number; when the
+// purchase NIN gate is on (FEATURE_INSURANCE_NIN_REQUIRED, default ON) it is
+// required and must verify via the identity provider before the saga runs.
 // Runs the premium-debit→bind saga with mandatory auto-reverse.
 func (h *Handler) Bind(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
 	}
 	var body struct {
 		QuoteID string `json:"quote_id" binding:"required"`
+		// Optional in the binding tag deliberately: when the gate is on, a
+		// missing NIN must surface as the domain's own nin_required 400 — not a
+		// generic bind error — and when it is off the field is ignored entirely.
+		NIN string `json:"nin"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	p, err := h.svc.BindFromQuote(c.Request.Context(), uid, body.QuoteID, idemKey)
+	if _, err := uuid.Parse(body.QuoteID); err != nil {
+		// Same gate as the :id path params — a malformed quote id hit the
+		// uuid-typed column and 500'd.
+		mapErr(c, ErrNotFound)
+		return
+	}
+	p, err := h.svc.BindFromQuoteWithNIN(c.Request.Context(), uid, body.QuoteID, body.NIN, idemKey)
 	if err != nil {
 		// A bind that auto-reversed returns the VOID policy plus an error; surface
 		// the policy state so the client can show "refunded".
 		if p != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "data": p})
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": p})
 			return
 		}
 		mapErr(c, err)
@@ -128,7 +174,7 @@ func (h *Handler) Bind(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	ps, err := h.svc.ListPolicies(c.Request.Context(), userID(c), limit, offset)
+	ps, err := h.svc.ListPolicies(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -138,7 +184,10 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /policies/:id
 func (h *Handler) Get(c *gin.Context) {
-	p, err := h.svc.GetPolicy(c.Request.Context(), userID(c), c.Param("id"))
+	if !uuidParamOK(c) {
+		return
+	}
+	p, err := h.svc.GetPolicy(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -148,7 +197,10 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Certificate (member): GET /policies/:id/certificate — signed URL.
 func (h *Handler) Certificate(c *gin.Context) {
-	ref, err := h.svc.CertificateRef(c.Request.Context(), userID(c), c.Param("id"))
+	if !uuidParamOK(c) {
+		return
+	}
+	ref, err := h.svc.CertificateRef(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -164,11 +216,14 @@ func (h *Handler) Certificate(c *gin.Context) {
 
 // Cancel (member): POST /policies/:id/cancel {reason}
 func (h *Handler) Cancel(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	var body struct {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	p, err := h.svc.Cancel(c.Request.Context(), userID(c), c.Param("id"), body.Reason)
+	p, err := h.svc.Cancel(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -178,6 +233,9 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // AddBeneficiary (member): POST /policies/:id/beneficiaries
 func (h *Handler) AddBeneficiary(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	var body struct {
 		FullName     string  `json:"full_name" binding:"required"`
 		Relationship string  `json:"relationship" binding:"required"`
@@ -185,10 +243,10 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 		Phone        *string `json:"phone"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	b, err := h.svc.AddBeneficiary(c.Request.Context(), userID(c), c.Param("id"), &Beneficiary{
+	b, err := h.svc.AddBeneficiary(c.Request.Context(), ginutil.UserID(c), c.Param("id"), &Beneficiary{
 		FullName:     body.FullName,
 		Relationship: body.Relationship,
 		SharePercent: body.SharePercent,
@@ -203,7 +261,10 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 
 // ListBeneficiaries (member): GET /policies/:id/beneficiaries
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
-	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), userID(c), c.Param("id"))
+	if !uuidParamOK(c) {
+		return
+	}
+	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -217,7 +278,7 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	ps, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("product_code"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": ps})

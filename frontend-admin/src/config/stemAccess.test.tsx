@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 
 // AUTH-020 follow-up (ADR-056/057): stemAccess.ts used to derive the
-// "current" STEM role from a build-time env var. useStemRoles() now fetches
 // the signed-in admin's REAL role(s) from the backend (getMyStemRoles) and
 // caches the result module-wide. getMyStemRoles is mocked here so these
 // tests exercise the caching/fallback behavior without a network call.

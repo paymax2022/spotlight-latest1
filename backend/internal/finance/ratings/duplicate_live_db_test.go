@@ -1,6 +1,5 @@
 package ratings
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression guard for RAT-3: Create() used to return a FABRICATED
 // Rating on a duplicate (rater_id, transaction_ref) submission — a fresh
 // random id, whatever score/comment the SECOND request sent, and time.Now()
@@ -8,13 +7,10 @@ package ratings
 // written. A caller had no way to tell "recorded" from "already recorded",
 // and if the second submission's score differed from the first, the response
 // body actively lied about what ended up in the table.
-//
 // Fixed: Create now returns (rating, created bool, err). On a conflict it
 // fetches and returns the row that actually exists, with created=false —
 // never a fabricated echo of the request that was rejected.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

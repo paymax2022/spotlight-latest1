@@ -32,11 +32,11 @@ import type { TransferRecipient, WalletTransfer, Beneficiary } from '@/types/wal
 
 import { formatNaira, nairaStringToKobo } from '@/utils/money';
 import { getErrorMessage } from '@/utils/errorMapper';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow2 } from '@/constants/shadows';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 
 import BankPicker from './components/BankPicker';
 import AmountInput from './components/AmountInput';
@@ -116,7 +116,6 @@ export default function TransferScreen() {
   const walletBankMut = useWalletToBankTransfer();
   const bankBankMut = useBankToBankTransfer();
 
-  // ── fee per type ────────────────────────────────────────────────────────────
   const feeKobo = useMemo(() => {
     if (type === 'wallet_wallet') return calculateTransferFee(amountKobo);
     if (type === 'wallet_bank') return walletBankFee(amountKobo);
@@ -125,10 +124,8 @@ export default function TransferScreen() {
 
   const balanceKobo = (walletQuery.data?.balance ?? 0) * 100; // wallet.balance is naira major units
 
-  // ── pre-flight validation: wallet balance sufficiency ───────────────────────
   // The NGN wallet is active on account creation, so there is NO KYC/tier gate on a
   // basic send. The single hard rule: (amount + fee) must not exceed the wallet
-  // balance. Applies to the wallet-funded flows (wallet→wallet, wallet→bank);
   // bank→bank funds from an external source account and is exempt. The backend stays
   // authoritative (ledger insufficient-funds → 402); this blocks it earlier + clearer.
   const totalDebitKobo = amountKobo + feeKobo;
@@ -144,7 +141,6 @@ export default function TransferScreen() {
     return { blocked: false, reason: null as string | null };
   }, [usesWallet, amountKobo, totalDebitKobo, balanceKobo, walletQuery.isSuccess]);
 
-  // ── reset when switching transfer type ──────────────────────────────────────
   const switchType = (next: TransferType) => {
     setType(next);
     setStep('form');
@@ -158,7 +154,6 @@ export default function TransferScreen() {
     setReceipt(null);
   };
 
-  // ── wallet → wallet: resolve recipient ──────────────────────────────────────
   const resolveRecipientMut = useMutation({
     mutationFn: () => resolvePaymaxRecipient(recipient.trim()),
     onSuccess: (data) => {
@@ -196,7 +191,6 @@ export default function TransferScreen() {
     onError: (e) => setPinError(getErrorMessage(e)),
   });
 
-  // ── auto-resolve destination on 10-digit NUBAN (debounced) ──────────────────
   useEffect(() => {
     if (type === 'wallet_wallet') return;
     if (!dest.bankCode || !/^\d{10}$/.test(dest.accountNumber)) {
@@ -213,7 +207,6 @@ export default function TransferScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, dest.bankCode, dest.accountNumber]);
 
-  // ── auto-resolve source (bank → bank) ───────────────────────────────────────
   const resolveSourceMut = useResolveAccount();
   useEffect(() => {
     if (type !== 'bank_bank') return;
@@ -231,7 +224,6 @@ export default function TransferScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, source.bankCode, source.accountNumber]);
 
-  // ── validation for the "Continue to review" button ──────────────────────────
   const canReview = useMemo(() => {
     if (amountKobo < 100) return false;
     if (walletGuard.blocked) return false; // insufficient wallet balance (amount + fee)
@@ -248,7 +240,6 @@ export default function TransferScreen() {
     setStep('review');
   };
 
-  // ── PIN gate: open create or verify based on status ─────────────────────────
   const beginAuthorise = () => {
     setPinError(null);
     const hasPin = pinStatusQuery.data?.hasPin ?? false;
@@ -336,7 +327,6 @@ export default function TransferScreen() {
 
   const resetAll = () => switchType(type);
 
-  // ── render ──────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
@@ -447,8 +437,6 @@ export default function TransferScreen() {
   );
 }
 
-// ── Hero ──────────────────────────────────────────────────────────────────────
-
 function Hero({ type }: { type: TransferType }) {
   const copy: Record<TransferType, { eyebrow: string; title: string; subtitle: string }> = {
     wallet_wallet: {
@@ -490,8 +478,6 @@ function Hero({ type }: { type: TransferType }) {
     </LinearGradient>
   );
 }
-
-// ── Form step ───────────────────────────────────────────────────────────────
 
 function FormStep(props: {
   type: TransferType;
@@ -652,8 +638,6 @@ function SavedBeneficiaries({ items, onPick }: { items: Beneficiary[]; onPick: (
     </View>
   );
 }
-
-// ── Review step ───────────────────────────────────────────────────────────────
 
 function ReviewStep(props: {
   type: TransferType;

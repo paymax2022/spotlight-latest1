@@ -36,7 +36,6 @@ export function makeIdempotencyKey(scope: string): string {
 const AV = (s: string) => `https://i.pravatar.cc/160?u=${s}`;
 const COVER = (s: string) => `https://picsum.photos/seed/${s}/600/800`;
 
-// ── Discovery (LV-01..LV-03) ─────────────────────────────────────────────────
 const MOCK_STREAMS: LiveStream[] = [
   {
     id: 'ls_1', title: 'Friday Afrobeats live set 🎧', hostName: 'DJ Kemi', hostId: 'h1',
@@ -95,7 +94,6 @@ export async function getLiveStream(id: string): Promise<LiveStream> {
   return unwrap<LiveStream>(res);
 }
 
-// ── Chat (LV-04) ─────────────────────────────────────────────────────────────
 const MOCK_CHAT: LiveChatMessage[] = [
   { id: 'm1', userId: 'u1', userName: 'Bisi', text: 'This set is fire 🔥', sentAtIso: new Date().toISOString() },
   { id: 'm2', userId: 'u2', userName: 'Femi', text: 'Sent you a rose!', sentAtIso: new Date().toISOString() },
@@ -120,7 +118,6 @@ export async function sendLiveChat(streamId: string, text: string): Promise<Live
   return unwrap<LiveChatMessage>(res);
 }
 
-// ── Gifts (LV-06..LV-08) — REAL MONEY ────────────────────────────────────────
 const MOCK_GIFTS: LiveGift[] = [
   { id: 'g_flower', name: 'Flower', icon: 'sparkles', priceKobo: 5_000, tierMin: 1 },     // ₦50
   { id: 'g_heart', name: 'Heart', icon: 'heart', priceKobo: 10_000, tierMin: 1 },         // ₦100
@@ -164,7 +161,6 @@ export async function sendGift(args: {
   return unwrap<GiftSendResult>(res);
 }
 
-// ── PK battle (LV-05) ────────────────────────────────────────────────────────
 const MOCK_PK: PkBattle = {
   id: 'pk_1', durationSec: 300, remainingSec: 142, state: 'live',
   teamA: { hostId: 'h2a', hostName: 'Tomi', hostAvatar: AV('tomi'), scoreKobo: 3_450_000, topGifter: 'Femi' },
@@ -180,7 +176,6 @@ export async function getPkBattle(streamId: string): Promise<PkBattle> {
   return unwrap<PkBattle>(res);
 }
 
-// ── Leaderboard (LV-09) ──────────────────────────────────────────────────────
 const MOCK_LB_GIFTERS: LiveLeaderboardEntry[] = [
   { rank: 1, userId: 'u_femi', name: 'Femi', avatar: AV('femi'), amountKobo: 1_250_000 },
   { rank: 2, userId: 'u_ada', name: 'Ada', avatar: AV('ada'), amountKobo: 880_000 },
@@ -202,7 +197,6 @@ export async function getLiveLeaderboard(kind: 'gifters' | 'streamers'): Promise
   return unwrap<LiveLeaderboardEntry[]>(res);
 }
 
-// ── Replays (LV-10) ──────────────────────────────────────────────────────────
 const MOCK_REPLAYS: StreamReplay[] = [
   { id: 'rp_1', title: 'Sunday gospel hour', hostName: 'DJ Kemi', coverUrl: COVER('gospel'), durationSec: 4920, views: 8400, recordedAtIso: new Date(Date.now() - 86_400_000).toISOString(), giftRevenueKobo: 4_200_000 },
   { id: 'rp_2', title: 'Founder fireside', hostName: 'Chuka', coverUrl: COVER('fireside'), durationSec: 3600, views: 2100, recordedAtIso: new Date(Date.now() - 2 * 86_400_000).toISOString(), giftRevenueKobo: 980_000 },
@@ -217,7 +211,6 @@ export async function listReplays(): Promise<StreamReplay[]> {
   return unwrap<StreamReplay[]>(res);
 }
 
-// ── Co-host requests (LV-05 / LB-04) ─────────────────────────────────────────
 const MOCK_COHOST: CoHostRequest[] = [
   { id: 'cr_1', fromUserId: 'u_ada', fromName: 'Ada', fromAvatar: AV('ada'), status: 'pending', requestedAtIso: new Date().toISOString() },
 ];
@@ -269,7 +262,6 @@ export async function reportStream(args: { streamId: string; reasonCode: string;
   return unwrap<StreamReportResult>(res);
 }
 
-// ── Broadcaster (LB-*) ───────────────────────────────────────────────────────
 const MOCK_PREFLIGHT: BroadcastPreflight = {
   tier: 2, tierLabel: 'Tier 2', canGoLive: true,
   cameraGranted: true, micGranted: true, networkOk: true,

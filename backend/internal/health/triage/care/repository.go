@@ -217,15 +217,13 @@ func (r *pgxRepo) log(actor, target, action, resourceType, resourceID string, ol
 	r.audit.LogAction(actor, target, action, "health.triage.care", resourceType, resourceID, oldV, newV, "", "", "info")
 }
 
-// ─── row scanning ────────────────────────────────────────────────────────────
-
 type scannable interface {
 	Scan(dest ...any) error
 }
 
 func scanReferral(row scannable) (*CareReferral, error) {
 	c, err := scanReferralRow(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return c, err
@@ -244,7 +242,7 @@ func scanReferralRow(row scannable) (*CareReferral, error) {
 
 func scanEscalation(row scannable) (*Escalation, error) {
 	e, err := scanEscalationRow(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return e, err

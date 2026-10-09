@@ -1,11 +1,9 @@
 // The contest banner, from the Go payload to what the screens render.
-//
 // ContestCard and ContestHero already draw `contest.bannerImage` and fall back
 // to a placeholder tile when it is absent — that has been true since before a
 // banner could be set. What was missing was anything to populate it: the column
 // did not exist, so only the mock fixtures ever had one and every real contest
 // showed the placeholder.
-//
 // This pins the mapper end of that wiring. It matters because a banner that
 // silently maps to undefined is INVISIBLE as a bug: the screens render exactly
 // as they always did, so an admin who uploaded an image simply never sees it
@@ -33,13 +31,11 @@ test('a banner url on the wire reaches the screens as bannerImage', () => {
 test('an empty banner becomes undefined, not an empty string', () => {
   // The column is NOT NULL DEFAULT '', so every contest without a banner sends
   // ''. The screens branch on truthiness, but an empty string reaching an
-  // <Image source={{uri: ''}}> is a broken-image request rather than the
   // placeholder tile the fallback is meant to show.
   assert.equal(mapContest(raw({ banner_image_url: '' })).bannerImage, undefined);
 });
 
 test('an absent banner field is tolerated', () => {
-  // Older Go builds predate the column and simply omit it; the field is
   // `omitempty` on the Go struct, so absence is normal rather than exceptional.
   assert.equal(mapContest(raw()).bannerImage, undefined);
 });

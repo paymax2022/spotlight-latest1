@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 
-// Shared presentational + RBAC helpers for the Transfers console. Matches the
 // existing admin light-card inline-style convention (connect/_ui, mobility/_ui).
 
 export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
@@ -60,7 +59,6 @@ export function BackLink() {
   );
 }
 
-// RBAC: reads the cached admin user and exposes a permission check so we can
 // disable sensitive money actions. Server still enforces — UX gate only.
 const TRANSFERS_PERM = 'finance.admin.transfers';
 

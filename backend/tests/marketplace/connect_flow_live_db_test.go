@@ -1,22 +1,18 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the ADR-023 "listings-and-connect" flow that
 // actually ships: messaging → offers → mark-met → review, plus object-level
 // authorization (a non-participant/stranger is denied). This replaces the value
 // the old escrow/order/dispute suite used to carry (those flows were removed;
 // their tests are historical stubs). Drives the real marketplace.Service against
 // a real Postgres.
-//
 // SKIPPED whenever MARKETPLACE_TEST_DATABASE_URL / TEST_DATABASE_URL are unset, so
 // `go test ./...` without a DB stays green. Self-contained: it seeds a minimal
 // category + active listing, exercises the flow, and cleans up.
-//
 // Bring-up: apply marketplace migrations incl. 20261006000000 (messaging) and
 // 20261007000000 (deal reviews), then:
 //   export MARKETPLACE_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/marketplace/... -run ConnectFlow -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -93,15 +89,14 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 
 	t.Cleanup(func() {
 		// Children first (FKs), then parents. Thread id resolved by listing/buyer.
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_deal_reviews WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_messages WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_threads WHERE listing_id=$1`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_offers WHERE listing_id=$1`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_listings WHERE id=$1`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_categories WHERE id=$1`, catID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_deal_reviews WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_messages WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_threads WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_offers WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_listings WHERE id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_categories WHERE id=$1`, catID)
 	})
 
-	// ── Messaging: buyer opens the thread ───────────────────────────────────────
 	thread, err := svc.StartOrGetThread(ctx, buyer, listingID, "Hi, is this still available?")
 	if err != nil {
 		t.Fatalf("start thread: %v", err)
@@ -116,7 +111,6 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 		t.Fatalf("send message: %v", err)
 	}
 
-	// ── Object-level auth: a stranger is denied the thread ──────────────────────
 	if _, gerr := svc.GetThread(ctx, stranger, thread.ID); !errors.Is(gerr, mkt.ErrThreadNotFound) {
 		t.Fatalf("stranger GetThread: want ErrThreadNotFound, got %v", gerr)
 	}
@@ -124,7 +118,6 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 		t.Fatalf("stranger SendMessage: want error, got nil")
 	}
 
-	// ── Offers: buyer proposes; seller sees it, a stranger sees none ────────────
 	if _, oerr := svc.CreateOffer(ctx, buyer, listingID, 400000, "Would you take ₦4,000?"); oerr != nil {
 		t.Fatalf("create offer: %v", oerr)
 	}
@@ -143,7 +136,6 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 		t.Fatalf("stranger (non-seller) should see 0 offers, got %d", len(strangerView))
 	}
 
-	// ── Reviews are gated on the "mark met" signal ──────────────────────────────
 	if _, rerr := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, nil, nil, "great"); rerr == nil {
 		t.Fatalf("review before mark-met: want error, got nil")
 	}
@@ -159,7 +151,6 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 		t.Fatalf("reviewee: got %q want seller %q", review.RevieweeID, seller)
 	}
 
-	// ── Read back + duplicate is rejected ───────────────────────────────────────
 	got, ok, err := svc.GetDealReview(ctx, buyer, thread.ID)
 	if err != nil || !ok {
 		t.Fatalf("get review: ok=%v err=%v", ok, err)

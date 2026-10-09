@@ -1,33 +1,46 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
-
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/insurance/catalog"
+	"spotlight/backend/internal/insurance/claims"
 	"spotlight/backend/internal/insurance/consent"
+	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/insurance/gateway"
 	"spotlight/backend/internal/insurance/policy"
+	"spotlight/backend/internal/insurance/providerimport"
 	"spotlight/backend/internal/insurance/reconciliation"
+	"spotlight/backend/internal/insurance/webhooks"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/r2"
+	"spotlight/backend/internal/provider/dojah"
 	"spotlight/backend/internal/provider/mycover"
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterInsurance wires the §6–§12 Insurance / Protection core onto the finance
 // member group and an insurance admin group. The orchestrator (finance_routes.go)
 // calls this — this file is the only one wired in; it edits no existing file.
-//
 //   - member: /api/finance/insurance/*   (member-authenticated; user_id mirrored)
 //   - admin : /api/insurance/admin/*      (member-authenticated; per-route RBAC insurance.*)
 //
@@ -37,12 +50,7 @@ import (
 // provider-clearing pass-through account, the commission posts to the SEPARATE
 // commission account, and a failed bind auto-reverses the premium. The gateway is
 // provider-agnostic (MyCover/Octamile adapters resolved from the catalog).
-//
 // Provider credentials are read from the environment (NEVER hard-coded / logged):
-//
-//	INSURANCE_MYCOVER_API_KEY (secret) / INSURANCE_MYCOVER_PUBLIC_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
-//	INSURANCE_OCTAMILE_API_KEY (secret) / INSURANCE_OCTAMILE_PUBLIC_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
-//
 // InsuranceServices exposes the subset of the insurance module other verticals
 // may reuse directly (in-process Go calls, not HTTP) — e.g. transport's parcel
 // flow binding real Goods-in-Transit cover. Nil-safe: a caller that gets a nil
@@ -54,19 +62,17 @@ type InsuranceServices struct {
 	Consent *consent.Service
 }
 
-func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, presigner *r2.Presigner, bucket string) *InsuranceServices {
+func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, presigner *r2.Presigner, bucket string, cfg config.Config) *InsuranceServices {
 	if pool == nil {
 		log.Println("[insurance] nil pool — skipping insurance routes")
 		return nil
 	}
 
-	// --- Reused finance primitives (money path) ---
 	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
 	tiersSvc := tiers.NewService(pool)
 	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
 	kycSvc := kyc.NewService(pool)
 
-	// --- Insurance domain services ---
 	catalogSvc := catalog.NewService(pool)
 	consentSvc := consent.NewService(pool)
 	// Prefunded-provider-float breaker. MyCover settles binds from a distributor
@@ -74,7 +80,6 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// before members are debited for cover that cannot be issued.
 	floatSvc := catalog.NewFloatService(pool)
 
-	// --- Provider adapters (sandbox keys from env; empty => sandbox defaults) ---
 	mycoverGW := mycover.New(
 		os.Getenv("INSURANCE_MYCOVER_API_KEY"),    // secret key
 		os.Getenv("INSURANCE_MYCOVER_PUBLIC_KEY"), // publishable key
@@ -95,6 +100,15 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// Router resolves an adapter from the data-driven catalog (product.provider).
 	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
+
+	// Purchase NIN gate (FEATURE_INSURANCE_NIN_REQUIRED — DEFAULT ON): the member
+	// POST /policies bind verifies the policyholder's NIN via Dojah BEFORE the
+	// policy row or any ledger leg exists. Same adapter + env credentials the
+	// kycverify gateway routes through — wired here directly so the gate does
+	// not depend on FEATURE_KYC_VERIFY_ENABLED. Unconfigured creds make the
+	// adapter return a non-verdict (PENDING), which the gate treats as
+	// "could not answer" and refuses — fail-CLOSED, never a silent skip.
+	dojahID := dojah.New(cfg.DojahAppID, cfg.DojahSecretKey, cfg.DojahProd)
 
 	// Catalog sync. Form schemas are FETCHED from the provider's public
 	// per-product schema endpoint rather than maintained here, so adding a
@@ -118,6 +132,9 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		// ledger money still moves correctly, but the workbench has no row to
 		// confirm/reverse against — see commissionRecorder below.
 		Commission: commissionRecorder{repo: reconciliation.NewRepository(pool)},
+		// Member purchase NIN gate — verified via Dojah before the saga starts.
+		NINVerifier: dojahID,
+		NINRequired: cfg.FeatureInsuranceNINRequired,
 		// Notifier / Auditor are optional (nil-safe); IB1/orchestrator may inject
 		// the real notifications + audit sinks.
 	})
@@ -151,7 +168,6 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	policyHandler := policy.NewHandler(policySvc, nil)
 	uploadHandler := &insuranceUploadHandler{presigner: presigner, bucket: bucket}
 
-	// --- Member routes (/api/finance/insurance) ---
 	mg := member.Group("/insurance")
 	// Products: KYC-tier + context filtered.
 	mg.GET("/products", catalogHandler.ListProducts)
@@ -183,7 +199,6 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	mg.GET("/policies/:id/beneficiaries", policyHandler.ListBeneficiaries)
 	mg.POST("/policies/:id/beneficiaries", policyHandler.AddBeneficiary)
 
-	// --- Admin routes (/api/insurance/admin, per-route RBAC insurance.*) ---
 	guard := func(permission string) gin.HandlerFunc {
 		return middleware.RequirePermission(rbac, permission)
 	}
@@ -248,4 +263,366 @@ func (c commissionRecorder) RecordCommission(ctx context.Context, policyID, prov
 		IdempotencyKey: idempotencyKey,
 		Status:         reconciliation.CommissionPending,
 	})
+}
+
+// RegisterInsuranceClaims wires the IB-claims layer onto the same finance member
+// group + insurance admin group IB0 uses, plus an UNAUTHENTICATED webhooks group
+// for provider callbacks. It BUILDS ON the IB0 core (catalog/gateway/policy) —
+// importing those packages, never editing them — and REUSES the finance
+// ledger/wallet money primitives (no new money rails).
+//   - member   : claims (FNOL/list/get/evidence) + embedded event-catalog GET
+//   - admin    : claim search/decision + reconciliation workbench + commission view
+//   - webhooks : POST /internal/webhooks/{mycover,octamile} (signature-verified)
+//   - internal : POST /internal/insurance/embedded/events — service-token only
+//     (RequireServiceToken on serviceToken; empty ⇒ fail-closed 503). The
+//     trigger debits a member wallet, so it can never hang off a user-JWT group.
+//
+// FeatureInsuranceEnabled is enforced UPSTREAM by the parent finance group, so
+// these routes inherit the same gate (mirrors RegisterInsurance). Money paths:
+//   - claim payout  : wallet.Credit, idempotent on claim.idempotency_key+":payout".
+//   - embedded bind : wallet.Debit hold + auto-release on failure, idempotent on
+//     source_event_id; commission on the SEPARATE commission acct.
+//   - commission    : reversal posts a balanced entry on ledger.AccountCommission.
+//
+// Provider credentials come from the environment (NEVER hard-coded / logged):
+//
+//	INSURANCE_MYCOVER_API_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
+//	INSURANCE_OCTAMILE_API_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
+//
+// audit/notifier are the shared sinks the embedded saga's auditSafe/notifySafe
+// fan out to — the immutable audit service and the notifications queue,
+// injected by the orchestrator. Both are nil-safe (nil ⇒ no-op).
+func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, serviceToken string, audit services.AuditService, notifier embedded.Notifier, providerImport bool) {
+	if pool == nil {
+		log.Println("[insurance-claims] nil pool — skipping insurance claims routes")
+		return
+	}
+
+	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
+	tiersSvc := tiers.NewService(pool)
+	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
+
+	catalogSvc := catalog.NewService(pool)
+
+	mycoverGW := mycover.New(
+		os.Getenv("INSURANCE_MYCOVER_API_KEY"),    // secret key
+		os.Getenv("INSURANCE_MYCOVER_PUBLIC_KEY"), // publishable key
+		os.Getenv("INSURANCE_MYCOVER_WEBHOOK_SECRET"),
+		os.Getenv("INSURANCE_MYCOVER_BASE_URL"),
+	)
+	octamileGW := octamile.New(
+		os.Getenv("INSURANCE_OCTAMILE_API_KEY"),    // secret key
+		os.Getenv("INSURANCE_OCTAMILE_PUBLIC_KEY"), // publishable key
+		os.Getenv("INSURANCE_OCTAMILE_WEBHOOK_SECRET"),
+		os.Getenv("INSURANCE_OCTAMILE_BASE_URL"),
+	)
+	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
+
+	policyRepo := policy.NewRepository(pool)
+
+	claimsSvc := claims.NewService(claims.Deps{
+		Repo:   claims.NewRepository(pool),
+		Router: router,
+		Policy: policyReaderAdapter{repo: policyRepo},
+		Docs:   nil, // nil-safe: stores supplied storage_ref verbatim until R2 signer is injected.
+		Wallet: walletSvc,
+		Ledger: ledgerSvc,
+	})
+	claimsHandler := claims.NewHandler(claimsSvc)
+
+	embeddedSvc := embedded.NewService(embedded.Deps{
+		Repo:       embedded.NewRepository(pool),
+		PolicyRepo: policyRepo,
+		Router:     router,
+		Wallet:     walletSvc,
+		Ledger:     ledgerSvc,
+		// Outbound bind idempotency (MyCover has none) + the prefunded-float
+		// breaker — the same guards policy.Bind runs with.
+		Binds: policy.NewBindRegistry(pool),
+		Float: catalog.NewFloatService(pool),
+		// The shared immutable-audit sink + member-notification queue — every
+		// auditSafe/notifySafe in the saga was a production no-op while these
+		// sat nil. Nil-safe on both ends: a nil audit or notifier degrades to
+		// the same no-op, never a panic.
+		Auditor:  embeddedAuditSink{audit: audit},
+		Notifier: notifier,
+	})
+	embeddedHandler := embedded.NewHandler(embeddedSvc)
+
+	webhookSvc := webhooks.NewService(router, webhooks.NewRepository(pool), claimsSvc)
+	webhookHandler := webhooks.NewHandler(webhookSvc)
+
+	reconSvc := reconciliation.NewService(reconciliation.NewRepository(pool), ledgerSvc)
+	reconHandler := reconciliation.NewHandler(reconSvc)
+
+	// Per-route RBAC guard (mirrors insurance_routes.go).
+	guard := func(permission string) gin.HandlerFunc {
+		return middleware.RequirePermission(rbac, permission)
+	}
+
+	mg := member.Group("/insurance")
+	claims.Register(mg, admin, claimsHandler, guard)
+	// The embedded POST /events trigger debits a member wallet off a
+	// caller-chosen source_event_id, so it is a SERVICE-ONLY route — mounted on
+	// the root group behind RequireServiceToken (constant-time Bearer against
+	// the shared service token; empty token ⇒ fail-closed 503), never behind a
+	// user JWT. Members keep only the read-only GET event-catalog discovery.
+	// In-process emit points call Service.Handle directly and never need HTTP.
+	var embeddedInternal *gin.RouterGroup
+	if webhookGroup != nil {
+		embeddedInternal = webhookGroup.Group("/internal/insurance")
+		embeddedInternal.Use(middleware.RequireServiceToken(serviceToken))
+	}
+	embedded.Register(mg, embeddedInternal, embeddedHandler)
+
+	reconciliation.Register(admin, reconHandler, guard)
+
+	// Read-only mirror of the provider's own policy list (FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED).
+	// Never writes to insurance_policy and never touches the ledger or a wallet.
+	if providerImport {
+		importSvc := providerimport.NewService(mycoverGW.Name(), mycoverSource{c: mycoverGW}, providerimport.NewRepository(pool),
+			func(_ context.Context, actorID, action string, detail map[string]any) {
+				if audit != nil {
+					audit.LogAction(actorID, actorID, action, "insurance", "provider_policy_mirror", "", nil, detail, "", "", "info")
+				}
+			})
+		providerimport.Register(admin, providerimport.NewHandler(importSvc), guard)
+	}
+
+	if webhookGroup != nil {
+		webhooks.Register(webhookGroup, webhookHandler)
+	}
+
+	log.Println("[insurance-claims] routes registered — claims + embedded + webhooks + reconciliation/commission live")
+}
+
+// mycoverSource adapts the MyCover client to providerimport.Source, copying the
+// personal-data-free summary across the package boundary.
+type mycoverSource struct{ c *mycover.Client }
+
+func (m mycoverSource) Configured() bool { return m.c.Configured() }
+
+func (m mycoverSource) ListSummaries(ctx context.Context, page, limit int) ([]providerimport.Summary, int, error) {
+	items, total, err := m.c.ListPolicySummaries(ctx, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]providerimport.Summary, 0, len(items))
+	for _, it := range items {
+		out = append(out, providerimport.Summary(it))
+	}
+	return out, total, nil
+}
+
+// embeddedAuditSink bridges the embedded engine's minimal Auditor slice
+// (Audit(ctx, userID, action, detail)) onto the shared immutable audit sink —
+// the same services.AuditService the wave-8 social lane and p2pmarket wire in
+// production. Actor and target are the policyholder (the saga always acts on
+// their behalf); the policy id rides in detail and is lifted into resourceID.
+type embeddedAuditSink struct{ audit services.AuditService }
+
+func (a embeddedAuditSink) Audit(_ context.Context, userID, action string, detail map[string]any) {
+	if a.audit == nil {
+		return
+	}
+	resourceID, _ := detail["policy_id"].(string)
+	severity := "info"
+	if strings.Contains(action, "fail") || strings.Contains(action, "exhausted") || strings.Contains(action, "blocked") {
+		severity = "high"
+	}
+	a.audit.LogAction(userID, userID, action, "insurance", "embedded_policy", resourceID,
+		nil, detail, "", "", severity)
+}
+
+// embeddedNotifierFunc adapts a plain func to embedded.Notifier so the
+// orchestrator can bind the notifications-queue closure at the call site
+// without the embedded package exporting a func type.
+type embeddedNotifierFunc func(ctx context.Context, userID, kind, message string)
+
+func (f embeddedNotifierFunc) Notify(ctx context.Context, userID, kind, message string) {
+	f(ctx, userID, kind, message)
+}
+
+// policyReaderAdapter adapts policy.Repository to claims.PolicyReader, enforcing
+// object-level authZ (the claimant must own the policy). It reads the policy via
+// the IB0 repository and never edits the policy package.
+type policyReaderAdapter struct {
+	repo *policy.Repository
+}
+
+func (a policyReaderAdapter) PolicyForClaim(ctx context.Context, userID, policyID string) (claims.PolicyView, error) {
+	p, err := a.repo.Get(ctx, policyID)
+	if err != nil {
+		// Translate the not-found sentinel across the seam — claims cannot
+		// import policy, and without this an FNOL on a nonexistent policy
+		// surfaced as a 500 instead of a 404.
+		if errors.Is(err, policy.ErrNotFound) {
+			return claims.PolicyView{}, claims.ErrNotFound
+		}
+		return claims.PolicyView{}, err
+	}
+	if p.PolicyholderID != userID {
+		return claims.PolicyView{}, claims.ErrForbidden
+	}
+	ref := ""
+	if p.ProviderPolicyRef != nil {
+		ref = *p.ProviderPolicyRef
+	}
+	return claims.PolicyView{
+		ID:                p.ID,
+		PolicyholderID:    p.PolicyholderID,
+		Provider:          p.Provider,
+		ProviderPolicyRef: ref,
+		State:             string(p.State),
+		Currency:          p.Currency,
+	}, nil
+}
+
+// insuranceUploadHandler backs POST /api/finance/insurance/uploads.
+// The mobile app's DynamicField file/image controls are URL-VALUED: MyCover's
+// image_url / id_image_url / device_about_image_url fields are fetched and
+// content-checked by MyCover itself at quote/bind time, so a private R2
+// object key or an opaque upload id is not enough — the field needs a URL
+// MyCover can actually GET. This handler receives the file server-side (so
+// the R2 credentials never reach the client), PUTs it to R2 via the same
+// presign mechanism used everywhere else in this codebase, and returns a
+// presigned GET URL with a TTL generous enough to survive the rest of the
+// application flow (the applicant may keep filling the form for minutes
+// after picking the photo) and a retried bind.
+type insuranceUploadHandler struct {
+	presigner *r2.Presigner
+	bucket    string
+}
+
+// allowedInsuranceUploadTypes mirrors the content-type allow-lists already
+// used for doctor/restaurant/health-provider presigned uploads elsewhere in
+// this codebase.
+var allowedInsuranceUploadTypes = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+}
+
+// uploadHTTPClient bounds the presigned-R2 PUT. 30s (not the 10s used for
+// GoTrue auth calls) because this carries multi-MB image bodies, but it must
+// still terminate — AUD-REL-003: http.DefaultClient has no timeout, so a
+// stalled R2 connection held the request handler forever.
+var uploadHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+const insuranceUploadMaxBytes = 8 << 20 // 8MB
+
+func (h *insuranceUploadHandler) Upload(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	if h.presigner == nil || !h.presigner.Configured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "uploads are not configured"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	contentType := header.Header.Get("Content-Type")
+	ext, ok := allowedInsuranceUploadTypes[contentType]
+	if !ok {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unsupported file type — use PNG, JPEG, or WEBP"})
+		return
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, insuranceUploadMaxBytes+1))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "could not read file"})
+		return
+	}
+	if len(data) > insuranceUploadMaxBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large — max 8MB"})
+		return
+	}
+
+	purpose := c.PostForm("purpose")
+	if purpose == "" {
+		purpose = "document"
+	}
+	key := fmt.Sprintf("insurance/uploads/%s/%s-%s%s", userID, purpose, uuid.New().String(), ext)
+
+	putURL, err := h.presigner.PresignPut(key, contentType, 10*time.Minute)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not prepare upload"})
+		return
+	}
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPut, putURL, bytes.NewReader(data))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not prepare upload"})
+		return
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = int64(len(data))
+	resp, err := uploadHTTPClient.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
+		return
+	}
+
+	getURL, err := h.presigner.PresignGet(key, 7*24*time.Hour)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "uploaded, but could not generate an access url"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": getURL})
+}
+
+// insuranceBinderAdapter implements transport.InsuranceBinder over the real
+// insurance module (mirrors vetDispatchAdapter/commissionRecorderAdapter —
+// transport never imports insurance/* packages directly; this thin wrapper is
+// the only place that does).
+type insuranceBinderAdapter struct {
+	policy  *policy.Service
+	catalog *catalog.Service
+	consent *consent.Service
+}
+
+func (a *insuranceBinderAdapter) IndicativeRateBps(ctx context.Context, productCode string) (int64, error) {
+	prod, err := a.catalog.Get(ctx, productCode)
+	if err != nil {
+		return 0, err
+	}
+	return prod.RateBps, nil
+}
+
+func (a *insuranceBinderAdapter) GrantConsent(ctx context.Context, userID, productCode string) error {
+	_, err := a.consent.Grant(ctx, userID, productCode, "")
+	return err
+}
+
+func (a *insuranceBinderAdapter) CreateQuote(ctx context.Context, userID, productCode string, sumInsuredKobo int64, inputs map[string]any) (string, int64, error) {
+	q, err := a.policy.CreateQuote(ctx, userID, productCode, sumInsuredKobo, inputs)
+	if err != nil {
+		return "", 0, err
+	}
+	return q.QuoteID, q.PremiumKobo, nil
+}
+
+func (a *insuranceBinderAdapter) BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (string, int64, error) {
+	p, err := a.policy.BindFromQuote(ctx, userID, quoteID, idempotencyKey)
+	if err != nil {
+		return "", 0, err
+	}
+	return p.ID, p.PremiumKobo, nil
+}
+
+func (a *insuranceBinderAdapter) CancelPolicy(ctx context.Context, userID, policyID, reason string) error {
+	_, err := a.policy.Cancel(ctx, userID, policyID, reason)
+	return err
 }

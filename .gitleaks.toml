@@ -43,6 +43,7 @@ paths = [
     '''^backend/tests/utilitybills/admin_live_db_test\.go$''',         # testCredentialsKey (explicitly commented "obviously not a secret") + fake rotate-credentials api_key/secret_key
     '''^backend/internal/utilitybills/admin_test\.go$''',              # fake secret_key/api_key ("…SUPERSECRET"/"…ALSOSECRET") asserting an audit log names keys, never values
     '''^backend/internal/estate/paystackfunded_live_db_test\.go$''',   # IdempotencyKey: "duespf-tier0-wallet-" + invID — a fixture key, not a secret
+    '''^backend/internal/config/env_parity_test\.go$''',               # sk_test_/sk_live_ env-parity fixtures asserting required-var detection — fake keys; earlier commits in this file's history carried a longer suffix the stripe rule matched
 
     # -- Docs / templates with placeholder tokens --------------------------
     '''^MARKETPLACE_QUICK_START\.md$''',
@@ -51,6 +52,7 @@ paths = [
     '''^docs/qa/modules/cashtag\.md$''',
     '''^frontend-web/src/server/voting-bridge/README\.md$''',
     '''^IMPLEMENTATION_CHECKLIST\.md$''', # curl-auth-header hits on "Bearer YOUR_TOKEN" example snippets (entropy 3.12)
+    '''^tools/loadtest/integration/write-env\.sh$''',   # emits placeholder Paystack key values into generated local .env files — placeholders, not credentials
 ]
 
 # Matched against the detected SECRET value (gitleaks default regexTarget).

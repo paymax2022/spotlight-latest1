@@ -6,14 +6,12 @@ import (
 )
 
 // service_clinical.go — Wave 3a (human-side CLINICAL) business logic.
-//
 // Mirrors the Wave 2 service style: reads delegate to the repository scoped to the
 // authenticated doctor; mutations that target a table with a UNIQUE idempotency_key,
 // or that transition an existing row, require the Idempotency-Key header
 // (ErrIdempotencyRequired) and rely on the repository's ON CONFLICT replay /
 // status-guarded UPDATE. None of these touch the money ledger — they are clinical
 // state transitions / document writes. Monetary fields stay int64 kobo (no floats).
-//
 // The free-form `Generic` request bodies are passed through as json.RawMessage; the
 // few typed knobs the OpenAPI summaries imply (status verbs, message body, decision)
 // are pulled out of the raw patch via small helpers below.
@@ -48,8 +46,6 @@ func parseClinicalPatch(raw json.RawMessage) clinicalPatch {
 	}
 	return p
 }
-
-// ══ PHARMACY ════════════════════════════════════════════════════════════════
 
 func (s *Service) ListPharmacyFulfilments(ctx context.Context, userID string) ([]PharmacyFulfilment, error) {
 	return s.repo.ListPharmacyFulfilments(ctx, userID)
@@ -123,8 +119,6 @@ func (s *Service) SendPharmacyMessage(ctx context.Context, userID, fulfilmentID,
 	return s.repo.InsertPharmacyMessage(ctx, userID, fulfilmentID, strOrDefault(p.Author, "doctor"), p.Body, idemKey)
 }
 
-// ── Pharmacy reference directories (no backing table → empty projection) ──────
-
 func (s *Service) ListPharmacies(ctx context.Context, userID string) ([]json.RawMessage, error) {
 	return []json.RawMessage{}, nil
 }
@@ -154,8 +148,6 @@ func (s *Service) ReportPharmacy(ctx context.Context, userID, pharmacyID, idemKe
 func (s *Service) ListDeliveryAlerts(ctx context.Context, userID string) ([]json.RawMessage, error) {
 	return []json.RawMessage{}, nil
 }
-
-// ══ LABS (extended) ═════════════════════════════════════════════════════════
 
 // Reference catalogues have no backing table → empty projections.
 func (s *Service) ListLabCatalogue(ctx context.Context, userID string) ([]json.RawMessage, error) {
@@ -228,8 +220,6 @@ func (s *Service) ReportSuspiciousResult(ctx context.Context, userID, resultID, 
 		Detail:   raw,
 	})
 }
-
-// ══ REFERRALS & COLLABORATION ═══════════════════════════════════════════════
 
 func (s *Service) ListReferrals(ctx context.Context, userID string) ([]Referral, error) {
 	return s.repo.ListReferrals(ctx, userID)
@@ -306,8 +296,6 @@ func (s *Service) GetSharedCaseSummary(ctx context.Context, userID, caseRef stri
 func (s *Service) ListSpecialists(ctx context.Context, userID string) ([]json.RawMessage, error) {
 	return []json.RawMessage{}, nil
 }
-
-// ══ FOLLOW-UP CARE ══════════════════════════════════════════════════════════
 
 func (s *Service) ListFollowUps(ctx context.Context, userID string) ([]FollowUpPlan, error) {
 	return s.repo.ListFollowUps(ctx, userID)
@@ -428,8 +416,6 @@ func (s *Service) RecordAdherenceCheck(ctx context.Context, userID, idemKey stri
 	return s.repo.InsertAdherenceCheck(ctx, userID, p.PatientID, p.PrescriptionID, strOrDefault(p.Status, "pending"), raw, idemKey)
 }
 
-// ══ HMO ═════════════════════════════════════════════════════════════════════
-
 func (s *Service) GetHMOCoverage(ctx context.Context, userID, patientID string) (*HMOPlanCoverage, error) {
 	return s.repo.GetHMOCoverageForPatient(ctx, userID, patientID)
 }
@@ -486,8 +472,6 @@ func (s *Service) AckFraudWarning(ctx context.Context, userID, warningID, idemKe
 	}
 	return s.repo.AckFraudWarning(ctx, userID, warningID)
 }
-
-// ══ MEDICAL RECORDS ═════════════════════════════════════════════════════════
 
 // GetRecordsDashboard projects a summary across the doctor's record shares + access log.
 func (s *Service) GetRecordsDashboard(ctx context.Context, userID string) (map[string]any, error) {

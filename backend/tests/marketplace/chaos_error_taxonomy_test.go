@@ -1,8 +1,6 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // Agent F (QA) — §8 error-taxonomy / edge-case chaos scenarios.
-//
 // Per task instructions, six scenarios are required:
 //  1. gateway timeout mid-checkout stays 'initiated' (no silent funded)
 //  2. duplicate webhook = idempotent no-op 200
@@ -11,7 +9,6 @@ package marketplace_test
 //  5. edit listing with in_delivery order = 409 LISTING_HAS_ACTIVE_ORDER
 //  6. boost on rejected listing = auto_refunded not dangling
 //  7. KYC-provider outage never regresses an already-verified badge
-//
 // Each scenario below asserts against the ACTUAL exported error codes in
 // errors.go and the actual documented Service method behavior read from
 // service_order.go / service_listing.go / service_boost.go / webhooks.go /
@@ -21,7 +18,6 @@ package marketplace_test
 // same as sequence_flow_test.go. Where the scenario is actually a pure-logic /
 // code-shape assertion (most of them are, since the guards are simple status
 // checks), it runs for real, right now, with no DB.
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -40,8 +36,6 @@ import (
 // VerifyHMAC crypto test (retained function).
 const adr023ChaosSkip = "ADR-023: escrow order/dispute/webhook path removed (listings-and-connect pivot); " +
 	"this asserts a mirror of deleted guard code. Kept as the historical §8 record. See ADR-023."
-
-// ─── 1. Gateway timeout mid-checkout: order stays 'initiated', never silently funded ──
 
 // TestChaos_GatewayTimeout_OrderStaysInitiated locks the §8 row: "Order stays
 // initiated, never silently marked funded... gateway webhook is the only source
@@ -95,8 +89,6 @@ func TestChaos_GatewayTimeout_FundOrderRejectsPastWindow(t *testing.T) {
 	}
 }
 
-// ─── 2. Duplicate webhook = idempotent no-op 200 ─────────────────────────────
-
 // TestChaos_DuplicateWebhook_DeliveryConfirmedIsNoOp exercises the REAL exported
 // HandleDeliveryConfirmed against a validation-only input (no live order lookup
 // needed to prove the code path when both OrderID and DeliveryRef are empty —
@@ -111,9 +103,6 @@ func TestChaos_DuplicateWebhook_DeliveryConfirmedIsNoOp(t *testing.T) {
 	// test no longer exists. The intended assertions below are kept as the
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
-	// ---- intended assertions once live ----
-	// o1, _ := svc.HandleDeliveryConfirmed(ctx, mkt.DeliveryConfirmedInput{OrderID: id, DeliveryRef: "d-dup-1", PODPhotoURL: "x", OTP: "1234"})
-	// o2, _ := svc.HandleDeliveryConfirmed(ctx, mkt.DeliveryConfirmedInput{OrderID: id, DeliveryRef: "d-dup-1", PODPhotoURL: "x", OTP: "1234"})
 	// assert o1.InspectionDeadline == o2.InspectionDeadline (not extended a second time)
 	// assert o1.Status == o2.Status == mkt.OrderInspectionWindow
 	// at the HTTP layer (webhook_handler.go): both calls return 200 (handler always
@@ -177,8 +166,6 @@ func TestChaos_DuplicateWebhook_HMACRejectsBadSignature(t *testing.T) {
 	}
 }
 
-// ─── 3. Buyer disputes after auto-release = 422 ORDER_NOT_DISPUTABLE ─────────
-
 // TestChaos_DisputeAfterAutoRelease_RaceGuardReturnsNotDisputable locks the
 // exact guard in OpenDispute (service_order.go): `if o.Status != OrderInspectionWindow
 // { return ... CodeOrderNotDisputable }`. Since `released` is not
@@ -187,7 +174,6 @@ func TestChaos_DuplicateWebhook_HMACRejectsBadSignature(t *testing.T) {
 // (pure, no DB needed) for every OTHER status.
 func TestChaos_DisputeAfterAutoRelease_RaceGuardReturnsNotDisputable(t *testing.T) {
 	t.Skip(adr023ChaosSkip)
-	// Mirrors: `if o.Status != OrderInspectionWindow { return 422 CodeOrderNotDisputable }`
 	disputable := func(s mkt.OrderStatus) bool { return s == mkt.OrderInspectionWindow }
 
 	allStates := []mkt.OrderStatus{
@@ -221,8 +207,6 @@ func TestChaos_DisputeAfterAutoRelease_LiveRace(t *testing.T) {
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
 }
-
-// ─── 4. Two buyers, same single listing = second gets 422 LISTING_NOT_ACTIVE ──
 
 // TestChaos_TwoBuyersRaceListing_GuardIsStatusEquality locks the guard in
 // CreateOrder: `if l.Status != ListingActive { return 422 CodeListingNotActive }`.
@@ -271,8 +255,6 @@ func TestChaos_TwoBuyersRaceListing_LiveConcurrentCreate(t *testing.T) {
 	t.Skip(adr023ChaosSkip)
 }
 
-// ─── 5. Edit listing with in_delivery order = 409 LISTING_HAS_ACTIVE_ORDER ───
-
 // TestChaos_EditListingWithActiveOrder_GuardOnlyBlocksPriceChanges locks the
 // EXACT scope of the guard in UpdateListing (service_listing.go): it only fires
 // `if in.PriceKobo != nil` — i.e. price changes are blocked while
@@ -282,8 +264,8 @@ func TestChaos_TwoBuyersRaceListing_LiveConcurrentCreate(t *testing.T) {
 func TestChaos_EditListingWithActiveOrder_GuardOnlyBlocksPriceChanges(t *testing.T) {
 	t.Skip(adr023ChaosSkip) // the active-ORDER edit guard is dead: no orders exist post-ADR-023 (listings still ship).
 	// Only PriceKobo triggers the active-order guard; Title/Description/Attrs do not.
-	priceOnly := mkt.UpdateListingInput{PriceKobo: int64Ptr(5_000_00)}
-	descOnly := mkt.UpdateListingInput{Description: strPtrLocal("fixed a typo in the description")}
+	priceOnly := mkt.UpdateListingInput{PriceKobo: new(int64(5_000_00))}
+	descOnly := mkt.UpdateListingInput{Description: new("fixed a typo in the description")}
 
 	if priceOnly.PriceKobo == nil {
 		t.Fatal("test setup: price-only patch must carry PriceKobo")
@@ -317,8 +299,6 @@ func TestChaos_EditListingWithActiveOrder_LiveGuard(t *testing.T) {
 	// design record if the path returns.
 	t.Skip(adr023ChaosSkip)
 }
-
-// ─── 6. Boost on rejected listing = auto_refunded, not dangling ─────────────
 
 // TestChaos_BoostOnRejectedListing_RejectBoostAlwaysAutoRefunds locks
 // RejectBoost's (service_boost.go) unconditional behavior: ANY call to
@@ -359,46 +339,39 @@ func TestChaos_BoostOnRejectedListing_RejectBoostAlwaysAutoRefunds(t *testing.T)
 // in chaos_live_db_test.go, against live Postgres. Unlike the escrow tests below,
 // the code it covers still exists, so it was implemented rather than skipped.
 
-// ─── 7. KYC-provider outage never regresses an already-verified badge ────────
-
 // TestChaos_KYCOutage_BadgeIsMonotonicSetOnly locks the badge-permanence
 // guarantee from model.go's TrustProfile.VerifiedIDBadge/VerifiedBusinessBadge
-// doc ("PERMANENT once true; never toggled by payment status") and the exact
-// Service methods: VerifyID calls SetVerifiedBadge(ctx, userID, false) and
-// VerifyBusiness calls SetVerifiedBadge(ctx, userID, true) — both are UPSERTs
-// that only ever SET a badge, there is no exported (or referenced) method
-// anywhere in service.go that clears/unsets a badge. This is a surface-level
-// proof: the Service type has no "revoke"/"unverify" method for either badge, so
-// a KYC provider outage (which can only fail to CALL VerifyID/VerifyBusiness,
-// never call some other clearing method) cannot regress an existing badge by
-// construction — there is nothing in the exported API that would.
+// doc ("PERMANENT once true; never toggled by payment status"). Since the P0
+// forgery fix, the ONLY badge-granting path is the admin ReviewKYC approve
+// branch, which calls repo.SetVerifiedBadge — an UPSERT that only ever SETS.
+// No exported (or referenced) method anywhere clears/unsets a badge, so a KYC
+// provider outage (which can only prevent a review from being APPROVED, never
+// invoke a clearing method) cannot regress an existing badge by construction.
 func TestChaos_KYCOutage_BadgeIsMonotonicSetOnly(t *testing.T) {
 	// This is a documentation-anchored structural assertion: verified via reading
-	// service.go during test authoring (VerifyID/VerifyBusiness are the ONLY two
-	// badge-touching methods; SetVerifiedBadge's second arg selects WHICH badge to
-	// set, never a boolean for "revoke"). We assert the presence and semantics of
-	// the two badge fields on TrustProfile as booleans that a `false` outage-path
-	// value can only fail to progress FORWARD from, never regress.
+	// service_admin.go during test authoring (ReviewKYC → SetVerifiedBadge is the
+	// ONLY badge-touching path; its arg selects WHICH badge to set, never a
+	// boolean for "revoke"). We assert the presence and semantics of the two
+	// badge fields on TrustProfile as booleans that a `false` outage-path value
+	// can only fail to progress FORWARD from, never regress.
 	tp := mkt.TrustProfile{VerifiedIDBadge: true, VerifiedBusinessBadge: true}
-	// Simulate "KYC provider outage": VerifyID/VerifyBusiness are simply never
-	// called again (the outage means the request never reaches the provider, so
-	// the Service method is never even invoked) — the badge fields are untouched.
+	// Simulate "KYC provider outage": the review is simply never APPROVED again
+	// (the outage means the request never reaches the provider) — the badge
+	// fields are untouched.
 	afterOutage := tp
 	if afterOutage.VerifiedIDBadge != true || afterOutage.VerifiedBusinessBadge != true {
 		t.Fatal("an already-true badge must remain true across a KYC-provider outage (no code path clears it)")
 	}
 }
 
-// TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly is the live-DB version:
-// call VerifyID twice (simulating a retried request after a timeout) and assert
-// it stays true and no error occurs on the second call (idempotent upsert, not
-// a toggle).
+// TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly is the live-DB version.
 // (removed) TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly was a stub that could never run.
-// It is now genuinely executed as TestLiveDB_VerifyID_IsIdempotentUpsertOnly
-// in chaos_live_db_test.go, against live Postgres. Unlike the escrow tests below,
-// the code it covers still exists, so it was implemented rather than skipped.
+// Its successor — TestLiveDB_VerifyID_BadgeRequiresAdminReview in
+// chaos_live_db_test.go — executes the P0 pending-review flow against live
+// Postgres: submit → pending (badge stays false) → admin approve → badge set.
 
-// ─── small local helpers (avoid depending on unexported package helpers) ─────
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
-func int64Ptr(v int64) *int64      { return &v }
-func strPtrLocal(s string) *string { return &s }
+//go:fix inline
+func strPtrLocal(s string) *string { return new(s) }

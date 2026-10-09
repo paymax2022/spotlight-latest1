@@ -10,13 +10,11 @@ var errNonPositive = errors.New("non-positive")
 
 // The Tier-0 checkout allowance (ADR-043) is a KYC relaxation, so these tests are
 // mostly about what it must NOT do.
-//
 // The money bug it exists to prevent: ADR-042 lets a Tier-0 customer fund their
 // wallet by card for a purchase in flight. Without a matching spend gate they are
 // charged, credited, and then refused at escrow — left holding money they cannot
 // spend and (being Tier 0) cannot withdraw. That is strictly worse than the clean
 // "complete KYC" refusal they used to get.
-//
 // The money bug it must not CREATE: ADR-042's whole safety argument is that a
 // Tier-0 account cannot get value back out. If this allowance ever reached a
 // cash-out path, that argument collapses.

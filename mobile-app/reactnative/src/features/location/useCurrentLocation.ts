@@ -1,8 +1,6 @@
-// ── "Use my current location" ────────────────────────────────────────────────
 // One-tap GPS capture for the address picker: ask permission, read the device
 // position, then reverse-geocode it (via the hybrid resolver) into a real
 // address + Plus Code.
-//
 // expo-location is loaded lazily and defensively: it may be absent in Expo Go or
 // a JS-only build that hasn't been rebuilt yet. When it's unavailable the hook
 // reports `available: false` so the UI can simply hide the button instead of

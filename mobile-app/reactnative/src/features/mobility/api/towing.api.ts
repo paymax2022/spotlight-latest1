@@ -1,5 +1,3 @@
-// ── Towing — API wrapper ─────────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Booking is a money mutation (escrow →
 // settle on completion) and carries an Idempotency-Key. Callout/distance fares
 // come from the SERVER.
 
@@ -11,6 +9,14 @@ import type {
   TowingEstimateRequest,
   TowingBookRequest,
 } from '../types/modes.types';
+import {
+  buildTowingCardDirectBody,
+  normalizeTowingStatus,
+  towingCardDirectStatusPath,
+  TOWING_CARD_DIRECT_BASE,
+  type TowingCardDirectInput,
+} from '../utils/towingCardDirect';
+import type { CardDirectIntent, CardDirectStatus } from '../utils/cardDirect';
 import {
   mockTowingEstimate,
   makeTowingJob,
@@ -73,6 +79,48 @@ export async function bookTowing(req: TowingBookRequest): Promise<TowingJob> {
         payment_method: req.paymentMethod,
       },
       idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+// ── Card-direct (pay by debit card, never the wallet KYC-tier gate) ─────────
+// backend/internal/transport/paystackcheckout (towing domain). Same pattern as
+// the parcel domain in parcel.api.ts: the server quotes + freezes the amount,
+// Paystack collects it, the server verifies and books. The wallet rail
+// (bookTowing) keeps its KYC gate unchanged.
+
+export type TowingCardDirectIntent = CardDirectIntent;
+export type TowingCardDirectStatus = CardDirectStatus & { towingJobId?: string };
+
+export async function initiateTowingPaystack(
+  req: TowingCardDirectInput & { idempotencyKey: string },
+): Promise<TowingCardDirectIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      reference: `towingorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+      status: 'pending',
+    };
+  }
+  return unwrap<TowingCardDirectIntent>(
+    await api.post(
+      `${BASE}${TOWING_CARD_DIRECT_BASE}/initiate`,
+      buildTowingCardDirectBody(req),
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getTowingPaystackStatus(reference: string): Promise<TowingCardDirectStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', amountKobo: 0, towingJobId: towingStore.active?.id ?? 'mock-towing-1' };
+  }
+  return normalizeTowingStatus(
+    unwrap<{ reference: string; status: CardDirectStatus['status']; amountKobo?: number; towingJobId?: string }>(
+      await api.get(`${BASE}${towingCardDirectStatusPath(reference)}`),
     ),
   );
 }

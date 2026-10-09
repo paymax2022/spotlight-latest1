@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -13,13 +14,11 @@ import (
 // money mutation, balanced double-entry cash legs on the finance ledger (never
 // mint), audit on every mutation, and fail-closed object-level authorization.
 
-// ── Swap ────────────────────────────────────────────────────────────────────
-
 // SwapQuote returns a pre-trade estimate for swapping fromUnits of asset A into
 // asset B at the current quotes, net of the default spread (retained as fee).
 // Display-only: the server re-prices at execution time.
 func (s *Service) SwapQuote(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64) (*SwapQuote, error) {
-	q, _, _, _, err := s.priceSwap(ctx, fromAssetID, toAssetID, fromUnits)
+	q, _, _, _, err := s.priceSwap(ctx, fromAssetID, toAssetID, fromUnits) //nolint:dogsled // tuple: quote path only
 	return q, err
 }
 
@@ -114,6 +113,20 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		Reference: "crypto:swap:" + from.Symbol + "->" + to.Symbol, idem: idemKey,
 	}
 
+	// Tier gate (fail-closed, E2E-FIN-046): the swap's cash legs DEBIT the wallet
+	// (buy B + retained spread = gross cashKobo), so the same
+	// EnforceWalletDebitLimit the transfer rail applies runs BEFORE the order and
+	// holdings are recorded — a refused attempt moves nothing. Skipped only when
+	// the buy leg is already durably posted (led.Posted): a replay of a completed
+	// swap must re-drive to the filled result, not refuse on today's usage.
+	if posted, err := s.led.Posted(ctx, idemKey+":buy"); err != nil {
+		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, q.CashKobo); err != nil {
+			return nil, err
+		}
+	}
+
 	// 1) Asset legs FIRST (fail-closed oversell): record the order + move both
 	//    holdings atomically. A replay is a no-op (dup → holdings untouched).
 	orderID, dup, err := s.repo.RecordSwapFill(ctx, o)
@@ -134,19 +147,19 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		return nil, err
 	}
 	// sell A: escrow → wallet CREDIT (+cashKobo)
-	if err := s.led.Credit(ctx, userID, o.Reference+":sell", idemKey+":sell", escrow.ID, q.CashKobo); err != nil && err != ledger.ErrDuplicate {
+	if err := s.led.Credit(ctx, userID, o.Reference+":sell", idemKey+":sell", escrow.ID, q.CashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, err
 	}
 	// buy B: wallet → escrow DEBIT (−netCash)
 	netCash := q.CashKobo - q.SpreadKobo
 	if netCash > 0 {
-		if err := s.led.Debit(ctx, userID, o.Reference+":buy", idemKey+":buy", escrow.ID, netCash); err != nil && err != ledger.ErrDuplicate {
+		if err := s.led.Debit(ctx, userID, o.Reference+":buy", idemKey+":buy", escrow.ID, netCash); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 			return nil, err
 		}
 	}
 	// spread: wallet → paymax_revenue (−spreadKobo)
 	if q.SpreadKobo > 0 {
-		if err := s.led.Debit(ctx, userID, o.Reference+":spread", idemKey+":spread", revenue.ID, q.SpreadKobo); err != nil && err != ledger.ErrDuplicate {
+		if err := s.led.Debit(ctx, userID, o.Reference+":spread", idemKey+":spread", revenue.ID, q.SpreadKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 			return nil, err
 		}
 	}
@@ -179,8 +192,6 @@ func (s *Service) SwapOrders(ctx context.Context, userID string, limit, offset i
 	}
 	return s.repo.SwapOrdersForUser(ctx, userID, limit, offset)
 }
-
-// ── Address allow-list ──────────────────────────────────────────────────────
 
 // AddAddress whitelists a destination address for the caller. The address is
 // validated (non-trivial length) and screened via the provider seam before it can
@@ -223,8 +234,6 @@ func (s *Service) DeleteAddress(ctx context.Context, userID, id string) error {
 	_ = s.audit.log(ctx, userID, "crypto.address.delete", "crypto_address", id, "", nil, nil)
 	return nil
 }
-
-// ── Deposit address ─────────────────────────────────────────────────────────
 
 // DepositAddress returns (issuing + persisting on first request) the caller's
 // deposit address for an asset. Generated deterministically via the provider seam
@@ -323,15 +332,12 @@ func (s *Service) QuoteWithdrawal(ctx context.Context, userID, assetID, network 
 	}, nil
 }
 
-// ── Withdrawal state machine ────────────────────────────────────────────────
-
 // networkFeeUnits estimates the in-asset miner fee (0.05% of the amount, floored at
 // one minor unit). Integer arithmetic only.
 func networkFeeUnits(units int64) int64 {
-	fee := units / 2000 // 0.05%
-	if fee < 1 {
-		fee = 1
-	}
+	fee := max(
+		// 0.05%
+		units/2000, 1)
 	return fee
 }
 
@@ -352,9 +358,11 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 	if units <= 0 || idemKey == "" {
 		return nil, ErrBadRequest
 	}
-	if feeKobo < 0 {
-		return nil, ErrBadRequest
-	}
+	// The fiat processing fee is platform policy, not client input — a request
+	// could otherwise pass fee_kobo=0 and skip the paymax_revenue leg entirely.
+	// The parameter stays for signature compatibility but is overridden with the
+	// same constant QuoteWithdrawal advertises.
+	feeKobo = DefaultWithdrawFeeKobo
 	a, err := s.repo.GetAsset(ctx, assetID)
 	if err != nil {
 		return nil, err
@@ -390,6 +398,21 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 		Provider: s.withdraw.Name(), Reference: "crypto:withdraw:" + a.Symbol, idem: idemKey,
 	}
 
+	// Tier gate (fail-closed, E2E-FIN-046): the fiat processing fee DEBITS the
+	// wallet below, and a Tier-0 wallet must not open an asset withdrawal at all,
+	// so the same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
+	// any units are parked — a refused attempt creates no withdrawal row and
+	// posts zero ledger legs. Skipped only when the fee leg is already durably
+	// posted (led.Posted): a replay then falls through to the dup return below
+	// instead of refusing on today's usage.
+	if posted, err := s.led.Posted(ctx, idemKey+":fee"); err != nil {
+		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, feeKobo); err != nil {
+			return nil, err
+		}
+	}
+
 	// 1) Create the withdrawal + park the units atomically (state=requested). A
 	//    replay returns the existing row (dup) without re-parking or re-charging.
 	wid, dup, err := s.repo.CreateWithdrawal(ctx, w)
@@ -409,7 +432,7 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 		if rerr != nil {
 			return nil, rerr
 		}
-		if ferr := s.led.Debit(ctx, userID, w.Reference+":fee", idemKey+":fee", revenue.ID, feeKobo); ferr != nil && ferr != ledger.ErrDuplicate {
+		if ferr := s.led.Debit(ctx, userID, w.Reference+":fee", idemKey+":fee", revenue.ID, feeKobo); ferr != nil && !errors.Is(ferr, ledger.ErrDuplicate) {
 			_, _ = s.repo.TransitionWithdrawal(ctx, userID, wid, WithdrawalRequested, WithdrawalFailed,
 				userID, "fee charge failed: "+ferr.Error(), "", "", ferr.Error(), units)
 			_ = s.audit.log(ctx, userID, "crypto.withdraw.failed", "crypto_withdrawal", wid, ferr.Error(), nil, nil)
@@ -436,18 +459,12 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 }
 
 // broadcastApprovedWithdrawal dispatches an admin-approved withdrawal to the
-// provider and advances approved → broadcast. It is the ONLY place the provider is
-// called — invoked from the admin approve path AFTER the AML gate, never from the
-// member create path. On provider reject/error the withdrawal fails and the parked
-// units are returned to the holder (compensation, never mints). It reads the owner +
-// destination from the persisted row so the broadcast targets the right whitelisted
-// address. Idempotent: the guarded approved→broadcast transition (and the provider's
-// own idempotency on the withdrawal id) make a re-run safe.
-//
-// TODO(crypto-worker): for production this should be enqueued to an asynq worker so
-// the admin approve HTTP call returns immediately and provider latency/retries are
-// handled off the request path. Today it runs inline on approve so the state machine
-// is exercisable end-to-end with the mock provider.
+// provider and advances approved → broadcast — the ONLY place the provider is
+// called (admin approve path AFTER the AML gate, never the member path). A
+// provider error fails the withdrawal and returns the parked units. Idempotent
+// via the guarded transition + the provider's own idempotency on the key.
+// TODO(crypto-worker): enqueue to an asynq worker for production so the admin
+// approve call returns immediately; today it runs inline.
 func (s *Service) broadcastApprovedWithdrawal(ctx context.Context, w *AdminWithdrawal) (*AdminWithdrawal, error) {
 	// Provider needs the net units, the destination address + network, and a stable
 	// idempotency key. Derive the provider idem key from the withdrawal id (stable).

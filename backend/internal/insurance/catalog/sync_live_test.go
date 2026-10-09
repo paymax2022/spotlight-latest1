@@ -13,14 +13,10 @@ import (
 	"spotlight/backend/internal/provider/mycover"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // LIVE CATALOG SYNC
-// ════════════════════════════════════════════════════════════════════════════
-//
 // Runs the REAL syncer against the REAL provider and the REAL database. It skips
 // unless both a database URL and a provider key are available, so CI and offline
 // runs are unaffected.
-//
 // It is a WRITE test against the catalog by design — that is the thing being
 // verified. It writes no member data, moves no money, and buys nothing.
 
@@ -40,7 +36,7 @@ func dotenv(t *testing.T) map[string]string {
 			}
 			out[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
 		}
-		f.Close()
+		_ = f.Close()
 		if len(out) > 0 {
 			return out
 		}
@@ -117,7 +113,6 @@ func TestLive_CatalogSync(t *testing.T) {
 		t.Fatalf("only %d products came back purchasable — expected the great majority", res.Purchasable)
 	}
 
-	// ── The end state a member sees ──────────────────────────────────────────
 	var active, activeUnsellable, fictional int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE active),

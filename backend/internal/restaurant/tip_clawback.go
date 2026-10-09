@@ -12,22 +12,18 @@ import (
 )
 
 // Rider tip clawback on post-settlement food disputes (ADR-031).
-//
 // A food dispute resolves only on a DELIVERED order, so settlement has already paid the
 // rider 100% of the customer's tip. The platform-funded refund is capped at the non-tip
 // basis (see platformRefundableKobo) — so the tip, if it is to come back to the customer
 // at all, has to come from the party that was paid it. This file is that path:
-//
 //	refund_full on a tipped order with a rider
 //	  → record the obligation (restaurant_dispute_tip_clawbacks, keyed by dispute id)
 //	  → try to settle it NOW: one balanced pair, DR rider wallet → CR customer wallet
 //	  → if the rider's wallet is short (they have already withdrawn), leave it PENDING
 //	     and recover it off their next delivery settlement (recoverRiderTipDebts).
-//
 // The rider's wallet is NEVER driven negative: ledger.Debit performs the sufficiency
 // check and the insert atomically under the wallet's advisory lock, so an unaffordable
 // clawback fails cleanly and stays queued instead of overdrawing.
-//
 // Deliberately NOT applied to refund_partial: a partial refund is characteristically a
 // restaurant fault (wrong_item, quality), and taking a rider's tip for the kitchen's
 // mistake is indefensible. The partial branch is still bounded by the non-tip basis, so
@@ -42,7 +38,6 @@ func tipClawbackKey(disputeID string) string { return "dispute-tip-clawback:" + 
 // riderWasPaidTip reports whether the rider on this order actually RECEIVED the tip at
 // settlement. The clawback must never fire on a belief — orders.tip_kobo records what the
 // customer was charged, not what the rider was paid, and the two come apart:
-//
 //   - ESCROW DIVERGENCE. settleOrder drops the tip leg when the escrow does not cover the
 //     order (settlements.total_kobo != orders.total_kobo), releasing the tip through the
 //     percentages instead — 90/10 to restaurant/platform. It zeroes only its LOCAL tip
@@ -55,7 +50,6 @@ func tipClawbackKey(disputeID string) string { return "dispute-tip-clawback:" + 
 //     and the tip is still sitting in escrow, not in the rider's wallet.
 //
 // The predicate has two halves, and needs both:
-//
 //   - The settlement must be SETTLED with its escrowed total equal to the order total.
 //     This mirrors settleOrder's own decision and is what establishes that the tip leg
 //     was INCLUDED in the payout rather than dropped.
@@ -105,7 +99,6 @@ func (s *Service) riderWasPaidTip(ctx context.Context, settlementID, riderID str
 
 // recordTipClawback durably records the obligation to return `tipKobo` to the customer out
 // of the rider's earnings. Reports whether THIS dispute owns the order's clawback.
-//
 // Uniqueness is per ORDER, not per dispute. The disputes table only blocks a second
 // CONCURRENTLY ACTIVE ticket on an order (status in open/investigating), and disputed_at
 // is a marker rather than a gate — so once a dispute resolves, a second one is raisable on
@@ -139,7 +132,6 @@ func (s *Service) recordTipClawback(ctx context.Context, disputeID, orderID, rid
 // settleTipClawback attempts the actual money move for one recorded clawback: a single
 // balanced pair debiting the rider's wallet and crediting the customer's. Reports whether
 // the debt is now discharged.
-//
 // Returns (false, nil) — NOT an error — when the rider's wallet cannot cover it. That is
 // the expected steady state for a rider who has already withdrawn, and it leaves the row
 // pending for the next settlement sweep.
@@ -148,7 +140,6 @@ func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, cus
 
 	// Ask the LEDGER OF RECORD first, before attempting anything. Neither error Debit can
 	// return is proof about whether the pair exists:
-	//
 	//   - ErrDuplicate is not proof it DID post. Debit takes the Redis idempotency lock
 	//     before its balance check, so an attempt that failed on insufficient funds holds
 	//     that lock for its 10s TTL and a retry inside the window reports duplicate having
@@ -159,7 +150,6 @@ func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, cus
 	//     balance has fallen below the tip returns insufficient funds — and treating that
 	//     as "not recovered" would strand the debt as pending forever against a rider who
 	//     has already paid, and re-notify the customer when a later sweep finally cleared.
-	//
 	// Posted reads the credit side of the pair from the DB and is Redis-independent, so it
 	// settles the question outright. One cheap indexed read per attempt.
 	posted, perr := s.ledger.Posted(ctx, key)
@@ -205,7 +195,6 @@ func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, cus
 // markTipClawbackRecovered flips a settled debt to 'recovered' and reports whether THIS
 // call performed the flip. Guarded on the pending status so a concurrent sweep cannot
 // double-stamp it, and paired with the table's status/recovered_at CHECK.
-//
 // The bool matters: the loser of a race between two settlements for one rider (or a sweep
 // racing a resolution) also reaches this point with recovered==true, and without the
 // row-count guard both would notify the customer for a single credit.
@@ -222,14 +211,12 @@ func (s *Service) markTipClawbackRecovered(ctx context.Context, disputeID string
 
 // clawBackDisputedTip records the obligation and immediately tries to discharge it.
 // Called from the dispute resolve path for refund_full on a tipped order.
-//
 // ORDERING: the row is written BEFORE the money move is attempted, the mirror of the
 // refund path's "move first, then record". Here the record is the DEBT, not the receipt —
 // a crash after a successful debit leaves a pending row whose ledger pair already exists,
 // which the next sweep resolves through Posted and stamps correctly. A crash the other
 // way round (money moved, no row) would silently forget the obligation, which is the one
 // outcome that cannot be recovered from.
-//
 // Reports whether the customer has been credited the tip already.
 func (s *Service) clawBackDisputedTip(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) (bool, error) {
 	owns, recordedKobo, err := s.recordTipClawback(ctx, disputeID, orderID, riderID, customerID, tipKobo)
@@ -270,12 +257,10 @@ func (s *Service) clawBackDisputedTip(ctx context.Context, disputeID, orderID, r
 // discharges every one their wallet can now cover — crediting each disputing customer.
 // Called right after a settlement has paid the rider, which is the moment their balance
 // is highest.
-//
 // BEST-EFFORT by design: it must never fail the settlement that triggered it. The
 // settlement's own legs are already committed by then, and a debt that cannot be
 // recovered on this pass is still pending for the next one, so the correct response to
 // any error here is to log and move on rather than unwind a completed payout.
-//
 // Recovery is all-or-nothing per debt: a debt is discharged only when the wallet covers
 // it in full. Balances accumulate across deliveries, so a rider whose single next payout
 // is smaller than the tip still converges — just over a few deliveries rather than one.

@@ -1,11 +1,8 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // SendDueReminders idempotency (24h + 1h waves, concurrent-safe claim).
-//
 // Service.sendReminderWave (backend/internal/transport/scheduled_dispatch.go)
 // claims each booking with a single SQL statement:
-//
 //	UPDATE transport_scheduled_bookings
 //	SET %s = NOW(), updated_at = NOW()          -- %s = reminder_24h_sent_at | reminder_1h_sent_at
 //	WHERE %s IS NULL
@@ -13,7 +10,6 @@ package transport_scheduled_test
 //	  AND scheduled_pickup_at > now()
 //	  AND scheduled_pickup_at <= now() + $1::interval
 //	RETURNING id, user_id, mode, scheduled_pickup_at
-//
 // The claim and the notify are split (UPDATE...RETURNING claims the row atomically;
 // notifyUser fires only for rows the UPDATE actually returned), so two concurrent
 // SendDueReminders calls racing the SAME row can only have ONE of them see it in
@@ -24,7 +20,6 @@ package transport_scheduled_test
 // that are pure logic: (1) the WHERE-clause claim guard is a correct one-shot
 // gate (already-sent bookings are excluded), and (2) the two waves (24h/1h) are
 // independent columns so firing one never blocks or duplicates the other.
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -53,7 +48,7 @@ func claimWave(b *reminderBooking, which string, window time.Duration, now time.
 	if !active {
 		return false
 	}
-	if !(b.scheduledPickupAt.After(now) && !b.scheduledPickupAt.After(now.Add(window))) {
+	if !b.scheduledPickupAt.After(now) || b.scheduledPickupAt.After(now.Add(window)) {
 		return false
 	}
 	switch which {
@@ -88,7 +83,7 @@ func TestReminders_24hWaveFiresExactlyOnce(t *testing.T) {
 		scheduledPickupAt: now.Add(20 * time.Hour), // inside (now, now+24h]
 	}
 	fired := 0
-	for tick := 0; tick < 10; tick++ {
+	for range 10 {
 		if claimWave(b, "24h", 24*time.Hour, now) {
 			fired++
 		}
@@ -110,7 +105,7 @@ func TestReminders_1hWaveFiresExactlyOnce(t *testing.T) {
 		scheduledPickupAt: now.Add(45 * time.Minute), // inside (now, now+1h]
 	}
 	fired := 0
-	for tick := 0; tick < 10; tick++ {
+	for range 10 {
 		if claimWave(b, "1h", 1*time.Hour, now) {
 			fired++
 		}
@@ -141,7 +136,7 @@ func TestReminders_ConcurrentInvocationClaimsExactlyOnce(t *testing.T) {
 	}
 	var claims int
 	const workers = 20
-	for i := 0; i < workers; i++ {
+	for range workers {
 		if claimWave(b, "1h", 1*time.Hour, now) {
 			claims++
 		}

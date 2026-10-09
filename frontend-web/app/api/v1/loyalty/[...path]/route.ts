@@ -4,7 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy: /api/v1/loyalty/<...> → Go /api/finance/loyalty/<...>
-// Auth + feature-flag guarded; Go enforces object-level authZ, guarded state
 // transitions, ledger/idempotency and the NL-1..12 invariants. Admin routes hit
 // Go directly. Money mutations forward the Idempotency-Key.
 async function forward(request: Request, path: string[]) {
@@ -19,3 +18,4 @@ export async function GET(request: Request, ctx: { params: Promise<{ path: strin
 export async function POST(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function PUT(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }

@@ -1,9 +1,6 @@
-// ── Association (Group / Membership Management) — Type contract ───────────────
 // Source of truth the screens code against. Mirrors the voting/crowdfunding
 // feature contracts. IRON RULE: all monetary amounts are integers in minor
 // units (kobo) — never floats, never strings for math.
-
-// ─── Organisation discovery ───────────────────────────────────────────────────
 
 export type GroupType = 'OPEN' | 'CLOSED' | 'INVITE_ONLY' | 'CODE_BASED' | 'PAID';
 
@@ -61,8 +58,6 @@ export interface JoinRequirement {
   required: boolean;
 }
 
-// ─── Join / application flow ──────────────────────────────────────────────────
-
 export interface JoinDraft {
   organisationId: string;
   categoryId:     string | null;
@@ -91,8 +86,6 @@ export interface ApplicationResult {
   message:       string;           // status explainer
   nextStep:      string | null;
 }
-
-// ─── Member identity ──────────────────────────────────────────────────────────
 
 export type MemberStatus =
   | 'ACTIVE'
@@ -170,8 +163,6 @@ export interface MemberDirectoryQuery {
   status?:   MemberStatus;
 }
 
-// ─── Member dashboard ─────────────────────────────────────────────────────────
-
 export interface MemberDashboard {
   card:          MembershipCard;
   outstandingKobo: number;
@@ -187,10 +178,8 @@ export interface AccessRestriction {
   reason:        string;           // human readable
   amountDueKobo: number;
   disabledFeatures: string[];      // ["Voting", "Event registration"…]
-  graceEndsAt:   string | null;    // ISO; null when grace elapsed
+  graceEndsAt:   string | null;
 }
-
-// ─── Dues & payments ──────────────────────────────────────────────────────────
 
 export type DuesCadence = 'ONE_OFF' | 'MONTHLY' | 'QUARTERLY' | 'ANNUAL' | 'LIFETIME';
 
@@ -246,8 +235,6 @@ export interface PayInvoiceResult {
   status:    'SUCCESS' | 'PENDING' | 'FAILED';
 }
 
-// ─── Edge / restriction states (for app/association/edge/[type]) ──────────────
-
 export type AssociationEdgeType =
   | 'payment-required'
   | 'suspended'
@@ -257,8 +244,6 @@ export type AssociationEdgeType =
   | 'invite-invalid'
   | 'offline'
   | 'error';
-
-// ─── Elections (TS-13) — wired to /associations/elections ─────────────────────
 
 export type ElectionStatus = 'DRAFT' | 'NOMINATION' | 'VOTING' | 'CLOSED' | 'PUBLISHED' | 'CANCELLED';
 

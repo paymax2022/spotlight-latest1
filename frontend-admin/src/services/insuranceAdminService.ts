@@ -1,22 +1,13 @@
-// ── Admin — Paymax Insurance control-plane service ───────────────────────────
-//
 // LIVE ONLY. There is no fixture mode in this file and one must not be added.
-//
-// WHY: this console previously shipped a full fixture set behind
 // NEXT_PUBLIC_INSURANCE_USE_MOCK (defaulting to MOCK), and rendered ₦84.9m of
 // gross written premium, 41,882 active policies and two "healthy" provider rails
 // against a system that has sold exactly ZERO policies. An operations console
 // that invents numbers is worse than one that shows nothing: nothing gets
 // escalated, and the fabrication is indistinguishable from real data at a
 // glance. The precedent is docs/audit/ADMIN_SIMULATED_WRITES.md.
-//
-// Every function below hits `/api/insurance/admin/*` through the same-origin
 // admin proxy and THROWS an `InsuranceAdminError` on any failure. Pages render
 // that error verbatim (endpoint, method, HTTP status, backend message). A 404
 // means the backend has not built the endpoint yet and the page must say so.
-//
-// MONEY: all `*_kobo` values are integers in minor units and are passed through
-// untouched. MyCover speaks naira decimal strings; the Go adapter converts
 // naira→kobo exactly once. Nothing here re-converts, and nothing here does
 // arithmetic that could produce a float kobo value. Formatting happens only in
 // `formatNaira` / `formatRateBps`, at the render boundary.
@@ -64,15 +55,12 @@ function adminBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 function newIdempotencyKey(prefix: string): string {
   return `ins-admin-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
-
-// ── Error surface ────────────────────────────────────────────────────────────
 
 function classify(status: number): FailureKind {
   if (status === 401) return 'unauthorized';
@@ -155,8 +143,6 @@ export class InsuranceAdminError extends Error {
   }
 }
 
-// ── Transport ────────────────────────────────────────────────────────────────
-
 function backendMessage(body: string): string | null {
   if (!body) return null;
   try {
@@ -181,7 +167,6 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...authHeaders() };
   if (opts?.body !== undefined) headers['Content-Type'] = 'application/json';
-  // Every mutating admin call carries an Idempotency-Key; the admin proxy
   // forwards this header verbatim.
   if (method !== 'GET') headers['Idempotency-Key'] = newIdempotencyKey(opts?.idempotencyPrefix ?? 'op');
 
@@ -219,8 +204,6 @@ async function request<T>(
     });
   }
 }
-
-// ── Render-boundary formatters ───────────────────────────────────────────────
 
 /**
  * kobo (integer minor units) → "₦1,234.56".
@@ -295,13 +278,10 @@ export function primaryBand(p: InsuranceProduct): SharingFormula | null {
   return bands[0];
 }
 
-// ── Normalisers ──────────────────────────────────────────────────────────────
-//
 // The backend is being built against the same internal contract, but the
 // pre-existing catalog handler still returns the older column names
 // (display_name / underwriter_display / indicative_premium_kobo). These
 // normalisers ALIAS those spellings onto the contract shape. Aliasing a field
-// the backend really sent is not fabrication; inventing a value for a field it
 // did not send is, and nothing below does that — absent fields stay null.
 
 function num(v: unknown): number | null {
@@ -341,7 +321,6 @@ function normaliseProduct(raw: unknown): InsuranceProduct {
   const bandsRaw = pick(o, 'sharing_formula');
   // The backend flattens the sharing formula into basis-point columns rather
   // than echoing MyCover's array. Rebuild a single band from them so the UI has
-  // one shape to render. bps → percent is /100 (1000 bps = 10%); this is a
   // rate, not money, so plain division is correct here.
   const bpsBand = ((): SharingFormula | null => {
     const dist = num(pick(o, 'distributor_commission_bps'));
@@ -426,8 +405,6 @@ function qs(params: Record<string, string | number | boolean | undefined>): stri
   return s ? `?${s}` : '';
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
-
 export async function getDashboard(): Promise<InsuranceDashboard> {
   const raw = await request<unknown>('GET', '/dashboard');
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -471,8 +448,6 @@ export async function getDashboard(): Promise<InsuranceDashboard> {
     generated_at: str(pick(o, 'generated_at', 'as_of')),
   };
 }
-
-// ── Catalog ──────────────────────────────────────────────────────────────────
 
 export async function getCatalog(opts?: {
   underwriter?: string;
@@ -539,8 +514,6 @@ export async function getProduct(code: string): Promise<InsuranceProduct> {
   const raw = await request<unknown>('GET', `/catalog/${encodeURIComponent(code)}`);
   return normaliseProduct(raw);
 }
-
-// ── Policies ─────────────────────────────────────────────────────────────────
 
 function normalisePolicy(raw: unknown): PolicySummary {
   const o = (raw ?? {}) as Record<string, unknown>;
@@ -609,8 +582,6 @@ export async function getPolicy(id: string): Promise<PolicyDetail> {
   };
 }
 
-// ── Claims ───────────────────────────────────────────────────────────────────
-
 function normaliseClaim(raw: unknown): ClaimSummary {
   const o = (raw ?? {}) as Record<string, unknown>;
   return {
@@ -672,8 +643,6 @@ export async function getClaim(id: string): Promise<ClaimDetail> {
   };
 }
 
-// ── Commission ───────────────────────────────────────────────────────────────
-
 export async function getCommission(opts?: {
   product_code?: string;
   underwriter?: string;
@@ -715,9 +684,6 @@ export async function getCommission(opts?: {
     period_to: str(pick(o, 'period_to', 'to')),
   };
 }
-
-// ── Providers ────────────────────────────────────────────────────────────────
-
 
 export type FloatSeverity = 'unknown' | 'empty' | 'critical' | 'ok';
 
@@ -776,7 +742,6 @@ export type Sellability = 'sellable' | 'blocked' | 'unknown';
 export function sellabilityOf(p: InsuranceProduct): Sellability {
   if (p.purchasable === true) return 'sellable';
   if (p.purchasable === false) {
-    // 'unknown' status with purchasable=false is the column default on a product
     // that has never been synced — absence of a verdict, not a verdict of broken.
     return !p.provider_config_status || p.provider_config_status === 'unknown' ? 'unknown' : 'blocked';
   }
@@ -886,8 +851,6 @@ export async function resetProviderFloat(provider: string, note: string): Promis
   });
 }
 
-// ── Reconciliation ───────────────────────────────────────────────────────────
-
 export async function getReconciliation(): Promise<ReconciliationReport> {
   const raw = await request<unknown>('GET', '/reconciliation');
   const drifts = asArray(raw, 'drifts', 'breaks').map((r, i) => {
@@ -923,14 +886,11 @@ export async function getReconciliation(): Promise<ReconciliationReport> {
   };
 }
 
-// ── Endpoints that are NOT in the internal contract ───────────────────────────
-//
 // premiums / refunds / schema / sweeps / reports / consent-audit / provider
 // events / webhook deliveries all have console pages but no agreed endpoint.
 // They call through here so that the day the backend adds one, the page
 // lights up on its own — and until then the page renders the real 404 instead
 // of a fixture. `probe` deliberately has no fallback.
-//
 // `routing` is NOT actually in this bucket — verified live 2026-09-17: the
 // backend DOES have a routing endpoint, `PATCH /api/insurance/admin/routing/:code`
 // (catalogHandler.AdminSetRouting, permission insurance.routing.manage). It sets
@@ -943,4 +903,100 @@ export async function getReconciliation(): Promise<ReconciliationReport> {
 // live; only the list/read half is unbuilt.
 export async function probe<T>(path: string): Promise<T> {
   return request<T>('GET', path);
+}
+
+// ── Provider (MyCover) policy mirror ──────────────────────────────────────────
+// Read-only mirror of the policies the PROVIDER holds for our account. It is NOT
+// Paymax's book: these never feed the dashboard's premium/commission figures,
+// because a policy bought directly at the provider moved no money through our
+// ledger. Backend: backend/internal/insurance/providerimport. The routes exist
+// only when FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED is on; otherwise they 404.
+
+export interface ProviderPolicy {
+  provider_policy_ref: string;
+  policy_number: string | null;
+  product_name: string | null;
+  underwriter: string | null;
+  status: string | null;
+  premium_kobo: number | null;
+  starts_at: string | null;
+  expires_at: string | null;
+  provider_created_at: string | null;
+  in_paymax: boolean;
+}
+
+export interface ProviderPolicyOverview {
+  provider: string;
+  total: number;
+  in_paymax: number;
+  not_in_paymax: number;
+  not_in_paymax_premium_kobo: number;
+  last_synced_at: string | null;
+}
+
+export interface ProviderPoliciesReport {
+  overview: ProviderPolicyOverview;
+  policies: ProviderPolicy[];
+}
+
+export interface ProviderSyncResult {
+  provider: string;
+  provider_total: number;
+  fetched: number;
+  inserted: number;
+  updated: number;
+  synced_at: string;
+}
+
+// Go time.Time zero value serialises as 0001-01-01…; that means "not set".
+const unsetDate = (v: unknown): string | null => {
+  const s = str(v);
+  return s && !s.startsWith('0001-') ? s : null;
+};
+
+export async function getProviderPolicies(opts?: { in_paymax?: boolean; limit?: number }): Promise<ProviderPoliciesReport> {
+  const raw = await request<unknown>(
+    'GET',
+    `/provider-policies${qs({ in_paymax: opts?.in_paymax, limit: opts?.limit ?? 100 })}`,
+  );
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const ov = (o.overview && typeof o.overview === 'object' ? o.overview : {}) as Record<string, unknown>;
+  return {
+    overview: {
+      provider: String(pick(ov, 'provider') ?? 'mycover'),
+      total: num(pick(ov, 'total')) ?? 0,
+      in_paymax: num(pick(ov, 'in_paymax')) ?? 0,
+      not_in_paymax: num(pick(ov, 'not_in_paymax')) ?? 0,
+      not_in_paymax_premium_kobo: num(pick(ov, 'not_in_paymax_premium_kobo')) ?? 0,
+      last_synced_at: unsetDate(pick(ov, 'last_synced_at')),
+    },
+    policies: asArray(o, 'policies').map((r) => {
+      const p = (r ?? {}) as Record<string, unknown>;
+      return {
+        provider_policy_ref: String(pick(p, 'provider_policy_ref') ?? ''),
+        policy_number: str(pick(p, 'policy_number')),
+        product_name: str(pick(p, 'product_name')),
+        underwriter: str(pick(p, 'underwriter')),
+        status: str(pick(p, 'status')),
+        premium_kobo: num(pick(p, 'premium_kobo')),
+        starts_at: unsetDate(pick(p, 'starts_at')),
+        expires_at: unsetDate(pick(p, 'expires_at')),
+        provider_created_at: unsetDate(pick(p, 'provider_created_at')),
+        in_paymax: pick(p, 'in_paymax') === true,
+      };
+    }),
+  };
+}
+
+export async function syncProviderPolicies(): Promise<ProviderSyncResult> {
+  const raw = await request<unknown>('POST', '/provider-policies/sync', { idempotencyPrefix: 'provider-sync' });
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    provider: String(pick(o, 'provider') ?? 'mycover'),
+    provider_total: num(pick(o, 'provider_total')) ?? 0,
+    fetched: num(pick(o, 'fetched')) ?? 0,
+    inserted: num(pick(o, 'inserted')) ?? 0,
+    updated: num(pick(o, 'updated')) ?? 0,
+    synced_at: String(pick(o, 'synced_at') ?? ''),
+  };
 }

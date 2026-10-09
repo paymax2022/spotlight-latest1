@@ -1,4 +1,3 @@
-// ── Referral foundation React Query hooks (v5) ───────────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as foundationApi from './api';
@@ -15,7 +14,6 @@ export const referralKeys = {
   consent: () => [...referralKeys.all, 'consent'] as const,
 };
 
-// ── Attribution / codes ──────────────────────────────────────────────────────
 export function useAttribution() {
   return useQuery({
     queryKey: referralKeys.attribution(),
@@ -44,7 +42,6 @@ export function useClaimCode() {
   });
 }
 
-// ── Roles / context ──────────────────────────────────────────────────────────
 export function useRoleContext() {
   return useQuery({
     queryKey: referralKeys.roles(),
@@ -61,7 +58,6 @@ export function useSetActiveRole() {
   });
 }
 
-// ── Notifications ────────────────────────────────────────────────────────────
 export function useReferralNotifications() {
   return useQuery({
     queryKey: referralKeys.notifications(),
@@ -94,7 +90,6 @@ export function useUpdateNotificationPrefs() {
   });
 }
 
-// ── Account / fraud standing ─────────────────────────────────────────────────
 export function useStanding() {
   return useQuery({
     queryKey: referralKeys.standing(),
@@ -111,7 +106,6 @@ export function useReportAbuse() {
   });
 }
 
-// ── Consent ──────────────────────────────────────────────────────────────────
 export function useConsent() {
   return useQuery({
     queryKey: referralKeys.consent(),

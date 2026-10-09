@@ -17,7 +17,6 @@ export function mapRepair(row: any, names: Record<string, string>) {
   };
 }
 
-// GET /api/v1/estate/repairs
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -31,14 +30,14 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list repairs'); }
 }
 
-// POST /api/v1/estate/repairs
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const category = CATEGORIES.includes(body?.category) ? body.category : null;
     if (!category) throw new ApiError('A valid category is required', 400);
     const description = String(body?.description ?? '').trim();

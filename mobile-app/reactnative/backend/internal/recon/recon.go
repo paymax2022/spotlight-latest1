@@ -2,7 +2,6 @@
 // the holdings recorded in the portfolio positions. A divergence (delta != 0)
 // means the ledger and the position store disagree for a symbol — an admin-only
 // signal that something needs investigation (missed event, double-credit, etc.).
-//
 // It deliberately depends only on a tiny read interface (Source) rather than the
 // whole store.Repository: store.Repository satisfies Source structurally, so the
 // HTTP layer can pass its repo straight in without this package importing store.
@@ -41,7 +40,6 @@ type Report struct {
 
 // Reconcile sums the crypto deltas implied by transaction history per symbol and
 // compares them against the live position quantities.
-//
 // Sign convention: "buy"/"deposit" add to a holding, "sell"/"withdraw" subtract.
 // Failed/reversed transactions ("Failed", "WithdrawalFailed") are excluded — they
 // never moved a balance (or were re-credited). Every other status is counted,

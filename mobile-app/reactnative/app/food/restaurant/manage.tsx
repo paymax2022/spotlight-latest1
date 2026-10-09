@@ -6,9 +6,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { Trash2, Plus, ClipboardList, Wallet, Users } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
@@ -23,13 +23,10 @@ import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet'
 
 const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG')}`;
 
-// ── Availability ↔ KYB messaging ─────────────────────────────────────────────
-//
 // Opening for orders requires an APPROVED business verification (KYB) — see
 // backend SetAvailability (ADR-033, fail-closed): closing is always allowed,
 // but the backend rejects turning the switch ON with
 // "business verification must be approved before opening for orders" until
-// `restaurants.kyb_status = 'approved'`. Until this notice existed the owner
 // had zero signal anywhere on this screen for WHY the switch wouldn't turn on
 // — the PayoutReadinessBanner below covers payouts, not opening, and reports
 // on a separate concern. This turns the same kybStatus (already fetched via
@@ -114,7 +111,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── First-run: create the store ───────────────────────────────────────────────
 function CreateStore({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
@@ -149,7 +145,6 @@ function CreateStore({ onDone }: { onDone: () => void }) {
   );
 }
 
-// ── Manage an existing store ──────────────────────────────────────────────────
 function ManageStore({
   storeId, outlets, activeOutletId, onSwitchOutlet,
 }: {
@@ -401,14 +396,10 @@ function ManageStore({
   );
 }
 
-// ── Payout readiness (capability ↔ KYB bridge) ───────────────────────────────
-//
 // Trading and being PAID are gated separately: the merchant capability lets a
-// person trade, while payout runs select `kyb_status = 'approved'` per outlet
 // (PY-007). Until now nothing joined them, so an outlet could take orders, settle
 // them, and be skipped by every payout run with no signal at all — 709 outlets
 // are in exactly that state.
-//
 // Shown only when this outlet is blocked. A banner that appears when everything
 // is fine is noise, and gets ignored when it matters.
 function PayoutReadinessBanner({ storeId }: { storeId: string }) {
@@ -429,8 +420,6 @@ function PayoutReadinessBanner({ storeId }: { storeId: string }) {
   );
 }
 
-// ── Takeaway packaging price ──────────────────────────────────────────────────
-//
 // The customer pays this ONCE PER PACK, so the owner is setting a price every
 // future order carries — worth its own card rather than a fourth input buried in
 // the profile form. The copy says where the money goes, because the honest answer
@@ -509,7 +498,6 @@ function PackagingPrice({ storeId, store }: { storeId: string; store: MerchantSt
   );
 }
 
-// ── Menu builder ──────────────────────────────────────────────────────────────
 function MenuBuilder({ storeId, categories }: { storeId: string; categories: MerchantMenuCategory[] }) {
   const [newCat, setNewCat] = useState('');
   const createCat = useCreateCategory(storeId);
@@ -605,7 +593,6 @@ function AddItem({ storeId, categoryId }: { storeId: string; categoryId: string 
   );
 }
 
-// ── Small building blocks ─────────────────────────────────────────────────────
 function Card({ children }: { children: React.ReactNode }) {
   return <View style={styles.card}>{children}</View>;
 }

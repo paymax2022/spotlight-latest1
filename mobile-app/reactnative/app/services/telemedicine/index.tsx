@@ -5,11 +5,11 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CalendarClock, ChevronRight, Stethoscope } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1, shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
 import {
   getSpecialties, getDoctors, DEMO_SPECIALTIES, DEMO_DOCTORS,
 } from '@/api/telemedicine.api';

@@ -7,13 +7,11 @@
 // code hits its cap it is retired: the 20% simply stays with Spotlight (the
 // "default referrer is Admin" policy needs no separate payout, since Spotlight
 // already holds its own commission by default — there's nothing to move).
-//
 // Hooked into commission.Service via the ReferralHook interface (see
 // finance/commission/service.go) — this package imports commission for the
 // Earning type; commission never imports this package (the same late-binding
 // shape as ledger.TransactionDetailResolver / Service.SetResolvers), so there
 // is no import cycle.
-//
 // Deliberately independent of the older, tiered (5/8/12/15%) Direct Referral
 // Rewards engine in finance/referrals — that engine computes its own margin
 // from a module-specific proxy and is wired to exactly one path (Maplerad bill
@@ -28,13 +26,17 @@ package commissionsplit
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/referrals"
+	referralevents "spotlight/backend/internal/referral/events"
 )
 
 // RateBps is the flat referral commission-split rate: 20% of Spotlight's
@@ -49,10 +51,17 @@ type ledgerService interface {
 	Credit(ctx context.Context, userID, reference, idempotencyKey, debitAccountID string, amountKobo int64) error
 }
 
+// eventTypeCredited is the referral_engine_events row appended after a split
+// actually lands (CREDITED). Money mutations must emit an audit event; the
+// event_type is distinct from the §7A engine's own types so analytics grouping
+// by event_type never mixes the two engines' semantics.
+const eventTypeCredited = "commission_split_reward_credited"
+
 // Service implements commission.ReferralHook.
 type Service struct {
 	pool    *pgxpool.Pool
 	ledger  ledgerService
+	events  *referralevents.Service
 	enabled bool
 }
 
@@ -61,7 +70,11 @@ type Service struct {
 // call site) so a caller that forgets the flag check still gets a safe no-op,
 // never a live payout.
 func NewService(pool *pgxpool.Pool, ledgerSvc ledgerService, enabled bool) *Service {
-	return &Service{pool: pool, ledger: ledgerSvc, enabled: enabled}
+	var ev *referralevents.Service
+	if pool != nil {
+		ev = referralevents.NewService(pool)
+	}
+	return &Service{pool: pool, ledger: ledgerSvc, events: ev, enabled: enabled}
 }
 
 // OnEarningRecorded implements commission.ReferralHook. Called exactly once per
@@ -99,7 +112,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		`SELECT referrer_id, is_house FROM public.referral_attributions WHERE referred_user_id = $1`,
 		*e.UserID,
 	).Scan(&referrerID, &isHouse)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -140,18 +153,19 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 	// UPDATE ... WHERE reward_count < reward_cap so two concurrent purchases by
 	// different referred users under the same code can never both succeed past
 	// the cap (a read-then-write here would race).
-	var linkID string
-	err = s.pool.QueryRow(ctx, `
-		UPDATE public.referral_links
-		SET reward_count = reward_count + 1
-		WHERE referrer_id = $1 AND reward_count < reward_cap
-		RETURNING id`,
-		*referrerID,
-	).Scan(&linkID)
-	if err == pgx.ErrNoRows {
-		// Code retired (at/over cap), or this referrer somehow has no code row —
-		// either way, defaults to admin: no payout, no reward row is written for
-		// this earning (there is nothing to record — it was never rewarded).
+	//
+	// A referrer with NO referral_links row at all is NOT retired — they simply
+	// never minted a code: referral_links is only created by GetOrCreateLink
+	// when the referrer opens their link page, yet attribution can already point
+	// at them via the legacy finance_referral_codes table (RewardService.Attribute
+	// resolves both code tables). Without a lazy mint here, every purchase under
+	// such an attribution would silently pay the house while the other engine
+	// (OnPurchaseSettled) pays the same referrer from the same attribution row.
+	err = s.claimRewardSlot(ctx, *referrerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Code retired (at/over cap) — defaults to admin: no payout, no reward
+		// row is written for this earning (there is nothing to record — it was
+		// never rewarded).
 		return nil
 	}
 	if err != nil {
@@ -175,7 +189,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		RETURNING id`,
 		*referrerID, *e.UserID, sourceTxnID, e.SourceModule, e.SpotlightRevenueKobo, rewardKobo,
 	).Scan(&rewardID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -197,7 +211,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		return err
 	}
 	creditErr := s.ledger.Credit(ctx, *referrerID, sourceTxnID, "referral:commission-split:"+rewardID, rewardAcct.ID, rewardKobo)
-	if creditErr != nil && creditErr != ledger.ErrDuplicate {
+	if creditErr != nil && !errors.Is(creditErr, ledger.ErrDuplicate) {
 		return creditErr
 	}
 	if _, err := s.pool.Exec(ctx,
@@ -206,5 +220,105 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 	); err != nil {
 		return err
 	}
+
+	// 6. Audit event — append-only referral_engine_events row, keyed on the
+	// reward id so a replay dedupes instead of double-recording. Best-effort like
+	// the rest of this hook: the money is already committed, so a failed event
+	// write is logged, never treated as a split failure (which would retry the
+	// whole path and claim another cap slot).
+	if s.events != nil {
+		if err := s.events.Record(ctx, referralevents.Input{
+			EventType:  eventTypeCredited,
+			UserID:     *e.UserID,
+			ReferrerID: *referrerID,
+			Payload: map[string]any{
+				"reward_id":             rewardID,
+				"earning_id":            e.ID,
+				"source_transaction_id": sourceTxnID,
+				"module":                e.SourceModule,
+				"margin_kobo":           e.SpotlightRevenueKobo,
+				"reward_kobo":           rewardKobo,
+				"rate_bps":              RateBps,
+			},
+			IdempotencyKey: "commission-split:credited:" + rewardID,
+		}); err != nil {
+			log.Printf("[referral/commissionsplit] audit event failed (reward=%s): %v", rewardID, err)
+		}
+	}
 	return nil
+}
+
+// claimRewardSlot atomically takes one of the referrer code's capped reward
+// slots, lazily minting the referral_links row first when the referrer has none
+// (a legacy-code referrer — see step 3 in trySplit). Returns pgx.ErrNoRows when
+// the code exists but is at/over its cap (retired); any other error propagates.
+func (s *Service) claimRewardSlot(ctx context.Context, referrerID string) error {
+	var linkID string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE public.referral_links
+		SET reward_count = reward_count + 1
+		WHERE referrer_id = $1 AND reward_count < reward_cap
+		RETURNING id`,
+		referrerID,
+	).Scan(&linkID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	// No claim — either the code is retired or the row is missing entirely. A
+	// missing row is not retirement: mint it, then take the slot.
+	var hasLink bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM public.referral_links WHERE referrer_id = $1)`,
+		referrerID,
+	).Scan(&hasLink); err != nil {
+		return err
+	}
+	if hasLink {
+		return pgx.ErrNoRows // exists but at cap — retired, pay the house
+	}
+	if err := s.mintLink(ctx, referrerID); err != nil {
+		return err
+	}
+	return s.pool.QueryRow(ctx, `
+		UPDATE public.referral_links
+		SET reward_count = reward_count + 1
+		WHERE referrer_id = $1 AND reward_count < reward_cap
+		RETURNING id`,
+		referrerID,
+	).Scan(&linkID)
+}
+
+// mintLink inserts a referral_links row for a referrer who never opened their
+// link page — same shape as referrals.RewardService.GetOrCreateLink: a fresh
+// 5-char code, retried on the (rare) code collision, with ON CONFLICT
+// (referrer_id) DO NOTHING so a concurrent mint/racing link-page visit keeps
+// whichever row landed first.
+func (s *Service) mintLink(ctx context.Context, referrerID string) error {
+	const ins = `
+		INSERT INTO public.referral_links (referrer_id, code)
+		VALUES ($1, $2)
+		ON CONFLICT (referrer_id) DO NOTHING`
+	for range 10 {
+		code, err := referrals.GenerateCode()
+		if err != nil {
+			return err
+		}
+		if _, err := s.pool.Exec(ctx, ins, referrerID, code); err != nil {
+			if isDuplicateCodeErr(err) {
+				continue // that CODE is taken; draw another
+			}
+			return err
+		}
+		return nil
+	}
+	return errors.New("commissionsplit: no free referral code in 10 attempts")
+}
+
+// isDuplicateCodeErr reports a unique-violation on referral_links.code (SQLSTATE
+// 23505). The referrer_id conflict is folded into ON CONFLICT ... DO NOTHING in
+// mintLink, so any 23505 surfacing here is the code collision to retry on.
+func isDuplicateCodeErr(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

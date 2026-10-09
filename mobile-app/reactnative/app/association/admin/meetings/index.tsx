@@ -1,8 +1,8 @@
 import React from 'react';
 import { router } from 'expo-router';
-import AdminContentList from '@/features/association/components/AdminContentList';
-import { CONTENT_CAPABILITY } from '@/features/association/utils/authoringAccess';
-import { bool, num } from '@/features/association/utils/metaFields';
+import {AdminContentList} from '@/features/association/components';
+import { CONTENT_CAPABILITY } from '@/features/association/utils';
+import { bool, num } from '@/features/association/utils';
 
 export default function AdminMeetingsList() {
   return (

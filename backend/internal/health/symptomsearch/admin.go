@@ -3,7 +3,6 @@ package symptomsearch
 // Pharmacist-console taxonomy write surface (POST /admin/pharmacy/mappings):
 // one suggest-approve endpoint for terms, concepts, clusters, cluster rules,
 // therapeutic classes and cluster→class maps. Invariants:
-//
 //   - create ⇒ status AI_SUGGESTED (nothing AI-drafted is user-visible until a
 //     licensed pharmacist approves it).
 //   - approve ⇒ stamps approved_by (from auth context) + approved_at.
@@ -14,7 +13,6 @@ package symptomsearch
 //     column, so retire removes the mapping row).
 //   - cluster_rule expressions are parsed at WRITE time — a malformed rule
 //     never enters the table (and the read path still fails closed anyway).
-//
 // Every successful write emits an audit event with the acting pharmacist.
 
 import (
@@ -121,7 +119,7 @@ func validateTaxonomyPayload(entity string, p map[string]any) error {
 			return fmt.Errorf("%w: expression must be 1–500 characters", ErrValidation)
 		}
 		if _, err := ParseRule(expr); err != nil {
-			return fmt.Errorf("%w: expression does not parse: %v", ErrValidation, err)
+			return fmt.Errorf("%w: expression does not parse: %w", ErrValidation, err)
 		}
 		// Effect shape — illegal states unreachable (mirrors the schema CHECK).
 		escalateTo := getString(p, "escalate_to_tier")
@@ -159,8 +157,6 @@ func validateTaxonomyPayload(entity string, p map[string]any) error {
 	return nil
 }
 
-// ─── Console read surface (GET /symptom/reviews/:id, GET /symptom/mappings) ──
-//
 // Read-only views for the pharmacist console. These live behind the same RBAC
 // permissions as their write counterparts and are served by the production
 // PgxRepo via the optional adminReader port (the in-memory test fake does not
@@ -197,6 +193,7 @@ type ReviewStateEvent struct {
 // context (e.g. catalogue POM orders).
 type PharmacyReviewCaseDetail struct {
 	PharmacyReviewCase
+
 	SymptomTerms    []string           `json:"symptom_terms"`
 	MatchedConcepts []string           `json:"matched_concepts"`
 	ClusterName     *string            `json:"cluster_name"`
@@ -382,8 +379,6 @@ func (s *Service) ListTaxonomy(ctx context.Context, entity string) (any, error) 
 	}
 	return nil, fmt.Errorf("%w: entity must be term or cluster", ErrValidation)
 }
-
-// ─── payload helpers (JSON decodes numbers as float64) ───────────────────────
 
 func getString(p map[string]any, key string) string {
 	if p == nil {

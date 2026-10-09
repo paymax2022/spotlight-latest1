@@ -1,14 +1,13 @@
-// ── Paymax · Admin — AssetControlRow ─────────────────────────────────────────
 // One asset's trading controls: symbol/kind + fee, status pill, and inline
 // enable/disable toggles for buy / sell / withdrawal. Toggles are controlled and
 // disabled when the screen can't edit (no asset.config permission).
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StatusPill from './StatusPill';
 import { ENTITY_STATUS_STYLE, formatBps } from '../constants/admin.constants';
 import type { AssetControl } from '../types/admin.types';

@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/pharmacy"
+
+	"github.com/gin-gonic/gin"
 )
 
 func newTestGin() *gin.Engine {
@@ -34,7 +35,7 @@ func TestListProductsNoAuth(t *testing.T) {
 		h.ListProducts(c)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/products", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/products", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -50,7 +51,7 @@ func TestAddToCartBadBody(t *testing.T) {
 	r.POST("/cart", setUserID("user-abc"), h.AddToCart)
 
 	body := `{"quantity": 2}` // missing product_id (required)
-	req := httptest.NewRequest(http.MethodPost, "/cart", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/cart", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "cart-001")
 	w := httptest.NewRecorder()
@@ -68,7 +69,7 @@ func TestUpdateCartItemBadBody(t *testing.T) {
 	r.PATCH("/cart/:product_id", setUserID("user-abc"), h.UpdateCartItem)
 
 	body := `{}` // missing quantity (required, min=1)
-	req := httptest.NewRequest(http.MethodPatch, "/cart/product-uuid", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/cart/product-uuid", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -84,7 +85,7 @@ func TestAddToCartBadJSON(t *testing.T) {
 	r := newTestGin()
 	r.POST("/cart", setUserID("user-abc"), h.AddToCart)
 
-	req := httptest.NewRequest(http.MethodPost, "/cart", bytes.NewBufferString("not-valid-json"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/cart", bytes.NewBufferString("not-valid-json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -97,7 +98,7 @@ func TestAddToCartBadJSON(t *testing.T) {
 // TestIdempotencyKeyFromHeader verifies AddToCart reads the Idempotency-Key from
 // the HTTP header when the body field is omitted.
 func TestAddToCartIdempotencyHeaderFallback(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/cart", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/cart", nil)
 	req.Header.Set("Idempotency-Key", "cart-idempotency-001")
 
 	got := req.Header.Get("Idempotency-Key")

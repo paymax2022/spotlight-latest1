@@ -12,7 +12,6 @@ test.describe('Bills E2E - Retry and polling states', () => {
   });
 
   test('FAILED transaction detail shows retry button', async ({ page }) => {
-    // Override single-transaction route to return a FAILED transaction
     await page.route('**/transactions/tx-provider-failed', async (route) => {
       // The app route /services/transactions/<id> matches this pattern too —
       // without this guard page.goto() renders the mocked JSON, not the screen.
@@ -124,7 +123,7 @@ test.describe('Bills E2E - Retry and polling states', () => {
 
     await page.goto('/services/airtime');
     await page.getByText('MTN').first().click();
-    await page.getByPlaceholder('0801 234 5678').fill('08031234567');
+    await page.getByPlaceholder('801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();
     // The confirm dialog gates on the transaction PIN — without it the payment

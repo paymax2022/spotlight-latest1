@@ -9,12 +9,9 @@ import (
 
 // PURE tests — no DB. The pgx Repository is replaced by an in-memory fakeStore and a fake
 // identity checker, mirroring feeschedule_test.go / edupay_test.go isolation.
-//
 // The identity-reuse tests ACTIVELY assert that the fake identity store is never written
 // to (grep-proof: fakeStore has NO identity-insert method and fakeIdentity only READS),
 // and that linking a non-existent identity is refused — proving we reuse, never mint.
-
-// ── fakes ─────────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
 	items map[string]*Student
@@ -124,8 +121,6 @@ func (f *fakeIdentity) IdentityExists(_ context.Context, userID string) (bool, e
 	return f.known[userID], nil
 }
 
-// ── admission_number uniqueness per school ───────────────────────────────────────
-
 func TestAdmissionNumberUniquePerSchool(t *testing.T) {
 	f := newFakeStore()
 	svc := NewServiceWithStore(f)
@@ -143,8 +138,6 @@ func TestAdmissionNumberUniquePerSchool(t *testing.T) {
 		t.Fatalf("same admission number in a different school must be allowed, got %v", err)
 	}
 }
-
-// ── guardian link reuses existing identity (never creates one) ────────────────────
 
 func TestLinkGuardian_ReusesExistingIdentity(t *testing.T) {
 	f := newFakeStore()
@@ -212,8 +205,6 @@ func TestUnlinkGuardian(t *testing.T) {
 	}
 }
 
-// ── minor_flag defaults true ─────────────────────────────────────────────────────
-
 func TestMinorFlagDefaultsTrue(t *testing.T) {
 	f := newFakeStore()
 	svc := NewServiceWithStore(f)
@@ -234,8 +225,6 @@ func TestMinorFlagDefaultsTrue(t *testing.T) {
 		t.Fatal("explicit minor_flag=false must be honoured")
 	}
 }
-
-// ── bulk import validation rejects bad rows ──────────────────────────────────────
 
 func TestBulkImport_ValidatesAndRejectsBadRows(t *testing.T) {
 	f := newFakeStore()

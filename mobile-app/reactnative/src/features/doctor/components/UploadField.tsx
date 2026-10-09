@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { UploadCloud, FileCheck2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 export type UploadFieldState = 'empty' | 'selected' | 'uploading' | 'uploaded' | 'error';
 
@@ -23,7 +23,6 @@ interface Props {
 // New component: a document/photo upload row with empty / selected / uploading /
 // uploaded / error states. The Phase A flow stubs the file picker (no real
 // DocumentPicker), so this renders the chosen-file affordance and drives the
-// upload mutation. DrugItemRow is prescription-specific; no existing component
 // models an upload slot, so this is genuinely new.
 export default function UploadField({
   label, required, state, fileName, hint, errorText, onPick, onUpload, onRetry,

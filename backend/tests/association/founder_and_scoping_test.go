@@ -3,7 +3,6 @@ package association_test
 // Regression tests for the defects fixed in the association module hardening
 // pass. Each test names the defect it locks down; every one of these failed
 // before the corresponding fix.
-//
 // Live-DB, same harness as live_db_integration_test.go: skipped without
 // TEST_DATABASE_URL. Every row is created by the test with a fresh uuid.
 
@@ -95,7 +94,7 @@ func TestPublishOrganisation_FoundersOwnTheirOrg(t *testing.T) {
 	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var status, standing, role, jurisdiction string
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT m.status, m.payment_standing, r.role, r.jurisdiction
 		FROM assoc_memberships m
 		JOIN assoc_member_roles r ON r.membership_id = m.id
@@ -110,7 +109,7 @@ func TestPublishOrganisation_FoundersOwnTheirOrg(t *testing.T) {
 	// The companion profile row must exist: every read path joins it, and a
 	// membership without one makes /me/profile and the directory fail.
 	var profiles int
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT count(*) FROM assoc_member_profiles p
 		JOIN assoc_memberships m ON m.id = p.membership_id
 		WHERE m.organisation_id=$1 AND m.user_id=$2`, res.OrganisationID, userID).Scan(&profiles); err != nil {
@@ -143,7 +142,7 @@ func TestPublishOrganisation_IdempotentReplay(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	userID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@replay.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -171,7 +170,7 @@ func TestPublishOrganisation_IdempotentReplay(t *testing.T) {
 	}
 
 	var count int
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT count(*) FROM assoc_organisations WHERE idempotency_key=$1`, draft.IdempotencyKey).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -191,7 +190,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	userID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@config.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -204,7 +203,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var rules int
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT count(*) FROM assoc_organisation_rules WHERE organisation_id=$1`, res.OrganisationID).Scan(&rules); err != nil {
 		t.Fatalf("rules: %v", err)
 	}
@@ -215,7 +214,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 	var graceDays int
 	var disableVoting bool
 	var structureType *string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT grace_days, disable_voting, structure_type FROM assoc_organisations WHERE id=$1`,
 		res.OrganisationID).Scan(&graceDays, &disableVoting, &structureType); err != nil {
 		t.Fatalf("restrictions: %v", err)
@@ -229,7 +228,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 
 	var leaderName *string
 	var canApprove bool
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT leader_name, can_approve_members FROM assoc_chapter_leaders
 		 WHERE organisation_id=$1 AND state_name='Lagos'`, res.OrganisationID).Scan(&leaderName, &canApprove); err != nil {
 		t.Fatalf("chapter leader missing: %v", err)
@@ -270,7 +269,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	orgID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_organisations (id, name, category, group_type, approval_rule, published)
 		VALUES ($1,$2,'Professional','OPEN','AUTO',true)`,
 		orgID, "Open Join "+uuid.New().String()[:8]); err != nil {
@@ -279,7 +278,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 	t.Cleanup(func() { deleteOrganisation(ctx, pool, orgID) })
 
 	applicant := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		applicant, applicant+"@applicant.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -294,7 +293,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 	}
 
 	var status string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT status FROM assoc_memberships WHERE organisation_id=$1 AND user_id=$2`,
 		orgID, applicant).Scan(&status); err != nil {
 		t.Fatalf("membership not created: %v", err)
@@ -306,7 +305,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 	// The supporting documents the join flow uploads must persist too — the
 	// server used to bind nothing, so the whole upload step was decorative.
 	var docs int
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT count(*) FROM assoc_application_documents WHERE application_id=$1`,
 		result.ApplicationID).Scan(&docs); err != nil {
 		t.Fatalf("documents: %v", err)
@@ -326,7 +325,7 @@ func TestGetAuditLog_DoesNotLeakAcrossOrganisations(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	founder := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		founder, founder+"@audit.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -381,7 +380,7 @@ func TestMemberWrites_AreScopedToOwningOrganisation(t *testing.T) {
 
 	// A meeting that belongs to org B only.
 	meetingID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_meetings (id, organisation_id, title, starts_at)
 		VALUES ($1,$2,'Org B private meeting', now() + interval '1 day')`, meetingID, orgB); err != nil {
 		t.Fatalf("seed meeting: %v", err)
@@ -395,7 +394,7 @@ func TestMemberWrites_AreScopedToOwningOrganisation(t *testing.T) {
 	}
 
 	var attendance int
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT count(*) FROM assoc_meeting_attendance WHERE meeting_id=$1`, meetingID).Scan(&attendance); err != nil {
 		t.Fatalf("attendance count: %v", err)
 	}
@@ -415,14 +414,14 @@ func TestRegenerateAiNoteSummary_RequiresOrgAdmin(t *testing.T) {
 
 	orgID := seedOrganisation(t, ctx, pool, "AI Note Org "+uuid.New().String()[:8])
 	noteID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_ai_notes (id, organisation_id, meeting_title, source, status)
 		VALUES ($1,$2,'Board minutes','TRANSCRIPT','READY')`, noteID, orgID); err != nil {
 		t.Fatalf("seed ai note: %v", err)
 	}
 
 	stranger := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		stranger, stranger+"@stranger.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
@@ -433,7 +432,7 @@ func TestRegenerateAiNoteSummary_RequiresOrgAdmin(t *testing.T) {
 	}
 
 	var status string
-	if err := pool.QueryRow(ctx, `SELECT status FROM assoc_ai_notes WHERE id=$1`, noteID).Scan(&status); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM assoc_ai_notes WHERE id=$1`, noteID).Scan(&status); err != nil {
 		t.Fatalf("read note: %v", err)
 	}
 	if status != "READY" {

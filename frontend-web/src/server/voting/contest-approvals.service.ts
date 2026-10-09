@@ -87,11 +87,14 @@ export async function proposeApproval(input: ProposeApprovalInput): Promise<Prop
   if (input.idempotencyKey) {
     const { data: existing } = await supabase
       .from('contest_admin_approvals')
-      .select('id, status')
+      .select('id, status, initiator_id')
       .eq('idempotency_key', input.idempotencyKey)
       .maybeSingle();
     if (existing) {
-      const row = existing as { id: string; status: string };
+      const row = existing as { id: string; status: string; initiator_id: string };
+      if (row.initiator_id !== input.initiatorId) {
+        throw new ApiError('Idempotency-Key conflicts with an existing approval.', 409);
+      }
       return { id: row.id, status: row.status as ContestApprovalStatus, alreadyProposed: true };
     }
   }
@@ -115,15 +118,19 @@ export async function proposeApproval(input: ProposeApprovalInput): Promise<Prop
       // Race on idempotency_key — re-fetch instead of failing.
       const { data: raced } = await supabase
         .from('contest_admin_approvals')
-        .select('id, status')
+        .select('id, status, initiator_id')
         .eq('idempotency_key', input.idempotencyKey)
         .maybeSingle();
       if (raced) {
-        const row = raced as { id: string; status: string };
+        const row = raced as { id: string; status: string; initiator_id: string };
+        if (row.initiator_id !== input.initiatorId) {
+          throw new ApiError('Idempotency-Key conflicts with an existing approval.', 409);
+        }
         return { id: row.id, status: row.status as ContestApprovalStatus, alreadyProposed: true };
       }
     }
-    throw new ApiError(`Failed to propose action: ${error.message}`, 500);
+    console.error('[voting/approvals] failed to propose action:', error);
+    throw new ApiError('Failed to propose action', 500);
   }
 
   const row = inserted as { id: string; status: string };

@@ -1,5 +1,3 @@
-// ── Insurance — API wrapper ──────────────────────────────────────────────────
-// Typed data layer the screens code against. Mock-first via USE_MOCK; live path
 // hits the frontend-web proxy at `${INSURANCE_API_BASE}/...`. Provider-specific
 // JSON never leaks past this layer (PRD §7 — normalised models only).
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
@@ -42,7 +40,6 @@ function uid(prefix: string): string {
   return `${prefix}-${secureRandomId()}`;
 }
 
-// ── Catalog ──────────────────────────────────────────────────────────────────
 export async function getProducts(line?: ProductLine): Promise<InsuranceProduct[]> {
   if (USE_MOCK) {
     await delay();
@@ -63,7 +60,6 @@ export async function getProduct(code: string): Promise<InsuranceProduct> {
     if (!found) throw new Error('Product not found');
     return found;
   }
-  // GAP: Go only exposes GET /products?line= (catalog/handler.go ListProducts) —
   // there is no GET /products/:code. Fetch the filtered list and find the code
   // client-side rather than calling a route that doesn't exist.
   const { data } = await api.get(`${INSURANCE_API_BASE}/products`);
@@ -72,9 +68,6 @@ export async function getProduct(code: string): Promise<InsuranceProduct> {
   return found;
 }
 
-// ── KYC profile (prefill) ─────────────────────────────────────────────────────
-// GAP: no GET /kyc-profile on the Go insurance surface (backend/internal/insurance
-// has no such handler; KYC lives in finance/kyc and isn't exposed to this module's
 // member group). Until a backend endpoint/proxy exists this stays mock-only in
 // live mode too (throwing would break the quote-prefill screen); report upstream.
 export async function getKycProfile(): Promise<KycProfile> {
@@ -83,8 +76,6 @@ export async function getKycProfile(): Promise<KycProfile> {
   return MOCK_KYC;
 }
 
-// ── Cover summary (Protection hub) ────────────────────────────────────────────
-// GAP: no GET /cover-summary on the Go side — derive it client-side from the real
 // live GET /policies endpoint (same aggregation the mock does) instead of calling
 // a route that 404s.
 export async function getCoverSummary(): Promise<CoverSummary> {
@@ -112,7 +103,6 @@ export async function getCoverSummary(): Promise<CoverSummary> {
   };
 }
 
-// ── Quote ─────────────────────────────────────────────────────────────────────
 export async function createQuote(input: QuoteInput): Promise<Quote> {
   if (USE_MOCK) {
     await delay(520);
@@ -166,7 +156,6 @@ export async function getQuote(id: string): Promise<Quote> {
   return data;
 }
 
-// ── NDPA consent (PRD §18) ────────────────────────────────────────────────────
 export async function recordConsent(payload: ConsentPayload): Promise<{ ok: true }> {
   if (USE_MOCK) {
     await delay(160);
@@ -180,13 +169,15 @@ export async function recordConsent(payload: ConsentPayload): Promise<{ ok: true
   return { ok: true };
 }
 
-// ── Bind (debit→bind saga; PRD §11) ───────────────────────────────────────────
 // The wallet debit is handled by the shared payments controller (usePurchasePayment).
 // `bindPolicy` is the module's "charge" — it binds with the provider AFTER funds
 // are guaranteed. On bind failure the premium is auto-reversed to wallet (the
 // single most important invariant, PRD §10.1).
 export async function bindPolicy(args: {
   quoteId: string;
+  /** Policyholder NIN — verified via Dojah at the Go purchase gate before any
+   * money moves (FEATURE_INSURANCE_NIN_REQUIRED, default ON). */
+  nin: string;
   idempotencyKey: string;
 }): Promise<BindResult> {
   if (USE_MOCK) {
@@ -240,22 +231,21 @@ export async function bindPolicy(args: {
     return { ok: true, policy };
   }
 
-  // Live: Idempotency-Key REQUIRED on bind (PRD §12.1).
+  // Live: Idempotency-Key REQUIRED on bind (PRD §12.1). Go binds on `quote_id`
+  // (snake_case) and requires `nin` at the Dojah purchase gate.
   const { data } = await api.post<BindResult>(
     `${INSURANCE_API_BASE}/policies`,
-    { quoteId: args.quoteId },
+    { quote_id: args.quoteId, nin: args.nin },
     { headers: { 'Idempotency-Key': args.idempotencyKey } },
   );
   return data;
 }
 
-// ── Policy wallet ─────────────────────────────────────────────────────────────
 export async function getPolicies(): Promise<Policy[]> {
   if (USE_MOCK) {
     await delay();
     return mockPolicies;
   }
-  // Envelope-unwrap only; a fresh member has no policies (empty list). Full
   // snake→camel Policy mapping lands when the live bind path is exercised.
   const { data } = await api.get(`${INSURANCE_API_BASE}/policies`);
   return unwrapList<Policy>(data);
@@ -289,7 +279,6 @@ export async function getCertificateUrl(id: string): Promise<{ url: string; expi
   return data;
 }
 
-// ── Beneficiaries ─────────────────────────────────────────────────────────────
 export async function saveBeneficiaries(
   policyId: string,
   beneficiaries: Beneficiary[],
@@ -310,8 +299,6 @@ export async function saveBeneficiaries(
   return data;
 }
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
-// GAP: policy/handler.go registers Cancel but no Renew handler — Go has no
 // POST /policies/:id/renew yet. Mobile call below is written correctly for when
 // it lands (Idempotency-Key attached); until then this 404s in live mode.
 export async function renewPolicy(args: {
@@ -362,10 +349,8 @@ export async function cancelPolicy(args: {
   return data;
 }
 
-// GAP: no GET /policies/:id/refund-status on the Go side (refund state currently
 // only surfaces embedded in the Policy record itself — see `refundState` /
 // `refundKobo` on Policy, which getPolicy() already returns live). This helper
-// still 404s in live mode until a dedicated endpoint exists; prefer reading
 // policy.refundState directly where possible.
 export async function getRefundStatus(
   policyId: string,

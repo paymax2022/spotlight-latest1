@@ -21,8 +21,6 @@ type PgxRepo struct{ db *pgxpool.Pool }
 
 func NewPgxRepo(db *pgxpool.Pool) *PgxRepo { return &PgxRepo{db: db} }
 
-// ─── Resolution reads ────────────────────────────────────────────────────────
-
 func (r *PgxRepo) LookupApprovedTerms(ctx context.Context, normTerms []string) ([]Term, error) {
 	const q = `
 		SELECT id, term, language, concept_id, status
@@ -254,8 +252,6 @@ func (r *PgxRepo) SearchEventContext(ctx context.Context, id string) (*SearchEve
 	return &evc, nil
 }
 
-// ─── Review cases ────────────────────────────────────────────────────────────
-
 const reviewCaseColumns = `id, order_id, pharmacy_provider_id, tier, state, pharmacist_id, decision_note, sla_deadline, search_event_id, version, created_at, updated_at`
 
 func scanReviewCase(row pgx.Row) (*PharmacyReviewCase, error) {
@@ -297,7 +293,7 @@ func (r *PgxRepo) InsertReviewCase(ctx context.Context, rc *PharmacyReviewCase, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		INSERT INTO pharmacy_review_cases
 			(id, order_id, pharmacy_provider_id, tier, state, sla_deadline, search_event_id, version)
@@ -319,7 +315,7 @@ func (r *PgxRepo) TransitionReviewCase(ctx context.Context, id string, expectedV
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		UPDATE pharmacy_review_cases
 		SET state = $3,
@@ -437,8 +433,6 @@ func (r *PgxRepo) IsProviderPharmacist(ctx context.Context, userID, providerID s
 	}
 	return ok, nil
 }
-
-// ─── Admin taxonomy writes (suggest-approve) ─────────────────────────────────
 
 // taxonomyTables whitelists the entity→table mapping. Table names never come
 // from user input.
@@ -684,8 +678,6 @@ func (r *PgxRepo) deleteClusterClassMap(ctx context.Context, p map[string]any) (
 	}
 	return map[string]any{"id": clusterID + ":" + classID, "cluster_id": clusterID, "class_id": classID, "retired": true}, nil
 }
-
-// ─── Console read surface (adminReader) ──────────────────────────────────────
 
 // OrderCartLines snapshots the order's lines for the review-case drawer.
 // Classification is derived from the rx_required snapshot (POM vs OTC) — the

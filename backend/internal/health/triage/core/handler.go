@@ -2,9 +2,15 @@ package core
 
 import (
 	"net/http"
+	"spotlight/backend/internal/health/triage"
+	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/services"
 	"time"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // parseDOB parses a YYYY-MM-DD date of birth; an empty/invalid value yields nil so
@@ -29,24 +35,16 @@ type Handler struct{ svc *SessionService }
 // NewHandler builds the handler.
 func NewHandler(svc *SessionService) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
-func fail(c *gin.Context, status int, msg string) {
-	c.JSON(status, gin.H{"success": false, "error": msg})
-}
-
-// --- profiles ---
-
 // ListProfiles — GET /health/triage/profiles
 func (h *Handler) ListProfiles(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	out, err := h.svc.ListProfiles(c.Request.Context(), id)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "profiles": out})
@@ -54,9 +52,9 @@ func (h *Handler) ListProfiles(c *gin.Context) {
 
 // CreateProfile — POST /health/triage/profiles
 func (h *Handler) CreateProfile(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -67,35 +65,33 @@ func (h *Handler) CreateProfile(c *gin.Context) {
 		IsPregnant bool   `json:"is_pregnant"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	dob := parseDOB(req.DOB)
 	p, err := h.svc.CreateProfile(c.Request.Context(), id, req.Kind, req.Name, req.Sex, dob, req.IsPregnant)
 	if err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "profile": p})
 }
 
-// --- sessions ---
-
 // StartSession — POST /health/triage/sessions
 func (h *Handler) StartSession(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req StartParams
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	sess, err := h.svc.StartSession(c.Request.Context(), id, req)
 	if err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	// SC-8: surface the mandatory disclaimer from the first response onward.
@@ -104,19 +100,19 @@ func (h *Handler) StartSession(c *gin.Context) {
 
 // SubmitIntake — POST /health/triage/sessions/:id/intake
 func (h *Handler) SubmitIntake(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req IntakeParams
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	view, err := h.svc.SubmitIntake(c.Request.Context(), id, c.Param("id"), req)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": view})
@@ -124,9 +120,9 @@ func (h *Handler) SubmitIntake(c *gin.Context) {
 
 // Answer — POST /health/triage/sessions/:id/answer
 func (h *Handler) Answer(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -134,12 +130,12 @@ func (h *Handler) Answer(c *gin.Context) {
 		Value string `json:"value"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	view, err := h.svc.Answer(c.Request.Context(), id, c.Param("id"), req.Code, req.Value)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": view})
@@ -147,15 +143,72 @@ func (h *Handler) Answer(c *gin.Context) {
 
 // GetSession — GET /health/triage/sessions/:id
 func (h *Handler) GetSession(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	view, err := h.svc.GetSession(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusNotFound, err.Error())
+		ginutil.FailOK(c, http.StatusNotFound, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": view})
+}
+
+// RegisterHealthTriageCore wires the AI Symptom Checker CORE orchestration onto
+// the finance member group + a health admin group. The integration owner calls
+// this from the aggregator under the triage feature flag — this file edits no
+// existing routing file.
+//   - member: /api/finance/health/triage/*  (member-authenticated; user_id mirrored)
+//   - admin : /api/health/admin/* + RBAC health.triage.admin (per route)
+//
+// Dependency injection (nil → mock-first / deterministic safety net):
+//   - engine    nil → triage.MockEngine            (licensed engine when configured)
+//   - extractor nil → triage.MockExtractor          (LLM extractor when configured)
+//   - redflag   nil → LayeredRedFlag(Default, nil)  (deterministic SC-2 safety net)
+//
+// The vault + audit sinks are wired by the orchestrator (nil is safe). The engine
+// always runs DE-IDENTIFIED (SC-7) and the red-flag layer always overrides toward
+// higher urgency (SC-2/SC-3) regardless of which engine is injected.
+func RegisterHealthTriageCore(
+	member, admin *gin.RouterGroup,
+	pool *pgxpool.Pool,
+	rbac services.RBACService,
+	engine triage.EngineProvider,
+	extractor triage.EvidenceExtractor,
+	redflag triage.RedFlagEngine,
+) {
+	if pool == nil {
+		return
+	}
+	if engine == nil {
+		engine = triage.MockEngine{}
+	}
+	if extractor == nil {
+		extractor = triage.MockExtractor{}
+	}
+	if redflag == nil {
+		redflag = NewLayeredRedFlag(triage.DefaultRedFlagEngine{}, nil)
+	}
+
+	// Audit + vault sinks are left nil here; the orchestrator may inject them via a
+	// NewSessionService call instead, but the default wiring is nil-safe (SC-12
+	// auditing degrades to no-op rather than failing the money/no-money path).
+	svc := NewSessionService(pool, engine, extractor, redflag, nil, nil)
+	h := NewHandler(svc)
+
+	g := member.Group("/health/triage")
+	g.GET("/profiles", h.ListProfiles)
+	g.POST("/profiles", h.CreateProfile)
+	g.POST("/sessions", h.StartSession)
+	g.POST("/sessions/:id/intake", h.SubmitIntake)
+	g.POST("/sessions/:id/answer", h.Answer)
+	g.GET("/sessions/:id", h.GetSession)
+
+	if admin != nil {
+		ag := admin.Group("/triage")
+		ag.GET("/sessions/:id",
+			middleware.RequirePermission(rbac, "health.triage.admin"), h.GetSession)
+	}
 }

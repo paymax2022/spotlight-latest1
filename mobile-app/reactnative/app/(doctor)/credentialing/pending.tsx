@@ -1,4 +1,3 @@
-// PRIVACY: This screen shows the doctor only a COARSE verification status plus
 // guidance copy. It must NEVER render MDCN/register data, reviewer identity,
 // internal reviewer notes, or matched-field detail — Paymax verifies out-of-band
 // (assisted Mode B) and the doctor never sees the MDCN portal.
@@ -8,10 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Clock, CheckCircle2, XCircle, FileCheck2, AlertCircle, PauseCircle } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView } from '@/features/doctor/components';

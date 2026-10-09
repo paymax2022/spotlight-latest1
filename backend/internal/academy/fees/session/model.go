@@ -9,11 +9,9 @@ import (
 // Package feessession owns the AcademicSession and (per-school, per-session) Class
 // entities of the EdTech School-Fees module. Both live here (build-spec §2 AcademicSession
 // + Class; REUSE-MAP maps /internal/session/ + /internal/class/ under the fees module).
-//
 // Tables (migration 20260918000000_academy_fees_edtech.sql):
 //   - academy_sessions      (AcademicSession; status active/closed/archived)
 //   - academy_fee_classes    (Class; class_teacher_user_id, session_id, level)
-//
 // No money moves here. Session status is a GUARDED transition (never a raw UPDATE …
 // SET status=) via the in-package pure state machine (statemachine.go).
 
@@ -49,8 +47,6 @@ type Class struct {
 	CreatedAt          time.Time `json:"createdAt"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreateSessionRequest opens an academic session for a school.
 type CreateSessionRequest struct {
 	Name          string          `json:"name" binding:"required"`
@@ -78,8 +74,6 @@ type UpdateClassRequest struct {
 	Level              string `json:"level"`
 	ClassTeacherUserID string `json:"classTeacherUserId"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound        = errors.New("not_found")

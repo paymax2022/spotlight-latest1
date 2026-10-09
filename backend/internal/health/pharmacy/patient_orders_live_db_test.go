@@ -1,7 +1,6 @@
 package healthpharmacy_test
 
 // LIVE-DB tests for the patient's own order history (GET /orders/mine).
-//
 // The gap this closes: the mobile "Customer: orders" getOrders() called
 // GET /orders — the same path the pharmacist inbox (ListForOwner) is bound
 // to. A patient calling it either got an empty list (owning no pharmacy) or,
@@ -9,14 +8,12 @@ package healthpharmacy_test
 // a pharmacy). ListForPatient/ListMyOrders give the patient a scoped read of
 // their OWN orders on a distinct path, /orders/mine, so it never collides
 // with the owner inbox.
-//
 // Two properties matter beyond "it returns rows":
 //   - it is scoped to orders the caller PLACED (a history that leaked
 //     another patient's orders would expose their purchases and pickup
 //     credential);
 //   - unlike the owner inbox, it DOES return pickup_code — that credential
 //     belongs to the patient reading their own order.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -94,10 +91,10 @@ func newPatientOrdersFixture(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		// IN ($1,$2), not = ANY($1) with a []string: these id columns are uuid, and
 		// `uuid = ANY(text[])` has no operator — the delete errors, the error is
 		// ignored here, and the fixture survives.
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2)`, f.orderID, f.otherOrderID)
-		pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id = $1`, f.pharmacy)
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id = $1`, f.pharmacy)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2)`, f.orderID, f.otherOrderID)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.pharmacy)
 	})
 	return f
 }

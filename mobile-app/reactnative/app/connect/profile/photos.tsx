@@ -1,58 +1,89 @@
 import React from 'react';
-import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { X, Camera } from 'lucide-react-native';
 import { ChevronUp, ChevronDown } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
+import { alertAsync, confirmAsync } from '@/lib/confirm';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { PLACEHOLDER_PHOTOS } from '@/features/connect/profile/api';
 import {
   usePhotos,
+  useAddPhoto,
   useReorderPhotos,
   useRemovePhoto,
 } from '@/features/connect/profile/hooks';
-import type { ConnectMode } from '@/features/connect/profile/types';
 
-// PR — Per-mode photo management. Photos belong to ONE mode only and are never
-// shared with the other mode. Index 0 is the primary photo.
+const MAX_PHOTOS = 9;
+
+// PR — Photo management. The first photo is the primary. New photos are uploaded
+// to storage and reviewed before they are shown to other people.
 export default function ProfilePhotos() {
-  const params = useLocalSearchParams<{ mode?: string }>();
-  const mode: ConnectMode = params.mode === 'network' ? 'network' : 'date';
-  const modeLabel = mode === 'date' ? 'Date' : 'Network';
-
-  const { data: photos, isLoading, error, refetch } = usePhotos(mode);
+  const { data: photos, isLoading, error, refetch } = usePhotos();
+  const add = useAddPhoto();
   const reorder = useReorderPhotos();
   const remove = useRemovePhoto();
 
-  const busy = reorder.isPending || remove.isPending;
+  const busy = add.isPending || reorder.isPending || remove.isPending;
+  const full = (photos?.length ?? 0) >= MAX_PHOTOS;
 
   const move = (from: number, to: number) => {
     if (!photos || to < 0 || to >= photos.length) return;
     const next = [...photos];
     const [item] = next.splice(from, 1);
     next.splice(to, 0, item);
-    reorder.mutate({ mode, photos: next });
+    reorder.mutate(next.map((p) => p.id));
   };
 
-  const onRemove = (uri: string) => remove.mutate({ mode, uri });
+  const onRemove = async (id: string) => {
+    const ok = await confirmAsync({
+      title: 'Remove this photo?',
+      message: 'It will be taken off your profile.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (ok) remove.mutate(id);
+  };
 
-  const onAdd = () => {
-    if (!photos) return;
-    // Mock: append the first placeholder not already present.
-    const next = PLACEHOLDER_PHOTOS.find((p) => !photos.includes(p));
-    if (!next) return;
-    reorder.mutate({ mode, photos: [...photos, next] });
+  const onAdd = async () => {
+    if (busy || full) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        await alertAsync({ title: 'Photo access needed', message: 'Allow photo library access to add photos.' });
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [4, 5],
+        quality: 0.8,
+      });
+      const asset = !res.canceled ? res.assets?.[0] : undefined;
+      if (!asset?.uri) return;
+      add.mutate(
+        { uri: asset.uri, mime: asset.mimeType },
+        {
+          onError: (e) =>
+            void alertAsync({
+              title: "Couldn't add photo",
+              message: e instanceof Error ? e.message : 'Please try again.',
+            }),
+        },
+      );
+    } catch {
+      await alertAsync({ title: "Couldn't open your photos", message: 'Please try again.' });
+    }
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Photos" subtitle={`${modeLabel} profile`} />
+      <ScreenHeader title="Photos" subtitle="Your profile" />
 
       {isLoading ? (
         <StateView kind="loading" message="Loading photos…" />
@@ -68,25 +99,30 @@ export default function ProfilePhotos() {
         <StateView
           kind="empty"
           title="No photos yet"
-          message={`Add photos to your ${modeLabel} profile so people can see the real you.`}
+          message="Add photos so people can see the real you."
           icon="ImagePlus"
-          actionLabel="Add photo"
+          actionLabel={add.isPending ? 'Uploading…' : 'Add photo'}
           onAction={onAdd}
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
           <Text style={styles.hint}>
-            The first photo is your primary. Use the arrows to reorder.
+            The first photo is your primary. Use the arrows to reorder. New photos show a
+            “In review” tag until they are approved.
           </Text>
 
           <View style={styles.grid}>
-            {photos.map((uri, i) => (
-              <View key={`${uri}-${i}`} style={styles.tile}>
-                <Image source={{ uri }} style={styles.image} resizeMode="cover" />
+            {photos.map((photo, i) => (
+              <View key={photo.id} style={styles.tile}>
+                <Image source={{ uri: photo.url }} style={styles.image} resizeMode="cover" />
 
                 {i === 0 ? (
                   <View style={styles.primaryTag}>
                     <Text style={styles.primaryTagText}>Primary</Text>
+                  </View>
+                ) : photo.status === 'pending' ? (
+                  <View style={[styles.primaryTag, styles.reviewTag]}>
+                    <Text style={styles.primaryTagText}>In review</Text>
                   </View>
                 ) : null}
 
@@ -96,7 +132,7 @@ export default function ProfilePhotos() {
                   disabled={busy}
                   accessibilityRole="button"
                   accessibilityLabel="Remove photo"
-                  onPress={() => onRemove(uri)}
+                  onPress={() => onRemove(photo.id)}
                 >
                   <X size={16} color={Colors.white} strokeWidth={2.4} />
                 </Pressable>
@@ -126,16 +162,24 @@ export default function ProfilePhotos() {
               </View>
             ))}
 
-            <Pressable
-              style={styles.addTile}
-              disabled={busy}
-              accessibilityRole="button"
-              accessibilityLabel="Add photo"
-              onPress={onAdd}
-            >
-              <Camera size={26} color={ConnectColors.brand} strokeWidth={2} />
-              <Text style={styles.addText}>Add photo</Text>
-            </Pressable>
+            {!full ? (
+              <Pressable
+                style={styles.addTile}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Add photo"
+                onPress={onAdd}
+              >
+                {add.isPending ? (
+                  <ActivityIndicator color={ConnectColors.brand} />
+                ) : (
+                  <>
+                    <Camera size={26} color={ConnectColors.brand} strokeWidth={2} />
+                    <Text style={styles.addText}>Add photo</Text>
+                  </>
+                )}
+              </Pressable>
+            ) : null}
           </View>
         </ScrollView>
       )}
@@ -165,6 +209,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: Radius.full,
   },
+  reviewTag: { backgroundColor: Colors.backdropDark },
   primaryTagText: { ...Typography.caption, color: Colors.white, fontWeight: '700' },
   removeBtn: {
     position: 'absolute',

@@ -1,14 +1,10 @@
-// ── Paymax Stays (Hotel Booking) — Constants & module tokens ─────────────────
 // Mock-first convention (mirrors connect / insurance / realtor). Flip to false
-// (or set EXPO_PUBLIC_STAYS_USE_MOCK=false) once the live Go-backend stays
 // endpoints are reachable via the frontend-web proxy.
-//
 // IRON RULE: all monetary amounts are integers in minor units (kobo). FX: every
-// price carries an explicit currency; NGN is the default, USD-priced upscale
 // supply is converted with a visible note (never silent — PRD §12 / build-plan §2).
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_STAYS_USE_MOCK, true);
 
@@ -17,7 +13,6 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_STAYS_USE_MOCK, true
 // module is registered at /api/finance/stays (backend/internal/app/stays_routes.go).
 // NOTE: Go currently only implements search/consent/prebook/book/reservations —
 // the richer mobile surface (home, deals, destinations, agent/*, reviews/*,
-// loyalty, saved-guests, trips/* cancel+modify) has NO backend route yet; those
 // calls will 404 once USE_MOCK is flipped until the backend cluster adds them.
 export const STAYS_API_BASE = '/api/finance/stays';
 
@@ -48,9 +43,7 @@ export const StaysColors = {
   loyaltyBg:  Colors.iconBgGold,
 } as const;
 
-// ── FX (PRD §12 — FX display, never silent) ──────────────────────────────────
 // Display rate used to show an indicative NGN equivalent for USD-priced supply.
-// Live path takes the controlled conversion from the backend; this is the mock
 // indicative rate. ALWAYS shown with a note that final charge is in NGN.
 export const USD_NGN_RATE = 1650;
 
@@ -127,7 +120,6 @@ export function newIdempotencyKey(): string {
   return `stay_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ── Error taxonomy (PRD §28.A — normalised, rail-agnostic) ───────────────────
 export const STAYS_ERRORS = {
   OFFER_EXPIRED: 'This price offer has expired. We refreshed the rates for you.',
   PREBOOK_PRICE_CHANGED: 'The price changed since you started. Review the updated total before booking.',
@@ -144,7 +136,6 @@ export const STAYS_ERRORS = {
 
 export type StaysErrorCode = keyof typeof STAYS_ERRORS;
 
-// ── Filter / sort catalogues (PRD §15) ───────────────────────────────────────
 export const SORT_OPTIONS = [
   { value: 'top_picks', label: 'Top picks' },
   { value: 'price_asc', label: 'Price (low to high)' },
@@ -214,7 +205,6 @@ export function scoreWord(score: number): string {
   return 'Review score';
 }
 
-// ── Date & guest display helpers (shared across screens) ─────────────────────
 export function nightsBetween(checkIn: string, checkOut: string): number {
   const a = new Date(`${checkIn}T00:00:00`).getTime();
   const b = new Date(`${checkOut}T00:00:00`).getTime();

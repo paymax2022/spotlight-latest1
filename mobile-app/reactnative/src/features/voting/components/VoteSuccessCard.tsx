@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import { CheckCircle2, TrendingUp } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
 import { formatVoteCount } from '../utils/voteFormatters';
 

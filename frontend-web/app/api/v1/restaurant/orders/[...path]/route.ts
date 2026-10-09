@@ -21,8 +21,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ path: strin
   const { path } = await ctx.params;
   // Live-order tracking ticket: GET /api/v1/restaurant/orders/:id/ws.
   // The Next.js HTTP proxy cannot upgrade WebSockets, so instead of proxying we
-  // return a short-lived signed ws(s):// URL that points DIRECTLY at the Go
-  // backend WS endpoint. Auth is enforced (requireRequestUser); see ws-ticket.ts
   // for the full decision record. The catch-all owns this segment because a
   // sibling [id]/ws route cannot coexist with [...path] in Next.js.
   if (Array.isArray(path) && path.length === 2 && path[1] === 'ws') {
@@ -41,3 +39,4 @@ export async function POST(request: Request, ctx: { params: Promise<{ path: stri
 export async function PUT(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function DELETE(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }

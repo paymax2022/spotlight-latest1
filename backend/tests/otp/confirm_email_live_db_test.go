@@ -1,35 +1,26 @@
 package otp_test
 
-// ---------------------------------------------------------------------------
 // LIVE test: redeeming a verify_email code actually confirms the account.
-//
 // WHY THIS EXISTS
-// ---------------
 // The unit tests drive a fake verifier, so they prove the handler CALLS
 // confirmation and nothing about whether confirmation works. The part that can
 // silently not work is the GoTrue call itself:
-//
 //   - PUT /auth/v1/admin/users/{id} with {"email_confirm": true} is the
 //     supported way to confirm, but GoTrue's admin surface has changed shape
 //     across versions, and a wrong body is accepted with a 200 that confirms
 //     nothing.
 //   - It needs the SERVICE ROLE key. With an anon key the call 401s, and the
 //     symptom is a user who redeems a valid code and still cannot log in.
-//
 // Both failures look like success from our side. This asserts the observable
 // outcome instead: auth.users.email_confirmed_at goes from NULL to set.
-//
 // Gated on TEST_DATABASE_URL (never DATABASE_URL — see
 // scripts/ci/check-live-db-gate.sh) AND on Supabase credentials, because it
 // needs a real GoTrue to talk to.
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	export SUPABASE_URL="http://127.0.0.1:54321"
 //	export SUPABASE_SERVICE_ROLE_KEY="<local service role key>"
 //	cd backend && go test ./tests/otp/... -run LiveDB_ConfirmEmail -v
-// ---------------------------------------------------------------------------
 
 import (
 	"bytes"
@@ -66,11 +57,11 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 		"email":    email,
 		"password": uuid.NewString(),
 	})
-	req, err := http.NewRequest(http.MethodPost, url+"/auth/v1/admin/users", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url+"/auth/v1/admin/users", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build create request: %v", err)
 	}
-	req.Header.Set("apikey", key)
+	req.Header.Set("Apikey", key)
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -78,7 +69,7 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if resp.StatusCode >= 400 {
 		t.Fatalf("create user: %d: %s", resp.StatusCode, string(raw))
@@ -91,19 +82,19 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 	}
 
 	t.Cleanup(func() {
-		del, err := http.NewRequest(http.MethodDelete, url+"/auth/v1/admin/users/"+created.ID, nil)
+		del, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, url+"/auth/v1/admin/users/"+created.ID, nil)
 		if err != nil {
 			t.Errorf("cleanup: build delete: %v", err)
 			return
 		}
-		del.Header.Set("apikey", key)
+		del.Header.Set("Apikey", key)
 		del.Header.Set("Authorization", "Bearer "+key)
 		r, err := http.DefaultClient.Do(del)
 		if err != nil {
 			t.Errorf("cleanup: delete user %s: %v", created.ID, err)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		if r.StatusCode >= 400 {
 			t.Errorf("cleanup: delete user %s returned %d — a fixture account is left behind", created.ID, r.StatusCode)
 		}

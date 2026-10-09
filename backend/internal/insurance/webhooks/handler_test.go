@@ -65,7 +65,7 @@ func postWebhook(t *testing.T, h *Handler, provider, body string, headers map[st
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/internal/webhooks/"+provider, strings.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/webhooks/"+provider, strings.NewReader(body))
 	for k, v := range headers {
 		c.Request.Header.Set(k, v)
 	}
@@ -75,7 +75,6 @@ func postWebhook(t *testing.T, h *Handler, provider, body string, headers map[st
 
 // TestIngest_ReadsTheAdapterDeclaredHeader is the regression for a bug that made
 // EVERY genuine MyCover delivery fail with a 401.
-//
 // The handler used to derive the header from the URL slug: mounted at
 // /internal/webhooks/mycover, it probed "X-mycover-Signature". MyCover signs
 // with "x-mycoverai-signature" — mycover != mycoverai — so the signature always

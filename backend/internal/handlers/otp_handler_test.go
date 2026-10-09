@@ -17,8 +17,6 @@ import (
 	"spotlight/backend/internal/otp"
 )
 
-// ── doubles ─────────────────────────────────────────────────────────────────
-
 type memStore struct {
 	mu   sync.Mutex
 	rows map[string]otp.Record
@@ -126,8 +124,6 @@ func (s *capturingSender) lastCode() string {
 	return s.sent[len(s.sent)-1]
 }
 
-// ── harness ─────────────────────────────────────────────────────────────────
-
 func newOTPRouter(t *testing.T, sender otp.EmailSender, lim otp.Limiter) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -150,14 +146,12 @@ func newOTPRouter(t *testing.T, sender otp.EmailSender, lim otp.Limiter) *gin.En
 func post(t *testing.T, r *gin.Engine, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
 }
-
-// ── gating ──────────────────────────────────────────────────────────────────
 
 // A disabled or misconfigured feature must 503 with the reason, never 404 and
 // never a partial success. A 404 reads as "not in this build" and sends the
@@ -182,8 +176,7 @@ func TestDisabledHandlerReturns503WithReason(t *testing.T) {
 	}
 }
 
-// ── enumeration safety ──────────────────────────────────────────────────────
-
+// enumeration safety
 // The whole point of the endpoint's contract. The handler never looks a user up,
 // so a registered and an unregistered address are indistinguishable — same
 // status, same body. This test would fail the moment someone "helpfully" adds a
@@ -222,8 +215,6 @@ func TestRequestOTPHidesDeliveryFailure(t *testing.T) {
 		t.Errorf("bodies differ:\n  ok:     %s\n  broken: %s", good.Body.String(), bad.Body.String())
 	}
 }
-
-// ── validation and status mapping ───────────────────────────────────────────
 
 func TestRequestOTPRejectsBadInput(t *testing.T) {
 	r := newOTPRouter(t, &capturingSender{}, &memLimiter{})
@@ -290,7 +281,6 @@ func TestFullRoundTripThroughTheHandlers(t *testing.T) {
 
 // Pins the exact status sequence a client will see, including what happens
 // AFTER lockout — which is not obvious.
-//
 // Lockout destroys the record, so the attempt that trips the ceiling returns 429
 // and every attempt after it returns 400 "invalid code", the same answer an
 // address that was never issued a code gets. That is deliberate: keeping a

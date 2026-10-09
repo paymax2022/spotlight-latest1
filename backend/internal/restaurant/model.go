@@ -195,7 +195,6 @@ type CreateRestaurantRequest struct {
 }
 
 // PlaceOrderRequest is the body for POST /restaurant/:id/orders.
-//
 // Delivery coordinates may arrive either as flat delivery_lat/delivery_lng or as
 // a nested delivery_location {lat,lng} object (the mobile app sends the latter).
 // Use DeliveryCoords() to read the normalized pair regardless of which the client
@@ -257,12 +256,10 @@ func (r PlaceOrderRequest) DeliveryCoords() (lat, lng float64, ok bool) {
 }
 
 // OrderItemInput is one line item in the order request.
-//
 // The mobile client sends the menu-item id as `item_id`; the DB column and the
 // canonical Order line are `menu_item_id`. We accept BOTH json tags and normalize
 // via MenuItem() so the client field name (`item_id`) works without a client change
 // while `menu_item_id` remains accepted for any other caller.
-//
 // RestaurantID (optional) specifies which restaurant provides this item. When omitted,
 // it defaults to the restaurantID from the route (single-restaurant backward compat).
 // When present, enables multi-restaurant orders.

@@ -1,14 +1,13 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // FE-UAT: independent live-DB reproductions for the Food module UAT test-plan
 // rows FE-004, FE-005 and FE-008 (docs/qa/food-restaurant-test-plan.md).
 // These are NEW tests, written fresh for this UAT pass — not a re-read of any
 // prior batch's coverage. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -23,7 +22,6 @@ import (
 	"spotlight/backend/internal/testsupport"
 )
 
-// ── FE-004 ───────────────────────────────────────────────────────────────────
 // Reproduces the EXACT crash window reconciler.go's own doc comment describes:
 // transitionInternal flips orders.status='delivered' first, then calls
 // settleOrder — two separate statements, not one transaction. A crash between
@@ -155,7 +153,6 @@ func TestLiveDB_FE004_ReconcilerRecoversStrandedEscrowNoDoubleSettle(t *testing.
 	}
 }
 
-// ── FE-005 ───────────────────────────────────────────────────────────────────
 // Independent, fresh reproduction of the double-disbursement protection —
 // racing TWO separate payout runs (different period keys, same provider) for
 // the SAME settlement via true concurrency (goroutines + a start barrier), not
@@ -250,7 +247,7 @@ func TestLiveDB_FE005_ConcurrentPayoutRunsNeverDoubleDisburseSameSettlement(t *t
 			if procRuns[i].NetMinor != 80_000 {
 				t.Errorf("processed run %d net = %d, want 80000", i, procRuns[i].NetMinor)
 			}
-		} else if e != ErrPayoutNothingDue {
+		} else if !errors.Is(e, ErrPayoutNothingDue) {
 			t.Errorf("processed run %d unexpected error: %v", i, e)
 		}
 	}
@@ -272,7 +269,6 @@ func TestLiveDB_FE005_ConcurrentPayoutRunsNeverDoubleDisburseSameSettlement(t *t
 	}
 }
 
-// ── FE-008 ───────────────────────────────────────────────────────────────────
 // A dispute refund on an order whose escrow never reached a rider AT ALL — no
 // rider was ever assigned (rider_id NULL throughout, the restaurant's own 90/10
 // no-rider settlement branch). disputes_service.go gates the tip-clawback block
@@ -331,13 +327,13 @@ func TestLiveDB_FE008_DisputeRefundNoRiderNeverAssignedNoPhantomClawback(t *test
 	// the real transitionInternal path (delivered is only reachable internally
 	// or via ConfirmHandoff in the live product; here we drive the same function
 	// the crash-recovery reconciler and ConfirmHandoff both call).
-	if err := svc.transitionInternal(ctx, order.ID, OrderConfirmed); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderConfirmed); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderPreparing); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderPreparing); err != nil {
 		t.Fatalf("preparing: %v", err)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderReady); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderReady); err != nil {
 		t.Fatalf("ready: %v", err)
 	}
 	var riderID *string
@@ -347,10 +343,10 @@ func TestLiveDB_FE008_DisputeRefundNoRiderNeverAssignedNoPhantomClawback(t *test
 	if riderID != nil {
 		t.Fatalf("precondition failed: a rider (%s) was auto-dispatched — fixture must have NO rider for this case", *riderID)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderPickedUp); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderPickedUp); err != nil {
 		t.Fatalf("picked_up (no rider): %v", err)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderDelivered); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderDelivered); err != nil {
 		t.Fatalf("deliver (no rider): %v", err)
 	}
 

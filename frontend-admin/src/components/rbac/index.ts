@@ -1,5 +1,5 @@
-export { useToasts, ToastStack } from './Toast';
-export type { Toast, ToastKind } from './Toast';
+export { useToasts, ToastStack, ConfirmDialog } from './feedback';
+export type { Toast, ToastKind, ConfirmDialogProps } from './feedback';
 export {
   FilterChips,
   SortHeaderButton,
@@ -9,8 +9,6 @@ export {
   nextSort,
 } from './DataControls';
 export type { FilterChip, SortState, SortDir } from './DataControls';
-export { ConfirmDialog } from './ConfirmDialog';
-export type { ConfirmDialogProps } from './ConfirmDialog';
 export {
   isCriticalPermissionSlug,
   evaluateAssignment,

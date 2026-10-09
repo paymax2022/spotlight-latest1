@@ -1,4 +1,3 @@
-// ── Referral Home (Earn dashboard) API ───────────────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`.
 // Money is ALWAYS integer kobo. Earnings tie to friends' verified activity (§7).
 
@@ -18,7 +17,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── Direct Rewards engine (live source of truth) ────────────────────────────
 // The home/* endpoints under REFERRAL_API_BASE do not exist. The live branches
 // below source from the fully-live Direct Rewards engine at /api/v1/referrals
 // (note the trailing 's'), which returns BARE snake_case JSON.
@@ -49,7 +47,6 @@ interface EngineEarning {
 
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_SNAPSHOT: EarningsSnapshot = {
   eligibleKobo: 150_000, // ₦1,500 ready to withdraw
   pendingKobo: 50_000, // ₦500 awaiting qualifying action
@@ -88,13 +85,11 @@ const MOCK_ACTIVITY: ActivityItem[] = [
   { id: 'a7', kind: 'clawback', title: 'Reward reversed', detail: 'A referral was flagged as invalid', createdAt: minsAgo(8640), amountKobo: 50_000, state: 'clawed_back' },
 ];
 
-// ── Calls ─────────────────────────────────────────────────────────────────────
 export async function getDashboard(): Promise<DashboardSummary> {
   if (USE_MOCK) {
     await delay();
     return { ...MOCK_SUMMARY, snapshot: { ...MOCK_SNAPSHOT } };
   }
-  // Live: Direct Rewards engine dashboard (tier/counts/lifetime) + the RB0
   // reward-ledger summary (GET /api/v1/referral/my-rewards) for the per-state
   // snapshot. Money stays integer kobo, no float math.
   const [dRes, sRes] = await Promise.all([
@@ -137,7 +132,6 @@ export async function getMyCode(): Promise<MyCode> {
     await delay(200);
     return { ...MOCK_MY_CODE };
   }
-  // Live: pull the code from the Direct Rewards dashboard (avoids an extra
   // POST /link round-trip). Build the invite link from the code.
   const res = await api.get('/api/v1/referrals/me/dashboard');
   const d = unwrap<EngineDashboard>(res);
@@ -154,7 +148,6 @@ export async function getActivity(): Promise<ActivityItem[]> {
     await delay(280);
     return MOCK_ACTIVITY.map((a) => ({ ...a }));
   }
-  // Live: there is no dedicated activity feed on the engine. Derive the
   // timeline from recent earnings (GET /me/earnings) — one reward row each.
   const res = await api.get('/api/v1/referrals/me/earnings?limit=20&offset=0');
   const body = unwrap<{ earnings: EngineEarning[] }>(res);
@@ -171,7 +164,6 @@ export async function getActivity(): Promise<ActivityItem[]> {
 }
 
 // Map engine earning status → reward-ledger EarnStateKey (drives the pill).
-// The Direct Rewards engine returns UPPERCASE statuses (CREDITED/PENDING/REVERSED);
 // the RB0 reward-ledger uses lowercase states. Normalise so both map correctly.
 function mapEarningStatus(status: string): EarnStateKey {
   switch ((status ?? '').toLowerCase()) {

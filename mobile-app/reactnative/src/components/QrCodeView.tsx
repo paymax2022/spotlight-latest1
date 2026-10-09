@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 interface Props {
   payload: string;

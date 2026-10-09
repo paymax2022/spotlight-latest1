@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
@@ -10,14 +10,18 @@ import {
   ChevronRight,
   Flame,
   Star,
+  Pencil,
+  MapPin,
+  Eye,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useMeSummary } from '@/features/connect/hooks/useConnect';
+import { useUnifiedProfile } from '@/features/connect/profile/hooks';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
 import TierLimitBar from '@/features/connect/components/TierLimitBar';
@@ -25,6 +29,18 @@ import TierLimitBar from '@/features/connect/components/TierLimitBar';
 // ST-01 — Me / hub. Entry to profile, wallet/tier, gamification, settings.
 export default function MeTab() {
   const { data, isLoading, error, refetch } = useMeSummary();
+  const { data: profile } = useUnifiedProfile();
+  // The saved profile is the source of truth; /me is only a fallback while it loads.
+  const shownName = profile?.displayName || data?.displayName || '';
+  const primaryPhoto = profile?.photoItems[0]?.url;
+  const headline = profile?.dateProfile.headline || data?.headline || '';
+  const missing = profile
+    ? [
+        profile.photoItems.length === 0 && 'a photo',
+        !profile.dateProfile.bio && 'a bio',
+        profile.dateProfile.interests.length === 0 && 'interests',
+      ].filter(Boolean)
+    : [];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -55,24 +71,68 @@ export default function MeTab() {
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
-          {/* Identity card */}
-          <Pressable style={styles.identity} onPress={() => router.push('/connect/me')}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{data.displayName.charAt(0)}</Text>
-            </View>
-            <View style={styles.identityBody}>
-              <Text style={styles.name}>{data.displayName}</Text>
-              {data.headline ? <Text style={styles.headline}>{data.headline}</Text> : null}
-              <View style={styles.intentRow}>
-                {data.intents.map((it) => (
-                  <View key={it} style={styles.intentChip}>
-                    <Text style={styles.intentChipText}>{labelForIntent(it)}</Text>
+          {/* Profile card */}
+          <View style={styles.profileCard}>
+            <Pressable
+              style={styles.identity}
+              accessibilityRole="button"
+              accessibilityLabel="View my profile"
+              onPress={() => router.push('/connect/profile/view?mode=date')}
+            >
+              {primaryPhoto ? (
+                <Image source={{ uri: primaryPhoto }} style={styles.photoAvatar} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{shownName.charAt(0).toUpperCase()}</Text>
+                </View>
+              )}
+              <View style={styles.identityBody}>
+                <Text style={styles.name}>
+                  {shownName}
+                  {profile && profile.age > 0 ? <Text style={styles.age}>, {profile.age}</Text> : null}
+                </Text>
+                {profile?.city ? (
+                  <View style={styles.cityRow}>
+                    <MapPin size={12} color={Colors.onSurfaceVariant} strokeWidth={2} />
+                    <Text style={styles.headline}>{profile.city}</Text>
                   </View>
-                ))}
+                ) : null}
+                {headline ? <Text style={styles.headline}>{headline}</Text> : null}
+                <View style={styles.intentRow}>
+                  {data.intents.map((it) => (
+                    <View key={it} style={styles.intentChip}>
+                      <Text style={styles.intentChipText}>{labelForIntent(it)}</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
+            </Pressable>
+
+            {missing.length > 0 ? (
+              <Text style={styles.completeHint}>Add {missing.join(', ')} to complete your profile.</Text>
+            ) : null}
+
+            <View style={styles.actionRow}>
+              <Pressable
+                style={[styles.actionBtn, styles.actionPrimary]}
+                accessibilityRole="button"
+                accessibilityLabel="Edit profile"
+                onPress={() => router.push('/connect/profile/edit?mode=date')}
+              >
+                <Pencil size={16} color={Colors.onPrimary} strokeWidth={2.2} />
+                <Text style={styles.actionPrimaryText}>Edit profile</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.actionBtn, styles.actionSecondary]}
+                accessibilityRole="button"
+                accessibilityLabel="Preview profile"
+                onPress={() => router.push('/connect/profile/view?mode=date')}
+              >
+                <Eye size={16} color={ConnectColors.brand} strokeWidth={2.2} />
+                <Text style={styles.actionSecondaryText}>Preview</Text>
+              </Pressable>
             </View>
-            <ChevronRight size={20} color={Colors.outline} strokeWidth={2} />
-          </Pressable>
+          </View>
 
           {/* Wallet + tier (money surface → must show tier/limit/remaining) */}
           <Pressable style={styles.walletCard} onPress={() => router.push('/connect/settings')}>
@@ -139,19 +199,31 @@ function Stat({ icon, value, label }: { icon: React.ReactNode; value: string; la
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 100, gap: Spacing.md },
-  identity: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
+  profileCard: {
     backgroundColor: Colors.surfaceContainerLowest,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.surfaceContainerHigh,
     padding: Spacing.md,
     marginTop: Spacing.sm,
+    gap: Spacing.md,
   },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  photoAvatar: { width: 84, height: 84, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerHigh },
+  age: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
+  cityRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  completeHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  actionRow: { flexDirection: 'row', gap: Spacing.sm },
+  actionBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: Spacing.xs, paddingVertical: 12, borderRadius: Radius.full,
+  },
+  actionPrimary: { backgroundColor: ConnectColors.brand },
+  actionPrimaryText: { ...Typography.labelLg, color: Colors.onPrimary, fontWeight: '700' },
+  actionSecondary: { backgroundColor: Colors.iconBgPurple },
+  actionSecondaryText: { ...Typography.labelLg, color: ConnectColors.brand, fontWeight: '700' },
   avatar: {
-    width: 56, height: 56, borderRadius: Radius.full,
+    width: 84, height: 84, borderRadius: Radius.full,
     backgroundColor: ConnectColors.brand, alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { ...Typography.titleLg, color: Colors.onPrimary },

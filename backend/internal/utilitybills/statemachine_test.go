@@ -2,8 +2,6 @@ package utilitybills
 
 import "testing"
 
-// ── IsTerminalStatus ─────────────────────────────────────────────────────
-
 func TestIsTerminalStatus_TrueForSuccessfulFailedReversed(t *testing.T) {
 	for _, s := range []Status{StatusSuccessful, StatusFailed, StatusReversed} {
 		if !IsTerminalStatus(s) {
@@ -19,8 +17,6 @@ func TestIsTerminalStatus_FalseForNonTerminal(t *testing.T) {
 		}
 	}
 }
-
-// ── CanRequeryStatus ─────────────────────────────────────────────────────
 
 func TestCanRequeryStatus_TrueForProviderPendingWalletDebitedInitiated(t *testing.T) {
 	for _, s := range []Status{StatusProviderPending, StatusWalletDebited, StatusInitiated} {
@@ -38,10 +34,10 @@ func TestCanRequeryStatus_FalseForTerminalAndDisputed(t *testing.T) {
 	}
 }
 
-// ── CanReverseTransaction ────────────────────────────────────────────────
-
 func TestCanReverseTransaction_AllowedForFailedPendingWalletDebited(t *testing.T) {
-	for _, s := range []Status{StatusFailed, StatusProviderPending, StatusWalletDebited} {
+	// 'disputed' joined the reversible set with the dispute-refund resolution: a
+	// dispute can only exist on a 'successful' row, so the debit is proven.
+	for _, s := range []Status{StatusFailed, StatusProviderPending, StatusWalletDebited, StatusDisputed} {
 		if !CanReverseTransaction(s) {
 			t.Errorf("CanReverseTransaction(%s) = false, want true", s)
 		}
@@ -49,14 +45,12 @@ func TestCanReverseTransaction_AllowedForFailedPendingWalletDebited(t *testing.T
 }
 
 func TestCanReverseTransaction_DeniedForSuccessfulOrReversed(t *testing.T) {
-	for _, s := range []Status{StatusSuccessful, StatusReversed, StatusInitiated, StatusDisputed} {
+	for _, s := range []Status{StatusSuccessful, StatusReversed, StatusInitiated} {
 		if CanReverseTransaction(s) {
 			t.Errorf("CanReverseTransaction(%s) = true, want false", s)
 		}
 	}
 }
-
-// ── NextStatusFromProvider ───────────────────────────────────────────────
 
 func TestNextStatusFromProvider_MapsEachOutcome(t *testing.T) {
 	cases := []struct {
@@ -83,8 +77,6 @@ func TestNextStatusFromProvider_UnknownOutcomeFallsThroughToFailed(t *testing.T)
 		t.Errorf("NextStatusFromProvider(unknown) = %s, want %s", got, StatusFailed)
 	}
 }
-
-// ── ClassifyProviderOutcome ──────────────────────────────────────────────
 
 func TestClassifyProviderOutcome_TimeoutAlwaysClassifiesAsPending(t *testing.T) {
 	// A timeout must never be reported as failed, regardless of what the

@@ -2,10 +2,16 @@ package points
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,7 +43,7 @@ func NewService(db *pgxpool.Pool, audit Auditor) *Service {
 // re-eval) contribute a delta exactly once even when a webhook is replayed.
 func (s *Service) Earn(ctx context.Context, userID, ruleKey string, ec EarnContext) (*Entry, bool, error) {
 	if userID == "" || ruleKey == "" {
-		return nil, false, fmt.Errorf("points: user and rule_key required")
+		return nil, false, errors.New("points: user and rule_key required")
 	}
 	rule, err := s.activeRule(ctx, ruleKey)
 	if err != nil {
@@ -111,10 +117,16 @@ func (s *Service) Balance(ctx context.Context, userID string) (int64, error) {
 }
 
 // Redeem spends points against a catalog item. It debits the points ledger atomically
-// (balance check under a row guard) and returns the Redemption + the item so the
-// caller (loyalty layer) can dispatch the NON-CASH fulfilment. There is intentionally
-// no cash-out branch (NL-4).
-func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, *CatalogItem, error) {
+// (balance check serialised under a per-user advisory lock) and returns the
+// Redemption + the item so the caller (loyalty layer) can dispatch the NON-CASH
+// fulfilment. There is intentionally no cash-out branch (NL-4).
+//
+// idemKey is the OPTIONAL client Idempotency-Key (the BFF forwards the header
+// verbatim when the caller sends one). When supplied, a replay returns the
+// original redemption with no second debit; when empty, a `redeem:<uuid>` key is
+// self-minted per call — kept so live clients that never send the header keep
+// working (follow-up: require the header like every other mutation).
+func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Redemption, *CatalogItem, error) {
 	item, err := s.catalogItem(ctx, sku)
 	if err != nil {
 		return nil, nil, err
@@ -131,15 +143,46 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("points: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Recompute balance inside the tx and lock against concurrent redemptions by
-	// serialising on the user's latest ledger rows.
+	// Serialise concurrent redemptions on the same balance. Postgres forbids
+	// FOR UPDATE on an aggregate query, so the projection cannot carry its own
+	// row guard — take a per-user advisory xact lock first instead, the same
+	// convention as wallet debits (finance/ledger DebitWithBalanceCheck).
+	const lockQ = `SELECT pg_advisory_xact_lock(hashtext($1))`
+	if _, err := tx.Exec(ctx, lockQ, "points:"+userID); err != nil {
+		return nil, nil, fmt.Errorf("points: redeem lock: %w", err)
+	}
+
+	redemptionID := uuid.New().String()
+	idem := "redeem:" + redemptionID
+	if idemKey != "" {
+		// Scope the client key to the user so identical keys from two different
+		// users can never collide in the ledger's global unique index.
+		idem = "redeem:" + userID + ":" + idemKey
+		// Idempotent replay: the prior debit's `reference` holds its redemption id.
+		var priorRef string
+		err := tx.QueryRow(ctx,
+			`SELECT reference FROM points_ledger WHERE idempotency_key=$1 AND user_id=$2`,
+			idem, userID).Scan(&priorRef)
+		switch {
+		case err == nil:
+			prior, perr := redemptionByID(ctx, tx, priorRef)
+			if perr != nil {
+				return nil, nil, perr
+			}
+			return prior, item, nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return nil, nil, fmt.Errorf("points: redeem replay check: %w", err)
+		}
+	}
+
+	// Re-project the balance INSIDE the lock+tx — no FOR UPDATE (illegal on the
+	// aggregate); the advisory lock is what serialises check-and-debit.
 	const balQ = `
 		SELECT COALESCE(SUM(CASE WHEN type='EARN' THEN points ELSE -points END), 0)
 		FROM points_ledger
-		WHERE user_id=$1 AND (type<>'EARN' OR expires_at IS NULL OR expires_at > now())
-		FOR UPDATE`
+		WHERE user_id=$1 AND (type<>'EARN' OR expires_at IS NULL OR expires_at > now())`
 	var bal int64
 	if err := tx.QueryRow(ctx, balQ, userID).Scan(&bal); err != nil {
 		return nil, nil, fmt.Errorf("points: redeem balance: %w", err)
@@ -148,8 +191,6 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 		return nil, nil, ErrInsufficientPoints
 	}
 
-	redemptionID := uuid.New().String()
-	idem := "redeem:" + redemptionID
 	const debit = `
 		INSERT INTO points_ledger (id, user_id, type, points, rule_key, module, reference, idempotency_key)
 		VALUES ($1,$2,'REDEEM',$3,$4,'loyalty',$5,$6)`
@@ -169,6 +210,16 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 	r := &Redemption{ID: redemptionID, UserID: userID, SKU: sku, CostPoints: item.CostPoints, Status: "REDEEMED", CreatedAt: time.Now()}
 	s.log(userID, "points.redeem", redemptionID, map[string]any{"sku": sku, "cost": item.CostPoints, "kind": item.Kind})
 	return r, item, nil
+}
+
+// redemptionByID loads a recorded redemption inside an open tx (replay path).
+func redemptionByID(ctx context.Context, tx pgx.Tx, id string) (*Redemption, error) {
+	const q = `SELECT id, user_id, sku, cost_points, status, created_at FROM points_redemptions WHERE id=$1`
+	var r Redemption
+	if err := tx.QueryRow(ctx, q, id).Scan(&r.ID, &r.UserID, &r.SKU, &r.CostPoints, &r.Status, &r.CreatedAt); err != nil {
+		return nil, fmt.Errorf("points: load prior redemption: %w", err)
+	}
+	return &r, nil
 }
 
 // ExpireDue appends EXPIRE entries for earn rows past their expires_at that have not
@@ -221,8 +272,6 @@ func (s *Service) ExpireDue(ctx context.Context, limit int) (int, error) {
 	return n, nil
 }
 
-// --- rule / catalog access ---
-
 func (s *Service) activeRule(ctx context.Context, ruleKey string) (*EarnRule, error) {
 	const q = `
 		SELECT id, rule_key, module, version, points_fixed, points_per_kobo, expiry_days, active, created_at
@@ -233,7 +282,7 @@ func (s *Service) activeRule(ctx context.Context, ruleKey string) (*EarnRule, er
 	if err := s.db.QueryRow(ctx, q, ruleKey).Scan(
 		&r.ID, &r.RuleKey, &r.Module, &r.Version, &r.PointsFixed, &r.PointsPerKobo, &r.ExpiryDays, &r.Active, &r.CreatedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("points: no active rule for %s", ruleKey)
 		}
 		return nil, fmt.Errorf("points: load rule: %w", err)
@@ -247,7 +296,7 @@ func (s *Service) catalogItem(ctx context.Context, sku string) (*CatalogItem, er
 	if err := s.db.QueryRow(ctx, q, sku).Scan(
 		&it.ID, &it.SKU, &it.Title, &it.Kind, &it.CostPoints, &it.ValueKobo, &it.Active,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("points: catalog item %s not found", sku)
 		}
 		return nil, fmt.Errorf("points: load catalog: %w", err)
@@ -327,6 +376,170 @@ func (s *Service) log(userID, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var (
-	ErrInsufficientPoints      = fmt.Errorf("points: insufficient points")
-	ErrCashRedemptionForbidden = fmt.Errorf("points: points cannot be redeemed for cash (NL-4)")
+	ErrInsufficientPoints      = errors.New("points: insufficient points")
+	ErrCashRedemptionForbidden = errors.New("points: points cannot be redeemed for cash (NL-4)")
 )
+
+// Handler exposes read-only points endpoints to members. Earn is never a public
+// endpoint — points accrue only as a side effect of live module actions wired in
+// the loyalty layer, so a client can never self-award points.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// Register mounts member points routes. Earn-rule + catalog administration is
+// mounted by the loyalty admin group (RBAC points.*).
+func (h *Handler) Register(member *gin.RouterGroup) {
+	member.GET("/points/balance", h.Balance)
+	member.GET("/points/history", h.History)
+	member.GET("/points/catalog", h.Catalog)
+	member.POST("/points/redeem", h.Redeem)
+}
+
+func (h *Handler) History(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	entries, err := h.svc.History(c.Request.Context(), userID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "history": entries})
+}
+
+func (h *Handler) Balance(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	bal, err := h.svc.Balance(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "balance_points": bal})
+}
+
+func (h *Handler) Catalog(c *gin.Context) {
+	items, err := h.svc.ListCatalog(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "items": items})
+}
+
+type redeemRequest struct {
+	SKU string `json:"sku" binding:"required"`
+}
+
+func (h *Handler) Redeem(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var req redeemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	// The Idempotency-Key is optional today (legacy clients do not send it); when
+	// present the redeem replays idempotently instead of double-debiting.
+	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, ginutil.IdempotencyKey(c))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInsufficientPoints):
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err)})
+		case errors.Is(err, ErrCashRedemptionForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "redemption": red, "item": item})
+}
+
+// EntryType is the direction of a points-ledger row. Append-only: balance is the
+// projection of EARN - REDEEM - EXPIRE (never an updated column).
+type EntryType string
+
+const (
+	EntryEarn   EntryType = "EARN"
+	EntryRedeem EntryType = "REDEEM"
+	EntryExpire EntryType = "EXPIRE"
+	EntryAdjust EntryType = "ADJUST" // manual correction (admin, audited)
+)
+
+// Entry is one immutable points movement. Points are NOT money (NL-4): there is no
+// kobo column and no path that converts a points balance to a cash withdrawal.
+type Entry struct {
+	ID             string     `json:"id"`
+	UserID         string     `json:"user_id"`
+	Type           EntryType  `json:"type"`
+	Points         int64      `json:"points"` // always positive; direction from Type
+	RuleKey        string     `json:"rule_key,omitempty"`
+	Module         string     `json:"module,omitempty"` // payments | savings | tickets | referral | ...
+	Reference      string     `json:"reference"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// EarnRule is a versioned, config-driven earn definition (per action/module). A new
+// version supersedes the prior one; historical entries keep the version they earned
+// under, so a rule change never rewrites past awards.
+type EarnRule struct {
+	ID            string    `json:"id"`
+	RuleKey       string    `json:"rule_key"` // e.g. "payments.bill_paid"
+	Module        string    `json:"module"`
+	Version       int       `json:"version"`
+	PointsFixed   int64     `json:"points_fixed"`    // flat award
+	PointsPerKobo float64   `json:"points_per_kobo"` // optional value-scaled award
+	ExpiryDays    int       `json:"expiry_days"`     // 0 => never expires
+	Active        bool      `json:"active"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// CatalogItem is a redeemable reward. Redemption only ever targets airtime, bills,
+// a ticket discount or a perk (NL-4) — never cash. Fulfilment is delegated to the
+// owning module (bill-pay / airtime / ticketing) via the loyalty layer.
+type CatalogItem struct {
+	ID         string         `json:"id"`
+	SKU        string         `json:"sku"`
+	Title      string         `json:"title"`
+	Kind       string         `json:"kind"` // airtime | bill | ticket_discount | perk
+	CostPoints int64          `json:"cost_points"`
+	ValueKobo  int64          `json:"value_kobo"` // notional value for airtime/bill fulfilment (NOT cash-out)
+	Active     bool           `json:"active"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
+// Redemption records a points spend against a catalog item.
+type Redemption struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	SKU        string    `json:"sku"`
+	CostPoints int64     `json:"cost_points"`
+	Status     string    `json:"status"` // REDEEMED | FULFILLED | FAILED
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// EarnContext carries the data an earn rule scales against (e.g. the kobo amount of
+// the underlying transaction) plus the reference that makes the award idempotent.
+type EarnContext struct {
+	Module     string
+	Reference  string // unique business ref of the earning event
+	AmountKobo int64  // for value-scaled rules
+	Metadata   map[string]any
+}

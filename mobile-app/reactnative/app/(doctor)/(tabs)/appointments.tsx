@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CalendarDays, Inbox, ListOrdered } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { useAppointments, useAppointmentRequests } from '@/features/doctor/hooks';
 import { AppointmentRow, StateView } from '@/features/doctor/components';
 

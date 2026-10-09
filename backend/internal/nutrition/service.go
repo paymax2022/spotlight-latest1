@@ -2,6 +2,7 @@ package nutrition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -37,9 +38,7 @@ func (s *Service) WithLabelLookup(l LabelLookup) *Service {
 	return s
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Authz — object-level, via the restaurant ownership chain.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // assertOwner enforces that userID owns the dish's restaurant. Mirrors the
 // restaurant module's assertOwner join (menu_items.restaurant_id →
@@ -69,15 +68,12 @@ func (s *Service) assertRestaurantOwner(ctx context.Context, restaurantID, userI
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Grounding-based resolver — barcode → library → free estimate (single AI
 // suggestion to the vendor). The optional recipe path is a separate, hidden
 // power-user method (DeclareRecipe), NOT part of this routine cascade.
-//
 //   barcode present  → LABEL          / EXACT  / status EXACT
 //   library match    → LIBRARY_MATCHED/ MEDIUM / status AI_ESTIMATE (auto-published)
 //   no match         → FREE_ESTIMATED / LOW    / status AI_ESTIMATE (auto-published)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ResolveInput drives a resolve. Barcode triggers the LABEL fast-path; the dish
 // name feeds the library grounding match and the free AI estimate.
@@ -105,7 +101,6 @@ func (s *Service) resolveDish(ctx context.Context, in ResolveInput, dishName str
 		portion = 350 // sensible default Nigerian main portion (g)
 	}
 
-	// ── LABEL: barcode → label/OFF → EXACT per-serving → status EXACT.
 	if in.Barcode != "" && s.label != nil {
 		res, ok, err := s.label.Lookup(ctx, in.Barcode)
 		if err == nil && ok {
@@ -118,7 +113,6 @@ func (s *Service) resolveDish(ctx context.Context, in ResolveInput, dishName str
 		}
 	}
 
-	// ── LIBRARY_MATCHED: name fuzzy-matches the Nigerian grounding library
 	//    (grounding inside the AI, not a vendor-facing tier) → scale to portion.
 	entries, err := s.repo.AllLibraryEntries(ctx)
 	if err != nil {
@@ -143,7 +137,6 @@ func (s *Service) resolveDish(ctx context.Context, in ResolveInput, dishName str
 		}, nil
 	}
 
-	// ── FREE_ESTIMATED: no library match → AI free estimate → LOW band.
 	ps, err := s.estimateAI(ctx, in.MenuItemID, dishName, portion)
 	if err != nil {
 		return nil, err
@@ -256,12 +249,10 @@ func (s *Service) Resolve(ctx context.Context, in ResolveInput) (*Profile, error
 	return s.applyResolved(ctx, dish, res)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Auto-suggest — batch-estimate a whole menu at upload (the onboarding-first
 // core). A "menu" is a restaurant's set of menu_items (menu_items has no menu_id
 // column — see migration 20260616270000_restaurant.sql), so menuID IS the
 // restaurantID. Object-level owner check on the restaurant.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AutoSuggestMenu estimates + auto-publishes AI_ESTIMATE for every menu item in a
 // restaurant that lacks a profile (or whose profile is STALE). Owner-checked.
@@ -291,10 +282,6 @@ func (s *Service) AutoSuggestMenu(ctx context.Context, restaurantID, callerID st
 		map[string]any{"restaurant_id": restaurantID, "estimated": count}, nil)
 	return count, nil
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Reads.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // DishView is the buyer-facing read: the resolved profile, its display block,
 // and the allergen declarations (with the default "may contain" surfaced for
@@ -345,9 +332,7 @@ func (s *Service) GetDishView(ctx context.Context, menuItemID string) (*DishView
 	return view, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Vendor actions (object-level owner-checked).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // DeclareRecipeInput is a vendor recipe declaration.
 type DeclareRecipeInput struct {
@@ -368,10 +353,10 @@ func (s *Service) DeclareRecipe(ctx context.Context, menuItemID, userID string, 
 		return nil, err
 	}
 	if in.PortionSizeG <= 0 {
-		return nil, fmt.Errorf("nutrition: portion_size_g must be > 0")
+		return nil, errors.New("nutrition: portion_size_g must be > 0")
 	}
 	if len(in.Ingredients) == 0 {
-		return nil, fmt.Errorf("nutrition: recipe requires at least one ingredient")
+		return nil, errors.New("nutrition: recipe requires at least one ingredient")
 	}
 	rec, err := s.repo.UpsertRecipe(ctx, Recipe{
 		MenuItemID:   menuItemID,
@@ -384,7 +369,7 @@ func (s *Service) DeclareRecipe(ctx context.Context, menuItemID, userID string, 
 		return nil, err
 	}
 
-	// Compute the per-serving profile from the just-declared recipe.
+	// Per-serving profile from the just-declared recipe.
 	lookup := func(ing Ingredient) (Composition, bool) {
 		c, lerr := s.repo.LookupComposition(ctx, ing.FoodCode, ing.Source, ing.PrepMethod)
 		if lerr != nil || c == nil {
@@ -628,7 +613,6 @@ func (s *Service) recordLibraryFeedback(ctx context.Context, p *Profile) {
 // AttestAllergens records vendor allergen attestations (SEPARATE from nutrition).
 // Each declaration is validated in code (validateAllergen) AND by the DB CHECK
 // constraints. Object-level owner-checked. Every attestation is audited.
-//
 // SAFETY: definitive claims (CONTAINS / FREE_FROM) are forced to source=VENDOR
 // with the attester set to the calling vendor; FREE_FROM additionally requires
 // the cross-contamination ack. An AI-suggested allergen can only ever be
@@ -639,7 +623,7 @@ func (s *Service) AttestAllergens(ctx context.Context, menuItemID, userID string
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("nutrition: no allergen declarations provided")
+		return nil, errors.New("nutrition: no allergen declarations provided")
 	}
 	for _, it := range items {
 		allergen := strings.ToLower(strings.TrimSpace(it.Allergen))
@@ -691,9 +675,7 @@ func (s *Service) SuggestAllergenAI(ctx context.Context, menuItemID, restaurantI
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Stale + re-resolve.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // MarkStale flags a dish's profile STALE (on a menu/recipe/version change). The
 // caller is the trigger source (restaurant edit hook / admin version bump). It is
@@ -756,9 +738,7 @@ func (s *Service) Reresolve(ctx context.Context, limit int) (int, error) {
 	return count, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Cart summary — aggregate estimate with range propagation.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CartSummaryByIDs resolves each dish (lazily resolving a missing profile) and
 // returns the aggregate estimate with range propagation + worst-case lights.
@@ -790,9 +770,7 @@ func (s *Service) CartSummaryByIDs(ctx context.Context, menuItemIDs []string) (*
 	return &summary, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin: composition + library curation.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // UpsertComposition appends a new versioned reference row (admin).
 func (s *Service) UpsertComposition(ctx context.Context, actorID string, c Composition) (*Composition, error) {

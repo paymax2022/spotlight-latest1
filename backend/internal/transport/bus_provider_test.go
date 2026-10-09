@@ -5,16 +5,15 @@ package transport
 // invariants (interstate-only routing, cross-provider ownership, seat math, and
 // the amenities JSON round-trip) via the small extracted seams, so
 // `go test ./internal/transport/...` proves them without a Postgres instance.
-//
 // Companion suites: money_authz_test.go, modes_engine_test.go, split_invariant_test.go.
 
 import (
 	"reflect"
 	"testing"
+
+	"spotlight/backend/go-common/jsonx"
 )
 
-// ─── 1. Interstate invariant: from != to (search AND route-create) ───────────
-//
 // sameState is the single decision behind both the search 400 and the
 // route-create 400. Equal states (any case / whitespace) must be rejected; a
 // different pair (or a blank/open filter) must pass.
@@ -43,8 +42,6 @@ func TestSameState_BlankFilterIsOpenNotEqual(t *testing.T) {
 	}
 }
 
-// ─── 2. Cross-provider ownership ─────────────────────────────────────────────
-//
 // routeOwnedBy is the pure decision behind "provider B cannot edit provider A's
 // route". It also rejects unclaimed (legacy admin, provider_id NULL) routes.
 
@@ -69,8 +66,6 @@ func TestRouteOwnedBy_UnclaimedRouteRejected(t *testing.T) {
 	}
 }
 
-// ─── 3. seatsAvailable math ──────────────────────────────────────────────────
-
 func TestSeatsAvailable_SubtractsBooked(t *testing.T) {
 	if got := seatsAvailable(14, 5); got != 9 {
 		t.Fatalf("seatsAvailable(14,5) = %d, want 9", got)
@@ -90,38 +85,34 @@ func TestSeatsAvailable_FlooredAtZero(t *testing.T) {
 	}
 }
 
-// ─── 4. Amenities JSON round-trip ────────────────────────────────────────────
-//
 // Routes persist amenities as a jsonb array; the customer-facing projection must
 // round-trip cleanly and default to an EMPTY (non-nil) array so the mobile client
 // never receives null.
 
 func TestAmenities_RoundTrip(t *testing.T) {
 	in := []string{"wifi", "ac", "usb"}
-	raw, err := marshalAmenities(in)
+	raw, err := jsonx.MarshalArray(in)
 	if err != nil {
-		t.Fatalf("marshalAmenities: %v", err)
+		t.Fatalf("MarshalArray: %v", err)
 	}
-	out := unmarshalAmenities([]byte(raw))
+	out := unmarshalAmenities(raw)
 	if !reflect.DeepEqual(in, out) {
 		t.Fatalf("amenities did not round-trip: in=%v out=%v", in, out)
 	}
 }
 
 func TestAmenities_NilDefaultsToEmptyArray(t *testing.T) {
-	raw, err := marshalAmenities(nil)
+	raw, err := jsonx.MarshalArray([]string(nil))
 	if err != nil {
-		t.Fatalf("marshalAmenities(nil): %v", err)
+		t.Fatalf("MarshalArray(nil): %v", err)
 	}
-	if raw != "[]" {
+	if string(raw) != "[]" {
 		t.Fatalf("nil amenities must marshal to an empty JSON array, got %q", raw)
 	}
 	if out := unmarshalAmenities(nil); out == nil || len(out) != 0 {
 		t.Fatalf("empty amenities column must decode to a non-nil empty slice, got %#v", out)
 	}
 }
-
-// ─── 5. Slug derivation is stable + URL-safe ─────────────────────────────────
 
 func TestBusProviderSlug_IsURLSafeAndStable(t *testing.T) {
 	id := "abcd1234-ef56-7890-abcd-ef1234567890"

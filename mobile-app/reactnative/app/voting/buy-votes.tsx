@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
@@ -26,7 +26,6 @@ export default function BuyVotesScreen() {
 
   const pkgs = packages ?? [];
   // Deadline-aware and shared with the screen that links here, so the two cannot
-  // disagree. Status alone let an expired contest through — getVotingWindow
   // treats an unloaded contest as open, so a pending query still does not block.
   const votingWindow = getVotingWindow(contest);
 

@@ -7,9 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { checkRateLimit } from '../../../src/lib/voting/rate-limit';
 
-// ---------------------------------------------------------------------------
 // Helpers / stubs shared across tests
-// ---------------------------------------------------------------------------
 
 /** Minimal VotingSettings stub */
 function makeSettings(overrides: Partial<Record<string, unknown>> = {}) {
@@ -66,9 +64,7 @@ function makeSettings(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-// ---------------------------------------------------------------------------
 // 1. Rate limiter — core unit tests (no mocking needed)
-// ---------------------------------------------------------------------------
 describe('Rate Limiter', () => {
   it('allows requests within limit', () => {
     const key = `test:rl:${Date.now()}`;
@@ -97,13 +93,9 @@ describe('Rate Limiter', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 2. Voting settings guard — assertVotingOpen
-// ---------------------------------------------------------------------------
 describe('assertVotingOpen', () => {
-  // Generous timeout: this is the first test to dynamically import the voting
   // service graph, so it pays the one-time module-transform cost under vitest.
-  // The assertion is unchanged — only the import-warmup budget is widened so the
   // suite never flakes at the 5s boundary on a busy machine.
   it('throws if voting is disabled', async () => {
     const { assertVotingOpen } = await import('../../../src/server/voting/free-vote.service');
@@ -133,9 +125,7 @@ describe('assertVotingOpen', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 3. Free vote limit — remaining calculation (pure logic)
-// ---------------------------------------------------------------------------
 describe('Free vote remaining calculation', () => {
   function calcRemaining(used: number, limit: number) {
     return Math.max(0, limit - used);
@@ -158,9 +148,7 @@ describe('Free vote remaining calculation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 4. Paid vote — payment amount mismatch detection (pure logic)
-// ---------------------------------------------------------------------------
 describe('Payment amount mismatch logic', () => {
   it('flags mismatch > ₦1 tolerance', () => {
     const amountExpected = 1000;
@@ -177,9 +165,7 @@ describe('Payment amount mismatch logic', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 5. Idempotency — vote_credit_status guard
-// ---------------------------------------------------------------------------
 describe('Vote credit idempotency', () => {
   it('detects already-credited transactions', () => {
     const tx = { vote_credit_status: 'credited', total_votes_to_credit: 100 };
@@ -198,9 +184,7 @@ describe('Vote credit idempotency', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 6. Vote totals formula
-// ---------------------------------------------------------------------------
 describe('Vote totals formula', () => {
   function computeTotal(
     free: number, paid: number, bonus: number, admin: number, reversed: number
@@ -229,9 +213,7 @@ describe('Vote totals formula', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 7. Fraud scoring — disposable email detection
-// ---------------------------------------------------------------------------
 describe('Disposable email detection', () => {
   const DISPOSABLE = new Set([
     'mailinator.com', 'tempmail.com', 'guerrillamail.com', '10minutemail.com',
@@ -250,9 +232,7 @@ describe('Disposable email detection', () => {
   it('handles missing @ gracefully', () => expect(isDisposable('notanemail')).toBe(false));
 });
 
-// ---------------------------------------------------------------------------
 // 8. Leaderboard ranking — tie-break logic
-// ---------------------------------------------------------------------------
 describe('Leaderboard tie-breaker', () => {
   function rankContestants(contestants: { id: string; votes: number; paidVotes: number; lastVoteAt: string }[]) {
     return [...contestants].sort((a, b) => {
@@ -288,9 +268,6 @@ describe('Leaderboard tie-breaker', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 9. Free vote limit reset
-// ---------------------------------------------------------------------------
 describe('Free vote limit reset time', () => {
   function nextResetAt(resetTime: string): Date {
     const [hh, mm] = resetTime.split(':').map(Number);
@@ -311,9 +288,7 @@ describe('Free vote limit reset time', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 10. Admin adjustment — requires reason ≥ 5 chars
-// ---------------------------------------------------------------------------
 describe('Admin adjustment validation', () => {
   function validateAdjustment(reason: string, quantity: number) {
     if (!reason || reason.trim().length < 5) return 'Reason must be at least 5 characters';
@@ -327,12 +302,9 @@ describe('Admin adjustment validation', () => {
   it('accepts valid input', () => expect(validateAdjustment('Fraud reversal detected', 50)).toBeNull());
 });
 
-// ---------------------------------------------------------------------------
 // 11. Paystack webhook signature verification (HMAC logic)
-// ---------------------------------------------------------------------------
 describe('Paystack webhook signature verification', () => {
   it('rejects tampered payload', () => {
-    // If signature does not match we return false — verified by structural test
     const { createHmac } = require('node:crypto') as typeof import('node:crypto');
     const secret = 'sk_test_secret';
     const payload = '{"event":"charge.success","data":{"reference":"SPT-VOTE-123"}}';
@@ -352,9 +324,7 @@ describe('Paystack webhook signature verification', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 12. Vote type enumeration — only valid types accepted
-// ---------------------------------------------------------------------------
 describe('Vote type validation', () => {
   const VALID_TYPES = ['free', 'paid', 'bonus', 'admin_adjustment', 'sponsor_bundle', 'refund_reversal', 'fraud_reversal'];
 
@@ -362,9 +332,7 @@ describe('Vote type validation', () => {
   it('rejects unknown type', () => expect(VALID_TYPES.includes('fake_type')).toBe(false));
 });
 
-// ---------------------------------------------------------------------------
 // 13. Vote status state machine — only valid transitions
-// ---------------------------------------------------------------------------
 describe('Vote status transitions', () => {
   const ALLOWED: Record<string, string[]> = {
     pending: ['confirmed', 'rejected', 'failed'],
@@ -385,9 +353,7 @@ describe('Vote status transitions', () => {
   it('blocks confirmed → confirmed (no self-loop)', () => expect(canTransition('confirmed', 'confirmed')).toBe(false));
 });
 
-// ---------------------------------------------------------------------------
 // 14. Receipt number format
-// ---------------------------------------------------------------------------
 describe('Receipt number format', () => {
   it('starts with SPT-RCP', () => {
     const prefix = 'SPT-RCP';
@@ -403,9 +369,7 @@ describe('Receipt number format', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 15. Share code generation
-// ---------------------------------------------------------------------------
 describe('Share code generation', () => {
   it('generates codes of correct length', () => {
     const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
@@ -422,9 +386,6 @@ describe('Share code generation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 16. CSV export — toCsv helper
-// ---------------------------------------------------------------------------
 describe('CSV export helper', () => {
   function toCsv(rows: Record<string, unknown>[]): string {
     if (rows.length === 0) return '';
@@ -451,9 +412,7 @@ describe('CSV export helper', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // 17. RBAC — hasPermission logic
-// ---------------------------------------------------------------------------
 describe('RBAC hasPermission', () => {
   const rolePermissions: Record<string, string[]> = {
     super_admin: ['votes:manage', 'finance:view', 'finance:refund', 'reports:export'],
@@ -474,9 +433,6 @@ describe('RBAC hasPermission', () => {
   it('unknown role gets no permissions', () => expect(hasPermission('unknown_role', 'votes:manage')).toBe(false));
 });
 
-// ---------------------------------------------------------------------------
-// 18. Slugify function (used for contestant URL slugs)
-// ---------------------------------------------------------------------------
 describe('slugify', () => {
   function slugify(input: string): string {
     return input
@@ -493,9 +449,7 @@ describe('slugify', () => {
   it('handles empty string', () => expect(slugify('')).toBe(''));
 });
 
-// ---------------------------------------------------------------------------
 // 19. Voting window — edge case at exact deadline
-// ---------------------------------------------------------------------------
 describe('Voting window edge cases', () => {
   function isVotingOpen(endsAt: string | null): boolean {
     if (!endsAt) return true;
@@ -517,9 +471,6 @@ describe('Voting window edge cases', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 20. Contest-configurable free vote defaults
-// ---------------------------------------------------------------------------
 describe('Contest-configurable free vote defaults', () => {
   const DEFAULT_FREE_VOTES = 3;
 

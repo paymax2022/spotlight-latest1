@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ActivityIndicator, Pressable, Animated } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AlertCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useVerifyRegistrationPayment } from '@/features/registration/hooks/useRegistration';
 
 // Bounded backoff — Paystack usually settles within seconds but can take longer.
@@ -48,7 +48,6 @@ export default function RegistrationPaymentProcessingScreen() {
         transactionId: transactionId ?? '',
         reference:     reference ?? '',
       });
-      // The mock path returns 'SUCCESSFUL' (uppercase); the live backend's
       // VerifyPayment returns lowercase 'successful' (registration_handler.go)
       // — a strict-case comparison here only ever matched the mock, so a
       // real Paystack success from the live API silently fell through every

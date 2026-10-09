@@ -5,13 +5,10 @@ import "testing"
 // vertical_settlement_pending_test.go verifies module-specific settlement
 // invariants for each marketplace vertical. These tests use the same pure-math
 // splitParts helper from settlement_split_test.go — no DB required.
-//
 // The CONSERVATION invariant (platform + rider + provider == total) is proven
 // in settlement_split_test.go. These tests add the vertical-specific lifecycle
 // assertions: correct commission tiers, 3-way splits, dispute gating, and
 // refund semantics.
-
-// ── Shared helpers ──────────────────────────────────────────────────────────
 
 // escrow returns the full amount to hold in escrow (100% until settled/refunded).
 func escrow(totalKobo int64) int64 { return totalKobo }
@@ -27,8 +24,6 @@ func settled(status string, totalKobo int64, platformPct, riderPct float64, hasR
 	platform, rider, provider = splitParts(totalKobo, platformPct, riderPct, hasRider)
 	return platform, rider, provider, true
 }
-
-// ── Telemedicine ─────────────────────────────────────────────────────────────
 
 func TestPending_Telemedicine_AppointmentSettlement(t *testing.T) {
 	const platformPct = 0.125 // 12.5% platform, 87.5% doctor
@@ -75,8 +70,6 @@ func TestPending_Telemedicine_AppointmentSettlement(t *testing.T) {
 		})
 	}
 }
-
-// ── Estate ───────────────────────────────────────────────────────────────────
 
 func TestPending_Estate_RentEscrowSettlement(t *testing.T) {
 	const platformPct = 0.05 // 5% platform, 95% landlord
@@ -131,8 +124,6 @@ func TestPending_Estate_RentEscrowSettlement(t *testing.T) {
 	}
 }
 
-// ── Transport ────────────────────────────────────────────────────────────────
-
 func TestPending_Transport_RideSettlement(t *testing.T) {
 	const platformPct = 0.15 // 15% platform
 	const driverPct = 0.70   // 70% driver (remaining 15% goes to rider incentive pool)
@@ -180,8 +171,6 @@ func TestPending_Transport_RideSettlement(t *testing.T) {
 		})
 	}
 }
-
-// ── Restaurant ───────────────────────────────────────────────────────────────
 
 func TestPending_Restaurant_OrderSettlement(t *testing.T) {
 	const platformPct = 0.10  // 10% platform

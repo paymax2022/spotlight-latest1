@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
+	"strconv"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,15 +23,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 var ErrNotFound = errors.New("academy.curriculum: not found")
 
 const defaultLimit = 100
-
-func clampLimit(limit int) int {
-	if limit <= 0 || limit > 500 {
-		return defaultLimit
-	}
-	return limit
-}
-
-// ── Versions ──────────────────────────────────────────────────────────────────
 
 func (r *Repository) ListVersions(ctx context.Context) ([]CurriculumVersion, error) {
 	const q = `
@@ -109,12 +102,12 @@ func (r *Repository) PublishVersion(ctx context.Context, id string) (*Curriculum
 	return v, err
 }
 
-// ── Classes ───────────────────────────────────────────────────────────────────
-
 // ListClasses returns classes, optionally filtered by version, with cursor/limit
 // pagination (cursor is the last ordinal+code seen; pass empty to start).
 func (r *Repository) ListClasses(ctx context.Context, versionID string, limit int) ([]Class, error) {
-	limit = clampLimit(limit)
+	if limit <= 0 || limit > 500 {
+		limit = defaultLimit
+	}
 	q := `
 		SELECT id, version_id, phase, code, name, ordinal
 		FROM public.academy_classes`
@@ -123,7 +116,7 @@ func (r *Repository) ListClasses(ctx context.Context, versionID string, limit in
 		q += ` WHERE version_id = $1`
 		args = append(args, versionID)
 	}
-	q += ` ORDER BY ordinal ASC, code ASC LIMIT $` + itoa(len(args)+1)
+	q += ` ORDER BY ordinal ASC, code ASC LIMIT $` + strconv.Itoa(len(args)+1)
 	args = append(args, limit)
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -181,8 +174,6 @@ func (r *Repository) UpdateClass(ctx context.Context, id string, req UpdateClass
 	return c, err
 }
 
-// ── Streams & trade tracks (read) ─────────────────────────────────────────────
-
 func (r *Repository) ListStreams(ctx context.Context) ([]Stream, error) {
 	const q = `SELECT id, code, name FROM public.academy_streams ORDER BY code ASC`
 	rows, err := r.db.Query(ctx, q)
@@ -218,8 +209,6 @@ func (r *Repository) ListTradeTracks(ctx context.Context) ([]TradeTrack, error) 
 	}
 	return out, rows.Err()
 }
-
-// ── Subjects ──────────────────────────────────────────────────────────────────
 
 func (r *Repository) ListSubjects(ctx context.Context, classID string) ([]Subject, error) {
 	const q = `
@@ -295,8 +284,6 @@ func (r *Repository) UpdateSubject(ctx context.Context, id string, req UpdateSub
 	return s, err
 }
 
-// ── Topics ────────────────────────────────────────────────────────────────────
-
 func (r *Repository) ListTopics(ctx context.Context, subjectID string) ([]Topic, error) {
 	const q = `
 		SELECT id, subject_id, code, title, ordinal
@@ -357,8 +344,6 @@ func (r *Repository) UpdateTopic(ctx context.Context, id string, req UpdateTopic
 	return t, err
 }
 
-// ── Learning objectives ───────────────────────────────────────────────────────
-
 func (r *Repository) ListObjectives(ctx context.Context, topicID string) ([]LearningObjective, error) {
 	const q = `
 		SELECT id, topic_id, code, title, exam_tags, ordinal
@@ -411,8 +396,6 @@ func (r *Repository) UpdateObjective(ctx context.Context, id string, req UpdateO
 	return o, err
 }
 
-// ── Audit ─────────────────────────────────────────────────────────────────────
-
 // InsertAudit appends an immutable row to public.audit_logs (module academy.curriculum).
 func (r *Repository) InsertAudit(ctx context.Context, actorUserID, action, resourceType, resourceID string, newValues any) error {
 	var nv []byte
@@ -427,8 +410,6 @@ func (r *Repository) InsertAudit(ctx context.Context, actorUserID, action, resou
 	return err
 }
 
-// ── small helpers ─────────────────────────────────────────────────────────────
-
 // strArray normalizes a string slice for a Postgres text[] parameter (nil → empty).
 func strArray(v []string) []string {
 	if v == nil {
@@ -437,30 +418,6 @@ func strArray(v []string) []string {
 	return v
 }
 
-// itoa is a tiny non-allocating-ish int→string for building $N placeholders.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
-
-// ── Lessons (read-only bridge into the content package's academy_edu_lessons) ──
 // NOTE: reads academy_edu_lessons (objective_id-keyed), NOT the unrelated legacy
 // academy_lessons (module_id-keyed) film/vocational table — see 20260815 core.
 const lessonCols = `id, objective_id, title, type, version_id, media_ref, transcript, duration_s, status, created_at, updated_at`

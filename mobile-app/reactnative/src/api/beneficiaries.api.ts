@@ -10,14 +10,12 @@
  *   POST   /api/v1/transfers/bank (bank transfer initiation)
  */
 import { api } from '@/api/client';
-import { generateIdempotencyKey } from '@/utils/idempotency';
+import { withIntentKey } from '@/utils/intentKey';
 import type { Beneficiary, BankTransferResult } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
 
-// ---------------------------------------------------------------------------
 // Fee schedule — mirrors backend calculateBankTransferFee()
-// ---------------------------------------------------------------------------
 
 export function calculateBankTransferFee(amountKobo: number): number {
   if (amountKobo <= 500_000)   return 1_000;  // ₦0–₦5,000: ₦10
@@ -25,9 +23,7 @@ export function calculateBankTransferFee(amountKobo: number): number {
   return 5_000;                               // > ₦50,000: ₦50
 }
 
-// ---------------------------------------------------------------------------
 // Beneficiary CRUD
-// ---------------------------------------------------------------------------
 
 export async function fetchBeneficiaries(): Promise<Beneficiary[]> {
   const response = await api.get('/api/v1/beneficiaries');
@@ -49,9 +45,7 @@ export async function removeBeneficiary(id: string): Promise<void> {
   await api.delete(`/api/v1/beneficiaries/${id}`);
 }
 
-// ---------------------------------------------------------------------------
 // Bank account resolution
-// ---------------------------------------------------------------------------
 
 export interface ResolvedAccount {
   accountName: string;
@@ -73,9 +67,7 @@ export async function resolveBankAccount(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Bank transfer initiation
-// ---------------------------------------------------------------------------
 
 export interface InitiateBankTransferPayload {
   bankCode: string;
@@ -92,8 +84,10 @@ export interface InitiateBankTransferPayload {
 export async function initiateBankTransfer(
   payload: InitiateBankTransferPayload,
 ): Promise<BankTransferResult> {
-  const idempotencyKey = generateIdempotencyKey();
-  const response = await api.post(
+  // Keyed on the intent, not the attempt: a retry after a timeout must reach
+  // the server as the same transfer, not a second one.
+  const { pin, ...intent } = payload;
+  const response = await withIntentKey('transfer:bank', intent, (idempotencyKey) => api.post(
     '/api/v1/transfers/bank',
     {
       bank_code:        payload.bankCode,
@@ -101,10 +95,10 @@ export async function initiateBankTransfer(
       amount_kobo:      payload.amountKobo,
       narration:        payload.narration?.slice(0, 100),
       save_beneficiary: payload.saveBeneficiary ?? false,
-      pin:              payload.pin,
+      pin,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },
-  );
+  ));
   const data = (response.data?.data ?? response.data) as ApiRecord;
   const transfer = (data?.transfer ?? data) as ApiRecord;
   return {
@@ -122,9 +116,7 @@ export async function initiateBankTransfer(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Mapper
-// ---------------------------------------------------------------------------
 
 function mapBeneficiary(row: ApiRecord): Beneficiary {
   return {

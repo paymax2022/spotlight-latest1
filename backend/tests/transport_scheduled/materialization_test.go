@@ -1,8 +1,6 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // Mode -> materialization-kind mapping + dispatch idempotency-key derivation.
-//
 // transport.materializationKind, transport.defaultLeadMinutes, and
 // transport.rideServiceType (backend/internal/transport/scheduled.go,
 // scheduled_dispatch.go) are unexported. Backend's own scheduled_test.go
@@ -11,22 +9,15 @@ package transport_scheduled_test
 // (cited below), plus additional invariants Backend's unit test doesn't cover:
 // the dispatch idempotency-key format and exhaustiveness of the mode set
 // against the frozen 6-mode list in SWARM_INTEGRATION_CONTRACT.md.
-//
 // Cited verbatim from backend/internal/transport/scheduled.go:
-//
 //	func materializationKind(mode string) string {
 //		switch mode {
 //		case "ride_hail", "ride_share", "airport_pickup":
-//			return "trip"
 //		case "parcel_intra", "parcel_inter":
-//			return "parcel"
 //		case "bus":
-//			return "bus_ticket"
 //		default:
-//			return ""
 //		}
 //	}
-//
 //	func defaultLeadMinutes(mode string) int {
 //		switch mode {
 //		case "airport_pickup": return 90
@@ -35,12 +26,8 @@ package transport_scheduled_test
 //		default: return 30 // ride_hail / ride_share
 //		}
 //	}
-//
 // Cited verbatim from backend/internal/transport/scheduled_dispatch.go
 // (Service.DispatchScheduled):
-//
-//	idemKey := fmt.Sprintf("sched:%s:dispatch", b.ID)
-// ---------------------------------------------------------------------------
 
 import (
 	"fmt"
@@ -210,7 +197,7 @@ func TestDispatchIdemKey_DeterministicPerBooking(t *testing.T) {
 // above: N distinct booking ids must produce N distinct keys.
 func TestDispatchIdemKey_NoCollisionAcrossManyBookings(t *testing.T) {
 	seen := map[string]bool{}
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		id := fmt.Sprintf("booking-%d", i)
 		key := dispatchIdemKey(id)
 		if seen[key] {

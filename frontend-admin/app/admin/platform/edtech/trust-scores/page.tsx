@@ -1,6 +1,5 @@
 'use client';
 
-// SU-07 — School Trust Score Admin. View component breakdown; override with a
 // mandatory reason where a computed score is disputed. RBAC: platform_edtech_admin.
 
 import { useEffect, useState } from 'react';

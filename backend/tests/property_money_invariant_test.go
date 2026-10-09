@@ -1,18 +1,14 @@
 package tests
 
-// ---------------------------------------------------------------------------
 // Property Management suite — money-invariant tests (INV) for
 // backend/internal/property/rentpassport.go GetRentPassport.
-//
 // PROPERTY-INV-011 (docs/qa/modules/property.md §4): TotalPaidKobo must be an
 // EXACT integer-kobo sum across BOTH the estate dues path (estate_payments)
 // and the realtor lease path (realtor_payments) — no float coercion, no
 // rounding, no drift. PROPERTY-INT-012: recentPayments caps at 20,
 // most-recent-first, while paymentsCount stays uncapped.
-//
 // Live-DB only: GetRentPassport takes a concrete *pgxpool.Pool
 // (property.NewService(db *pgxpool.Pool)) and cannot run without one.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -52,7 +48,7 @@ func seedPropertyMoneyUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email, created_at) VALUES ($1,$2,NOW())`, id, id+"@property-money.invalid"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, id) })
 	testsupport.CleanupUser(t, pool, id)
 	return id
 }
@@ -69,33 +65,33 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 	ctx := context.Background()
 
 	portfolioID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'Money Inv Portfolio')`, portfolioID, tenant); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'Money Inv Portfolio')`, portfolioID, tenant); err != nil {
 		t.Fatalf("seed portfolio: %v", err)
 	}
 
 	propID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_properties (id, portfolio_id, name, property_type, address, area, city, state)
 		 VALUES ($1,$2,'Bldg','apartment','1 St','Area','City','State')`, propID, portfolioID); err != nil {
 		t.Fatalf("seed realtor_properties: %v", err)
 	}
 
 	unitID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_units (id, property_id, label, property_type) VALUES ($1,$2,'Unit',$3)`,
 		unitID, propID, "apartment"); err != nil {
 		t.Fatalf("seed realtor_units: %v", err)
 	}
 
 	listingID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_listings (id, unit_id, title, mode) VALUES ($1,$2,'Listing','long_rent')`,
 		listingID, unitID); err != nil {
 		t.Fatalf("seed realtor_listings: %v", err)
 	}
 
 	appID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_rental_applications (id, listing_id, user_id, full_name, email, phone)
 		 VALUES ($1,$2,$3,'Tenant','tenant@money-inv.invalid','+2340000000000')`,
 		appID, listingID, tenant); err != nil {
@@ -103,7 +99,7 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 	}
 
 	leaseID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_leases (id, application_id, listing_id, tenant_id, start_date, end_date)
 		 VALUES ($1,$2,$3,$4, CURRENT_DATE - INTERVAL '1 year', CURRENT_DATE + INTERVAL '1 year')`,
 		leaseID, appID, listingID, tenant); err != nil {
@@ -111,14 +107,14 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 	}
 
 	invoiceID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_invoices (id, lease_id, status, total_kobo, due_date) VALUES ($1,$2,'paid',$3,$4)`,
 		invoiceID, leaseID, amountKobo, dueDate); err != nil {
 		t.Fatalf("seed realtor_invoices: %v", err)
 	}
 
 	payID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_payments (id, invoice_id, user_id, channel, amount_kobo, status, reference, idempotency_key, paid_at)
 		 VALUES ($1,$2,$3,'WALLET',$4,'paid',$5,$5,$6)`,
 		payID, invoiceID, tenant, amountKobo, "idem-"+payID, paidAt); err != nil {
@@ -127,14 +123,14 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM realtor_payments WHERE id=$1`, payID)
-		pool.Exec(bg, `DELETE FROM realtor_invoices WHERE id=$1`, invoiceID)
-		pool.Exec(bg, `DELETE FROM realtor_leases WHERE id=$1`, leaseID)
-		pool.Exec(bg, `DELETE FROM realtor_rental_applications WHERE id=$1`, appID)
-		pool.Exec(bg, `DELETE FROM realtor_listings WHERE id=$1`, listingID)
-		pool.Exec(bg, `DELETE FROM realtor_units WHERE id=$1`, unitID)
-		pool.Exec(bg, `DELETE FROM realtor_properties WHERE id=$1`, propID)
-		pool.Exec(bg, `DELETE FROM realtor_portfolios WHERE id=$1`, portfolioID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_payments WHERE id=$1`, payID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_invoices WHERE id=$1`, invoiceID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_leases WHERE id=$1`, leaseID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_rental_applications WHERE id=$1`, appID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_listings WHERE id=$1`, listingID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_units WHERE id=$1`, unitID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_properties WHERE id=$1`, propID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_portfolios WHERE id=$1`, portfolioID)
 	})
 }
 
@@ -142,22 +138,26 @@ func seedEstatePayment(t *testing.T, pool *pgxpool.Pool, payer, estateID string,
 	t.Helper()
 	ctx := context.Background()
 	invoiceID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_dues_invoices (id, estate_id, resident_id, category, amount_kobo, due_date)
 		 VALUES ($1,$2,$3,'rent',$4,$5)`,
 		invoiceID, estateID, payer, amountKobo, dueDate); err != nil {
 		t.Fatalf("seed estate_dues_invoices: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID)
+	})
 
 	payID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_payments (id, estate_id, invoice_id, payer_id, amount_kobo, method, status, created_at)
 		 VALUES ($1,$2,$3,$4,$5,'wallet','successful',$6)`,
 		payID, estateID, invoiceID, payer, amountKobo, createdAt); err != nil {
 		t.Fatalf("seed estate_payments: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_payments WHERE id=$1`, payID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_payments WHERE id=$1`, payID)
+	})
 }
 
 // TestLiveDB_RentPassport_TotalPaidKobo_ExactSumAcrossEstateAndRealtor is
@@ -175,10 +175,12 @@ func TestLiveDB_RentPassport_TotalPaidKobo_ExactSumAcrossEstateAndRealtor(t *tes
 	admin := seedPropertyMoneyUser(t, pool)
 
 	estateID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Money Inv Estate',$2)`, estateID, admin); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Money Inv Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
 
 	// Deliberately awkward kobo amounts: 100000003 kobo (₦1,000,000.03) has a
 	// fractional-naira remainder, and 233333337 kobo is not a multiple of any
@@ -229,17 +231,19 @@ func TestLiveDB_RentPassport_RecentPaymentsCapAndOrder(t *testing.T) {
 	admin := seedPropertyMoneyUser(t, pool)
 
 	estateID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Cap Order Estate',$2)`, estateID, admin); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Cap Order Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
 
 	const rowCount = 25
 	base := time.Now().Add(-time.Duration(rowCount) * time.Hour)
 	dueDate := time.Now().Add(24 * time.Hour) // estate_dues_invoices.due_date is NOT NULL
 	// Payment i is created at base + i hours, so payment 24 (amount 24*1000) is
 	// the most recent and payment 0 is the oldest.
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		amount := int64((i + 1) * 1000) // distinct amounts double as an ordering fingerprint
 		createdAt := base.Add(time.Duration(i) * time.Hour)
 		seedEstatePayment(t, pool, tenant, estateID, amount, &dueDate, createdAt)

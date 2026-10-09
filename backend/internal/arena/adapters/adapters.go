@@ -4,13 +4,13 @@
 // construct a verifiable arena.SignedMeritEntry (NDC-2). Money/engagement rails
 // import nothing from this package and hold no signer — the compile-time half of
 // the merit firewall (NDC-1).
-//
 // Normalization is deterministic: identical ScoreSubmission inputs always yield
 // the identical NormalizedScore, so a signature is reproducible for audit.
 package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -38,8 +38,6 @@ func signedAt(in arena.ScoreSubmission) time.Time {
 	}
 	return time.Time{}
 }
-
-// ── Pure normalization helpers (unit-tested without a signer) ────────────────
 
 // Clamp bounds v to [lo, hi].
 func Clamp(v, lo, hi float64) float64 {
@@ -106,8 +104,6 @@ func attestationReason(prefix string, att map[string]string) string {
 	return b.String()
 }
 
-// ── TheoryExamAdapter ────────────────────────────────────────────────────────
-
 // TheoryExamAdapter scores a proctored theory exam. Raw["score"] is the raw
 // marks, Raw["max"] the paper's maximum. The proctor attestation (proctor_id,
 // webcam_ok, …) is folded into the signed canonical payload so an entry carries
@@ -154,8 +150,6 @@ func (a *TheoryExamAdapter) SubmitScore(ctx context.Context, in arena.ScoreSubmi
 	}
 	return arena.SignScore(a.signer, p, in.PrevHash), nil
 }
-
-// ── PracticalJudgeAdapter ────────────────────────────────────────────────────
 
 // PracticalJudgeAdapter aggregates multiple judge scores into one normalized
 // score via a trimmed mean (discarding the extreme high/low). Judge ids are
@@ -211,7 +205,7 @@ func (a *PracticalJudgeAdapter) SubmitScore(ctx context.Context, in arena.ScoreS
 		return arena.SignedMeritEntry{}, fmt.Errorf("practical adapter: unsupported stage %q", in.Stage)
 	}
 	if len(judgeScores(in.Raw)) == 0 {
-		return arena.SignedMeritEntry{}, fmt.Errorf("practical adapter: no judge scores")
+		return arena.SignedMeritEntry{}, errors.New("practical adapter: no judge scores")
 	}
 	rawScore, normalized := NormalizePractical(in.Raw)
 	p := arena.ScorePayload{
@@ -228,8 +222,6 @@ func (a *PracticalJudgeAdapter) SubmitScore(ctx context.Context, in arena.ScoreS
 	}
 	return arena.SignScore(a.signer, p, in.PrevHash), nil
 }
-
-// ── FirstAidAdapter ──────────────────────────────────────────────────────────
 
 // FirstAidAdapter scores the finale first-aid station. Raw["score"] / Raw["max"]
 // as with theory; assessor attestation is folded into the signed payload.

@@ -7,9 +7,7 @@ import type {
 } from '@/types/featuredPlacementAdmin';
 
 // Backend admin placement routes hang off the Go API /api prefix (verified:
-// backend/internal/app/finance_routes.go `placementAdmin := r.Group("/api/placement/admin")`),
 // matching the onboarding/mobility admin services. This used to be
-// `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api')`, which relied on
 // apiBaseUrl ending in /api/v1 — it no longer does (see config/env.ts), so
 // that regex silently stopped matching and every live placement admin call
 // 404'd against the bare proxy origin. apiRoot() strips the /api/v1 suffix
@@ -21,17 +19,12 @@ function adminApiBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
-// Mock by default; flip with NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK=false
 // once the live Go admin endpoints (/api/placement/admin/*) are deployed.
 // Matches the onboarding/fx/mobility/realtor admin-service convention.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK);
-
-// ── Fixtures ────────────────────────────────────────────────────────────────
 
 function daysFromNow(d: number): string {
   return new Date(Date.now() + d * 86_400_000).toISOString();
@@ -147,8 +140,6 @@ function fixtureCampaign(id: string): Campaign {
   return { ...fixtureCampaigns[0], id, creative: { ...fixtureCampaigns[0].creative } };
 }
 
-// ── API ───────────────────────────────────────────────────────────────────
-
 // GET /placement/admin/review-queue?state=
 export async function listReviewQueue(
   filters: ReviewQueueFilters,
@@ -229,8 +220,6 @@ export function requestInfo(id: string, reason: string): Promise<Campaign> {
 export function suspend(id: string, reason: string): Promise<Campaign> {
   return postAction(id, 'suspend', { reason });
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 // Money: integer kobo → naira display.
 export function naira(kobo: number): string {

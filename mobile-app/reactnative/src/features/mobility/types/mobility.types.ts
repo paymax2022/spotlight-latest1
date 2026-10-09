@@ -1,13 +1,10 @@
-// ── Paymax Mobility — Types ──────────────────────────────────────────────────
 // Mirrors docs/prd/transportation/BUILD-CONTRACT.md payloads.
 // IRON RULES: all money is integer minor units (kobo). Never floats for money.
 // Fare floors/ceilings are server-computed — the client only *displays* them.
 
-// ─── Money ──────────────────────────────────────────────────────────────────
 /** Integer kobo (1 NGN = 100 kobo). Never a float, never a string for math. */
 export type Kobo = number;
 
-// ─── Geo ────────────────────────────────────────────────────────────────────
 export interface LatLng {
   lat: number;
   lng: number;
@@ -27,7 +24,6 @@ export interface SavedPlace {
   icon?: string;         // lucide name
 }
 
-// ─── Service types & pricing ──────────────────────────────────────────────────
 export type ServiceType = 'economy' | 'comfort' | 'premium' | 'xl';
 
 export type PricingMode = 'instant' | 'offer';
@@ -44,13 +40,12 @@ export interface PricingConfig {
   perKmKobo: Kobo;
   perMinKobo: Kobo;
   minFareKobo: Kobo;
-  surgeMultiplier: number;        // display-only; backend applies it
+  surgeMultiplier: number;
   fareFloorPct: number;           // e.g. 0.85
   fareCeilingPct: number;         // e.g. 1.25
   serviceAvailable: boolean;      // false → service-unavailable-in-city state
 }
 
-// ─── Estimate ─────────────────────────────────────────────────────────────────
 export interface RideEstimateRequest {
   pickup: Place;
   dest: Place;
@@ -68,7 +63,6 @@ export interface RideEstimate {
   polyline: string;
 }
 
-// ─── Trip ─────────────────────────────────────────────────────────────────────
 export type TripPhase =
   | 'requested'
   | 'fare_negotiating'
@@ -125,7 +119,7 @@ export interface RideRequest {
   dest: Place;
   serviceType: ServiceType;
   pricingMode: PricingMode;
-  offerKobo?: Kobo;               // required when pricingMode = 'offer'
+  offerKobo?: Kobo;
   paymentMethod: PaymentMethod;
   idempotencyKey: string;
 }
@@ -136,7 +130,6 @@ export interface Trip {
   status: TripStatus;
   serviceType: ServiceType;
   pricingMode: PricingMode;
-  // Always present: live backend trips return flat pickupAddress/destAddress
   // strings, and flattenTrip (mobility.api.ts) synthesizes Place objects from
   // them so screens can rely on pickup/dest unconditionally.
   pickup: Place;
@@ -151,7 +144,7 @@ export interface Trip {
   currency: 'NGN';
   paymentMethod: PaymentMethod;
   paymentStatus: 'escrowed' | 'pending' | 'settled' | 'refunded' | 'failed';
-  tripPin: string | null;         // 4-digit; shown to rider, verified by driver
+  tripPin: string | null;
   driver: Driver | null;
   vehicle: Vehicle | null;
   fareOffer: FareOffer | null;
@@ -171,7 +164,6 @@ export interface TripEvent {
   note?: string;
 }
 
-// ─── Home ─────────────────────────────────────────────────────────────────────
 export interface QuickTile {
   id: string;
   label: string;
@@ -202,7 +194,6 @@ export interface MobilityHome {
   safetyReminder: string;
 }
 
-// ─── Rating ───────────────────────────────────────────────────────────────────
 export interface RateDraft {
   stars: number;                  // 1..5
   comment?: string;
@@ -241,7 +232,6 @@ export interface ShareLink {
   expiresAt: string;
 }
 
-// ─── Driver ───────────────────────────────────────────────────────────────────
 export type VerificationStatus =
   | 'not_started'
   | 'submitted'
@@ -351,7 +341,6 @@ export interface DriverTripSummary {
   destLabel: string;
 }
 
-// ─── Rider ride-preference settings (GET/PUT /mobility/profile) ───────────────
 // Distinct from the lightweight display MobilityProfile above (name/photo/
 // rating on the home payload) — this is the rider's saved preferences: trust
 // level, default payment method, and saved home/work addresses.
@@ -371,7 +360,6 @@ export interface UpdateRideSettingsInput {
   workAddress?: string | null;
 }
 
-// ─── Trip chat ────────────────────────────────────────────────────────────────
 // Pre-arrival/en-route logistics between the rider and the assigned driver
 // ("I'm outside", "which gate", "is this the right address") — distinct from
 // the trip PIN, which is an at-the-door identity check, not free-form chat.
@@ -387,7 +375,6 @@ export interface TripMessage {
   createdAt: string;
 }
 
-// ─── API error shape ─────────────────────────────────────────────────────────
 export type MobilityErrorCode =
   | 'FARE_BELOW_FLOOR'
   | 'FARE_ABOVE_CEILING'

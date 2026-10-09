@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	"spotlight/backend/internal/health/makercheck"
 	"spotlight/backend/internal/health/triage"
+	"time"
 )
 
 // ErrIllegalTransition guards the content/rule lifecycle SM (SC-6).
@@ -54,8 +54,6 @@ type GovernanceService struct{ repo Store }
 // NewGovernanceService builds the governance service.
 func NewGovernanceService(repo Store) *GovernanceService { return &GovernanceService{repo: repo} }
 
-// ─────────────────────────────── Content lifecycle ───────────────────────────
-
 var validContentKinds = map[string]bool{
 	"condition": true, "first_aid": true, "disclaimer": true, "self_care": true, "question": true,
 }
@@ -64,7 +62,7 @@ var validContentKinds = map[string]bool{
 // never LLM-generated — this is an authoring action, not generation).
 func (s *GovernanceService) CreateContentDraft(ctx context.Context, actorID string, in ContentItem) (*ContentItem, error) {
 	if in.Code == "" || in.Body == "" {
-		return nil, fmt.Errorf("triage.gov: code and body required")
+		return nil, errors.New("triage.gov: code and body required")
 	}
 	if !validContentKinds[in.Kind] {
 		return nil, fmt.Errorf("triage.gov: invalid content kind %q", in.Kind)
@@ -195,17 +193,15 @@ func (s *GovernanceService) ListContent(ctx context.Context, state, kind, langua
 	return s.repo.ListContent(ctx, state, kind, language)
 }
 
-// ─────────────────────────────── Rule lifecycle ──────────────────────────────
-
 // CreateRuleDraft creates a new DRAFT red-flag rule. SC-2: urgency_level must be a
 // valid (1..5) disposition level — the rule can only force a MORE-urgent level at
 // evaluation time (enforced in DBRedFlagEngine + triage.ApplyRedFlag).
 func (s *GovernanceService) CreateRuleDraft(ctx context.Context, actorID string, in RedFlagRule) (*RedFlagRule, error) {
 	if in.Code == "" || in.Name == "" {
-		return nil, fmt.Errorf("triage.gov: code and name required")
+		return nil, errors.New("triage.gov: code and name required")
 	}
 	if in.UrgencyLevel < triage.LevelEmergencyAmbulance || in.UrgencyLevel > triage.LevelSelfCare {
-		return nil, fmt.Errorf("triage.gov: urgency_level must be 1..5")
+		return nil, errors.New("triage.gov: urgency_level must be 1..5")
 	}
 	if in.Severity == "" {
 		in.Severity = "emergency"
@@ -224,7 +220,7 @@ func (s *GovernanceService) CreateRuleDraft(ctx context.Context, actorID string,
 // a new DRAFT at version+1 (live signed-off rules are immutable).
 func (s *GovernanceService) EditRule(ctx context.Context, actorID, id, name string, cond RuleCondition, urgency int, severity string) (*RedFlagRule, error) {
 	if urgency < triage.LevelEmergencyAmbulance || urgency > triage.LevelSelfCare {
-		return nil, fmt.Errorf("triage.gov: urgency_level must be 1..5")
+		return nil, errors.New("triage.gov: urgency_level must be 1..5")
 	}
 	if severity == "" {
 		severity = "emergency"
@@ -334,8 +330,6 @@ func (s *GovernanceService) ListRules(ctx context.Context, state string) ([]RedF
 	return s.repo.ListRules(ctx, state)
 }
 
-// ─────────────────────────────── Language packs ──────────────────────────────
-
 // SeedLanguagePacks seeds the Phase-1 packs: English + Nigerian Pidgin ('pcm').
 // Idempotent (upsert by code).
 func (s *GovernanceService) SeedLanguagePacks(ctx context.Context) error {
@@ -353,7 +347,7 @@ func (s *GovernanceService) SeedLanguagePacks(ctx context.Context) error {
 // UpsertLanguagePack creates/updates a language pack.
 func (s *GovernanceService) UpsertLanguagePack(ctx context.Context, actorID string, lp LanguagePack) (*LanguagePack, error) {
 	if lp.Code == "" || lp.Name == "" {
-		return nil, fmt.Errorf("triage.gov: language code and name required")
+		return nil, errors.New("triage.gov: language code and name required")
 	}
 	out, err := s.repo.UpsertLanguagePack(ctx, &lp)
 	if err != nil {
@@ -367,4 +361,104 @@ func (s *GovernanceService) UpsertLanguagePack(ctx context.Context, actorID stri
 // ListLanguagePacks lists configured packs.
 func (s *GovernanceService) ListLanguagePacks(ctx context.Context) ([]LanguagePack, error) {
 	return s.repo.ListLanguagePacks(ctx)
+}
+
+// ContentItem is a clinician-governed clinical content row (RAG library entry,
+// disclaimer, first-aid, self-care guidance, interview question copy). SC-10:
+// content is CURATED, never LLM-generated. Lifecycle is governed by
+// triage.ContentState (draft→clinical_review→approved→published→deprecated) and
+// publish requires a licensed-clinician sign-off (reviewer_id + published_at).
+type ContentItem struct {
+	ID          string              `json:"id"`
+	Code        string              `json:"code"`
+	Kind        string              `json:"kind"` // condition|first_aid|disclaimer|self_care|question
+	Language    string              `json:"language"`
+	Body        string              `json:"body"`
+	RAGTags     []string            `json:"rag_tags"`
+	State       triage.ContentState `json:"state"`
+	Version     int                 `json:"version"`
+	ReviewerID  *string             `json:"reviewer_id,omitempty"`
+	CreatedBy   string              `json:"created_by,omitempty"` // author (maker); the approver must differ (SC-011)
+	PublishedAt *time.Time          `json:"published_at,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+}
+
+// RedFlagRule is a deterministic, clinician-authored emergency rule. SC-2: a rule
+// can ONLY RAISE urgency (force the disposition to a more-urgent / lower level);
+// it can never lower it. SC-6: a rule must pass licensed-clinician sign-off before
+// it is published and becomes live in DBRedFlagEngine. The condition jsonb is an
+// evidence-match expression (see redflag_db.go for the evaluator).
+type RedFlagRule struct {
+	ID           string              `json:"id"`
+	Code         string              `json:"code"`
+	Name         string              `json:"name"`
+	Condition    RuleCondition       `json:"condition"`
+	UrgencyLevel int                 `json:"urgency_level"` // force disposition to (≤) this level
+	Severity     string              `json:"severity"`      // emergency|urgent
+	State        triage.ContentState `json:"state"`
+	Version      int                 `json:"version"`
+	ReviewerID   *string             `json:"reviewer_id,omitempty"`
+	CreatedBy    string              `json:"created_by,omitempty"` // author (maker); the approver must differ (SC-011)
+	PublishedAt  *time.Time          `json:"published_at,omitempty"`
+	CreatedAt    time.Time           `json:"created_at"`
+}
+
+// RuleCondition is the evidence-match expression stored in red_flag_rules.condition.
+// A rule fires when ALL of AllPresent are present AND NONE of NonePresent are
+// present, optionally gated on pregnancy / age band. Conservative by design:
+// an empty/unknown condition never fires (fail-closed → no spurious override).
+type RuleCondition struct {
+	AllPresent      []string `json:"all_present,omitempty"`  // every code must be value=present
+	AnyPresent      []string `json:"any_present,omitempty"`  // at least one code present
+	NonePresent     []string `json:"none_present,omitempty"` // none of these may be present
+	RequirePregnant bool     `json:"require_pregnant,omitempty"`
+	MaxAgeYears     *int     `json:"max_age_years,omitempty"` // rule only applies at/below this age
+	MinAgeYears     *int     `json:"min_age_years,omitempty"`
+}
+
+// Vignette is an African clinical test case for the validation harness. The engine
+// is run over its evidence and the result is compared to expected_level /
+// expected_emergency (SC-11 emergency-sensitivity-first shadow eval).
+type Vignette struct {
+	ID                 string            `json:"id"`
+	Code               string            `json:"code"`
+	Language           string            `json:"language"`
+	Evidence           []triage.Evidence `json:"evidence"`
+	ExpectedLevel      int               `json:"expected_level"`
+	ExpectedEmergency  bool              `json:"expected_emergency"`
+	ExpectedConditions []string          `json:"expected_conditions"`
+	AgeYears           int               `json:"age_years"`
+	Sex                string            `json:"sex"`
+	Region             string            `json:"region"`
+	CreatedAt          time.Time         `json:"created_at"`
+}
+
+// EvalRun is one persisted shadow-eval observation: how the engine scored a single
+// vignette on a given run.
+type EvalRun struct {
+	ID               string    `json:"id"`
+	VignetteID       string    `json:"vignette_id"`
+	EngineLevel      int       `json:"engine_level"`
+	LevelMatch       bool      `json:"level_match"`
+	EmergencyCorrect bool      `json:"emergency_correct"`
+	RanAt            time.Time `json:"ran_at"`
+}
+
+// LanguagePack is a supported language for the symptom checker (Phase 1: EN +
+// Nigerian Pidgin 'pcm').
+type LanguagePack struct {
+	ID     string `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// ChannelSession maps an external omnichannel id (e.g. a WhatsApp wa_id) to an
+// internal triage session id, enabling idempotent inbound webhook handling.
+type ChannelSession struct {
+	ID         string    `json:"id"`
+	Channel    string    `json:"channel"`
+	ExternalID string    `json:"external_id"`
+	SessionID  *string   `json:"session_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }

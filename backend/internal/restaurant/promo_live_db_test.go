@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for promo codes (Phase 4): owner CRUD, code resolution
 // (window / min-subtotal / usage limits), and the funder snapshot — driven against
 // real rows. Skipped unless TEST_DATABASE_URL is set. Requires the
 // restaurant + restaurant_promos migrations. Escrow/settlement not exercised here;
 // the settlement funder math is proven by the settlement package's pure invariants.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -89,7 +87,7 @@ func TestLiveDB_Promos(t *testing.T) {
 	// Simulate a redemption consuming the single allowed use, then confirm the usage
 	// limit now blocks (and that UNIQUE(order_id) keeps a re-inserted order idempotent).
 	orderID := uuid.New().String()
-	for i := 0; i < 2; i++ { // second insert is a no-op via ON CONFLICT (order_id)
+	for range 2 { // second insert is a no-op via ON CONFLICT (order_id)
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO restaurant_promo_redemptions (id, promo_id, order_id, user_id, discount_kobo)
 			 VALUES ($1,$2,$3,$4,$5) ON CONFLICT (order_id) DO NOTHING`,

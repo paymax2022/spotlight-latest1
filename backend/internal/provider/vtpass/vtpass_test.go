@@ -11,9 +11,7 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // Request building — payload shape genuinely differs by category
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestPurchasePayload_Airtime(t *testing.T) {
 	req := provider.BillRequest{
@@ -133,10 +131,6 @@ func TestPurchasePayload_Education(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Response normalization
-// ════════════════════════════════════════════════════════════════════════════
-
 func TestNormalizeProviderStatus(t *testing.T) {
 	cases := []struct {
 		name string
@@ -203,10 +197,6 @@ func TestTokenFrom(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Sandbox meter simulation table
-// ════════════════════════════════════════════════════════════════════════════
-
 func TestSandboxPurchase_MeterTable(t *testing.T) {
 	c := New("k", "p", "s", EnvironmentSandbox, "")
 
@@ -254,23 +244,99 @@ func TestSandboxPurchase_MeterTable(t *testing.T) {
 	}
 }
 
-// The sandbox table is keyed on customerReference for EVERY category, not just
-// electricity — matching the TS source, which calls sandboxPurchase before any
-// category branch is consulted.
-func TestSandboxPurchase_AppliesRegardlessOfCategory(t *testing.T) {
+// TS-adapter parity (frontend-web/src/server/utility/adapters/vtpass.ts,
+// sandboxPurchase): the meter-outcome table is documented by VTPass ONLY for
+// electricity (EKEDC). Every other sandbox category must vend a plain success
+// — a phone number, decoder serial, or smart-card ID is not a meter number,
+// so it must never fall into the "meter not recognised" failure, never be
+// driven to pending by a sentinel it happens to collide with, and never carry
+// a meter token.
+func TestSandboxPurchase_MeterTableOnlyForElectricity(t *testing.T) {
 	c := New("k", "p", "s", EnvironmentSandbox, "")
-	req := provider.BillRequest{
-		Ref:        "ref-airtime-sandbox",
-		Type:       "airtime",
+
+	for _, typ := range []string{"airtime", "data", "cable_tv", "internet", "education"} {
+		res, err := c.PurchaseBill(context.Background(), provider.BillRequest{
+			Ref:        "ref-sandbox-" + typ,
+			Type:       typ,
+			AmountKobo: 50_000,
+			Params:     map[string]string{"customerReference": "1902847565"},
+		})
+		if err != nil {
+			t.Fatalf("PurchaseBill(%s): %v", typ, err)
+		}
+		if res.Status != StatusSuccess {
+			t.Fatalf("sandbox %s purchase status = %q, want SUCCESS — the meter table must not apply", typ, res.Status)
+		}
+		if res.Token != "" {
+			t.Fatalf("sandbox %s purchase must not vend a meter token, got %q", typ, res.Token)
+		}
+		if res.ProviderRef == "" {
+			t.Fatalf("sandbox %s purchase must carry the request id as ProviderRef", typ)
+		}
+	}
+
+	// A non-electricity customer reference colliding with a documented
+	// simulator meter must NOT inherit its outcome — "400000000000" is the
+	// electricity no-response sentinel, but as a cable_tv smartcard it is just
+	// a customer and must vend successfully.
+	res, err := c.PurchaseBill(context.Background(), provider.BillRequest{
+		Ref:        "ref-sandbox-cable-nr",
+		Type:       "cable_tv",
 		AmountKobo: 50_000,
-		Params:     map[string]string{"customerReference": sandboxMeterPrepaid},
-	}
-	res, err := c.PurchaseBill(context.Background(), req)
+		Params:     map[string]string{"customerReference": sandboxMeterNoResponse},
+	})
 	if err != nil {
-		t.Fatalf("PurchaseBill: %v", err)
+		t.Fatalf("PurchaseBill(cable_tv): %v", err)
 	}
-	if res.Status != StatusSuccess || res.Token != sandboxPrepaidToken {
-		t.Fatalf("sandbox table must apply to airtime too: status=%q token=%q", res.Status, res.Token)
+	if res.Status != StatusSuccess {
+		t.Fatalf("cable_tv smartcard colliding with the no-response meter must still vend, got %q", res.Status)
+	}
+}
+
+// TS-adapter parity (vtpass.ts validateCustomer): in sandbox the meter-verify
+// stub applies to ELECTRICITY only — VTPass publishes no smartcard/account
+// test matrix for cable_tv/internet, so those categories verify valid
+// unconditionally. Applying the electricity stub to them meant a real
+// smartcard number could never match and validation failed on every attempt.
+func TestValidateCustomer_SandboxMeterTableOnlyForElectricity(t *testing.T) {
+	c := New("k", "p", "s", EnvironmentSandbox, "")
+
+	res, err := c.ValidateCustomer(context.Background(), provider.BillValidationRequest{
+		Type:              "cable_tv",
+		CustomerReference: "7034567890", // a smartcard number, not a meter
+	})
+	if err != nil {
+		t.Fatalf("ValidateCustomer(cable_tv): %v", err)
+	}
+	if !res.Valid {
+		t.Fatal("sandbox cable_tv validation must pass — VTPass has no smartcard test matrix")
+	}
+	if res.Message != strCustomerVerified {
+		t.Fatalf("sandbox cable_tv message = %q, want %q", res.Message, strCustomerVerified)
+	}
+
+	// Electricity still consults the documented meter table: unrecognised
+	// meter → invalid; documented prepaid meter → valid with a customer name.
+	res, err = c.ValidateCustomer(context.Background(), provider.BillValidationRequest{
+		Type:              "electricity",
+		CustomerReference: "0000000000000",
+	})
+	if err != nil {
+		t.Fatalf("ValidateCustomer(electricity unknown meter): %v", err)
+	}
+	if res.Valid {
+		t.Fatal("an unrecognised sandbox meter must fail validation")
+	}
+
+	res, err = c.ValidateCustomer(context.Background(), provider.BillValidationRequest{
+		Type:              "electricity",
+		CustomerReference: sandboxMeterPrepaid,
+	})
+	if err != nil {
+		t.Fatalf("ValidateCustomer(electricity prepaid): %v", err)
+	}
+	if !res.Valid || res.CustomerName == "" {
+		t.Fatalf("documented sandbox meter must verify with a customer name, got valid=%v name=%q", res.Valid, res.CustomerName)
 	}
 }
 
@@ -285,16 +351,14 @@ func TestSandboxGetBill_AlwaysSuccessful(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Auth headers — api-key always; public-key for GET; secret-key for POST
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 	var gotAPIKey, gotSecretKey, gotPublicKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAPIKey = r.Header.Get("api-key")
-		gotSecretKey = r.Header.Get("secret-key")
-		gotPublicKey = r.Header.Get("public-key")
+		gotAPIKey = r.Header.Get("Api-Key")
+		gotSecretKey = r.Header.Get("Secret-Key")
+		gotPublicKey = r.Header.Get("Public-Key")
 		_, _ = w.Write([]byte(`{"code":"000","response_description":"successful","requestId":"req-x"}`))
 	}))
 	defer srv.Close()
@@ -323,8 +387,8 @@ func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 func TestAuthHeaders_GetUsesPublicKey(t *testing.T) {
 	var gotPublicKey, gotSecretKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPublicKey = r.Header.Get("public-key")
-		gotSecretKey = r.Header.Get("secret-key")
+		gotPublicKey = r.Header.Get("Public-Key")
+		gotSecretKey = r.Header.Get("Secret-Key")
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
@@ -343,19 +407,15 @@ func TestAuthHeaders_GetUsesPublicKey(t *testing.T) {
 
 func TestAuthHeaders_MissingKeysFailClosed(t *testing.T) {
 	c := New("", "", "", EnvironmentLive, "http://unused.invalid")
-	if _, err := c.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime"}); err == nil {
+	if _, err := c.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime", AmountKobo: 10_000}); err == nil {
 		t.Fatal("PurchaseBill with no API key must fail")
 	}
 
 	c2 := New("api", "", "", EnvironmentLive, "http://unused.invalid")
-	if _, err := c2.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime"}); err == nil {
+	if _, err := c2.PurchaseBill(context.Background(), provider.BillRequest{Type: "airtime", AmountKobo: 10_000}); err == nil {
 		t.Fatal("PurchaseBill with no secret key must fail (POST requires secret-key)")
 	}
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Base URL selection by environment
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	live := New("a", "p", "s", EnvironmentLive, "")
@@ -381,9 +441,7 @@ func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // End-to-end (HTTP-boundary mocked): purchase + requery
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	var gotBody map[string]any
@@ -401,7 +459,7 @@ func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	req := provider.BillRequest{
 		Ref:        "ledger-ref-9",
 		Type:       "electricity",
-		AmountKobo: 500_050, // ₦5,000.50 → rounds to ₦5001
+		AmountKobo: 500_000, // ₦5,000 — whole naira only; sub-naira is rejected below
 		Params: map[string]string{
 			"providerBillerCode": "ikeja-electric",
 			"customerReference":  "9999999999999",
@@ -424,11 +482,41 @@ func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	if res.Ref != "ledger-ref-9" {
 		t.Fatalf("Bill.Ref = %q, want the client ref echoed back", res.Ref)
 	}
-	if gotBody["amount"].(float64) != 5001 {
-		t.Fatalf("provider saw amount=%v naira, want 5001", gotBody["amount"])
+	if gotBody["amount"].(float64) != 5000 {
+		t.Fatalf("provider saw amount=%v naira, want 5000", gotBody["amount"])
 	}
 	if gotBody["billersCode"] != "9999999999999" {
 		t.Fatalf("provider saw billersCode=%v", gotBody["billersCode"])
+	}
+}
+
+func TestPurchaseBill_SubNairaRejectedWithoutProviderCall(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer srv.Close()
+
+	c := New("api", "pub", "sec", EnvironmentLive, srv.URL)
+	// ₦5,000.50 — sub-naira: asNaira would silently vend ₦5001 while we
+	// collected 500050 kobo, so the adapter refuses before any provider call.
+	res, err := c.PurchaseBill(context.Background(), provider.BillRequest{
+		Ref:        "ledger-ref-sub",
+		Type:       "electricity",
+		AmountKobo: 500_050,
+		Params: map[string]string{
+			"providerBillerCode": "ikeja-electric",
+			"customerReference":  "9999999999999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PurchaseBill: %v", err)
+	}
+	if called {
+		t.Fatal("provider must not be called for a sub-naira amount")
+	}
+	if res.Status != StatusFailed {
+		t.Fatalf("status = %q, want FAILED (deterministic validation)", res.Status)
 	}
 }
 
@@ -466,9 +554,7 @@ func TestGetBill_EmptyRefRejected(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // HTTP-failure normalization — no live network calls anywhere in this suite
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestDo_NonOKStatusSynthesizesEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -24,8 +24,6 @@ import (
 	"spotlight/backend/internal/restaurant"
 )
 
-// ── fakeGateway ──────────────────────────────────────────────────────────
-
 type fakeGateway struct {
 	mu sync.Mutex
 
@@ -41,7 +39,7 @@ type fakeGateway struct {
 	initCalls   []provider.InitializePaymentRequest
 	verifyCalls []string
 	refundCalls []struct {
-		reference string
+		reference  string
 		amountKobo int64
 	}
 }
@@ -85,8 +83,6 @@ func (f *fakeGateway) RefundPayment(_ context.Context, reference string, amountK
 	return &provider.RefundResult{Reference: reference, Status: "processed", AmountKobo: amountKobo}, nil
 }
 
-// ── fakeOrders ───────────────────────────────────────────────────────────
-
 type fakeOrders struct {
 	mu sync.Mutex
 
@@ -98,7 +94,7 @@ type fakeOrders struct {
 
 	quoteCalls []restaurant.PlaceOrderRequest
 	placeCalls []struct {
-		req        restaurant.PlaceOrderRequest
+		req          restaurant.PlaceOrderRequest
 		verifiedKobo int64
 	}
 }
@@ -129,10 +125,8 @@ func (f *fakeOrders) PlaceOrderPaystackFunded(_ context.Context, _ string, _ str
 	return &restaurant.Order{ID: "order-1", TotalKobo: verifiedAmountKobo}, nil
 }
 
-// ── fakeIntents (in-memory IntentStore) ────────────────────────────────────
-
 type fakeIntents struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	byRef map[string]*intentRecord
 	byKey map[string]string // idempotencyKey -> reference
 }
@@ -203,8 +197,6 @@ func (f *fakeIntents) GetByOrderID(_ context.Context, orderID string) (*intentRe
 	return nil, errors.New("not found")
 }
 
-// ── fakeSettlementReverser ───────────────────────────────────────────────
-
 type fakeSettlementReverser struct {
 	mu    sync.Mutex
 	calls []struct{ settlementID, reason string }
@@ -218,8 +210,6 @@ func (f *fakeSettlementReverser) RefundExternal(_ context.Context, settlementID,
 	return f.err
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────
-
 func sampleReq(idemKey string) restaurant.PlaceOrderRequest {
 	return restaurant.PlaceOrderRequest{
 		Items:           []restaurant.OrderItemInput{{MenuItemID: "item-1", Quantity: 1}},
@@ -231,8 +221,6 @@ func sampleReq(idemKey string) restaurant.PlaceOrderRequest {
 func successStatus(amountKobo int64) *provider.PaymentStatus {
 	return &provider.PaymentStatus{Status: "success", AmountKobo: amountKobo}
 }
-
-// ── InitiateCheckout ─────────────────────────────────────────────────────
 
 func TestInitiateCheckout_FreezesQuotedAmount(t *testing.T) {
 	gw := &fakeGateway{}
@@ -297,8 +285,6 @@ func TestInitiateCheckout_ReplayReusesFrozenAmount(t *testing.T) {
 	}
 }
 
-// ── OnChargeSuccess: happy path ──────────────────────────────────────────
-
 func TestOnChargeSuccess_PlacesOrderAndConfirms(t *testing.T) {
 	gw := &fakeGateway{verifyStatus: successStatus(150_000)}
 	orders := &fakeOrders{quoteAmount: 150_000, placedOrder: &restaurant.Order{ID: "order-42", TotalKobo: 150_000}}
@@ -362,11 +348,9 @@ func TestOnChargeSuccess_NotSuccessfulMovesNothing(t *testing.T) {
 	}
 }
 
-// ── OnChargeSuccess: amount mismatch → refund ────────────────────────────
-
 func TestOnChargeSuccess_AmountMismatchRefundsAndMarks(t *testing.T) {
 	gw := &fakeGateway{verifyStatus: successStatus(200_000)} // Paystack actually collected 200k
-	orders := &fakeOrders{quoteAmount: 150_000}               // but the frozen quote was 150k
+	orders := &fakeOrders{quoteAmount: 150_000}              // but the frozen quote was 150k
 	intents := newFakeIntents()
 	svc := NewService(gw, orders, intents, &fakeSettlementReverser{})
 
@@ -393,8 +377,6 @@ func TestOnChargeSuccess_AmountMismatchRefundsAndMarks(t *testing.T) {
 		t.Errorf("intent status = %s, want refunded", rec.Status)
 	}
 }
-
-// ── OnChargeSuccess: placement failure → refund ──────────────────────────
 
 func TestOnChargeSuccess_PlacementFailureRefundsAndMarksOrderFailed(t *testing.T) {
 	gw := &fakeGateway{verifyStatus: successStatus(150_000)}
@@ -457,12 +439,10 @@ func TestOnChargeSuccess_ConcurrentDeliveriesActOnce(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_, _ = svc.OnChargeSuccess(context.Background(), intent.Reference, "gw")
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -473,8 +453,6 @@ func TestOnChargeSuccess_ConcurrentDeliveriesActOnce(t *testing.T) {
 		t.Errorf("PlaceOrderPaystackFunded called %d times across concurrent deliveries, want exactly 1", placeCalls)
 	}
 }
-
-// ── CheckStatus self-heal ─────────────────────────────────────────────────
 
 func TestCheckStatus_SelfHealsPendingIntent(t *testing.T) {
 	gw := &fakeGateway{verifyStatus: successStatus(150_000)}

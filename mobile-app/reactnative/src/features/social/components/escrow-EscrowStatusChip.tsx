@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Lock, CheckCircle2, RotateCcw, ShieldAlert } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { SocialColors } from '../constants/social.constants';
 import type { EscrowStatus } from '../escrow';
 

@@ -1,9 +1,9 @@
 import { Tabs } from 'expo-router';
 import { View, Platform, StyleSheet } from 'react-native';
 import { LayoutDashboard, CalendarDays, MessageSquare, FolderOpen, Wallet } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 function TabIcon({ icon: Icon, focused }: { icon: React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; focused: boolean }) {
   return (

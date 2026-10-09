@@ -1,5 +1,3 @@
-// ── Sell wizard — screens 10–14 in one route (camera → publish) ──────────────
-//
 // Hosted as a single Expo Router route (`marketplace/sell/compose`, already
 // registered href:null in the marketplace tabs layout) that walks a five-step
 // draft flow with internal step state, so no new tab-level routes are added:
@@ -9,23 +7,19 @@
 //   12 attributes— dynamic form from the category attribute schema
 //   13 price     — live fair-price band, escrow toggle, delivery options
 //   14 preview   — Listing-Detail-style preview → Publish (create → submit)
-//
-// Publish = POST /listings (draft) then POST /listings/:id/submit. Success shows
 // "live in <5 min" for auto-approved categories, then routes to My Listings.
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-// Aliased: this screen already has a local `goBack` that steps back through
-// the wizard. Without the alias my call sites resolved to THAT function and
 // recursed into it with an argument it does not take.
 import { goBack as leaveScreen } from '@/lib/navigation';
 import * as ImagePicker from 'expo-image-picker';
 import { ArrowLeft, Camera, ImagePlus, CheckCircle2, ShieldCheck, Truck, MapPin, Handshake } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { sanitizeMoneyInput } from '@/utils/money';
 import {
@@ -71,7 +65,6 @@ function phashOf(uri: string): string {
 export default function SellWizard() {
   const [step, setStep] = useState<Step>('capture');
 
-  // ── Draft state ──
   const [photos, setPhotos] = useState<ComposerPhoto[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
@@ -83,14 +76,12 @@ export default function SellWizard() {
   const [escrowReady, setEscrowReady] = useState(true);
   const [delivery, setDelivery] = useState<Set<string>>(new Set(['pickup']));
 
-  // ── AI prefill ──
   const [aiResult, setAiResult] = useState<AiPrefillResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiDismissed, setAiDismissed] = useState(false);
 
   const categoriesQuery = useSellCategories();
   // Two-step picker. One flat row of every category was 84 chips deep once the
-  // taxonomy gained subcategories, and — worse — it let a seller file a listing
   // against a MAIN category. Nothing lives in a main: browsing one searches its
   // descendants, so a listing parked on the main itself would be invisible in
   // every subcategory and turn up only on the main's own page.
@@ -132,7 +123,6 @@ export default function SellWizard() {
     setCondition((prev) => (conditions.includes(prev) ? prev : conditions[0]));
   }, [conditions]);
 
-  // ── Live validation (composer step) ──
   const bannedMatches = useMemo(() => checkBannedPatterns(`${title} ${description}`), [title, description]);
   const wordCount = countWords(description);
   const hasDuplicatePhoto = useMemo(() => {
@@ -156,7 +146,6 @@ export default function SellWizard() {
   const attributesValid = requiredMissing.length === 0;
   const priceValid = priceKobo > 0;
 
-  // ── Photo capture (step 10) ──
   const addPhotos = async (fromCamera: boolean) => {
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()
@@ -202,7 +191,6 @@ export default function SellWizard() {
       void runAiPrefill(added[0]);
     }
 
-    // Upload each picked photo (presign → PUT). Non-blocking; the composer works
     // while uploads run, and Publish waits for fileUrls.
     for (const p of added) {
       const mimeType = p.mimeType || 'image/jpeg';
@@ -238,7 +226,6 @@ export default function SellWizard() {
     track('ai_prefill_accepted', {});
   };
 
-  // ── Publish (step 14) ──
   const handlePublish = async () => {
     if (!categoryId) return;
     const pendingUploads = photos.some((p) => p.uploading);
@@ -482,7 +469,6 @@ function StepBar({ step }: { step: Step }) {
   );
 }
 
-// ── Screen 10 — camera-first capture ──
 function CaptureScreen({ onCamera, onGallery }: { onCamera: () => void; onGallery: () => void }) {
   return (
     <View style={styles.capture}>
@@ -500,7 +486,6 @@ function CaptureScreen({ onCamera, onGallery }: { onCamera: () => void; onGaller
   );
 }
 
-// ── Screen 14 — Listing-Detail-style preview ──
 function ListingPreview(props: {
   photos: ComposerPhoto[];
   title: string;

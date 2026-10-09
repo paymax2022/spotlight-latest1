@@ -6,12 +6,10 @@ package orchestration
 // hold admin/console metadata + a money-approval DECISION record — NOT the money
 // path (no ledger, no balances; the actual value movement stays on the
 // transfer/conversion path).
-//
 // Tenant model: the FX account owner (the authenticated customer id) IS the
-// business/tenant, so every query is scoped by business_id (= customerID(c)) for
+// business/tenant, so every query is scoped by business_id (= ginutil.UserID(c)) for
 // object-level authorization. A nil store makes handlers fall back to honest
 // defaults so the app still renders in a DB-less dev setup.
-//
 // Requires migration 20260913000000_fx_business_admin.sql.
 
 import (
@@ -23,8 +21,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ─── Contract-shaped records (camelCase JSON mirrors mobile fx.types.ts) ───────
 
 // TeamMember is one RBAC seat under a business.
 type TeamMember struct {
@@ -106,22 +102,17 @@ type Notification struct {
 	Deeplink  *string `json:"deeplink,omitempty"`
 }
 
-// ─── Store interface ──────────────────────────────────────────────────────────
-
 // BusinessStore persists the FX business-admin console tables. An interface so
 // handlers stay testable and so a nil store degrades to honest defaults.
 type BusinessStore interface {
-	// Team
 	ListTeam(ctx context.Context, business string) ([]TeamMember, error)
 	UpdateMemberRole(ctx context.Context, business, id, role string) (TeamMember, bool, error)
 
-	// Approvals + thresholds
 	ListApprovals(ctx context.Context, business string) ([]Approval, error)
 	DecideApproval(ctx context.Context, business, id, decision, actor string) (Approval, bool, error)
 	ListThresholds(ctx context.Context, business string) ([]ApprovalThreshold, error)
 	UpdateThreshold(ctx context.Context, business, id string, amount int64, approvers int) (ApprovalThreshold, bool, error)
 
-	// Activity / audit
 	ListActivity(ctx context.Context, business string) ([]ActivityEvent, error)
 	LogActivity(ctx context.Context, business, actor, action string, target *string, kind string) error
 
@@ -130,7 +121,6 @@ type BusinessStore interface {
 	CreateAPIKey(ctx context.Context, business, label, mode, prefix, hash, secret string) (APIKey, error)
 	RotateAPIKey(ctx context.Context, business, id, prefix, hash, secret string) (APIKey, bool, error)
 
-	// Webhooks
 	ListWebhooks(ctx context.Context, business string) ([]Webhook, error)
 	CreateWebhook(ctx context.Context, business, url string, events []string) (Webhook, error)
 	UpdateWebhook(ctx context.Context, business, id string, enabled *bool, url *string, events []string) (Webhook, bool, error)
@@ -140,7 +130,6 @@ type BusinessStore interface {
 	GetSettings(ctx context.Context, business string) (FxSettings, error)
 	UpdateSettings(ctx context.Context, business string, patch FxSettingsPatch) (FxSettings, error)
 
-	// Notifications
 	ListNotifications(ctx context.Context, business string) ([]Notification, error)
 	MarkNotificationRead(ctx context.Context, business, id string) error
 	MarkAllNotificationsRead(ctx context.Context, business string) error
@@ -161,8 +150,6 @@ func tsPtr(t *time.Time) *string {
 	s := t.UTC().Format(time.RFC3339)
 	return &s
 }
-
-// ─── Team ─────────────────────────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListTeam(ctx context.Context, business string) ([]TeamMember, error) {
 	rows, err := s.db.Query(ctx, `
@@ -204,8 +191,6 @@ func (s *sqlBusinessStore) UpdateMemberRole(ctx context.Context, business, id, r
 	m.LastActiveAt = tsPtr(last)
 	return m, true, nil
 }
-
-// ─── Approvals + thresholds ───────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListApprovals(ctx context.Context, business string) ([]Approval, error) {
 	rows, err := s.db.Query(ctx, `
@@ -293,8 +278,6 @@ func (s *sqlBusinessStore) UpdateThreshold(ctx context.Context, business, id str
 	return t, true, nil
 }
 
-// ─── Activity / audit ─────────────────────────────────────────────────────────
-
 func (s *sqlBusinessStore) ListActivity(ctx context.Context, business string) ([]ActivityEvent, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, actor, action, target, kind, at
@@ -327,8 +310,6 @@ func (s *sqlBusinessStore) LogActivity(ctx context.Context, business, actor, act
 		newID("act"), business, actor, action, target, kind)
 	return err
 }
-
-// ─── API keys (hash-only) ─────────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListAPIKeys(ctx context.Context, business string) ([]APIKey, error) {
 	rows, err := s.db.Query(ctx, `
@@ -397,8 +378,6 @@ func (s *sqlBusinessStore) RotateAPIKey(ctx context.Context, business, id, prefi
 	return k, true, nil
 }
 
-// ─── Webhooks ─────────────────────────────────────────────────────────────────
-
 func (s *sqlBusinessStore) ListWebhooks(ctx context.Context, business string) ([]Webhook, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, url, events, enabled
@@ -466,8 +445,6 @@ func (s *sqlBusinessStore) DeleteWebhook(ctx context.Context, business, id strin
 	_, err := s.db.Exec(ctx, `DELETE FROM orch_fx_webhooks WHERE id=$1 AND business_id=$2`, id, business)
 	return err
 }
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
 
 // FxSettings mirrors the mobile FxSettings contract.
 type FxSettings struct {
@@ -585,8 +562,6 @@ func (s *sqlBusinessStore) UpdateSettings(ctx context.Context, business string, 
 	}
 	return cur, nil
 }
-
-// ─── Notifications ────────────────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListNotifications(ctx context.Context, business string) ([]Notification, error) {
 	rows, err := s.db.Query(ctx, `

@@ -25,7 +25,6 @@ function idempotencyKey(): string {
 
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_ME: MyCashtag = {
   handle: '@you',
   displayName: 'You',
@@ -96,8 +95,6 @@ const MOCK_POOLS: GroupPool[] = [
   },
 ];
 
-// ── Reads ────────────────────────────────────────────────────────────────────
-// Backend: GET /handle/me → { success, handle: Cashtag|null }. There is no
 // dedicated "my cashtag summary" endpoint (limits/avatar) yet — we merge the
 // handle response into the display shape and fall back to safe defaults for
 // the fields the backend doesn't return (MISSING: GET /me profile summary).
@@ -116,9 +113,10 @@ export async function getMyCashtag(): Promise<MyCashtag> {
 }
 
 // MISSING BACKEND ENDPOINT: no GET /api/finance/social/activity feed exists.
-// Falls back to the mock feed so the Activity screen still renders something
-// rather than a hard error; flip once the backend adds an activity endpoint.
+// The mock feed is dev-only: a deployed build shows an empty feed rather than
+// invented transactions. Flip once the backend adds an activity endpoint.
 export async function getActivity(): Promise<ActivityItem[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_ACTIVITY;
 }
@@ -140,22 +138,30 @@ export async function resolveCashtag(handle: string): Promise<Cashtag | null> {
 }
 
 // MISSING BACKEND ENDPOINT: no cashtag directory search exists server-side.
-// Falls back to the mock directory (client-side filter) until one ships.
+// Live mode can only resolve an exact handle; the mock directory (client-side
+// filter) is dev-only so invented people never appear as real send targets.
 export async function searchCashtags(query: string): Promise<Cashtag[]> {
-  await delay();
   const q = query.trim().toLowerCase().replace(/^@/, '');
+  if (!USE_MOCK) {
+    if (!q) return [];
+    const exact = await resolveCashtag(q);
+    return exact ? [exact] : [];
+  }
+  await delay();
   if (!q) return MOCK_DIRECTORY;
   return MOCK_DIRECTORY.filter((c) => c.handle.includes(q) || c.displayName.toLowerCase().includes(q));
 }
 
 // MISSING BACKEND ENDPOINT: no /contacts directory endpoint exists.
 export async function getContacts(): Promise<Cashtag[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_DIRECTORY;
 }
 
 // MISSING BACKEND ENDPOINT: no GET /splits (list) endpoint — only GET /splits/:id.
 export async function listSplits(): Promise<SplitBill[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_SPLITS;
 }
@@ -174,6 +180,7 @@ export async function getSplit(id: string): Promise<SplitBill> {
 
 // MISSING BACKEND ENDPOINT: no GET /pools (list) endpoint — only GET /pools/:id/balance.
 export async function listPools(): Promise<GroupPool[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_POOLS;
 }
@@ -195,7 +202,6 @@ export async function getPool(id: string): Promise<GroupPool> {
   return { ...cached, raisedKobo };
 }
 
-// ── Response mapping helpers ─────────────────────────────────────────────────
 interface SplitShareServer {
   id: string;
   name?: string;
@@ -227,7 +233,6 @@ function mapSplit(bill?: Record<string, unknown>, shares?: SplitShareServer[]): 
   };
 }
 
-// ── Mutations (each carries an Idempotency-Key) ──────────────────────────────
 // Backend: POST /send expects { handle, amount_kobo, note } → { success, payment }.
 export async function sendMoney(input: SendInput): Promise<PayResult> {
   if (USE_MOCK) { await delay(); return { id: `pay_${Date.now()}`, ok: true, status: 'completed' }; }
@@ -290,7 +295,6 @@ export async function createSplit(input: CreateSplitInput): Promise<SplitBill> {
   return mapSplit(body.bill, body.shares);
 }
 
-// Backend: POST /splits/:id/shares/:shareId/pay carries Idempotency-Key; body is
 // empty (amount is fixed by the share) → { success }. amountKobo is accepted
 // here for the mock path only.
 export async function paySplitShare(splitId: string, shareId: string, amountKobo: number): Promise<PayResult> {
@@ -331,7 +335,6 @@ export async function createPool(input: CreatePoolInput): Promise<GroupPool> {
   };
 }
 
-// Backend: POST /pools/:id/contribute expects { amount_kobo } (Idempotency-Key
 // header) → { success, balance_kobo }.
 export async function contributeToPool(poolId: string, amountKobo: number): Promise<ContributeResult> {
   if (USE_MOCK) {

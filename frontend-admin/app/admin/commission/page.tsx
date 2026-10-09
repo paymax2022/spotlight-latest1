@@ -187,7 +187,6 @@ export default function CommissionRatesPage() {
   );
 }
 
-// ── Edit / create modal ───────────────────────────────────────────────────────
 function ConfigModal({ title, form, setForm, onCancel, onSave, saving, error, isEdit }: {
   title: string; form: FormState; setForm: (f: FormState) => void;
   onCancel: () => void; onSave: () => void; saving: boolean; error: string | null; isEdit: boolean;

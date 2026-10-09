@@ -182,13 +182,11 @@ type VirtualAccount struct {
 	Status     string `json:"status"`
 	// ProviderRef is the provider's own handle for this account (Maplerad: the
 	// virtual account number). It is the join key that matches an inbound
-	// collection webhook back to this customer and currency. It was previously
-	// returned by the adapter as CollectionResult.ProviderRef and then thrown
-	// away, leaving `details->>'account_number'` as the only way in — a jsonb key
-	// is not a join key.
-	ProviderRef string                 `json:"-"`
-	Details     map[string]interface{} `json:"details"`
-	CreatedAt   time.Time              `json:"createdAt"`
+	// collection webhook back to this customer and currency — must be persisted;
+	// `details->>'account_number'` is a jsonb key, not a join key.
+	ProviderRef string         `json:"-"`
+	Details     map[string]any `json:"details"`
+	CreatedAt   time.Time      `json:"createdAt"`
 }
 
 // CollectionCredit is an inbound deposit into a provisioned virtual account, as
@@ -208,8 +206,6 @@ type CollectionCredit struct {
 	Reference       string
 	CreatedAt       time.Time
 }
-
-// --- Request bodies (normalized API) ---
 
 // QuoteRequest is POST /v1/quotes.
 type QuoteRequest struct {

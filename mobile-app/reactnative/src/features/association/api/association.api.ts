@@ -1,4 +1,3 @@
-// ── Association — API wrapper ─────────────────────────────────────────────────
 // Typed data layer the screens code against. Mirrors voting.api.ts /
 // crowdfunding.api.ts: mock-flagged, flip USE_MOCK (constants) to false once the
 // real /associations endpoints land.
@@ -25,7 +24,7 @@ import type {
   VoteReceipt,
   CardVerification,
 } from '../types/association.types';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import {
   MOCK_ORGANISATIONS,
   MOCK_DASHBOARD,
@@ -47,8 +46,6 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 // frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
 const notInFixtureMode = (action: string) =>
   new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
-
-// ─── Organisation discovery ───────────────────────────────────────────────────
 
 export async function getOrganisations(search?: string): Promise<OrganisationSummary[]> {
   if (USE_MOCK) {
@@ -79,8 +76,6 @@ export async function getOrganisation(id: string): Promise<Organisation> {
   return data;
 }
 
-// ─── Join / application flow ──────────────────────────────────────────────────
-
 export async function submitApplication(draft: JoinDraft): Promise<ApplicationResult> {
   if (USE_MOCK) throw notInFixtureMode('Submitting a membership application');
   // Served at /apply (not /members/apply) — /members is a static collection
@@ -90,8 +85,6 @@ export async function submitApplication(draft: JoinDraft): Promise<ApplicationRe
   });
   return data;
 }
-
-// ─── Member dashboard & identity ──────────────────────────────────────────────
 
 export async function getDashboard(): Promise<MemberDashboard> {
   if (USE_MOCK) { await delay(); return MOCK_DASHBOARD; }
@@ -138,8 +131,6 @@ export async function verifyMembershipCard(token: string): Promise<CardVerificat
   return data;
 }
 
-// ─── Member directory ─────────────────────────────────────────────────────────
-
 export async function getDirectory(query?: MemberDirectoryQuery): Promise<MemberProfileSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -165,8 +156,6 @@ export async function getMember(id: string): Promise<MemberProfile> {
   const { data } = await api.get(`${BASE}/members/${id}`);
   return data;
 }
-
-// ─── Dues & payments ──────────────────────────────────────────────────────────
 
 export async function getDues(): Promise<DuesSummary> {
   if (USE_MOCK) { await delay(); return MOCK_DUES; }
@@ -199,7 +188,6 @@ export async function payInvoice(
   return data;
 }
 
-// ─── Elections (TS-13) ────────────────────────────────────────────────────────
 // Wired to /associations/elections. In mock mode a single VOTING election is
 // served with a small in-memory ballot state so the vote flow is demoable.
 

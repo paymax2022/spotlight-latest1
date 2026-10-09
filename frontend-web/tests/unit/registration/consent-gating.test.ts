@@ -31,8 +31,6 @@ function makeChain(table: string) {
     maybeSingle: () => Promise.resolve({ data: { id: 'connect-contest-1' }, error: null }),
   };
   if (table === 'registrations') {
-    // .update({...}).eq('id', applicationId) is awaited directly with no
-    // .select()/.single() in the notes-write step; .then lets `await` on the
     // chain itself resolve, same as review-template-wiring.test.ts's mock.
     chain.then = (resolve: any) => resolve({ data: null, error: null });
   }
@@ -63,7 +61,7 @@ import { processContestantPhotoNoTemplate } from '@/src/server/registration/phot
 
 function baseRow(formData: Record<string, unknown>, contestSlug = 'reality-tv-show') {
   return {
-    id: 'app-1',
+    id: '11111111-1111-4111-8111-111111111111',
     reference: 'REALTV-000001-ABCD',
     // reality-tv-show is one of only two hand-tailored live forms that
     // literally collect BOTH media.rightsConfirmed and
@@ -101,7 +99,7 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       // media.rightsConfirmed absent
     });
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'approved' })).rejects.toThrow(
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' })).rejects.toThrow(
       /rights to the uploaded materials/i,
     );
     // No DB write attempted: the gate throws before the notes UPDATE, so
@@ -118,7 +116,7 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       'publicProfile.publicVotingConsent': false,
     });
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'approved' })).rejects.toThrow(
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' })).rejects.toThrow(
       /public voting visibility/i,
     );
     expect(rpcMock).not.toHaveBeenCalled();
@@ -130,7 +128,7 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       // neither key present
     });
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'approved' })).rejects.toThrow();
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' })).rejects.toThrow();
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
@@ -142,7 +140,7 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       'media.photoUrl': 'https://cdn.test/raw-photo.jpg',
     });
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'approved' })).resolves.toBeDefined();
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' })).resolves.toBeDefined();
     expect(rpcMock).toHaveBeenCalled();
   });
 
@@ -151,7 +149,6 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
     // support public voting" — that template never renders
     // publicProfile.publicVotingConsent, so form_data never carries it.
     // Requiring it unconditionally here would permanently block every
-    // film-academy approval; gating on derived.supportsVoting avoids that
     // regression while still enforcing the universal rights confirmation.
     registrationsRow = baseRow(
       {
@@ -164,7 +161,7 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       'film-academy',
     );
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'selected_for_bootcamp' })).resolves.toBeDefined();
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'selected_for_bootcamp' })).resolves.toBeDefined();
     expect(rpcMock).toHaveBeenCalled();
   });
 
@@ -178,7 +175,7 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       'film-academy',
     );
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'selected_for_bootcamp' })).rejects.toThrow(
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'selected_for_bootcamp' })).rejects.toThrow(
       /rights to the uploaded materials/i,
     );
     expect(rpcMock).not.toHaveBeenCalled();
@@ -200,13 +197,13 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
       'open-mic-competition',
     );
 
-    await expect(reviewRegistrationApplication('app-1', { status: 'approved' })).resolves.toBeDefined();
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' })).resolves.toBeDefined();
     expect(rpcMock).toHaveBeenCalled();
   });
 
   it('does not run the consent gate for a non-promoting status', async () => {
     registrationsRow = baseRow({}); // no consent flags at all
-    await expect(reviewRegistrationApplication('app-1', { status: 'rejected' })).resolves.toBeDefined();
+    await expect(reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'rejected' })).resolves.toBeDefined();
   });
 });
 
@@ -360,7 +357,7 @@ describe('SEC-010/RG-003/EC-006: submitRegistrationApplication records consent a
     const insertedRows: any[] = [];
 
     const draftRow = {
-      id: 'app-2',
+      id: '22222222-2222-4222-8222-222222222222',
       reference: 'OPENMI-000002-EFGH',
       contest_slug: 'open-mic-competition',
       status: 'draft',
@@ -405,7 +402,6 @@ describe('SEC-010/RG-003/EC-006: submitRegistrationApplication records consent a
     // Stub the step builder so this test is decoupled from open-mic's full
     // required-field list (which would make it brittle against unrelated
     // future form edits) — validateStepData itself stays REAL, exercising the
-    // actual code path submitRegistrationApplication calls; it is only fed a
     // minimal step containing exactly the two consent fields, both already
     // satisfied by draftRow.form_data above, so validation genuinely passes
     // and the insert this test asserts on genuinely fires.
@@ -425,7 +421,7 @@ describe('SEC-010/RG-003/EC-006: submitRegistrationApplication records consent a
 
     const { submitRegistrationApplication } = await import('@/src/server/registration/supabase-store');
 
-    const result = await submitRegistrationApplication('app-2');
+    const result = await submitRegistrationApplication('22222222-2222-4222-8222-222222222222');
     expect(result.success).toBe(true);
 
     expect(insertedRows).toHaveLength(2);
@@ -435,7 +431,7 @@ describe('SEC-010/RG-003/EC-006: submitRegistrationApplication records consent a
     const voting = insertedRows.find((r) => r.consent_key === 'publicProfile.publicVotingConsent');
     expect(rights.accepted).toBe(true);
     expect(voting.accepted).toBe(false); // reflects form_data as-is, not assumed true
-    expect(rights.registration_id).toBe('app-2');
+    expect(rights.registration_id).toBe('22222222-2222-4222-8222-222222222222');
     expect(rights.ip_address).toBeNull();
     expect(rights.device_fingerprint).toBeNull();
 

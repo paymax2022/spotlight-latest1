@@ -1,35 +1,26 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: unfreezing a campaign restores the status freeze replaced.
-//
 // WHY THIS EXISTS
-// ---------------
 // Both freeze paths wrote FROZEN and both unfreeze paths wrote ACTIVE
 // unconditionally. So freezing a campaign that was AWAITING REVIEW and then
 // releasing the freeze APPROVED it: live to the public, with no review decision
 // ever taken. An operator freezing a suspicious submission to investigate — the
 // exact reason freeze exists — published it by undoing the freeze.
-//
 // Nothing failed when this happened. The campaign simply changed state, the
 // audit row said "unfreeze", and no row anywhere claimed an approval.
-//
 // The cases below are the ones that make a naive fix wrong:
 //   - freeze from PENDING_REVIEW must come back to PENDING_REVIEW, not ACTIVE
 //   - freeze from ACTIVE must still come back to ACTIVE
 //   - freezing twice must not overwrite the memory with FROZEN itself
 //   - a campaign frozen before the column existed (no memory) falls back to
 //     ACTIVE, which is the old behaviour and must not regress
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Unfreeze -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

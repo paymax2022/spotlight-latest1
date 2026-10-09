@@ -1,17 +1,22 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// GET /api/admin/privileges — Get privileges for all users
+// E2E-SEC-054: was gated on requireRequestUser only — any signed-in user could
+// enumerate every user's role/permission assignments. RBAC inventory is
+// roles:manage territory, same as /api/admin/users-roles.
+//
+// Residual fix: the user list read `.from('auth.users')`, which PostgREST does
+// not expose → every gated call 500'd. public.user_profiles carries the same
+// id + email columns and is the store every other BFF route reads.
 export async function GET(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'roles:manage');
     const supabase = createAdminClient();
 
-    // Get all users with their roles and permissions
     const { data: usersData, error: usersError } = await supabase
-      .from('auth.users')
+      .from('user_profiles')
       .select(`
         id,
         email
@@ -50,7 +55,6 @@ export async function GET(request: Request) {
 
     if (userPermError) throw userPermError;
 
-    // Build module structure
     const moduleMap: { [key: string]: Set<string> } = {
       'estate.admin': new Set(),
       'platform': new Set(),
@@ -58,28 +62,22 @@ export async function GET(request: Request) {
       'marketplace': new Set(),
     };
 
-    // Process user data with their permissions
     const result = (usersData ?? []).map((u: any) => {
       const modules: { [key: string]: { name: string; permissions: string[]; isActive: boolean } } = {};
 
-      // Get roles for user
       const userRolesList = (userRoles ?? []).filter((ur: any) => ur.user_id === u.id);
       const roleIds = userRolesList.map((ur: any) => ur.role_id);
 
-      // Get permissions from roles
       const rolePerms = (rolePermissions ?? [])
         .filter((rp: any) => roleIds.includes(rp.role_id))
         .map((rp: any) => rp.permissions.slug);
 
-      // Get direct user permissions
       const directPerms = (userPermissions ?? [])
         .filter((up: any) => up.user_id === u.id)
         .map((up: any) => up.permissions.slug);
 
-      // Combine permissions
       const allPerms = [...new Set([...rolePerms, ...directPerms])];
 
-      // Organize by module
       Object.keys(moduleMap).forEach((mod) => {
         const modPerms = allPerms.filter((p: string) => p.startsWith(mod));
         modules[mod] = {

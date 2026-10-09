@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 // Service is the trading fund's money-path orchestrator. ALL cash moves through
@@ -24,6 +25,7 @@ type Service struct {
 	gate      AccessGate
 	feeBps    int64
 	hurdleBps int64
+	tiers     walletDebitLimiter
 }
 
 // AccessGate is the Module-KYC access check (§16B.1). Deposits are refused unless
@@ -34,8 +36,51 @@ type AccessGate interface {
 	HasTradingAccess(ctx context.Context, userID string) (bool, error)
 }
 
+// walletDebitLimiter is the minimal seam the Subscribe money path depends on
+// for the fail-closed KYC-tier / daily-debit gate (E2E-FIN-046). *tiers.Service
+// satisfies it in production; unit tests inject a fake via WithTiers. The
+// AccessGate above only answers "may this account use the trading module" — it
+// does NOT bound how much cash may leave the wallet per day. A subscribe debit
+// moves cash out of the wallet into the fund clearing account, so the STRICT
+// gate is used: it is not a checkout purchase, so the Tier-0 checkout
+// allowance (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// NewService builds the trading fund wallet service. The tier-limit gate is
+// constructed from the same pool (tiers.NewService needs only the DB), so no
+// extra wiring is required at the call site — same convention as
+// social.NewService. A nil pool leaves the gate nil, and the subscribe debit
+// then fails closed via ErrTierGateUnwired.
 func NewService(pool *pgxpool.Pool, led *ledger.Service, gate AccessGate, feeBps, hurdleBps int64) *Service {
-	return &Service{pool: pool, repo: NewRepository(pool), led: led, gate: gate, feeBps: feeBps, hurdleBps: hurdleBps}
+	s := &Service{pool: pool, repo: NewRepository(pool), led: led, gate: gate, feeBps: feeBps, hurdleBps: hurdleBps}
+	if pool != nil {
+		s.tiers = tiers.NewService(pool)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the subscribe
+// wallet debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical
+// transfer rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over
+// daily cap → ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate
+// refuses via ErrTierGateUnwired. The error is propagated UNWRAPPED so the
+// handler maps the tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // Sentinel errors (mapped to HTTP by the handler).
@@ -53,6 +98,10 @@ var (
 	// units awaiting an idempotent re-drive of the payout).
 	ErrDebitPending  = errors.New("trading: deposit cash leg pending confirmation, retry")
 	ErrCreditPending = errors.New("trading: redemption payout pending confirmation, retry")
+	// ErrTierGateUnwired is returned when the service has no tier gate — a nil
+	// gate must fail CLOSED, never debit ungated (mirrors
+	// social.ErrTierGateUnwired; E2E-FIN-046).
+	ErrTierGateUnwired = errors.New("trading: money path requires a tier gate (not wired)")
 )
 
 // clearing returns the fund clearing standing account id.
@@ -157,7 +206,7 @@ func (s *Service) reserveSubscribe(ctx context.Context, userID, idemKey string, 
 			return nil, gerr
 		}
 		if prior == nil {
-			return nil, fmt.Errorf("subscribe reserve race: reservation vanished")
+			return nil, errors.New("subscribe reserve race: reservation vanished")
 		}
 		return prior, nil
 	}
@@ -174,6 +223,14 @@ func (s *Service) ensureSubscribeDebit(ctx context.Context, userID string, order
 		return err
 	} else if posted {
 		return nil // cash already durably moved on a prior attempt
+	}
+	// Tier gate (fail-closed, E2E-FIN-046): a subscribe debits the wallet into
+	// the fund clearing account, so the same EnforceWalletDebitLimit the
+	// transfer rail applies runs BEFORE money moves — a refused attempt posts
+	// zero ledger legs and mints no units. Replays whose leg already posted
+	// returned above, so a completed deposit never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, userID, order.CashKobo); err != nil {
+		return err
 	}
 	err := s.led.Debit(ctx, userID, order.LedgerRef, walletKey, clearingAcct, order.CashKobo)
 	if err == nil {
@@ -435,18 +492,12 @@ func (s *Service) Reconcile(ctx context.Context, toleranceKobo int64) (Reconcile
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	// The active integrity guard is UNIT-projection consistency: the summed
-	// per-user units MUST equal what the immutable order + fee journals imply
-	// (Σ order deltas − Σ fee burns). A torn write — units changed without a
-	// journal row, or vice-versa — shows up here.
-	//
-	// The cash side: in this paper foundation the fund holds only cash, so AUM ≡
-	// the ledger clearing balance and the AUM-vs-clearing check is tautologically
-	// satisfied (we pass clearingBal for both). The journal member-cash total
-	// (jt.ExpectedClearingKobo) is NOT used as the cash oracle because it excludes
-	// trading P&L (clearing − memberCash = net realized P&L). When real position
-	// valuation lands, aumKobo becomes cash + Σ position mark-to-market and this
-	// check becomes a genuine cross-check; until then unit-consistency is the guard.
+	// The active integrity guard is UNIT-projection consistency: summed per-user
+	// units MUST equal what the immutable order + fee journals imply — a torn
+	// write shows up here. The fund holds only cash, so AUM ≡ the clearing
+	// balance and the AUM check is tautological (clearingBal passed twice);
+	// jt.ExpectedClearingKobo is not the cash oracle because it excludes trading
+	// P&L. When position valuation lands this becomes a genuine cross-check.
 	_ = jt.ExpectedClearingKobo // reserved for the position-valuation phase
 	return Reconcile(sumUnits, jt.ExpectedUnits, clearingBal, clearingBal, toleranceKobo), nil
 }
@@ -456,4 +507,149 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+const (
+	// UnitScale is the number of integer fund units that represent ONE whole
+	// unit — i.e. fractional-unit precision (6 dp). A holding of UnitScale units
+	UnitScale int64 = 1_000_000
+
+	// ParNAVKobo is the NAV of ONE WHOLE unit at fund inception (before any P&L),
+	// used to bootstrap the very first deposit when no units exist yet. ₦10,000.
+	ParNAVKobo int64 = 1_000_000
+)
+
+// NAVPerUnitKobo returns the mark-to-market NAV of ONE WHOLE unit, in kobo:
+// When no units are outstanding the fund is at inception, so NAV is par. A fund
+// whose AUM has gone to zero while units remain has NAV 0 (correctly worthless);
+// the deposit path guards against minting at NAV 0.
+func NAVPerUnitKobo(aumKobo, totalUnits int64) int64 {
+	if totalUnits <= 0 {
+		return ParNAVKobo
+	}
+	if aumKobo <= 0 {
+		return 0
+	}
+	r := new(big.Int).Mul(big.NewInt(aumKobo), big.NewInt(UnitScale))
+	r.Quo(r, big.NewInt(totalUnits))
+	if !r.IsInt64() {
+		return 0
+	}
+	nav := r.Int64()
+	if nav <= 0 {
+		// AUM is positive but tiny relative to units, so the truncated division
+		// floored to 0. Returning 0 here would make BOTH mint and redeem refuse
+		// (they reject NAV 0), freezing the pool — a griefable DoS. A fund that
+		// still holds value floors NAV at 1 kobo/unit so mint/redeem stay
+		// operable. (A near-zero NAV should also trip defensive-mode at the
+		// service layer per the brief; this floor only stops the pure math from
+		// bricking the fund.)
+		return 1
+	}
+	return nav
+}
+
+// UnitsForCash returns the fund units minted for a cash deposit at a given NAV:
+//
+//	units = cashKobo * UnitScale / navPerUnitKobo   (truncated DOWN)
+//
+// Truncating down means a depositor never receives units worth more than their
+// cash — the residual accrues to the pool, never diluting existing holders. Mint
+// is refused (0) at non-positive NAV or cash, or on overflow.
+func UnitsForCash(cashKobo, navPerUnitKobo int64) int64 {
+	if cashKobo <= 0 || navPerUnitKobo <= 0 {
+		return 0
+	}
+	r := new(big.Int).Mul(big.NewInt(cashKobo), big.NewInt(UnitScale))
+	r.Quo(r, big.NewInt(navPerUnitKobo))
+	if !r.IsInt64() {
+		return 0
+	}
+	return r.Int64()
+}
+
+// CashForUnits returns the cash (kobo) a holding of units is worth at a given NAV
+// — used both for redemption payout and mark-to-market valuation:
+//
+//	cash = units * navPerUnitKobo / UnitScale   (truncated DOWN)
+//
+// Truncating down means a redeemer is never paid more than their units are worth;
+// the residual stays in the pool. Returns 0 on non-positive inputs or overflow.
+func CashForUnits(units, navPerUnitKobo int64) int64 {
+	if units <= 0 || navPerUnitKobo <= 0 {
+		return 0
+	}
+	r := new(big.Int).Mul(big.NewInt(units), big.NewInt(navPerUnitKobo))
+	r.Quo(r, big.NewInt(UnitScale))
+	if !r.IsInt64() {
+		return 0
+	}
+	return r.Int64()
+}
+
+// ValueOfUnits is CashForUnits — the mark-to-market kobo value of a unit holding.
+// Named separately so valuation call sites read clearly vs redemption payout.
+func ValueOfUnits(units, navPerUnitKobo int64) int64 { return CashForUnits(units, navPerUnitKobo) }
+
+// High-water-mark performance fee — pure integer math (§3.5).
+// A performance fee is charged ONLY on new net profit above the holder's previous
+// peak NAV (the high-water mark), so a user who loses and then recovers is never
+// charged twice for the same gains. An optional hurdle raises the threshold NAV
+// the fund must clear before ANY fee applies. All arithmetic is integer kobo with
+// big.Int intermediates; the fee always rounds DOWN (never over-charges the user).
+
+// PerformanceFee computes the performance fee (kobo) on a unit holding at
+// assessment time, and the new high-water mark to persist.
+//
+//	navNowKobo   – current NAV per whole unit
+//	hwmKobo      – holder's previous high-water mark (NAV per whole unit); at
+//	               inception this is the par NAV
+//	units        – holder's units (scaled by UnitScale)
+//	feeBps       – performance fee rate in basis points (e.g. 2000 = 20%)
+//	hurdleBps    – optional hurdle in bps applied to the HWM (0 = pure HWM);
+//	               fee accrues only on NAV above hwm*(1+hurdle)
+//
+// Returns feeKobo (>= 0) and newHWMKobo. The high-water mark advances to the new
+// peak ONLY when a fee is actually crystallized (navNow clears the hurdle
+// threshold); on a no-fee period the HWM is left UNCHANGED. Advancing on an
+// un-charged peak would inflate the next period's hurdle base and permanently
+// exempt the intermediate gains from a legitimate fee — so the mark tracks the
+// level up to which fees have been PAID, never merely the highest NAV touched.
+// The HWM never ratchets down, so recovering a drawdown pays no fee until the
+// prior fee-paid peak is exceeded.
+func PerformanceFee(navNowKobo, hwmKobo, units, feeBps, hurdleBps int64) (int64, int64) {
+	var newHWMKobo = hwmKobo // default: unchanged unless a fee crystallizes below
+	// feeBps must be a sane rate in (0, 10000]; a misconfigured rate fails closed
+	// (no fee, no HWM move) rather than over-charging the client.
+	if units <= 0 || feeBps <= 0 || feeBps > 10_000 || hurdleBps < 0 || navNowKobo <= 0 || hwmKobo < 0 {
+		return 0, newHWMKobo
+	}
+
+	// thresholdNav = hwm + hwm*hurdleBps/10000 (the NAV that must be cleared).
+	threshold := new(big.Int).Set(big.NewInt(hwmKobo))
+	if hurdleBps > 0 {
+		h := new(big.Int).Mul(big.NewInt(hwmKobo), big.NewInt(hurdleBps))
+		h.Quo(h, big.NewInt(10_000))
+		threshold.Add(threshold, h)
+	}
+
+	navNow := big.NewInt(navNowKobo)
+	if navNow.Cmp(threshold) <= 0 {
+		return 0, hwmKobo // at/below threshold → no fee, HWM UNCHANGED
+	}
+
+	// gainPerWholeUnit = navNow - threshold   (kobo per whole unit)
+	gainPerUnit := new(big.Int).Sub(navNow, threshold)
+	// profitKobo = gainPerUnit * units / UnitScale   (holder's kobo profit above threshold)
+	profit := new(big.Int).Mul(gainPerUnit, big.NewInt(units))
+	profit.Quo(profit, big.NewInt(UnitScale))
+	// feeKobo = profit * feeBps / 10000   (truncate down)
+	fee := profit.Mul(profit, big.NewInt(feeBps))
+	fee.Quo(fee, big.NewInt(10_000))
+
+	if !fee.IsInt64() || fee.Sign() < 0 {
+		return 0, hwmKobo // fail closed on overflow / degenerate — HWM unchanged
+	}
+	// Fee crystallized: advance the mark to the new fee-paid peak.
+	return fee.Int64(), navNowKobo
 }

@@ -2,6 +2,7 @@ package tutor
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -9,8 +10,6 @@ import (
 // the KYC verification gate, payout idempotency (double request = one rail call) and
 // insufficient-balance rejection, and the DERIVED earnings-balance summation. The Service
 // is driven through a small in-memory fake store + fake KYCChecker + counting PayoutRail.
-
-// ── Payout SM: allowed + illegal ──────────────────────────────────────────────────
 
 func TestCanPayout_Allowed(t *testing.T) {
 	if !canPayout(PayoutRequested, PayoutPaid) {
@@ -37,8 +36,6 @@ func TestCanPayout_Illegal(t *testing.T) {
 		}
 	}
 }
-
-// ── In-memory fakes ────────────────────────────────────────────────────────────────
 
 type fakeKYC struct {
 	tier int
@@ -272,8 +269,6 @@ func newTestService(store tutorStore, kyc KYCChecker, rail PayoutRail) *Service 
 	return &Service{repo: store, kyc: kyc, payout: rail}
 }
 
-// ── KYC gate: tier 0 → rejected, tier 1 → verified ────────────────────────────────
-
 func TestVerifyTutor_KYCGate(t *testing.T) {
 	ctx := context.Background()
 
@@ -281,7 +276,7 @@ func TestVerifyTutor_KYCGate(t *testing.T) {
 	f := newFakeStore()
 	f.seedTutor("t1", "u1", TutorPending)
 	s := newTestService(f, fakeKYC{tier: 0}, newFakeRail())
-	if _, err := s.VerifyTutor(ctx, "admin", "t1"); err != ErrKYCNotMet {
+	if _, err := s.VerifyTutor(ctx, "admin", "t1"); !errors.Is(err, ErrKYCNotMet) {
 		t.Fatalf("tier 0 must reject with ErrKYCNotMet, got %v", err)
 	}
 	if f.tutors["t1"].Status == TutorVerified {
@@ -306,15 +301,13 @@ func TestVerifyTutor_KYCErrorFailsClosed(t *testing.T) {
 	f := newFakeStore()
 	f.seedTutor("t1", "u1", TutorPending)
 	s := newTestService(f, fakeKYC{err: context.DeadlineExceeded}, newFakeRail())
-	if _, err := s.VerifyTutor(context.Background(), "admin", "t1"); err != ErrKYCNotMet {
+	if _, err := s.VerifyTutor(context.Background(), "admin", "t1"); !errors.Is(err, ErrKYCNotMet) {
 		t.Errorf("KYC read error must fail closed with ErrKYCNotMet, got %v", err)
 	}
 	if f.tutors["t1"].Status == TutorVerified {
 		t.Error("KYC error must NOT verify the tutor")
 	}
 }
-
-// ── RequestPayout idempotency: double request = one rail call ─────────────────────
 
 func TestRequestPayout_Idempotent_SingleRailCall(t *testing.T) {
 	ctx := context.Background()
@@ -355,8 +348,6 @@ func TestRequestPayout_Idempotent_SingleRailCall(t *testing.T) {
 	}
 }
 
-// ── RequestPayout insufficient balance → reject (no rail call) ────────────────────
-
 func TestRequestPayout_InsufficientBalance(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
@@ -365,7 +356,7 @@ func TestRequestPayout_InsufficientBalance(t *testing.T) {
 	rail := newFakeRail()
 	s := newTestService(f, fakeKYC{tier: 1}, rail)
 
-	if _, err := s.RequestPayout(ctx, "u1", 30_000, "idem-x"); err != ErrInsufficientBalance {
+	if _, err := s.RequestPayout(ctx, "u1", 30_000, "idem-x"); !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("expected ErrInsufficientBalance, got %v", err)
 	}
 	if f.insertCnt != 0 {
@@ -376,8 +367,6 @@ func TestRequestPayout_InsufficientBalance(t *testing.T) {
 	}
 }
 
-// ── RequestPayout requires an Idempotency-Key + positive amount ───────────────────
-
 func TestRequestPayout_Guards(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
@@ -385,18 +374,16 @@ func TestRequestPayout_Guards(t *testing.T) {
 	f.seedPending("t1", 50_000)
 	s := newTestService(f, fakeKYC{tier: 1}, newFakeRail())
 
-	if _, err := s.RequestPayout(ctx, "u1", 30_000, ""); err != ErrIdempotencyRequired {
+	if _, err := s.RequestPayout(ctx, "u1", 30_000, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Errorf("missing idem key must reject with ErrIdempotencyRequired, got %v", err)
 	}
-	if _, err := s.RequestPayout(ctx, "u1", 0, "k"); err != ErrInvalidAmount {
+	if _, err := s.RequestPayout(ctx, "u1", 0, "k"); !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("zero amount must reject with ErrInvalidAmount, got %v", err)
 	}
-	if _, err := s.RequestPayout(ctx, "u1", -5, "k"); err != ErrInvalidAmount {
+	if _, err := s.RequestPayout(ctx, "u1", -5, "k"); !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("negative amount must reject with ErrInvalidAmount, got %v", err)
 	}
 }
-
-// ── RequestPayout on rail error → failed ──────────────────────────────────────────
 
 func TestRequestPayout_RailError_MarksFailed(t *testing.T) {
 	ctx := context.Background()
@@ -420,8 +407,6 @@ func TestRequestPayout_RailError_MarksFailed(t *testing.T) {
 	}
 }
 
-// ── Earnings balance is DERIVED via SUM(pending) ─────────────────────────────────
-
 func TestEarningsBalance_DerivedFromPendingSum(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
@@ -442,8 +427,6 @@ func TestEarningsBalance_DerivedFromPendingSum(t *testing.T) {
 	}
 }
 
-// ── Paying out flips covered pending earnings to paid (derived balance drops) ──────
-
 func TestRequestPayout_FlipsCoveredEarnings(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
@@ -460,8 +443,6 @@ func TestRequestPayout_FlipsCoveredEarnings(t *testing.T) {
 		t.Errorf("after a 20000 payout, pending must be 20000, got %d", bal)
 	}
 }
-
-// ── Onboard is idempotent on the user ─────────────────────────────────────────────
 
 func TestOnboardTutor_IdempotentOnUser(t *testing.T) {
 	ctx := context.Background()
@@ -480,8 +461,6 @@ func TestOnboardTutor_IdempotentOnUser(t *testing.T) {
 		t.Errorf("re-onboard must return the SAME tutor, got %q != %q", t1.ID, t2.ID)
 	}
 }
-
-// ── Stub rails are deterministic + idempotent (no vendor leak) ────────────────────
 
 func TestStubRails(t *testing.T) {
 	ctx := context.Background()

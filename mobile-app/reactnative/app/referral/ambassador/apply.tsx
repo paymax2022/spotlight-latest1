@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ShieldCheck, Check, Megaphone, Users, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -182,7 +182,6 @@ export default function AmbassadorApplyScreen() {
         <PrimaryButton
           label="Submit application"
           onPress={onSubmit}
-          // The backend rejects an unaccepted disclosure with 400; gating here
           // makes that a visible precondition rather than a failed request.
           disabled={!accepted || apply.isPending}
           loading={apply.isPending}

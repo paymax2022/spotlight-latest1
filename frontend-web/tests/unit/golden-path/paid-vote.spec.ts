@@ -13,8 +13,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest, withAuth, makeInitiateResult, makeVerifyResult, makeSupabaseMock } from './_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -35,18 +33,17 @@ vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { POST as initiatePost } from '../../../app/api/votes/paid/initiate/route';
 import { POST as verifyPost } from '../../../app/api/votes/paid/verify/route';
 import { initiatePaidVote, verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import { createClient } from '@/lib/supabase/server';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function makeInitiateBody(overrides: Record<string, unknown> = {}) {
   return {
-    contestId: 'contest-001',
+    // uuid-shaped: the route shape-checks contestId before calling the service
+    // (voting_settings.contest_id is a uuid column — malformed ids 500 on
+    // Postgres 22P02).
+    contestId: '99999999-9999-4999-8999-999999999999',
     contestantId: 'contestant-abc',
     voterEmail: 'voter@example.com',
     voterName: 'Test Voter',
@@ -62,8 +59,6 @@ function makeVerifyBody(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
-// ── Tests: initiate ───────────────────────────────────────────────────────────
 
 describe('POST /api/votes/paid/initiate', () => {
   beforeEach(() => {
@@ -105,6 +100,19 @@ describe('POST /api/votes/paid/initiate', () => {
     expect(body.error).toMatch(/contestId/i);
   });
 
+  // Malformed-id gate: non-uuid contestId fed into the uuid
+  // voting_settings.contest_id column surfaced as 22P02 → 500 on prod.
+  it('should return 400 on a non-uuid contestId without calling the service', async () => {
+    const res = await initiatePost(
+      makeRequest('/api/votes/paid/initiate', { body: makeInitiateBody({ contestId: 'bogus' }) }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/uuid/i);
+    expect(vi.mocked(initiatePaidVote)).not.toHaveBeenCalled();
+  });
+
   it('should return 400 when voterEmail is missing', async () => {
     const res = await initiatePost(
       makeRequest('/api/votes/paid/initiate', { body: makeInitiateBody({ voterEmail: undefined }) }),
@@ -137,8 +145,6 @@ describe('POST /api/votes/paid/initiate', () => {
     expect(body.error).toMatch(/packageId|customVoteQuantity/i);
   });
 });
-
-// ── Tests: verify ─────────────────────────────────────────────────────────────
 
 describe('POST /api/votes/paid/verify', () => {
   beforeEach(() => {

@@ -3,20 +3,19 @@ package association
 import (
 	"context"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	platformWS "spotlight/backend/internal/platform/ws"
 
 	"github.com/gin-gonic/gin"
-
-	platformWS "spotlight/backend/internal/platform/ws"
 )
 
-// Handlers for the remaining endpoint groups. Error→HTTP via statusFor.
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
+// Handlers for the remaining endpoint groups. Error→HTTP via errMap.
 
 func (h *Handler) GetNotificationPrefs(c *gin.Context) {
-	v, err := h.svc.GetNotificationPrefs(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetNotificationPrefs(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -25,21 +24,21 @@ func (h *Handler) GetNotificationPrefs(c *gin.Context) {
 func (h *Handler) UpdateNotificationPrefs(c *gin.Context) {
 	var b NotificationPrefs
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	v, err := h.svc.UpdateNotificationPrefs(c.Request.Context(), c.GetString("user_id"), b)
+	v, err := h.svc.UpdateNotificationPrefs(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetSecurity(c *gin.Context) {
-	v, err := h.svc.GetSecuritySettings(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetSecuritySettings(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -48,21 +47,21 @@ func (h *Handler) GetSecurity(c *gin.Context) {
 func (h *Handler) UpdateSecurity(c *gin.Context) {
 	var b SecuritySettings
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	v, err := h.svc.UpdateSecuritySettings(c.Request.Context(), c.GetString("user_id"), b)
+	v, err := h.svc.UpdateSecuritySettings(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetPreferences(c *gin.Context) {
-	v, err := h.svc.GetPreferences(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetPreferences(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -71,58 +70,56 @@ func (h *Handler) GetPreferences(c *gin.Context) {
 func (h *Handler) UpdatePreferences(c *gin.Context) {
 	var b Preferences
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	v, err := h.svc.UpdatePreferences(c.Request.Context(), c.GetString("user_id"), b)
+	v, err := h.svc.UpdatePreferences(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetDevices(c *gin.Context) {
-	v, err := h.svc.GetDevices(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetDevices(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) RevokeDevice(c *gin.Context) {
-	if err := h.svc.RevokeDevice(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.RevokeDevice(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ─── Support ──────────────────────────────────────────────────────────────────
-
 func (h *Handler) GetFaqs(c *gin.Context) {
 	v, err := h.svc.GetFaqs(c.Request.Context())
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) ListTickets(c *gin.Context) {
-	v, err := h.svc.GetTickets(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetTickets(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetTicket(c *gin.Context) {
-	v, err := h.svc.GetTicket(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	v, err := h.svc.GetTicket(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -131,12 +128,12 @@ func (h *Handler) GetTicket(c *gin.Context) {
 func (h *Handler) CreateTicket(c *gin.Context) {
 	var b CreateTicketInput
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	id, err := h.svc.CreateTicket(c.Request.Context(), c.GetString("user_id"), b)
+	id, err := h.svc.CreateTicket(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id})
@@ -147,35 +144,32 @@ func (h *Handler) ReplyTicket(c *gin.Context) {
 		Body string `json:"body" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	m, err := h.svc.ReplyTicket(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Body)
+	m, err := h.svc.ReplyTicket(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Body)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, m)
 }
 
-// ─── Chat ─────────────────────────────────────────────────────────────────────
-
 // ServeWS upgrades the connection to the caller's own realtime stream. The
 // member is resolved from RequireAuthContext (Bearer JWT already validated);
 // hub.ServeHTTP registers the connection keyed by user id, so a message posted
 // by any member of a thread fans out to every other member allowed to read it.
-//
 // Replaces Supabase Realtime for group chat: the same open-source WebSocket
 // stack (platform/ws) the food, mobility and doctor streams already use, so chat
 // delivery no longer depends on a hosted realtime service.
 func (h *Handler) ServeWS(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
 		return
 	}
 	if h.hub == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "realtime not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "realtime not configured"})
 		return
 	}
 	// On success the connection is hijacked; an error here means the upgrade
@@ -187,7 +181,6 @@ func (h *Handler) ServeWS(c *gin.Context) {
 // the sender (who already has it from the POST response). Best-effort: the write
 // is durable by the time this runs, so a push failure must never change the
 // response.
-//
 // The audience comes from ChatThreadAudience — the SAME scope gate the read
 // paths apply — so an ordinary member is never pushed the body of an executive
 // or committee message they could not fetch.
@@ -214,18 +207,18 @@ func (h *Handler) pushChatMessage(ctx context.Context, threadID, senderID string
 }
 
 func (h *Handler) ListChatThreads(c *gin.Context) {
-	v, err := h.svc.GetChatThreads(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetChatThreads(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetChatThread(c *gin.Context) {
-	v, err := h.svc.GetChatThread(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	v, err := h.svc.GetChatThread(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -236,17 +229,17 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 		Body string `json:"body" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	m, err := h.svc.SendChatMessage(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Body)
+	m, err := h.svc.SendChatMessage(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Body)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	// The row is committed; tell the thread's other members now rather than
 	// leaving them to discover it on their next fetch.
-	h.pushChatMessage(c.Request.Context(), c.Param("id"), c.GetString("user_id"), m)
+	h.pushChatMessage(c.Request.Context(), c.Param("id"), ginutil.UserID(c), m)
 	c.JSON(http.StatusCreated, m)
 }
 
@@ -256,85 +249,81 @@ func (h *Handler) MuteChatThread(c *gin.Context) {
 		Muted bool `json:"muted"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.MuteThread(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Muted); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.MuteThread(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Muted); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ─── AI notes ─────────────────────────────────────────────────────────────────
-
 func (h *Handler) ListAiNotes(c *gin.Context) {
-	v, err := h.svc.GetAiNotes(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.GetAiNotes(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetAiNote(c *gin.Context) {
-	v, err := h.svc.GetAiNote(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	v, err := h.svc.GetAiNote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
 }
 
 func (h *Handler) GetAiNoteStatus(c *gin.Context) {
-	status, err := h.svc.GetAiNoteStatus(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	status, err := h.svc.GetAiNoteStatus(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": status})
+	c.JSON(http.StatusOK, gin.H{keyStatus: status})
 }
 
 func (h *Handler) CreateAiNote(c *gin.Context) {
 	var b CreateAiNoteInput
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	id, status, err := h.svc.CreateAiNote(c.Request.Context(), c.GetString("user_id"), b)
+	id, status, err := h.svc.CreateAiNote(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"id": id, "status": status})
+	c.JSON(http.StatusAccepted, gin.H{"id": id, keyStatus: status})
 }
 
 func (h *Handler) ApproveAiNote(c *gin.Context) {
-	if err := h.svc.SetAiNoteStatus(c.Request.Context(), c.GetString("user_id"), c.Param("id"), "APPROVED", "MINUTES_APPROVE"); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.SetAiNoteStatus(c.Request.Context(), ginutil.UserID(c), c.Param("id"), "APPROVED", "MINUTES_APPROVE"); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) PublishAiNote(c *gin.Context) {
-	if err := h.svc.SetAiNoteStatus(c.Request.Context(), c.GetString("user_id"), c.Param("id"), "PUBLISHED", "MINUTES_PUBLISH"); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.SetAiNoteStatus(c.Request.Context(), ginutil.UserID(c), c.Param("id"), "PUBLISHED", "MINUTES_PUBLISH"); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) ConvertActionItem(c *gin.Context) {
-	taskID, err := h.svc.ConvertActionItem(c.Request.Context(), c.GetString("user_id"), c.Param("id"), c.Param("itemId"))
+	taskID, err := h.svc.ConvertActionItem(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("itemId"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"taskId": taskID})
 }
-
-// ─── Join ─────────────────────────────────────────────────────────────────────
 
 func (h *Handler) ValidateInvite(c *gin.Context) { h.validateCode(c, "INVITE") }
 
@@ -343,12 +332,12 @@ func (h *Handler) ValidateAccessCode(c *gin.Context) { h.validateCode(c, "ACCESS
 func (h *Handler) validateCode(c *gin.Context, kind string) {
 	var b CodeRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.svc.ValidateCode(c.Request.Context(), kind, b.Code)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -357,18 +346,16 @@ func (h *Handler) validateCode(c *gin.Context, kind string) {
 func (h *Handler) SubmitApplication(c *gin.Context) {
 	var b JoinDraft
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	res, err := h.svc.SubmitApplication(c.Request.Context(), c.GetString("user_id"), b)
+	res, err := h.svc.SubmitApplication(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
 func (h *Handler) ImportPreview(c *gin.Context) {
 	// Parse the uploaded CSV (multipart form field "file"). org_id is taken from
@@ -377,17 +364,17 @@ func (h *Handler) ImportPreview(c *gin.Context) {
 	orgID := c.Query("org_id")
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "multipart file 'file' required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "multipart file 'file' required"})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	fileName := ""
 	if header != nil {
 		fileName = header.Filename
 	}
-	v, err := h.svc.ImportPreview(c.Request.Context(), c.GetString("user_id"), orgID, fileName, file)
+	v, err := h.svc.ImportPreview(c.Request.Context(), ginutil.UserID(c), orgID, fileName, file)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, v)
@@ -398,30 +385,134 @@ func (h *Handler) ConfirmImport(c *gin.Context) {
 	// batchId is required, so a bind error must not be swallowed the way it was
 	// before — the old code ignored the body entirely and confirmed nothing.
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	res, err := h.svc.ConfirmImport(c.Request.Context(), c.GetString("user_id"), b.BatchID, b.SendInvites)
+	res, err := h.svc.ConfirmImport(c.Request.Context(), ginutil.UserID(c), b.BatchID, b.SendInvites)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
 
-// ─── Organisation publish ─────────────────────────────────────────────────────
-
 func (h *Handler) PublishOrganisation(c *gin.Context) {
 	var b OrgDraft
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	b.IdempotencyKey = c.GetHeader("Idempotency-Key")
-	res, err := h.svc.PublishOrganisation(c.Request.Context(), c.GetString("user_id"), b)
+	b.IdempotencyKey = ginutil.IdempotencyKey(c)
+	res, err := h.svc.PublishOrganisation(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
+}
+
+// Election endpoints. Officer actions are org-scoped inside the service
+// (requireElectionOfficer); voter actions are fail-closed on eligibility + window.
+
+func (h *Handler) ListElections(c *gin.Context) {
+	v, err := h.svc.ListElections(c.Request.Context(), ginutil.UserID(c), c.Query("org_id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+func (h *Handler) GetElection(c *gin.Context) {
+	v, err := h.svc.GetElection(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+func (h *Handler) CreateElection(c *gin.Context) {
+	var in CreateElectionInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	id, err := h.svc.CreateElection(c.Request.Context(), ginutil.UserID(c), c.Query("org_id"), in)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (h *Handler) AddElectionCandidate(c *gin.Context) {
+	var in AddCandidateInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	id, err := h.svc.AddCandidate(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (h *Handler) OpenElection(c *gin.Context) {
+	if err := h.svc.OpenElection(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) CloseElection(c *gin.Context) {
+	if err := h.svc.CloseElection(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) PublishElectionResults(c *gin.Context) {
+	res, err := h.svc.PublishResults(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func (h *Handler) HandoverElection(c *gin.Context) {
+	res, err := h.svc.HandoverElection(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func (h *Handler) GetElectionTally(c *gin.Context) {
+	res, err := h.svc.Tally(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func (h *Handler) CastVote(c *gin.Context) {
+	var in CastVoteInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	receipt, err := h.svc.CastVote(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, receipt)
 }

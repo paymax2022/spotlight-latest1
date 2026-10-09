@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"errors"
+	"spotlight/backend/go-common/dbutil"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,7 +80,7 @@ func (r *Repository) ReserveOrder(ctx context.Context, o FundOrder) (dup bool, e
 			(user_id,kind,cash_kobo,units_delta,nav_per_unit_kobo,ledger_ref,idempotency_key,settled)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,false)
 		ON CONFLICT (idempotency_key) DO NOTHING`,
-		o.UserID, o.Kind, o.CashKobo, o.UnitsDelta, o.NAVPerUnitKobo, nullIfEmpty(o.LedgerRef), o.IdempotencyKey)
+		o.UserID, o.Kind, o.CashKobo, o.UnitsDelta, o.NAVPerUnitKobo, dbutil.NullStr(o.LedgerRef), o.IdempotencyKey)
 	if err != nil {
 		return false, err
 	}
@@ -94,7 +95,7 @@ func (r *Repository) SettleOrder(ctx context.Context, idem string) (alreadySettl
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var userID string
 	var delta int64
@@ -135,14 +136,14 @@ func (r *Repository) RecordRedeem(ctx context.Context, o FundOrder) (dup bool, e
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx, `
 		INSERT INTO public.trading_fund_orders
 			(user_id,kind,cash_kobo,units_delta,nav_per_unit_kobo,ledger_ref,idempotency_key,settled)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,true)
 		ON CONFLICT (idempotency_key) DO NOTHING`,
-		o.UserID, o.Kind, o.CashKobo, o.UnitsDelta, o.NAVPerUnitKobo, nullIfEmpty(o.LedgerRef), o.IdempotencyKey)
+		o.UserID, o.Kind, o.CashKobo, o.UnitsDelta, o.NAVPerUnitKobo, dbutil.NullStr(o.LedgerRef), o.IdempotencyKey)
 	if err != nil {
 		return false, err
 	}
@@ -160,11 +161,11 @@ func (r *Repository) RecordRedeem(ctx context.Context, o FundOrder) (dup bool, e
 
 // FeeAccrual is a performance-fee journal row.
 type FeeAccrual struct {
-	UserID                        string
-	Period                        string
-	NAVNowKobo, HWMBefore, HWMAfter int64
+	UserID                           string
+	Period                           string
+	NAVNowKobo, HWMBefore, HWMAfter  int64
 	ProfitKobo, FeeKobo, UnitsBurned int64
-	IdempotencyKey, LedgerRef     string
+	IdempotencyKey, LedgerRef        string
 }
 
 // GetFeeByIdem returns a previously-recorded fee accrual for replay, or nil.
@@ -190,14 +191,14 @@ func (r *Repository) RecordFeeAccrual(ctx context.Context, a FeeAccrual) (dup bo
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx, `
 		INSERT INTO public.trading_fee_accruals
 			(user_id,period,nav_now_kobo,hwm_before_kobo,hwm_after_kobo,profit_kobo,fee_kobo,units_burned,ledger_ref,idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (idempotency_key) DO NOTHING`,
-		a.UserID, nullIfEmpty(a.Period), a.NAVNowKobo, a.HWMBefore, a.HWMAfter, a.ProfitKobo, a.FeeKobo, a.UnitsBurned, nullIfEmpty(a.LedgerRef), a.IdempotencyKey)
+		a.UserID, dbutil.NullStr(a.Period), a.NAVNowKobo, a.HWMBefore, a.HWMAfter, a.ProfitKobo, a.FeeKobo, a.UnitsBurned, dbutil.NullStr(a.LedgerRef), a.IdempotencyKey)
 	if err != nil {
 		return false, err
 	}
@@ -237,7 +238,7 @@ func (r *Repository) InsertNAVSnapshot(ctx context.Context, navPerUnit, totalUni
 		INSERT INTO public.trading_nav_snapshots (nav_per_unit_kobo,total_units,aum_kobo,clearing_kobo,idempotency_key)
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE SET nav_per_unit_kobo=EXCLUDED.nav_per_unit_kobo
-		RETURNING id`, navPerUnit, totalUnits, aumKobo, clearingKobo, nullIfEmpty(idem)).Scan(&id)
+		RETURNING id`, navPerUnit, totalUnits, aumKobo, clearingKobo, dbutil.NullStr(idem)).Scan(&id)
 	return id, err
 }
 
@@ -264,9 +265,50 @@ func (r *Repository) JournalTotals(ctx context.Context) (JournalTotals, error) {
 	return jt, err
 }
 
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
+// Reconciliation — the fund-integrity invariant the brief makes a first-class
+// control (§3.4, §7.7): internal state must match the ledger, and any divergence
+// beyond tolerance halts trading. Pure check; the caller supplies the numbers
+// (sum of per-user unit rows, recorded total units, mark-to-market AUM, and the
+// cash balance of the fund clearing ledger account).
+// In this paper/accounting foundation the fund holds only cash in the clearing
+// account (no venue positions), so mark-to-market AUM must equal that cash
+// balance exactly (tolerance covers rounding dust only). Once real positions
+// exist, AUM becomes cash + MTM(positions) and this check is extended — never
+// relaxed.
+
+// ReconcileResult reports the outcome of a fund-integrity check.
+type ReconcileResult struct {
+	OK           bool  // both invariants hold within tolerance
+	UnitsOK      bool  // Σ per-user units == recorded total units
+	AUMOK        bool  // |AUM − clearing balance| ≤ tolerance
+	UnitDrift    int64 // sumUserUnits − totalUnits (0 when consistent)
+	AUMDriftKobo int64 // aumKobo − clearingBalanceKobo
+}
+
+// Reconcile checks the two fund invariants. Units must match EXACTLY (units are
+// integer and every mint/redeem writes both the per-user row and the total in one
+// transaction — any drift is a bug, not rounding). AUM may differ from the
+// clearing balance by at most toleranceKobo (sub-unit valuation dust).
+func Reconcile(sumUserUnits, totalUnits, aumKobo, clearingBalanceKobo, toleranceKobo int64) ReconcileResult {
+	unitDrift := sumUserUnits - totalUnits
+	aumDrift := aumKobo - clearingBalanceKobo
+
+	tol := toleranceKobo
+	if tol < 0 {
+		tol = -tol
 	}
-	return s
+	absAUM := aumDrift
+	if absAUM < 0 {
+		absAUM = -absAUM
+	}
+
+	unitsOK := unitDrift == 0
+	aumOK := absAUM <= tol
+	return ReconcileResult{
+		OK:           unitsOK && aumOK,
+		UnitsOK:      unitsOK,
+		AUMOK:        aumOK,
+		UnitDrift:    unitDrift,
+		AUMDriftKobo: aumDrift,
+	}
 }

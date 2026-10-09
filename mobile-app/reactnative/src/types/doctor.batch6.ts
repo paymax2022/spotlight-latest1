@@ -1,10 +1,7 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 6 Domain Types ──────────────
-// Batch 6 = spec sections W · X · Y · Z — Medical Records · Notifications ·
 // Earnings/Wallet/Payout · Ratings/Reviews/Reputation. This is CONSOLIDATED and
 // leans HEAVILY on Phase 1 / Phase 2 / Phase 3 / Section B work. Earlier shapes
 // are imported and re-exported, NEVER duplicated. Money amounts are integers in
 // minor units (kobo). Use `import type` for type-only imports.
-//
 // Sections:
 //   W — Medical Records: REUSE PatientRecordHub / RecordDocument /
 //       RecordAccessEntry / RecordDiagnosisEntry (Phase 2) + the dependent/pet
@@ -25,14 +22,12 @@
 //       ranking insight, improvement recommendations and review disputes.
 
 import type {
-  // ── REUSE: Phase 1 primitives ──
   PatientSummary,
   DoctorNotification,
   DoctorNotificationType,
   EarningsSummary,
   PayoutItem,
 } from '@/types/doctor';
-// ── REUSE: Phase 2 rich records / reputation / payout shapes ──
 import type {
   PatientRecordHub,
   RecordDocument,
@@ -47,12 +42,9 @@ import type {
   PayoutReport,
   PayoutPeriodBreakdown,
 } from '@/types/doctor.phase2';
-// ── REUSE: Phase 3 analytics ──
 import type { QualityAnalytics } from '@/types/doctor.phase3';
-// ── REUSE: Section B bank account (do NOT redeclare) ──
 import type { BankAccount } from '@/types/doctor.profile';
 
-// Re-export the primitives Batch 6 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   PatientSummary,
@@ -78,9 +70,7 @@ export type {
 export type { QualityAnalytics } from '@/types/doctor.phase3';
 export type { BankAccount } from '@/types/doctor.profile';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION W — MEDICAL RECORDS (18)
-// ═══════════════════════════════════════════════════════════════════════════
 // Consolidated. The per-patient consultation / prescription / lab / document /
 // imaging / allergy / medication / diagnosis / care-plan / referral / HMO /
 // dependent / pet histories are all VIEWS over the Phase 2 PatientRecordHub and
@@ -88,7 +78,6 @@ export type { BankAccount } from '@/types/doctor.profile';
 // 18 separate shapes. ADD: a records dashboard, a category index, restriction
 // warnings, and download/share descriptors.
 
-// ─── W.1 Record categories (the 18 record sub-screens collapse to these) ──────
 export type RecordCategory =
   | 'consultations'
   | 'prescriptions'
@@ -104,7 +93,6 @@ export type RecordCategory =
   | 'dependents'
   | 'pets';
 
-// ─── W.2 Doctor records dashboard (recent patients + counts + quick links) ────
 export interface RecordCategoryCount {
   category:    RecordCategory;
   count:       number;
@@ -125,7 +113,6 @@ export interface DoctorRecordsDashboard {
   pendingShares:   number;       // share-with-specialist requests in flight
 }
 
-// ─── W.3 Per-patient category index (counts + lastUpdated per category) ───────
 export interface PatientRecordIndexEntry {
   category:     RecordCategory;
   count:        number;
@@ -157,12 +144,11 @@ export interface RestrictedRecordWarning {
   detectedAt:  string;           // ISO datetime
 }
 
-// ─── W.5 Download / share descriptors ────────────────────────────────────────
 export type RecordExportFormat = 'pdf' | 'fhir_json' | 'csv';
 
 export interface RecordDownloadDescriptor {
   patientId:   string;
-  categories:  RecordCategory[]; // empty = full record
+  categories:  RecordCategory[];
   format:      RecordExportFormat;
   fileName:    string;
   url?:        string;           // Phase C: signed download URL
@@ -185,16 +171,13 @@ export interface RecordShare {
   note?:         string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION X — NOTIFICATIONS (17)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES DoctorNotification / DoctorNotificationType. The 17 notification
 // sub-screens are KINDS of one notification, not separate shapes: a richer
 // `DoctorNotificationKind` superset drives icon/severity/cta, and a
 // `RichNotification` composes the Phase 1 DoctorNotification with kind/category/
 // severity/cta/group.
 
-// ─── X.1 Notification kind superset (additive to DoctorNotificationType) ──────
 export type DoctorNotificationKind =
   | 'new_appointment'
   | 'appointment_cancelled'
@@ -213,7 +196,6 @@ export type DoctorNotificationKind =
   | 'rating_review'
   | 'support_response';
 
-// ─── X.2 Notification category (grouping + filters) ──────────────────────────
 export type NotificationCategory =
   | 'appointments'
   | 'messages'
@@ -229,13 +211,11 @@ export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical';
 
 export type NotificationFilter = 'all' | 'unread' | NotificationCategory;
 
-// ─── X.3 Call-to-action descriptor (deep-link target) ────────────────────────
 export interface NotificationCta {
   label:  string;                // "View appointment"
   route:  string;                // expo-router path, e.g. "/(doctor)/appointments/123"
 }
 
-// ─── X.4 Rich notification (COMPOSES Phase 1 DoctorNotification) ─────────────
 export interface RichNotification extends DoctorNotification {
   kind:      DoctorNotificationKind;
   category:  NotificationCategory;
@@ -244,7 +224,6 @@ export interface RichNotification extends DoctorNotification {
   groupKey?: string;             // dedupe / collapse key, e.g. "thread-7C1B88"
 }
 
-// ─── X.5 Notification group (collapsed by category / day) ────────────────────
 export interface NotificationGroup {
   key:           string;         // category id or "YYYY-MM-DD"
   label:         string;         // "Today", "Appointments"
@@ -252,7 +231,6 @@ export interface NotificationGroup {
   notifications: RichNotification[];
 }
 
-// ─── X.6 Notification preferences (per category × channel) ───────────────────
 export interface NotificationPreference {
   category:  NotificationCategory;
   label:     string;
@@ -261,15 +239,12 @@ export interface NotificationPreference {
   sms:       boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION Y — EARNINGS, WALLET & PAYOUT (19)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES EarningsSummary / PayoutItem (Phase 1) + PayoutReport /
 // PayoutPeriodBreakdown (Phase 2) + the Section B BankAccount. ADD an earnings
 // breakdown by source/period, a wallet balance, payout detail, invoices,
 // commission breakdown, tax/VAT report and settlement disputes. All money kobo.
 
-// ─── Y.1 Earnings breakdown by source × period ───────────────────────────────
 export type EarningsSource = 'consult' | 'hmo' | 'vet' | 'bonus';
 export type EarningsPeriod = 'today' | 'week' | 'month';
 
@@ -293,7 +268,6 @@ export interface EarningsBreakdown {
   periods:      EarningsPeriodTotals[]; // today / week / month
 }
 
-// ─── Y.2 Wallet balance (available / pending / ledger) ───────────────────────
 export interface WalletLedgerEntry {
   id:          string;
   label:       string;           // "Consult fee — TM-9F2A41", "Payout — PO-2026-014"
@@ -309,7 +283,6 @@ export interface WalletBalance {
   ledger:        WalletLedgerEntry[];
 }
 
-// ─── Y.3 Payout detail (extends the Phase 1 PayoutItem row) ──────────────────
 export type PayoutDetailStatus = 'pending' | 'processing' | 'paid' | 'failed';
 
 export interface PayoutDetail {
@@ -328,7 +301,6 @@ export interface PayoutDetail {
   sessionId?:    string;         // provider settlement session id (Phase C)
 }
 
-// ─── Y.4 Invoices ────────────────────────────────────────────────────────────
 export interface InvoiceLineItem {
   description: string;           // "Teleconsultation — Tunde A."
   quantity:    number;
@@ -350,7 +322,6 @@ export interface Invoice {
   status:      InvoiceStatus;
 }
 
-// ─── Y.5 Commission breakdown ────────────────────────────────────────────────
 export interface CommissionTier {
   source:           EarningsSource;
   grossKobo:        number;
@@ -367,7 +338,6 @@ export interface CommissionBreakdown {
   tiers:           CommissionTier[]; // per source
 }
 
-// ─── Y.6 Tax / VAT report ────────────────────────────────────────────────────
 export interface TaxVatReport {
   rangeLabel:    string;         // "Jan – Jun 2026 (FY2026)"
   grossKobo:     number;
@@ -380,7 +350,6 @@ export interface TaxVatReport {
   vatNumber?:    string;
 }
 
-// ─── Y.7 Settlement dispute ──────────────────────────────────────────────────
 export type SettlementDisputeStatus = 'open' | 'under_review' | 'resolved' | 'rejected';
 
 export interface SettlementDispute {
@@ -396,9 +365,7 @@ export interface SettlementDispute {
   resolutionNote?: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION Z — RATINGS, REVIEWS & REPUTATION (12)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES ReputationSummary / DoctorReview / RatingBreakdown / ReputationMetrics
 // (Phase 2) + QualityAnalytics (Phase 3). The rating dashboard, patient reviews,
 // vet client reviews and the response-time / completion-rate / satisfaction
@@ -406,7 +373,6 @@ export interface SettlementDispute {
 // composite quality score, a ranking insight, improvement recommendations and
 // review disputes.
 
-// ─── Z.1 Per-consult feedback ────────────────────────────────────────────────
 export type ConsultFeedbackChannel = 'human' | 'vet';
 
 export interface ConsultationFeedback {
@@ -420,7 +386,6 @@ export interface ConsultationFeedback {
   createdAt:   string;           // ISO datetime
 }
 
-// ─── Z.2 Composite quality score ─────────────────────────────────────────────
 export type QualityScoreGrade = 'excellent' | 'good' | 'fair' | 'needs_attention';
 
 export interface QualityScoreFactor {
@@ -437,7 +402,6 @@ export interface QualityScore {
   updatedAt:  string;            // ISO datetime
 }
 
-// ─── Z.3 Ranking insight (percentile + peer compare) ─────────────────────────
 export interface RankingPeerStat {
   label:       string;           // "Avg rating", "Response time"
   yourValue:   number;
@@ -455,7 +419,6 @@ export interface RankingInsight {
   movementPlaces:   number;      // ranks gained/lost
 }
 
-// ─── Z.4 Improvement recommendation ──────────────────────────────────────────
 export type ImprovementPriority = 'high' | 'medium' | 'low';
 
 export interface ImprovementRecommendation {
@@ -467,7 +430,6 @@ export interface ImprovementRecommendation {
   potentialUpliftPct?: number;   // estimated score uplift
 }
 
-// ─── Z.5 Review dispute ──────────────────────────────────────────────────────
 export type ReviewDisputeReason =
   | 'not_my_patient'
   | 'factually_incorrect'
@@ -489,16 +451,13 @@ export interface ReviewDispute {
   decisionNote?: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
 
-// ─── Section W ────────────────────────────────────────────────────────────────
 export interface DownloadPatientRecordInput {
   patientId:      string;
-  categories:     RecordCategory[]; // empty = full record
+  categories:     RecordCategory[];
   format:         RecordExportFormat;
   idempotencyKey: string;
 }
@@ -535,7 +494,6 @@ export interface RequestRecordAccessResult {
   requested: boolean;
 }
 
-// ─── Section X ────────────────────────────────────────────────────────────────
 export interface MarkNotificationReadInput {
   notificationId: string;
   idempotencyKey: string;
@@ -547,7 +505,7 @@ export interface MarkNotificationReadResult {
 }
 
 export interface MarkAllNotificationsReadInput {
-  category?:      NotificationCategory; // omit = all categories
+  category?:      NotificationCategory;
   idempotencyKey: string;
 }
 
@@ -564,10 +522,9 @@ export interface UpdateNotificationPrefsResult {
   preferences: NotificationPreference[];
 }
 
-// ─── Section Y ────────────────────────────────────────────────────────────────
 export interface WithdrawEarningsInput {
   amountKobo:     number;
-  bankAccount?:   BankAccount;   // omit = use saved payout account
+  bankAccount?:   BankAccount;
   idempotencyKey: string;
 }
 
@@ -601,7 +558,6 @@ export interface RaiseSettlementDisputeResult {
   status:    SettlementDisputeStatus;
 }
 
-// ─── Section Z ────────────────────────────────────────────────────────────────
 export interface DisputeReviewInput {
   reviewId:       string;
   reason:         ReviewDisputeReason;

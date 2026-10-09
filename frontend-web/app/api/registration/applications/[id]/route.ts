@@ -6,11 +6,15 @@ import { buildAccountPrefill } from '@/src/features/registration/account-prefill
 import type { RegistrationStepKey } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 
+// registrations.id is uuid — a malformed id makes getRegistrationDraft throw a
+// Postgres 22P02 which lands as a 500 instead of a clean 400.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
     // Validate param
-    if (!params?.id || typeof params.id !== 'string') {
+    if (!params?.id || typeof params.id !== 'string' || !UUID_RE.test(params.id)) {
       return errorResponse('Invalid application ID', 400);
     }
 
@@ -45,8 +49,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
     });
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Failed to load registration application: ${detail}`, 500);
+    return handleApiError(error, 'Failed to load registration application');
   }
 }
 
@@ -54,7 +57,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const params = await ctx.params;
   try {
     // Validate param
-    if (!params?.id || typeof params.id !== 'string') {
+    if (!params?.id || typeof params.id !== 'string' || !UUID_RE.test(params.id)) {
       return errorResponse('Invalid application ID', 400);
     }
 
@@ -96,15 +99,31 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    if (error instanceof Error && error.message === 'Application not found') {
+    // supabase-store throws 'Application not found.' (trailing period) — a
+    // prefix match covers both spellings so the race between the existence
+    // check above and the save can't fall through to the 500 branch.
+    if (error instanceof Error && error.message.startsWith('Application not found')) {
       console.warn('[registration/applications PATCH] application not found during save:', params.id);
       return errorResponse('Application not found', 404);
+    }
+    // Input-guard errors thrown by saveRegistrationStep are client errors, not
+    // server faults — a bogus stepKey previously fell through to the generic
+    // 500 below. 422 matches the sibling /step adapter's validation status.
+    if (error instanceof Error && error.message === 'Invalid step key.') {
+      return errorResponse('Invalid step key', 422);
+    }
+    if (
+      error instanceof Error &&
+      (error.message === 'Step key is required' ||
+        error.message === 'Values must be a non-empty object' ||
+        error.message === 'Invalid application ID')
+    ) {
+      return errorResponse(error.message, 400);
     }
     console.error('[registration/applications PATCH] error for', params.id, {
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
     });
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Failed to save registration step: ${detail}`, 500);
+    return handleApiError(error, 'Failed to save registration step');
   }
 }

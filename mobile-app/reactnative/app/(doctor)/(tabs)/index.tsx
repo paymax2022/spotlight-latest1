@@ -8,11 +8,11 @@ import {
   Inbox, Users, MessageSquare, Smile, Video, AlertTriangle, ShieldAlert, UserCog, CalendarClock, Pill, RefreshCw, BadgeCheck,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
 import SectionHeader from '@/components/SectionHeader';
 import { formatKobo } from '@/api/doctor.api';
 import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useUpdateSettings, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
@@ -62,7 +62,6 @@ export default function DoctorDashboardScreen() {
   const { data: settings } = useSettings();
   const updateSettings = useUpdateSettings();
 
-  // ── Section D — consolidated dashboard aggregate ──
   const { data: dashboard, isError: dashError, refetch: refetchDash } = useDashboard();
   const { data: announcement } = useAnnouncement();
   const setPresence = useSetPresence();

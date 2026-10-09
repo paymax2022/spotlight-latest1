@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminSession } from '../../../_lib/require-admin-session';
 
 let _supabase: SupabaseClient | null = null;
 function supabase(): SupabaseClient {
@@ -13,7 +14,6 @@ function supabase(): SupabaseClient {
 }
 
 // GET contestant votes
-// Next 15 made route params async: the second argument is a Promise and must
 // be awaited. The sync `{ params: { id: string } }` shape is a build-time type
 // error, not just a deprecation warning.
 export async function GET(
@@ -21,9 +21,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!(await requireAdminSession(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { id } = await params;
 
-    // Fetch contestant votes from database
     const { data: adminVotes, error: votesError } = await supabase()
       .from('admin_votes')
       .select('*')
@@ -34,7 +36,6 @@ export async function GET(
       throw votesError;
     }
 
-    // Fetch audit log
     const { data: auditLog, error: auditError } = await supabase()
       .from('vote_audit_log')
       .select('*')
@@ -45,7 +46,6 @@ export async function GET(
       throw auditError;
     }
 
-    // Fetch vote stats
     const { data: voteStats, error: statsError } = await supabase()
       .from('contestant_vote_stats')
       .select('*')
@@ -81,6 +81,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!(await requireAdminSession(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { id } = await params;
     const body = await req.json();
     const { voteCount, adminName, adminId, competitionId } = body;
@@ -92,7 +95,6 @@ export async function POST(
       );
     }
 
-    // Get current vote count
     const { data: existingVotes } = await supabase()
       .from('admin_votes')
       .select('*')
@@ -137,7 +139,6 @@ export async function POST(
       throw auditError;
     }
 
-    // Update vote stats
     const { error: statsError } = await supabase()
       .from('contestant_vote_stats')
       .upsert({

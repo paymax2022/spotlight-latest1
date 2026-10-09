@@ -1,9 +1,7 @@
 package app
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: the WhatsApp health-triage driver resolves a real user by
 // phone.
-//
 // health_triage_routes.go's StartOrContinue used to look the caller up against
 // auth.users.phone directly — a query the service_role pgx pool cannot even run
 // (Supabase never grants service_role SELECT on the auth schema; see
@@ -16,13 +14,10 @@ package app
 // user_profiles, matching on the national significant number the same way
 // sign-in already does (services.NormalizePhone + user_profiles_phone_nsn_idx),
 // since stored phones are not normalised.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset — same gate as the other live-DB
 // suites in this package (see internal_ledger_routes_test.go).
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./internal/app/... -run HealthTriage_ -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

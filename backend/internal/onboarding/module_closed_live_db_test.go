@@ -3,7 +3,6 @@ package onboarding_test
 // LIVE-DB test for CreateApplication's module/merchant-type "closed" enforcement.
 // Regression for the gap where an OPEN merchant type under a CLOSED module was
 // still applyable (create checked the type status only, not the module status).
-//
 // Skips unless TEST_DATABASE_URL is set. onb_application.user_id has
 // no hard FK, so a random uuid works as the caller.
 
@@ -56,9 +55,9 @@ func TestLiveDB_CreateApplication_ModuleClosedEnforced(t *testing.T) {
 		t.Fatalf("seed type: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM onb_application WHERE merchant_type_id=$1`, typeID)
-		pool.Exec(context.Background(), `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
-		pool.Exec(context.Background(), `DELETE FROM onb_module WHERE id=$1`, modID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM onb_application WHERE merchant_type_id=$1`, typeID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM onb_module WHERE id=$1`, modID)
 	})
 
 	// Open type, CLOSED module → must be rejected (the fix).

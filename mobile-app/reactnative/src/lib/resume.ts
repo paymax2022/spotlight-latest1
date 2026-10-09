@@ -1,11 +1,9 @@
-// ── Resume-after-blocker ─────────────────────────────────────────────────────
 // A tiny app-wide store for "intelligent dynamic routing": when a blocker (the
 // transaction-PIN gate, a KYC step-up, or any future gate) interrupts a user
 // mid-flow, we remember exactly where they were (route + params). Once the
 // blocker is resolved, resumeOrFallback() sends them back to continue — and,
 // because the target can carry params, the destination screen can re-open the
 // action they were taking (e.g. the Back-a-Driver sheet).
-//
 // Deliberately a module singleton (not React state): the value must survive
 // navigation across the blocker screens without a provider.
 

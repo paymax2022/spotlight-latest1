@@ -1,5 +1,4 @@
 // Paymax Connect — Mentorship types (Phase 6 §6.6, MN-01..03).
-//
 // SAFETY / INVARIANTS (Phase 6 §2):
 //  PN-7  Mentorship discovery must NOT cross-leak Dating-mode profile signals.
 //        MentorProfile therefore carries professional fields ONLY (no photos-of,

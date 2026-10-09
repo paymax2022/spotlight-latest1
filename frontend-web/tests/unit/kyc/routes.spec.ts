@@ -6,8 +6,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makeRequest } from '../golden-path/_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -27,14 +25,10 @@ vi.mock('@/src/server/kyc/service', () => ({
   initiateKyc: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { GET } from '../../../app/api/v1/kyc/me/route';
 import { POST } from '../../../app/api/v1/kyc/initiate/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { getKycProfile, initiateKyc } from '@/src/server/kyc/service';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_USER = { id: 'user-001', email: 'test@example.com' };
 
@@ -56,8 +50,6 @@ function unverifiedProfile() {
     document_type: null,
   };
 }
-
-// ── Tests: GET /api/v1/kyc/me ────────────────────────────────────────────────
 
 describe('GET /api/v1/kyc/me', () => {
   beforeEach(() => {
@@ -95,8 +87,6 @@ describe('GET /api/v1/kyc/me', () => {
     expect(res.status).toBe(401);
   });
 });
-
-// ── Tests: POST /api/v1/kyc/initiate ─────────────────────────────────────────
 
 describe('POST /api/v1/kyc/initiate', () => {
   beforeEach(() => {

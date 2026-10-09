@@ -3,9 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getRestaurant, initiatePaystackOrder, placeOrder, quoteDelivery, RestaurantApiError } from '@/src/lib/restaurant/api';
-import { cartTotalKobo, loadLocalCart, saveLocalCart } from '@/src/lib/restaurant/cart';
-import { formatNaira } from '@/src/lib/restaurant/format';
+import { getRestaurant, initiatePaystackOrder, placeOrder, quoteDelivery, RestaurantApiError, cartTotalKobo, loadLocalCart, saveLocalCart, formatNaira } from '@/src/lib/restaurant';
 import type { Cart, DeliveryQuote, Restaurant } from '@/src/types/restaurant';
 
 export default function RestaurantCheckoutClient() {

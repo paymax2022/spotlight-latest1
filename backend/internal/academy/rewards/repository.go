@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Repository is the pgx data-access layer for the academy rewards module.
-//
 // Money-path invariants enforced here:
 //   - GetPoolForUpdate locks the pool row (SELECT ... FOR UPDATE) so the
 //     funded-vs-spent balance check and the spend increment are serialised; two
@@ -39,8 +40,6 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.db }
 // Begin opens a transaction. The service drives the credit flow inside it so the
 // pool lock, balance check, ledger append and spend increment commit atomically.
 func (r *Repository) Begin(ctx context.Context) (pgx.Tx, error) { return r.db.Begin(ctx) }
-
-// ── Reward pools ────────────────────────────────────────────────────────────────
 
 const poolCols = `id, sponsor_id, campaign_id, name, currency, funded_minor, spent_minor,
 	per_user_cap_minor, per_campaign_cap_minor, conversion_rate, status, created_at`
@@ -141,8 +140,6 @@ func (r *Repository) IncrementPoolSpent(ctx context.Context, tx pgx.Tx, poolID s
 	return err
 }
 
-// ── Reward ledger (audit trail; balances derived) ────────────────────────────────
-
 const entryCols = `id, user_id, pool_id, type, amount_minor, points, reason,
 	source_event, wallet_ref, idempotency_key, created_at`
 
@@ -190,7 +187,7 @@ func (r *Repository) InsertLedgerEntry(ctx context.Context, tx pgx.Tx, e LedgerE
 		RETURNING ` + entryCols
 	out, err := scanEntry(tx.QueryRow(ctx, q, e.UserID, poolArg, string(e.Type), e.AmountMinor,
 		e.Points, reasonArg, sourceArg, walletArg, e.IdempotencyKey))
-	if err != nil && isUniqueViolation(err) {
+	if err != nil && dbutil.IsUniqueViolation(err) {
 		return nil, ErrDuplicate
 	}
 	return out, err
@@ -239,6 +236,21 @@ func (r *Repository) SumUserBalance(ctx context.Context, userID string) (int64, 
 		WHERE user_id = $1`
 	var bal int64
 	err := r.db.QueryRow(ctx, q, userID).Scan(&bal)
+	return bal, err
+}
+
+// SumUserBalanceTx is the tx-bound variant used by RedeemPoints so the balance
+// check and the redemption entry commit atomically — without it two concurrent
+// redeems both pass the check and overspend the balance.
+func (r *Repository) SumUserBalanceTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
+	const q = `
+		SELECT COALESCE(SUM(
+			CASE WHEN type = 'credit' THEN amount_minor ELSE -amount_minor END
+		),0)
+		FROM public.academy_reward_ledger_entries
+		WHERE user_id = $1`
+	var bal int64
+	err := tx.QueryRow(ctx, q, userID).Scan(&bal)
 	return bal, err
 }
 
@@ -315,8 +327,6 @@ func (r *Repository) ListAllEntries(ctx context.Context, limit int) ([]LedgerEnt
 	return out, rows.Err()
 }
 
-// ── Redemption catalog (CRUD) ────────────────────────────────────────────────────
-
 const catalogCols = `id, sku, name, kind, cost_points, value_minor, status`
 
 func scanCatalog(row pgx.Row) (*CatalogItem, error) {
@@ -374,8 +384,6 @@ func (r *Repository) UpsertCatalog(ctx context.Context, req UpsertCatalogRequest
 	return scanCatalog(r.db.QueryRow(ctx, q, req.SKU, req.Name, req.Kind, req.CostPoints, req.ValueMinor, status))
 }
 
-// ── Redemptions ──────────────────────────────────────────────────────────────────
-
 const redemptionCols = `id, user_id, sku, points_spent, value_minor, state, idempotency_key, created_at`
 
 func scanRedemption(row pgx.Row) (*Redemption, error) {
@@ -409,7 +417,25 @@ func (r *Repository) InsertRedemption(ctx context.Context, rd Redemption) (*Rede
 		VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING ` + redemptionCols
 	out, err := scanRedemption(r.db.QueryRow(ctx, q, rd.UserID, rd.SKU, rd.PointsSpent, rd.ValueMinor, state, rd.IdempotencyKey))
-	if err != nil && isUniqueViolation(err) {
+	if err != nil && dbutil.IsUniqueViolation(err) {
+		return nil, ErrDuplicate
+	}
+	return out, err
+}
+
+// InsertRedemptionTx is the tx-bound variant so the balance check, redemption
+// row, and decrementing ledger entry commit atomically.
+func (r *Repository) InsertRedemptionTx(ctx context.Context, tx pgx.Tx, rd Redemption) (*Redemption, error) {
+	state := rd.State
+	if state == "" {
+		state = "requested"
+	}
+	const q = `
+		INSERT INTO public.academy_redemptions (user_id, sku, points_spent, value_minor, state, idempotency_key)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING ` + redemptionCols
+	out, err := scanRedemption(tx.QueryRow(ctx, q, rd.UserID, rd.SKU, rd.PointsSpent, rd.ValueMinor, state, rd.IdempotencyKey))
+	if err != nil && dbutil.IsUniqueViolation(err) {
 		return nil, ErrDuplicate
 	}
 	return out, err
@@ -421,8 +447,6 @@ func (r *Repository) SetRedemptionState(ctx context.Context, id, state string) e
 	_, err := r.db.Exec(ctx, q, id, state)
 	return err
 }
-
-// ── audit ─────────────────────────────────────────────────────────────────────
 
 // InsertAudit appends an immutable audit row (module=academy). Non-tx; reward
 // outcomes are audited on the read path after the money tx commits.
@@ -440,20 +464,6 @@ func (r *Repository) InsertAudit(ctx context.Context, actor, action, resourceTyp
 		VALUES ($1,$2,'academy',$3,$4,$5,$6)`
 	_, err := r.db.Exec(ctx, q, actorArg, action, resourceType, resourceID, toJSONB(newValues), severity)
 	return err
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
-
-// isUniqueViolation reports whether err is a Postgres unique_violation (23505).
-func isUniqueViolation(err error) bool {
-	// Match without importing pgconn directly: pgx wraps a *pgconn.PgError whose
-	// SQLState() == "23505" for a unique violation.
-	type sqlStater interface{ SQLState() string }
-	var pgErr sqlStater
-	if errors.As(err, &pgErr) {
-		return pgErr.SQLState() == "23505"
-	}
-	return false
 }
 
 // toJSONB marshals a map to a JSONB-ready byte slice ("{}" when empty/nil).

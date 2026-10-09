@@ -73,7 +73,8 @@ export async function legacyUtilityPurchase(request: Request, input: {
     const limited = utilityRateLimit(request, `legacy-${input.category}-pay`, user.id, 10, 60_000);
     if (limited) return limited;
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const key = idempotencyKey(request, body);
     if (!key) return errorResponse('Idempotency-Key header is required for utility payments.', 400);
 
@@ -113,7 +114,8 @@ export async function legacyUtilityValidation(request: Request, input: {
     const limited = utilityRateLimit(request, `legacy-${input.category}-validate`, user.id, 40, 60_000);
     if (limited) return limited;
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const biller = await getBillerByCode(input.category, input.billerCode(body));
     const productId = input.productId ? await input.productId(body, biller.id) : await getFirstProductId(biller.id);
     const result = await validateUtilityCustomer({
@@ -131,4 +133,15 @@ export async function legacyUtilityValidation(request: Request, input: {
 
 export async function firstProductId(billerId: string, amountType?: 'fixed' | 'variable') {
   return getFirstProductId(billerId, amountType);
+}
+
+// nairaToKobo converts a decimal-naira amount to integer kobo WITHOUT float
+// intermediate — `Math.round(Number(x) * 100)` both loses precision before the
+// round and silently accepts fractional sub-kobo inputs.
+export function nairaToKobo(value: unknown): number | undefined {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(raw)) return undefined;
+  const [whole, frac = ''] = raw.split('.');
+  const kobo = Number(whole) * 100 + Number((frac + '00').slice(0, 2));
+  return Number.isSafeInteger(kobo) && kobo > 0 ? kobo : undefined;
 }

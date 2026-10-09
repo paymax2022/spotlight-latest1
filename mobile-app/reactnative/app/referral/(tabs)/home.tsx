@@ -5,10 +5,10 @@ import { router } from 'expo-router';
 import {
   ChevronRight, Share2, QrCode, Users, UserCheck, Trophy, ArrowUpRight, Wallet, Clock, TrendingUp, Activity,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { ReferralHeader, DisclosureCard, EarnStatePill } from '@/features/referral/components';
 import { RemoteBanner } from '@/features/media/banners';

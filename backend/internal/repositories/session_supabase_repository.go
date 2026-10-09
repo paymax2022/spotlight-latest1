@@ -1,16 +1,22 @@
 package repositories
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
 )
 
+const (
+	keyCreatedAt = "created_at"
+)
+
 // SessionSupabaseRepository implements domain.SessionStore over Supabase REST.
-//
 // SECURITY: raw refresh/access tokens are NEVER persisted — only their sha256
 // hashes (the service hashes before calling this layer). PII is limited to the
 // inet/user_agent already stored for legacy auth_sessions/login_activity.
@@ -48,12 +54,12 @@ func (r sessionRow) toSession() domain.Session {
 		UserID:            r.UserID,
 		RefreshTokenHash:  r.RefreshTokenHash,
 		RotationCounter:   r.RotationCounter,
-		PreviousTokenHash: deref(r.PreviousTokenHash),
-		AccessTokenHash:   deref(r.AccessTokenHash),
-		DeviceFingerprint: deref(r.DeviceFingerprint),
-		IPAddress:         deref(r.IPAddress),
-		UserAgent:         deref(r.UserAgent),
-		RevokedReason:     deref(r.RevokedReason),
+		PreviousTokenHash: ptr.DerefZero(r.PreviousTokenHash),
+		AccessTokenHash:   ptr.DerefZero(r.AccessTokenHash),
+		DeviceFingerprint: ptr.DerefZero(r.DeviceFingerprint),
+		IPAddress:         ptr.DerefZero(r.IPAddress),
+		UserAgent:         ptr.DerefZero(r.UserAgent),
+		RevokedReason:     ptr.DerefZero(r.RevokedReason),
 		RevokedAt:         r.RevokedAt,
 		LastSeenAt:        r.LastSeenAt,
 	}
@@ -69,21 +75,12 @@ func (r sessionRow) toSession() domain.Session {
 	return s
 }
 
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
 func nilIfEmpty(s string) any {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}
 	return s
 }
-
-func nowRFC() string { return time.Now().UTC().Format(time.RFC3339) }
 
 func (r *SessionSupabaseRepository) enabled() bool {
 	return r.client != nil && r.client.Enabled()
@@ -102,18 +99,18 @@ func (r *SessionSupabaseRepository) CreateSession(s domain.Session) (string, err
 		"ip_address":         nilIfEmpty(s.IPAddress),
 		"user_agent":         nilIfEmpty(s.UserAgent),
 		"expires_at":         s.ExpiresAt.UTC().Format(time.RFC3339),
-		"last_seen_at":       nowRFC(),
-		"created_at":         nowRFC(),
+		"last_seen_at":       timeutil.RFC3339(time.Now()),
+		keyCreatedAt:         timeutil.RFC3339(time.Now()),
 	}
 	var rows []sessionRow
 	// Return the inserted row so we can set session_family_id = id.
-	err := r.client.RESTReturn(http.MethodPost, "auth_sessions", map[string]string{"select": "id"}, payload, &rows)
+	err := r.client.RESTReturn(context.Background(), http.MethodPost, "auth_sessions", map[string]string{"select": "id"}, payload, &rows) //nolint:goconst // PostgREST query key; literal is self-describing
 	if err != nil || len(rows) == 0 {
 		return "", err
 	}
 	id := rows[0].ID
 	// Family id defaults to the session's own id (first of the family).
-	_ = r.client.REST(http.MethodPatch, "auth_sessions", map[string]string{"id": "eq." + id}, map[string]any{"session_family_id": id}, nil)
+	_ = r.client.REST(context.Background(), http.MethodPatch, "auth_sessions", map[string]string{"id": "eq." + id}, map[string]any{"session_family_id": id}, nil)
 	return id, nil
 }
 
@@ -124,7 +121,7 @@ func (r *SessionSupabaseRepository) getOne(query map[string]string) (*domain.Ses
 	query["select"] = sessionSelect
 	query["limit"] = "1"
 	var rows []sessionRow
-	if err := r.client.REST(http.MethodGet, "auth_sessions", query, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "auth_sessions", query, nil, &rows); err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
@@ -159,11 +156,11 @@ func (r *SessionSupabaseRepository) ListActiveByUser(userID string) ([]domain.Se
 		"select":     sessionSelect,
 		"user_id":    "eq." + userID,
 		"revoked_at": "is.null",
-		"expires_at": "gt." + nowRFC(),
+		"expires_at": "gt." + timeutil.RFC3339(time.Now()),
 		"order":      "created_at.desc",
 		"limit":      "100",
 	}
-	if err := r.client.REST(http.MethodGet, "auth_sessions", q, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "auth_sessions", q, nil, &rows); err != nil {
 		return nil, err
 	}
 	out := make([]domain.Session, 0, len(rows))
@@ -184,13 +181,13 @@ func (r *SessionSupabaseRepository) RotateSession(id, newRefresh, prevRefresh, n
 		"revoked_at":         "is.null",
 		"refresh_token_hash": "neq." + newRefresh,
 	}
-	return r.client.REST(http.MethodPatch, "auth_sessions", q, map[string]any{
+	return r.client.REST(context.Background(), http.MethodPatch, "auth_sessions", q, map[string]any{
 		"refresh_token_hash":  newRefresh,
 		"previous_token_hash": prevRefresh,
 		"access_token_hash":   newAccess,
 		"rotation_counter":    counter,
 		"expires_at":          expiresAt.UTC().Format(time.RFC3339),
-		"last_seen_at":        nowRFC(),
+		"last_seen_at":        timeutil.RFC3339(time.Now()),
 	}, nil)
 }
 
@@ -198,17 +195,17 @@ func (r *SessionSupabaseRepository) RevokeSession(id, reason string) error {
 	if !r.enabled() {
 		return nil
 	}
-	return r.client.REST(http.MethodPatch, "auth_sessions", map[string]string{"id": "eq." + id, "revoked_at": "is.null"},
-		map[string]any{"revoked_at": nowRFC(), "revoked_reason": reason}, nil)
+	return r.client.REST(context.Background(), http.MethodPatch, "auth_sessions", map[string]string{"id": "eq." + id, "revoked_at": "is.null"},
+		map[string]any{"revoked_at": timeutil.RFC3339(time.Now()), "revoked_reason": reason}, nil)
 }
 
 func (r *SessionSupabaseRepository) RevokeFamily(familyID, reason string) error {
 	if !r.enabled() {
 		return nil
 	}
-	return r.client.REST(http.MethodPatch, "auth_sessions",
+	return r.client.REST(context.Background(), http.MethodPatch, "auth_sessions",
 		map[string]string{"session_family_id": "eq." + familyID, "revoked_at": "is.null"},
-		map[string]any{"revoked_at": nowRFC(), "revoked_reason": reason}, nil)
+		map[string]any{"revoked_at": timeutil.RFC3339(time.Now()), "revoked_reason": reason}, nil)
 }
 
 func (r *SessionSupabaseRepository) RevokeAllForUser(userID, reason string) (int, error) {
@@ -216,9 +213,9 @@ func (r *SessionSupabaseRepository) RevokeAllForUser(userID, reason string) (int
 		return 0, nil
 	}
 	var rows []sessionRow
-	err := r.client.RESTReturn(http.MethodPatch, "auth_sessions",
+	err := r.client.RESTReturn(context.Background(), http.MethodPatch, "auth_sessions",
 		map[string]string{"user_id": "eq." + userID, "revoked_at": "is.null", "select": "id"},
-		map[string]any{"revoked_at": nowRFC(), "revoked_reason": reason}, &rows)
+		map[string]any{"revoked_at": timeutil.RFC3339(time.Now()), "revoked_reason": reason}, &rows)
 	if err != nil {
 		return 0, err
 	}
@@ -229,7 +226,7 @@ func (r *SessionSupabaseRepository) TouchLastSeen(id string, at time.Time) error
 	if !r.enabled() {
 		return nil
 	}
-	return r.client.REST(http.MethodPatch, "auth_sessions", map[string]string{"id": "eq." + id},
+	return r.client.REST(context.Background(), http.MethodPatch, "auth_sessions", map[string]string{"id": "eq." + id},
 		map[string]any{"last_seen_at": at.UTC().Format(time.RFC3339)}, nil)
 }
 
@@ -242,10 +239,10 @@ func (r *SessionSupabaseRepository) CountRecentFailedLogins(email string, since 
 		"select":     "id",
 		"email":      "eq." + strings.ToLower(strings.TrimSpace(email)),
 		"status":     "eq.failed",
-		"created_at": "gte." + since.UTC().Format(time.RFC3339),
+		keyCreatedAt: "gte." + since.UTC().Format(time.RFC3339),
 		"limit":      "100",
 	}
-	if err := r.client.REST(http.MethodGet, "login_activity", q, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "login_activity", q, nil, &rows); err != nil {
 		return 0, err
 	}
 	return len(rows), nil
@@ -267,10 +264,10 @@ func (r *SessionSupabaseRepository) LastSuccessfulLogin(email string) (*domain.L
 		"order":  "created_at.desc",
 		"limit":  "1",
 	}
-	if err := r.client.REST(http.MethodGet, "login_activity", q, nil, &rows); err != nil || len(rows) == 0 {
+	if err := r.client.REST(context.Background(), http.MethodGet, "login_activity", q, nil, &rows); err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	la := &domain.LoginActivitySnapshot{IPAddress: deref(rows[0].IPAddress)}
+	la := &domain.LoginActivitySnapshot{IPAddress: ptr.DerefZero(rows[0].IPAddress)}
 	if rows[0].CreatedAt != nil {
 		la.CreatedAt = *rows[0].CreatedAt
 	}
@@ -287,7 +284,7 @@ func (r *SessionSupabaseRepository) HasKnownDevice(userID, fp string) (bool, err
 	}
 	var rows []map[string]any
 	q := map[string]string{"select": "id", "user_id": "eq." + userID, "device_fingerprint": "eq." + fp, "limit": "1"}
-	if err := r.client.REST(http.MethodGet, "auth_sessions", q, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "auth_sessions", q, nil, &rows); err != nil {
 		return false, err
 	}
 	return len(rows) > 0, nil
@@ -300,7 +297,7 @@ func (r *SessionSupabaseRepository) HasKnownIP(userID, ip string) (bool, error) 
 	var rows []map[string]any
 	// A prior successful login from this IP marks the IP as known.
 	q := map[string]string{"select": "id", "user_id": "eq." + userID, "ip_address": "eq." + ip, "status": "eq.success", "limit": "1"}
-	if err := r.client.REST(http.MethodGet, "login_activity", q, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "login_activity", q, nil, &rows); err != nil {
 		return false, err
 	}
 	return len(rows) > 0, nil
@@ -329,15 +326,15 @@ func (r *SessionSupabaseRepository) RecordSecurityEvent(e domain.SecurityEvent) 
 	if payload["email"] == "" {
 		payload["email"] = "unknown"
 	}
-	return r.client.REST(http.MethodPost, "security_events", map[string]string{}, payload, nil)
+	return r.client.REST(context.Background(), http.MethodPost, "security_events", map[string]string{}, payload, nil)
 }
 
 func (r *SessionSupabaseRepository) SetForceFlags(userID string, reset, reverify bool) error {
 	if !r.enabled() {
 		return nil
 	}
-	return r.client.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID},
-		map[string]any{"force_password_reset": reset, "force_reverification": reverify, "last_security_event_at": nowRFC()}, nil)
+	return r.client.REST(context.Background(), http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID},
+		map[string]any{"force_password_reset": reset, "force_reverification": reverify, "last_security_event_at": timeutil.RFC3339(time.Now())}, nil)
 }
 
 func asFloat(v any) float64 {

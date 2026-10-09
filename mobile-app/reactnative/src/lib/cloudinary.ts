@@ -1,4 +1,3 @@
-// ── Cloudinary — responsive CDN URL builder ──────────────────────────────────
 // Marketing banners live in Cloudinary under the SPOTLIGHT/Banners/ folder,
 // uploaded out-of-band (no in-app upload flow yet — same precedent as the
 // existing R2 banner map in frontend-web/app/api/media/banners/[slug]/route.ts).
@@ -10,7 +9,14 @@
 // never a fixed size everyone pays for regardless of screen.
 import { useWindowDimensions } from 'react-native';
 
-const CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '';
+// The cloud name is public (it is part of every delivery URL), so a build that
+// forgot it, or kept the env template's placeholder (CHANGE_ME /
+// your-cloudinary-cloud-name), must still resolve to the real account — the
+// failure mode otherwise is every banner 404ing and rendering as an empty frame.
+const DEFAULT_CLOUD_NAME = 'paymax';
+const rawCloudName = (process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '').trim();
+const CLOUD_NAME =
+  rawCloudName && !/change_me|your-cloudinary|^xxx/i.test(rawCloudName) ? rawCloudName : DEFAULT_CLOUD_NAME;
 
 /**
  * Width buckets, narrowest to widest, matching the phone / large-phone /
@@ -36,14 +42,6 @@ export function useBannerWidth(): number {
   return bannerWidthForViewport(width);
 }
 
-function warnIfUnconfigured() {
-  if (!CLOUD_NAME) {
-    console.warn(
-      '[cloudinary] EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME is not set — banner images will fail to load.',
-    );
-  }
-}
-
 /**
  * Builds a responsive, auto-format/auto-quality Cloudinary delivery URL.
  * `f_auto` serves WebP/AVIF to clients that support it; `q_auto` picks the
@@ -55,7 +53,6 @@ function warnIfUnconfigured() {
  * the old cached bytes keeps showing stale artwork indefinitely.
  */
 export function cloudinaryBannerUrl(publicId: string, width: number): string {
-  warnIfUnconfigured();
   return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/f_auto,q_auto,w_${width}/${publicId}`;
 }
 
@@ -65,6 +62,5 @@ export function cloudinaryBannerUrl(publicId: string, width: number): string {
  * while the real image is still loading.
  */
 export function cloudinaryBannerPlaceholderUrl(publicId: string): string {
-  warnIfUnconfigured();
   return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/f_auto,q_auto,w_20,e_blur:1000/${publicId}`;
 }

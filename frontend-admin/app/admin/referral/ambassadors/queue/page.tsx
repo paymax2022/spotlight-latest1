@@ -10,7 +10,6 @@ import {
 } from '@/services/referralAdminOpsService';
 
 // A-AMB-Q — Ambassador approval queue.
-//
 // Applications land at status 'applied' and stay there until an admin decides.
 // Nothing else in the product drives that transition, so without this screen
 // every application accumulates unactioned.

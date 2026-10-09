@@ -12,20 +12,20 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/strutil"
 )
 
 // Service methods for the remaining endpoint groups (settings, support, chat,
 // AI notes, join, bulk import, org publish). SQL-backed against the assoc_*
 // schema (+ 20260629000000 settings columns). Separate file to limit merge
-// surface. NOT compiled in-sandbox — see STATUS.md.
+// surface.
 
 // profileMembershipID resolves the member_profiles row key for the caller.
 func (s *Service) profileMembershipID(ctx context.Context, userID string) (string, error) {
 	mid, _, err := s.primaryMembership(ctx, userID)
 	return mid, err
 }
-
-// ─── Settings: notification prefs / security / preferences ────────────────────
 
 func scanJSONB(raw []byte, into any) {
 	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
@@ -112,8 +112,6 @@ func (s *Service) UpdatePreferences(ctx context.Context, userID string, p Prefer
 	return &p, nil
 }
 
-// ─── Settings: devices ────────────────────────────────────────────────────────
-
 func (s *Service) GetDevices(ctx context.Context, userID string) ([]Device, error) {
 	const q = `
 		SELECT id, COALESCE(name,''), COALESCE(platform,''), COALESCE(to_char(last_active,'YYYY-MM-DD"T"HH24:MI:SS"Z"'),''), location
@@ -145,8 +143,6 @@ func (s *Service) RevokeDevice(ctx context.Context, userID, deviceID string) err
 	}
 	return nil
 }
-
-// ─── Support ──────────────────────────────────────────────────────────────────
 
 func (s *Service) GetFaqs(ctx context.Context) ([]FaqItem, error) {
 	// Static help content (no table needed).
@@ -223,7 +219,7 @@ func (s *Service) CreateTicket(ctx context.Context, userID string, in CreateTick
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `INSERT INTO assoc_support_tickets (id, membership_id, subject, category, status) VALUES ($1,$2,$3,$4,'OPEN')`,
 		id, mid, in.Subject, in.Category); err != nil {
 		return "", fmt.Errorf("association: create ticket: %w", err)
@@ -257,8 +253,6 @@ func (s *Service) ReplyTicket(ctx context.Context, userID, ticketID, body string
 	_, _ = s.db.Exec(ctx, `UPDATE assoc_support_tickets SET updated_at=now() WHERE id=$1`, ticketID)
 	return m, nil
 }
-
-// ─── Chat ─────────────────────────────────────────────────────────────────────
 
 func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThreadSummary, error) {
 	mid, orgID, err := s.primaryMembership(ctx, userID)
@@ -428,7 +422,6 @@ func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted
 
 // ChatThreadAudience returns the user ids of every ACTIVE member allowed to open
 // the thread — the exact set a realtime push may fan a message out to.
-//
 // The scope gate is the one GetChatThreads / GetChatThread / SendChatMessage
 // apply (CM-002 / CH-005): organisation membership alone is NOT enough for an
 // EXECUTIVE thread (needs a role) or a COMMITTEE thread (needs committee
@@ -507,8 +500,6 @@ func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, body st
 	}
 	return m, nil
 }
-
-// ─── AI notes ─────────────────────────────────────────────────────────────────
 
 func (s *Service) GetAiNotes(ctx context.Context, userID string) ([]AiNoteSummary, error) {
 	_, orgID, err := s.primaryMembership(ctx, userID)
@@ -607,7 +598,7 @@ func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1`, noteID, status); err != nil {
 		return fmt.Errorf("association: ai note status: %w", err)
 	}
@@ -640,8 +631,6 @@ func (s *Service) ConvertActionItem(ctx context.Context, userID, noteID, itemID 
 	return taskID, nil
 }
 
-// ─── Join: code validation + apply ────────────────────────────────────────────
-
 func (s *Service) ValidateCode(ctx context.Context, kind, code string) (*CodeValidation, error) {
 	// No dedicated codes table yet: the organisation acronym doubles as the
 	// invite/access code for this wave. Unknown codes are reported invalid.
@@ -666,12 +655,10 @@ func (s *Service) ValidateCode(ctx context.Context, kind, code string) (*CodeVal
 // ensureMembership creates (or re-activates) a membership row for userID in
 // orgID and guarantees the companion assoc_member_profiles row exists, seeding
 // full_name/email from the platform user record.
-//
 // Every read path in this module joins assoc_member_profiles, so a membership
 // without a profile row makes /me/profile, /me/privacy, the directory and all
 // settings endpoints fail or silently no-op. Creating the two together is the
 // only way to keep that invariant. Returns the membership id.
-//
 // Callers pass the tx so membership creation rolls back with its caller
 // (application insert, org publish) rather than leaving a half-joined member.
 func (s *Service) ensureMembership(ctx context.Context, tx pgx.Tx, orgID, userID, status, standing, memberCodePrefix string, categoryID, chapterID *string) (string, error) {
@@ -726,7 +713,7 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `INSERT INTO assoc_applications (id, organisation_id, user_id, category_id, chapter_id, sponsor_name, status)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)`
@@ -747,7 +734,7 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO assoc_application_documents (id, application_id, label, url, kind)
 			 VALUES ($1,$2,$3,$4,$5)`,
-			uuid.New().String(), id, doc.Label, doc.URL, nz(doc.Kind, "OTHER")); err != nil {
+			uuid.New().String(), id, doc.Label, doc.URL, strutil.OrBlank(doc.Kind, "OTHER")); err != nil {
 			return nil, fmt.Errorf("association: insert application document: %w", err)
 		}
 	}
@@ -779,8 +766,6 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 	}
 	return res, nil
 }
-
-// ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
 func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName string, r io.Reader) (*ImportPreview, error) {
 	// Resolve the target organisation: explicit org_id wins, else the caller's
@@ -893,7 +878,7 @@ func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName st
 // that is already CONFIRMED returns its recorded result without re-importing.
 func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, sendInvites bool) (*ImportResult, error) {
 	if strings.TrimSpace(batchID) == "" {
-		return nil, fmt.Errorf("association: batchId is required")
+		return nil, errors.New("association: batchId is required")
 	}
 	var orgID, status string
 	var rowsJSON []byte
@@ -926,7 +911,7 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	imported, skipped, invited = 0, 0, 0
 	for _, row := range rows {
@@ -983,8 +968,6 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 	return &ImportResult{Imported: imported, Skipped: skipped, Invited: invited, BatchID: batchID}, nil
 }
 
-// ─── Organisation publish (founder) ───────────────────────────────────────────
-
 // DefaultChapterName is the chapter an organisation gets when its founder names
 // none. It is a real chapter row, not a placeholder: members are filed under it
 // and it appears wherever chapters are listed.
@@ -994,12 +977,10 @@ const DefaultChapterName = "Home"
 // identity fields, and is the SERVER's copy of the wizard's required/optional
 // split rather than a restatement of it — the mobile wizard is currently the
 // only publisher, so client-side validation alone would be the whole contract.
-//
 // Founded year and a logo are required; acronym, location and website are not.
 // The year bounds match the admin console's organisation editor (1800 → this
 // year), so the same organisation cannot be valid on one surface and rejected
 // on the other.
-//
 // NOTE on the logo: the wizard offers a pasted URL or the device image picker,
 // and the picker yields a LOCAL file:// URI with no association upload endpoint
 // behind it. Such a value is stored verbatim and will not resolve for the admin
@@ -1013,10 +994,10 @@ func validateOrgIdentity(d *OrgDraft) error {
 	d.LogoURL = strings.TrimSpace(d.LogoURL)
 
 	if d.LogoURL == "" {
-		return fmt.Errorf("association: a logo is required — provide a logo URL or upload one")
+		return errors.New("association: a logo is required — provide a logo URL or upload one")
 	}
 	if d.FoundedYear == nil {
-		return fmt.Errorf("association: founded year is required")
+		return errors.New("association: founded year is required")
 	}
 	thisYear := time.Now().Year()
 	if *d.FoundedYear < 1800 || *d.FoundedYear > thisYear {
@@ -1027,7 +1008,7 @@ func validateOrgIdentity(d *OrgDraft) error {
 
 func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgDraft) (*PublishResult, error) {
 	if !d.AcceptedTerms {
-		return nil, fmt.Errorf("association: terms must be accepted")
+		return nil, errors.New("association: terms must be accepted")
 	}
 	if err := validateOrgIdentity(&d); err != nil {
 		return nil, err
@@ -1052,20 +1033,16 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	graceDays := 30
 	if d.Restrictions.GraceDays != nil && *d.Restrictions.GraceDays >= 0 {
 		graceDays = *d.Restrictions.GraceDays
 	}
-	// requires_payment was derived from fee>0 alone, so a PAID group with a zero
-	// registration fee stored requires_payment=false and contradicted itself.
+	// requires_payment follows group_type too: fee>0 alone would store false for
+	// a PAID group with a zero registration fee, contradicting itself.
 	requiresPayment := d.RegistrationFeeKobo > 0 || d.GroupType == "PAID"
 
-	// founded_year / location / website have existed on this table since the
-	// schema was written and the admin console has always edited them, but this
-	// INSERT never wrote them — so every organisation the wizard published had
-	// them NULL and the founder had no way to set them at all.
 	const insOrg = `
 		INSERT INTO assoc_organisations
 		  (id, name, acronym, category, description, logo_url, group_type, approval_rule,
@@ -1077,7 +1054,7 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 		        $18,NULLIF($19,''),NULLIF($20,''),
 		        NULLIF($21,''))`
 	if _, err := tx.Exec(ctx, insOrg, orgID, d.Name, d.Acronym, d.Category, d.Description, d.LogoURL,
-		d.GroupType, nz(d.ApprovalRule, "ADMIN"),
+		d.GroupType, strutil.OrBlank(d.ApprovalRule, "ADMIN"),
 		d.RegistrationFeeKobo, requiresPayment, userID,
 		d.StructureType, graceDays,
 		d.Restrictions.DisableVoting, d.Restrictions.DisableEvents,
@@ -1108,7 +1085,7 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 		}
 		chID := uuid.New().String()
 		if _, err := tx.Exec(ctx, `INSERT INTO assoc_chapters (id, organisation_id, name, level) VALUES ($1,$2,$3,$4)`,
-			chID, orgID, name, nz(ch.Level, "STATE")); err != nil {
+			chID, orgID, name, strutil.OrBlank(ch.Level, "STATE")); err != nil {
 			return nil, fmt.Errorf("association: insert chapter: %w", err)
 		}
 		chapterByName[strings.ToLower(name)] = chID
@@ -1116,7 +1093,6 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	// Every organisation gets at least one chapter. A founder who names none is
 	// not saying "this organisation has no structure", they are saying they have
 	// not divided it up — so it gets a single default chapter rather than zero.
-	//
 	// Zero chapters was a real source of breakage rather than a tidy edge case:
 	// members had no chapter to be filed under, the join screen's chapter picker
 	// had nothing to offer, and chapter-scoped admin views had nothing to scope
@@ -1160,7 +1136,7 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	for _, cat := range d.Categories {
 		catID := uuid.New().String()
 		if _, err := tx.Exec(ctx, `INSERT INTO assoc_membership_categories (id, organisation_id, label, dues_kobo, cadence) VALUES ($1,$2,$3,$4,$5)`,
-			catID, orgID, cat.Label, cat.DuesKobo, nz(cat.Cadence, "ANNUAL")); err != nil {
+			catID, orgID, cat.Label, cat.DuesKobo, strutil.OrBlank(cat.Cadence, "ANNUAL")); err != nil {
 			return nil, fmt.Errorf("association: insert category: %w", err)
 		}
 		if founderCategoryID == nil {
@@ -1191,12 +1167,4 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 		return nil, err
 	}
 	return &PublishResult{OrganisationID: orgID, Name: d.Name}, nil
-}
-
-// nz returns def when v is empty.
-func nz(v, def string) string {
-	if strings.TrimSpace(v) == "" {
-		return def
-	}
-	return v
 }

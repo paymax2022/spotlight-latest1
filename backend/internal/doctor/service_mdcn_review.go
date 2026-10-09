@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/health/credential"
 	"spotlight/backend/internal/platform/r2"
+	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // service_mdcn_review.go — the ops (assisted) review service for MDCN doctor
@@ -15,7 +19,6 @@ import (
 // the Mode-B pieces the doctor flow lacked: an ops decision layer, an identity
 // cross-check (name/DOB ↔ Paymax KYC), access-logged signed-URL document reads,
 // idempotent capability grant (discoverability), and licence-expiry auto-suspend.
-//
 // The doctor never sees the MDCN portal; an ops reviewer confirms the registration
 // out-of-band and records the decision here. HL-2 (credential-gated discoverability,
 // auto-suspend on expiry), HL-12 (immutable audit), NDPA (access-logged docs,
@@ -60,7 +63,7 @@ type mdcnStore interface {
 // not modify the large doctor Service. Constructed in the wiring layer.
 type MDCNReviewService struct {
 	repo      mdcnStore
-	verifier  credential.CredentialVerifier // MDCNAdapter (ASSISTED)
+	verifier  credential.CredentialVerifier
 	identity  IdentityReader
 	presigner *r2.Presigner
 	sched     LicenceScheduler
@@ -164,10 +167,10 @@ func (s *MDCNReviewService) Decide(ctx context.Context, reviewerID, verification
 	}
 	if in.Action == "approve" {
 		if in.LicenceExpiry == nil {
-			return nil, fmt.Errorf("doctor: licence_expiry required to approve")
+			return nil, errors.New("doctor: licence_expiry required to approve")
 		}
 		if in.Discipline == nil || (*in.Discipline != "medical" && *in.Discipline != "dental") {
-			return nil, fmt.Errorf("doctor: discipline (medical|dental) required to approve")
+			return nil, errors.New("doctor: discipline (medical|dental) required to approve")
 		}
 	}
 	// Idempotency: repeated identical terminal decision is a no-op success.
@@ -231,4 +234,84 @@ func (s *MDCNReviewService) RunLicenceSweep(ctx context.Context, now time.Time) 
 			map[string]any{"count": n, "as_of": now.UTC().Format(time.RFC3339)})
 	}
 	return n, nil
+}
+
+// admin (ops) HTTP surface for assisted MDCN doctor
+// verification review. Mounted under an RBAC-gated admin group (health.doctor.review);
+// the service additionally forbids self-approval.
+
+type MDCNReviewHandler struct{ svc *MDCNReviewService }
+
+func NewMDCNReviewHandler(svc *MDCNReviewService) *MDCNReviewHandler {
+	return &MDCNReviewHandler{svc: svc}
+}
+
+var reviewErrMap = httperr.New(http.StatusBadRequest,
+	httperr.R(http.StatusForbidden, ErrReviewForbidden),
+	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusConflict, ErrReviewIllegalTransition),
+)
+
+// Queue GET /verification/queue
+func (h *MDCNReviewHandler) Queue(c *gin.Context) {
+	items, err := h.svc.ListQueue(c.Request.Context(), 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// GetRecord GET /verification/:verificationId
+func (h *MDCNReviewHandler) GetRecord(c *gin.Context) {
+	rec, err := h.svc.GetForReview(c.Request.Context(), c.Param("verificationId"))
+	if err != nil {
+		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, rec)
+}
+
+// DocURL GET /verification/documents/:docId/url — reviewer signed URL (access-logged).
+func (h *MDCNReviewHandler) DocURL(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), true)
+	if err != nil {
+		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// Decide POST /verification/:verificationId/decision
+func (h *MDCNReviewHandler) Decide(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	var body struct {
+		Action        string `json:"action" binding:"required"` // approve | need_info | reject
+		LicenceExpiry string `json:"licence_expiry"`            // YYYY-MM-DD (required for approve)
+		Discipline    string `json:"discipline"`                // medical | dental (required for approve)
+		Notes         string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	in := MDCNDecision{Action: body.Action, Notes: body.Notes}
+	if body.LicenceExpiry != "" {
+		t, perr := time.Parse("2006-01-02", body.LicenceExpiry)
+		if perr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "licence_expiry must be YYYY-MM-DD"})
+			return
+		}
+		in.LicenceExpiry = &t
+	}
+	if body.Discipline != "" {
+		in.Discipline = &body.Discipline
+	}
+	rec, err := h.svc.Decide(c.Request.Context(), uid, c.Param("verificationId"), in)
+	if err != nil {
+		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
+		return
+	}
+	c.JSON(http.StatusOK, rec)
 }

@@ -5,23 +5,22 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Send, Lock, CreditCard, Search, Bell, BellOff, ImagePlus, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import MessageBubble from '@/features/association/components/MessageBubble';
-import { useChatThread, useSendMessage, useMuteThread, useReactMessage } from '@/features/association/hooks/useChat';
-import { useAssociationChatRealtime } from '@/features/association/hooks/useChatRealtime';
-import { pickDocument } from '@/features/association/utils/docPicker';
-import { POSTING_BLOCK_NOTICE, CHAT_SCOPE_LABEL } from '@/features/association/constants/chat.constants';
-import type { ChatMessage } from '@/features/association/types/chat.types';
+import {MessageBubble} from '@/features/association/components';
+import { useChatThread, useSendMessage, useMuteThread, useReactMessage } from '@/features/association/hooks';
+import { useAssociationChatRealtime } from '@/features/association/hooks';
+import { pickDocument } from '@/features/association/utils';
+import { POSTING_BLOCK_NOTICE, CHAT_SCOPE_LABEL } from '@/features/association/constants';
+import type { ChatMessage } from '@/features/association/types';
 
 export default function ChatThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const thread = useChatThread(id);
-  // Live delivery for this thread; without it a reply only appeared after
   // leaving the screen and coming back.
   useAssociationChatRealtime(id);
   const send = useSendMessage(id as string);

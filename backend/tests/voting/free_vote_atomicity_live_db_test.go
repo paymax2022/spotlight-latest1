@@ -1,11 +1,11 @@
 package voting_test
 
 // D-010: the Connect free-vote engine's cap check ("has this voter already
-// used their free vote(s) in this contest?") and the vote insert used to be
-// two separate statements — CountFreeVotes then InsertVote — so two
-// concurrent free-vote requests from the SAME voter could both read a count
-// below the cap before either had inserted, and both got voted. This test
-// proves the fix (Repository.ClaimFreeVote, a single transaction serialized
+// used their free vote(s) in this contest?") and the vote insert must be a
+// single serialized operation — as two statements (CountFreeVotes then
+// InsertVote), two concurrent free-vote requests from the SAME voter could
+// both read a count below the cap before either had inserted, and both land.
+// This test proves Repository.ClaimFreeVote (a single transaction serialized
 // by an advisory lock per (contest, voter)) actually closes that window,
 // the same way the sibling engines' D-002/PV-005 fixes were proven here —
 // by firing genuinely concurrent goroutines at a real Postgres instance and
@@ -34,7 +34,7 @@ func runConcurrentFreeVoteClaims(t *testing.T, ctx context.Context, pool *pgxpoo
 	var mu sync.Mutex
 	granted := 0
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

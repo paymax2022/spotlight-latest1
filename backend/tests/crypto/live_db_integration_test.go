@@ -1,9 +1,7 @@
 package crypto_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the crypto module (swap + withdrawal money
 // paths).
-//
 // crypto.Service (crypto.NewService(pool, ledgerSvc, priceProvider)) talks to
 // a concrete *pgxpool.Pool for every mutation (Buy, Sell, Swap, AddAddress,
 // Withdraw, ConfirmWithdrawal) and to the real ledger.Service for the
@@ -13,7 +11,6 @@ package crypto_test
 // but is fully written end-to-end so it can be un-skipped the moment infra is
 // available — the skip is NOT a stub; every step below drives the real
 // Service against real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply the crypto migration (20260815001600_crypto.sql per model.go's
 //     header comment): crypto_assets, crypto_holdings, crypto_orders,
@@ -31,15 +28,14 @@ package crypto_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/crypto/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id, and every asset is upserted via AdminConfigAsset (keyed on
 // symbol, so re-running is safe) — no truncation, no shared fixtures, safe to
 // run repeatedly against the same test database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -107,9 +103,7 @@ func buyToSeedHolding(t *testing.T, ctx context.Context, svc *crypto.Service, us
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Swap: net-zero wallet delta, spread to revenue, idempotency — live.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent drives a real
 // swap end-to-end and proves: (a) the caller's NGN wallet balance is
@@ -131,6 +125,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
+	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	return id
 }
 
@@ -253,7 +248,7 @@ func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	fromUnitsBefore := findHoldingUnits(holdingsBefore, fromAssetID)
 
 	_, err = svc.Swap(ctx, userID, fromAssetID, toAssetID, fromUnitsBefore*1000, newIdemKey(t, "oversell"))
-	if err != crypto.ErrInsufficient {
+	if !errors.Is(err, crypto.ErrInsufficient) {
 		t.Fatalf("oversell swap: err = %v, want ErrInsufficient", err)
 	}
 
@@ -293,10 +288,8 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Withdrawal state machine: whitelist requirement, units parked on create,
 // units returned on failed, idempotent create — live.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Withdraw_RequiresWhitelistedAddress proves Withdraw rejects an
 // addressID that does not belong to the caller (object-level authZ / allow-list
@@ -506,7 +499,7 @@ func TestLiveDB_Withdraw_OverWithdrawalRejected_HoldingUnchanged(t *testing.T) {
 	unitsBefore := findHoldingUnits(holdingsBefore, fromAssetID)
 
 	_, err = svc.Withdraw(ctx, userID, fromAssetID, addr.ID, unitsBefore*1000, 15_000, newIdemKey(t, "over-withdraw"))
-	if err != crypto.ErrInsufficient {
+	if !errors.Is(err, crypto.ErrInsufficient) {
 		t.Fatalf("over-withdrawal: err = %v, want ErrInsufficient", err)
 	}
 

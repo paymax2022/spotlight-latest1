@@ -1,4 +1,3 @@
-// ── AI Trading — Fund the trading wallet (subscribe) — §16A #13 ────────────────
 // Moves cash from the base Paymax wallet into the fund, minting units at the
 // current NAV. Shows the unit price and units-to-mint before confirming.
 import React, { useState } from 'react';
@@ -7,10 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Info } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useSubscribe } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';

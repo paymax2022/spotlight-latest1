@@ -3,13 +3,12 @@ package doctor
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"spotlight/backend/internal/health/credential"
 )
-
-// ── fakes (no DB) ──
 
 type fakeMDCNStore struct {
 	owner      map[string]string // verificationID → doctor user_id
@@ -93,12 +92,7 @@ func (f *fakeMDCNStore) InsertAudit(_ context.Context, _, action, _, _, _ string
 	return nil
 }
 func (f *fakeMDCNStore) hasAudit(a string) bool {
-	for _, x := range f.audits {
-		if x == a {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.audits, a)
 }
 
 type fakeIdentity struct{ snap credential.IdentitySnapshot }
@@ -125,8 +119,6 @@ func newSvc(store *fakeMDCNStore, snapName string, sched *fakeSched) *MDCNReview
 		fakeIdentity{snap: credential.IdentitySnapshot{FullName: snapName, KYCTier: 2}}, nil, sched)
 }
 
-// ── 1. status SM ──
-
 func TestDoctorVerifSM(t *testing.T) {
 	allow := [][2]string{{"pending", "approved"}, {"pending", "needs_info"}, {"pending", "rejected"}, {"needs_info", "approved"}, {"needs_info", "rejected"}}
 	for _, c := range allow {
@@ -141,8 +133,6 @@ func TestDoctorVerifSM(t *testing.T) {
 		}
 	}
 }
-
-// ── 2-6. Decide ──
 
 func setup(t *testing.T) (*MDCNReviewService, *fakeMDCNStore, *fakeSched) {
 	t.Helper()
@@ -215,8 +205,6 @@ func TestDecide_IllegalTransition(t *testing.T) {
 	}
 }
 
-// ── 7. licence-expiry auto-suspend ──
-
 func TestRunLicenceSweep(t *testing.T) {
 	svc, store, _ := setup(t)
 	store.suspendN = 3
@@ -231,8 +219,6 @@ func TestRunLicenceSweep(t *testing.T) {
 		t.Error("expected auto-suspend audit (HL-12)")
 	}
 }
-
-// ── 8. NDPA doc access ──
 
 func TestDocSignedURL_AccessLoggedAndGated(t *testing.T) {
 	svc, store, _ := setup(t)
@@ -254,8 +240,6 @@ func TestDocSignedURL_AccessLoggedAndGated(t *testing.T) {
 		t.Error("expected document-access audit (HL-12/NDPA)")
 	}
 }
-
-// ── 9. identity cross-check surfaced ──
 
 func TestGetForReview_IdentityFlag(t *testing.T) {
 	store := newFakeStore()

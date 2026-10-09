@@ -4,7 +4,6 @@ package orchestration
 //   - store-contract tests against an in-memory fake (round-trip semantics)
 //   - customer-scoping / object-level authZ (customer B cannot touch A's rows)
 //   - handler tests via httptest proving the handler threads customerID(c) through
-//
 // No DB required: the in-memory fake implements the SecondaryStore interface, and
 // the production pgx impl (sqlSecondaryStore) is exercised separately against a
 // live/local database (see docs/runbooks/fx-e2e-test.md).
@@ -22,8 +21,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-// ─── in-memory fake ───────────────────────────────────────────────────────────
 
 type memSecondaryStore struct {
 	mu     sync.Mutex
@@ -131,8 +128,6 @@ func (m *memSecondaryStore) DeleteRateAlert(_ context.Context, customer, id stri
 	return nil
 }
 
-// ─── store-contract tests ─────────────────────────────────────────────────────
-
 func TestBeneficiaryStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := newMemSecondaryStore()
@@ -215,8 +210,6 @@ func TestRateAlertStoreRoundTripAndIsolation(t *testing.T) {
 	}
 }
 
-// ─── handler tests (httptest) ─────────────────────────────────────────────────
-
 // testEngine wires the beneficiary/rate-alert routes with a middleware that fixes
 // the caller identity (mimics RequireAuthContext setting user_id).
 func testEngine(sec SecondaryStore, userID string) *gin.Engine {
@@ -238,7 +231,7 @@ func testEngine(sec SecondaryStore, userID string) *gin.Engine {
 
 func doJSON(t *testing.T, r *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

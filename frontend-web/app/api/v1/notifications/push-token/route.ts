@@ -3,13 +3,14 @@ import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// POST /api/v1/notifications/push-token — upsert a device push token for the caller.
+// Upsert a device push token for the caller.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const token: string = String(body?.token ?? '').trim();
     const platform: string = String(body?.platform ?? '').trim();
 
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
     );
     if (error) throw error;
 
-    return NextResponse.json(null, { status: 204 });
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return handleApiError(error, 'Failed to register push token');
   }

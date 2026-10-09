@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,14 +22,14 @@ func NewGiftingStore(db *pgxpool.Pool) *GiftingStore {
 
 // GiftCatalogItem represents a giftable item.
 type GiftCatalogItem struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	AmountKobo      int64  `json:"amountKobo"`
-	Currency        string `json:"currency"`
-	ImageURL        string `json:"imageUrl"`
-	Category        string `json:"category"`
-	Available       bool   `json:"available"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	AmountKobo  int64  `json:"amountKobo"`
+	Currency    string `json:"currency"`
+	ImageURL    string `json:"imageUrl"`
+	Category    string `json:"category"`
+	Available   bool   `json:"available"`
 }
 
 // GetCatalog retrieves all giftable items.
@@ -85,6 +86,9 @@ func (s *GiftingStore) GetCatalogItem(ctx context.Context, itemID string) (*Gift
 }
 
 // Recipient represents a potential gift recipient.
+// Email is ALWAYS the masked form ("a***@domain") — this endpoint lists the
+// newest 50 platform users, so a raw email here is an enumerable PII feed,
+// not a directory feature.
 type Recipient struct {
 	UserID   string `json:"userId"`
 	Email    string `json:"email"`
@@ -92,16 +96,45 @@ type Recipient struct {
 	Nickname string `json:"nickname"`
 }
 
+// UserExists reports whether userID names a real platform user — checked
+// before a money path resolves the recipient's wallet so a bogus id answers
+// 404 instead of surfacing a ledger write error as a 500.
+func (s *GiftingStore) UserExists(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM platform_users WHERE id = $1)`, userID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("user exists: %w", err)
+	}
+	return exists, nil
+}
+
+// maskRecipientEmail masks the local part of an email for list surfaces:
+// "amara.obi@gmail.com" → "a***@gmail.com". A value without an @ is fully
+// masked — the label stays non-empty either way so clients can render it.
+func maskRecipientEmail(email string) string {
+	at := strings.IndexByte(email, '@')
+	if at <= 0 {
+		return "***"
+	}
+	return email[:1] + "***" + email[at:]
+}
+
 // GetRecipients retrieves user's saved gift recipients.
-//
 // Reads platform_users, not auth.users: this pool runs as service_role, which
 // Supabase never grants auth-schema access to, and platform_users.id mirrors
 // auth.users.id 1:1. The name join also had to move off "profiles" — that
 // table has no name/nickname column, only user_profiles does (via full_name);
 // there is no nickname anywhere in the schema, so it is always empty.
+// No SELECT DISTINCT: platform_users.id is unique so it can never dedupe
+// anything, and Postgres rejects ORDER BY expressions outside the select
+// list under DISTINCT — the previous query therefore failed on every call.
+// Emails are masked in Go (maskRecipientEmail) — the query returns the raw
+// column so the masking decision lives next to this code, not inside SQL
+// every reader has to re-audit.
 func (s *GiftingStore) GetRecipients(ctx context.Context, senderUserID string) ([]Recipient, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT DISTINCT
+		SELECT
 			u.id as user_id, u.email,
 			COALESCE(p.full_name, '') as name,
 			'' as nickname
@@ -122,6 +155,7 @@ func (s *GiftingStore) GetRecipients(ctx context.Context, senderUserID string) (
 		if err := rows.Scan(&r.UserID, &r.Email, &r.Name, &r.Nickname); err != nil {
 			return nil, fmt.Errorf("scan recipient: %w", err)
 		}
+		r.Email = maskRecipientEmail(r.Email)
 		recipients = append(recipients, r)
 	}
 
@@ -165,14 +199,39 @@ func (s *GiftingStore) SendGift(ctx context.Context, senderID string, recipientI
 		return nil, fmt.Errorf("send gift: %w", err)
 	}
 
-	// Query sender and recipient names for response
+	s.enrichGiftTransaction(ctx, &gt)
+	return &gt, nil
+}
+
+// GetGiftByIdempotencyKey returns the gift transaction recorded under this
+// derived ledger key — the convergence read after a SendGift insert hits the
+// unique idempotency_key: a retry that crashed between the ledger debit
+// commit and the row insert must be returned THIS row.
+func (s *GiftingStore) GetGiftByIdempotencyKey(ctx context.Context, idemKey string) (*GiftTransaction, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT
+			id, reference, sender_id, recipient_id, item_id, amount_kobo,
+			'NGN' as currency, COALESCE(message, '') as message, status,
+			created_at::text
+		FROM gift_transactions
+		WHERE idempotency_key = $1
+	`, idemKey)
+
+	var gt GiftTransaction
+	err := row.Scan(&gt.ID, &gt.Reference, &gt.SenderID, &gt.RecipientID,
+		&gt.ItemID, &gt.AmountKobo, &gt.Currency, &gt.Message, &gt.Status, &gt.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query gift by idempotency key: %w", err)
+	}
 	s.enrichGiftTransaction(ctx, &gt)
 	return &gt, nil
 }
 
 // GetSentGifts retrieves gifts sent by user (paginated).
 func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit int, offset int) ([]GiftTransaction, int64, error) {
-	// Get total count
 	var total int64
 	err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM gift_transactions WHERE sender_id = $1
@@ -180,8 +239,6 @@ func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit in
 	if err != nil {
 		return nil, 0, fmt.Errorf("count sent: %w", err)
 	}
-
-	// Get paginated results
 	rows, err := s.db.Query(ctx, `
 		SELECT
 			id, reference, sender_id, recipient_id, item_id, amount_kobo,
@@ -213,7 +270,6 @@ func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit in
 
 // GetReceivedGifts retrieves gifts received by user (paginated).
 func (s *GiftingStore) GetReceivedGifts(ctx context.Context, userID string, limit int, offset int) ([]GiftTransaction, int64, error) {
-	// Get total count
 	var total int64
 	err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM gift_transactions WHERE recipient_id = $1
@@ -221,8 +277,6 @@ func (s *GiftingStore) GetReceivedGifts(ctx context.Context, userID string, limi
 	if err != nil {
 		return nil, 0, fmt.Errorf("count received: %w", err)
 	}
-
-	// Get paginated results
 	rows, err := s.db.Query(ctx, `
 		SELECT
 			id, reference, sender_id, recipient_id, item_id, amount_kobo,
@@ -278,26 +332,20 @@ func (s *GiftingStore) GetGiftTransaction(ctx context.Context, userID string, tx
 }
 
 // enrichGiftTransaction loads sender/recipient names and item name.
-//
 // Reads platform_users/user_profiles, not auth.users/profiles: this pool runs
 // as service_role (no auth-schema grants), and the old "profiles" table has
 // no name column at all — full_name lives on user_profiles, keyed by id.
 func (s *GiftingStore) enrichGiftTransaction(ctx context.Context, gt *GiftTransaction) {
-	// Get sender name
 	_ = s.db.QueryRow(ctx, `
 		SELECT COALESCE(NULLIF(p.full_name, ''), u.email) FROM platform_users u
 		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id = $1
 	`, gt.SenderID).Scan(&gt.SenderName)
-
-	// Get recipient name
 	_ = s.db.QueryRow(ctx, `
 		SELECT COALESCE(NULLIF(p.full_name, ''), u.email) FROM platform_users u
 		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id = $1
 	`, gt.RecipientID).Scan(&gt.RecipientName)
-
-	// Get item name
 	_ = s.db.QueryRow(ctx, `
 		SELECT name FROM gift_catalog WHERE id = $1
 	`, gt.ItemID).Scan(&gt.ItemName)

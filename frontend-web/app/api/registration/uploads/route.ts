@@ -1,6 +1,6 @@
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { errorResponse, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireUser } from '@/src/lib/auth/server';
 import { createR2UploadUrl, createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
 import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
@@ -48,7 +48,12 @@ export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
 
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return errorResponse('Expected multipart/form-data', 415);
+    }
     const file = formData.get('file');
 
     if (!(file instanceof File)) {
@@ -121,10 +126,11 @@ export async function POST(request: Request) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    // Surface the real reason (R2 misconfig, filesystem permissions, etc.) so
-    // failures are diagnosable instead of a blanket "Upload failed".
+    // Log the real reason (R2 misconfig, filesystem permissions, etc.)
+    // server-side so failures are diagnosable, but never echo internals —
+    // fs errors carry absolute paths and AWS SDK errors carry config — to
+    // the client.
     console.error('[registration/uploads] upload failed:', error);
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Upload failed: ${detail}`, 500);
+    return handleApiError(error, 'Upload failed');
   }
 }

@@ -7,7 +7,6 @@ package healthrx
 // service method the new route calls through the pharmacy RxLister seam
 // (see healthpharmacy.RxLister / internal/app/health_pharmacy_routes.go's
 // rxListerAdapter).
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -66,8 +65,8 @@ func TestLiveDB_ListForPatient_ScopedToCallerWithItems(t *testing.T) {
 		t.Fatalf("issue mine: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_prescription_items WHERE prescription_id=$1`, mine.ID)
-		pool.Exec(context.Background(), `DELETE FROM health_prescriptions WHERE id=$1`, mine.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_prescription_items WHERE prescription_id=$1`, mine.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_prescriptions WHERE id=$1`, mine.ID)
 	})
 
 	notMine, err := svc.Issue(ctx, prescriber, other, nil, []Item{
@@ -77,8 +76,8 @@ func TestLiveDB_ListForPatient_ScopedToCallerWithItems(t *testing.T) {
 		t.Fatalf("issue not-mine: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_prescription_items WHERE prescription_id=$1`, notMine.ID)
-		pool.Exec(context.Background(), `DELETE FROM health_prescriptions WHERE id=$1`, notMine.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_prescription_items WHERE prescription_id=$1`, notMine.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_prescriptions WHERE id=$1`, notMine.ID)
 	})
 
 	got, err := svc.ListForPatient(ctx, patient)

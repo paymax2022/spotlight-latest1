@@ -1,14 +1,8 @@
-// ── Secure random helpers ─────────────────────────────────────────────────────
-// Math.random() is not cryptographically secure and must not back anything
 // that looks like an identifier, token, or code — even a mock/demo one, since
 // static analysis (and a future real implementation copy-pasting the mock)
 // can't tell "de-dup key" from "session token" apart from the source alone.
-//
-// No Math.random() fallback anywhere below, on purpose: a fallback branch is
-// still a reachable code path, and CodeQL (correctly) flags a Math.random()
 // call feeding a security-context sink regardless of how rarely that branch
 // runs. crypto.getRandomValues is the foundational Web Crypto API — more
-// widely implemented than the newer crypto.randomUUID() convenience method —
 // and this app already depends on it being present (Supabase's React Native
 // SDK needs it for PKCE), so building on it directly rather than falling
 // through to Math.random() is not a real availability regression.

@@ -2,18 +2,23 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const { searchParams } = new URL(request.url);
     const contestId = searchParams.get('contestId');
     if (!contestId) return errorResponse('contestId is required', 400);
+    // contestants.contest_id is uuid — reject a malformed value before it hits
+    // the enrollment query and surfaces as a Postgres 22P02 → swallowed → 403.
+    if (!UUID_RE.test(contestId)) return errorResponse('Invalid contest ID', 400);
 
     const supabase = createAdminClient();
 
     // Find enrollment
     const { data: enrollment } = await supabase
-      .from('competition_enrollments')
+      .from('contestants')
       .select('id')
       .eq('contest_id', contestId)
       .eq('user_id', user.id)

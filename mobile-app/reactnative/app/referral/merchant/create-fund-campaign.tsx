@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -19,7 +19,6 @@ import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { sanitizeMoneyInput } from '@/utils/money';
 
 // M-MER-02 — Create / fund campaign (lite): quick campaign + wallet funding.
-// Funding debits the merchant wallet in kobo; the live mutation carries an
 // Idempotency-Key (see merchant/api.ts).
 const ACTIONS: { key: CreateCampaignInput['qualifyingAction']; label: string }[] = [
   { key: 'first_transaction', label: 'First transaction' },

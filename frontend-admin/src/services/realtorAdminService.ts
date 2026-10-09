@@ -1,4 +1,3 @@
-// ── Admin — Realtor control-plane service ────────────────────────────────────
 // Mock by default (mirrors fxAdminService / crowdfundingAdminService). Flip with
 // NEXT_PUBLIC_REALTOR_ADMIN_USE_MOCK=false to hit the live admin endpoints.
 // All money is integer minor units (kobo).
@@ -14,11 +13,8 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REALTOR_ADMIN_USE_MOCK);
 
 // /api/realtor/admin is the real mount point — confirmed against
-// backend/internal/realtor/routes.go (`admin := r.Group("/api/realtor/admin")`)
 // and its Register() doc comment. apiRoot() strips any trailing /api/v1 from the
 // proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/realtor/admin')`,
 // which stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
 // every request 404'd against <proxy>/overview instead of
@@ -28,8 +24,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 async function getJson<T>(path: string): Promise<T> {
@@ -49,7 +44,6 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (j?.data ?? j) as T;
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const OVERVIEW: RealtorOverview = {
   listingsLive: 1842, pendingModeration: 3, pendingVerification: 5, activeLeases: 412,
   escrowHeldKobo: 84_500_000_00, payoutsDueKobo: 31_900_000_00, gmvKobo: 612_400_000_00,
@@ -81,7 +75,6 @@ const ESCROW: EscrowAccount[] = [
   { id: 'e3', leaseOrBooking: 'Lease · Yaba self-con', amountKobo: 100_000_00, status: 'disputed', heldSince: new Date(Date.now() - 20 * 86_400_000).toISOString() },
 ];
 
-// ─── API ──────────────────────────────────────────────────────────────────────
 export async function getOverview(): Promise<RealtorOverview> {
   if (USE_MOCK) { await delay(); return { ...OVERVIEW }; }
   return getJson<RealtorOverview>('/overview');

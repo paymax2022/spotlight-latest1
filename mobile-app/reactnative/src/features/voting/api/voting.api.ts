@@ -31,25 +31,19 @@ import {
   MOCK_VOTING_NOTIFICATIONS,
 } from './voting.mock';
 
-// ─── Mock data: OPT-IN ONLY ───────────────────────────────────────────────────
 // This used to default to MOCK, so any environment that forgot the flag served
 // invented contests, contestants and vote packages while looking entirely normal.
 // Fake data that shows up silently is worse than an empty screen or an error:
 // nobody goes looking for a bug they cannot see.
-//
 // The default is now LIVE. Mock is only used when someone explicitly asks for it
-// with EXPO_PUBLIC_VOTING_USE_MOCK=true — so forgetting the flag now produces a
 // visible failure against the real backend rather than a convincing fiction.
 // Live by default, and NEVER mock on staging or production — see mockPolicy.ts.
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VOTING_USE_MOCK, false);
 
 // Live voting is served by the Go backend's Connect module. Contests,
-// contestants and free votes all come from here; the roster is the same ranked
 // list the admin console publishes to, so approving an entry there makes it
 // votable here.
 const CONNECT_VOTING_BASE = '/api/v1/connect';
-
-// ─── Contests ─────────────────────────────────────────────────────────────────
 
 /**
  * Map a raw contest-detail response into our Contest shape, honouring the
@@ -104,18 +98,20 @@ export async function getContest(contestId: string): Promise<Contest> {
   // the roster — the authoritative list of who is actually votable.
   let count = raw.contestant_count ?? 0;
   let votes: number | null = raw.total_votes ?? null;
+  let likes = 0;
+  let shares = 0;
   try {
     const roster = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/contestants`);
     const rows = (roster.data?.data ?? []) as BackendRosterEntry[];
     count = rows.length;
     votes = rows.reduce((sum, r) => sum + (r.total_votes ?? 0), 0);
+    likes = rows.reduce((sum, r) => sum + (r.like_count ?? 0), 0);
+    shares = rows.reduce((sum, r) => sum + (r.share_count ?? 0), 0);
   } catch {
     /* roster unavailable — show the contest without a count rather than failing */
   }
-  return normalizeContest(mapContest(raw, count, votes) as unknown as Record<string, unknown>);
+  return normalizeContest(mapContest(raw, count, votes, likes, shares) as unknown as Record<string, unknown>);
 }
-
-// ─── Contestants ──────────────────────────────────────────────────────────────
 
 export async function getContestants(
   contestId: string,
@@ -164,7 +160,58 @@ export async function getContestant(contestantId: string): Promise<Contestant> {
   );
 }
 
-// ─── Leaderboard ──────────────────────────────────────────────────────────────
+// Gated server-side behind FEATURE_CONTESTANT_SOCIAL_ENABLED. When the flag is
+// off, these endpoints 404/aren't registered — callers should treat a failure
+// here as "not available yet", not surface a hard error over a like/share tap.
+
+/** Toggle the caller's like. Idempotent both ways — retrying a tap is safe. */
+export async function likeContestant(contestantId: string): Promise<Contestant> {
+  if (USE_MOCK) {
+    const found = MOCK_CONTESTANTS.find((c) => c.id === contestantId);
+    if (!found) throw new Error('Contestant not found');
+    return { ...found, likedByMe: true, likeCount: (found.likeCount ?? 0) + (found.likedByMe ? 0 : 1) };
+  }
+  const res = await api.post(`${CONNECT_VOTING_BASE}/contestants/${contestantId}/like`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendRosterEntry & { contest_id?: string };
+  return mapContestant(raw, raw.contest_id ?? '');
+}
+
+export async function unlikeContestant(contestantId: string): Promise<Contestant> {
+  if (USE_MOCK) {
+    const found = MOCK_CONTESTANTS.find((c) => c.id === contestantId);
+    if (!found) throw new Error('Contestant not found');
+    return { ...found, likedByMe: false, likeCount: Math.max(0, (found.likeCount ?? 0) - (found.likedByMe ? 1 : 0)) };
+  }
+  const res = await api.delete(`${CONNECT_VOTING_BASE}/contestants/${contestantId}/like`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendRosterEntry & { contest_id?: string };
+  return mapContestant(raw, raw.contest_id ?? '');
+}
+
+export interface ShareLinkResult {
+  /** Absolute, shareable URL — pass straight to the native Share sheet. */
+  url: string;
+  shareCount: number;
+}
+
+// The web app's own base URL, same variable the referral module's invite
+// links are built from — keeps every "share a link to get someone into the
+// app" feature pointed at one configured host instead of each hardcoding it.
+const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://spotlight.ng';
+
+/** Record a share and return the link to hand to the OS share sheet. */
+export async function shareContestant(contestantId: string): Promise<ShareLinkResult> {
+  if (USE_MOCK) {
+    const found = MOCK_CONTESTANTS.find((c) => c.id === contestantId);
+    const shareCount = (found?.shareCount ?? 0) + 1;
+    return { url: `${WEB_BASE_URL}/vote/mock-${contestantId}`, shareCount };
+  }
+  const res = await api.post(`${CONNECT_VOTING_BASE}/contestants/${contestantId}/share`);
+  const d = (res.data?.data ?? res.data ?? {}) as { path?: string; share_count?: number };
+  return {
+    url: `${WEB_BASE_URL}${d.path ?? ''}`,
+    shareCount: Number(d.share_count ?? 0),
+  };
+}
 
 function normalizeLeaderboardEntries(
   list: Array<Record<string, unknown>>,
@@ -259,8 +306,6 @@ function movementFromTrend(
   }
 }
 
-// ─── Vote Packages ─────────────────────────────────────────────────────────────
-
 /**
  * Paid vote packages for a contest.
  *
@@ -301,7 +346,6 @@ export async function getVotePackages(contestId?: string): Promise<VotePackage[]
   }));
 }
 
-// ─── Free Vote Allocation (PER CONTESTANT) ──────────────────────────────────────
 // Each voter gets 1 free vote per day for EACH contestant (admin-configurable).
 // Once that vote is cast, free voting for that contestant freezes until the 24h
 // reset. `resetsAt` drives the visible reset countdown. The live backend drives
@@ -341,7 +385,6 @@ export async function getFreeVoteAllocation(
       resetsAt: nextLocalMidnightISO(),
     };
   }
-  // Live: the Connect backend computes the allowance from the contest's
   // per-user cap and the votes actually recorded, so this cannot disagree with
   // what the vote endpoint enforces.
   const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/free-vote-allowance`);
@@ -353,8 +396,6 @@ export async function getFreeVoteAllocation(
     resetsAt: String(d.resetAt ?? d.reset_at ?? nextLocalMidnightISO()),
   };
 }
-
-// ─── Cast Free Votes ──────────────────────────────────────────────────────────
 
 export async function castFreeVotes(
   payload: VoteFreePayload,
@@ -393,8 +434,6 @@ export async function castFreeVotes(
   };
 }
 
-// ─── Paid Vote Initiate ────────────────────────────────────────────────────────
-
 export async function initiatePaidVote(payload: VotePaidInitiatePayload): Promise<VotePaidInitiateResult> {
   if (USE_MOCK) {
     return {
@@ -409,7 +448,6 @@ export async function initiatePaidVote(payload: VotePaidInitiatePayload): Promis
   // paymentMethod was dropped here, so "Pay with Wallet" opened a Paystack
   // transaction instead of debiting the wallet, then sent the voter to a
   // processing screen to wait for a payment they were never asked to make.
-  //
   // /paid/wallet debits atomically, prices the package server-side, records the
   // transaction and credits the votes in one call — so it comes back already
   // SUCCESSFUL, with nothing to verify.
@@ -439,7 +477,6 @@ export async function initiatePaidVote(payload: VotePaidInitiatePayload): Promis
   }
 
   // Backend: POST /api/votes/paid/initiate (no /voting prefix, no /v2).
-  // Requires voterEmail + voterName; vote count goes in `customVoteQuantity`
   // unless a preset `packageId` is supplied.
   const res = await api.post(
     '/api/votes/paid/initiate',
@@ -491,8 +528,6 @@ export async function verifyPaidVote(args: {
     receiptNumber: data.receiptNumber != null ? String(data.receiptNumber) : null,
   };
 }
-
-// ─── My Votes ─────────────────────────────────────────────────────────────────
 
 export async function getMyVotes(params?: {
   contestId?: string;
@@ -604,8 +639,6 @@ export async function getVoteReceipt(transactionId: string): Promise<VoteTransac
   const res = await api.get(`/api/v1/connect/votes/${transactionId}`);
   return toVoteTransaction((res.data?.data ?? res.data) as ConnectVoteRow);
 }
-
-// ─── Notifications ────────────────────────────────────────────────────────────
 
 /**
  * The voting activity feed.

@@ -2,9 +2,13 @@ package invest
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/jsonx"
 	"strconv"
 	"strings"
 
@@ -12,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
+const keyError = "error"
+
 // Admin repository methods (RBAC-gated; every mutation is audited by the service)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ListAllAssets returns every asset (including disabled/suspended) for admins.
 func (r *Repository) ListAllAssets(ctx context.Context) ([]StockAsset, error) {
@@ -85,11 +89,11 @@ func (r *Repository) ListAllOrders(ctx context.Context, status string, limit, of
 	args := []any{}
 	i := 1
 	if status != "" {
-		sb.WriteString(fmt.Sprintf(" WHERE status=$%d", i))
+		fmt.Fprintf(&sb, " WHERE status=$%d", i)
 		args = append(args, status)
 		i++
 	}
-	sb.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1))
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -135,7 +139,7 @@ func (r *Repository) GetFeeConfig(ctx context.Context) (FeeConfig, error) {
 	var fc FeeConfig
 	err := r.db.QueryRow(ctx, `SELECT commission_bps, min_fee_kobo FROM invest_fee_config WHERE is_active=true LIMIT 1`).
 		Scan(&fc.CommissionBPS, &fc.MinFeeKobo)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return FeeConfig{CommissionBPS: 150, MinFeeKobo: 10_000}, nil
 	}
 	if err != nil {
@@ -159,11 +163,11 @@ func (r *Repository) UpdateFeeConfig(ctx context.Context, fc FeeConfig, adminID 
 
 // InsertAudit appends an immutable admin-audit row.
 func (r *Repository) InsertAudit(ctx context.Context, adminID, action, entityType, entityID, reason string, oldVal, newVal any) error {
-	ob, _ := json.Marshal(oldVal)
-	nb, _ := json.Marshal(newVal)
+	ob := jsonx.Marshal(oldVal)
+	nb := jsonx.Marshal(newVal)
 	const q = `INSERT INTO invest_admin_audit_log (admin_id, action, entity_type, entity_id, old_value, new_value, reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := r.db.Exec(ctx, q, adminID, action, entityType, nullStr(entityID), ob, nb, nullStr(reason))
+	_, err := r.db.Exec(ctx, q, adminID, action, entityType, dbutil.NullStr(entityID), ob, nb, dbutil.NullStr(reason))
 	return err
 }
 
@@ -178,7 +182,7 @@ func (r *Repository) ListAudit(ctx context.Context, limit, offset int) ([]map[st
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, adminID, action, entityType, entityID, reason string
-		var created interface{}
+		var created any
 		if err := rows.Scan(&id, &adminID, &action, &entityType, &entityID, &reason, &created); err != nil {
 			return nil, err
 		}
@@ -190,34 +194,16 @@ func (r *Repository) ListAudit(ctx context.Context, limit, offset int) ([]map[st
 	return out, rows.Err()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin handler (HTTP). Mounted under /api/v1/admin/invest with RBAC.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type AdminHandler struct{ svc *Service }
 
 func NewAdminHandler(svc *Service) *AdminHandler { return &AdminHandler{svc: svc} }
 
-func adminID(c *gin.Context) string {
-	if u, ok := getAuthUserID(c); ok {
-		return u
-	}
-	return c.GetString("user_id")
-}
-
-// getAuthUserID reads the user id set by the auth middleware.
-func getAuthUserID(c *gin.Context) (string, bool) {
-	v := c.GetString("user_id")
-	if v == "" {
-		return "", false
-	}
-	return v, true
-}
-
 func (h *AdminHandler) Overview(c *gin.Context) {
 	counts, err := h.svc.repo.OverviewCounts(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, counts)
@@ -226,7 +212,7 @@ func (h *AdminHandler) Overview(c *gin.Context) {
 func (h *AdminHandler) ListAssets(c *gin.Context) {
 	assets, err := h.svc.repo.ListAllAssets(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": assets})
@@ -235,19 +221,19 @@ func (h *AdminHandler) ListAssets(c *gin.Context) {
 func (h *AdminHandler) CreateAsset(c *gin.Context) {
 	var a StockAsset
 	if err := c.ShouldBindJSON(&a); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if a.Symbol == "" || a.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "symbol and name are required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "symbol and name are required"})
 		return
 	}
 	created, err := h.svc.repo.CreateAsset(c.Request.Context(), a)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	_ = h.svc.repo.InsertAudit(c.Request.Context(), adminID(c), "asset.create", "stock_asset", created.ID, "", nil, created)
+	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "asset.create", "stock_asset", created.ID, "", nil, created)
 	c.JSON(http.StatusCreated, created)
 }
 
@@ -265,12 +251,12 @@ func (h *AdminHandler) UpdateAsset(c *gin.Context) {
 		Reason             string  `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	before, err := h.svc.repo.GetStockByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "asset not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "asset not found"})
 		return
 	}
 	fields := map[string]any{}
@@ -297,10 +283,10 @@ func (h *AdminHandler) UpdateAsset(c *gin.Context) {
 	}
 	updated, err := h.svc.repo.UpdateAssetFields(c.Request.Context(), id, fields)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	_ = h.svc.repo.InsertAudit(c.Request.Context(), adminID(c), "asset.update", "stock_asset", id, body.Reason, before, updated)
+	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "asset.update", "stock_asset", id, body.Reason, before, updated)
 	c.JSON(http.StatusOK, updated)
 }
 
@@ -308,7 +294,7 @@ func (h *AdminHandler) ListOrders(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	orders, err := h.svc.repo.ListAllOrders(c.Request.Context(), c.Query("status"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": orders})
@@ -318,7 +304,7 @@ func (h *AdminHandler) FailedOrders(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	orders, err := h.svc.repo.ListAllOrders(c.Request.Context(), "Failed", limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": orders})
@@ -328,7 +314,7 @@ func (h *AdminHandler) PendingSettlements(c *gin.Context) {
 	limit, _ := adminPage(c, 100)
 	orders, err := h.svc.repo.DueSettlements(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	// Also surface all PendingSettlement (not just due) for visibility.
@@ -340,17 +326,17 @@ func (h *AdminHandler) PendingSettlements(c *gin.Context) {
 func (h *AdminHandler) RunSettlement(c *gin.Context) {
 	n, err := h.svc.ProcessDueSettlements(c.Request.Context(), 200)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	_ = h.svc.repo.InsertAudit(c.Request.Context(), adminID(c), "settlement.run", "settlement", "", "", nil, gin.H{"processed": n})
+	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "settlement.run", "settlement", "", "", nil, gin.H{"processed": n})
 	c.JSON(http.StatusOK, gin.H{"processed": n})
 }
 
 func (h *AdminHandler) GetFees(c *gin.Context) {
 	fc, err := h.svc.repo.GetFeeConfig(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, fc)
@@ -363,20 +349,20 @@ func (h *AdminHandler) UpdateFees(c *gin.Context) {
 		Reason        string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.CommissionBPS < 0 || body.CommissionBPS > 1000 || body.MinFeeKobo < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "fee out of allowed range"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "fee out of allowed range"})
 		return
 	}
 	before, _ := h.svc.repo.GetFeeConfig(c.Request.Context())
 	fc := FeeConfig{CommissionBPS: body.CommissionBPS, MinFeeKobo: body.MinFeeKobo}
-	if err := h.svc.repo.UpdateFeeConfig(c.Request.Context(), fc, adminID(c)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.svc.repo.UpdateFeeConfig(c.Request.Context(), fc, ginutil.AdminID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	_ = h.svc.repo.InsertAudit(c.Request.Context(), adminID(c), "fees.update", "fee_config", "", body.Reason, before, fc)
+	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "fees.update", "fee_config", "", body.Reason, before, fc)
 	c.JSON(http.StatusOK, fc)
 }
 
@@ -384,13 +370,11 @@ func (h *AdminHandler) AuditLog(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	logs, err := h.svc.repo.ListAudit(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": logs})
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 func adminPage(c *gin.Context, def int) (int, int) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", strconv.Itoa(def)))
@@ -416,4 +400,177 @@ func defaultInt(v, d int) int {
 		return d
 	}
 	return v
+}
+
+// Admin: dividend + corporate-action ingestion and provider health.
+// Dividends/corporate actions are admin- or provider-sourced; every record is
+// traceable to a source (iron rule: every corporate action traceable).
+
+// InsertDividend records a dividend for a symbol (resolves the asset id).
+func (r *Repository) InsertDividend(ctx context.Context, symbol string, amountPerShareKobo int64, exDate, recordDate, paymentDate, source string) (string, error) {
+	st, err := r.GetStockBySymbol(ctx, symbol)
+	if err != nil {
+		return "", err
+	}
+	const q = `INSERT INTO invest_dividends
+		(stock_asset_id, symbol, amount_per_share_kobo, ex_date, record_date, payment_date, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`
+	var id string
+	err = r.db.QueryRow(ctx, q, st.ID, st.Symbol, amountPerShareKobo,
+		nullDate(exDate), nullDate(recordDate), nullDate(paymentDate), dbutil.NullStr(source)).Scan(&id)
+	return id, err
+}
+
+func (r *Repository) ListDividends(ctx context.Context, limit, offset int) ([]Dividend, error) {
+	const q = `SELECT id, stock_asset_id, symbol, amount_per_share_kobo, currency,
+		ex_date::text, record_date::text, payment_date::text, status, COALESCE(source,'')
+		FROM invest_dividends ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := r.db.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Dividend{}
+	for rows.Next() {
+		var d Dividend
+		if err := rows.Scan(&d.ID, &d.StockAssetID, &d.Symbol, &d.AmountPerShareKobo, &d.Currency,
+			&d.ExDate, &d.RecordDate, &d.PaymentDate, &d.Status, &d.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) InsertCorporateAction(ctx context.Context, symbol, caType, title, description, effectiveDate, recordDate, paymentDate, source string) (string, error) {
+	st, err := r.GetStockBySymbol(ctx, symbol)
+	if err != nil {
+		return "", err
+	}
+	const q = `INSERT INTO invest_corporate_actions
+		(stock_asset_id, symbol, type, title, description, effective_date, record_date, payment_date, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`
+	var id string
+	err = r.db.QueryRow(ctx, q, st.ID, st.Symbol, caType, title, dbutil.NullStr(description),
+		nullDate(effectiveDate), nullDate(recordDate), nullDate(paymentDate), dbutil.NullStr(source)).Scan(&id)
+	return id, err
+}
+
+func (r *Repository) ListCorporateActions(ctx context.Context, limit, offset int) ([]CorporateAction, error) {
+	const q = `SELECT id, stock_asset_id, symbol, type, title, COALESCE(description,''),
+		effective_date::text, record_date::text, payment_date::text, status, COALESCE(source,'')
+		FROM invest_corporate_actions ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := r.db.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CorporateAction{}
+	for rows.Next() {
+		var c CorporateAction
+		if err := rows.Scan(&c.ID, &c.StockAssetID, &c.Symbol, &c.Type, &c.Title, &c.Description,
+			&c.EffectiveDate, &c.RecordDate, &c.PaymentDate, &c.Status, &c.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ProviderHealth reports the configured broker + market-data adapter health.
+func (s *Service) ProviderHealth(ctx context.Context) []map[string]any {
+	out := []map[string]any{}
+	check := func(role, name string, hc any) {
+		entry := map[string]any{"role": role, "provider": name, "healthy": true, "detail": "mock/no health check"}
+		if checker, ok := hc.(HealthChecker); ok {
+			ok2, detail := checker.Healthy(ctx)
+			entry["healthy"] = ok2
+			entry["detail"] = detail
+		}
+		out = append(out, entry)
+	}
+	check("broker", s.broker.Name(), s.broker)
+	check("market_data", s.market.Name(), s.market)
+	return out
+}
+
+func (h *AdminHandler) ListDividends(c *gin.Context) {
+	limit, offset := adminPage(c, 50)
+	d, err := h.svc.repo.ListDividends(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": d})
+}
+
+func (h *AdminHandler) CreateDividend(c *gin.Context) {
+	var body struct {
+		Symbol             string `json:"symbol" binding:"required"`
+		AmountPerShareKobo int64  `json:"amount_per_share_kobo" binding:"required"`
+		ExDate             string `json:"ex_date"`
+		RecordDate         string `json:"record_date"`
+		PaymentDate        string `json:"payment_date"`
+		Source             string `json:"source"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	id, err := h.svc.repo.InsertDividend(c.Request.Context(), body.Symbol, body.AmountPerShareKobo,
+		body.ExDate, body.RecordDate, body.PaymentDate, body.Source)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "dividend.create", "dividend", id, body.Source, nil, body)
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (h *AdminHandler) ListCorporateActions(c *gin.Context) {
+	limit, offset := adminPage(c, 50)
+	a, err := h.svc.repo.ListCorporateActions(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": a})
+}
+
+func (h *AdminHandler) CreateCorporateAction(c *gin.Context) {
+	var body struct {
+		Symbol        string `json:"symbol" binding:"required"`
+		Type          string `json:"type" binding:"required"`
+		Title         string `json:"title" binding:"required"`
+		Description   string `json:"description"`
+		EffectiveDate string `json:"effective_date"`
+		RecordDate    string `json:"record_date"`
+		PaymentDate   string `json:"payment_date"`
+		Source        string `json:"source"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	id, err := h.svc.repo.InsertCorporateAction(c.Request.Context(), body.Symbol, strings.ToLower(body.Type),
+		body.Title, body.Description, body.EffectiveDate, body.RecordDate, body.PaymentDate, body.Source)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "corporate_action.create", "corporate_action", id, body.Source, nil, body)
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (h *AdminHandler) ProviderHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"data": h.svc.ProviderHealth(c.Request.Context())})
+}
+
+// nullDate returns nil for empty strings so a NULL is written, else the string
+// (Postgres assignment-casts 'YYYY-MM-DD' text to date).
+func nullDate(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }

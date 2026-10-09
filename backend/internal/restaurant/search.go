@@ -2,7 +2,7 @@ package restaurant
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +16,7 @@ type SearchParams struct {
 	Query       string   // free text over name + description + dish (menu-item) names
 	Cuisine     string   // exact (case-insensitive) cuisine tag
 	DietaryTags []string // keep restaurants with an available item carrying any tag
-	MinRating   float64  // rating >= this
+	MinRating   float64
 	OpenNow     bool     // only restaurants open right now (honors business hours)
 	NearLat     *float64 // near-me centre (both lat+lng required to activate)
 	NearLng     *float64
@@ -37,7 +37,6 @@ const (
 // DB) so the whole filter/sort/pagination policy is unit-testable, and it uses ONLY
 // parameterized placeholders for caller-supplied values — no string interpolation of
 // user input — so it is injection-safe by construction.
-//
 // The result always selects the same fixed column list (…, distance_m) so the scanner
 // is stable whether or not a near-me point was supplied (distance is NULL without one).
 // open_now mirrors hours.go's windowContains exactly, evaluated at `now` in `loc`.
@@ -136,10 +135,7 @@ func buildSearchQuery(p SearchParams, now time.Time, loc *time.Location) (string
 	if limit <= 0 || limit > maxSearchLimit {
 		limit = defaultSearchLimit
 	}
-	offset := p.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(p.Offset, 0)
 	b.WriteString(" LIMIT " + ph(limit) + " OFFSET " + ph(offset))
 	return b.String(), args
 }
@@ -185,7 +181,7 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 	}
 	if req.PrepTimeMinutes != nil {
 		if *req.PrepTimeMinutes < 0 || *req.PrepTimeMinutes > 240 {
-			return fmt.Errorf("restaurant: prep_time_minutes must be in [0,240]")
+			return errors.New("restaurant: prep_time_minutes must be in [0,240]")
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET prep_time_minutes=$1, updated_at=NOW() WHERE id=$2`, *req.PrepTimeMinutes, restaurantID); err != nil {
 			return err
@@ -193,7 +189,7 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 	}
 	if req.MinOrderKobo != nil {
 		if *req.MinOrderKobo < 0 {
-			return fmt.Errorf("restaurant: min_order_kobo must be >= 0")
+			return errors.New("restaurant: min_order_kobo must be >= 0")
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET min_order_kobo=$1, updated_at=NOW() WHERE id=$2`, *req.MinOrderKobo, restaurantID); err != nil {
 			return err

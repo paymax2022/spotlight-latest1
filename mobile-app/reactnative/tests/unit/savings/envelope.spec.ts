@@ -1,7 +1,4 @@
 // Pure-logic unit tests for the Go savings API response envelope.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/savings/*.spec.ts"
-// (node:test + assert — this app has no vitest; matches the other unit suites.)
-//
 // Every fixture below is the LITERAL shape emitted by
 // backend/internal/savings/handler.go (line numbers in comments), so these
 // tests fail if the client and the Go handler drift apart again.
@@ -28,7 +25,6 @@ describe('savings response envelope', () => {
       // handler.go:85 — GET /vaults
       const payload = body(res({ success: true, vaults: [{ id: 'v1' }] }));
       assert.equal(Array.isArray(payload), false);
-      // …which is why `(Array.isArray(raw) ? raw : [])` used to yield [] with no
       // error at all. list() is what makes the read work.
       assert.deepEqual(list(res({ success: true, vaults: [{ id: 'v1' }] }), 'vaults'), [{ id: 'v1' }]);
     });
@@ -106,7 +102,6 @@ describe('savings response envelope', () => {
 
   describe('vaultStatus() — state vs kind', () => {
     it('reports a LOCK vault as LOCKED (the bug: state was compared to a KIND value)', () => {
-      // Go sends state=OPEN, kind=LOCK. The old code tested state === 'LOCK',
       // which is never true, so no vault was ever locked and the early-break
       // penalty always took the unlocked path — charging nothing.
       assert.equal(vaultStatus('OPEN', 'LOCK'), 'LOCKED');

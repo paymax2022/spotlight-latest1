@@ -1,7 +1,6 @@
-import crypto from 'node:crypto';
-import { creditWallet } from '@/src/server/wallet/service';
-import { buildIdempotencyKey } from '@/src/server/wallet/ledger';
 import { getVirtualAccountByNumber } from './service';
+import { creditDvaInboundTransfer } from './reconcile';
+import { verifyHmacSha512Hex } from '@/src/lib/crypto/hmac';
 
 interface DvaWebhookResult {
   processed: boolean;
@@ -23,8 +22,8 @@ export async function handleDvaTransferWebhook(
   const secretKey = process.env.PAYSTACK_SECRET_KEY;
   if (!secretKey) return { processed: false, duplicate: false, error: 'Paystack not configured' };
 
-  const expected = crypto.createHmac('sha512', secretKey).update(rawBody).digest('hex');
-  if (expected !== signature) {
+  // Constant-time compare — `expected !== signature` leaks prefix-match timing.
+  if (!verifyHmacSha512Hex(rawBody, signature, secretKey)) {
     return { processed: false, duplicate: false, error: 'Invalid signature' };
   }
 
@@ -65,14 +64,14 @@ export async function handleDvaTransferWebhook(
   }
 
   try {
-    const idempotencyKey = buildIdempotencyKey('dva', reference, 'CREDIT');
-
-    const result = await creditWallet(virtualAccount.user_id, {
+    // Shared with the read-time reconcile (./reconcile.ts) — one credit path,
+    // one `dva:<reference>:CREDIT` idempotency key, so a webhook replay and a
+    // verify-on-read pass over the same transfer credit it exactly once.
+    const result = await creditDvaInboundTransfer({
+      userId: virtualAccount.user_id,
+      reference,
       amountKobo,
-      reference: `DVA:${reference}`,
-      idempotencyKey,
-      description: `Inbound transfer to virtual account ${accountNumber}`,
-      metadata: { payment_reference: reference, account_number: accountNumber },
+      accountNumber,
     });
 
     return {

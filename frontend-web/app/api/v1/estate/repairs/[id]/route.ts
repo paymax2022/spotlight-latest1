@@ -5,9 +5,11 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, resolveNames } from '@/src/server/estate/resident';
 import { mapRepair } from '../route';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+
 const COLS = 'id, estate_id, reporter_id, category, description, urgency, status, cost_estimate_kobo, created_at';
 
-// GET /api/v1/estate/repairs/[id]
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
@@ -15,6 +17,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(params.id)) throw new ApiError('Invalid repair request ID', 400);
     const { data: row, error } = await supabase.from('estate_repair_requests').select(COLS).eq('id', params.id).maybeSingle();
     if (error) throw error;
     if (!row || (row as any).estate_id !== ctx.estateId) throw new ApiError('Request not found', 404);

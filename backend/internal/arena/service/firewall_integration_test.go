@@ -12,7 +12,6 @@ import (
 // append → batch-cutoff to QUALIFIED) and then proves that a large Support
 // contribution moves the prize pot and the People's Champion tally WITHOUT moving
 // any merit / leaderboard / crown value. Money can never buy merit.
-//
 // Scenario:
 //   - k1 outscores k2 on the theory exam (merit).
 //   - The batch cutoff (top-1 by merit) QUALIFIES k1, not k2.
@@ -23,7 +22,6 @@ func TestFirewall_EndToEnd_SupportMovesPotNotMerit(t *testing.T) {
 	ctx := context.Background()
 	const comp = "naija-driver-2026"
 
-	// ── Merit rail: the ONLY holder of a signer is the authorized theory adapter ──
 	signer := newSigner(t, "theory-exam")
 	meritRepo := newFakeMeritRepo(authFor(signer, "THEORY_EXAM"))
 	merit := NewMeritService(meritRepo, &fakeAudit{})
@@ -60,7 +58,6 @@ func TestFirewall_EndToEnd_SupportMovesPotNotMerit(t *testing.T) {
 		return rows
 	}
 
-	// ── Batch cutoff → QUALIFIED (merit-only, top-1) ─────────────────────────────
 	rowsBefore := leaderboard()
 	if !AdvancementQualifies(rowsBefore, "k1", 1) {
 		t.Fatal("k1 must QUALIFY on merit (top-1)")
@@ -73,10 +70,9 @@ func TestFirewall_EndToEnd_SupportMovesPotNotMerit(t *testing.T) {
 	}
 	meritEntriesBefore := len(meritRepo.inserted)
 
-	// ── Money rail: Support holds NO signer, can only move money + tag rows ───────
 	led := newFakeLedger()
 	supportRepo := &fakeSupportRepo{}
-	support := NewSupportService(supportRepo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{})
+	support := NewSupportService(supportRepo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{}).WithDebitLimiter(allowAllDebitLimit{})
 
 	// Backers gift k2 (the merit loser) 5× what k1 gets.
 	if err := support.Contribute(ctx, "backer-1", "idem-1", comp, "k2", 500000); err != nil {
@@ -94,7 +90,6 @@ func TestFirewall_EndToEnd_SupportMovesPotNotMerit(t *testing.T) {
 		t.Fatalf("People's Champion (money) want k2, got %s", champ)
 	}
 
-	// ── FIREWALL (NDC-1): merit / leaderboard / crown are UNCHANGED by the money ──
 	if len(meritRepo.inserted) != meritEntriesBefore {
 		t.Fatalf("Support must not mint merit entries: before=%d after=%d", meritEntriesBefore, len(meritRepo.inserted))
 	}

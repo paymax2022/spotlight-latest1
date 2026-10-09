@@ -17,7 +17,6 @@ import (
 // RewardService is the Direct Referral Rewards ENGINE. It is distinct from the
 // legacy *Service (per-referral flat reward) in service.go — this one is purchase-
 // triggered, single-level, tiered + milestone-driven, and config-versioned.
-//
 // Money path REUSES the finance ledger: an ongoing-share reward CREDITs the
 // referrer wallet with a balanced double-entry (counterpart = the referral reward
 // expense standing account), keyed idempotently on the reward id. A refund posts a
@@ -53,10 +52,6 @@ func (s *RewardService) emit(ctx context.Context, event string, fields map[strin
 	_ = s.audit.Emit(ctx, event, fields)
 }
 
-// ============================================================================
-// EMIT HOOKS — the in-process contract for the integration agent.
-// ============================================================================
-
 // OnPurchaseSettled processes a settled purchase into an ongoing-share reward.
 // Contract (§2.1, §4.1):
 //   - Look up the payer's attribution. No attribution OR margin <= 0 → no-op (nil).
@@ -70,17 +65,15 @@ func (s *RewardService) emit(ctx context.Context, event string, fields map[strin
 // Idempotent: a replay with the same TransactionID is a safe no-op.
 func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettled) error {
 	if strings.TrimSpace(in.TransactionID) == "" {
-		return fmt.Errorf("referrals: OnPurchaseSettled requires transaction_id")
+		return errors.New("referrals: OnPurchaseSettled requires transaction_id")
 	}
 	if strings.TrimSpace(in.PayerUserID) == "" {
-		return fmt.Errorf("referrals: OnPurchaseSettled requires payer_user_id")
+		return errors.New("referrals: OnPurchaseSettled requires payer_user_id")
 	}
-	// No-op on non-positive margin — reward is only created where margin > 0 (§4.1).
 	if in.MarginKobo <= 0 {
 		return nil
 	}
 
-	// 1) Attribution lookup for the payer. No attribution → no reward (§3 invariant).
 	referrerID, err := s.attributedReferrer(ctx, in.PayerUserID)
 	if err != nil {
 		return err
@@ -88,22 +81,19 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 	if referrerID == "" {
 		return nil // unattributed payer — nothing to reward, fail-closed no-op
 	}
-	// Fail-closed self-referral guard (attribution should never do this, but never
-	// pay a user for their own purchase).
+	// Fail-closed self-referral guard — never pay a user for their own purchase.
 	if referrerID == in.PayerUserID {
 		return nil
 	}
 
-	// 2) Resolve the referrer's current tier rate + active config version.
 	rate, cfgVersion, err := s.currentRate(ctx, referrerID)
 	if err != nil {
 		return err
 	}
 	rewardKobo := ComputeReward(in.MarginKobo, rate)
 
-	// 3) Insert the reward row idempotently (source_transaction_id UNIQUE). If a row
-	//    already exists we fetch it and continue toward crediting (covers a crash
-	//    between insert and credit).
+	// An existing row is fetched and crediting continues — covers a crash
+	// between insert and credit.
 	rewardID, status, err := s.insertOrGetReward(ctx, referrerID, in, rate, rewardKobo, cfgVersion)
 	if err != nil {
 		return err
@@ -115,9 +105,8 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 		return nil // already fully processed — idempotent no-op
 	}
 
-	// 4) Credit the referrer wallet (balanced double-entry), idempotency-keyed on the
-	//    reward id. Zero-value rewards skip the ledger but still resolve to CREDITED so
-	//    the row isn't stuck PENDING.
+	// Zero-value rewards skip the ledger but still resolve to CREDITED so the
+	// row is not stuck PENDING.
 	if rewardKobo > 0 {
 		expenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountReferralReward)
 		if err != nil {
@@ -131,7 +120,6 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 		}
 	}
 
-	// 5) Flip PENDING → CREDITED (idempotent WHERE status='PENDING').
 	const upd = `UPDATE referral_rewards SET status='CREDITED', credited_at=now()
 	             WHERE id=$1 AND status='PENDING'`
 	if _, err := s.db.Exec(ctx, upd, rewardID); err != nil {
@@ -139,7 +127,7 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 	}
 
 	s.emit(ctx, "referral.reward.credited", map[string]any{
-		"reward_id": rewardID, "referrer_id": referrerID, "referred_user_id": in.PayerUserID,
+		"reward_id": rewardID, keyReferrerID: referrerID, keyReferredUserID: in.PayerUserID,
 		"transaction_id": in.TransactionID, "module": in.Module, "reward_kobo": rewardKobo,
 		"applied_rate": rate, "config_version": cfgVersion,
 	})
@@ -153,7 +141,7 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 // refund event is a safe no-op.
 func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefunded) error {
 	if strings.TrimSpace(in.TransactionID) == "" {
-		return fmt.Errorf("referrals: OnPurchaseRefunded requires transaction_id")
+		return errors.New("referrals: OnPurchaseRefunded requires transaction_id")
 	}
 
 	const q = `SELECT id, referrer_id, reward_kobo, status FROM referral_rewards
@@ -171,10 +159,9 @@ func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefun
 		return nil // PENDING never credited, or already REVERSED — idempotent no-op
 	}
 
-	// Post the ledger reversal (drain the credited reward from the referrer wallet
-	// back to the expense account) and flip the reward row REVERSED. The ledger
-	// reversal is its own atomic tx (balanced pair + unique idempotency key); the
-	// reward row flip is guarded WHERE status='CREDITED' so a replay is a no-op.
+	// Ledger reversal + status flip: the reversal is its own atomic tx (unique
+	// idempotency key); the flip is guarded WHERE status='CREDITED' so a replay
+	// is a no-op.
 	if rewardKobo > 0 {
 		expenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountReferralReward)
 		if err != nil {
@@ -202,15 +189,11 @@ func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefun
 	}
 
 	s.emit(ctx, "referral.reward.reversed", map[string]any{
-		"reward_id": rewardID, "referrer_id": referrerID,
+		"reward_id": rewardID, keyReferrerID: referrerID,
 		"transaction_id": in.TransactionID, "reward_kobo": rewardKobo,
 	})
 	return nil
 }
-
-// ============================================================================
-// Attribution + config helpers.
-// ============================================================================
 
 // attributedReferrer returns the referrer_id attributed to a payer, or "" if the
 // payer has no (human) attribution. Reuses the existing referral_attributions
@@ -247,7 +230,7 @@ func (s *RewardService) ActiveConfig(ctx context.Context) (*ProgramConfig, error
 	err := s.db.QueryRow(ctx, q).Scan(
 		&c.ID, &c.Version, &tierJSON, &msJSON, &c.IsActive, &c.EffectiveFrom, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("referrals: no active program config")
+		return nil, errors.New("referrals: no active program config")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("referrals: load active config: %w", err)
@@ -275,7 +258,6 @@ func (s *RewardService) currentRate(ctx context.Context, referrerID string) (flo
 	var rate float64
 	err = s.db.QueryRow(ctx, q, referrerID).Scan(&rate)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// No status row yet — use the entry-tier rate for count 1 (Starter).
 		if b, ok := cfg.TierForCount(1); ok {
 			return b.Rate, cfg.Version, nil
 		}
@@ -307,18 +289,12 @@ func (s *RewardService) insertOrGetReward(ctx context.Context, referrerID string
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", "", fmt.Errorf("referrals: insert reward: %w", err)
 	}
-	// Conflict — row already exists; fetch it.
 	const sel = `SELECT id, status FROM referral_rewards WHERE source_transaction_id=$1`
 	if err := s.db.QueryRow(ctx, sel, in.TransactionID).Scan(&id, &status); err != nil {
 		return "", "", fmt.Errorf("referrals: fetch existing reward: %w", err)
 	}
 	return id, status, nil
 }
-
-// ============================================================================
-// USER API — link / attribute / dashboard / referrals / earnings / milestones.
-// All read paths are scoped to the caller (object-level authZ in the handler).
-// ============================================================================
 
 // GetOrCreateLink returns the caller's referral code from referral_links,
 // generating one if absent. Idempotent (referrer_id UNIQUE).
@@ -327,20 +303,46 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 	var l Link
 	err := s.db.QueryRow(ctx, sel, referrerID).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt)
 	if err == nil {
+		// E2E-FIN-044: an OLDER finance_referral_codes row is canonical — adopt
+		// it so both surfaces show one code. A code already held by another
+		// referrer leaves the row unchanged.
+		var legacy string
+		var legacyAt time.Time
+		if lerr := s.db.QueryRow(ctx,
+			`SELECT code, created_at FROM finance_referral_codes WHERE user_id = $1`,
+			referrerID).Scan(&legacy, &legacyAt); lerr == nil && legacy != l.Code && legacyAt.Before(l.CreatedAt) {
+			if _, uerr := s.db.Exec(ctx,
+				`UPDATE referral_links SET code = $2 WHERE referrer_id = $1`,
+				referrerID, legacy); uerr == nil {
+				l.Code = legacy
+				l.CreatedAt = legacyAt
+			}
+		}
 		return &l, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("referrals: load link: %w", err)
 	}
-	// Retry on a code collision. At 11 characters a clash was negligible; at 5
-	// it is not (27^5 ~= 14.3M, and the birthday bound bites long before that),
-	// so a single attempt would surface as a hard 500 to an ordinary user just
-	// opening their own referral screen.
+	// Retry on a code collision: at 5 chars the birthday bound makes clashes
+	// realistic, and a single attempt would 500 a user opening their screen.
 	const ins = `
 		INSERT INTO referral_links (referrer_id, code) VALUES ($1,$2)
 		ON CONFLICT (referrer_id) DO NOTHING
 		RETURNING id, referrer_id, code, created_at`
-	for attempt := 0; attempt < codeIssueAttempts; attempt++ {
+	// E2E-FIN-044: adopt the legacy finance_referral_codes code if one exists —
+	// first-minted wins, so an old seed code stays the user's one code.
+	var adopted string
+	if aerr := s.db.QueryRow(ctx,
+		`SELECT code FROM finance_referral_codes WHERE user_id = $1`,
+		referrerID).Scan(&adopted); aerr == nil {
+		if ierr := s.db.QueryRow(ctx, ins, referrerID, adopted).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt); ierr == nil {
+			return &l, nil
+		} else if errors.Is(ierr, pgx.ErrNoRows) {
+			return s.GetOrCreateLink(ctx, referrerID)
+		}
+		// Code taken by another referrer — fall through and draw a fresh one.
+	}
+	for range codeIssueAttempts {
 		code, gerr := generateRewardCode()
 		if gerr != nil {
 			return nil, gerr
@@ -350,8 +352,7 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 			return &l, nil
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
-			// ON CONFLICT (referrer_id) fired: this user's link already exists.
-			// Re-read rather than retry — a second code is not wanted.
+			// referrer_id conflict: the link already exists — re-read it.
 			return s.GetOrCreateLink(ctx, referrerID)
 		}
 		if isDuplicateCode(err) {
@@ -362,64 +363,83 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 	return nil, fmt.Errorf("referrals: no free referral code in %d attempts", codeIssueAttempts)
 }
 
-// Attribute applies a referral code at signup: resolves the code to a referrer and
-// creates the permanent referral_attributions row for the caller. Idempotent per
-// user (referred_user_id UNIQUE). Rejects self-referral and unknown codes.
-func (s *RewardService) Attribute(ctx context.Context, referredUserID, code string) (string, error) {
+// Attribute applies a referral code at signup (or as a late claim afterwards):
+// resolves the code to a referrer and writes the permanent referral_attributions
+// row for the caller. Idempotent per user (referred_user_id UNIQUE). Rejects
+// self-referral and unknown codes.
+//
+// Late-claim semantics (E2E-FIN-042): the §7A signup resolver ALWAYS writes a
+// row — a codeless signup gets a house placeholder (is_house, referrer NULL) —
+// so the upsert below must REPLACE a still-claimable house placeholder rather
+// than no-op on conflict (same claimable conditions as
+// attribution.Service.ClaimCode: is_house, status='grace', grace window open).
+// A row held by a real referrer is never overwritten — first-real-attribution
+// wins, so a signup-time attribution beats a racing late claim.
+//
+// Returns (referrerID, attributed): referrerID is the user's ACTUAL current
+// referrer ("" when still house-attributed), and attributed is true only when
+// the submitted code is the attribution now in effect — false when a different
+// real referrer already won or the house row is no longer claimable.
+func (s *RewardService) Attribute(ctx context.Context, referredUserID, code string) (string, bool, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return "", fmt.Errorf("referrals: attribute requires a code")
-	}
-
-	// Already attributed? Idempotent — return the existing referrer.
-	if existing, err := s.attributedReferrer(ctx, referredUserID); err != nil {
-		return "", err
-	} else if existing != "" {
-		return existing, nil
+		return "", false, errors.New("referrals: attribute requires a code")
 	}
 
 	referrerID, err := s.resolveCode(ctx, code)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if referrerID == "" {
-		return "", fmt.Errorf("referrals: unknown referral code")
+		return "", false, errors.New("referrals: unknown referral code")
 	}
 	if referrerID == referredUserID {
-		return "", fmt.Errorf("referrals: self-referral rejected")
+		return "", false, errors.New("referrals: self-referral rejected")
 	}
 
-	const ins = `
+	// The conflict-update WHERE overrides ONLY a claimable house placeholder, so
+	// a racing real attribution (is_house=false) is a safe no-op —
+	// first-real-attribution wins, atomically.
+	const upsert = `
 		INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type, code_used)
 		VALUES ($1,$2,'code',$3)
-		ON CONFLICT (referred_user_id) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, referredUserID, referrerID, code); err != nil {
-		return "", fmt.Errorf("referrals: insert attribution: %w", err)
+		ON CONFLICT (referred_user_id) DO UPDATE
+			SET referrer_id      = EXCLUDED.referrer_id,
+			    house_account_id = NULL,
+			    attribution_type = 'code',
+			    code_used        = EXCLUDED.code_used,
+			    is_house         = false,
+			    risk_flag        = NULL,
+			    reassigned_from  = 'house',
+			    reassigned_at    = now(),
+			    updated_at       = now()
+			WHERE referral_attributions.is_house
+			  AND referral_attributions.status = 'grace'
+			  AND (referral_attributions.grace_expires_at IS NULL
+			       OR referral_attributions.grace_expires_at > now())`
+	res, err := s.db.Exec(ctx, upsert, referredUserID, referrerID, code)
+	if err != nil {
+		return "", false, fmt.Errorf("referrals: write attribution: %w", err)
 	}
-	// Re-read to return the authoritative referrer (covers a concurrent insert).
+	// Re-read for the authoritative referrer (a concurrent insert, or a conflict
+	// row the WHERE declined, may differ).
 	final, err := s.attributedReferrer(ctx, referredUserID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	s.emit(ctx, "referral.attributed", map[string]any{
-		"referred_user_id": referredUserID, "referrer_id": final, "code": code,
-	})
-	return final, nil
+	if res.RowsAffected() > 0 {
+		s.emit(ctx, "referral.attributed", map[string]any{
+			keyReferredUserID: referredUserID, keyReferrerID: referrerID, "code": code,
+		})
+	}
+	return final, final != "" && final == referrerID, nil
 }
 
-// resolveCode maps a code to a referrer, checking the engine's referral_links
-// first, then falling back to the legacy finance_referral_codes seed so codes
-// issued by the old module still attribute.
-//
-// referral_links is looked up by exact case: GetOrCreateLink/GenerateCode
-// only ever issue uppercase codes there, so an exact match is correct and
-// this path is left untouched (REF-008 does not affect it).
-//
-// The legacy finance_referral_codes fallback is looked up case-INSENSITIVELY
-// (REF-008): its rows may be stored in whatever case they were generated in
-// before the two generators writing into that table were unified (see
-// internal/finance/referrals/code.go and frontend-web's referrals/service.ts),
-// so a case-sensitive match would leave already-issued codes unresolvable.
+// resolveCode maps a code to a referrer: referral_links (exact case — its
+// generators only mint uppercase), then the legacy finance_referral_codes seed
+// looked up case-INSENSITIVELY (REF-008: that table may hold mixed-case rows
+// written before its generators were unified, so an exact match would leave
+// already-issued codes unresolvable).
 func (s *RewardService) resolveCode(ctx context.Context, code string) (string, error) {
 	code = strings.TrimSpace(code)
 	const q1 = `SELECT referrer_id FROM referral_links WHERE code=$1`
@@ -442,16 +462,12 @@ func (s *RewardService) resolveCode(ctx context.Context, code string) (string, e
 	return referrerID, nil
 }
 
-// ResolveCodeToReferrer adapts resolveCode to the referral/attribution.CodeResolver
-// interface (ResolveCodeToReferrer(ctx, code) (string, error)), so the §7A
-// signup-attribution engine (System A) can resolve codes through this engine's
-// (System B's) two-table lookup — referral_links first, then the legacy
-// finance_referral_codes seed — instead of the older Service.ResolveCodeToReferrer,
-// which only ever checked finance_referral_codes and made codes minted into
-// referral_links invisible to attribution (REF-002). Mirrors the error contract
-// of the older method: an unresolved code returns a non-nil error (not just an
-// empty string), since CodeResolver callers treat "err != nil || referrerID == """
-// as the same "invalid code" case.
+// ResolveCodeToReferrer adapts resolveCode to referral/attribution.CodeResolver
+// so the §7A signup-attribution engine resolves codes through this engine's
+// two-table lookup — the older Service.ResolveCodeToReferrer only checked
+// finance_referral_codes, making referral_links codes invisible (REF-002).
+// Unresolved codes return a non-nil error, matching the older contract (callers
+// treat "err != nil || referrerID == \"\"" as one invalid-code case).
 func (s *RewardService) ResolveCodeToReferrer(ctx context.Context, code string) (string, error) {
 	referrerID, err := s.resolveCode(ctx, code)
 	if err != nil {
@@ -486,7 +502,6 @@ func (s *RewardService) GetDashboard(ctx context.Context, referrerID string) (*D
 		}
 	}
 
-	// Earnings — lifetime + this calendar month (CREDITED only).
 	const eq = `
 		SELECT
 		  COALESCE(SUM(reward_kobo) FILTER (WHERE status='CREDITED'),0),
@@ -496,7 +511,6 @@ func (s *RewardService) GetDashboard(ctx context.Context, referrerID string) (*D
 		return nil, fmt.Errorf("referrals: dashboard earnings: %w", err)
 	}
 
-	// Next milestone preview from the active config (first threshold above the count).
 	if cfg, cerr := s.ActiveConfig(ctx); cerr == nil {
 		for _, m := range cfg.MilestoneTable {
 			if m.Threshold > d.ActiveReferralCount {
@@ -629,10 +643,6 @@ func (s *RewardService) scanRewards(ctx context.Context, q string, args ...any) 
 	return out, rows.Err()
 }
 
-// ============================================================================
-// NIGHTLY RECALC — active-count → tier/rate; milestone crossings → idempotent payout.
-// ============================================================================
-
 // RecalculateTiers recomputes every referrer's rolling active_referral_count
 // (referred users with >= 1 CREDITED reward in the trailing 30 days), sets
 // current_tier/current_rate from the active config, and fires milestone
@@ -645,7 +655,6 @@ func (s *RewardService) RecalculateTiers(ctx context.Context) error {
 		return err
 	}
 
-	// Active count per referrer over the trailing window.
 	const countQ = `
 		SELECT a.referrer_id, COUNT(DISTINCT a.referred_user_id)
 		FROM referral_attributions a
@@ -700,11 +709,10 @@ func (s *RewardService) RecalculateTiers(ctx context.Context) error {
 			return fmt.Errorf("referrals: recalc upsert tier: %w", err)
 		}
 		s.emit(ctx, "referral.tier.recalculated", map[string]any{
-			"referrer_id": rr.referrerID, "active_referral_count": rr.count,
+			keyReferrerID: rr.referrerID, "active_referral_count": rr.count,
 			"current_tier": tier, "current_rate": rate,
 		})
 
-		// Milestone crossings — pay each threshold the count now meets, once.
 		for _, m := range cfg.MilestoneTable {
 			if rr.count >= m.Threshold {
 				if err := s.awardMilestone(ctx, rr.referrerID, m); err != nil {
@@ -754,14 +762,10 @@ func (s *RewardService) awardMilestone(ctx context.Context, referrerID string, b
 		return fmt.Errorf("referrals: mark milestone paid: %w", err)
 	}
 	s.emit(ctx, "referral.milestone.paid", map[string]any{
-		"referrer_id": referrerID, "threshold": band.Threshold, "bonus_kobo": band.BonusKobo,
+		keyReferrerID: referrerID, "threshold": band.Threshold, "bonus_kobo": band.BonusKobo,
 	})
 	return nil
 }
-
-// ============================================================================
-// ADMIN — config / analytics / fraud / ledger / case / milestones / module.
-// ============================================================================
 
 // GetActiveConfig returns the currently-active config (A1 read).
 func (s *RewardService) GetActiveConfig(ctx context.Context) (*ProgramConfig, error) {
@@ -773,7 +777,7 @@ func (s *RewardService) GetActiveConfig(ctx context.Context) (*ProgramConfig, er
 // which transactions use it. If effectiveFrom is zero it defaults to now().
 func (s *RewardService) PublishConfig(ctx context.Context, tiers []TierBand, milestones []MilestoneBand, effectiveFrom time.Time, adminID string) (*ProgramConfig, error) {
 	if len(tiers) == 0 || len(milestones) == 0 {
-		return nil, fmt.Errorf("referrals: config requires tier_table and milestone_table")
+		return nil, errors.New("referrals: config requires tier_table and milestone_table")
 	}
 	if effectiveFrom.IsZero() {
 		effectiveFrom = time.Now()
@@ -948,7 +952,7 @@ func (s *RewardService) ActionFraudFlag(ctx context.Context, flagID, action, not
 		return fmt.Errorf("referrals: invalid fraud action %q", action)
 	}
 	if strings.TrimSpace(note) == "" {
-		return fmt.Errorf("referrals: fraud action requires a logged note")
+		return errors.New("referrals: fraud action requires a logged note")
 	}
 	const upd = `
 		UPDATE referral_fraud_flags
@@ -959,7 +963,7 @@ func (s *RewardService) ActionFraudFlag(ctx context.Context, flagID, action, not
 		return fmt.Errorf("referrals: action fraud flag: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("referrals: fraud flag not found or already actioned")
+		return errors.New("referrals: fraud flag not found or already actioned")
 	}
 	s.emit(ctx, "referral.fraud.actioned", map[string]any{
 		"flag_id": flagID, "action": action, "reviewer_id": reviewerID,
@@ -1010,13 +1014,13 @@ func (s *RewardService) GetCase(ctx context.Context, referrerID string) (*CaseVi
 // referral_case_adjustments for audit.
 func (s *RewardService) AdjustCase(ctx context.Context, referrerID string, adjustKobo int64, reason, adminID, idempotencyKey string) error {
 	if strings.TrimSpace(reason) == "" {
-		return fmt.Errorf("referrals: manual adjustment requires a logged reason")
+		return errors.New("referrals: manual adjustment requires a logged reason")
 	}
 	if adjustKobo == 0 {
-		return fmt.Errorf("referrals: adjustment amount must be non-zero")
+		return errors.New("referrals: adjustment amount must be non-zero")
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
-		return fmt.Errorf("referrals: manual adjustment requires an idempotency key")
+		return errors.New("referrals: manual adjustment requires an idempotency key")
 	}
 
 	// Record the audit row first (UNIQUE idempotency_key makes a replay a no-op).
@@ -1055,7 +1059,7 @@ func (s *RewardService) AdjustCase(ctx context.Context, referrerID string, adjus
 		}
 	}
 	s.emit(ctx, "referral.case.adjusted", map[string]any{
-		"referrer_id": referrerID, "adjust_kobo": adjustKobo, "reason": reason, "admin_id": adminID,
+		keyReferrerID: referrerID, "adjust_kobo": adjustKobo, "reason": reason, "admin_id": adminID,
 	})
 	return nil
 }
@@ -1106,15 +1110,7 @@ func (s *RewardService) ModuleStatus(ctx context.Context) ([]ModuleRollup, error
 	return out, rows.Err()
 }
 
-// ============================================================================
-// small helpers.
-// ============================================================================
-
-// generateRewardCode issues a code in the shared 5-character shape (see code.go).
-//
-// It previously returned "R" + hex(5 bytes) = 11 characters, far too long to
-// read aloud or type — the complaint that prompted this change. Nothing depended
-// on the "R" prefix; it was never parsed anywhere.
+// generateRewardCode issues a code in the shared 5-character shape (see service.go).
 func generateRewardCode() (string, error) {
 	return GenerateCode()
 }
@@ -1137,4 +1133,178 @@ func maskContact(contact string) string {
 		return "***"
 	}
 	return "***" + contact[len(contact)-4:]
+}
+
+// Direct Referral Rewards ENGINE types — single-level, purchase-triggered
+// revenue share. The legacy Code/Event/Summary types in service.go are left
+// intact (brownfield additive rule). Money is integer minor units (kobo).
+
+// Reward status state machine (§4.1).
+const (
+	RewardStatusPending  = "PENDING"
+	RewardStatusCredited = "CREDITED"
+	RewardStatusReversed = "REVERSED"
+)
+
+// Tier names (§2.2).
+const (
+	TierStarter = "STARTER"
+	TierGrowth  = "GROWTH"
+	TierPro     = "PRO"
+	TierElite   = "ELITE"
+)
+
+// Milestone status state machine (§4.2).
+const (
+	MilestoneStatusAchieved = "ACHIEVED"
+	MilestoneStatusPaid     = "PAID"
+	MilestoneStatusVoided   = "VOIDED"
+)
+
+// ActiveWindowDays is the trailing window used to classify a referred user as
+// "active" (§2.2: at least one qualifying purchase in the last 30 days).
+const ActiveWindowDays = 30
+
+// PurchaseSettled is the common event every revenue-bearing module emits into
+// the engine when a referred user completes a settled purchase. MarginKobo is
+// the platform margin on that purchase in kobo (integer minor units).
+type PurchaseSettled struct {
+	Module        string    `json:"module"`         // e.g. "bills", "marketplace", "insurance"
+	TransactionID string    `json:"transaction_id"` // idempotency anchor — one reward per txn, ever
+	PayerUserID   string    `json:"payer_user_id"`  // the referred user who paid
+	MarginKobo    int64     `json:"margin_kobo"`    // platform margin in kobo (integer minor units)
+	Currency      string    `json:"currency"`       // ISO code, e.g. "NGN"
+	SettledAt     time.Time `json:"settled_at"`
+}
+
+// PurchaseRefunded reverses the reward generated by a previously-settled
+// purchase (§2.4). TransactionID must match a prior PurchaseSettled.
+type PurchaseRefunded struct {
+	TransactionID string    `json:"transaction_id"`
+	RefundedAt    time.Time `json:"refunded_at"`
+}
+
+// Link is a referrer's canonical referral code (referral_links).
+type Link struct {
+	ID         string    `json:"id"`
+	ReferrerID string    `json:"referrer_id"`
+	Code       string    `json:"code"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Reward is one per-purchase ongoing-share accrual (referral_rewards).
+type Reward struct {
+	ID                  string     `json:"id"`
+	ReferrerID          string     `json:"referrer_id"`
+	ReferredUserID      string     `json:"referred_user_id"`
+	SourceTransactionID string     `json:"source_transaction_id"`
+	Module              string     `json:"module"`
+	MarginKobo          int64      `json:"margin_kobo"`
+	AppliedRate         float64    `json:"applied_rate"`
+	RewardKobo          int64      `json:"reward_kobo"`
+	Status              string     `json:"status"`
+	ConfigVersion       int        `json:"config_version"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CreditedAt          *time.Time `json:"credited_at,omitempty"`
+	ReversedAt          *time.Time `json:"reversed_at,omitempty"`
+}
+
+// TierStatus is a referrer's rolling tier snapshot (referral_tier_status).
+type TierStatus struct {
+	ReferrerID          string    `json:"referrer_id"`
+	ActiveReferralCount int       `json:"active_referral_count"`
+	CurrentTier         string    `json:"current_tier"`
+	CurrentRate         float64   `json:"current_rate"`
+	LastRecalculatedAt  time.Time `json:"last_recalculated_at"`
+}
+
+// Milestone is a one-time count-threshold bonus (referral_milestones).
+type Milestone struct {
+	ID         string     `json:"id"`
+	ReferrerID string     `json:"referrer_id"`
+	Threshold  int        `json:"threshold"`
+	BonusKobo  int64      `json:"bonus_kobo"`
+	Status     string     `json:"status"`
+	AchievedAt time.Time  `json:"achieved_at"`
+	PaidAt     *time.Time `json:"paid_at,omitempty"`
+	VoidedAt   *time.Time `json:"voided_at,omitempty"`
+}
+
+// TierBand is one row of the versioned tier table. MaxCount == nil means
+// open-ended (the top tier). Rate is a fraction (0.05 = 5%).
+type TierBand struct {
+	Tier     string  `json:"tier"`
+	MinCount int     `json:"min_count"`
+	MaxCount *int    `json:"max_count"`
+	Rate     float64 `json:"rate"`
+}
+
+// MilestoneBand is one row of the versioned milestone table.
+type MilestoneBand struct {
+	Threshold int   `json:"threshold"`
+	BonusKobo int64 `json:"bonus_kobo"`
+}
+
+// ProgramConfig is one versioned config row. The engine reads the active version
+// whose EffectiveFrom <= now(); new versions apply from EffectiveFrom forward and
+// never retroactively recompute past rewards (§3 invariant).
+type ProgramConfig struct {
+	ID             string          `json:"id"`
+	Version        int             `json:"version"`
+	TierTable      []TierBand      `json:"tier_table"`
+	MilestoneTable []MilestoneBand `json:"milestone_table"`
+	IsActive       bool            `json:"is_active"`
+	EffectiveFrom  time.Time       `json:"effective_from"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
+// TierForCount returns the tier band whose [min,max] range contains count.
+// Returns (band, true) on a match; (zero, false) when count is below the lowest
+// band (i.e. 0 active referrals → no tier / rate 0).
+func (c ProgramConfig) TierForCount(count int) (TierBand, bool) {
+	for _, b := range c.TierTable {
+		if count < b.MinCount {
+			continue
+		}
+		if b.MaxCount == nil || count <= *b.MaxCount {
+			return b, true
+		}
+	}
+	return TierBand{}, false
+}
+
+// ComputeReward returns floor(marginKobo * rate) in kobo. Integer math on the
+// kobo amount — no floats in the persisted value. rate is a fraction (0.05).
+func ComputeReward(marginKobo int64, rate float64) int64 {
+	if marginKobo <= 0 || rate <= 0 {
+		return 0
+	}
+	return int64(float64(marginKobo) * rate)
+}
+
+// Dashboard is the response for GET /v1/referrals/me/dashboard.
+type Dashboard struct {
+	Code                string         `json:"code"`
+	CurrentTier         string         `json:"current_tier"`
+	CurrentRate         float64        `json:"current_rate"`
+	ActiveReferralCount int            `json:"active_referral_count"`
+	ThisMonthEarnedKobo int64          `json:"this_month_earned_kobo"`
+	LifetimeEarnedKobo  int64          `json:"lifetime_earned_kobo"`
+	NextMilestone       *NextMilestone `json:"next_milestone,omitempty"`
+}
+
+// NextMilestone previews the upcoming count-threshold bonus.
+type NextMilestone struct {
+	Threshold int   `json:"threshold"`
+	BonusKobo int64 `json:"bonus_kobo"`
+	Remaining int   `json:"remaining"`
+}
+
+// ReferredUser is a row in GET /v1/referrals/me/referrals. Contact is masked.
+type ReferredUser struct {
+	ReferredUserID     string    `json:"referred_user_id"`
+	MaskedContact      string    `json:"masked_contact"`
+	JoinedAt           time.Time `json:"joined_at"`
+	Active             bool      `json:"active"` // qualifying purchase in trailing 30d
+	LifetimeEarnedKobo int64     `json:"lifetime_earned_kobo"`
 }

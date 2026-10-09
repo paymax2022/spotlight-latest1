@@ -1,25 +1,20 @@
 // Registration → voting seam, read side.
-//
 // WHY THIS EXISTS
 // An approved registration becomes a contestant (see the
 // promote_registration_to_contestant seam), but nothing told the APPLICANT.
 // The registration status screen showed a status chip and a withdraw button and
 // stopped there — no contest details, no way to vote, nothing to share so other
-// people could vote. Everything needed was already in the database; there was
 // simply no endpoint that joined it.
-//
 // THE PLANES (this is the part that trips people up)
 //   registrations          the application the applicant submitted
 //   contestants            the roster row the promotion seam creates
 //   connect_contests       what the MOBILE app votes against, via Go
 //                          /api/v1/connect — this is the plane that WORKS
-//   contests               the web/admin voting plane; mirrored from
 //                          connect_contests by trigger, so ids and slugs match
 //   competition_enrollments the web public vote page's contestant plane — a
 //                          promoted contestant is NOT in here, which is why the
 //                          public /vote/<contest>/<contestant> page cannot serve
 //                          one and why the share target below is the app route.
-//
 // Nothing here edits a protected legacy file: it reads the roster and the
 // contest and joins them. Per CLAUDE.md § Brownfield safety and the hook's own
 // guidance, new registration behaviour lives in registration-v2/.

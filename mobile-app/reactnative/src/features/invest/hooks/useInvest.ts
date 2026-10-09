@@ -1,4 +1,3 @@
-// ── Invest — React Query data hooks ──────────────────────────────────────────
 // Keeps screens declarative and shares caching / loading / error contracts.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,8 +6,6 @@ import type { BuyOrderRequest, SellOrderRequest } from '../types/invest.types';
 import { newIdempotencyKey } from '../utils/format';
 
 const KEY = 'invest';
-
-// ── Profile / eligibility ────────────────────────────────────────────────────
 
 export function useInvestProfile() {
   return useQuery({ queryKey: [KEY, 'profile'], queryFn: invest.getProfile, staleTime: 30_000 });
@@ -59,8 +56,6 @@ export function useSubmitSuitability() {
   });
 }
 
-// ── Transaction PIN ──────────────────────────────────────────────────────────
-
 export function usePINStatus() {
   return useQuery({ queryKey: [KEY, 'pin-status'], queryFn: invest.getPINStatus, staleTime: 60_000 });
 }
@@ -72,8 +67,6 @@ export function useSetPIN() {
     onSettled: () => qc.invalidateQueries({ queryKey: [KEY, 'pin-status'] }),
   });
 }
-
-// ── Stocks ───────────────────────────────────────────────────────────────────
 
 export function useStocks(query?: string, sector?: string) {
   return useQuery({
@@ -103,8 +96,6 @@ export function useStockChart(symbol: string, range = '1m') {
 export function useMarketStatus() {
   return useQuery({ queryKey: [KEY, 'market-status'], queryFn: invest.getMarketStatus, staleTime: 60_000 });
 }
-
-// ── Orders ───────────────────────────────────────────────────────────────────
 
 export function useBuyOrder() {
   const qc = useQueryClient();
@@ -142,8 +133,6 @@ export function useCancelOrder() {
   });
 }
 
-// ── Portfolio / wallet ───────────────────────────────────────────────────────
-
 export function usePortfolio() {
   return useQuery({ queryKey: [KEY, 'portfolio'], queryFn: invest.getPortfolio, staleTime: 15_000 });
 }
@@ -166,15 +155,14 @@ export function useDeposit() {
 export function useWithdraw() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (amountKobo: number) => invest.withdrawFromWallet(amountKobo, newIdempotencyKey('wd')),
+    mutationFn: ({ amountKobo, pin }: { amountKobo: number; pin: string }) =>
+      invest.withdrawFromWallet(amountKobo, newIdempotencyKey('wd'), pin),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'wallet'] });
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
     },
   });
 }
-
-// ── Watchlists ───────────────────────────────────────────────────────────────
 
 export function useWatchlists() {
   return useQuery({ queryKey: [KEY, 'watchlists'], queryFn: invest.getWatchlists, staleTime: 30_000 });

@@ -29,6 +29,8 @@ type store interface {
 	UpsertCatalog(ctx context.Context, req UpsertCatalogRequest) (*CatalogItem, error)
 	GetRedemptionByIdempotencyKey(ctx context.Context, key string) (*Redemption, error)
 	InsertRedemption(ctx context.Context, rd Redemption) (*Redemption, error)
+	InsertRedemptionTx(ctx context.Context, tx pgx.Tx, rd Redemption) (*Redemption, error)
+	SumUserBalanceTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error)
 	SetRedemptionState(ctx context.Context, id, state string) error
 	ListPools(ctx context.Context) ([]RewardPool, error)
 	CreatePool(ctx context.Context, req CreatePoolRequest) (*RewardPool, error)
@@ -89,14 +91,11 @@ func (e rejection) Reason() string { return e.reason }
 
 // AsRejection extracts the reason code if err is a typed rejection.
 func AsRejection(err error) (string, bool) {
-	var r rejection
-	if errors.As(err, &r) {
+	if r, ok := errors.AsType[rejection](err); ok {
 		return r.reason, true
 	}
 	return "", false
 }
-
-// ── Pure eligibility gate (ordered; no DB, no side effects) ──────────────────────
 
 // eligibilityInput is the snapshot the pure gate decides on. All values are read
 // under the pool's FOR UPDATE lock before the gate runs.
@@ -114,7 +113,6 @@ type eligibilityInput struct {
 
 // evaluateEligibility is the SINGLE ordered decision function for a reward credit.
 // It returns "" when the credit is approved, or a stable rejection reason code.
-//
 // ORDER (golden rules 1-3; state-machines §3 "approve" guard):
 //  1. amount must be positive (invalid_amount)
 //  2. pool must be active (pool_inactive)
@@ -145,11 +143,8 @@ func evaluateEligibility(in eligibilityInput) string {
 	return ""
 }
 
-// ── IssueReward (the guarded money path) ────────────────────────────────────────
-
 // IssueReward runs the reward-issuance state machine
 // (triggered → eligibility_checked → credited | rejected).
-//
 // Flow:
 //  1. Idempotency replay: a prior ledger entry for the key returns it unchanged
 //     (Duplicate=true), with NO second credit.
@@ -296,8 +291,6 @@ func (s *Service) IssueReward(ctx context.Context, in IssueInput) (IssueResult, 
 	return IssueResult{State: StateCredited, Entry: written}, nil
 }
 
-// ── RedeemPoints (points → catalog reward) ──────────────────────────────────────
-
 // RedeemPoints redeems points for a catalog SKU. Idempotent on idemKey. For a
 // wallet-kind SKU the value is credited to the user wallet (same idemKey); other
 // kinds (airtime/data/voucher) are recorded as requested for downstream fulfilment.
@@ -323,6 +316,25 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 		return nil, rejection{"sku_inactive"}
 	}
 
+	// The balance check, redemption row, and decrementing ledger entry commit in
+	// ONE tx: previously nothing verified the user owned the points at all —
+	// every wallet-kind SKU minted real kobo for free — and no ledger entry
+	// decremented the derived balance, so even a "fixed" check would have raced.
+	tx, err := s.repo.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("rewards: begin redemption tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	bal, err := s.repo.SumUserBalanceTx(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if bal < item.ValueMinor {
+		return nil, rejection{"insufficient_balance"}
+	}
+
+	reason := "redemption:" + sku
 	rd := Redemption{
 		UserID:         userID,
 		SKU:            sku,
@@ -331,7 +343,7 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 		State:          "requested",
 		IdempotencyKey: idemKey,
 	}
-	written, err := s.repo.InsertRedemption(ctx, rd)
+	written, err := s.repo.InsertRedemptionTx(ctx, tx, rd)
 	if errors.Is(err, ErrDuplicate) {
 		if prior, gerr := s.repo.GetRedemptionByIdempotencyKey(ctx, idemKey); gerr == nil {
 			return prior, nil
@@ -341,6 +353,19 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 	if err != nil {
 		return nil, err
 	}
+	if _, err := s.repo.InsertLedgerEntry(ctx, tx, LedgerEntry{
+		UserID:         userID,
+		Type:           EntryRedemption,
+		AmountMinor:    item.ValueMinor,
+		Points:         item.CostPoints,
+		Reason:         &reason,
+		IdempotencyKey: "redeem:" + idemKey,
+	}); err != nil {
+		return nil, fmt.Errorf("rewards: write redemption ledger entry: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("rewards: commit redemption: %w", err)
+	}
 
 	// Wallet-kind redemptions move value on the wallet ledger with the same idemKey.
 	if item.Kind == "wallet" && item.ValueMinor > 0 && s.wallet != nil {
@@ -349,6 +374,25 @@ func (s *Service) RedeemPoints(ctx context.Context, userID, sku, idemKey string)
 		if err != nil && !isDuplicateCredit(err) {
 			_ = s.repo.SetRedemptionState(ctx, written.ID, "failed")
 			written.State = "failed"
+			// The redemption ledger entry already decremented the derived
+			// balance — post the reversal so a failed fulfilment doesn't
+			// burn the user's points. Best-effort; keyed so it can't double.
+			if rtx, rerr := s.repo.Begin(ctx); rerr == nil {
+				reason := "redemption_reversal:" + sku
+				_, rerr = s.repo.InsertLedgerEntry(ctx, rtx, LedgerEntry{
+					UserID:         userID,
+					Type:           EntryReversal,
+					AmountMinor:    item.ValueMinor,
+					Points:         item.CostPoints,
+					Reason:         &reason,
+					IdempotencyKey: "redeem-reversal:" + idemKey,
+				})
+				if rerr == nil {
+					_ = rtx.Commit(ctx)
+				} else {
+					_ = rtx.Rollback(ctx)
+				}
+			}
 			return written, fmt.Errorf("rewards: redemption wallet credit failed: %w", err)
 		}
 		_ = s.repo.SetRedemptionState(ctx, written.ID, "fulfilled")
@@ -373,8 +417,6 @@ func (s *Service) History(ctx context.Context, userID string, limit int) ([]Ledg
 func (s *Service) Catalog(ctx context.Context) ([]CatalogItem, error) {
 	return s.repo.ListCatalog(ctx, true)
 }
-
-// ── Admin passthroughs ──────────────────────────────────────────────────────────
 
 func (s *Service) ListPools(ctx context.Context) ([]RewardPool, error) { return s.repo.ListPools(ctx) }
 func (s *Service) CreatePool(ctx context.Context, req CreatePoolRequest) (*RewardPool, error) {
@@ -407,8 +449,6 @@ func (s *Service) PoolLedger(ctx context.Context, poolID string, limit int) ([]L
 func (s *Service) GlobalLedger(ctx context.Context, limit int) ([]LedgerEntry, error) {
 	return s.repo.ListAllEntries(ctx, limit)
 }
-
-// ── internal audit helpers ──────────────────────────────────────────────────────
 
 func (s *Service) auditCredit(ctx context.Context, e LedgerEntry) {
 	pool := ""

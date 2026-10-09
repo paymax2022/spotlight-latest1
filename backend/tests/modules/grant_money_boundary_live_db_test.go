@@ -1,6 +1,5 @@
 // The load-bearing invariant of per-user module grants: a grant opens a MODULE, it
 // never opens the WALLET.
-//
 // This test lives outside both packages on purpose. It is the only place that imports
 // modules AND finance/tiers together — the production code must not, and that
 // separation is what keeps an admin grant from becoming an AML decision. If someone
@@ -47,7 +46,7 @@ func TestLiveDB_GrantOpensModuleButNotTheWallet(t *testing.T) {
 		t.Fatalf("seed profile: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM user_module_grants WHERE user_id=$1`, uid)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM user_module_grants WHERE user_id=$1`, uid)
 	})
 
 	modSvc := modules.NewService(pool, modules.Environment("production"), func(string) bool { return true })

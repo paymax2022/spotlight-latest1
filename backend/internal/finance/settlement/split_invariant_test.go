@@ -7,25 +7,20 @@ import (
 	"spotlight/backend/internal/finance/settlement"
 )
 
-// ---------------------------------------------------------------------------
 // Settlement money-core invariants (go-live gate).
-//
 // The settlement Service takes a concrete *pgxpool.Pool, so the DB code paths
 // (Escrow / Settle / Refund) cannot be exercised without a live Postgres. These
 // tests therefore PROVE the properties that are independent of the DB driver and
 // that the DB code is built to uphold:
-//
 //   - split arithmetic conserves value exactly (sum of legs == escrowed total),
 //   - the idempotency-key derivation is stable and per-leg distinct (so retries
 //     collide on UNIQUE and become no-ops rather than double-credits),
 //   - the escrowed → settled / refunded state machine rejects illegal moves,
 //   - the crash-between-legs replay converges to one canonical outcome.
-//
 // They are correct by construction and MIRROR the exact expressions in
 // settlement/service.go. They have NOT been run (no Go toolchain in this
 // environment); they compile against the public settlement API and the
 // production formulas transcribed below.
-// ---------------------------------------------------------------------------
 
 // splitLegsKobo replicates the EXACT split math in Service.Settle:
 //
@@ -305,8 +300,6 @@ func TestSettlePromoFunderSemantics(t *testing.T) {
 
 // idempotency-key derivation, transcribed from Service.Settle:
 //
-//	idem  = "settle:" + settlementID
-//	legs  = idem + ":provider" | ":commission" | ":rider"
 //	sides = leg + ":debit" | ":credit"   (added by postPairTx)
 //
 // The per-leg-per-side keys must be globally distinct so a retried Settle collides
@@ -481,13 +474,11 @@ func TestStateMachineTransitions(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // fakeStore: an in-memory model of the settlement money effects, dedup-keyed the
 // same way the DB code is (ledger idempotency_key + settlements idempotency_key,
 // both UNIQUE with ON CONFLICT DO NOTHING). It lets us assert the crash-safety /
 // idempotency PROPERTIES without a live Postgres. It is NOT the production code —
 // it encodes the same invariants so a regression in reasoning surfaces here.
-// ---------------------------------------------------------------------------
 
 type fakeStore struct {
 	debitCount  map[string]int    // ledger idempotency key → times debited (must stay 1)

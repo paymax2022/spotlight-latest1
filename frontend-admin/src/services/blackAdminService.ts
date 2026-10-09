@@ -1,6 +1,4 @@
-// ── Admin — Paymax Black (premium tier, perks, partners, settlement) control-plane ─
 // Mock by default (mirrors events / loyalty admin services). Flip with
-// NEXT_PUBLIC_LOYALTY_USE_MOCK=false to hit the live Go backend at
 // /api/loyalty/admin/black*.
 // RBAC: loyalty.black.admin.* gates wired on the sidebar.
 // Money is BIGINT kobo (minor units). Surfaces NL-3 (closed-loop perks via single-use
@@ -22,10 +20,7 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK)
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_LOYALTY_USE_MOCK';
 
 // Verified against backend/internal/app/top5_p3_routes.go RegisterLoyaltyBlack:
-//   RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black"), pool, rbac)
 // — the Black admin group really is rooted at /api/loyalty/admin/black.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin/black')`,
 // which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
 // it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
 // stopped matching, the replace was a no-op, and every live call went to the
@@ -35,10 +30,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,7 +51,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -71,9 +62,7 @@ const dateAhead = (days: number) => new Date(Date.now() + days * 86_400_000).toI
 const aud = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
 const thisPeriod = () => new Date().toISOString().slice(0, 7);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: BlackDashboard = {
   members_total: 18_420,
   members_active: 16_980,
@@ -111,9 +100,7 @@ export async function getBlackDashboard(): Promise<BlackDashboard> {
   return getJson<BlackDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Perk config
-// ════════════════════════════════════════════════════════════════════════════
 const PERKS: BlackPerk[] = [
   { id: 'prk_001', name: 'Early ticket access (24h)', kind: 'early_ticket', status: 'active', description: 'Black members buy tickets 24h before public sale via single-use credential.', partner_id: null, partner_name: null, value_kobo: 0, monthly_cap_per_member: 10, total_redeemed_30d: 3_840, cost_30d_kobo: 0, starts_at: dateStr(120), ends_at: null, updated_by_masked: 'admin:fola•••', updated_at: iso(40) },
   { id: 'prk_002', name: 'VIP lounge access', kind: 'lounge_access', status: 'active', description: 'Complimentary lounge entry at partnered venues (credential-gated, single-use per event).', partner_id: 'prt_3310', partner_name: 'Hardrock Lounge VI', value_kobo: 50_000_0, monthly_cap_per_member: 2, total_redeemed_30d: 1_920, cost_30d_kobo: 9_600_000_00, starts_at: dateStr(90), ends_at: dateAhead(180), updated_by_masked: 'admin:bola•••', updated_at: iso(60) },
@@ -165,9 +152,7 @@ export async function upsertPerk(perk: Partial<BlackPerk> & { id?: string }, not
   return sendJson<BlackPerkUpsertResult>(perk.id ? 'PATCH' : 'POST', perk.id ? `/perks/${perk.id}` : '/perks', { ...perk, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Partner-offer management
-// ════════════════════════════════════════════════════════════════════════════
 const PARTNERS: BlackPartner[] = [
   { id: 'prt_3310', name: 'Hardrock Lounge VI', category: 'dining', status: 'active', contact_masked: 'ops@hardrock•••', offers_count: 4, redemptions_30d: 1_920, settlement_model: 'partner_funded', partner_share_bps: 10000, outstanding_settlement_kobo: 9_600_000_00, onboarded_at: dateStr(90), created_at: iso(2160) },
   { id: 'prt_3320', name: 'Filmhouse Cinemas', category: 'events', status: 'active', contact_masked: 'partners@filmhouse•••', offers_count: 6, redemptions_30d: 2_140, settlement_model: 'shared', partner_share_bps: 5000, outstanding_settlement_kobo: 6_300_000_00, onboarded_at: dateStr(120), created_at: iso(2880) },
@@ -194,9 +179,7 @@ export async function listPartners(opts?: { status?: string; category?: string; 
   return getJson<BlackPartner[]>(`/partners${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Partner settlement
-// ════════════════════════════════════════════════════════════════════════════
 const SETTLEMENT: BlackSettlement = {
   generated_at: iso(0.2),
   total_gross_kobo: 36_400_000_00,

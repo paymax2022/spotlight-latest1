@@ -1,4 +1,3 @@
-// ── Referral Earnings & Rewards API ──────────────────────────────────────────
 // Mock-first (USE_MOCK). withdraw/getWithdrawQuote hit the real RB0 endpoints
 // under `${REFERRAL_API_BASE}` (my-rewards/withdraw-eligible/withdraw). The
 // per-row ledger (getLedger/getRewardDetail/getStatement) has no RB0 member
@@ -7,7 +6,6 @@
 // getVestingSchedule/getCurrencyOptions/setRewardCurrency/getCatalog/
 // redeemCatalogItem/exportStatement/getClawbackNotice/appealClawback have NO
 // backend endpoint at all (content-only or genuinely missing) — see the
-// per-function TODOs. Money is ALWAYS integer kobo. The withdraw mutation
 // attaches an Idempotency-Key on the live path (money mutation). Rewards tie
 // to friends' verified activity (§7).
 
@@ -38,7 +36,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── Direct Rewards engine (live source for the ledger list) ─────────────────
 // RB0 (REFERRAL_API_BASE) has NO per-row member ledger endpoint — only the
 // aggregate GET /my-rewards summary and GET /withdraw-eligible/POST /withdraw
 // (see backend/internal/referral/ledger/handlers.go). The per-row ledger list
@@ -100,7 +97,6 @@ const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86400_000).toISOString();
 
-// ── Mock fixtures — a row across EVERY reward-ledger state (§7) ───────────────
 const MOCK_LEDGER: RewardLedgerRow[] = [
   { id: 'r1', state: 'eligible', kind: 'referrer', amountKobo: 100_000, currency: 'NGN', inviteeName: 'Amara Eze', qualifyingAction: 'first_transaction', createdAt: minsAgo(20000), updatedAt: minsAgo(60) },
   { id: 'r2', state: 'eligible', kind: 'referrer', amountKobo: 50_000, currency: 'NGN', inviteeName: 'Bola Adeyemi', qualifyingAction: 'kyc_completed', createdAt: minsAgo(9000), updatedAt: minsAgo(1500) },
@@ -224,13 +220,11 @@ const MOCK_CLAWBACK: ClawbackNotice = {
   appealStatus: 'none',
 };
 
-// ── Calls ─────────────────────────────────────────────────────────────────────
 export async function getLedger(): Promise<RewardLedgerRow[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_LEDGER.map((r) => ({ ...r }));
   }
-  // Live: no RB0 per-row member endpoint exists (only the aggregate my-rewards
   // summary). Source the ledger list from the Direct Rewards engine instead.
   const res = await api.get(`${REWARDS_ENGINE_BASE}/me/earnings?limit=50&offset=0`);
   const body = unwrap<{ earnings: EngineEarning[] }>(res);
@@ -245,7 +239,6 @@ export async function getRewardDetail(id: string): Promise<RewardDetail> {
     if (!d) throw new Error('Reward not found');
     return { ...d, timeline: d.timeline.map((t) => ({ ...t })) };
   }
-  // Live: no dedicated reward-detail endpoint (RB0 or engine). Derive detail
   // from the same engine earnings list used by getLedger() and build a
   // minimal timeline/explanation client-side (no fabricated backend fields).
   const res = await api.get(`${REWARDS_ENGINE_BASE}/me/earnings?limit=50&offset=0`);
@@ -265,7 +258,6 @@ export async function getRewardDetail(id: string): Promise<RewardDetail> {
 }
 
 // No backend endpoint exists for a per-reward vesting schedule (RB0 has no
-// vesting sub-resource; the engine has no vesting concept at all — it is a
 // flat PENDING→CREDITED/REVERSED state machine, see rewards_model.go). Kept
 // mock-only; do not fabricate a live call against a non-existent path.
 export async function getVestingSchedule(scheduleId?: string): Promise<VestingSchedule> {
@@ -285,7 +277,6 @@ export async function getWithdrawQuote(): Promise<WithdrawQuote> {
     await delay(220);
     return { ...MOCK_QUOTE };
   }
-  // Live: GET /withdraw-eligible → { beneficiary_id, eligible_kobo, currency }
   // (RB0 reward-ledger summary). The KYC gate + all-or-nothing sweep is enforced
   // server-side on POST /withdraw, so the quote reflects only the eligible total.
   const res = await api.get(`${REFERRAL_API_BASE}/withdraw-eligible`);
@@ -321,9 +312,7 @@ export async function withdraw(amountKobo: number): Promise<WithdrawResult> {
       reference: `RWD-WD-${Math.floor(Math.random() * 900000 + 100000)}`,
     };
   }
-  // Live: POST /withdraw sweeps ALL eligible reward rows → wallet (balanced
   // double-entry per row, server-side). The endpoint is all-or-nothing and does
-  // not read a body/amount; `amountKobo` here is informational only. Requires an
   // Idempotency-Key (money mutation). 403 ⇒ KYC tier below the withdrawal floor.
   try {
     const res = await api.post(
@@ -360,7 +349,6 @@ export async function withdraw(amountKobo: number): Promise<WithdrawResult> {
 }
 
 // No backend endpoint exists for reward-payout currency selection (RB0's
-// withdraw sweep always pays NGN into the Spotlight wallet; there is no
 // airtime/points/discount/charity payout rail). Content/FX-only feature —
 // kept mock-only; do not fabricate a live call.
 export async function getCurrencyOptions(): Promise<CurrencyOption[]> {
@@ -384,7 +372,6 @@ export async function setRewardCurrency(key: RewardCurrency): Promise<CurrencyOp
 }
 
 // No backend endpoint exists for a rewards catalog / points system (RB0 and
-// the Direct Rewards engine both pay cash-kobo only; there is no points
 // ledger). Content/points-only feature — kept mock-only.
 export async function getCatalog(): Promise<{ items: CatalogItem[]; pointsBalance: number }> {
   if (USE_MOCK) {
@@ -446,7 +433,6 @@ export async function getStatement(period: StatementPeriod): Promise<StatementSu
   };
 }
 
-// No backend endpoint exists to render a PDF/CSV export file. Content-only /
 // genuinely missing — kept mock-only.
 export async function exportStatement(period: StatementPeriod, format: 'pdf' | 'csv'): Promise<StatementExport> {
   if (USE_MOCK) {
@@ -461,7 +447,6 @@ export async function exportStatement(period: StatementPeriod, format: 'pdf' | '
 }
 
 // No backend endpoint exists for a clawback-notice detail (RB0's ledger has no
-// per-row detail or reason taxonomy for the member; REVERSED rows on the
 // engine carry no reason field either — see rewards_model.go). Kept mock-only.
 export async function getClawbackNotice(id?: string): Promise<ClawbackNotice> {
   if (USE_MOCK) {

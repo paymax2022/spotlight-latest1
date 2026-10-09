@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { cancelOrder, getOrder, RestaurantApiError } from '@/src/lib/restaurant/api';
-import { formatNaira, orderStatusClass, orderStatusLabel } from '@/src/lib/restaurant/format';
+import { cancelOrder, getOrder, RestaurantApiError, formatNaira, orderStatusClass, orderStatusLabel } from '@/src/lib/restaurant';
 import type { Order } from '@/src/types/restaurant';
 
 const TERMINAL_STATUSES = new Set(['delivered', 'cancelled', 'rejected', 'dispatch_failed', 'delivery_failed']);

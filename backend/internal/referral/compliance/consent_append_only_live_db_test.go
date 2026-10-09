@@ -2,17 +2,14 @@ package compliance_test
 
 // LIVE-DB tests for the append-only referral consent record (migration
 // 20260813010000). Skipped unless TEST_DATABASE_URL is set.
-//
 // These exist because the write path had NO test, and that gap let a
 // schema/code mismatch reach the cloud database: the migration dropped the
 // unique (user_id, consent_type, version) index while the repo still wrote
 // `ON CONFLICT (user_id, consent_type, version) DO UPDATE`, so every consent
 // write failed with SQLSTATE 42P10 until the code caught up.
-//
 // A consent record is evidence, so the invariants worth pinning are: every
 // decision survives, the newest one is unambiguous, and nothing can be edited
 // away afterwards.
-//
 // NOTE ON CLEANUP: these tests deliberately do not delete their consent rows —
 // the table forbids DELETE by trigger, which is the property
 // TestLiveDB_Consent_ImmutableByTrigger asserts. Each test uses a fresh random
@@ -158,7 +155,7 @@ func TestLiveDB_Consent_OrdersBySeqNotCreatedAt(t *testing.T) {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO referral_consents (user_id, consent_type, granted, version, source)
 			 VALUES ($1, $2, $3, 1, 'tie-test')`, userID, consentType, granted); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			t.Fatalf("insert (granted=%v): %v", granted, err)
 		}
 	}

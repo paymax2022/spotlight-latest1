@@ -1,4 +1,3 @@
-// ── Fractional Real Estate — Subscription wizard draft store ─────────────────
 // Holds the in-progress invest flow (choose amount → limit-check → sign → PIN →
 // processing → certificate) so router params stay simple. Zustand mirrors the
 // app's existing store pattern (see crowdfunding/store/campaignDraftStore.ts).

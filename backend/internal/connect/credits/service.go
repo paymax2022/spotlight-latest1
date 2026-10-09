@@ -1,6 +1,5 @@
 // Package connectcredits implements consumable Connect credits (super-likes,
 // InMail, boost counts) with money-grade integrity — test-plan row PAY-008.
-//
 // Invariants:
 //   - Balance is never negative (DB CHECK + guarded decrement).
 //   - No double-spend: a consume is applied AT MOST ONCE per idempotency key, and
@@ -15,7 +14,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -69,16 +71,16 @@ func (s *Service) Balances(ctx context.Context, userID string) (map[string]int64
 // purchase grant applies once). amount must be > 0.
 func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey string, amount int64, reason string) error {
 	if amount <= 0 {
-		return fmt.Errorf("connect: grant amount must be positive")
+		return errors.New("connect: grant amount must be positive")
 	}
 	if idempotencyKey == "" {
-		return fmt.Errorf("connect: grant requires an idempotency key")
+		return errors.New("connect: grant requires an idempotency key")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx,
 		`INSERT INTO connect_credit_txns (idempotency_key, user_id, credit_type, delta, reason)
@@ -88,7 +90,13 @@ func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey 
 		return fmt.Errorf("connect: record grant txn: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return tx.Commit(ctx) // duplicate key — already granted, idempotent no-op
+		// Duplicate key is a REJECTION, not proof this grant replayed — a foreign
+		// claim on the same key (different user/type/delta) must fail closed rather
+		// than silently absorbing another credit mutation.
+		if err := s.verifyCreditTxnReplay(ctx, tx, idempotencyKey, userID, creditType, amount); err != nil {
+			return err
+		}
+		return tx.Commit(ctx) // true replay — already granted, idempotent no-op
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO connect_credits (user_id, credit_type, balance) VALUES ($1::uuid,$2,$3)
@@ -105,16 +113,16 @@ func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey 
 // so simultaneous spends can neither oversell nor go negative.
 func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKey string, amount int64, reason string) error {
 	if amount <= 0 {
-		return fmt.Errorf("connect: consume amount must be positive")
+		return errors.New("connect: consume amount must be positive")
 	}
 	if idempotencyKey == "" {
-		return fmt.Errorf("connect: consume requires an idempotency key")
+		return errors.New("connect: consume requires an idempotency key")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: record the spend txn first. A duplicate key means this exact
 	// spend already happened — return success without decrementing again.
@@ -126,7 +134,13 @@ func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKe
 		return fmt.Errorf("connect: record consume txn: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return tx.Commit(ctx) // already consumed under this key — idempotent success
+		// Duplicate key is a REJECTION, not proof this spend replayed — a foreign
+		// claim on the same key must fail closed rather than silently absorbing
+		// another credit mutation.
+		if err := s.verifyCreditTxnReplay(ctx, tx, idempotencyKey, userID, creditType, -amount); err != nil {
+			return err
+		}
+		return tx.Commit(ctx) // already consumed under this key — verified idempotent
 	}
 
 	// Guarded decrement: only succeeds if enough balance. Under concurrency the row
@@ -144,4 +158,44 @@ func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKe
 		return ErrInsufficientCredits
 	}
 	return tx.Commit(ctx)
+}
+
+// verifyCreditTxnReplay runs when an idempotent insert hit an existing txn row.
+// A duplicate is a true replay ONLY when the recorded row is the same mutation —
+// same user, credit_type and signed delta. Anything else under the key is a
+// foreign claim and must fail closed.
+func (s *Service) verifyCreditTxnReplay(ctx context.Context, tx pgx.Tx, key, userID, creditType string, delta int64) error {
+	var u, t string
+	var d int64
+	if err := tx.QueryRow(ctx,
+		`SELECT user_id::text, credit_type, delta FROM connect_credit_txns WHERE idempotency_key = $1`,
+		key).Scan(&u, &t, &d); err != nil {
+		return fmt.Errorf("connect: verify credit txn replay: %w", err)
+	}
+	if u != userID || t != creditType || d != delta {
+		return fmt.Errorf("connect: idempotency key held by a different credit transaction")
+	}
+	return nil
+}
+
+// Handler exposes the member-facing credit balance read. Consumption is invoked
+// server-side by the features that spend credits, never by the client directly.
+type Handler struct{ svc *Service }
+
+// NewHandler wires the credits handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Balances — GET /api/v1/connect/credits (member). Returns the caller's balances.
+func (h *Handler) Balances(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	bals, err := h.svc.Balances(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read credits"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": bals})
 }

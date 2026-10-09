@@ -1,4 +1,3 @@
-// ── Crowdfunding — Data hooks ────────────────────────────────────────────────
 // React Query hooks (mirrors the voting feature's hook pattern) so screens stay
 // declarative and share caching/loading/error contracts.
 

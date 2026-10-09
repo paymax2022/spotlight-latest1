@@ -2,10 +2,15 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Repository is the parameterized data layer for the referral finance tables. It
@@ -19,21 +24,6 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(dst *string, src *string) {
-	if src != nil {
-		*dst = *src
-	}
-}
-
-// --- payouts ---
-
 const payoutCols = `id, beneficiary_id, reward_id, amount_kobo, currency, status,
 	requested_by, approved_by, ledger_entry_id, reject_reason, created_at, updated_at, decided_at`
 
@@ -46,11 +36,11 @@ func scanPayout(row pgx.Row) (*Payout, error) {
 		&reqBy, &apprBy, &led, &rj, &p.CreatedAt, &p.UpdatedAt, &p.DecidedAt); err != nil {
 		return nil, err
 	}
-	deref(&p.RewardID, reward)
-	deref(&p.RequestedBy, reqBy)
-	deref(&p.ApprovedBy, apprBy)
-	deref(&p.LedgerEntryID, led)
-	deref(&p.RejectReason, rj)
+	ptr.Assign(&p.RewardID, reward)
+	ptr.Assign(&p.RequestedBy, reqBy)
+	ptr.Assign(&p.ApprovedBy, apprBy)
+	ptr.Assign(&p.LedgerEntryID, led)
+	ptr.Assign(&p.RejectReason, rj)
 	return &p, nil
 }
 
@@ -68,8 +58,8 @@ func (r *Repository) QueuePayout(ctx context.Context, in PayoutRequest, requeste
 		ON CONFLICT (idempotency_key) DO NOTHING
 		RETURNING ` + payoutCols
 	p, err := scanPayout(r.db.QueryRow(ctx, q,
-		in.BeneficiaryID, nullable(in.RewardID), in.AmountKobo, currency, nullable(requestedBy), in.IdempotencyKey))
-	if err == pgx.ErrNoRows {
+		in.BeneficiaryID, dbutil.NullStr(in.RewardID), in.AmountKobo, currency, dbutil.NullStr(requestedBy), in.IdempotencyKey))
+	if errors.Is(err, pgx.ErrNoRows) {
 		existing, e := scanPayout(r.db.QueryRow(ctx,
 			`SELECT `+payoutCols+` FROM referral_payouts WHERE idempotency_key = $1`, in.IdempotencyKey))
 		if e != nil {
@@ -86,7 +76,7 @@ func (r *Repository) QueuePayout(ctx context.Context, in PayoutRequest, requeste
 // GetPayout returns one payout by id.
 func (r *Repository) GetPayout(ctx context.Context, id string) (*Payout, error) {
 	p, err := scanPayout(r.db.QueryRow(ctx, `SELECT `+payoutCols+` FROM referral_payouts WHERE id = $1`, id))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -132,12 +122,12 @@ func (r *Repository) MarkPayoutPaid(ctx context.Context, id, approvedBy, ledgerE
 		UPDATE referral_payouts
 		SET status = 'paid', approved_by = $2::uuid, ledger_entry_id = $3, decided_at = now(), updated_at = now()
 		WHERE id = $1 AND status IN ('queued','approved')`
-	tag, err := r.db.Exec(ctx, q, id, nullable(approvedBy), ledgerEntryID)
+	tag, err := r.db.Exec(ctx, q, id, dbutil.NullStr(approvedBy), ledgerEntryID)
 	if err != nil {
 		return fmt.Errorf("finance: mark payout paid: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("finance: payout not in a payable state")
+		return errors.New("finance: payout not in a payable state")
 	}
 	return nil
 }
@@ -148,12 +138,12 @@ func (r *Repository) RejectPayout(ctx context.Context, id, approvedBy, reason st
 		UPDATE referral_payouts
 		SET status = 'rejected', approved_by = $2::uuid, reject_reason = $3, decided_at = now(), updated_at = now()
 		WHERE id = $1 AND status IN ('queued','approved')`
-	tag, err := r.db.Exec(ctx, q, id, nullable(approvedBy), reason)
+	tag, err := r.db.Exec(ctx, q, id, dbutil.NullStr(approvedBy), reason)
 	if err != nil {
 		return fmt.Errorf("finance: reject payout: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("finance: payout not in a rejectable state")
+		return errors.New("finance: payout not in a rejectable state")
 	}
 	return nil
 }
@@ -175,7 +165,7 @@ func (r *Repository) KYCTier(ctx context.Context, userID string) (int, error) {
 	const q = `SELECT COALESCE(kyc_tier, 0) FROM user_profiles WHERE id = $1 AND kyc_status = 'verified'`
 	var tier int
 	err := r.db.QueryRow(ctx, q, userID).Scan(&tier)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -183,8 +173,6 @@ func (r *Repository) KYCTier(ctx context.Context, userID string) (int, error) {
 	}
 	return tier, nil
 }
-
-// --- reconciliation ---
 
 const reconCols = `id, period_start, period_end, ledger_paid_kobo, wallet_paid_kobo, variance_kobo, status, created_by, created_at`
 
@@ -197,7 +185,7 @@ func scanRecon(row pgx.Row) (*Reconciliation, error) {
 		&rc.WalletPaidKobo, &rc.VarianceKobo, &rc.Status, &creBy, &rc.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&rc.CreatedBy, creBy)
+	ptr.Assign(&rc.CreatedBy, creBy)
 	return &rc, nil
 }
 
@@ -238,7 +226,7 @@ func (r *Repository) InsertReconciliation(ctx context.Context, rc Reconciliation
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING ` + reconCols
 	return scanRecon(r.db.QueryRow(ctx, q,
-		rc.PeriodStart, rc.PeriodEnd, rc.LedgerPaidKobo, rc.WalletPaidKobo, rc.VarianceKobo, rc.Status, nullable(createdBy)))
+		rc.PeriodStart, rc.PeriodEnd, rc.LedgerPaidKobo, rc.WalletPaidKobo, rc.VarianceKobo, rc.Status, dbutil.NullStr(createdBy)))
 }
 
 // ListReconciliations lists recon snapshots.
@@ -259,8 +247,6 @@ func (r *Repository) ListReconciliations(ctx context.Context) ([]Reconciliation,
 	return out, rows.Err()
 }
 
-// --- budgets ---
-
 const budgetCols = `id, scope, scope_ref, budget_kobo, spent_kobo, alert_threshold_pct,
 	period_start, period_end, active, created_at, updated_at`
 
@@ -273,7 +259,7 @@ func scanBudget(row pgx.Row) (*Budget, error) {
 		&b.PeriodStart, &b.PeriodEnd, &b.Active, &b.CreatedAt, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
-	deref(&b.ScopeRef, ref)
+	ptr.Assign(&b.ScopeRef, ref)
 	b.computeBurn()
 	return &b, nil
 }
@@ -304,7 +290,7 @@ func (r *Repository) UpsertBudget(ctx context.Context, in BudgetInput) (*Budget,
 			active = true,
 			updated_at = now()
 		RETURNING ` + budgetCols
-	return scanBudget(r.db.QueryRow(ctx, q, scope, nullable(in.ScopeRef), in.BudgetKobo, threshold))
+	return scanBudget(r.db.QueryRow(ctx, q, scope, dbutil.NullStr(in.ScopeRef), in.BudgetKobo, threshold))
 }
 
 // ListBudgets lists active budgets with burn computed.
@@ -331,14 +317,12 @@ func (r *Repository) AddSpend(ctx context.Context, scope, scopeRef string, amoun
 	const q = `
 		UPDATE referral_budgets SET spent_kobo = spent_kobo + $3, updated_at = now()
 		WHERE scope = $1 AND scope_ref IS NOT DISTINCT FROM $2 AND active = true`
-	_, err := r.db.Exec(ctx, q, scope, nullable(scopeRef), amountKobo)
+	_, err := r.db.Exec(ctx, q, scope, dbutil.NullStr(scopeRef), amountKobo)
 	if err != nil {
 		return fmt.Errorf("finance: add spend: %w", err)
 	}
 	return nil
 }
-
-// --- float ---
 
 const floatCols = `id, position_kobo, liability_kobo, funded_kobo, as_of, note, created_at`
 
@@ -350,7 +334,7 @@ func scanFloat(row pgx.Row) (*Float, error) {
 	if err := row.Scan(&f.ID, &f.PositionKobo, &f.LiabilityKobo, &f.FundedKobo, &f.AsOf, &note, &f.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&f.Note, note)
+	ptr.Assign(&f.Note, note)
 	return &f, nil
 }
 
@@ -370,13 +354,13 @@ func (r *Repository) SnapshotFloat(ctx context.Context, fundedKobo int64, note s
 		INSERT INTO referral_float (position_kobo, liability_kobo, funded_kobo, note)
 		VALUES ($1,$2,$3,$4)
 		RETURNING ` + floatCols
-	return scanFloat(r.db.QueryRow(ctx, q, position, liability, fundedKobo, nullable(note)))
+	return scanFloat(r.db.QueryRow(ctx, q, position, liability, fundedKobo, dbutil.NullStr(note)))
 }
 
 // LatestFloat returns the most recent float snapshot (nil when none).
 func (r *Repository) LatestFloat(ctx context.Context) (*Float, error) {
 	f, err := scanFloat(r.db.QueryRow(ctx, `SELECT `+floatCols+` FROM referral_float ORDER BY as_of DESC LIMIT 1`))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -384,8 +368,6 @@ func (r *Repository) LatestFloat(ctx context.Context) (*Float, error) {
 	}
 	return f, nil
 }
-
-// --- reward-to-LTV ---
 
 // RewardToLTV computes reward spend (paid, non-house) vs referred-user verified
 // activity value (LTV proxy). House rows are excluded from spend.
@@ -411,4 +393,103 @@ func (r *Repository) RewardToLTV(ctx context.Context) (*RewardToLTV, error) {
 		out.RatioBps = out.ReferredLTVKobo * 10000 / out.RewardSpentKobo
 	}
 	return &out, nil
+}
+
+// Payout statuses.
+const (
+	PayoutQueued   = "queued"
+	PayoutApproved = "approved"
+	PayoutPaid     = "paid"
+	PayoutRejected = "rejected"
+	PayoutFailed   = "failed"
+)
+
+// Reconciliation statuses.
+const (
+	ReconOpen     = "open"
+	ReconBalanced = "balanced"
+	ReconVariance = "variance"
+)
+
+// Payout is a payout-queue row.
+type Payout struct {
+	ID            string     `json:"id"`
+	BeneficiaryID string     `json:"beneficiary_id"`
+	RewardID      string     `json:"reward_id,omitempty"`
+	AmountKobo    int64      `json:"amount_kobo"`
+	Currency      string     `json:"currency"`
+	Status        string     `json:"status"`
+	RequestedBy   string     `json:"requested_by,omitempty"`
+	ApprovedBy    string     `json:"approved_by,omitempty"`
+	LedgerEntryID string     `json:"ledger_entry_id,omitempty"`
+	RejectReason  string     `json:"reject_reason,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DecidedAt     *time.Time `json:"decided_at,omitempty"`
+}
+
+// PayoutRequest queues a payout. IdempotencyKey is required (one payout per key).
+type PayoutRequest struct {
+	BeneficiaryID  string `json:"beneficiary_id"`
+	RewardID       string `json:"reward_id"`
+	AmountKobo     int64  `json:"amount_kobo"`
+	Currency       string `json:"currency"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// Reconciliation is a recon snapshot row.
+type Reconciliation struct {
+	ID             string    `json:"id"`
+	PeriodStart    time.Time `json:"period_start"`
+	PeriodEnd      time.Time `json:"period_end"`
+	LedgerPaidKobo int64     `json:"ledger_paid_kobo"`
+	WalletPaidKobo int64     `json:"wallet_paid_kobo"`
+	VarianceKobo   int64     `json:"variance_kobo"`
+	Status         string    `json:"status"`
+	CreatedBy      string    `json:"created_by,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Budget is a budget envelope with burn tracking.
+type Budget struct {
+	ID                string     `json:"id"`
+	Scope             string     `json:"scope"`
+	ScopeRef          string     `json:"scope_ref,omitempty"`
+	BudgetKobo        int64      `json:"budget_kobo"`
+	SpentKobo         int64      `json:"spent_kobo"`
+	AlertThresholdPct int        `json:"alert_threshold_pct"`
+	PeriodStart       *time.Time `json:"period_start,omitempty"`
+	PeriodEnd         *time.Time `json:"period_end,omitempty"`
+	Active            bool       `json:"active"`
+	BurnPct           int        `json:"burn_pct"`
+	AlertTriggered    bool       `json:"alert_triggered"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// BudgetInput creates/updates a budget envelope.
+type BudgetInput struct {
+	Scope             string `json:"scope"`
+	ScopeRef          string `json:"scope_ref"`
+	BudgetKobo        int64  `json:"budget_kobo"`
+	AlertThresholdPct *int   `json:"alert_threshold_pct"`
+}
+
+// Float is a float / liability snapshot.
+type Float struct {
+	ID            string    `json:"id"`
+	PositionKobo  int64     `json:"position_kobo"`
+	LiabilityKobo int64     `json:"liability_kobo"`
+	FundedKobo    int64     `json:"funded_kobo"`
+	AsOf          time.Time `json:"as_of"`
+	Note          string    `json:"note,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// RewardToLTV is the reward-to-LTV summary (A-FIN / A-BI). LTV is the verified
+// activity value generated by referred users vs reward spend.
+type RewardToLTV struct {
+	RewardSpentKobo int64 `json:"reward_spent_kobo"`
+	ReferredLTVKobo int64 `json:"referred_ltv_kobo"`
+	RatioBps        int64 `json:"ratio_bps"` // LTV / spend in basis points
 }

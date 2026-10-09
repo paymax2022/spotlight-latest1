@@ -107,7 +107,6 @@ const navItemsBase: NavItem[] = [
   // entries above.
   { label: 'Payments & Finance', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
   // ADR-005 maker-checker checker-side queue (WAL-004) — finance:adjust:approve
-  // is a distinct permission from finance:adjust:initiate above; an initiator
   // cannot approve their own proposal (enforced server-side).
   { label: 'Adjustment Approvals', href: '/admin/payments-finance/adjustments', section: 'Finance', permissions: ['finance:adjust:approve'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
@@ -119,7 +118,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Nutrition', href: '/admin/nutrition', section: 'Finance', permissions: ['nutrition.admin.manage'] },
   { label: 'Nutrition Consults', href: '/admin/nutrition/consults', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
   { label: 'Nutritionist Payouts', href: '/admin/nutrition/payouts', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
-  // ── Commission & Profit (central rate card + realized-revenue dashboard) ──
   { label: 'Rate Card', href: '/admin/commission', section: 'Commission' },
   { label: 'Profit Dashboard', href: '/admin/commission/profit', section: 'Commission' },
   { label: 'CF Overview', href: '/admin/crowdfunding', section: 'Crowdfunding', permissions: ['crowdfunding.view'] },
@@ -155,7 +153,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Support', href: '/admin/connect/support', section: 'Connect', permissions: ['connect.support.view'] },
   { label: 'Configuration', href: '/admin/connect/config', section: 'Connect', permissions: ['connect.config.view'] },
   { label: 'Audit', href: '/admin/connect/audit', section: 'Connect', permissions: ['connect.audit.view'] },
-  // ── Connect · Network (Phase 6 — Professional Network admin; ADM-JB/CN/CP/SA/MN/GM) ──
   { label: 'Job Moderation', href: '/admin/connect/jobs', section: 'Connect · Network', permissions: ['connect.company.review'] },
   { label: 'Bounty Payouts', href: '/admin/connect/bounties', section: 'Connect · Network', permissions: ['connect.company.review'] },
   { label: 'Content Moderation', href: '/admin/connect/content', section: 'Connect · Network', permissions: ['connect.moderation.manage'] },
@@ -194,7 +191,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Referrer Case (A5)', href: '/admin/referral-rewards/case', section: 'Referral Rewards', permissions: ['referral.admin.case'] },
   { label: 'Milestone Payouts (A6)', href: '/admin/referral-rewards/milestones', section: 'Referral Rewards', permissions: ['referral.admin.milestones'] },
   { label: 'Module Status (A7)', href: '/admin/referral-rewards/module-status', section: 'Referral Rewards', permissions: ['referral.admin.module'] },
-  // ── Insurance (micro-insurance super-app module) ──────────────────────────
   { label: 'Insurance Dashboard', href: '/admin/insurance/dashboard', section: 'Insurance', permissions: ['insurance.policy.view', 'insurance.commission.view'] },
   { label: 'Catalog', href: '/admin/insurance/catalog', section: 'Insurance', permissions: ['insurance.catalog.manage'] },
   { label: 'Routing', href: '/admin/insurance/routing', section: 'Insurance', permissions: ['insurance.routing.manage'] },
@@ -211,7 +207,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Consent & Audit', href: '/admin/insurance/consent-audit', section: 'Insurance', permissions: ['insurance.audit.view'] },
   { label: 'Sweeps', href: '/admin/insurance/sweeps', section: 'Insurance', permissions: ['insurance.policy.view'] },
   { label: 'Reports', href: '/admin/insurance/reports', section: 'Insurance', permissions: ['insurance.audit.view'] },
-  // ── Stays (hotel booking ops console — dual-rail super-app module) ────────
   { label: 'Stays Dashboard', href: '/admin/stays/dashboard', section: 'Stays', permissions: ['stays.admin.dashboard'] },
   { label: 'Suppliers', href: '/admin/stays/suppliers', section: 'Stays', permissions: ['stays.admin.supplier'] },
   { label: 'Mapping & Dedup', href: '/admin/stays/mapping', section: 'Stays', permissions: ['stays.admin.mapping'] },
@@ -241,19 +236,16 @@ const navItemsBase: NavItem[] = [
   { label: 'Audit Log', href: '/admin/stays/audit', section: 'Stays', permissions: ['stays.admin.audit'] },
   { label: 'Config & Flags', href: '/admin/stays/config', section: 'Stays', permissions: ['stays.admin.config'] },
   { label: 'Templates', href: '/admin/stays/templates', section: 'Stays', permissions: ['stays.admin.config'] },
-  // ── Savings (Goal Vaults + Ajo/Esusu circles — Top-5 Phase 1) ────────────
   { label: 'Savings Dashboard', href: '/admin/savings/dashboard', section: 'Savings', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
   { label: 'Vaults', href: '/admin/savings/vaults', section: 'Savings', permissions: ['savings.admin.vaults'] },
   { label: 'Float Reconciliation', href: '/admin/savings/float-recon', section: 'Savings', permissions: ['savings.admin.recon'] },
   { label: 'Ajo Circles', href: '/admin/savings/ajo', section: 'Savings', permissions: ['savings.admin.ajo'] },
   { label: 'Default Queue', href: '/admin/savings/defaults', section: 'Savings', permissions: ['savings.admin.ajo', 'savings.admin.defaults'] },
-  // ── Social Pay (P2P / Split / Pools — Top-5 Phase 1) ─────────────────────
   { label: 'Social Dashboard', href: '/admin/social/dashboard', section: 'Social Pay', permissions: ['social.admin.dashboard', 'social.admin.view'] },
   { label: 'Velocity & Limits', href: '/admin/social/limits', section: 'Social Pay', permissions: ['social.admin.limits'] },
   { label: 'Reversals', href: '/admin/social/reversals', section: 'Social Pay', permissions: ['social.admin.reversals'] },
   { label: 'Disputes', href: '/admin/social/disputes', section: 'Social Pay', permissions: ['social.admin.disputes'] },
   { label: 'Cashtags', href: '/admin/social/cashtags', section: 'Social Pay', permissions: ['social.admin.cashtags'] },
-  // ── Events (Ticketing + Cashless event wallet — Top-5 Phase 2) ───────────
   { label: 'Events Dashboard', href: '/admin/events/dashboard', section: 'Events', permissions: ['events.admin.dashboard', 'events.admin.view'] },
   { label: 'Event Approval', href: '/admin/events/approval', section: 'Events', permissions: ['events.admin.approval'] },
   { label: 'Event Catalog', href: '/admin/events/events', section: 'Events', permissions: ['events.admin.events'] },
@@ -262,14 +254,12 @@ const navItemsBase: NavItem[] = [
   { label: 'Vendors', href: '/admin/events/vendors', section: 'Events', permissions: ['events.admin.vendors'] },
   { label: 'Settlement', href: '/admin/events/settlement', section: 'Events', permissions: ['events.admin.settlement'] },
   { label: 'Fraud & Risk', href: '/admin/events/fraud', section: 'Events', permissions: ['events.admin.fraud'] },
-  // ── Loyalty (Points, Tiers, Catalog — Top-5 Phase 2) ─────────────────────
   { label: 'Loyalty Dashboard', href: '/admin/loyalty/dashboard', section: 'Loyalty', permissions: ['loyalty.admin.dashboard', 'loyalty.admin.view'] },
   { label: 'Earn Rules', href: '/admin/loyalty/earn-rules', section: 'Loyalty', permissions: ['loyalty.admin.earn_rules'] },
   { label: 'Tiers', href: '/admin/loyalty/tiers', section: 'Loyalty', permissions: ['loyalty.admin.tiers'] },
   { label: 'Catalog', href: '/admin/loyalty/catalog', section: 'Loyalty', permissions: ['loyalty.admin.catalog'] },
   { label: 'Redemptions', href: '/admin/loyalty/redemptions', section: 'Loyalty', permissions: ['loyalty.admin.redemptions'] },
   { label: 'Points Liability', href: '/admin/loyalty/liability', section: 'Loyalty', permissions: ['loyalty.admin.liability'] },
-  // ── Health · Pharmacy (HEALTH-BUILD Phase 1 ADM; lab/vet entries added later) ──
   { label: 'Pharmacy Dashboard', href: '/admin/health/pharmacy/dashboard', section: 'Health', permissions: ['health.pharmacy.dashboard', 'health.pharmacy.view'] },
   { label: 'PCN Audit', href: '/admin/health/pharmacy/pcn-audit', section: 'Health', permissions: ['health.pharmacy.pcn'] },
   { label: 'Catalog & NAFDAC', href: '/admin/health/pharmacy/catalog', section: 'Health', permissions: ['health.pharmacy.catalog'] },
@@ -278,10 +268,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Recall', href: '/admin/health/pharmacy/recall', section: 'Health', permissions: ['health.pharmacy.recall'] },
   { label: 'Pharmacy Payouts', href: '/admin/health/pharmacy/payouts', section: 'Health', permissions: ['health.pharmacy.payouts'] },
   { label: 'Pharmacy Reporting', href: '/admin/health/pharmacy/reporting', section: 'Health', permissions: ['health.pharmacy.reporting'] },
-  // ── Health · Pharmacy Symptom Search addon (pharmacist console; RBAC health.pharmacy.symptom.*) ──
   { label: 'Symptom Review Queue', href: '/admin/health/pharmacy-reviews', section: 'Health', permissions: ['health.pharmacy.symptom.reviews'] },
   { label: 'Symptom Mappings', href: '/admin/health/symptom-mappings', section: 'Health', permissions: ['health.pharmacy.symptom.mappings'] },
-  // ── Health · Laboratory (HEALTH-BUILD Phase 2 ADM; RBAC health.lab.*) ──────────
   { label: 'Lab Dashboard', href: '/admin/health/lab/dashboard', section: 'Health', permissions: ['health.lab.dashboard', 'health.lab.view'] },
   { label: 'Lab MLSCN Audit', href: '/admin/health/lab/mlscn-audit', section: 'Health', permissions: ['health.lab.mlscn'] },
   { label: 'Lab Catalog', href: '/admin/health/lab/catalog', section: 'Health', permissions: ['health.lab.catalog'] },
@@ -291,7 +279,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Lab Phlebotomists', href: '/admin/health/lab/phlebotomists', section: 'Health', permissions: ['health.lab.phlebotomists'] },
   { label: 'Lab Payouts', href: '/admin/health/lab/payouts', section: 'Health', permissions: ['health.lab.payouts'] },
   { label: 'Lab Reporting', href: '/admin/health/lab/reporting', section: 'Health', permissions: ['health.lab.reporting'] },
-  // ── Health · Veterinary (HEALTH-BUILD Phase 3 ADM; RBAC health.vet.*) ──────────
   { label: 'Vet Dashboard', href: '/admin/health/vet/dashboard', section: 'Health', permissions: ['health.vet.dashboard', 'health.vet.view'] },
   { label: 'Vet VCN Audit', href: '/admin/health/vet/vcn-audit', section: 'Health', permissions: ['health.vet.vcn'] },
   { label: 'Vet Verification', href: '/admin/health/vet/verification', section: 'Health', permissions: ['health.vet.review'] },
@@ -301,17 +288,13 @@ const navItemsBase: NavItem[] = [
   { label: 'Vet Payouts', href: '/admin/health/vet/payouts', section: 'Health', permissions: ['health.vet.payouts'] },
   { label: 'Vet Moderation', href: '/admin/health/vet/moderation', section: 'Health', permissions: ['health.vet.moderation'] },
   { label: 'Vet Reporting', href: '/admin/health/vet/reporting', section: 'Health', permissions: ['health.vet.reporting'] },
-  // ── Health · Doctor (MDCN assisted verification; RBAC health.doctor.*) ──────────
   { label: 'Doctor Verification', href: '/admin/health/doctor/verification', section: 'Health', permissions: ['health.doctor.review'] },
-  // ── Health · Pre-Consultation Intake (telemedicine intake console; RBAC health.admin.intake) ──
   { label: 'Pre-Consult Intake', href: '/admin/intake', section: 'Health', permissions: ['health.admin.intake'] },
-  // ── Health · Symptom Checker (AI triage clinical console; RBAC health.triage.*) ──
   { label: 'Symptom Checker', href: '/admin/health/triage', section: 'Health', permissions: ['health.triage.review', 'health.triage.admin'] },
   { label: 'Triage Escalations', href: '/admin/health/triage/escalations', section: 'Health', permissions: ['health.triage.review', 'health.triage.admin'] },
   { label: 'Triage Content', href: '/admin/health/triage/content', section: 'Health', permissions: ['health.triage.admin'] },
   { label: 'Triage Red-flag Rules', href: '/admin/health/triage/red-flag-rules', section: 'Health', permissions: ['health.triage.admin'] },
   { label: 'Triage Validation', href: '/admin/health/triage/validation', section: 'Health', permissions: ['health.triage.admin'] },
-  // ── Creators (Storefront, Tips, Subs, Gated content — Top-5 Phase 3) ──────
   { label: 'Creators Dashboard', href: '/admin/creators/dashboard', section: 'Creators', permissions: ['creators.admin.dashboard', 'creators.admin.view'] },
   { label: 'Verification', href: '/admin/creators/verification', section: 'Creators', permissions: ['creators.admin.verification'] },
   { label: 'Content Moderation', href: '/admin/creators/moderation', section: 'Creators', permissions: ['creators.admin.moderation'] },
@@ -319,11 +302,9 @@ const navItemsBase: NavItem[] = [
   { label: 'Payouts', href: '/admin/creators/payouts', section: 'Creators', permissions: ['creators.admin.payouts'] },
   { label: 'Fee Config', href: '/admin/creators/fees', section: 'Creators', permissions: ['creators.admin.fees'] },
   { label: 'Fraud & Abuse', href: '/admin/creators/fraud', section: 'Creators', permissions: ['creators.admin.fraud'] },
-  // ── Social Escrow (P2P dispute arbitration — Top-5 Phase 3) ──────────────
   { label: 'Escrow Dashboard', href: '/admin/social-escrow/dashboard', section: 'Social Escrow', permissions: ['p2p.admin.dashboard', 'p2p.admin.view'] },
   { label: 'Dispute Arbitration', href: '/admin/social-escrow/disputes', section: 'Social Escrow', permissions: ['p2p.admin.disputes'] },
   { label: 'Fraud / AML', href: '/admin/social-escrow/fraud', section: 'Social Escrow', permissions: ['p2p.admin.fraud'] },
-  // ── Paymax Black (premium tier, perks, partners — Top-5 Phase 3) ─────────
   { label: 'Black Dashboard', href: '/admin/loyalty-black/dashboard', section: 'Paymax Black', permissions: ['loyalty.black.admin.dashboard', 'loyalty.black.admin.view'] },
   { label: 'Perks', href: '/admin/loyalty-black/perks', section: 'Paymax Black', permissions: ['loyalty.black.admin.perks'] },
   { label: 'Partners', href: '/admin/loyalty-black/partners', section: 'Paymax Black', permissions: ['loyalty.black.admin.partners'] },
@@ -351,7 +332,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Providers', href: '/admin/invest/providers', section: 'Invest (Stocks)', permissions: ['invest.manage'] },
   { label: 'Fees & Limits', href: '/admin/invest/fees', section: 'Invest (Stocks)', permissions: ['invest.manage'] },
   { label: 'Audit Log', href: '/admin/invest/audit', section: 'Invest (Stocks)', permissions: ['invest.manage'] },
-  // ── Crypto (buy/sell; RBAC crypto.admin) ─────────────────────────────────
   { label: 'Crypto Overview', href: '/admin/crypto', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Orders', href: '/admin/crypto/orders', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Asset Catalogue', href: '/admin/crypto/assets', section: 'Crypto', permissions: ['crypto.admin'] },
@@ -359,8 +339,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Swap Monitoring', href: '/admin/crypto/swaps', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Address Review', href: '/admin/crypto/addresses', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Reconciliation', href: '/admin/crypto/reconciliation', section: 'Crypto', permissions: ['crypto.admin'] },
-  // ── Property Management ──────────────────────────────────────────────────
-  // Estate workspace (gated on estate.manage; dashboard also visible to estate.admin)
+  { label: 'Property roles', href: '/admin/property-roles', section: 'Property Management', permissions: ['property.roles.review'] },
   { label: 'Estate Dashboard', href: '/admin/estate', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Residents & Units', href: '/admin/estate/residents', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Properties', href: '/admin/estate/properties', section: 'Property Management', permissions: ['estate.manage'] },
@@ -376,7 +355,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Vendor Directory', href: '/admin/vendors', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Vendor Onboarding', href: '/admin/vendors/onboarding', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Vendor Payouts', href: '/admin/vendors/payouts', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
-  // Property Management Suite (unification umbrella over estate + realtor;
   // rent-passport screening lookup is RBAC-gated on property.manage — see
   // backend/internal/property and docs/qa/modules/property.md)
   { label: 'Property Suite', href: '/admin/property', section: 'Property Management', permissions: ['property.manage'] },
@@ -412,7 +390,6 @@ const navItemsBase: NavItem[] = [
   // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED gates (default OFF).
   { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.withdrawals'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
-  // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────
   // Controls which service modules the mobile app shows, per environment
   // (hidden / coming soon / live). Gated on the same permission the API enforces —
   // reading the registry exposes unreleased work, so it is not a public nav entry.
@@ -422,7 +399,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Module Grants', href: '/admin/modules/grants', section: 'Platform', permissions: ['platform.modules.read'] },
   { label: 'Maps Cost & Coverage', href: '/admin/maps', section: 'Platform', permissions: ['map.admin.review'] },
   { label: 'OSM Contributions', href: '/admin/maps/contributions', section: 'Platform', permissions: ['map.admin.review'] },
-  // ── Fractional Real Estate (land crowd-investing) ─────────────────────────
   { label: 'FRE Dashboard', href: '/admin/fractionalre', section: 'Fractional RE', permissions: ['fractionalre.manage', 'fractionalre.compliance', 'fractionalre.asset_manage'] },
   { label: 'Assets', href: '/admin/fractionalre/assets', section: 'Fractional RE', permissions: ['fractionalre.asset_manage', 'fractionalre.manage'] },
   { label: 'Rounds', href: '/admin/fractionalre/rounds', section: 'Fractional RE', permissions: ['fractionalre.asset_manage', 'fractionalre.manage'] },
@@ -435,7 +411,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Finance', href: '/admin/fractionalre/finance', section: 'Fractional RE', permissions: ['fractionalre.finance', 'fractionalre.manage'] },
   { label: 'Documents', href: '/admin/fractionalre/documents', section: 'Fractional RE', permissions: ['fractionalre.manage'] },
   { label: 'Audit', href: '/admin/fractionalre/audit', section: 'Fractional RE', permissions: ['fractionalre.audit', 'fractionalre.manage'] },
-  // ── Spotlight Academy (EdTech super-app — Phase 0+1+2 admin console; RBAC academy.*) ──
   { label: 'Academy Overview', href: '/admin/academy', section: 'Academy', permissions: ['academy.admin'] },
   { label: 'Curriculum', href: '/admin/academy/curriculum', section: 'Academy', permissions: ['academy.curriculum'] },
   { label: 'Content (CMS)', href: '/admin/academy/content', section: 'Academy', permissions: ['academy.content'] },
@@ -452,7 +427,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Credentials', href: '/admin/academy/credentials', section: 'Academy', permissions: ['academy.credentials'] },
   { label: 'Live & Events', href: '/admin/academy/live', section: 'Academy', permissions: ['academy.live'] },
   { label: 'Moderation', href: '/admin/academy/moderation', section: 'Academy', permissions: ['academy.moderation'] },
-  // ── Phase 4 — partnerships, marketplace ops & BI depth (admin-console.md §6/§7) ──
   { label: 'Schools', href: '/admin/academy/schools', section: 'Academy', permissions: ['academy.schools'] },
   { label: 'Tutor Ops', href: '/admin/academy/tutors', section: 'Academy', permissions: ['academy.tutor'] },
   { label: 'Analytics & BI', href: '/admin/academy/analytics', section: 'Academy', permissions: ['academy.analyst'] },
@@ -460,7 +434,6 @@ const navItemsBase: NavItem[] = [
   // whose console lives in frontend-web. Grouped under Academy because that is
   // where an operator looks for it; the page itself is a bridge.
   { label: 'Film Academy', href: '/admin/academy/film', section: 'Academy', permissions: ['academy.admin'] },
-  // ── EdTech School-Fees console (SC-29 … SC-40; RBAC academy.fees.*; school-scoped) ──
   { label: 'Fees · Setup Wizard', href: '/admin/academy/fees/setup-wizard', section: 'Academy', permissions: ['academy.fees.setup'] },
   { label: 'Fees · Bulk Onboarding', href: '/admin/academy/fees/onboarding', section: 'Academy', permissions: ['academy.fees.onboarding'] },
   { label: 'Fees · Collections', href: '/admin/academy/fees/collections', section: 'Academy', permissions: ['academy.fees.collections'] },
@@ -469,11 +442,9 @@ const navItemsBase: NavItem[] = [
   { label: 'Fees · Competitions', href: '/admin/academy/fees/competition', section: 'Academy', permissions: ['academy.fees.competition.manage'] },
   { label: 'Fees · Gov Export', href: '/admin/academy/fees/gov-export', section: 'Academy', permissions: ['academy.fees.export.run'] },
   { label: 'Fees · Staff Roles', href: '/admin/academy/fees/roles', section: 'Academy', permissions: ['academy.fees.roles.assign'] },
-  // ── Telemedicine (Health — read-only ops; backend has no admin route group yet) ──
   { label: 'Telemedicine Overview', href: '/admin/telemedicine/dashboard', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
   { label: 'Consultations', href: '/admin/telemedicine/consultations', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
   { label: 'Clinicians', href: '/admin/telemedicine/clinicians', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
-  // ── Savings pools (Community group savings — read-only; backend has no admin route group) ──
   // Labelled "Savings Pools", NOT "Groups". These two rows and the Associations
   // rows below both sit in Community and both gate on savings.admin.*, so
   // "Groups Overview" / "Groups & Members" read as the association console's
@@ -483,11 +454,8 @@ const navItemsBase: NavItem[] = [
   // landing here and reading sample data as real.
   { label: 'Savings Pools Overview', href: '/admin/groups/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
   { label: 'Savings Pools & Members', href: '/admin/groups/groups', section: 'Community', permissions: ['savings.admin.view'] },
-  // ── Learn Center (Paymax Invest — content admin; RBAC learn.admin.manage) ──
   { label: 'Learn Center', href: '/admin/learn', section: 'Academy', permissions: ['learn.admin.manage'] },
-  // ── Spotlight Wealth (education-first Spotlight ⇄ Invest surface; RBAC spotlight.admin.manage) ──
   { label: 'Spotlight Wealth', href: '/admin/spotlight', section: 'Academy', permissions: ['spotlight.admin.manage'] },
-  // ── Associations (Community — real admin surface: approvals, dues, member ops) ──
   { label: 'Associations Overview', href: '/admin/association/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
   // The organisation register + per-org management (identity, verification,
   // publication, chapters, committees, dues tiers, rules, custom settings).
@@ -511,20 +479,16 @@ const navItemsBase: NavItem[] = [
   { label: 'Association Tasks', href: '/admin/association/content/tasks', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Bulk Import', href: '/admin/association/import', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Association Audit Log', href: '/admin/association/audit', section: 'Community', permissions: ['savings.admin.view', 'savings.admin.recon'] },
-  // ── P2P Marketplace (Social — escrow marketplace; admin = dispute arbitration) ──
   { label: 'P2P Market Overview', href: '/admin/p2pmarket/dashboard', section: 'Social Pay', permissions: ['p2p.admin.dashboard', 'p2p.admin.view'] },
   { label: 'P2P Listings', href: '/admin/p2pmarket/listings', section: 'Social Pay', permissions: ['p2p.admin.view'] },
   { label: 'P2P Orders', href: '/admin/p2pmarket/orders', section: 'Social Pay', permissions: ['p2p.admin.view'] },
   { label: 'P2P Disputes', href: '/admin/p2pmarket/disputes', section: 'Social Pay', permissions: ['p2p.dispute.arbitrate', 'p2p.admin.disputes'] },
-  // ── Spray (Social — event money-spraying; admin = leaderboard AML oversight) ──
   { label: 'Spray Overview', href: '/admin/spray/dashboard', section: 'Social Pay', permissions: ['spray.read'] },
   { label: 'Spray Events', href: '/admin/spray/events', section: 'Social Pay', permissions: ['spray.read'] },
   { label: 'Spray Payouts', href: '/admin/spray/payouts', section: 'Social Pay', permissions: ['spray.read'] },
-  // ── Points (Loyalty — points ledger + balances; admin via loyalty group) ──
   { label: 'Points Overview', href: '/admin/points/dashboard', section: 'Loyalty', permissions: ['loyalty.read', 'loyalty.admin.dashboard'] },
   { label: 'Points Ledger', href: '/admin/points/ledger', section: 'Loyalty', permissions: ['loyalty.read', 'loyalty.admin.view'] },
   { label: 'Points Balances', href: '/admin/points/balances', section: 'Loyalty', permissions: ['loyalty.read'] },
-  // ── Stays Extranet (hotelier console — object-scoped to the hotelier's own property) ──
   { label: 'Reservations', href: '/extranet/reservations', section: 'Stays Extranet', permissions: ['stays.hotelier.reservations', 'stays.hotelier.view'] },
   { label: 'Calendar & Rates', href: '/extranet/calendar', section: 'Stays Extranet', permissions: ['stays.hotelier.inventory', 'stays.hotelier.view'] },
   { label: 'Property Profile', href: '/extranet/profile', section: 'Stays Extranet', permissions: ['stays.hotelier.content', 'stays.hotelier.view'] },
@@ -539,7 +503,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Flags Queue', href: '/admin/marketplace/flags', section: 'Marketplace', permissions: ['marketplace.admin.flags.action'] },
   { label: 'Boosts', href: '/admin/marketplace/boosts', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
-  // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
   { label: 'Competition Config', href: '/admin/arena/config', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Quiz Bank', href: '/admin/arena/questions', section: 'Arena', permissions: ['arena.admin.questions', 'arena.admin.manage'] },
   { label: 'Screening Queue', href: '/admin/arena/screening', section: 'Arena', permissions: ['arena.reviewer.screen', 'arena.admin.manage'] },
@@ -550,9 +513,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Pot & Disbursement', href: '/admin/arena/pot', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Sponsor Placement', href: '/admin/arena/sponsors', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Credentials', href: '/admin/arena/credentials', section: 'Arena', permissions: ['arena.admin.manage'] },
-  // ── Business Registry (CAC business-name verify/register review; RBAC business.registry.review) ──
   { label: 'Business Registry', href: '/admin/business', section: 'Business Registry', permissions: ['business.registry.review'] },
-  // ── Platform · EdTech (SUPER-ADMIN console, SU-01..SU-12) ────────────────────
   // Checkpoint E — RBAC scope separation. This is a Paymax PLATFORM-OPERATOR
   // surface, NOT an escalated school-admin surface. It is registered as its OWN
   // top-level section ('Platform · EdTech'), entirely separate from the per-school
@@ -561,8 +522,6 @@ const navItemsBase: NavItem[] = [
   // hasAnyPermission(authUser, item.permissions), a school-level role
   // (school-owner / bursar / class-teacher / head-teacher / guardian / student) —
   // which never carries `platform_edtech_admin` — matches ZERO items here, so the
-  // whole section header is skipped (see `if (!items.length) return null`). There
-  // is no school-role permission that unlocks any of these routes; a school owner
   // or bursar has zero visibility into the Super-Admin console regardless of their
   // own school-scoped permissions. Each page ALSO re-asserts the capability via
   // <PlatformGuard> for defence-in-depth, and the Go backend

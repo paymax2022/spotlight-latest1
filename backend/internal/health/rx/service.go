@@ -2,15 +2,24 @@ package healthrx
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"net/http"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/health/clinicalsafety"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
 
-	"spotlight/backend/internal/health/clinicalsafety"
+const (
+	keyPrescription = "prescription"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -37,22 +46,18 @@ const (
 	StateRejected  State = "REJECTED"
 )
 
-var allowedTransitions = map[State]map[State]bool{
-	StateIssued:    {StateSent: true},
-	StateSent:      {StateVerifying: true},
-	StateVerifying: {StateVerified: true, StateRejected: true},
-	StateVerified:  {StateDispensed: true},
-	StateDispensed: {StateFulfilled: true},
-	StateFulfilled: {},
-	StateRejected:  {},
+var allowedTransitions = fsm.Table[State]{
+	StateIssued:    fsm.Set(StateSent),
+	StateSent:      fsm.Set(StateVerifying),
+	StateVerifying: fsm.Set(StateVerified, StateRejected),
+	StateVerified:  fsm.Set(StateDispensed),
+	StateDispensed: fsm.Set(StateFulfilled),
+	StateFulfilled: fsm.Set[State](),
+	StateRejected:  fsm.Set[State](),
 }
 
 func canTransition(from, to State) bool {
-	next, ok := allowedTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedTransitions.Can(from, to)
 }
 
 type Item struct {
@@ -92,6 +97,7 @@ type Service struct {
 	audit          Auditor
 	clinical       ClinicalContextProvider // optional; supplies allergies/meds for the pre-issue safety screen
 	prescriberAuth PrescriberAuthorizer    // optional; scope-of-practice gate at the prescribe boundary (CR-004)
+	pharmacyGate   PharmacyOwnerGate       // optional; pharmacist-side transitions act only on the pinned pharmacy (HL-3)
 }
 
 func NewService(db *pgxpool.Pool, audit Auditor) *Service {
@@ -110,14 +116,13 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 // contraindicated/major interaction, out-of-range dose, species-toxic/human-only
 // drug) blocks issuance with a *SafetyBlockError unless overrideReason documents a
 // licensed prescriber's decision to proceed (RX-011), which is then audited.
-//
 //   - pc != nil: caller supplies the clinical context explicitly (vet passes the
 //     pet's species/weight so species-toxicity rules apply).
 //   - pc == nil: the injected ClinicalContextProvider is consulted (human path);
 //     when none is wired, the screen runs against an empty context (no findings).
 func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID string, consultID *string, items []Item, pc *clinicalsafety.PatientContext, overrideReason string) (*Prescription, error) {
 	if prescriberID == "" || patientID == "" {
-		return nil, fmt.Errorf("rx: prescriber and patient required")
+		return nil, errors.New("rx: prescriber and patient required")
 	}
 	// Scope-of-practice gate (CR-004): only a verified, unexpired prescriber may
 	// issue. Fail-closed when an authorizer is wired; no-op otherwise.
@@ -125,17 +130,17 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("rx: at least one item required")
+		return nil, errors.New("rx: at least one item required")
 	}
 	for _, it := range items {
 		if it.IsControlled {
-			return nil, fmt.Errorf("rx: controlled substances are excluded at MVP (HL-4)")
+			return nil, errors.New("rx: controlled substances are excluded at MVP (HL-4)")
 		}
 		if strings.TrimSpace(it.DrugName) == "" {
-			return nil, fmt.Errorf("rx: item drug_name required")
+			return nil, errors.New("rx: item drug_name required")
 		}
 		if it.Quantity <= 0 {
-			return nil, fmt.Errorf("rx: item quantity must be positive")
+			return nil, errors.New("rx: item quantity must be positive")
 		}
 	}
 
@@ -158,7 +163,27 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Consult binding: when a consult is referenced, the prescription may only be
+	// issued by the consult's provider owner to the consult's patient — a
+	// prescriber cannot attach a victim's patient_id or another doctor's consult.
+	if consultID != nil && *consultID != "" {
+		var consultPatient, consultOwner string
+		const qc = `SELECT c.patient_id, COALESCE(p.owner_user_id::text,'')
+		            FROM health_consults c
+		            LEFT JOIN health_providers p ON p.id = c.provider_id
+		            WHERE c.id = $1`
+		if err := tx.QueryRow(ctx, qc, *consultID).Scan(&consultPatient, &consultOwner); err != nil {
+			return nil, errors.New("rx: consult not found")
+		}
+		if consultPatient != patientID {
+			return nil, errors.New("rx: patient_id does not match the consult's patient")
+		}
+		if consultOwner != "" && consultOwner != prescriberID {
+			return nil, errors.New("rx: only the consult's provider may issue for it")
+		}
+	}
 
 	p := &Prescription{
 		ID:           uuid.New().String(),
@@ -184,9 +209,7 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 	}
 	p.Items = items
 	meta := map[string]any{"items": len(items), "state": string(StateIssued)}
-	for k, v := range safetyAudit(safetyRes, overrideReason) {
-		meta[k] = v
-	}
+	maps.Copy(meta, safetyAudit(safetyRes, overrideReason))
 	s.audited(prescriberID, patientID, "health.rx.issue", p.ID, nil, meta)
 	return p, nil
 }
@@ -195,7 +218,7 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 func (s *Service) SendToPharmacy(ctx context.Context, actorID, rxID, pharmacyProviderID string) (*Prescription, error) {
 	return s.transition(ctx, actorID, rxID, StateSent, func(tx pgx.Tx, p *prescriptionRow) error {
 		if pharmacyProviderID == "" {
-			return fmt.Errorf("rx: pharmacy provider required")
+			return errors.New("rx: pharmacy provider required")
 		}
 		_, err := tx.Exec(ctx, `UPDATE health_prescriptions SET pharmacy_provider_id=$2 WHERE id=$1`, rxID, pharmacyProviderID)
 		return err
@@ -233,7 +256,7 @@ func (s *Service) Dispense(ctx context.Context, pharmacistID, rxID string) (*Pre
 	return s.transition(ctx, pharmacistID, rxID, StateDispensed, func(tx pgx.Tx, p *prescriptionRow) error {
 		// HL-3 POM gating: a POM line may only be dispensed after pharmacist verify.
 		if p.hasPOM && p.VerifiedBy == nil {
-			return fmt.Errorf("rx: POM items require pharmacist verification before dispense (HL-3)")
+			return errors.New("rx: POM items require pharmacist verification before dispense (HL-3)")
 		}
 		_, err := tx.Exec(ctx, `UPDATE health_prescriptions SET dispensed_at=now() WHERE id=$1`, rxID)
 		return err
@@ -253,7 +276,7 @@ func (s *Service) Get(ctx context.Context, requesterID, rxID string) (*Prescript
 	// object-level authZ: patient, prescriber, or assigned pharmacist may read.
 	if requesterID != p.PatientID && requesterID != p.PrescriberID &&
 		(p.VerifiedBy == nil || *p.VerifiedBy != requesterID) {
-		return nil, fmt.Errorf("rx: forbidden")
+		return nil, errors.New("rx: forbidden")
 	}
 	items, _ := s.loadItems(ctx, rxID)
 	p.Items = items
@@ -302,11 +325,10 @@ func (s *Service) ListForPatient(ctx context.Context, patientID string) ([]Presc
 	return out, nil
 }
 
-// --- internals ---
-
 // internal carrier carrying the POM flag fetched during the locked read.
 type prescriptionRow struct {
 	Prescription
+
 	hasPOM bool
 }
 
@@ -315,7 +337,7 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	p, err := lockPrescription(ctx, tx, rxID)
 	if err != nil {
@@ -326,6 +348,9 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 	}
 	if !canTransition(p.State, to) {
 		return nil, fmt.Errorf("rx: illegal transition %s -> %s", p.State, to)
+	}
+	if err := s.authorizeActor(ctx, actorID, p, to); err != nil {
+		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE health_prescriptions SET state=$2, updated_at=now() WHERE id=$1`, rxID, string(to)); err != nil {
 		// HL-3 backstop: a second DISPENSE collides with the partial UNIQUE index.
@@ -352,8 +377,8 @@ func lockPrescription(ctx context.Context, tx pgx.Tx, rxID string) (*prescriptio
 	                  EXISTS (SELECT 1 FROM health_prescription_items i WHERE i.prescription_id=health_prescriptions.id AND i.is_pom)
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.PrescriberID, &p.PatientID, &p.PharmacyProviderID, &p.VerifiedBy, &state, &p.hasPOM); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("rx: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("rx: not found")
 		}
 		return nil, err
 	}
@@ -370,8 +395,8 @@ func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) 
 	if err := s.db.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.ConsultID, &p.PrescriberID, &p.PatientID,
 		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt,
 		&p.RefillsAuthorized, &p.RefillsUsed); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("rx: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("rx: not found")
 		}
 		return nil, err
 	}
@@ -402,4 +427,104 @@ func (s *Service) audited(actor, target, action, resourceID string, oldV, newV m
 		return
 	}
 	s.audit.LogAction(actor, target, action, "health", "health_prescription", resourceID, oldV, newV, "", "", "info")
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Issue — POST /prescriptions  (vet/clinician)
+func (h *Handler) Issue(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		PatientID      string  `json:"patient_id"`
+		ConsultID      *string `json:"consult_id"`
+		Items          []Item  `json:"items"`
+		OverrideReason string  `json:"override_reason"` // documents proceeding past a safety hard stop (RX-011)
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// Human path: the injected ClinicalContextProvider supplies allergies/meds; a
+	// hard stop blocks unless override_reason is provided (audited).
+	p, err := h.svc.IssueChecked(c.Request.Context(), id, req.PatientID, req.ConsultID, req.Items, nil, req.OverrideReason)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, keyPrescription: p})
+}
+
+// Get — GET /prescriptions/:id
+func (h *Handler) Get(c *gin.Context) {
+	p, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// Send — POST /prescriptions/:id/send  { pharmacy_provider_id }
+func (h *Handler) Send(c *gin.Context) {
+	var req struct {
+		PharmacyProviderID string `json:"pharmacy_provider_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	p, err := h.svc.SendToPharmacy(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.PharmacyProviderID)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// Verify — POST /prescriptions/:id/verify  { approve, reason }  (pharmacist, HL-3)
+func (h *Handler) Verify(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Begin   bool   `json:"begin"` // true → move SENT→VERIFYING first
+		Approve bool   `json:"approve"`
+		Reason  string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Begin {
+		if _, err := h.svc.BeginVerify(c.Request.Context(), id, c.Param("id")); err != nil {
+			ginutil.FailOK(c, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	p, err := h.svc.Verify(c.Request.Context(), id, c.Param("id"), req.Approve, req.Reason)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// Dispense — POST /prescriptions/:id/dispense  (pharmacist, HL-3 dispense-once)
+func (h *Handler) Dispense(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	p, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
 }

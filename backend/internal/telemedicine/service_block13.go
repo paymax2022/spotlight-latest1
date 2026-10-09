@@ -4,26 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
-
-// sqlStater matches a pgx-wrapped *pgconn.PgError without importing pgconn —
-// mirrors marketplace's/restaurant's identical helper (neither is exported,
-// so it isn't shared across packages).
-type sqlStater interface{ SQLState() string }
-
-// isUniqueViolation reports whether err is a Postgres 23505 unique_violation.
-func isUniqueViolation(err error) bool {
-	var pgErr sqlStater
-	if errors.As(err, &pgErr) {
-		return pgErr.SQLState() == "23505"
-	}
-	return false
-}
-
-// ─── Block 13: Availability ──────────────────────────────────────────────────
 
 // defaultSlotTimes are the standard daily consultation windows offered when a
 // doctor has not published a bespoke availability calendar.
@@ -36,13 +25,12 @@ var defaultSlotTimes = []string{
 // otherwise a deterministic default calendar is synthesised so the booking UI is
 // always populated. Booked slots are reported with available=false.
 func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot, error) {
-	// Verify doctor exists.
 	var exists bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM doctors WHERE id=$1)`, doctorID).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if !exists {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, ErrDoctorNotFound
 	}
 
 	rows, err := s.db.Query(ctx, `
@@ -81,7 +69,7 @@ func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot,
 func synthSlots(doctorID string) []Slot {
 	out := make([]Slot, 0, 5*len(defaultSlotTimes))
 	today := time.Now()
-	for d := 0; d < 5; d++ {
+	for d := range 5 {
 		date := today.AddDate(0, 0, d).Format("2006-01-02")
 		for i, tm := range defaultSlotTimes {
 			out = append(out, Slot{
@@ -96,8 +84,6 @@ func synthSlots(doctorID string) []Slot {
 	return out
 }
 
-// ─── Block 13: Confirm / Reschedule ──────────────────────────────────────────
-
 // ConfirmAppointment moves a booked appointment to confirmed. The patient who
 // booked it or the assigned doctor may confirm.
 func (s *Service) ConfirmAppointment(ctx context.Context, appointmentID, userID string) error {
@@ -105,13 +91,13 @@ func (s *Service) ConfirmAppointment(ctx context.Context, appointmentID, userID 
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, status FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&patientID, &status); err != nil {
-		return fmt.Errorf("telemedicine: appointment not found")
+		return errors.New("telemedicine: appointment not found")
 	}
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
-		return fmt.Errorf("telemedicine: not authorised for this appointment")
+		return errors.New("telemedicine: not authorised for this appointment")
 	}
 	if status != string(ApptBooked) {
-		return fmt.Errorf("telemedicine: only booked appointments can be confirmed")
+		return errors.New("telemedicine: only booked appointments can be confirmed")
 	}
 	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='confirmed' WHERE id=$1`, appointmentID)
 	return err
@@ -125,10 +111,10 @@ func (s *Service) RescheduleAppointment(ctx context.Context, appointmentID, user
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, status FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&patientID, &status); err != nil {
-		return fmt.Errorf("telemedicine: appointment not found")
+		return errors.New("telemedicine: appointment not found")
 	}
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
-		return fmt.Errorf("telemedicine: not authorised for this appointment")
+		return errors.New("telemedicine: not authorised for this appointment")
 	}
 	if status == string(ApptCompleted) || status == string(ApptCancelled) {
 		return fmt.Errorf("telemedicine: cannot reschedule a %s appointment", status)
@@ -138,26 +124,24 @@ func (s *Service) RescheduleAppointment(ctx context.Context, appointmentID, user
 	return err
 }
 
-// ─── Block 13: Reviews ───────────────────────────────────────────────────────
-
 // AddReview records a patient's rating for a completed appointment and refreshes
 // the doctor's aggregate rating/review_count projection. Reviews are immutable —
 // a second review for the same appointment is rejected by the UNIQUE constraint.
 func (s *Service) AddReview(ctx context.Context, appointmentID, patientID string, req SubmitReviewRequest) (*Review, error) {
 	if req.Rating < 1 || req.Rating > 5 {
-		return nil, fmt.Errorf("telemedicine: rating must be between 1 and 5")
+		return nil, errors.New("telemedicine: rating must be between 1 and 5")
 	}
 	var dbPatientID, doctorID, status string
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id, status FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&dbPatientID, &doctorID, &status); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	if dbPatientID != patientID {
-		return nil, fmt.Errorf("telemedicine: only the patient can review this appointment")
+		return nil, errors.New("telemedicine: only the patient can review this appointment")
 	}
 	if status != string(ApptCompleted) {
-		return nil, fmt.Errorf("telemedicine: reviews are only allowed for completed appointments")
+		return nil, errors.New("telemedicine: reviews are only allowed for completed appointments")
 	}
 
 	r := &Review{
@@ -173,8 +157,8 @@ func (s *Service) AddReview(ctx context.Context, appointmentID, patientID string
 		INSERT INTO telemedicine_reviews (id, appointment_id, doctor_id, patient_id, rating, comment)
 		VALUES ($1,$2,$3,$4,$5,$6)`
 	if _, err := s.db.Exec(ctx, ins, r.ID, r.AppointmentID, r.DoctorID, r.PatientID, r.Rating, r.Comment); err != nil {
-		if isUniqueViolation(err) {
-			return nil, fmt.Errorf("telemedicine: this appointment has already been reviewed")
+		if dbutil.IsUniqueViolation(err) {
+			return nil, errors.New("telemedicine: this appointment has already been reviewed")
 		}
 		return nil, fmt.Errorf("telemedicine: save review: %w", err)
 	}
@@ -219,18 +203,16 @@ func (s *Service) ListDoctorReviews(ctx context.Context, doctorID string, limit 
 	return out, rows.Err()
 }
 
-// ─── Block 13: Visit summary ─────────────────────────────────────────────────
-
 // GetVisitSummary returns the patient-facing summary for an appointment. If no
 // explicit summary row exists, it is derived from the doctor's SOAP note.
 func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID string) (*VisitSummary, error) {
 	var patientID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id FROM appointments WHERE id=$1`, appointmentID).Scan(&patientID); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
-		return nil, fmt.Errorf("telemedicine: not authorised for this appointment")
+		return nil, errors.New("telemedicine: not authorised for this appointment")
 	}
 
 	var vs VisitSummary
@@ -249,7 +231,7 @@ func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID str
 		FROM doctor_soap_notes WHERE appointment_id=$1`, appointmentID).
 		Scan(&doctorID, &assessment, &objective, &plan)
 	if derr != nil {
-		return nil, fmt.Errorf("telemedicine: no visit summary available")
+		return nil, errors.New("telemedicine: no visit summary available")
 	}
 	return &VisitSummary{
 		AppointmentID: appointmentID,
@@ -260,8 +242,6 @@ func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID str
 		FollowUp:      plan,
 	}, nil
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // isParticipant returns true if userID is the appointment's patient or its doctor.
 func (s *Service) isParticipant(ctx context.Context, appointmentID, userID, patientID string) bool {
@@ -276,4 +256,122 @@ func (s *Service) isParticipant(ctx context.Context, appointmentID, userID, pati
 		    WHERE a.id = $1 AND d.user_id = $2
 		)`, appointmentID, userID).Scan(&isDoctor)
 	return isDoctor
+}
+
+// Slot is a single bookable availability window for a doctor.
+type Slot struct {
+	ID        string `json:"id"`
+	DoctorID  string `json:"doctor_id"`
+	Date      string `json:"date"` // YYYY-MM-DD
+	Time      string `json:"time"` // e.g. "09:00 AM"
+	Available bool   `json:"available"`
+}
+
+// Review is an immutable patient rating left after a completed appointment.
+type Review struct {
+	ID            string    `json:"id"`
+	AppointmentID string    `json:"appointment_id"`
+	DoctorID      string    `json:"doctor_id"`
+	PatientID     string    `json:"patient_id"`
+	Rating        int       `json:"rating"`
+	Comment       string    `json:"comment"`
+	IsHidden      bool      `json:"is_hidden"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// VisitSummary is the patient-facing diagnosis / notes / follow-up for a visit.
+type VisitSummary struct {
+	ID            string    `json:"id"`
+	AppointmentID string    `json:"appointment_id"`
+	DoctorID      string    `json:"doctor_id"`
+	PatientID     string    `json:"patient_id"`
+	Diagnosis     string    `json:"diagnosis"`
+	Notes         string    `json:"notes"`
+	FollowUp      string    `json:"follow_up"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// SubmitReviewRequest is the body for POST /telemedicine/appointments/:id/review.
+type SubmitReviewRequest struct {
+	Rating  int    `json:"rating" binding:"required,min=1,max=5"`
+	Comment string `json:"comment"`
+}
+
+// RescheduleRequest is the body for POST /telemedicine/appointments/:id/reschedule.
+type RescheduleRequest struct {
+	ScheduledAt time.Time `json:"scheduled_at" binding:"required"`
+	SlotTime    string    `json:"slot_time"`
+}
+
+// GetAvailability handles GET /telemedicine/doctors/:id/availability.
+func (h *Handler) GetAvailability(c *gin.Context) {
+	slots, err := h.svc.GetAvailability(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": slots})
+}
+
+// ConfirmAppointment handles POST /telemedicine/appointments/:id/confirm.
+func (h *Handler) ConfirmAppointment(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.ConfirmAppointment(c.Request.Context(), c.Param("id"), userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// RescheduleAppointment handles POST /telemedicine/appointments/:id/reschedule.
+func (h *Handler) RescheduleAppointment(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req RescheduleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.RescheduleAppointment(c.Request.Context(), c.Param("id"), userID, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AddReview handles POST /telemedicine/appointments/:id/review.
+func (h *Handler) AddReview(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req SubmitReviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	r, err := h.svc.AddReview(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": r})
+}
+
+// ListDoctorReviews handles GET /telemedicine/doctors/:id/reviews.
+func (h *Handler) ListDoctorReviews(c *gin.Context) {
+	limit, _ := ginutil.PageParams(c, 20, 0)
+	reviews, err := h.svc.ListDoctorReviews(c.Request.Context(), c.Param("id"), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": reviews})
+}
+
+// GetVisitSummary handles GET /telemedicine/appointments/:id/summary.
+func (h *Handler) GetVisitSummary(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	vs, err := h.svc.GetVisitSummary(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": vs})
 }

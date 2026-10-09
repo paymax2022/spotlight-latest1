@@ -17,7 +17,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const params = await context.params;
   try {
     await assertOpenMicAdmin(request);
-    const body = (await request.json()) as { entries?: Array<{ submissionId?: string; order?: number }> };
+    const body = (await request.json().catch(() => null)) as { entries?: Array<{ submissionId?: string; order?: number }> };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const entries = (body.entries || [])
       .filter((item) => item.submissionId)
       .map((item) => ({ submissionId: String(item.submissionId), order: item.order }));

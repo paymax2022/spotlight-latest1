@@ -1,4 +1,3 @@
-// ── Referral Campaigns types (M-CMP-01..03) ──────────────────────────────────
 // Active campaigns, campaign detail (eligibility, reward, vesting, end date),
 // featured/seasonal. Money is ALWAYS integer kobo. Rewards tie to a referred
 // friend's verified activity (§7).

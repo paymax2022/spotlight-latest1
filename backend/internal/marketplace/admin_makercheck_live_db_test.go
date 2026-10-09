@@ -1,15 +1,11 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for the MKT-007 maker-checker flows (Users ban, Appeals
 // overturn). Follows the same pattern as service_boost_live_db_test.go:
 // TEST_DATABASE_URL-gated, real pgxpool, no mocking of the DB layer.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDB_MakerChecker -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -51,8 +47,8 @@ func seedMakercheckPlatformUser(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatalf("seed platform_users: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM mkt_user_moderation WHERE user_id=$1`, id)
-		pool.Exec(context.Background(), `DELETE FROM platform_users WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_user_moderation WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id=$1`, id)
 	})
 	return id
 }
@@ -115,16 +111,19 @@ func TestLiveDB_MakerChecker_AppealOverturn_DifferentAdminApproves(t *testing.T)
 	appellantID := seedMakercheckPlatformUser(t, ctx, pool)
 	makerID := uuid.New().String()
 	checkerID := uuid.New().String()
-	targetListingID := uuid.New().String()
 
+	// 'user' target = the appellant themself (the only 'user' appeal FileAppeal
+	// accepts — a member can only appeal a moderation action against themself).
 	a, err := svc.FileAppeal(ctx, appellantID, CreateAppealInput{
-		TargetType: "listing", TargetID: targetListingID,
-		OriginalAction: "removed_policy", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal",
+		TargetType: "user", TargetID: appellantID,
+		OriginalAction: "suspended", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal",
 	})
 	if err != nil {
 		t.Fatalf("file appeal: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID)
+	})
 
 	decided, err := svc.DecideAppealAdmin(ctx, makerID, "test-role", a.ID, DecideAppealInput{Decision: "overturn", ReasonCode: "TEST_OVERTURN"})
 	if err != nil {
@@ -166,16 +165,17 @@ func TestLiveDB_MakerChecker_AppealUphold_ExecutesImmediately(t *testing.T) {
 
 	appellantID := seedMakercheckPlatformUser(t, ctx, pool)
 	makerID := uuid.New().String()
-	targetListingID := uuid.New().String()
 
 	a, err := svc.FileAppeal(ctx, appellantID, CreateAppealInput{
-		TargetType: "listing", TargetID: targetListingID,
-		OriginalAction: "removed_policy", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal 2",
+		TargetType: "user", TargetID: appellantID,
+		OriginalAction: "suspended", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal 2",
 	})
 	if err != nil {
 		t.Fatalf("file appeal: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID)
+	})
 
 	decided, err := svc.DecideAppealAdmin(ctx, makerID, "test-role", a.ID, DecideAppealInput{Decision: "uphold", ReasonCode: "TEST_UPHOLD"})
 	if err != nil {

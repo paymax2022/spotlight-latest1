@@ -81,6 +81,16 @@ export async function initiatePaidVote(
   const totalVotesToCredit = votesPurchased + bonusVotes;
   const paymentReference = `${settings.paymentRefPrefix}-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
+  // Reject bogus contestants with a 404 before the insert — an FK violation
+  // surfacing as a bare 500 tells the caller nothing actionable.
+  const { data: contestantRow } = await supabase
+    .from('contestants')
+    .select('id')
+    .eq('id', req.contestantId)
+    .eq('contest_id', req.contestId)
+    .maybeSingle();
+  if (!contestantRow) throw new ApiError('Contestant not found', 404);
+
   // --- Create pending transaction ---
   const { data: txRow, error: txErr } = await supabase
     .from('vote_transactions')

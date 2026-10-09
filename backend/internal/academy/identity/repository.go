@@ -20,8 +20,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a scoped row does not exist.
 var ErrNotFound = errors.New("academy.identity: not found")
 
-// ── Roles ─────────────────────────────────────────────────────────────────────
-
 // GrantRole inserts an additive role idempotently (ON CONFLICT DO NOTHING).
 func (r *Repository) GrantRole(ctx context.Context, userID string, role Role) error {
 	const q = `
@@ -53,8 +51,6 @@ func (r *Repository) ListRoles(ctx context.Context, userID string) ([]RoleGrant,
 	}
 	return out, rows.Err()
 }
-
-// ── Profiles ──────────────────────────────────────────────────────────────────
 
 // UpsertProfile writes the per-(user_id, role) profile row.
 func (r *Repository) UpsertProfile(ctx context.Context, userID string, req UpsertProfileRequest) (*Profile, error) {
@@ -129,8 +125,6 @@ func (r *Repository) ListProfiles(ctx context.Context, userID string) ([]Profile
 	}
 	return out, rows.Err()
 }
-
-// ── Guardian links ────────────────────────────────────────────────────────────
 
 // CreateGuardianLink inserts a pending link (idempotent on the UNIQUE pair).
 // On conflict it returns the existing row so re-linking is a no-op replay.
@@ -254,7 +248,7 @@ func (r *Repository) RecordConsentAndActivate(
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	scopeJSON, err := json.Marshal(scope)
 	if err != nil {
@@ -314,8 +308,6 @@ func (r *Repository) RevokeGuardianLink(ctx context.Context, linkID string) (*Gu
 	}
 	return r.GetGuardianLinkByID(ctx, linkID)
 }
-
-// ── Audit ─────────────────────────────────────────────────────────────────────
 
 // InsertAudit appends an immutable row to the existing public.audit_logs table.
 // module is fixed to "academy.identity"; actor/target may be empty (stored NULL).

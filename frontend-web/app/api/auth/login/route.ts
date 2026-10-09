@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAnonClient, createServiceClient, formatUser } from '../_supabase';
+import { forwardRateLimitHeaders } from '../_headers';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 /**
  * POST /api/auth/login — delegates to the Go backend.
@@ -28,7 +30,6 @@ const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
-    // `identifier` is the new name; `email` stays accepted so existing web
     // callers keep working unchanged.
     const identifier = String(body?.identifier ?? body?.email ?? '').trim();
     const password = body?.password;
@@ -44,7 +45,10 @@ export async function POST(request: Request) {
     try {
       upstream = await fetch(`${GO_BACKEND_URL}/api/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Forward the resolved client IP — Go keys the login limiter, audit
+        // rows and suspicious-login signals on it; without this every web
+        // login shares the BFF's address (AUD-BE-014).
+        headers: { 'Content-Type': 'application/json', ...clientIpHeaders(request) },
         body: JSON.stringify({ identifier, password }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
@@ -72,10 +76,12 @@ export async function POST(request: Request) {
       // Otherwise pass Go's status through. It answers 401 with a DELIBERATELY
       // generic message so a wrong password and an unknown account are
       // indistinguishable; do not enrich it here.
-      return NextResponse.json(
+      const passthru = NextResponse.json(
         { error: payload?.error ?? 'Invalid credentials' },
         { status: upstream.status === 400 ? 401 : upstream.status },
       );
+      forwardRateLimitHeaders(upstream, passthru);
+      return passthru;
     }
 
     // Second factor. With FEATURE_OTP_LOGIN_MFA_ENABLED on, Go answers 200 with
@@ -129,6 +135,7 @@ export async function POST(request: Request) {
       message: 'Login successful',
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? 'Login failed' }, { status: 500 });
+    console.error('[auth/login]', err);
+    return NextResponse.json({ error: 'Login failed' }, { status: 500 });
   }
 }

@@ -1,7 +1,6 @@
 package ledger
 
 // Live-DB integration test for REF-009's payout-side account-status gate.
-//
 // WithdrawEligible already refused a suspended/locked/deleted account at the
 // withdrawal request (see TestWithdrawEligible_AccountStatusGate_Integration).
 // That left a narrower gap open: Transition(..., StatePaid, ...) — invoked
@@ -11,12 +10,12 @@ package ledger
 // checkAccountEligibleForMoneyMovement gate inside Transition itself, so a
 // payout and a withdrawal are refused on the same terms regardless of which
 // entry point is used.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (see withdraw_integration_test.go
 // for the bring-up recipe).
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -37,7 +36,7 @@ func TestTransition_PayoutAccountStatusGate_Integration(t *testing.T) {
 	rewardID := seedEligibleRewardReturningID(t, pool, suspended, 30_000)
 	mustExec(t, pool, `UPDATE platform_users SET status='suspended' WHERE id=$1`, suspended)
 
-	if err := svc.Transition(ctx, rewardID, StatePaid, "payout-suspended-"+rewardID); err != ErrAccountNotEligible {
+	if err := svc.Transition(ctx, rewardID, StatePaid, "payout-suspended-"+rewardID); !errors.Is(err, ErrAccountNotEligible) {
 		t.Fatalf("suspended account: expected ErrAccountNotEligible, got %v", err)
 	}
 

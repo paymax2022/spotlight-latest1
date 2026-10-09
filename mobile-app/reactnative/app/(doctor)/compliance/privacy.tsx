@@ -3,18 +3,16 @@ import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, ToggleRow, StateView, StatusBadge } from '@/features/doctor/components';
 import { usePrivacySettings, useUpdatePrivacySettings, useRequestDataExport, useRequestAccountDeletion } from '@/features/doctor/hooks';
 import type { DataSharingPreference, DataRequestStatus } from '@/types/doctor.batch7';
 
-// ── Section AB — Data privacy settings (AB.4) ─────────────────────────────────
-// NEW screen: sharing preferences (toggle), data-export request and account-
 // deletion request (gated confirm). Reuses ToggleRow + StatusBadge. Account
 // deletion uses the single shared useRequestAccountDeletion mutation (AB+AC).
 

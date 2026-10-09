@@ -3,7 +3,6 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapPrizeRow, UNIQUE_VIOLATION } from './_shared';
 
-// GET /api/admin/voting/contest-prizes?connectContestId=<uuid>
 // Lists structured per-position prizes for a contest (CS-010), ordered by position.
 export async function GET(request: Request) {
   try {
@@ -22,7 +21,10 @@ export async function GET(request: Request) {
       .eq('connect_contest_id', connectContestId)
       .order('position', { ascending: true });
 
-    if (error) return errorResponse(`Failed to load prizes: ${error.message}`, 500);
+    if (error) {
+      console.error('[admin/voting/contest-prizes GET]', error.message);
+      return errorResponse('Failed to load prizes', 500);
+    }
 
     return successResponse({ success: true, prizes: (data ?? []).map(mapPrizeRow) });
   } catch (error) {
@@ -38,7 +40,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (typeof body.connectContestId !== 'string' || !body.connectContestId.trim()) {
       return errorResponse('connectContestId is required', 400);
@@ -86,7 +89,8 @@ export async function POST(request: Request) {
       if ((error as any).code === UNIQUE_VIOLATION) {
         return errorResponse(`A prize already exists for position ${body.position} on this contest`, 409);
       }
-      return errorResponse(`Failed to create prize: ${error.message}`, 500);
+      console.error('[admin/voting/contest-prizes POST]', error.message);
+      return errorResponse('Failed to create prize', 500);
     }
 
     return successResponse({ success: true, prize: mapPrizeRow(inserted) }, 201);

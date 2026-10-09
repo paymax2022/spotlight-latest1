@@ -1,10 +1,8 @@
 package connectpayouts
 
 // Live-DB test for the CONNECT-001 admin payout surface: RegisterAdmin's
-// list/detail/settle/reject routes, which did not exist at all before this
-// change (the member group only ever exposed creator-facing POST/GET
-// /payouts — the admin console's payout queue 404'd in production).
-//
+// list/detail/settle/reject routes (the member group only exposes
+// creator-facing POST/GET /payouts; the admin queue is separate).
 // Proves, against a REAL local Postgres:
 //  1. the admin list route returns real rows (seeded via the actual member
 //     Request() money path, not hand-inserted fixtures);
@@ -15,10 +13,8 @@ package connectpayouts
 //     creator's wallet (confirmed via ledger.GetBalance, a real DB read) and
 //     marks the row failed;
 //  5. reject is idempotent (retrying does not double-refund).
-//
 // ⚠️ GATED ON TEST_DATABASE_URL, DELIBERATELY WITH NO FALLBACK TO DATABASE_URL
 // (the root .env DATABASE_URL points at the PRODUCTION Supabase pooler).
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/connect/payouts/ -run TestLiveDB -v
 
@@ -107,9 +103,20 @@ func creditWallet(t *testing.T, ledgerSvc *ledger.Service, userID string, amount
 
 // testReverser mirrors app.connectPayoutReverseAdapter exactly (it cannot
 // import internal/app — that would be a cycle — so it reimplements the same
-// two-line adapter over the same ledger.Service.PostReversal this package's
-// PayoutReverser interface expects production code to call).
+// adapter over the same ledger.Service.PostReversal this package's
+// PayoutReverser interface expects production code to call), INCLUDING the
+// durable-identity check on a duplicate: a claimed reversal key is a replay
+// only when the recorded pair carries REVERSAL_DEBIT/REVERSAL_CREDIT with this
+// payout's accounts + amount — a foreign claim fails closed.
 type testReverser struct{ ledger *ledger.Service }
+
+func (r *testReverser) reversalLegOK(ctx context.Context, legKey, accountID string, wantType ledger.EntryType, ref string, amountKobo int64) (bool, error) {
+	e, found, err := r.ledger.EntryByKey(ctx, legKey)
+	if err != nil || !found {
+		return false, err
+	}
+	return e.AccountID == accountID && e.Type == wantType && e.Reference == ref && e.AmountKobo == amountKobo, nil
+}
 
 func (r *testReverser) ReversePayout(ctx context.Context, creatorID, payoutID string, amountKobo int64) error {
 	settleAcc, err := r.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
@@ -124,7 +131,21 @@ func (r *testReverser) ReversePayout(ctx context.Context, creatorID, payoutID st
 	idem := "connect:payout:reject:" + payoutID
 	err = r.ledger.PostReversal(ctx, creatorWallet.ID, settleAcc.ID, amountKobo, ref, idem)
 	if errors.Is(err, ledger.ErrDuplicate) {
-		return nil
+		d, derr := r.reversalLegOK(ctx, idem+":rev_debit", creatorWallet.ID, ledger.EntryReversalDebit, ref, amountKobo)
+		if derr != nil || !d {
+			if derr != nil {
+				return derr
+			}
+			return err
+		}
+		cr, cerr := r.reversalLegOK(ctx, idem+":rev_credit", settleAcc.ID, ledger.EntryReversalCredit, ref, amountKobo)
+		if cerr != nil {
+			return cerr
+		}
+		if !cr {
+			return err
+		}
+		return nil // verified reversal replay
 	}
 	return err
 }
@@ -201,9 +222,9 @@ func (f *fakeRBAC) CheckPermission(userID, permission, scopeType, scopeID string
 // The rest of services.RBACService is unused by middleware.RequirePermission
 // (which calls CheckPermission alone) — stubbed only so *fakeRBAC satisfies
 // the interface signature RequirePermission requires.
-func (f *fakeRBAC) GetUserRoles(string) ([]string, error)            { return nil, nil }
-func (f *fakeRBAC) GetUserScopes(string) ([]domain.UserScope, error) { return nil, nil }
-func (f *fakeRBAC) GetUserPermissions(string, string, string) ([]string, error) {
+func (f *fakeRBAC) GetUserRoles(context.Context, string) ([]string, error) { return nil, nil }
+func (f *fakeRBAC) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (f *fakeRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (f *fakeRBAC) ListRoles() ([]domain.Role, error) { return nil, nil }
@@ -233,12 +254,12 @@ func (f *fakeRBAC) DeletePermission(string) error                       { return
 func (f *fakeRBAC) AssignRoleToUser(string, string, string, string, string) error {
 	return nil
 }
-func (f *fakeRBAC) RemoveRoleFromUser(string, string, string) error { return nil }
-func (f *fakeRBAC) GetUserStatus(string) (string, error)            { return "", nil }
-func (f *fakeRBAC) SuspendUser(string) error                        { return nil }
-func (f *fakeRBAC) UnsuspendUser(string) error                      { return nil }
-func (f *fakeRBAC) LockUser(string) error                           { return nil }
-func (f *fakeRBAC) UnlockUser(string) error                         { return nil }
+func (f *fakeRBAC) RemoveRoleFromUser(string, string, string) error       { return nil }
+func (f *fakeRBAC) GetUserStatus(context.Context, string) (string, error) { return "", nil }
+func (f *fakeRBAC) SuspendUser(string) error                              { return nil }
+func (f *fakeRBAC) UnsuspendUser(string) error                            { return nil }
+func (f *fakeRBAC) LockUser(string) error                                 { return nil }
+func (f *fakeRBAC) UnlockUser(string) error                               { return nil }
 func (f *fakeRBAC) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	return nil, nil
 }
@@ -321,7 +342,7 @@ func TestLiveDB_AdminSettlePayouts_RBACBlocksNonAdmin(t *testing.T) {
 
 	// Non-admin caller: must be refused BEFORE the handler runs (403), and the
 	// payout must be untouched.
-	req := httptest.NewRequest(http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
 		strings.NewReader(`{"settlementRef":"manual-bank-ref-1"}`))
 	req.Header.Set("X-Test-User", nonAdmin)
 	req.Header.Set("Content-Type", "application/json")
@@ -341,7 +362,7 @@ func TestLiveDB_AdminSettlePayouts_RBACBlocksNonAdmin(t *testing.T) {
 
 	// Admin caller with the permission: must succeed and the DB row must move
 	// to 'settled' with the supplied settlement ref stamped.
-	req2 := httptest.NewRequest(http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
 		strings.NewReader(`{"settlementRef":"manual-bank-ref-1"}`))
 	req2.Header.Set("X-Test-User", admin)
 	req2.Header.Set("Content-Type", "application/json")
@@ -431,5 +452,113 @@ func TestLiveDB_AdminRejectPayout_ReversesLedgerAndMarksFailed(t *testing.T) {
 	if balanceAfterRetry != balanceBeforePayout {
 		t.Fatalf("balance after retried reject = %d, want %d (must not double-refund)",
 			balanceAfterRetry, balanceBeforePayout)
+	}
+}
+
+// TestLiveDB_AdminRejectPayout_RevTypeMismatch_Rejected: a phantom NON-reversal
+// pair holding the reversal key (a foreign/wrong-type claim — e.g. plain
+// DEBIT/CREDIT rows parked under <idem>:rev_debit/:rev_credit) must NOT be
+// accepted as "already reversed". The reject must fail closed and the payout
+// must stay 'requested' — a verified reversal is REVERSAL_DEBIT +
+// REVERSAL_CREDIT, nothing else.
+func TestLiveDB_AdminRejectPayout_RevTypeMismatch_Rejected(t *testing.T) {
+	pool := newAdminTestPool(t)
+	ctx := context.Background()
+	svc, ledgerSvc := buildAdminTestService(t, pool)
+	creator := newTestCreator(t, pool)
+	creditWallet(t, ledgerSvc, creator, 5_000_00)
+
+	p := seedPayout(t, svc, creator, 1_500_00)
+	balAfterPayout, err := ledgerSvc.GetBalance(ctx, creator)
+	if err != nil {
+		t.Fatalf("balance after payout: %v", err)
+	}
+
+	// Foreign claim: plain DEBIT/CREDIT rows occupy the reversal leg keys on
+	// the SAME accounts the real reversal would use — identity matches on
+	// account/ref/amount but NOT on entry type.
+	settleAcc := mustStanding(t, ledgerSvc, ledger.AccountSettlement)
+	walletAcc, err := ledgerSvc.GetOrCreateUserWallet(ctx, creator)
+	if err != nil {
+		t.Fatalf("creator wallet: %v", err)
+	}
+	idem := "connect:payout:reject:" + p.ID
+	ref := idem
+	for _, leg := range []struct{ acc, typ, suffix string }{
+		{walletAcc.ID, "DEBIT", ":rev_debit"},
+		{settleAcc, "CREDIT", ":rev_credit"},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			leg.acc, leg.typ, 1_500_00, ref, idem+leg.suffix); err != nil {
+			t.Fatalf("seed wrong-type leg %s: %v", leg.suffix, err)
+		}
+	}
+
+	if _, err := svc.AdminReject(ctx, uuid.NewString(), p.ID, "reject"); err == nil {
+		t.Fatal("reject must fail closed when the reversal key holds a non-reversal journal")
+	}
+	fresh, err := NewRepository(pool).Get(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("re-read payout: %v", err)
+	}
+	if fresh.Status != "requested" {
+		t.Fatalf("payout must stay 'requested' after a rejected foreign claim, got %q", fresh.Status)
+	}
+	// The reject must not have posted its reversal: balance moved only by the
+	// seeded phantom DEBIT leg (-1.5M), never restored by the phantom claim.
+	bal, err := ledgerSvc.GetBalance(ctx, creator)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if bal != balAfterPayout-1_500_00 {
+		t.Fatalf("balance = %d, want %d (phantom debit only; no reversal posted)", bal, balAfterPayout-1_500_00)
+	}
+}
+
+// TestLiveDB_AdminRejectPayout_VerifiedReversalReplay_Converges: a real
+// reversal pair is already durable under the reject key (crash between the
+// PostReversal commit and MarkFailed): the retried reject must verify the
+// recorded legs — types included — converge, and mark the payout failed
+// without posting a second reversal.
+func TestLiveDB_AdminRejectPayout_VerifiedReversalReplay_Converges(t *testing.T) {
+	pool := newAdminTestPool(t)
+	ctx := context.Background()
+	svc, ledgerSvc := buildAdminTestService(t, pool)
+	creator := newTestCreator(t, pool)
+	creditWallet(t, ledgerSvc, creator, 5_000_00)
+
+	p := seedPayout(t, svc, creator, 1_500_00)
+	balAfterPayout, err := ledgerSvc.GetBalance(ctx, creator)
+	if err != nil {
+		t.Fatalf("balance after payout: %v", err)
+	}
+
+	// Simulate the crash: the reversal committed but the payout row was never
+	// marked — post the exact reversal the adapter would post.
+	settleAcc := mustStanding(t, ledgerSvc, ledger.AccountSettlement)
+	walletAcc, err := ledgerSvc.GetOrCreateUserWallet(ctx, creator)
+	if err != nil {
+		t.Fatalf("creator wallet: %v", err)
+	}
+	idem := "connect:payout:reject:" + p.ID
+	if err := ledgerSvc.PostReversal(ctx, walletAcc.ID, settleAcc, 1_500_00, idem, idem); err != nil {
+		t.Fatalf("seed committed reversal: %v", err)
+	}
+
+	got, err := svc.AdminReject(ctx, uuid.NewString(), p.ID, "provider declined")
+	if err != nil {
+		t.Fatalf("reject over a verified reversal replay must converge, got %v", err)
+	}
+	if got.Status != "failed" {
+		t.Fatalf("payout status = %q, want failed", got.Status)
+	}
+	bal, err := ledgerSvc.GetBalance(ctx, creator)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if bal != balAfterPayout+1_500_00 {
+		t.Fatalf("balance = %d, want %d — reversal must restore once, not twice", bal, balAfterPayout+1_500_00)
 	}
 }

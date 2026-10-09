@@ -6,15 +6,12 @@ import (
 	"time"
 )
 
-// ─── Real parcel Goods-in-Transit insurance (MyCover-backed) ──────────────────
-//
 // Replaces the earlier in-house percentage premium: the "insurance" shown on a
 // parcel estimate is now the CURRENT real rate on our synced product catalog
 // (no PII sent, no consent needed — a display-only figure), and a real policy
 // is bound with the real MyCover product once a courier + vehicle are actually
 // known (AcceptParcel), using the proven quote→debit→bind saga in
 // backend/internal/insurance/policy. See docs/adr/ for the design rationale.
-//
 // InsuranceBinder is the minimal seam into that saga — mirrors tierLimiter /
 // MapsAdapter / CommissionRecorder: transport never imports insurance/policy,
 // insurance/catalog, or insurance/consent at compile time. app-wiring supplies
@@ -45,8 +42,8 @@ type InsuranceBinder interface {
 }
 
 // WithInsurance injects the insurance seam. Optional: a nil binder (the
-// default) simply means every parcel books and delivers with no cover, exactly
-// as before this feature existed — never a startup requirement.
+// default) simply means every parcel books and delivers with no cover —
+// never a startup requirement.
 func (s *Service) WithInsurance(b InsuranceBinder) *Service {
 	s.insurance = b
 	return s
@@ -66,7 +63,6 @@ const parcelInsuranceProductCode = "mycover:sti-git-on-demand"
 // transport_pricing_config rate (parcelInsurance/PricingConfig.InsuranceRateBps)
 // when the insurance module isn't wired or the product lookup fails — never
 // lets an unrelated outage block a fare estimate.
-//
 // KNOWN LIMITATION, deliberate trade-off: this is rate_bps × declared value
 // only. A real live quote for mycover:sti-git-on-demand against a ₦10,000
 // declared value returned a ₦2,000 premium (verified 2026-09-02) — 40× the
@@ -113,7 +109,7 @@ type parcelDriverVehicle struct {
 
 // mycoverVehicleType maps our constrained vehicle_type enum to MyCover's real,
 // live options for this product (fetched from its options_url and verified on
-// 2026-09-02: Bus, Car, Jeep - Suv, Suv, Truck, Mini-Van, Bike, Tricycle).
+// 2026-09-02: Bus, Car, Jeep - Suv, Truck, Mini-Van, Bike, Tricycle).
 func mycoverVehicleType(ourType string) string {
 	switch ourType {
 	case "car":
@@ -142,21 +138,21 @@ func buildParcelInsuranceInputs(p *parcelRow, pickupAddr, dropoffAddr, category 
 		"address":       sender.Address,
 	}
 	return map[string]any{
-		"first_name":            sender.FirstName,
-		"last_name":             sender.LastName,
-		"email":                 sender.Email,
-		"phone_number":          sender.Phone,
-		"gender":                sender.Gender,
-		"date_of_birth":         sender.DateOfBirth,
-		"address":               sender.Address,
-		"pickup_location":       pickupAddr,
-		"drop_off_location":     dropoffAddr,
-		"shipping_date":         now.Format("2006-01-02"),
-		"vehicle_plate_number":  vehicle.PlateNumber,
-		"vehicle_type":          mycoverVehicleType(vehicle.VehicleType),
-		"total_value":           declaredValueKobo, // schema type "money", unit kobo — the gateway adapter rescales to naira
-		"bought_for_self":       true,
-		"policy_holder":         holder,
+		"first_name":           sender.FirstName,
+		"last_name":            sender.LastName,
+		"email":                sender.Email,
+		"phone_number":         sender.Phone,
+		"gender":               sender.Gender,
+		"date_of_birth":        sender.DateOfBirth,
+		"address":              sender.Address,
+		"pickup_location":      pickupAddr,
+		"drop_off_location":    dropoffAddr,
+		"shipping_date":        now.Format("2006-01-02"),
+		"vehicle_plate_number": vehicle.PlateNumber,
+		"vehicle_type":         mycoverVehicleType(vehicle.VehicleType),
+		"total_value":          declaredValueKobo, // schema type "money", unit kobo — the gateway adapter rescales to naira
+		"bought_for_self":      true,
+		"policy_holder":        holder,
 		"item_details": []map[string]any{
 			{
 				"value":       declaredValueKobo,

@@ -2,6 +2,7 @@ package healthlab
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -57,7 +58,6 @@ func (s *Service) AdminListOrders(ctx context.Context, state, labProviderID stri
 
 // AdminCustodyAudit is the immutable chain-of-custody oversight read (HL-6/HL-12).
 // Each row is one custody event; admin can trace any sample's chain.
-//
 // sampleID is a thin, additive filter (the admin frontend's custody detail
 // drawer — healthLabAdminService.ts getCustodyChain — wants every event for
 // ONE sample, not the whole audit list). It reuses this exact query rather
@@ -155,7 +155,7 @@ func (s *Service) AdminDeactivateTest(ctx context.Context, adminID, testID strin
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("lab: test not found")
+		return errors.New("lab: test not found")
 	}
 	s.audited(adminID, "", "health.lab.test.deactivate", testID,
 		map[string]any{"active": true}, map[string]any{"active": false})
@@ -212,4 +212,46 @@ func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
 	}
 
 	return out, nil
+}
+
+// request/response types for the admin console dashboard.
+// These are additive to model.go; nothing here changes the member-facing
+// shapes. Mirrors healthpharmacy's admin.go (PHARMACY-001) exactly in shape
+// and discipline.
+
+// AdminDashboard aggregates platform-wide KPIs for the lab admin console.
+// Contrast with the owner/patient views (model.go), which are scoped to one
+// caller.
+type AdminDashboard struct {
+	TotalOrders int64 `json:"total_orders"`
+	// OrdersByState is a count per OrderState value (model.go), including
+	// states with zero orders — the console renders a complete state
+	// breakdown, not only the states that happen to have rows today.
+	OrdersByState map[string]int64 `json:"orders_by_state"`
+	// PlatformRevenueKoboWeek is Spotlight's realized commission on lab orders
+	// released in the trailing 7 days.
+	// Direct READ of already-recorded rows, NOT a recomputation: the split is
+	// resolved server-side by the central commission module's rate card, and
+	// lab deliberately never imports that package — recomputing a % here would
+	// hardcode a rate that can drift from the live config. Summing
+	// commission_earnings.spotlight_revenue_kobo (append-only integer-kobo
+	// ledger) for source_module='health.lab' is the only accurate source.
+	// When the commission feature is off no rows are written and this is 0.
+	PlatformRevenueKoboWeek int64 `json:"platform_revenue_kobo_week"`
+	// TotalLabs mirrors the exact APPROVED-lab predicate used by
+	// labProviderGateAdapter.IsApprovedLab (backend/internal/app/health_lab_routes.go)
+	// — the only "is a real, live lab" check this module has (there is no
+	// member-facing DiscoverLabs browse endpoint to match against, unlike
+	// pharmacy's DiscoverPharmacies): domain='LAB', provider_type='lab',
+	// status='APPROVED'.
+	TotalLabs int64 `json:"total_labs"`
+}
+
+// allOrderStates lists every OrderState the lifecycle (model.go header
+// comment) defines, used to zero-initialize AdminDashboard.OrdersByState so
+// states with no current orders still appear (as 0) rather than being absent.
+var allOrderStates = []OrderState{
+	StateCreated, StateScheduled, StateSampleCollected, StateInTransit, StateAccessioned,
+	StateProcessing, StateResultReady, StateEscalated, StateReleased, StateClosed,
+	StateCancelled, StateRefunded,
 }

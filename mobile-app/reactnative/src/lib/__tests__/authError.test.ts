@@ -1,7 +1,4 @@
 // Pure-logic tests for the 401 classification and the return path.
-//
-// Run: node --experimental-strip-types --test "src/lib/__tests__/authError.test.ts"
-//
 // isUnauthorized decides whether a screen offers "Retry" or "Sign in". Getting it
 // wrong in the lenient direction is the worse failure: a real outage would tell
 // the user to sign in again, which does nothing and looks like the app rejecting

@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Lightbulb, Trophy } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
@@ -45,7 +45,7 @@ export default function PracticeScreen() {
   };
 
   const checkOrNext = () => {
-    if (!revealed) { setRevealed(true); return; }   // first tap = check (instant feedback)
+    if (!revealed) { setRevealed(true); return; }
     if (isLast) {
       submit.mutate(
         { objectiveId, answers: Object.entries(answers).map(([questionId, sel]) => ({ questionId, selected: sel })) },
@@ -61,7 +61,6 @@ export default function PracticeScreen() {
   if (questions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading practice…" /></SafeAreaView>;
   if (!list.length) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Practice" /><StateView kind="empty" title="No questions yet" /></SafeAreaView>;
 
-  // ── Results (L13) ───────────────────────────────────────────────────────────
   if (result) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -93,7 +92,6 @@ export default function PracticeScreen() {
     );
   }
 
-  // ── Question (L9) ───────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title={`Question ${idx + 1} of ${list.length}`} />

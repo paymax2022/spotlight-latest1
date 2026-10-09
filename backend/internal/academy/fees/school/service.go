@@ -2,8 +2,11 @@ package feesschool
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/ptr"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,11 +44,11 @@ func (s *Service) Create(ctx context.Context, ownerUserID string, req CreateScho
 	}
 	sch, err := s.store.Insert(ctx, School{
 		Name:              req.Name,
-		Code:              ptrOrNil(req.Code),
-		Level:             ptrOrNil(req.Level),
-		VirtualAccountRef: ptrOrNil(req.VirtualAccountRef),
-		Contact:           ptrOrNil(req.Contact),
-		OwnerUserID:       ptrOrNil(ownerUserID),
+		Code:              ptr.OrNil(req.Code),
+		Level:             ptr.OrNil(req.Level),
+		VirtualAccountRef: ptr.OrNil(req.VirtualAccountRef),
+		Contact:           ptr.OrNil(req.Contact),
+		OwnerUserID:       ptr.OrNil(ownerUserID),
 	})
 	if err != nil {
 		return nil, err
@@ -83,7 +86,7 @@ func (s *Service) Update(ctx context.Context, callerID, id string, req UpdateSch
 	if err != nil {
 		return nil, err
 	}
-	if deref(cur.OwnerUserID) != callerID {
+	if ptr.ZeroIfNil(cur.OwnerUserID) != callerID {
 		return nil, ErrForbidden
 	}
 	out, err := s.store.Update(ctx, id, req)
@@ -99,7 +102,6 @@ func (s *Service) Update(ctx context.Context, callerID, id string, req UpdateSch
 // demotions/re-review allowed). The caller is expected to already be RBAC-gated as a
 // platform admin at the router; this method additionally validates the MOVE is legal and
 // records the transition to the immutable audit log.
-//
 // It never skips a forward step (e.g. unverified→verified is rejected with
 // ErrIllegalTierMove) and rejects unknown tiers with ErrInvalidTier.
 func (s *Service) Verify(ctx context.Context, adminID, schoolID string, tier VerificationTier) (*School, error) {
@@ -141,7 +143,7 @@ func (s *Service) Export(ctx context.Context, callerID, schoolID string) (*Schoo
 	}
 	// Fail-closed: only the owning school (or a platform admin at a higher layer) may
 	// pull the export, and only once the school is verified (SF-10).
-	if deref(sch.OwnerUserID) != callerID {
+	if ptr.ZeroIfNil(sch.OwnerUserID) != callerID {
 		return nil, ErrForbidden
 	}
 	if !sch.IsVerified() {
@@ -165,4 +167,22 @@ func (s *Service) Export(ctx context.Context, callerID, schoolID string) (*Schoo
 		Roster:       roster,
 		FeeSchedules: fees,
 	}, nil
+}
+
+// toJSON marshals a detail payload for the audit_logs jsonb column, never returning nil.
+func toJSON(v any) []byte {
+	if v == nil {
+		return []byte("{}")
+	}
+	if b, ok := v.([]byte); ok {
+		if len(b) == 0 {
+			return []byte("{}")
+		}
+		return b
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
 }

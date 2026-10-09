@@ -1,6 +1,5 @@
 // Unit tests for the live curriculum response adapters, pinned against REAL
 // captured backend JSON (GET /api/finance/academy/curriculum/{versions,classes}).
-// The Go API returns snake_case wrapped payloads ({classes:[…]}, {versions:[…]});
 // the mobile screens expect camelCase AcademyClass/CurriculumVersion. These
 // adapters bridge the two so the live branch (USE_MOCK=false) returns correct data.
 
@@ -9,7 +8,6 @@ import assert from 'node:assert/strict';
 
 import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects, adaptTopic, adaptTopics, adaptObjective, adaptObjectives, adaptLesson, adaptLessons } from '../curriculumAdapters.ts';
 
-// ── Real fixtures (verbatim from the running backend) ──────────────────────────
 const GO_CLASS_P1 = { id: 'c8fba02e', version_id: '2be23de0', phase: 'LowerPrimary', code: 'P1', name: 'Primary 1', ordinal: 1 };
 const GO_CLASS_JSS1 = { id: 'e915974a', version_id: 'be19c08b', phase: 'JSS', code: 'JSS1', name: 'Junior Secondary 1', ordinal: 7 };
 const GO_CLASS_SSS2 = { id: '2be5334b', version_id: 'be19c08b', phase: 'SSS', code: 'SSS2', name: 'Senior Secondary 2', ordinal: 11 };
@@ -54,7 +52,6 @@ test('empty / missing envelope → empty array (never throws)', () => {
   assert.deepEqual(adaptVersions({} as never), []);
 });
 
-// ── Subjects (real fixture from /classes/:uuid/subjects) ──────────────────────
 const GO_SUBJECT_BDL = {
   id: 'bc776b48', version_id: '2be23de0', class_id: '695eb847',
   code: 'BDL', name: 'Basic Digital Literacy', kind: 'core', exam_relevance: ['CCE'],
@@ -93,7 +90,6 @@ test('adaptSubjects unwraps {subjects:[…]} and injects classCode on each', () 
   assert.deepEqual(adaptSubjects({} as never, 'JSS1'), []);
 });
 
-// ── Topics (real fixture from /subjects/:uuid/topics) ─────────────────────────
 const GO_TOPIC_CELL = { id: 'cd55da30', subject_id: 'da4831ee', code: 'BSC-CELL', title: 'The Cell', ordinal: 1 };
 
 test('adaptTopic maps snake→camel (title→name, ordinal→order, subject_id→subjectId)', () => {
@@ -117,7 +113,6 @@ test('adaptTopics unwraps {topics:[…]}; empty → []', () => {
   assert.deepEqual(adaptTopics({} as never), []);
 });
 
-// ── Objectives (real fixture from /topics/:uuid/objectives) ───────────────────
 const GO_OBJ_CELL1 = { id: 'd26678a1', topic_id: 'cd55da30', code: 'BSC-CELL-1', title: 'Describe the structure of a plant and animal cell', exam_tags: ['BECE'], ordinal: 1 };
 
 test('adaptObjective maps title→statement, topic_id→topicId', () => {
@@ -138,7 +133,6 @@ test('adaptObjectives unwraps {objectives:[…]}; empty → []', () => {
   assert.deepEqual(adaptObjectives({} as never), []);
 });
 
-// ── Lessons (real seeded shape from /topics/:uuid/lessons) ────────────────────
 const GO_LESSON_CELL = {
   id: 'le111', objective_id: 'd26678a1', title: 'Plant and animal cells', type: 'video',
   version_id: '2be23de0', media_ref: 'academy/jss1/bsc/cell-intro.mp4',

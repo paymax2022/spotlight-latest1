@@ -1,7 +1,6 @@
 'use client';
 
 // AK1 — KYC Verification review queue.
-// RBAC: finance.admin.kyc (role: KYC Ops). Lists sessions/checks in NEEDS_REVIEW,
 // prioritized (lowest confidence first), each row → case detail (AK2).
 
 import { useCallback, useEffect, useState } from 'react';

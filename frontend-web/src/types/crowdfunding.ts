@@ -1,4 +1,3 @@
-// ── Admin — Crowdfunding types ───────────────────────────────────────────────
 // All monetary amounts are integers in minor units (kobo).
 
 export type CfCampaignStatus =
@@ -117,8 +116,6 @@ export interface CfFraudAlert {
   createdAt: string;
 }
 
-// ─── Finance (refunds, chargebacks, settlement) ───────────────────────────────
-
 export type CfRefundStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'PROCESSED';
 
 export interface CfRefundRequest {
@@ -158,8 +155,6 @@ export interface CfFinanceSummary {
   reconciliationMismatches: number;
 }
 
-// ─── Support & disputes ───────────────────────────────────────────────────────
-
 export type CfDisputeType = 'FAKE_CAMPAIGN' | 'REFUND' | 'REWARD' | 'PAYMENT' | 'WITHDRAWAL' | 'OTHER';
 export type CfDisputeStatus = 'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'CLOSED';
 export type CfDisputeResolution = 'NO_ACTION' | 'REFUND' | 'PARTIAL_REFUND' | 'FREEZE' | 'WARN_CREATOR';
@@ -178,8 +173,6 @@ export interface CfDispute {
   resolution: CfDisputeResolution | null;
   adminNote: string | null;
 }
-
-// ─── Platform configuration ───────────────────────────────────────────────────
 
 export interface CfCategoryConfig {
   id: string;
@@ -206,8 +199,6 @@ export interface CfFeatureFlag {
   locked: boolean;             // e.g. investment flag stays off until licensed
 }
 
-// ─── KYC / KYB verification ───────────────────────────────────────────────────
-
 export type CfKycKind = 'KYC' | 'KYB';
 export type CfKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -233,8 +224,6 @@ export interface CfKycCase {
   duplicateBank: boolean;
   riskLevel: CfRiskLevel;
 }
-
-// ─── Compliance ───────────────────────────────────────────────────────────────
 
 export interface CfAuditLog {
   id: string;
@@ -267,8 +256,6 @@ export interface CfComplianceSummary {
   lastRegulatoryExport: string;
   auditEventsToday: number;
 }
-
-// ─── User & Creator management ────────────────────────────────────────────────
 
 export type CfUserStatus = 'ACTIVE' | 'SUSPENDED' | 'RESTRICTED';
 export type CfUserRole = 'CONTRIBUTOR' | 'CREATOR' | 'ORGANISATION';

@@ -6,7 +6,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // WalletDebiter debits the voter's wallet and credits the given standing account
@@ -40,7 +42,6 @@ type SolicitationFlagger interface {
 // voting never imports the commission package at compile time (mirrors the
 // WalletDebiter / RevenueAccountResolver seams) — the adapter, which lives in
 // app-wiring, discards the returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. The paid-vote debit
 // above already posts the balanced double-entry into paymax_revenue, so the injected
 // recorder is deliberately constructed WITHOUT a ledger — RecordFor never re-posts to
@@ -116,13 +117,42 @@ func (s *Service) GetContest(ctx context.Context, id string) (*Contest, error) {
 	return c, nil
 }
 
-// Results returns the live tally for a contest.
+// notFoundIfBadUUID refuses a malformed id before it reaches a Postgres uuid
+// comparison — the driver error would otherwise surface as a bare 500. A
+// malformed id can never name the resource, so the answer is the same
+// not-found a well-formed-but-absent id gets (groups.Get / discovery.Swipe
+// use the same convention).
+func notFoundIfBadUUID(id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Results returns the live tally for a contest. A contest that does not exist
+// (or whose id is malformed) is a 404 — the same answer GetContest/ListRoster
+// give — not an empty 200 that implies a real contest with zero votes.
 func (s *Service) Results(ctx context.Context, contestID string) ([]ResultRow, error) {
+	if err := notFoundIfBadUUID(contestID); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetContest(ctx, contestID); err != nil {
+		return nil, ErrNotFound
+	}
 	return s.repo.Results(ctx, contestID)
 }
 
-// GetStages retrieves all stages for a contest.
+// GetStages retrieves all stages for a contest. Unlike Results it must NOT
+// existence-check against connect_contests: contest_stages.contest_id
+// references the legacy public.contests plane, and the contests→connect_contests
+// mirror deliberately skips unrepresentable rows (bridge migration
+// 20261223000000) — a legacy contest can own stages without ever having a
+// connect_contests row. Only the uuid-shape gate applies here; a well-formed
+// but unknown id keeps the pre-existing empty-list answer.
 func (s *Service) GetStages(ctx context.Context, contestID string) ([]ContestStage, error) {
+	if err := notFoundIfBadUUID(contestID); err != nil {
+		return nil, err
+	}
 	return s.repo.GetStages(ctx, contestID)
 }
 
@@ -164,14 +194,13 @@ func (s *Service) enforceVelocity(ctx context.Context, c *Contest, voterID strin
 var ErrNotOnRoster = errors.New("voting: option is not an active contestant in this contest")
 
 // checkRosterTarget validates the vote target against the contest's roster.
-//
 // Contests without a roster are plain polls whose option_ref is a free-form
 // label, so they are left alone. Once a contest has contestants, though, an
 // arbitrary option_ref would create a tally row no roster entry can account
 // for — a phantom candidate accumulating real votes. Fail-closed: a lookup
 // error rejects the vote rather than admitting an unverifiable target.
 func (s *Service) checkRosterTarget(ctx context.Context, contestID, optionRef string) error {
-	roster, err := s.repo.ListRoster(ctx, contestID, true)
+	roster, err := s.repo.ListRoster(ctx, contestID, true, "")
 	if err != nil {
 		return err
 	}
@@ -240,7 +269,6 @@ func (s *Service) FreeVote(ctx context.Context, contestID, voterID string, req F
 
 // PaidVote is the money path: it charges the voter's wallet for `quantity` paid
 // vote units (price-per-unit from the contest) and records the votes.
-//
 // Ordering (correctness > convenience):
 //  1. validate input + load contest; paid voting must be enabled and open;
 //  2. require an Idempotency-Key;
@@ -293,8 +321,15 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 		return nil, err
 	}
 	ref := "connect:paidvote:" + contestID
+	// The client-supplied Idempotency-Key is scoped per (rail, caller) before it
+	// touches the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another voter) would collide
+	// on ledger_entries.idempotency_key and the debit would silently no-op —
+	// leaving a paid-vote row with no money behind it. The derived key keeps a
+	// genuine retry a no-op while a foreign claim surfaces as a conflict.
+	ledgerKey := "connect:paidvote:" + voterID + ":" + idemKey
 	// Money mutation — tier-checked, balanced double-entry, idempotent.
-	if err := s.wallet.Debit(ctx, voterID, ref, idemKey, revAcc, totalKobo); err != nil {
+	if err := s.wallet.Debit(ctx, voterID, ref, ledgerKey, revAcc, totalKobo); err != nil {
 		return nil, err
 	}
 
@@ -305,7 +340,7 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 		Paid:           true,
 		Quantity:       qty,
 		AmountKobo:     totalKobo,
-		IdempotencyKey: &idemKey,
+		IdempotencyKey: &ledgerKey,
 		LedgerRef:      &ref,
 	})
 	if err != nil {
@@ -334,11 +369,13 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 }
 
 // ListRoster returns a contest's active contestants ranked by total votes.
-func (s *Service) ListRoster(ctx context.Context, contestID string, includeInactive bool) ([]RosterEntry, error) {
+// viewerID sets each entry's LikedByMe; pass "" when the caller has no
+// authenticated viewer.
+func (s *Service) ListRoster(ctx context.Context, contestID string, includeInactive bool, viewerID string) ([]RosterEntry, error) {
 	if _, err := s.repo.GetContest(ctx, contestID); err != nil {
 		return nil, ErrNotFound
 	}
-	return s.repo.ListRoster(ctx, contestID, includeInactive)
+	return s.repo.ListRoster(ctx, contestID, includeInactive, viewerID)
 }
 
 // FreeVoteAllowance reports how many free votes a user has left in a contest.
@@ -364,17 +401,16 @@ func (s *Service) FreeVoteAllowanceFor(ctx context.Context, contestID, voterID s
 	if err != nil {
 		return FreeVoteAllowance{}, err
 	}
-	remaining := total - used
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(total-used, 0)
 	return FreeVoteAllowance{Total: total, Used: used, Remaining: remaining}, nil
 }
 
 // GetContestant returns one contestant with its live tally and rank, or
-// ErrNotFound when no such contestant exists.
-func (s *Service) GetContestant(ctx context.Context, contestantID string) (*RosterEntry, error) {
-	e, err := s.repo.GetRosterEntry(ctx, contestantID)
+// ErrNotFound when no such contestant exists. viewerID sets LikedByMe; pass
+// "" when the caller has no authenticated viewer (e.g. the public share
+// resolve path).
+func (s *Service) GetContestant(ctx context.Context, contestantID, viewerID string) (*RosterEntry, error) {
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +420,109 @@ func (s *Service) GetContestant(ctx context.Context, contestantID string) (*Rost
 	return e, nil
 }
 
-// ─── My votes / contestant supporters ────────────────────────────────────────
+// LikeContestant records the caller's like. Idempotent — liking twice is not
+// an error. Returns the fresh entry (with the new LikeCount and
+// LikedByMe=true) so the client can render the result of its own action
+// without a second round trip.
+func (s *Service) LikeContestant(ctx context.Context, contestantID, userID string) (*RosterEntry, error) {
+	if err := notFoundIfBadUUID(contestantID); err != nil {
+		return nil, err
+	}
+	// A nil entry is a contestant that does not exist — refuse it here rather
+	// than letting the like INSERT hit the FK and surface as a 500.
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, ErrNotFound
+	}
+	if err := s.repo.LikeContestant(ctx, contestantID, userID); err != nil {
+		return nil, err
+	}
+	return s.GetContestant(ctx, contestantID, userID)
+}
+
+// UnlikeContestant removes the caller's like, if any. Idempotent.
+func (s *Service) UnlikeContestant(ctx context.Context, contestantID, userID string) (*RosterEntry, error) {
+	// Malformed uuid must refuse before the DELETE's uuid comparison can
+	// error → 500; a well-formed but absent id already 404s via GetContestant.
+	if err := notFoundIfBadUUID(contestantID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.UnlikeContestant(ctx, contestantID, userID); err != nil {
+		return nil, err
+	}
+	return s.GetContestant(ctx, contestantID, userID)
+}
+
+// ShareResult is what the client needs to build and send the shareable link.
+// Path is relative (e.g. "/vote-link/abcd1234"); the client's own configured
+// web base URL supplies the scheme+host, the same pattern the referral
+// module uses for its invite links. "/vote/..." was NOT used here — the web
+// app already owns that path for its own contestSlug/contestantSlug voting
+// pages (a separate, pre-existing voting surface — see vote-bridge skill),
+// and Next.js refuses two different dynamic segment names at the same route
+// position, so this needed its own non-colliding prefix.
+type ShareResult struct {
+	Token      string `json:"token"`
+	Path       string `json:"path"`
+	ShareCount int64  `json:"share_count"`
+}
+
+// ShareContestant records a share action and returns the token to build a
+// link from, plus the contestant's fresh share count.
+func (s *Service) ShareContestant(ctx context.Context, contestantID, sharerID string) (*ShareResult, error) {
+	if err := notFoundIfBadUUID(contestantID); err != nil {
+		return nil, err
+	}
+	e0, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	if e0 == nil {
+		return nil, ErrNotFound
+	}
+	token, err := s.repo.CreateShare(ctx, contestantID, sharerID)
+	if err != nil {
+		return nil, err
+	}
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	shareCount := int64(0)
+	if e != nil {
+		shareCount = e.ShareCount
+	}
+	return &ShareResult{Token: token, Path: "/vote-link/" + token, ShareCount: shareCount}, nil
+}
+
+// ErrShareNotFound is returned when a share token does not resolve to any
+// contestant — a bad/expired link, not a server error.
+var ErrShareNotFound = errors.New("voting: share link not found")
+
+// ResolveShare is the PUBLIC, unauthenticated lookup a share link's landing
+// page uses to find out which contestant to show and deep-link to. No
+// viewer, so LikedByMe is always false here — the landing page is for
+// someone who has not signed in yet.
+func (s *Service) ResolveShare(ctx context.Context, token string) (*RosterEntry, error) {
+	contestantID, err := s.repo.ResolveShareToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if contestantID == "" {
+		return nil, ErrShareNotFound
+	}
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, ErrShareNotFound
+	}
+	return e, nil
+}
 
 // ErrNotContestant is returned when a caller asks for a contestant's supporters
 // and is not that contestant.
@@ -399,15 +537,22 @@ func (s *Service) MyVotes(ctx context.Context, voterID, contestID string, paidOn
 }
 
 // Supporters returns who voted for a contestant — to that contestant only.
-//
 // The check is ownership, not membership or admin: a contestant may see their
 // own supporters and nobody else's. A contestant row with no user_id (imported,
 // or promoted from a registration that never linked an account) belongs to
 // nobody, so nobody passes the check — which is the right answer rather than a
 // list everybody can read.
 func (s *Service) Supporters(ctx context.Context, callerID, contestantID string) ([]Supporter, error) {
+	if err := notFoundIfBadUUID(contestantID); err != nil {
+		return nil, err
+	}
 	ownerID, contestID, err := s.repo.ContestantOwner(ctx, contestantID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No such contestant — not-found, same as the other contestant
+			// reads, not a 500 from a raw driver error.
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	if callerID == "" || ownerID == "" || ownerID != callerID {
@@ -441,8 +586,6 @@ func (s *Service) Notifications(ctx context.Context, userID string) ([]Notificat
 	return s.repo.Notifications(ctx, userID)
 }
 
-// ─── Support Ticket Methods (lowercase internal methods called by handlers) ───
-
 func (s *Service) createSupportTicket(ctx context.Context, ticket SupportTicket) (*SupportTicket, error) {
 	svc := NewSupportService(s.repo.db)
 	return svc.CreateSupportTicket(ctx, ticket)
@@ -471,4 +614,126 @@ func (s *Service) addTicketMessage(ctx context.Context, userID, ticketID, messag
 func (s *Service) listTicketMessages(ctx context.Context, userID, ticketID string) ([]TicketMessage, error) {
 	svc := NewSupportService(s.repo.db)
 	return svc.ListTicketMessages(ctx, userID, ticketID)
+}
+
+// Contest mirrors a row of public.connect_contests. Status is one of
+// draft|open|closed. PaidVoteKobo is the price of ONE paid vote unit in kobo
+// (0 = paid voting disabled for the contest).
+type Contest struct {
+	ID                string     `json:"id"`
+	Title             string     `json:"title"`
+	Description       *string    `json:"description,omitempty"`
+	Status            string     `json:"status"`
+	PaidVoteKobo      int64      `json:"paid_vote_kobo"`
+	FreeVotesPerUser  int        `json:"free_votes_per_user"`
+	VelocityPerMinute int        `json:"velocity_per_minute"`
+	OpensAt           *time.Time `json:"opens_at,omitempty"`
+	ClosesAt          *time.Time `json:"closes_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	RulesText         string     `json:"rules_text,omitempty"`
+	BannerImageURL    string     `json:"banner_image_url,omitempty"`
+
+	// Roster/tally summary, populated by the list + detail queries so a client
+	// rendering a contest card does not have to fetch the whole roster to show
+	// "N contestants / M votes" (which would be an N+1 across the list).
+	ContestantCount int   `json:"contestant_count"`
+	TotalVotes      int64 `json:"total_votes"`
+}
+
+// Vote mirrors a row of public.connect_votes (immutable). A free vote has
+// paid=false and amount_kobo=0; a paid vote carries the ledger ref.
+type Vote struct {
+	ID             string    `json:"id"`
+	ContestID      string    `json:"contest_id"`
+	VoterID        string    `json:"voter_id"`
+	OptionRef      string    `json:"option_ref"`
+	Paid           bool      `json:"paid"`
+	Quantity       int       `json:"quantity"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	IdempotencyKey *string   `json:"-"`
+	LedgerRef      *string   `json:"ledger_ref,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ResultRow is one tallied option in a contest's results.
+type ResultRow struct {
+	OptionRef  string `json:"option_ref"`
+	FreeVotes  int64  `json:"free_votes"`
+	PaidVotes  int64  `json:"paid_votes"`
+	TotalVotes int64  `json:"total_votes"`
+}
+
+// FreeVoteRequest is the body for POST /contests/:id/vote.
+type FreeVoteRequest struct {
+	OptionRef string `json:"optionRef" binding:"required"`
+}
+
+// PaidVoteRequest is the body for POST /contests/:id/paid-vote. Quantity is the
+// number of paid vote units; the price-per-unit comes from the contest, never
+// the client.
+type PaidVoteRequest struct {
+	OptionRef string `json:"optionRef" binding:"required"`
+	Quantity  int    `json:"quantity"`
+}
+
+// Contest expiry loop: closes contests whose voting deadline has passed.
+// Nothing ever moved a contest to 'ended'. A finished contest stayed 'active',
+// so /api/v1/contests kept listing it and the connect_contests mirror kept it
+// 'open' — ListContests then served it to the phone with a LIVE badge. Votes
+// were still refused correctly (votingOpen checks the closes_at window, not just
+// the status), so this was never a money bug, but every finished contest went on
+// advertising itself as running.
+// Scheduling decision: the repo has NO pg_cron (the one cron.schedule line in
+// supabase/migrations is commented out) and NO asynq periodic scheduler — the
+// house pattern for periodic work is a background ticker goroutine
+// (symptomsearch.StartRetentionPurge, orchestration.StartReconScheduler). This
+// mirrors that pattern.
+// The work itself is the SECURITY DEFINER SQL function
+// public.close_expired_contests() (migration 20261227000000), service_role-
+// executable only; this loop merely invokes it on a schedule.
+
+// DefaultExpiryInterval is how often expired contests are swept. Hourly rather
+// than daily: a contest that ends at 09:00 should not still read LIVE at 20:00,
+// and the statement is a cheap indexed no-op when nothing has expired.
+const DefaultExpiryInterval = time.Hour
+
+// StartExpiryCloser runs close_expired_contests once at startup and then every
+// `every` until ctx is cancelled.
+// Multi-instance safe: the UPDATE is guarded on status IN ('active','upcoming')
+// and a past deadline, so a row can only transition once. Concurrent runs are
+// redundant, never harmful — the second sees no matching rows.
+func StartExpiryCloser(ctx context.Context, db *pgxpool.Pool, every time.Duration) {
+	if db == nil {
+		return
+	}
+	if every <= 0 {
+		every = DefaultExpiryInterval
+	}
+	run := func() {
+		cctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		var closed int
+		if err := db.QueryRow(cctx, `SELECT public.close_expired_contests()`).Scan(&closed); err != nil {
+			// Logged, never fatal: a failed sweep leaves contests reading LIVE for
+			// another interval — not a reason to take the process down.
+			log.Printf("[connect.voting] contest expiry sweep failed: %v", err)
+			return
+		}
+		if closed > 0 {
+			log.Printf("[connect.voting] contest expiry sweep: %d contest(s) past their deadline closed", closed)
+		}
+	}
+	go func() {
+		run()
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
 }

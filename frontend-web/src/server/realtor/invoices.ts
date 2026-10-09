@@ -89,8 +89,16 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     .select(PAYMENT_COLS)
     .eq('idempotency_key', idempotencyKey)
     .maybeSingle();
-  if (priorErr) throw new ApiError(`Failed to check prior payment: ${priorErr.message}`, 500);
+  if (priorErr) {
+    console.error('[realtor/invoices] failed to check prior payment:', priorErr);
+    throw new ApiError('Failed to check prior payment', 500);
+  }
   if (priorPayment) {
+    // The key resolves globally — a payment recorded under another tenant's
+    // key is a collision (amount, escrow, invoice are theirs), not a replay.
+    if ((priorPayment as any).user_id !== userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing payment.', 409);
+    }
     const { data: invoiceRow } = await supabase
       .from('realtor_invoices')
       .select(INVOICE_COLS)
@@ -111,7 +119,10 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     .select(INVOICE_COLS)
     .eq('id', invoiceId)
     .maybeSingle();
-  if (invErr) throw new ApiError(`Failed to load invoice: ${invErr.message}`, 500);
+  if (invErr) {
+    console.error('[realtor/invoices] failed to load invoice:', invErr);
+    throw new ApiError('Failed to load invoice', 500);
+  }
   if (!invoice) throw new ApiError('Invoice not found', 404);
 
   const { data: lease, error: leaseErr } = await supabase
@@ -119,7 +130,10 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     .select('id, tenant_id, listing_id, status')
     .eq('id', (invoice as any).lease_id)
     .maybeSingle();
-  if (leaseErr) throw new ApiError(`Failed to load lease: ${leaseErr.message}`, 500);
+  if (leaseErr) {
+    console.error('[realtor/invoices] failed to load lease:', leaseErr);
+    throw new ApiError('Failed to load lease', 500);
+  }
   if (!lease || (lease as any).tenant_id !== userId) throw new ApiError('Invoice not found', 404);
 
   if ((invoice as any).status === 'paid') throw new ApiError('Invoice is already paid', 409);
@@ -164,8 +178,9 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     // The wallet has already been debited (or was already debited on a prior
     // attempt) — a finalization failure here must be surfaced loudly for
     // reconciliation, never swallowed.
+    console.error('[realtor/invoices] realtor_pay_invoice failed after wallet debit:', rpcErr);
     throw new ApiError(
-      `Wallet debited but realtor invoice finalization failed (reconcile invoice ${invoiceId}): ${rpcErr.message}`,
+      `Wallet debited but realtor invoice finalization failed (reconcile invoice ${invoiceId})`,
       500,
     );
   }

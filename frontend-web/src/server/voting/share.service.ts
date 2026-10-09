@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server';
+import { ApiError } from '@/src/lib/api/responses';
 import { SHARE_CODE_LENGTH, SHARE_MESSAGE_TEMPLATE } from '@/src/features/voting/constants';
 import type { ContestantShareLink, ShareEventType } from '@/src/features/voting/types';
 import { randomBytes } from 'node:crypto';
@@ -67,7 +68,16 @@ export async function recordShareEvent(opts: {
   referrer?: string;
 }): Promise<void> {
   const supabase = createAdminClient();
-  await supabase.from('contestant_share_events').insert({
+  const { data: link, error: linkError } = await supabase
+    .from('contestant_share_links')
+    .select('id')
+    .eq('id', opts.shareLinkId)
+    .maybeSingle();
+  if (linkError) throw linkError;
+  if (!link) {
+    throw new ApiError('Share link not found', 404);
+  }
+  const { error: insertError } = await supabase.from('contestant_share_events').insert({
     share_link_id: opts.shareLinkId,
     event_type: opts.eventType,
     channel: opts.channel ?? null,
@@ -75,6 +85,7 @@ export async function recordShareEvent(opts: {
     user_agent: opts.userAgent ?? null,
     referrer: opts.referrer ?? null,
   });
+  if (insertError) throw insertError;
 
   // Increment click or vote counter
   if (opts.eventType === 'click') {

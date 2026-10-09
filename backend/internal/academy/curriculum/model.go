@@ -1,5 +1,4 @@
 // Package curriculum is the Spotlight Academy curriculum sub-package.
-//
 // GOLDEN RULE enforced here: curriculum is VERSIONED DATA, never hardcoded. The
 // subject/topic/objective spine lives in academy_curriculum_versions and its child
 // tables; code only reads, administers, and seeds that data. Every admin mutation
@@ -7,8 +6,6 @@
 package curriculum
 
 import "time"
-
-// ── Read models (mirror the migration columns exactly) ────────────────────────
 
 // CurriculumVersion is one academy_curriculum_versions row (e.g. NERDC-2025).
 type CurriculumVersion struct {
@@ -112,8 +109,6 @@ type VersionTree struct {
 	Classes []ClassSubjectsTree `json:"classes"`
 }
 
-// ── Admin request DTOs ────────────────────────────────────────────────────────
-
 // CreateVersionRequest creates a curriculum version (status defaults to draft).
 type CreateVersionRequest struct {
 	Code          string     `json:"code" binding:"required"`
@@ -194,8 +189,6 @@ type UpdateObjectiveRequest struct {
 	Ordinal  *int     `json:"ordinal,omitempty"`
 }
 
-// ── Version binding (pure) ────────────────────────────────────────────────────
-
 // VersionCodeNERDC2025 / VersionCodeLegacy are the two seeded version codes.
 const (
 	VersionCodeNERDC2025 = "NERDC-2025"
@@ -222,4 +215,3 @@ func BindVersion(classCode string, entryYear int) string {
 	}
 	return VersionCodeLegacy
 }
-

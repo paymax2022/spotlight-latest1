@@ -3,10 +3,10 @@ import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import AuthScreenWrapper from '@/components/AuthScreenWrapper';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import * as authApi from '@/api/auth.api';
 import { setSecureItem } from '@/lib/secureStorage';
 import { useAuthStore } from '@/store/authStore';
@@ -16,12 +16,10 @@ import { otpLength, distributeOtpInput, nextOtpFocus } from '@/features/auth/otp
 
 // Was hardcoded 6 while PRODUCTION issues 8-digit codes, so a production user
 // could not enter the code they were sent. Must match the project's
-// mailer_otp_length; see docs/audit/USER_MANAGEMENT_AUDIT.md B2.
 const OTP_LENGTH = otpLength();
 
 export default function VerifyOtpScreen() {
   // mode distinguishes the two things this screen redeems. 'login' is the
-  // sign-in second factor, which returns a SESSION; the default is the sign-up
   // code, which confirms the account and returns none.
   const { email, mode } = useLocalSearchParams<{ email: string; mode?: string }>();
   const isLoginStepUp = mode === 'login';
@@ -34,8 +32,6 @@ export default function VerifyOtpScreen() {
   const inputs = useRef<(TextInput | null)[]>([]);
 
   const handleChange = (text: string, index: number) => {
-    // Autofill and paste deliver the WHOLE code into one box; the old
-    // `text.slice(-1)` kept only its last character, so the code looked entered
     // and verification failed with nothing on screen to explain why.
     const next = distributeOtpInput(otp, index, text);
     setOtp(next);
@@ -54,7 +50,6 @@ export default function VerifyOtpScreen() {
     setApiError(''); setLoading(true);
     try {
       if (isLoginStepUp) {
-        // Redeeming the sign-in code returns a session directly; there is no
         // "verified, now go and log in" step, because logging in is what this IS.
         const result = await authApi.verifyLoginOtp({ email: email ?? '', otp: code });
         setUser(result.user);
@@ -65,7 +60,6 @@ export default function VerifyOtpScreen() {
       const { signedIn } = await authApi.verifyOtp({ email: email ?? '', otp: code });
 
       // The two verification backends differ here and the screen has to branch.
-      // Supabase's signup OTP signs the user in; the server-issued one confirms
       // the account and stops, because control of a mailbox is not proof of the
       // password. Calling getMe() without a session would fail and show the user
       // an error after a verification that actually SUCCEEDED.
@@ -97,7 +91,6 @@ export default function VerifyOtpScreen() {
     try {
       if (isLoginStepUp) {
         // Sign-in codes are issued only by the password step — /otp/request
-        // refuses purpose=login, and that refusal is what keeps this a second
         // factor rather than passwordless sign-in. So resending means signing in
         // again.
         setApiError('To get a new sign-in code, enter your password again.');

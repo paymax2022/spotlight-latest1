@@ -7,9 +7,9 @@ package transport
 
 import "testing"
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
-// ─── escrowStatusFromSettlement ───────────────────────────────────────────────
 // Maps the shared settlements.status enum (escrowed/releasing/settled/
 // disputed/refunded) onto the modes' EscrowStatus contract (none/held/
 // released/refunded) used by parcels/towing/car-hire (mover_jobs has its own
@@ -22,11 +22,11 @@ func TestEscrowStatusFromSettlement(t *testing.T) {
 		want   string
 	}{
 		{"no settlement row", nil, "none"},
-		{"escrowed is held", strPtr("escrowed"), "held"},
-		{"releasing is still held", strPtr("releasing"), "held"},
-		{"disputed funds stay held", strPtr("disputed"), "held"},
-		{"settled releases to provider", strPtr("settled"), "released"},
-		{"refunded goes back to payer", strPtr("refunded"), "refunded"},
+		{"escrowed is held", new("escrowed"), "held"},
+		{"releasing is still held", new("releasing"), "held"},
+		{"disputed funds stay held", new("disputed"), "held"},
+		{"settled releases to provider", new("settled"), "released"},
+		{"refunded goes back to payer", new("refunded"), "refunded"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -37,7 +37,6 @@ func TestEscrowStatusFromSettlement(t *testing.T) {
 	}
 }
 
-// ─── moverEscrowStatus ─────────────────────────────────────────────────────--
 // mover_jobs.escrow_status uses "funded" where every other mode says "held";
 // everything else already matches the shared EscrowStatus contract verbatim.
 
@@ -55,7 +54,6 @@ func TestMoverEscrowStatus(t *testing.T) {
 	}
 }
 
-// ─── deriveParcelPodStatus ─────────────────────────────────────────────────--
 // There is no dedicated pod_status column/workflow: VerifyParcelDropoff sets
 // proof_url and advances the parcel straight from dropoff_verified to
 // delivered inside the same call (parcel.go), so a persisted "submitted,
@@ -70,12 +68,12 @@ func TestDeriveParcelPodStatus(t *testing.T) {
 		want     string
 	}{
 		{"no proof at all is pending", "created", nil, "pending"},
-		{"empty-string proof is pending", "in_transit", strPtr(""), "pending"},
-		{"proof + delivered is approved", "delivered", strPtr("https://r2/proof.jpg"), "approved"},
-		{"proof + disputed is rejected", "disputed", strPtr("https://r2/proof.jpg"), "rejected"},
-		{"proof + dropoff_verified is submitted", "dropoff_verified", strPtr("https://r2/proof.jpg"), "submitted"},
-		{"proof + in_transit is submitted", "in_transit", strPtr("https://r2/proof.jpg"), "submitted"},
-		{"proof + cancelled is submitted", "cancelled", strPtr("https://r2/proof.jpg"), "submitted"},
+		{"empty-string proof is pending", "in_transit", new(""), "pending"},
+		{"proof + delivered is approved", "delivered", new("https://r2/proof.jpg"), "approved"},
+		{"proof + disputed is rejected", "disputed", new("https://r2/proof.jpg"), "rejected"},
+		{"proof + dropoff_verified is submitted", "dropoff_verified", new("https://r2/proof.jpg"), "submitted"},
+		{"proof + in_transit is submitted", "in_transit", new("https://r2/proof.jpg"), "submitted"},
+		{"proof + cancelled is submitted", "cancelled", new("https://r2/proof.jpg"), "submitted"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

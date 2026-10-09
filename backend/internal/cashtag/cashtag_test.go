@@ -52,7 +52,6 @@ func TestValidate(t *testing.T) {
 		in   string
 		want error // nil = valid; formatErr = format rejection; else a sentinel
 	}{
-		// ---- valid handles ----
 		{"simple valid", "alice123", nil},
 		{"underscore valid", "bob_smith", nil},
 		{"min length 3", "abc", nil},
@@ -64,7 +63,6 @@ func TestValidate(t *testing.T) {
 		// 4 chars, so the len(r) >= 5 prefix gate does not fire.
 		{"extends short reserved word is allowed", "rootbeer", nil},
 
-		// ---- format rejections ----
 		{"too short 2 chars", "ab", formatErr},
 		{"empty", "", formatErr},
 		{"too long 31 chars", over31, formatErr},
@@ -73,14 +71,12 @@ func TestValidate(t *testing.T) {
 		{"disallowed punctuation", "hi!", formatErr},
 		{"hyphen not allowed", "a-b-c", formatErr},
 
-		// ---- reserved-word rejections (checked before impersonation) ----
 		{"reserved admin", "admin", ErrReserved},
 		{"reserved paymax", "paymax", ErrReserved},
 		{"reserved via normalization (@Admin)", "@Admin", ErrReserved},
 		{"reserved verified", "verified", ErrReserved},
 		{"reserved payments", "payments", ErrReserved},
 
-		// ---- impersonation guard ----
 		// Prefix-padding a reserved word of len >= 5.
 		{"impersonation prefix paymax_official", "paymax_official", ErrImpersonation},
 		{"impersonation prefix admins (admin is len 5)", "admins", ErrImpersonation},

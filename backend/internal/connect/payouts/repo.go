@@ -13,12 +13,12 @@ import (
 var ErrNotFound = errors.New("connect: payout not found")
 
 // ErrForwardOnly is returned when a status transition is attempted on a payout
-// that is no longer in a forward-transitionable state (e.g. trying to settle or
+// that is no longer in a forward-transitional state (e.g. trying to settle or
 // reject a payout that is already 'settled' or 'failed'). Ledger/payout status
 // is forward-only by design — corrections are reversing entries, never in-place
 // edits — so the caller must re-read the row and decide (idempotent no-op vs
 // real conflict) rather than the repo silently no-op'ing.
-var ErrForwardOnly = errors.New("connect: payout is not in a forward-transitionable state")
+var ErrForwardOnly = errors.New("connect: payout is not in a forward-transitional state")
 
 // Repository handles connect_payouts over a pgx pool. Inserts record the payout;
 // a forward-only status update stamps the settlement reference. Parameterized.
@@ -48,6 +48,26 @@ func (r *Repository) Insert(ctx context.Context, p *Payout) (*Payout, error) {
 		return nil, fmt.Errorf("payouts: insert: %w", err)
 	}
 	return out, nil
+}
+
+// GetByIdempotencyKey fetches the payout recorded under a derived ledger key —
+// the convergence read after an Insert hits the unique idempotency_key: a retry
+// that crashed between the ledger debit commit and the row insert must be
+// returned THIS row, never re-inserted.
+func (r *Repository) GetByIdempotencyKey(ctx context.Context, idemKey string) (*Payout, error) {
+	const q = `SELECT ` + payoutColumns + ` FROM connect_payouts WHERE idempotency_key = $1`
+	var p Payout
+	err := r.db.QueryRow(ctx, q, idemKey).Scan(
+		&p.ID, &p.CreatorID, &p.AmountKobo, &p.Status, &p.DestinationRef,
+		&p.LedgerRef, &p.SettlementRef, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("payouts: get by idempotency key: %w", err)
+	}
+	return &p, nil
 }
 
 // Get fetches a single payout by id, or ErrNotFound.
@@ -165,10 +185,7 @@ func (r *Repository) AdminList(ctx context.Context, f AdminListFilter) ([]AdminP
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	offset := f.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(f.Offset, 0)
 	var creatorID *string
 	if f.CreatorID != nil && *f.CreatorID != "" {
 		creatorID = f.CreatorID

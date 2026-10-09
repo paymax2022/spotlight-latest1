@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Mock data ────────────────────────────────────────────
 // Realistic NG inventory so loading/empty/filled states render in mock mode.
 // All prices are integer minor units (kobo).
 

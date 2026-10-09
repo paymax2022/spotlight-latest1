@@ -1,5 +1,3 @@
-// ── Doctor — specialist referral hooks ───────────────────────────────────────
-// Phase 2. Query keys under ['doctor', …]; create mutation auto-generates the
 // idempotencyKey and invalidates the referral list.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

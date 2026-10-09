@@ -1,4 +1,3 @@
-// Real-time trip tracking client. The driver app POSTs GPS samples; riders
 // receive snapped positions over a WebSocket on their authenticated user channel.
 import { api } from '@/api/client';
 import { MAPS_BASE } from './maps.api';

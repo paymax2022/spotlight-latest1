@@ -1,11 +1,9 @@
 'use client';
 
 // Per-association custom settings.
-//
 // `settings` is a free-form jsonb object on assoc_organisations with no schema —
 // so the editor cannot be a fixed form. It is a key/value row editor with an
 // explicit type per row, plus a raw-JSON escape hatch for nested structures.
-//
 // The PUT is a MERGE, not a replace: the body is a partial object, and a `null`
 // value DELETES that key. That is what makes deletion expressible at all, and it
 // means a key this page never saw is never clobbered by a save.

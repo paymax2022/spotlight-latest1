@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/provider"
+	"spotlight/backend/internal/provider/disbursement"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Restaurant / rider payout-run DISBURSEMENT subsystem.
-//
 // This replaces the read-only settlement-projection view (see admin_repo.go
 // AdminPayoutRuns) with a real, auditable money path. A payout run aggregates
 // settled-but-unpaid `settlements` for ONE provider (a restaurant owner or a
@@ -22,7 +22,6 @@ import (
 // posts ONE balanced ledger transfer (DR settlement standing account, CR provider
 // wallet) keyed on the run's idempotency_key and flips the run
 // draft -> processing -> paid under a status guard.
-//
 // Iron rules honoured (root CLAUDE.md "Money handling"):
 //   - amounts are integer minor units (kobo) — BIGINT, never float/string math;
 //   - the disbursement mutation requires an Idempotency-Key and posts a balanced
@@ -33,13 +32,11 @@ import (
 //   - no direct balance mutation — the provider wallet balance is a projection of
 //     the ledger entries this posts;
 //   - every disbursement emits an audit event.
-//
 // Why the ledger transfer is DR settlement -> CR provider wallet: at delivery the
 // order's escrow is released via settlement.Settle into a settlement/clearing
 // posture; the payout run is the batched disbursement that credits the provider's
 // spendable wallet. Each settlement can only ever back ONE payout line (unique
 // index uq_restaurant_payout_lines_settlement), so it is disbursed exactly once.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Payout provider types.
 const (
@@ -92,6 +89,7 @@ type PayoutLine struct {
 // PayoutRunDetail is a run plus its append-only lines (GET /payouts/:id).
 type PayoutRunDetail struct {
 	PayoutRun
+
 	Lines []PayoutLine `json:"lines"`
 }
 
@@ -109,7 +107,6 @@ type unpaidSettlement struct {
 // (unique index uq_restaurant_payout_runs_provider_period) and only appends lines
 // for settlements not already claimed (unique index
 // uq_restaurant_payout_lines_settlement). net = gross - fees.
-//
 // periodKey is a caller-supplied bucket label (e.g. an ISO week "2026-W38"); it is
 // used verbatim so BuildRun is deterministic and does not itself decide the
 // period. Selection of unpaid settlements is by "settled and not yet on any payout
@@ -120,7 +117,7 @@ func (s *Service) BuildRun(ctx context.Context, periodKey, providerType, provide
 		return nil, ErrPayoutBadProvider
 	}
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: payout runs require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: payout runs require a ledger (WithLedger not wired)")
 	}
 
 	items, err := s.loadUnpaidSettlements(ctx, providerType, providerID)
@@ -132,7 +129,7 @@ func (s *Service) BuildRun(ctx context.Context, periodKey, providerType, provide
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: payout build begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Resolve (or create) the single draft run for this provider+period. The unique
 	// (provider_type, provider_id, period_key) index makes this idempotent — a
@@ -282,7 +279,6 @@ func totalFee(items []unpaidSettlement) int64 {
 // row-level status guard and posts ONE balanced ledger transfer for the run's
 // net (DR settlement standing account, CR provider wallet) keyed on the run's
 // idempotency_key. Fail-closed and NEVER double-pays:
-//
 //   - the caller MUST supply an Idempotency-Key (ErrPayoutMissingIdem otherwise);
 //   - the draft -> processing transition is an atomic guarded UPDATE
 //     (WHERE status='draft'); a concurrent/duplicate call sees 0 rows affected and
@@ -299,7 +295,7 @@ func (s *Service) ProcessRun(ctx context.Context, runID, idempotencyKey string) 
 		return nil, ErrPayoutMissingIdem
 	}
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: payout runs require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: payout runs require a ledger (WithLedger not wired)")
 	}
 
 	// Guarded transition draft -> processing. Atomic: only one caller wins the
@@ -513,8 +509,6 @@ func (s *Service) GetRun(ctx context.Context, runID string) (*PayoutRunDetail, e
 	return &d, rows.Err()
 }
 
-// ── Merchant earnings (owner-scoped read) ─────────────────────────────────────
-
 // EarningsRun is a payout-run summary line for the merchant earnings screen.
 type EarningsRun struct {
 	ID          string     `json:"id"`
@@ -561,7 +555,6 @@ func (s *Service) GetMerchantEarnings(ctx context.Context, ownerID string) (*Mer
 		return nil, fmt.Errorf("restaurant: earnings pending: %w", err)
 	}
 
-	// Recent runs (most recent first).
 	rows, err := s.db.Query(ctx,
 		`SELECT id, period_key, net_minor, status, processed_at
 		   FROM restaurant_payout_runs WHERE provider_type=$2 AND provider_id=$1
@@ -578,4 +571,265 @@ func (s *Service) GetMerchantEarnings(ctx context.Context, ownerID string) (*Mer
 		out.Runs = append(out.Runs, r)
 	}
 	return out, rows.Err()
+}
+
+// EarningsLine is one settled order's contribution to a restaurant's earnings (PY-008).
+type EarningsLine struct {
+	OrderID      string    `json:"order_id"`
+	GrossKobo    int64     `json:"gross_kobo"`    // order total escrowed, net of rider tip + platform service fee
+	ProviderKobo int64     `json:"provider_kobo"` // the restaurant's settled share
+	FeeKobo      int64     `json:"fee_kobo"`      // platform commission on this order
+	SettledAt    time.Time `json:"settled_at"`
+}
+
+// EarningsStatement is a restaurant's earnings over a period, exportable (PY-008).
+type EarningsStatement struct {
+	RestaurantID      string         `json:"restaurant_id"`
+	From              string         `json:"from"`
+	To                string         `json:"to"`
+	Lines             []EarningsLine `json:"lines"`
+	TotalGrossKobo    int64          `json:"total_gross_kobo"`
+	TotalProviderKobo int64          `json:"total_provider_kobo"`
+	TotalFeeKobo      int64          `json:"total_fee_kobo"`
+	OrderCount        int            `json:"order_count"`
+}
+
+// EarningsStatement returns a restaurant's settled-earnings statement for [from,to]
+// (owner only). Derived from the immutable settled `settlements` — a read, it moves no
+// money. Totals are summed server-side so the exported figures are authoritative.
+func (s *Service) EarningsStatement(ctx context.Context, restaurantID, userID string, from, to time.Time) (*EarningsStatement, error) {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermViewEarnings); err != nil {
+		return nil, err
+	}
+	if to.Before(from) {
+		return nil, errors.New("restaurant: `to` must be on or after `from`")
+	}
+	// Gross is reported NET of the two fixed legs escrowed in st.total_kobo that were
+	// paid straight through and that the percentages never priced: the rider tip and the
+	// platform service fee. Both are money that was never the merchant's — including
+	// them would inflate the statement's gross and stop it tying out against the
+	// restaurant's own share + the platform cut. Surge is NOT deducted: it is food
+	// revenue inside the gross, split 80/10/10 like any other item money, so the
+	// restaurant genuinely earned its share of it.
+	const q = `
+		SELECT o.id, st.total_kobo - COALESCE(o.tip_kobo,0) - COALESCE(o.service_fee_kobo,0), st.provider_kobo, st.fee_kobo, st.settled_at
+		FROM settlements st
+		JOIN orders o ON o.id = replace(st.reference, 'order:', '')::uuid
+		WHERE st.module_type = 'food_delivery'
+		  AND st.status = 'settled'
+		  AND o.restaurant_id = $1
+		  AND st.settled_at >= $2 AND st.settled_at < ($3::timestamptz + interval '1 day')
+		ORDER BY st.settled_at DESC`
+	rows, err := s.db.Query(ctx, q, restaurantID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	stmt := &EarningsStatement{
+		RestaurantID: restaurantID,
+		From:         from.Format("2006-01-02"),
+		To:           to.Format("2006-01-02"),
+		Lines:        []EarningsLine{},
+	}
+	for rows.Next() {
+		var l EarningsLine
+		var settledAt *time.Time
+		if err := rows.Scan(&l.OrderID, &l.GrossKobo, &l.ProviderKobo, &l.FeeKobo, &settledAt); err != nil {
+			return nil, err
+		}
+		if settledAt != nil {
+			l.SettledAt = *settledAt
+		}
+		stmt.Lines = append(stmt.Lines, l)
+		stmt.TotalGrossKobo += l.GrossKobo
+		stmt.TotalProviderKobo += l.ProviderKobo
+		stmt.TotalFeeKobo += l.FeeKobo
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	stmt.OrderCount = len(stmt.Lines)
+	return stmt, nil
+}
+
+// Spotlight answers two different questions with two unconnected systems:
+//	onb_application  — "may this PERSON be a restaurant merchant?"  (capability)
+//	restaurant_kyb   — "may this OUTLET be paid?"                   (payout gate)
+// They are deliberately NOT merged: KYB is per outlet and capability is per
+// person, so an owner's second outlet can carry different banking. Merging would
+// either weaken payout verification or gate the capability behind per-restaurant
+// banking.
+// What was missing is the join. buildPayoutRun selects
+// `AND res.kyb_status = 'approved'` (PY-007), so an outlet without approved KYB
+// takes orders, settles into provider_kobo, and is then skipped by every payout
+// run — with nothing surfaced to the owner or the admin. In the live data that is
+// 1059 of 1075 outlets with no KYB row at all, 709 of them actively trading.
+// This reports the join per outlet: can it be paid, why not, and how much has
+// already piled up behind the gate.
+
+// KYBStatusNone is the reported status for an outlet with NO restaurant_kyb row.
+// It is deliberately distinct from a submitted-but-undecided one: "you have not
+// started" and "we are reviewing" need different actions from the owner.
+const KYBStatusNone = "none"
+
+// OutletPayoutReadiness answers "can this outlet be paid, and if not, why?"
+type OutletPayoutReadiness struct {
+	RestaurantID string `json:"restaurant_id"`
+	Name         string `json:"name"`
+	// KYBStatus is the outlet's verification state, or KYBStatusNone.
+	KYBStatus string `json:"kyb_status"`
+	// Payable mirrors the payout query's gate exactly.
+	Payable bool `json:"payable"`
+	// Reason is owner-facing and empty when Payable.
+	Reason string `json:"reason,omitempty"`
+	// UnpaidKobo is settled provider money not yet in a payout line — what is
+	// currently held behind the gate. Integer kobo.
+	UnpaidKobo int64 `json:"unpaid_kobo"`
+}
+
+// PayoutReadinessForOwner reports, for every outlet the caller owns, whether it
+// can currently be paid.
+// The `payable` expression and the UnpaidKobo sum are written to mirror
+// buildPayoutRun's own query (settled food_delivery settlements with
+// provider_kobo > 0 and no existing payout line). If the two drift, the app
+// promises money the payout engine will not release — so the gate condition here
+// is intentionally the same literal comparison, not a re-interpretation.
+func (s *Service) PayoutReadinessForOwner(ctx context.Context, ownerID string) ([]OutletPayoutReadiness, error) {
+	const q = `
+		SELECT r.id,
+		       r.name,
+		       COALESCE(NULLIF(r.kyb_status, ''), 'none')            AS kyb_status,
+		       -- COALESCE, not a bare comparison: kyb_status is NULL for the 1059
+		       -- outlets with no KYB row, and NULL = 'approved' evaluates to NULL,
+		       -- not false. The payout query excludes NULL rows (NULL is not TRUE),
+		       -- so readiness must report them as not payable, never as unknown.
+		       (COALESCE(r.kyb_status, '') = 'approved')             AS payable,
+		       COALESCE((
+		         SELECT SUM(st.provider_kobo)
+		         FROM settlements st
+		         JOIN orders o ON o.id = replace(st.reference, 'order:', '')::uuid
+		         WHERE st.module_type = 'food_delivery'
+		           AND st.status = 'settled'
+		           AND o.restaurant_id = r.id
+		           AND st.provider_kobo > 0
+		           AND NOT EXISTS (
+		             SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id
+		           )
+		       ), 0)::bigint                                          AS unpaid_kobo
+		FROM restaurants r
+		WHERE r.owner_id = $1
+		ORDER BY r.name ASC`
+
+	rows, err := s.db.Query(ctx, q, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []OutletPayoutReadiness{}
+	for rows.Next() {
+		var o OutletPayoutReadiness
+		if err := rows.Scan(&o.RestaurantID, &o.Name, &o.KYBStatus, &o.Payable, &o.UnpaidKobo); err != nil {
+			return nil, err
+		}
+		o.Reason = payoutBlockReason(o.KYBStatus, o.Payable)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// payoutBlockReason turns a KYB state into something the owner can act on.
+// Extracted so the wording is tested rather than mirrored in a test: an outlet
+// that cannot be paid and gives no reason is exactly the status quo this bridge
+// exists to end.
+func payoutBlockReason(kybStatus string, payable bool) string {
+	if payable {
+		return ""
+	}
+	switch kybStatus {
+	case KYBStatusNone:
+		return "Business verification not started. Submit your business details to receive payouts."
+	case "submitted", "under_review":
+		return "Business verification is being reviewed. Payouts start once it is approved."
+	case "needs_more_info":
+		return "Business verification needs more information. Check the details you submitted."
+	case "rejected":
+		return "Business verification was declined. Contact support to resolve it."
+	default:
+		return "Business verification is not approved yet, so payouts are on hold."
+	}
+}
+
+// RegistryDisburser wraps a disbursement provider registry and implements
+// WithdrawalDisburser, routing withdrawal disbursements through the configured
+// provider (e.g., Paystack, Monnify).
+type RegistryDisburser struct {
+	reg *disbursement.Registry
+}
+
+// NewRegistryDisburser creates a disbursement adapter from the provider registry.
+func NewRegistryDisburser(reg *disbursement.Registry) *RegistryDisburser {
+	return &RegistryDisburser{reg: reg}
+}
+
+// Disburse sends merchant withdrawal funds to a saved bank account via the
+// configured provider. It:
+//  1. looks up the provider's default (or preferred, if available)
+//  2. resolves or creates a transfer recipient for the account
+//  3. initiates a payout
+//  4. returns the provider reference for later webhook reconciliation
+//
+// On any provider error, Executed=false (the withdrawal stays reserved;
+// a webhook will attempt to settle or reverse it).
+func (d *RegistryDisburser) Disburse(ctx context.Context, req WithdrawalDisburseRequest) (WithdrawalDisburseResult, error) {
+	providerName := d.reg.Default()
+	if providerName == "" {
+		// No provider configured; stay in sandbox (NoopDisburser behavior).
+		return WithdrawalDisburseResult{Executed: false}, nil
+	}
+
+	prov, ok := d.reg.ByName(providerName)
+	if !ok {
+		// Provider not found; fall back to sandbox.
+		return WithdrawalDisburseResult{Executed: false}, nil
+	}
+
+	// In a real integration, you'd cache recipient codes in a table
+	// (restaurant_bank_accounts.provider_recipient_code or similar).
+	// For now, create/re-create on each withdrawal attempt.
+
+	recipientReq := provider.RecipientRequest{
+		AccountName:   req.AccountName,
+		AccountNumber: req.AccountNumber,
+		BankCode:      req.BankCode,
+		Currency:      "NGN",
+	}
+
+	recipient, err := prov.CreateTransferRecipient(ctx, recipientReq)
+	if err != nil {
+		// Recipient creation failed; withdrawal stays reserved (Executed=false).
+		// On retry, the provider may return the cached recipient.
+		return WithdrawalDisburseResult{Executed: false}, fmt.Errorf("create recipient: %w", err)
+	}
+
+	payoutReq := provider.PayoutRequest{
+		RecipientCode:  recipient.Code,
+		AmountKobo:     req.AmountKobo,
+		Reference:      req.Reference,           // Withdrawal ID or a ledger reference
+		Narration:      "Restaurant Withdrawal", // Short memo on the bank statement
+		IdempotencyKey: req.IdempotencyKey,
+	}
+
+	payout, err := prov.InitiatePayout(ctx, payoutReq)
+	if err != nil {
+		// Payout initiation failed; withdrawal stays reserved.
+		return WithdrawalDisburseResult{Executed: false}, fmt.Errorf("initiate payout: %w", err)
+	}
+
+	// The MarkWithdrawalPaid/MarkWithdrawalFailed webhooks will use ProviderRef
+	// to look up the withdrawal and finalize the ledger entries.
+	return WithdrawalDisburseResult{
+		Executed:          true,
+		ProviderReference: payout.ProviderRef, // e.g., Paystack transfer_code
+	}, nil
 }

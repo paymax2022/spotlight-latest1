@@ -2,9 +2,22 @@ package association
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	valSuspended = "SUSPENDED"
+	valActive    = "ACTIVE"
+	valOverdue   = "OVERDUE"
 )
 
 // Gap-fill service methods: single-record detail reads, partial profile update,
@@ -13,8 +26,6 @@ import (
 // mutations write an assoc_audit_log row; detail reads are scoped to the
 // caller's organisation membership. Amounts remain kobo. Separate file to limit
 // merge surface.
-
-// ── Announcement detail ───────────────────────────────────────────────────────
 
 // GetAnnouncement returns one announcement (full body) visible to the caller.
 func (s *Service) GetAnnouncement(ctx context.Context, userID, id string) (*AnnouncementDetail, error) {
@@ -40,8 +51,6 @@ func (s *Service) GetAnnouncement(ctx context.Context, userID, id string) (*Anno
 	}
 	return &d, nil
 }
-
-// ── Meeting detail ────────────────────────────────────────────────────────────
 
 // GetMeeting returns one meeting with the caller's RSVP/attendance state.
 func (s *Service) GetMeeting(ctx context.Context, userID, id string) (*MeetingDetail, error) {
@@ -77,8 +86,6 @@ func (s *Service) GetMeeting(ctx context.Context, userID, id string) (*MeetingDe
 	return &d, nil
 }
 
-// ── Task detail ───────────────────────────────────────────────────────────────
-
 // GetTask returns one task assigned to (or in the org of) the caller.
 func (s *Service) GetTask(ctx context.Context, userID, id string) (*TaskDetail, error) {
 	var d TaskDetail
@@ -107,8 +114,6 @@ func (s *Service) GetTask(ctx context.Context, userID, id string) (*TaskDetail, 
 	return &d, nil
 }
 
-// ── Document detail ───────────────────────────────────────────────────────────
-
 // GetDocument returns one document's metadata for the caller's organisation.
 func (s *Service) GetDocument(ctx context.Context, userID, id string) (*DocumentDetail, error) {
 	var d DocumentDetail
@@ -130,8 +135,6 @@ func (s *Service) GetDocument(ctx context.Context, userID, id string) (*Document
 	}
 	return &d, nil
 }
-
-// ── Committee detail ──────────────────────────────────────────────────────────
 
 // GetCommittee returns one committee with its member roster for the caller's org.
 func (s *Service) GetCommittee(ctx context.Context, userID, id string) (*CommitteeDetail, error) {
@@ -173,8 +176,6 @@ func (s *Service) GetCommittee(ctx context.Context, userID, id string) (*Committ
 	return &d, nil
 }
 
-// ── Event detail ──────────────────────────────────────────────────────────────
-
 // GetEvent returns one event with the caller's RSVP/registration state.
 func (s *Service) GetEvent(ctx context.Context, userID, id string) (*EventDetail, error) {
 	var d EventDetail
@@ -207,8 +208,6 @@ func (s *Service) GetEvent(ctx context.Context, userID, id string) (*EventDetail
 	}
 	return &d, nil
 }
-
-// ── Profile update ────────────────────────────────────────────────────────────
 
 // UpdateProfile applies a partial update to the caller's member profile and
 // returns the refreshed profile. Only non-nil fields are written.
@@ -253,8 +252,6 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, in UpdatePro
 	}
 	return s.GetProfile(ctx, userID)
 }
-
-// ── Admin: audit log ──────────────────────────────────────────────────────────
 
 // GetAuditLog returns recent audit entries scoped to the resolved org (see
 // resolveOrgID; plus org-less entries the admin actioned), optionally
@@ -311,8 +308,6 @@ func (s *Service) GetAuditLog(ctx context.Context, adminID, action, orgIDOverrid
 	return out, rows.Err()
 }
 
-// ── AI notes: regenerate summary ──────────────────────────────────────────────
-
 // RegenerateAiNoteSummary re-queues a note for summary generation (PROCESSING)
 // and audits the request. Idempotent: safe to call repeatedly.
 func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID string) error {
@@ -331,21 +326,19 @@ func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID s
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status='PROCESSING' WHERE id=$1`, noteID)
 	if err != nil {
 		return fmt.Errorf("association: regenerate ai note: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("association: ai note not found")
+		return errors.New("association: ai note not found")
 	}
 	if err := s.audit(ctx, tx, noteOrg, adminID, "MINUTES_REGENERATE", "ai_note", noteID, nil); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
-
-// ── Chat: message reactions ───────────────────────────────────────────────────
 
 // ReactToMessage toggles the caller's emoji reaction on a chat message. A
 // repeated call with the same emoji removes it (toggle). Persisted in
@@ -385,4 +378,135 @@ func (s *Service) ReactToMessage(ctx context.Context, userID, threadID, messageI
 		return fmt.Errorf("association: react (add): %w", err)
 	}
 	return nil
+}
+
+// Membership-card QR verification (MC-003/004/005). The QR is a compact,
+// HMAC-signed token so a scanned card is tamper-evident and verifiable
+// server-side. Format:
+//
+//	AMC1.<b64url(payload)>.<b64url(hmac_sha256(key, "AMC1."+b64url(payload)))>
+//
+// payload = {"m":membershipID,"c":memberCode,"o":orgID,"t":issuedUnix}. The token
+// authenticates card authenticity; VerifyCard then does a LIVE status/standing
+// lookup, so a revoked/expired/arrears card fails even with a genuine signature.
+const cardTokenVersion = "AMC1"
+
+// defaultDevCardKey is a fixed dev/local signing key. Production wiring MUST call
+// SetCardSigningSecret to override it; if it isn't, cards signed on one host will
+// still verify on another only while both use this default (dev convenience).
+var defaultDevCardKey = func() []byte {
+	sum := sha256.Sum256([]byte("assoc-card-hmac-dev-key-v1"))
+	return sum[:]
+}()
+
+// SetCardSigningSecret derives the card HMAC key from a server secret (SHA-256,
+// domain-separated). An empty secret is ignored so a misconfiguration cannot
+// silently switch every card over to an empty-key signature.
+func (s *Service) SetCardSigningSecret(secret string) {
+	if strings.TrimSpace(secret) == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte("assoc-card-hmac-v1|" + secret))
+	s.cardKey = sum[:]
+}
+
+func (s *Service) cardSigningKey() []byte {
+	if len(s.cardKey) == 0 {
+		return defaultDevCardKey
+	}
+	return s.cardKey
+}
+
+type cardTokenPayload struct {
+	M string `json:"m"` // membership id (uuid) — the verify lookup key
+	C string `json:"c"` // member code (display)
+	O string `json:"o"` // organisation id
+	T int64  `json:"t"` // issued-at, unix seconds
+}
+
+func (s *Service) signCardData(signingInput string) string {
+	mac := hmac.New(sha256.New, s.cardSigningKey())
+	mac.Write([]byte(signingInput))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// SignCardToken produces a signed QR token for a membership. Exported so GetCard
+// and tests share one implementation.
+func (s *Service) SignCardToken(membershipID, memberCode, orgID string) string {
+	raw, _ := json.Marshal(cardTokenPayload{M: membershipID, C: memberCode, O: orgID, T: time.Now().Unix()})
+	signingInput := cardTokenVersion + "." + base64.RawURLEncoding.EncodeToString(raw)
+	return signingInput + "." + s.signCardData(signingInput)
+}
+
+// parseAndVerifyCardToken validates the token's structure + HMAC (constant-time)
+// and returns the decoded payload. Fail-closed on any structural/signature error.
+func (s *Service) parseAndVerifyCardToken(token string) (*cardTokenPayload, bool) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 || parts[0] != cardTokenVersion {
+		return nil, false
+	}
+	signingInput := parts[0] + "." + parts[1]
+	if !hmac.Equal([]byte(s.signCardData(signingInput)), []byte(parts[2])) {
+		return nil, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, false
+	}
+	var p cardTokenPayload
+	if err := json.Unmarshal(raw, &p); err != nil || p.M == "" {
+		return nil, false
+	}
+	return &p, true
+}
+
+// VerifyCard authenticates a scanned card QR token and returns the member's LIVE
+// verification result. A structurally/cryptographically invalid token yields
+// {Valid:false, Reason:"INVALID_SIGNATURE"} (a normal verification outcome, not an
+// error). Only a DB failure returns an error. Because the status/standing is read
+// live, a revoked/expired/arrears card fails even with a genuine signature
+// (MC-002/004/005, EC-007).
+func (s *Service) VerifyCard(ctx context.Context, token string) (*CardVerification, error) {
+	res := &CardVerification{VerifiedAt: time.Now().UTC().Format(time.RFC3339)}
+	p, ok := s.parseAndVerifyCardToken(token)
+	if !ok {
+		res.Reason = "INVALID_SIGNATURE"
+		return res, nil
+	}
+	const q = `
+		SELECT m.member_code, m.status, m.payment_standing,
+		       (m.valid_through IS NOT NULL AND m.valid_through < now()) AS expired,
+		       m.valid_through::text,
+		       COALESCE(mp.full_name,''), o.name, o.acronym, COALESCE(mc.label,'Member')
+		FROM assoc_memberships m
+		JOIN assoc_organisations o ON o.id=m.organisation_id
+		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
+		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=m.id
+		WHERE m.id=$1`
+	var expired bool
+	if err := s.db.QueryRow(ctx, q, p.M).Scan(
+		&res.MemberID, &res.Status, &res.PaymentStanding, &expired, &res.ValidThrough,
+		&res.FullName, &res.OrganisationName, &res.OrganisationAcronym, &res.CategoryLabel,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			res.Reason = "NOT_FOUND"
+			return res, nil
+		}
+		return nil, fmt.Errorf("association: verify card lookup: %w", err)
+	}
+
+	// Authentic signature is necessary but NOT sufficient — the live record decides.
+	switch {
+	case res.Status == valSuspended:
+		res.Reason = valSuspended
+	case res.Status == "EXPIRED" || expired:
+		res.Reason = "EXPIRED"
+	case res.Status != valActive:
+		res.Reason = "REVOKED"
+	case res.PaymentStanding == valOverdue:
+		res.Reason = "ARREARS"
+	default:
+		res.Valid = true
+	}
+	return res, nil
 }

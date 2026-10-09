@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { withSentryConfig } from '@sentry/nextjs';
+import { withSentryConfig } from '@sentry/nextjs/config';
 import { imageHosts } from './image-hosts.config.mjs';
+import { buildSecurityHeaders } from './security-headers.config.mjs';
 
 // Anchors the standalone trace to this app. Next otherwise infers the workspace
 // root by walking up to the highest directory containing a lockfile — which here
@@ -11,8 +12,21 @@ import { imageHosts } from './image-hosts.config.mjs';
 // expects it at .next/standalone/server.js and would fail to boot.
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 
+// E2E-SEC-057 (security.md F5): baseline hardening headers on EVERY response —
+// X-Content-Type-Options, X-Frame-Options, HSTS, Referrer-Policy,
+// Permissions-Policy, and a REPORT-ONLY CSP. The policy lives in
+// security-headers.config.mjs (see that file for the full rationale) so it can
+// be unit-tested without importing the withSentryConfig toolchain below.
+const securityHeaders = buildSecurityHeaders();
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Drop the X-Powered-By: Next.js disclosure (F5).
+  poweredByHeader: false,
+  // Local testing browses via 127.0.0.1 (Supabase site_url) as well as
+  // localhost; without this the dev server blocks /_next/hmr, which stalls
+  // hydration entirely in dev mode.
+  allowedDevOrigins: ['127.0.0.1'],
   // Produce a traced production server so the deployment image contains only
   // the runtime files Next needs, rather than the complete build toolchain.
   output: 'standalone',
@@ -38,11 +52,30 @@ const nextConfig = {
     minimumCacheTTL: 60,
   },
 
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: securityHeaders,
+      },
+    ];
+  },
+
   async redirects() {
     return [
       {
         source: '/homepage',
         destination: '/',
+        permanent: true,
+      },
+      // Legacy vote stream: the route file is protected-legacy and cannot be
+      // visibility-gated in place — it streamed live counts/rank for hidden
+      // contests. Its sole client (vote page) already moved to the gated
+      // /api/v2/votes/stream, which takes identical query params, so a
+      // permanent redirect retires the leak without touching the file.
+      {
+        source: '/api/votes/stream',
+        destination: '/api/v2/votes/stream',
         permanent: true,
       },
       // Canonical host: www.spotlightng.com. The apex 301s to it so users, SEO and

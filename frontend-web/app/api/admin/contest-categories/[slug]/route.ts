@@ -19,12 +19,13 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const existing = await getContestCategory(slug);
     if (!existing) return errorResponse('Category not found.', 404);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       label?: unknown;
       description?: unknown;
       active?: unknown;
       sortOrder?: unknown;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const patch: { label?: string; description?: string | null; active?: boolean; sortOrder?: number } = {};
 

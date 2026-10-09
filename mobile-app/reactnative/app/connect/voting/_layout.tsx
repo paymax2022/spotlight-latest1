@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { View } from 'react-native';
 import ModuleTabBar from '@/components/ModuleTabBar';
 import { CONNECT_VOTING_TABS } from '@/constants/moduleTabs';

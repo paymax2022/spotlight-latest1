@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Stethoscope, HeartPulse, PawPrint } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { ProviderTypeCard, StateView } from '@/features/doctor/components';
@@ -15,7 +15,6 @@ import { useSelectProviderType, useMerchantUpgradeStatus } from '@/features/doct
 import { PROVIDER_TYPE_OPTIONS } from '@/features/doctor/constants';
 import type { ProviderType } from '@/types/doctor.onboarding';
 
-// ── Section A · Entry 4 — Choose provider type ───────────────────────────────
 // Selectable card list over PROVIDER_TYPE_OPTIONS. Records the choice via
 // useSelectProviderType, then routes into the consent gate. The chosen type is
 // persisted on the merchant-upgrade status so the permissions step can route to
@@ -31,7 +30,6 @@ export default function ProviderTypeScreen() {
   const { data: status, isLoading, isError, refetch } = useMerchantUpgradeStatus();
   const selectType = useSelectProviderType();
   // The saved choice is the default; a tap overrides it for this visit.
-  //
   // DERIVED, not seeded into useState. useState reads its initial value only on
   // the FIRST render — which happens against placeholderData, where selectedType
   // is undefined — so the real value arriving from the query was discarded and
@@ -48,7 +46,6 @@ export default function ProviderTypeScreen() {
     setError(undefined);
     try {
       await selectType.mutateAsync({ providerType: selected });
-      // Gate: consents → permissions → builder. The builder is reached from the
       // permissions step using the persisted selectedType.
       router.push('/(doctor)/onboarding/consents');
     } catch {

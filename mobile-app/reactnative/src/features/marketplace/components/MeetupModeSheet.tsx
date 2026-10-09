@@ -1,18 +1,16 @@
-// ── Screen 27 — Meetup Mode (modal sheet) ────────────────────────────────────
 // The safety net for the in-person cash path (the only path in the connect
 // model). Safe-spot suggestions, a trip-share toggle, a check-in timer with an
 // SOS shortcut, and an always-visible one-line nudge that Paymax doesn't hold
 // funds for this deal. "Mark deal complete" opens the OPTIONAL, self-reported
 // Review Composer.
-//
 // Modelled as a modal (not a route) so it needs no new entry in the Tabs shell.
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, ScrollView, Switch, Alert } from 'react-native';
 import { X, ShieldOff, Timer, TriangleAlert, Share2, CheckCircle2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';
 import { useSafeSpots } from '@/features/marketplace/api/transact.hooks';

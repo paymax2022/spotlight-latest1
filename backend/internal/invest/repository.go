@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +22,10 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 var ErrNotFound = errors.New("invest: not found")
 
-// ── Profile ──────────────────────────────────────────────────────────────────
+// ErrSettlementClaimed is returned by SettleOrder when the order is no longer in
+// pending_settlement — i.e. another settlement path (broker webhook or the T+N
+// worker) already claimed it. Callers should treat it as "already handled".
+var ErrSettlementClaimed = errors.New("invest: settlement already claimed")
 
 func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	const q = `SELECT id, user_id, kyc_tier, suitability_profile_id, risk_category, country,
@@ -31,7 +36,7 @@ func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, e
 	err := r.db.QueryRow(ctx, q, userID).Scan(&p.ID, &p.UserID, &p.KYCTier, &p.SuitabilityProfileID,
 		&p.RiskCategory, &p.Country, &p.ResidencyCountry, &p.InvestmentEnabled, &p.StockTradingEnabled,
 		&p.PublicOfferEnabled, &p.RightsIssueEnabled, &p.Status, &p.CreatedAt, &p.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -78,8 +83,6 @@ func (r *Repository) UpdateProfileFields(ctx context.Context, userID string, fie
 	return err
 }
 
-// ── Investment account ───────────────────────────────────────────────────────
-
 func (r *Repository) GetOrCreateAccount(ctx context.Context, userID string) (*Account, error) {
 	const sel = `SELECT id, user_id, account_number, broker_provider_id, broker_account_id,
 		cscs_number, clearing_house_number, base_currency, status, created_at
@@ -90,10 +93,10 @@ func (r *Repository) GetOrCreateAccount(ctx context.Context, userID string) (*Ac
 	if err == nil {
 		return &a, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	acctNo := "INV" + fmt.Sprintf("%d", time.Now().UnixNano())[3:13]
+	acctNo := "INV" + strconv.FormatInt(time.Now().UnixNano(), 10)[3:13]
 	const ins = `INSERT INTO invest_accounts (user_id, account_number, status) VALUES ($1,$2,'active')
 		RETURNING id, user_id, account_number, broker_provider_id, broker_account_id,
 		cscs_number, clearing_house_number, base_currency, status, created_at`
@@ -104,8 +107,6 @@ func (r *Repository) GetOrCreateAccount(ctx context.Context, userID string) (*Ac
 	}
 	return &a, nil
 }
-
-// ── Suitability ──────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertSuitability(ctx context.Context, userID string, answersJSON []byte, score int, cat RiskCategory) (string, error) {
 	const q = `INSERT INTO invest_suitability_profiles (user_id, answers, score, risk_category, status, expires_at)
@@ -119,7 +120,7 @@ func (r *Repository) LatestSuitability(ctx context.Context, userID string) (id s
 	const q = `SELECT id, score, risk_category FROM invest_suitability_profiles
 		WHERE user_id=$1 AND status='active' ORDER BY created_at DESC LIMIT 1`
 	err = r.db.QueryRow(ctx, q, userID).Scan(&id, &score, &cat)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", 0, "", false, nil
 	}
 	if err != nil {
@@ -127,8 +128,6 @@ func (r *Repository) LatestSuitability(ctx context.Context, userID string) (id s
 	}
 	return id, score, cat, true, nil
 }
-
-// ── Agreements ───────────────────────────────────────────────────────────────
 
 func (r *Repository) ActiveAgreements(ctx context.Context, userID string) ([]Agreement, error) {
 	const q = `SELECT a.key, a.title, a.version, COALESCE(a.body_url,''),
@@ -174,8 +173,6 @@ func (r *Repository) AllActiveAgreementsAccepted(ctx context.Context, userID str
 	return missing == 0, nil
 }
 
-// ── Stocks ───────────────────────────────────────────────────────────────────
-
 const stockCols = `id, symbol, name, exchange, COALESCE(sector,''), COALESCE(board,''),
 	COALESCE(isin,''), asset_class, status, buy_enabled, sell_enabled, risk_rating,
 	minimum_order_amount, maximum_order_amount, kyc_tier_required, country_availability,
@@ -194,16 +191,16 @@ func (r *Repository) ListStocks(ctx context.Context, query, sector string, limit
 	args := []any{}
 	i := 1
 	if query != "" {
-		sb.WriteString(fmt.Sprintf(" AND (symbol ILIKE $%d OR name ILIKE $%d)", i, i))
+		fmt.Fprintf(&sb, " AND (symbol ILIKE $%d OR name ILIKE $%d)", i, i)
 		args = append(args, "%"+query+"%")
 		i++
 	}
 	if sector != "" {
-		sb.WriteString(fmt.Sprintf(" AND sector=$%d", i))
+		fmt.Fprintf(&sb, " AND sector=$%d", i)
 		args = append(args, sector)
 		i++
 	}
-	sb.WriteString(fmt.Sprintf(" ORDER BY symbol LIMIT $%d OFFSET $%d", i, i+1))
+	fmt.Fprintf(&sb, " ORDER BY symbol LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -225,7 +222,7 @@ func (r *Repository) GetStockBySymbol(ctx context.Context, symbol string) (*Stoc
 	const q = "SELECT " + stockCols + " FROM invest_stock_assets WHERE symbol=$1"
 	var s StockAsset
 	if err := scanStock(r.db.QueryRow(ctx, q, strings.ToUpper(symbol)), &s); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -237,7 +234,7 @@ func (r *Repository) GetStockByID(ctx context.Context, id string) (*StockAsset, 
 	const q = "SELECT " + stockCols + " FROM invest_stock_assets WHERE id=$1"
 	var s StockAsset
 	if err := scanStock(r.db.QueryRow(ctx, q, id), &s); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -245,15 +242,13 @@ func (r *Repository) GetStockByID(ctx context.Context, id string) (*StockAsset, 
 	return &s, nil
 }
 
-// ── Watchlists ───────────────────────────────────────────────────────────────
-
 func (r *Repository) EnsureDefaultWatchlist(ctx context.Context, userID string) (string, error) {
 	var id string
 	err := r.db.QueryRow(ctx, `SELECT id FROM invest_watchlists WHERE user_id=$1 AND is_default=true LIMIT 1`, userID).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
 	err = r.db.QueryRow(ctx, `INSERT INTO invest_watchlists (user_id, name, is_default) VALUES ($1,'My Watchlist',true) RETURNING id`, userID).Scan(&id)
@@ -340,7 +335,7 @@ func (r *Repository) AddWatchlistItem(ctx context.Context, userID, watchlistID, 
 	// ownership check
 	var owner string
 	if err := r.db.QueryRow(ctx, `SELECT user_id FROM invest_watchlists WHERE id=$1`, watchlistID).Scan(&owner); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -359,8 +354,6 @@ func (r *Repository) RemoveWatchlistItem(ctx context.Context, userID, watchlistI
 	_, err := r.db.Exec(ctx, q, userID, watchlistID, assetID)
 	return err
 }
-
-// ── Price alerts ─────────────────────────────────────────────────────────────
 
 func (r *Repository) ListAlerts(ctx context.Context, userID string) ([]PriceAlert, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, user_id, stock_asset_id, symbol, condition, target_price_kobo, status, triggered_at, created_at
@@ -411,8 +404,6 @@ func (r *Repository) DeleteAlert(ctx context.Context, userID, id string) error {
 	return nil
 }
 
-// ── Orders ───────────────────────────────────────────────────────────────────
-
 const orderCols = `id, user_id, stock_asset_id, symbol, side, order_type, amount_kobo, quantity,
 	limit_price_kobo, estimated_price_kobo, executed_price_kobo, filled_quantity, fees_kobo,
 	total_amount_kobo, locked_cash_kobo, locked_quantity, status, COALESCE(provider,''),
@@ -431,7 +422,7 @@ func scanOrder(row pgx.Row, o *Order) error {
 func (r *Repository) FindOrderByIdem(ctx context.Context, idem string) (*Order, error) {
 	var o Order
 	err := scanOrder(r.db.QueryRow(ctx, "SELECT "+orderCols+" FROM invest_orders WHERE idempotency_key=$1", idem), &o)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -462,13 +453,13 @@ func (r *Repository) UpdateOrder(ctx context.Context, o *Order, fromStatus Order
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `UPDATE invest_orders SET status=$1, executed_price_kobo=$2, filled_quantity=$3,
 		fees_kobo=$4, total_amount_kobo=$5, locked_cash_kobo=$6, locked_quantity=$7,
 		provider_reference=$8, failure_reason=$9, settlement_due_at=$10, submitted_at=$11,
 		filled_at=$12, settled_at=$13, updated_at=now() WHERE id=$14`
 	_, err = tx.Exec(ctx, q, o.Status, o.ExecutedPriceKobo, o.FilledQuantity, o.FeesKobo, o.TotalAmountKobo,
-		o.LockedCashKobo, o.LockedQuantity, nullStr(o.ProviderReference), nullStr(o.FailureReason),
+		o.LockedCashKobo, o.LockedQuantity, dbutil.NullStr(o.ProviderReference), dbutil.NullStr(o.FailureReason),
 		o.SettlementDueAt, o.SubmittedAt, o.FilledAt, o.SettledAt, o.ID)
 	if err != nil {
 		return err
@@ -488,11 +479,11 @@ func (r *Repository) ListOrders(ctx context.Context, userID, status string, limi
 	args := []any{userID}
 	i := 2
 	if status != "" {
-		sb.WriteString(fmt.Sprintf(" AND status=$%d", i))
+		fmt.Fprintf(&sb, " AND status=$%d", i)
 		args = append(args, status)
 		i++
 	}
-	sb.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1))
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -513,7 +504,7 @@ func (r *Repository) ListOrders(ctx context.Context, userID, status string, limi
 func (r *Repository) GetOrder(ctx context.Context, userID, id string) (*Order, error) {
 	var o Order
 	err := scanOrder(r.db.QueryRow(ctx, "SELECT "+orderCols+" FROM invest_orders WHERE id=$1 AND user_id=$2", id, userID), &o)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -543,8 +534,6 @@ func (r *Repository) DueSettlements(ctx context.Context, limit int) ([]Order, er
 	return out, rows.Err()
 }
 
-// ── Positions ────────────────────────────────────────────────────────────────
-
 func (r *Repository) ListPositions(ctx context.Context, userID string) ([]Position, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, user_id, stock_asset_id, symbol, quantity, locked_quantity,
 		average_cost_kobo, realized_gain_kobo, updated_at FROM invest_positions
@@ -573,7 +562,7 @@ func (r *Repository) GetPosition(ctx context.Context, userID, assetID string) (*
 		WHERE user_id=$1 AND stock_asset_id=$2`, userID, assetID).
 		Scan(&p.ID, &p.UserID, &p.StockAssetID, &p.Symbol, &p.Quantity, &p.LockedQuantity,
 			&p.AverageCostKobo, &p.RealizedGainKobo, &p.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -595,6 +584,83 @@ func (r *Repository) AddToPosition(ctx context.Context, userID, assetID, symbol 
 			quantity = invest_positions.quantity + EXCLUDED.quantity,
 			updated_at = now()`
 	_, err := r.db.Exec(ctx, q, userID, assetID, symbol, qty, costKobo)
+	return err
+}
+
+func addToPositionTx(ctx context.Context, tx pgx.Tx, userID, assetID, symbol string, qty float64, costKobo int64) error {
+	const q = `INSERT INTO invest_positions (user_id, stock_asset_id, symbol, quantity, average_cost_kobo)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (user_id, stock_asset_id) DO UPDATE SET
+			average_cost_kobo = CASE WHEN (invest_positions.quantity + EXCLUDED.quantity) > 0 THEN
+				((invest_positions.quantity * invest_positions.average_cost_kobo) + (EXCLUDED.quantity * EXCLUDED.average_cost_kobo))
+				/ (invest_positions.quantity + EXCLUDED.quantity)
+				ELSE invest_positions.average_cost_kobo END,
+			quantity = invest_positions.quantity + EXCLUDED.quantity,
+			updated_at = now()`
+	_, err := tx.Exec(ctx, q, userID, assetID, symbol, qty, costKobo)
+	return err
+}
+
+// SettleOrder atomically claims a pending_settlement order and applies the
+// position mutation in ONE transaction. The `AND status='pending_settlement'`
+// predicate makes the UPDATE a claim — a concurrent broker webhook and the T+N
+// worker can no longer both observe pending_settlement and double-credit shares
+// (or double-reduce a sell position), which was exploitable as a sellable
+// phantom balance. Expects o.Status already set to StatusSettled.
+// The sell-side cash release (il.ReleaseSettlement) stays OUTSIDE this tx — it
+// is keyed on "release:"+o.IdempotencyKey, so a retry after a tx failure is a
+// no-op and the position/state legs then complete.
+func (r *Repository) SettleOrder(ctx context.Context, o *Order, note string) error {
+	if o.Status != StatusSettled {
+		return errors.New("invest: SettleOrder requires StatusSettled")
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	ct, err := tx.Exec(ctx,
+		`UPDATE invest_orders SET status=$1, settled_at=$2, updated_at=now()
+		 WHERE id=$3 AND status=$4`,
+		string(StatusSettled), o.SettledAt, o.ID, string(StatusPendingSettlement))
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrSettlementClaimed
+	}
+
+	if o.Side == SideBuy {
+		if err := addToPositionTx(ctx, tx, o.UserID, o.StockAssetID, o.Symbol, o.FilledQuantity, o.ExecutedPriceKobo); err != nil {
+			return err
+		}
+	} else {
+		if err := reducePositionTx(ctx, tx, o.UserID, o.StockAssetID, o.FilledQuantity, o.TotalAmountKobo); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `INSERT INTO invest_order_events (order_id, from_status, to_status, note)
+		VALUES ($1,$2,$3,$4)`, o.ID, string(StatusPendingSettlement), string(StatusSettled), note); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func reducePositionTx(ctx context.Context, tx pgx.Tx, userID, assetID string, qty float64, proceedsKobo int64) error {
+	var quantity float64
+	var avg int64
+	if err := tx.QueryRow(ctx, `SELECT quantity, average_cost_kobo FROM invest_positions
+		WHERE user_id=$1 AND stock_asset_id=$2 FOR UPDATE`, userID, assetID).Scan(&quantity, &avg); err != nil {
+		return err
+	}
+	realized := proceedsKobo - int64(qty*float64(avg))
+	const q = `UPDATE invest_positions SET quantity = GREATEST(quantity - $3,0),
+		locked_quantity = GREATEST(locked_quantity - $3,0),
+		realized_gain_kobo = realized_gain_kobo + $4, updated_at=now()
+		WHERE user_id=$1 AND stock_asset_id=$2`
+	_, err := tx.Exec(ctx, q, userID, assetID, qty, realized)
 	return err
 }
 
@@ -625,25 +691,12 @@ func (r *Repository) ReducePosition(ctx context.Context, userID, assetID string,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-	var quantity float64
-	var avg int64
-	if err := tx.QueryRow(ctx, `SELECT quantity, average_cost_kobo FROM invest_positions
-		WHERE user_id=$1 AND stock_asset_id=$2 FOR UPDATE`, userID, assetID).Scan(&quantity, &avg); err != nil {
-		return err
-	}
-	realized := proceedsKobo - int64(qty*float64(avg))
-	const q = `UPDATE invest_positions SET quantity = GREATEST(quantity - $3,0),
-		locked_quantity = GREATEST(locked_quantity - $3,0),
-		realized_gain_kobo = realized_gain_kobo + $4, updated_at=now()
-		WHERE user_id=$1 AND stock_asset_id=$2`
-	if _, err := tx.Exec(ctx, q, userID, assetID, qty, realized); err != nil {
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := reducePositionTx(ctx, tx, userID, assetID, qty, proceedsKobo); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
-
-// ── Dividends & corporate actions (read) ─────────────────────────────────────
 
 func (r *Repository) DividendsForSymbol(ctx context.Context, symbol string) ([]Dividend, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, stock_asset_id, symbol, amount_per_share_kobo, currency,
@@ -685,8 +738,6 @@ func (r *Repository) CorporateActionsForSymbol(ctx context.Context, symbol strin
 	return out, rows.Err()
 }
 
-// ── Public offers ────────────────────────────────────────────────────────────
-
 func (r *Repository) ListPublicOffers(ctx context.Context) ([]PublicOffer, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, issuer_name, COALESCE(symbol,''), offer_price_kobo,
 		minimum_subscription_kobo, opening_date::text, closing_date::text, COALESCE(prospectus_url,''), status
@@ -713,7 +764,7 @@ func (r *Repository) GetPublicOffer(ctx context.Context, id string) (*PublicOffe
 		minimum_subscription_kobo, opening_date::text, closing_date::text, COALESCE(prospectus_url,''), status
 		FROM invest_public_offers WHERE id=$1`, id).Scan(&o.ID, &o.IssuerName, &o.Symbol, &o.OfferPriceKobo,
 		&o.MinimumSubKobo, &o.OpeningDate, &o.ClosingDate, &o.ProspectusURL, &o.Status)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -750,8 +801,6 @@ func (r *Repository) ListPublicOfferApplications(ctx context.Context, userID str
 	return out, rows.Err()
 }
 
-// ── Rights issues ────────────────────────────────────────────────────────────
-
 func (r *Repository) ListRightsIssues(ctx context.Context) ([]RightsIssue, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, issuer_name, COALESCE(symbol,''), COALESCE(ratio,''), offer_price_kobo,
 		qualification_date::text, opening_date::text, closing_date::text, status
@@ -778,7 +827,7 @@ func (r *Repository) GetRightsIssue(ctx context.Context, id string) (*RightsIssu
 		qualification_date::text, opening_date::text, closing_date::text, status
 		FROM invest_rights_issues WHERE id=$1`, id).Scan(&ri.ID, &ri.IssuerName, &ri.Symbol, &ri.Ratio,
 		&ri.OfferPriceKobo, &ri.QualificationDate, &ri.OpeningDate, &ri.ClosingDate, &ri.Status)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -813,15 +862,6 @@ func (r *Repository) ListRightsApplications(ctx context.Context, userID string) 
 		out = append(out, a)
 	}
 	return out, rows.Err()
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 var ErrInsufficientShares = errors.New("invest: insufficient available shares")

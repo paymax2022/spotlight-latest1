@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canManageCommittees, canManageCommitteeRoster } from '../utils/committeePermissions.ts';
+import { canManageCommittees, canManageCommitteeRoster } from '../utils';
 
 // The rule: an owner controls committees, a member only uses them. The server
 // enforces it; this keeps the UI from offering actions that would 403.

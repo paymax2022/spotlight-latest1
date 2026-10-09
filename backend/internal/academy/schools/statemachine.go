@@ -1,33 +1,28 @@
 package schools
 
-import "errors"
+import (
+	"errors"
+	"spotlight/backend/go-common/fsm"
+)
 
-// ── Licence lifecycle state machine (state-machines.md / admin-console §6) ────────
-//
 // States: active → suspended → expired, with suspended → active (reactivate).
-//
 //   - active    : licence in force; seats consumable by enrolment.
 //   - suspended : admin-paused; reversible back to active.
 //   - expired   : terminal sink (active|suspended → expired).
-//
 // Only the transitions below are legal. Illegal transitions are rejected with
 // ErrIllegalTransition and audit-logged by the service. canLicence is PURE so it is
 // unit-testable with no DB (schools_test.go).
 
 // licenceTransitions is the legal adjacency set for the licence SM.
-var licenceTransitions = map[LicenceState]map[LicenceState]bool{
-	LicenceActive:    {LicenceSuspended: true, LicenceExpired: true},
-	LicenceSuspended: {LicenceActive: true, LicenceExpired: true},
+var licenceTransitions = fsm.Table[LicenceState]{
+	LicenceActive:    fsm.Set(LicenceSuspended, LicenceExpired),
+	LicenceSuspended: fsm.Set(LicenceActive, LicenceExpired),
 	LicenceExpired:   {}, // terminal
 }
 
 // canLicence reports whether from→to is a legal licence-SM transition. Pure.
 func canLicence(from, to LicenceState) bool {
-	targets, ok := licenceTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return licenceTransitions.Can(from, to)
 }
 
 // Sentinel errors mapped to stable snake_case codes / HTTP statuses by the handler.

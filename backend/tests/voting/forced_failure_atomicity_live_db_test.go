@@ -1,7 +1,6 @@
 package voting_test
 
 // UAT Batch 3 — TS-11 NF-004 (Service/DB failover without vote loss).
-//
 // HONESTY NOTE (see docs/qa/voting-contest-test-plan.md NF-004 status): true
 // infra failover — killing the DB connection or the process mid-transaction —
 // is not something this environment can safely simulate (no chaos-engineering
@@ -18,7 +17,6 @@ package voting_test
 // error immediately before commit are indistinguishable from the database's
 // point of view: both leave zero side effects. That equivalence is what these
 // tests exercise, not a literal kill -9 against the connection.
-//
 // Each test forces a real Postgres error partway through one of the three
 // atomic write paths and then asserts, by reading the database directly
 // (not through the function's return value), that NOTHING from that attempt
@@ -61,7 +59,7 @@ func TestNF004_CreditPaidVoteTransaction_FailurePartwayLeavesNoSideEffects(t *te
 		t.Fatalf("seed zero-quantity vote_transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
 	})
 
 	// This call MUST fail: total_votes_to_credit=0 makes the function's own
@@ -147,7 +145,7 @@ func TestNF004_ClaimFreeVote_GoConnect_FailurePartwayLeavesNoSideEffects(t *test
 		t.Fatalf("seed pre-existing connect_votes row: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_votes WHERE id=$1`, preexistingID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM connect_votes WHERE id=$1`, preexistingID)
 	})
 
 	repo := connectvoting.NewRepository(pool)
@@ -157,7 +155,7 @@ func TestNF004_ClaimFreeVote_GoConnect_FailurePartwayLeavesNoSideEffects(t *test
 		OptionRef:      contestant,
 		Paid:           false,
 		Quantity:       1,
-		IdempotencyKey: strPtr(dupKey), // forces a unique_violation on INSERT
+		IdempotencyKey: new(string(dupKey)), // forces a unique_violation on INSERT
 	}, 5)
 	if err == nil {
 		t.Fatalf("expected ClaimFreeVote to fail on a duplicate idempotency_key, got ok=%v err=nil", ok)
@@ -175,4 +173,5 @@ func TestNF004_ClaimFreeVote_GoConnect_FailurePartwayLeavesNoSideEffects(t *test
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

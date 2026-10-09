@@ -28,7 +28,6 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
   const [filed, setFiled] = useState<string | null>(null);
   // Real POST /aml/cases/:id/file-str body is {filedRef, narrative} (models.go
   // FileSTRRequest) — filedRef is the NFIU acknowledgement reference obtained
-  // when the STR/SAR is filed with the NFIU directly; there's no "reason
   // code" input on that endpoint (reason codes are set once, at case-open
   // time — see connectAdminService.ts openAmlCase).
   const [filedRef, setFiledRef] = useState('');

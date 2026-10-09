@@ -12,6 +12,7 @@ import {
   type StandingAccountType,
 } from './journal';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { paystackApiBase } from '@/src/server/payments/paystack-base';
 import { WALLET_ACCOUNT_TYPE, SPENDABLE_WALLET_TYPES } from './account-type';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
@@ -21,9 +22,7 @@ const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 // catch them here and return an actionable error instead of an opaque 502.
 const NON_ROUTABLE_TLDS = ['internal', 'local', 'localhost', 'test', 'invalid', 'example'];
 
-// ---------------------------------------------------------------------------
 // Account management
-// ---------------------------------------------------------------------------
 
 /**
  * Find or create the wallet ledger_account for a user.
@@ -53,7 +52,6 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
     .insert({ id: newId, user_id: userId, type: WALLET_ACCOUNT_TYPE, currency: 'NGN' });
 
   if (error) {
-    // Race: another concurrent request inserted first — re-fetch
     const { data: raced } = await supabase
       .from('ledger_accounts')
       .select('id')
@@ -68,14 +66,20 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
   return newId;
 }
 
-async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: string) {
+// Returns whether the account has any ledger entries AFTER this call —
+// i.e. it already had some, or the legacy migration just posted one. The
+// callers only ever need "any rows?", so this is a LIMIT-1 existence check
+// instead of `count: 'exact'` — an exact count scans every index entry the
+// account owns on EVERY balance read (AGT1-PERF-007).
+async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: string): Promise<boolean> {
   const supabase = createAdminClient();
-  const { count } = await supabase
+  const { data: anyEntry } = await supabase
     .from('ledger_entries')
-    .select('id', { count: 'exact', head: true })
-    .eq('account_id', accountId);
+    .select('id')
+    .eq('account_id', accountId)
+    .limit(1);
 
-  if ((count ?? 0) > 0) return;
+  if ((anyEntry ?? []).length > 0) return true;
 
   const { data: legacy } = await supabase
     .from('mobile_fintech_accounts')
@@ -84,7 +88,7 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
     .maybeSingle();
 
   const legacyBalance = Number(legacy?.available_balance ?? 0);
-  if (legacyBalance <= 0) return;
+  if (legacyBalance <= 0) return false;
 
   const amountKobo = Math.round(legacyBalance * 100);
 
@@ -105,11 +109,11 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
     }),
     'Failed to migrate legacy wallet balance',
   );
+  // The migration just posted a ledger entry — the account now has entries.
+  return true;
 }
 
-// ---------------------------------------------------------------------------
 // Balance
-// ---------------------------------------------------------------------------
 
 export interface WalletBalance {
   available_kobo: number;
@@ -119,7 +123,7 @@ export interface WalletBalance {
 
 export async function getBalance(userId: string): Promise<WalletBalance> {
   const accountId = await getOrCreateAccount(userId);
-  await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
+  const hasEntries = await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
   // Mutations are unified on WALLET_ACCOUNT_TYPE (ADR-045). This read still sums
@@ -145,12 +149,12 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
     0,
   );
   const data = (balances ?? []).find((row) => row.account_id === accountId) ?? null;
-  const { count: ledgerEntryCount } = await supabase
-    .from('ledger_entries')
-    .select('id', { count: 'exact', head: true })
-    .eq('account_id', accountId);
 
-  if (availableKobo === 0 && (ledgerEntryCount ?? 0) === 0) {
+  // The second exact-COUNT this block used to run duplicated the existence
+  // check migrateLegacyMobileBalanceIfNeeded already performed (it is the same
+  // predicate: "any ledger_entries rows for this account?"). Reusing that
+  // answer removes one O(#entries) scan per balance read (AGT1-PERF-007).
+  if (availableKobo === 0 && !hasEntries) {
     const { data: legacy } = await supabase
       .from('mobile_fintech_accounts')
       .select('available_balance, currency')
@@ -174,9 +178,7 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Mutations
-// ---------------------------------------------------------------------------
 
 export interface WalletMutationInput {
   amountKobo: number;
@@ -206,7 +208,7 @@ export async function creditWallet(
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
 
-  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  const hit = await checkIdempotencyKey(input.idempotencyKey, userId);
   if (hit.alreadyProcessed) {
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
@@ -257,7 +259,7 @@ export async function debitWallet(
     );
   }
 
-  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  const hit = await checkIdempotencyKey(input.idempotencyKey, userId);
   if (hit.alreadyProcessed) {
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
@@ -312,7 +314,7 @@ export async function reverseWalletDebit(
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
 
-  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  const hit = await checkIdempotencyKey(input.idempotencyKey, userId);
   if (hit.alreadyProcessed) {
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
@@ -343,9 +345,7 @@ export async function reverseWalletDebit(
   return { alreadyProcessed: duplicate, amountKobo: input.amountKobo };
 }
 
-// ---------------------------------------------------------------------------
 // Transaction history
-// ---------------------------------------------------------------------------
 
 export async function listTransactions(
   userId: string,
@@ -369,9 +369,7 @@ export async function listTransactions(
   return (data ?? []) as LedgerEntryRow[];
 }
 
-// ---------------------------------------------------------------------------
 // Topup intent
-// ---------------------------------------------------------------------------
 
 export interface TopupInput {
   amountKobo: number;
@@ -462,8 +460,14 @@ export async function createTopupIntent(
   // a success: returning it as-is would hand the app an empty checkout URL and
   // permanently strand that idempotency key.
   const existing = await checkTopupIdempotencyKey(input.idempotencyKey);
+  // The key resolves globally — an intent owned by another member is a
+  // collision (its reference and checkout URL are theirs), never a replay.
+  if (existing && existing.userId !== userId) {
+    throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+  }
   if (existing?.authorizationUrl) {
-    return { alreadyProcessed: true, ...existing };
+    const { userId: _owner, ...intent } = existing;
+    return { alreadyProcessed: true, ...intent };
   }
 
   if (existing) {
@@ -539,9 +543,7 @@ export async function createTopupIntent(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Paystack initialization (wallet-owned, independent of voting module)
-// ---------------------------------------------------------------------------
 
 /**
  * Drive Paystack initialize for an intent row that already exists, persisting
@@ -586,7 +588,6 @@ async function initializeTopupWithPaystack(input: {
     // Prefer the internal-only detail (the raw provider reason) over the
     // generic public ApiError message for this DB column — error_message is
     // never returned to a client (grepped every route/response that reads
-    // wallet_topup_intents; none surface this column), so it stays useful for
     // ops/debugging without reintroducing the WC-007/WAL-012 leak.
     const message =
       (err as { internalDetail?: string })?.internalDetail ??
@@ -620,7 +621,7 @@ async function initializePaystackPayment(input: {
   };
   if (input.callbackUrl) body.callback_url = input.callbackUrl;
 
-  const res = await fetch('https://api.paystack.co/transaction/initialize', {
+  const res = await fetch(`${paystackApiBase()}/transaction/initialize`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
@@ -662,11 +663,9 @@ async function readPaystackError(res: Response): Promise<string> {
   return res.statusText || `HTTP ${res.status}`;
 }
 
-// ---------------------------------------------------------------------------
 // Topup status — polled by the app after the user returns from Paystack so a
 // module checkout can proceed once the wallet has actually been credited (the
 // webhook flips the intent to 'completed' on charge.success).
-// ---------------------------------------------------------------------------
 
 export interface TopupStatusResult {
   reference: string;

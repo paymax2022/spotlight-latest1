@@ -1,4 +1,3 @@
-// ── Doctor module — Batch 2 (sections G · H · I · J) constants ────────────────
 // Static option lists for the Batch 2 provider-side screens. Pure data only —
 // no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel). REUSES
@@ -16,9 +15,7 @@ import type {
   PatientDocumentKind,
 } from '@/types/doctor.batch2';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION G — patient profile review
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Patient-type labels (drives the adult/child/elderly demographic badge).
 export const PATIENT_TYPE_LABELS: Record<PatientType, string> = {
@@ -95,9 +92,7 @@ export const CLINICAL_ALERT_TONES: Record<'info' | 'warning' | 'critical', { lab
   critical: { label: 'Critical', tone: 'danger' },
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION H — chat consultation
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Chat message kind labels (drives the bubble header / placeholder copy).
 export const MESSAGE_KIND_LABELS: Record<ChatMessageKind, string> = {
@@ -141,9 +136,7 @@ export const REPORT_REASONS: string[] = [
 export const SECURE_CHAT_NOTICE =
   'Messages are end-to-end encrypted. Do not share login credentials, OTPs or off-platform payment details in chat.';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION I — audio & video consultation
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Real-time provider labels (VideoSDK only).
 export const CALL_PROVIDER_LABELS: Record<CallProvider, string> = {
@@ -189,13 +182,10 @@ export const CALL_DISPUTE_REASONS: string[] = [
   'Other',
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION J — consultation notes & diagnosis
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Searchable ICD-lite diagnosis catalogue (drives diagnosis search + code
 // selection). Superset of the barrel's DIAGNOSIS_OPTIONS with a category field
-// for grouping/filtering. DIAGNOSIS_OPTIONS (code+label) is reused elsewhere;
 // this richer catalogue is Section J's source of truth.
 export const ICD_CODES: DiagnosisCode[] = [
   { code: 'I10',   label: 'Essential Hypertension',                  category: 'Cardiovascular' },

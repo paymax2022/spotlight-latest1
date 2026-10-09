@@ -1,7 +1,6 @@
 // Package monnify implements provider.DisbursementProvider for Monnify
 // (https://docs.monnify.com). Auth is a two-step OAuth: base64(apiKey:secretKey)
 // is exchanged for a short-lived bearer token used on all subsequent calls.
-//
 // Money is integer kobo internally; Monnify's API is naira-major, so amounts are
 // converted kobo↔naira only at the HTTP boundary (no float math on the money path
 // — division by 100 of an integer kobo amount that is always a whole-naira value
@@ -11,10 +10,7 @@ package monnify
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha512"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/provider"
 )
 
@@ -60,8 +58,6 @@ func New(apiKey, secretKey, contractCode, webhookSecret string, prod bool) *Clie
 
 func (c *Client) Name() string { return "monnify" }
 
-// --- auth ---
-
 func (c *Client) authToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -96,8 +92,6 @@ func (c *Client) authToken(ctx context.Context) (string, error) {
 	c.tokenExp = time.Now().Add(time.Duration(ttl-60) * time.Second)
 	return c.token, nil
 }
-
-// --- DisbursementProvider ---
 
 func (c *Client) ListBanks(ctx context.Context) ([]provider.Bank, error) {
 	var resp struct {
@@ -193,7 +187,7 @@ func (c *Client) GetTransferStatus(ctx context.Context, providerRef string) (*pr
 		} `json:"responseBody"`
 		ResponseMessage string `json:"responseMessage"`
 	}
-	path := fmt.Sprintf("/api/v2/disbursements/single/summary?reference=%s", providerRef)
+	path := "/api/v2/disbursements/single/summary?reference=" + providerRef
 	if err := c.get(ctx, path, &resp); err != nil {
 		return nil, err
 	}
@@ -209,10 +203,7 @@ func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 	if c.webhookSecret == "" || signature == "" {
 		return false
 	}
-	mac := hmac.New(sha512.New, []byte(c.webhookSecret))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
+	return cryptox.VerifyHMACSHA512(c.webhookSecret, payload, signature)
 }
 
 // ParseWebhook normalizes a Monnify disbursement / collection webhook.
@@ -231,7 +222,7 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 		return nil, fmt.Errorf("monnify: parse webhook: %w", err)
 	}
 	ev := &provider.WebhookEvent{
-		ProviderRef: firstNonEmpty(env.EventData.Reference, env.EventData.TransactionReference),
+		ProviderRef: strutil.FirstNonEmpty(env.EventData.Reference, env.EventData.TransactionReference),
 		Reference:   env.EventData.Reference,
 		Status:      normalizeStatus(env.EventData.Status),
 	}
@@ -260,8 +251,6 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 	return ev, nil
 }
 
-// --- helpers ---
-
 // normalizeStatus maps Monnify status strings to our internal vocabulary.
 func normalizeStatus(s string) string {
 	switch s {
@@ -287,7 +276,7 @@ func parseRecipientCode(code string) (bankCode, accountNumber string) {
 	const prefix = "monnify:"
 	if len(code) > len(prefix) && code[:len(prefix)] == prefix {
 		rest := code[len(prefix):]
-		for i := 0; i < len(rest); i++ {
+		for i := range len(rest) {
 			if rest[i] == ':' {
 				return rest[:i], rest[i+1:]
 			}
@@ -295,17 +284,6 @@ func parseRecipientCode(code string) (bankCode, accountNumber string) {
 	}
 	return "", code
 }
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// --- HTTP ---
 
 func (c *Client) post(ctx context.Context, path string, body, dst any) error {
 	token, err := c.authToken(ctx)
@@ -343,7 +321,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("monnify: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("monnify: read response: %w", err)

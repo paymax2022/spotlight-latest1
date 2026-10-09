@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /** Paymax Stays (SM2) — loyalty segment (PRD §16 / §17 G, screen 52). */
 export default function StaysLoyaltyLayout() {

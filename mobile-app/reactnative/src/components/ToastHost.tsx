@@ -4,11 +4,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react-native';
 import { useToastStore } from '@/store/toastStore';
 import type { ToastVariant } from '@/store/toastStore';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { shadow2 } from '@/constants/shadows';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 
 const VARIANTS: Record<ToastVariant, { accent: string; icon: typeof Info }> = {
   success: { accent: Colors.teal,    icon: CheckCircle2 },

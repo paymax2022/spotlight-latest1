@@ -1,9 +1,6 @@
-// ── Screen 18 — Chat inbox (Chat/Deals tab) ──────────────────────────────────
 // Conversation list with listing-thumbnail context + a deal-stage chip per row,
 // so a buyer/seller can read where a deal stands without opening it. The stage is
-// DERIVED: if a thread has an order, from the order's FSM status; otherwise from
 // its live offers (offer pending / accepted) or plain chatting.
-//
 // No dedicated Paymax messaging shell exists for the marketplace yet, so threads
 // are modelled around their listing + offers (see offers.mock.ts). TODO(messaging)
 // noted there — swap in the shared shell when it lands without touching this UI.
@@ -12,10 +9,10 @@ import { View, Text, StyleSheet, FlatList, Pressable, Image } from 'react-native
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Package } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useThreads, useOffers } from '@/features/marketplace/api/transact.hooks';
@@ -64,7 +61,6 @@ function ThreadRow({ thread }: { thread: DealThread }) {
 export default function ChatInbox() {
   // Deep-link params from Listing Detail (Contact seller / Make Offer) and Seller
   // Profile (Message): open-or-create the relevant thread, then replace into the
-  // Deal Room so those CTAs never dead-end on the generic inbox. offer=1 forwards
   // so the Deal Room auto-opens the offer composer.
   const { listingId, sellerId, offer } = useLocalSearchParams<{ listingId?: string; sellerId?: string; offer?: string }>();
   const threadsQ = useThreads();

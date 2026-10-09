@@ -1,4 +1,3 @@
-// ── Schedule your logistics movement — data hooks ────────────────────────────
 // React Query hooks over scheduled.api.ts, mirroring useMobility.ts / useModes.ts
 // so screens stay declarative and share caching / loading / error contracts.
 // Create + cancel use a PERSISTED Idempotency-Key (see getOrCreateIdempotencyKey
@@ -18,7 +17,6 @@ import type {
 
 export const SCHEDULED_KEY = 'scheduled';
 
-// ─── List (upcoming | past | all) ───────────────────────────────────────────
 export function useScheduledList(filter: ScheduledFilter = 'upcoming', params?: Omit<ListScheduledParams, 'filter'>) {
   return useQuery({
     queryKey: [SCHEDULED_KEY, 'list', filter, params?.cursor ?? null, params?.limit ?? null],
@@ -27,7 +25,6 @@ export function useScheduledList(filter: ScheduledFilter = 'upcoming', params?: 
   });
 }
 
-// ─── Detail (poll while in-flight states so the FSM advances on screen) ─────
 const LIVE_STATUSES = new Set(['dispatch_pending', 'dispatched']);
 
 export function useScheduledDetail(id?: string, options?: { poll?: boolean }) {
@@ -44,7 +41,6 @@ export function useScheduledDetail(id?: string, options?: { poll?: boolean }) {
   });
 }
 
-// ─── Estimate (live fare quote while composing the booking) ────────────────
 export function useScheduledEstimate() {
   return useMutation({
     mutationFn: (req: EstimateScheduledRequest) => scheduled.estimateScheduled(req),
@@ -52,7 +48,6 @@ export function useScheduledEstimate() {
   });
 }
 
-// ─── Create ──────────────────────────────────────────────────────────────────
 // `draftScope` identifies the in-progress draft (e.g. a per-screen-mount token)
 // so its persisted Idempotency-Key survives an app kill and is cleared only
 // once the create has definitively resolved.
@@ -78,7 +73,6 @@ export function useCreateScheduled(draftScope: string) {
   });
 }
 
-// ─── Reschedule / edit (only while status === 'scheduled') ─────────────────
 export function useRescheduleScheduled(id?: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -91,7 +85,6 @@ export function useRescheduleScheduled(id?: string) {
   });
 }
 
-// ─── Cancel ──────────────────────────────────────────────────────────────────
 export function useCancelScheduled(id?: string) {
   const qc = useQueryClient();
   return useMutation({

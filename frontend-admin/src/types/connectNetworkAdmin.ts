@@ -1,4 +1,3 @@
-// ── Types — Paymax Connect Phase 6 (Professional Network) admin console ───────
 // Backend contract: /api/connect/admin/networking/*  (camelCase JSON, {data:...}).
 // PN-1 SAFETY: raw trust/strength numbers are NEVER surfaced. Where a trust signal
 // is relevant we carry only a coarse, non-numeric band (see TrustBand).
@@ -15,7 +14,6 @@ export interface ReviewResult {
   reviewedAt: string;
 }
 
-// ── ADM-JB-01 · Job posting moderation ───────────────────────────────────────
 export type JobModerationStatus = 'pending' | 'approved' | 'rejected' | 'flagged';
 
 export interface JobPosting {
@@ -31,7 +29,6 @@ export interface JobPosting {
   submittedAt: string;
 }
 
-// ── ADM-JB-02 · Referral bounty payout queue ─────────────────────────────────
 export type BountyState = 'bounty_payable' | 'approved' | 'released' | 'held' | 'rejected';
 
 export interface BountyPayout {
@@ -47,7 +44,6 @@ export interface BountyPayout {
   createdAt: string;
 }
 
-// ── ADM-CN-01 · Content moderation queue (reported posts/comments) ────────────
 export type ContentReportStatus = 'open' | 'reviewing' | 'actioned' | 'dismissed';
 
 export interface ContentReport {
@@ -63,7 +59,6 @@ export interface ContentReport {
   createdAt: string;
 }
 
-// ── ADM-CP-01 · Company page claim review ────────────────────────────────────
 export type ClaimStatus = 'claim_submitted' | 'under_review' | 'approved' | 'rejected';
 
 export interface CompanyPageClaim {
@@ -78,7 +73,6 @@ export interface CompanyPageClaim {
   submittedAt: string;
 }
 
-// ── ADM-SA-01 · Question bank / assessment management ────────────────────────
 export interface SkillAssessment {
   id: string;
   domain: string;
@@ -111,7 +105,6 @@ export interface MentorshipReport {
   createdAt: string;
 }
 
-// ── ADM-GM-01 · Loyalty (Paymax Black) event audit ───────────────────────────
 export interface LoyaltyAuditEntry {
   id: string;
   module: string; // always 'connect' for Phase-6 grants

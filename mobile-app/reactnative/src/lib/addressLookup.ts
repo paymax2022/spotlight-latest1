@@ -1,11 +1,9 @@
-// ── Unified address lookup ───────────────────────────────────────────────────
 // One resolver for every consumer address-capture surface (food delivery, parcel
 // pickup/drop-off). It goes through the backend MapService proxy — the provider-
 // agnostic stack now standardized on Google (autocomplete + geocoding + reverse),
 // which keeps the provider key server-side and returns Plus Codes for Nigeria
 // delivery accuracy. When the proxy is unreachable (local dev / demo builds), it
 // degrades to a deterministic OFFLINE geocoder so the field never goes dead.
-//
 // Everything below returns ONE normalized shape (`AddressHit`) so the UI never
 // has to know which provider answered. A hit may arrive WITHOUT coordinates
 // (Google text suggestions); call `resolveCoordinate` before relying on lat/lng.
@@ -61,9 +59,6 @@ interface LookupOpts {
   limit?: number;
 }
 
-// ── Proxy circuit-breaker ────────────────────────────────────────────────────
-// If the proxy is disabled (FEATURE_MAPS_ENABLED=false) or down, the first call
-// fails fast; we then skip it for a short window so every keystroke doesn't pay
 // a round-trip + timeout before falling back to the offline geocoder.
 const PROXY_COOLDOWN_MS = 60_000;
 let proxyDownUntil = 0;
@@ -107,7 +102,6 @@ function aborted(e: unknown): boolean {
   return (e as { name?: string })?.name === 'AbortError';
 }
 
-// ── Offline fallback geocoder ────────────────────────────────────────────────
 // Last-resort, zero-dependency address resolution for environments where neither
 // the maps proxy (Google) is available (local dev, demo and
 // preview builds). Without it, a dead geocoder leaks the provider's raw error
@@ -115,8 +109,6 @@ function aborted(e: unknown): boolean {
 // query yields selectable suggestions WITH coordinates, so address capture never
 // errors and the distance-based delivery fee can still compute. Deterministic:
 // the same typed text always maps to the same coordinate.
-//
-// Set EXPO_PUBLIC_ADDRESS_OFFLINE=false to disable (e.g. to force a hard failure
 // when a real provider is expected).
 const OFFLINE_DISABLED = process.env.EXPO_PUBLIC_ADDRESS_OFFLINE === 'false';
 

@@ -1,4 +1,3 @@
-// ── Admin — Paymax Stays (hotel booking) ops control-plane service ───────────
 // Mock by default (mirrors connect / insurance admin services). Flip with
 // NEXT_PUBLIC_STAYS_USE_MOCK=false to hit the live Go backend at /api/stays/admin/*.
 // RBAC: stays.admin.* gates wired on the sidebar.
@@ -45,6 +44,7 @@ import type {
   Agent,
   KycCase,
   KycDecision,
+  KycDecisionVerb,
   KycStatus,
   AdminUserRole,
   AuditLog,
@@ -57,7 +57,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_STAYS_USE_MOCK';
 
 // apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
-// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
 // here stopped matching once the proxy migration landed (apiBaseUrl stopped
 // ending in /api/v1), silently no-op'ing this replace and leaving every call
 // pointed at the bare proxy root instead of .../api/stays/admin/... — see
@@ -68,10 +67,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -97,7 +93,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
 // KYC, markup-rules, or generic reservation "manual action" route exists
 // anywhere in the stays backend, and "reconciliation" here doesn't match the
 // real "remittances" subsystem's shape closely enough to just repoint the URL.
-// Functions with a real route throw NOT_IN_FIXTURE_MODE; functions with no
 // reachable route throw NO_BACKEND_YET instead, since flipping the mock flag
 // would not reach a working call either way. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
@@ -108,7 +103,6 @@ const NO_BACKEND_YET =
   'has no backend yet (see the comment on the live-mode call below). ' +
   'This console cannot perform this action until that endpoint is built.';
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -125,9 +119,7 @@ const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).to
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 const dateAhead = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Overview / supply
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: StaysDashboard = {
   gmv_today_kobo: 41_820_000_00,
   gmv_30d_kobo: 1_184_500_000_00,
@@ -229,7 +221,6 @@ export async function getMappingQueue(opts?: { status?: string }): Promise<Mappi
 }
 export async function resolveMapping(id: string, payload: { status: MappingStatus; note?: string }): Promise<MappingResolution> {
   if (USE_MOCK) throw new Error(`Resolving a mapping ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /mapping-queue/:id/decision (staysadmin.Handler.DecideMapping) — the OLD
   // /mapping/:id/resolve path here matched no route; fixed to the real one.
   return sendJson<MappingResolution>('POST', `/mapping-queue/${encodeURIComponent(id)}/decision`, payload);
 }
@@ -249,12 +240,10 @@ export async function listModeration(opts?: { status?: string }): Promise<Modera
     return r;
   }
   const qs = opts?.status ? `?status=${encodeURIComponent(opts.status)}` : '';
-  return getJson<ModerationItem[]>(`/moderation${qs}`);
+  return getJson<ModerationItem[]>(`/properties${qs}`);
 }
 export async function approveProperty(id: string, payload: { status: ModerationStatus; note?: string }): Promise<ModerationDecision> {
   if (USE_MOCK) throw new Error(`Deciding a property listing ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /properties/:id/status (staysadmin.Handler.ModerateProperty) — the OLD
-  // /moderation/:id/decide path here matched no route; fixed to the real one.
   return sendJson<ModerationDecision>('POST', `/properties/${encodeURIComponent(id)}/status`, payload);
 }
 
@@ -295,9 +284,7 @@ export async function getCoverage(): Promise<CoverageRow[]> {
   return getJson<CoverageRow[]>('/coverage');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Reservations / support
-// ════════════════════════════════════════════════════════════════════════════
 const RESERVATIONS: ReservationDetail[] = [
   {
     id: 'rsv_88210', supplier_ref: 'DIR-CONF-77120', rail: 'DIRECT', supplier_code: 'direct', property_name: 'Eko Hotels & Suites',
@@ -481,9 +468,7 @@ export async function listOverbooking(opts?: { status?: string; case_type?: stri
   return getJson<OverbookingCase[]>(`/overbooking${s ? `?${s}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Money / pricing
-// ════════════════════════════════════════════════════════════════════════════
 const RECONCILIATION: ReconciliationSummary = {
   open_breaks: 9,
   break_value_kobo: 7_240_500_00,
@@ -600,9 +585,7 @@ export async function listCommission(opts?: { rail?: string; reconciled?: boolea
   return getJson<CommissionEntry[]>(`/commission${s ? `?${s}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Growth / content
-// ════════════════════════════════════════════════════════════════════════════
 const LOYALTY: LoyaltyConfig = {
   enabled: true, program_name: 'Paymax Stays Rewards', point_value_kobo: 100, expiry_months: 18,
   members: 28_410, points_outstanding: 4_182_000, liability_kobo: 418_200_000,
@@ -702,9 +685,7 @@ export async function listMerchandising(opts?: { placement?: string; status?: st
   return getJson<MerchandisingSlot[]>(`/merchandising${s ? `?${s}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Trust / risk / agents
-// ════════════════════════════════════════════════════════════════════════════
 const FRAUD: FraudCase[] = [
   { id: 'frd_1', reservation_id: 'rsv_88120', rail: 'BEDBANK', guest_masked: 'Tunde A••••', risk_score: 82, signals: ['velocity_5_bookings_1h', 'new_device', 'mismatched_billing_geo'], amount_kobo: 312_000_00, currency: 'NGN', status: 'open', detail: 'High booking velocity + new device on non-refundable rate.', created_at: iso(0.4) },
   { id: 'frd_2', reservation_id: 'rsv_87880', rail: 'BEDBANK', guest_masked: 'Emeka U••••', risk_score: 67, signals: ['chargeback_history', 'high_value'], amount_kobo: 540_000_00, currency: 'NGN', status: 'reviewing', detail: 'Prior chargeback on file; high-value booking.', created_at: iso(48) },
@@ -758,31 +739,36 @@ export async function listAgents(opts?: { status?: string }): Promise<Agent[]> {
 }
 
 const KYC: KycCase[] = [
-  { id: 'kyc_1', hotelier_masked: 'Femi O••••', business_name: 'Nordic Hospitality Ltd', city: 'Lagos', doc_types: ['CAC', 'Director ID', 'Bank statement'], cac_number_masked: 'RC ••••4421', bank_verified: false, status: 'pending', risk_flags: ['bank_name_mismatch'], submitted_at: iso(20) },
-  { id: 'kyc_2', hotelier_masked: 'Aisha M••••', business_name: 'BON Hotels Nigeria', city: 'Abuja', doc_types: ['CAC', 'TIN', 'Director ID'], cac_number_masked: 'RC ••••8810', bank_verified: true, status: 'pending', risk_flags: [], submitted_at: iso(40) },
-  { id: 'kyc_3', hotelier_masked: 'Bola A••••', business_name: 'Wheatbaker Ltd', city: 'Lagos', doc_types: ['CAC', 'TIN', 'Director ID', 'Proof of address'], cac_number_masked: 'RC ••••2201', bank_verified: true, status: 'approved', risk_flags: [], submitted_at: iso(120) },
-  { id: 'kyc_4', hotelier_masked: 'Chika E••••', business_name: 'VI Lodge Ventures', city: 'Lagos', doc_types: ['CAC'], cac_number_masked: 'RC ••••0099', bank_verified: false, status: 'rejected', risk_flags: ['cac_unverified', 'pep_match'], submitted_at: iso(200) },
+  { property_id: 'prop_1', property_name: 'Nordic Hotel Lekki', city: 'Lagos', legal_name: 'Nordic Hospitality Ltd', business_type: 'limited_company', rc_number_masked: 'RC ••••4421', has_tin: true, director_masked: 'Femi O••••', director_bvn_last4: '8901', kyc_status: 'submitted', business_doc_status: 'submitted', status: 'submitted', submitted_at: iso(20) },
+  { property_id: 'prop_2', property_name: 'BON Hotel Abuja', city: 'Abuja', legal_name: 'BON Hotels Nigeria', business_type: 'limited_company', rc_number_masked: 'RC ••••8810', has_tin: true, director_masked: 'Aisha M••••', director_bvn_last4: '1122', kyc_status: 'submitted', business_doc_status: 'submitted', status: 'submitted', submitted_at: iso(40) },
+  { property_id: 'prop_3', property_name: 'The Wheatbaker Ikoyi', city: 'Lagos', legal_name: 'Wheatbaker Ltd', business_type: 'limited_company', rc_number_masked: 'RC ••••2201', has_tin: true, director_masked: 'Bola A••••', director_bvn_last4: '3344', kyc_status: 'approved', business_doc_status: 'approved', status: 'approved', submitted_at: iso(120), reviewed_at: iso(100) },
 ];
+/** Live: the KYB review queue — GET /api/stays/admin/kyb (stays.admin.hotelier). */
 export async function listKyc(opts?: { status?: string }): Promise<KycCase[]> {
   if (USE_MOCK) {
     await delay();
-    let r = KYC.map((x) => ({ ...x, doc_types: [...x.doc_types], risk_flags: [...x.risk_flags] }));
+    let r = KYC.map((x) => ({ ...x }));
     if (opts?.status) r = r.filter((x) => x.status === opts.status);
     return r;
   }
   const qs = opts?.status ? `?status=${encodeURIComponent(opts.status)}` : '';
-  return getJson<KycCase[]>(`/kyc${qs}`);
+  return getJson<KycCase[]>(`/kyb${qs}`);
 }
-export async function decideKyc(id: string, payload: { status: KycStatus; note?: string }): Promise<KycDecision> {
-  // No backend at all: no KYC route anywhere in backend/internal/stays (confirmed
-  // by grep) — stays has no KYC subsystem of its own.
-  if (USE_MOCK) throw new Error(`Deciding a KYC case ${NO_BACKEND_YET}`);
-  return sendJson<KycDecision>('POST', `/kyc/${encodeURIComponent(id)}/decide`, payload);
+/**
+ * Live: POST /api/stays/admin/hoteliers/:propertyId/kyb/decision. The backend
+ * requires a note to reject or request changes; refuse here too so the operator
+ * gets the reason before a round-trip.
+ */
+export async function decideKyc(propertyId: string, payload: { decision: KycDecisionVerb; note?: string }): Promise<KycDecision> {
+  if (USE_MOCK) throw new Error(`Deciding a KYB case ${NOT_IN_FIXTURE_MODE}`);
+  if (payload.decision !== 'approve' && !payload.note?.trim()) {
+    throw new Error('A note is required to reject or request changes.');
+  }
+  const out = await sendJson<{ overall?: KycStatus }>('POST', `/hoteliers/${encodeURIComponent(propertyId)}/kyb/decision`, payload);
+  return { id: propertyId, status: out?.overall ?? 'pending' };
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Platform
-// ════════════════════════════════════════════════════════════════════════════
 const USERS_ROLES: AdminUserRole[] = [
   { id: 'u_1', user_masked: 'Ops Lead — Ada O••••', email_masked: 'a••@paymax.ng', roles: ['stays_ops_admin'], permissions: ['stays.admin.reservation', 'stays.admin.refund', 'stays.admin.recon'], last_active: iso(1), status: 'active' },
   { id: 'u_2', user_masked: 'Supply Mgr — Femi O••••', email_masked: 'f••@paymax.ng', roles: ['stays_supply_admin'], permissions: ['stays.admin.supplier', 'stays.admin.mapping', 'stays.admin.moderation'], last_active: iso(3), status: 'active' },

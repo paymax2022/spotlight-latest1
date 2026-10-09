@@ -31,12 +31,13 @@ export async function POST(request: Request) {
       throw new ApiError('Idempotency-Key header is required', 400);
     }
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       recipient_identifier?: unknown;
       amount_kobo?: unknown;
       narration?: unknown;
       pin?: unknown;
     };
+    if (!body) throw new ApiError('Invalid JSON body', 400);
 
     const recipientIdentifier = String(body.recipient_identifier ?? '').trim();
     if (!recipientIdentifier) {

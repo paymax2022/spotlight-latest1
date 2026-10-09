@@ -32,7 +32,7 @@ func TestRequireAdmin_UnconfiguredKey(t *testing.T) {
 			r.GET("/admin/x", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/x", nil))
+			r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/x", nil))
 			if w.Code != tc.want {
 				t.Fatalf("APP_ENV=%q with no key: got %d, want %d", tc.appEnv, w.Code, tc.want)
 			}
@@ -49,7 +49,7 @@ func TestRequireAdmin_ConfiguredKeyEnforcedEvenInDevelopment(t *testing.T) {
 		r.Use(RequireAdmin("real-key", env))
 		r.GET("/admin/x", func(c *gin.Context) { c.Status(http.StatusOK) })
 
-		wrong := httptest.NewRequest(http.MethodGet, "/admin/x", nil)
+		wrong := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/x", nil)
 		wrong.Header.Set("x-admin-api-key", "guess")
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, wrong)
@@ -57,7 +57,7 @@ func TestRequireAdmin_ConfiguredKeyEnforcedEvenInDevelopment(t *testing.T) {
 			t.Fatalf("APP_ENV=%s wrong key: got %d, want 401", env, w.Code)
 		}
 
-		right := httptest.NewRequest(http.MethodGet, "/admin/x", nil)
+		right := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/x", nil)
 		right.Header.Set("x-admin-api-key", "real-key")
 		w = httptest.NewRecorder()
 		r.ServeHTTP(w, right)

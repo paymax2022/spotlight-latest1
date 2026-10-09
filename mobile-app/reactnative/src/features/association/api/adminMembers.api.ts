@@ -1,9 +1,8 @@
-// ── Association — Admin RBAC & member actions API (Q depth) ───────────────────
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
-import type { AdminAccess, AdminRole, MemberActionResult } from '../types/adminRole.types';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
+import type { AdminAccess, AdminRole, MemberActionResult } from '../types';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 

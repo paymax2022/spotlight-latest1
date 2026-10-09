@@ -1,9 +1,14 @@
 package healthlab
 
-import "time"
+import (
+	"errors"
+	"math"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/internal/health/labref"
+	"strings"
+	"time"
+)
 
-// ─── LabOrder state machine (HEALTH-BUILD §5) ───────────────────────────────
-//
 // LabOrder: CREATED → SCHEDULED → SAMPLE_COLLECTED → IN_TRANSIT → ACCESSIONED
 //
 //	→ PROCESSING → RESULT_READY → RELEASED → CLOSED
@@ -35,27 +40,23 @@ const (
 // never a raw status write. RESULT_READY may go straight to RELEASED only when no
 // critical/abnormal value is present; a critical value forces RESULT_READY →
 // ESCALATED → RELEASED so the HL-7 human escalation is never skipped.
-var allowedOrderTransitions = map[OrderState]map[OrderState]bool{
-	StateCreated:         {StateScheduled: true, StateCancelled: true},
-	StateScheduled:       {StateSampleCollected: true, StateCancelled: true},
-	StateSampleCollected: {StateInTransit: true, StateAccessioned: true, StateCancelled: true},
-	StateInTransit:       {StateAccessioned: true},
-	StateAccessioned:     {StateProcessing: true},
-	StateProcessing:      {StateResultReady: true},
-	StateResultReady:     {StateEscalated: true, StateReleased: true},
-	StateEscalated:       {StateReleased: true},
-	StateReleased:        {StateClosed: true},
-	StateClosed:          {},
-	StateCancelled:       {StateRefunded: true},
-	StateRefunded:        {},
+var allowedOrderTransitions = fsm.Table[OrderState]{
+	StateCreated:         fsm.Set(StateScheduled, StateCancelled),
+	StateScheduled:       fsm.Set(StateSampleCollected, StateCancelled),
+	StateSampleCollected: fsm.Set(StateInTransit, StateAccessioned, StateCancelled),
+	StateInTransit:       fsm.Set(StateAccessioned),
+	StateAccessioned:     fsm.Set(StateProcessing),
+	StateProcessing:      fsm.Set(StateResultReady),
+	StateResultReady:     fsm.Set(StateEscalated, StateReleased),
+	StateEscalated:       fsm.Set(StateReleased),
+	StateReleased:        fsm.Set(StateClosed),
+	StateClosed:          fsm.Set[OrderState](),
+	StateCancelled:       fsm.Set(StateRefunded),
+	StateRefunded:        fsm.Set[OrderState](),
 }
 
 func canTransitionOrder(from, to OrderState) bool {
-	next, ok := allowedOrderTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedOrderTransitions.Can(from, to)
 }
 
 // isPreCollection reports whether an order may still be cancelled (HL-9: refund is
@@ -65,8 +66,6 @@ func isPreCollection(s OrderState) bool {
 	return s == StateCreated || s == StateScheduled || s == StateSampleCollected
 }
 
-// ─── Sample / ChainOfCustody state machine (HEALTH-BUILD §5, HL-6) ──────────
-//
 // Sample/Custody: COLLECTED → IN_CUSTODY → HANDED_OVER → ACCESSIONED
 //
 //	(break detected) → BREACHED → RECOLLECT_REQUIRED
@@ -86,29 +85,23 @@ const (
 	SampleRecollectRequired SampleState = "RECOLLECT_REQUIRED"
 )
 
-var allowedSampleTransitions = map[SampleState]map[SampleState]bool{
-	// SampleHandedOver is missing here would make Handover() unreachable from
+var allowedSampleTransitions = fsm.Table[SampleState]{
+	// SampleHandedOver missing here would make Handover() unreachable from
 	// its own documented starting state — Handover's switch treats
 	// SampleCollected as valid (the phlebotomist → courier handoff, per the
 	// package's own "phlebotomist → courier → lab" doc comment), but without
 	// this edge canTransitionSample rejects every such call with "illegal
 	// sample transition COLLECTED -> HANDED_OVER" regardless of caller.
-	// Found live via UAT — the standard courier handover step was completely
-	// blocked end to end.
-	SampleCollected:         {SampleInCustody: true, SampleHandedOver: true, SampleAccessioned: true, SampleBreached: true},
-	SampleInCustody:         {SampleHandedOver: true, SampleAccessioned: true, SampleBreached: true},
-	SampleHandedOver:        {SampleAccessioned: true, SampleBreached: true},
-	SampleAccessioned:       {},
-	SampleBreached:          {SampleRecollectRequired: true},
-	SampleRecollectRequired: {},
+	SampleCollected:         fsm.Set(SampleInCustody, SampleHandedOver, SampleAccessioned, SampleBreached),
+	SampleInCustody:         fsm.Set(SampleHandedOver, SampleAccessioned, SampleBreached),
+	SampleHandedOver:        fsm.Set(SampleAccessioned, SampleBreached),
+	SampleAccessioned:       fsm.Set[SampleState](),
+	SampleBreached:          fsm.Set(SampleRecollectRequired),
+	SampleRecollectRequired: fsm.Set[SampleState](),
 }
 
 func canTransitionSample(from, to SampleState) bool {
-	next, ok := allowedSampleTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedSampleTransitions.Can(from, to)
 }
 
 // chainIntact reports whether a sample state is on the unbroken custody path
@@ -142,8 +135,6 @@ func needsEscalation(s ResultStatus) bool {
 	return s == ResultCritical || s == ResultAbnormal
 }
 
-// ─── Catalog ─────────────────────────────────────────────────────────────────
-
 // Test is a single laboratory test in the catalog. prep_instructions and
 // tat_hours (turnaround) are surfaced to the patient before booking. price_kobo is
 // minor units (NL-8). A test is listed only by a verified MLSCN lab (HL-2).
@@ -174,8 +165,6 @@ type Package struct {
 	Active           bool      `json:"active"`
 	CreatedAt        time.Time `json:"created_at"`
 }
-
-// ─── Order + lines ───────────────────────────────────────────────────────────
 
 // Order is a LabOrder. The held money lives in the shared escrow account (HL-9,
 // no balance column); EscrowID is the funds-hold reference. CollectionMethod is
@@ -220,8 +209,6 @@ type ProviderOrderSummary struct {
 	HasCritical      bool             `json:"has_critical"`
 }
 
-// ─── Sample + custody ────────────────────────────────────────────────────────
-
 // Sample is a specimen collected for a LabOrder. State tracks the chain-of-custody
 // position. CustodianID is the current holder (phlebotomist → lab). A BREACHED
 // sample forces RECOLLECT_REQUIRED and blocks any result (HL-6).
@@ -250,8 +237,6 @@ type CustodyEvent struct {
 	OccurredAt    time.Time   `json:"occurred_at"`
 }
 
-// ─── Result ──────────────────────────────────────────────────────────────────
-
 // Result is a scientist-entered, validated test result. Status drives HL-7
 // escalation. ValidatedBy is the scientist who validated; ReleasedBy is the
 // sign-off scientist (may be the same). The result body is minimised; the
@@ -277,4 +262,126 @@ type Result struct {
 	AmendedBy       *string    `json:"amended_by,omitempty"`
 	AmendedAt       *time.Time `json:"amended_at,omitempty"`
 	AmendmentReason string     `json:"amendment_reason,omitempty"`
+}
+
+// canReleaseFrom reports whether an order in `state` may be signed off and released
+// (LR-004). Only a validated RESULT_READY order, or one already ESCALATED (critical
+// values surfaced for human review), can proceed — so a result is never released
+// before an authorized scientist has entered and validated it, and a released order
+// is never re-released. This mirrors the guarded order state machine
+// (allowedOrderTransitions); Release also requires a verified scientist (HL-2) and
+// stamps released_by for attribution.
+func canReleaseFrom(state OrderState) bool {
+	return state == StateResultReady || state == StateEscalated
+}
+
+// Payment/cart money errors (TS-13). Amounts are integer minor units (kobo) — no
+// floats anywhere on the money path.
+var (
+	ErrNegativeLinePrice = errors.New("lab: line price must not be negative")
+	ErrTotalOverflow     = errors.New("lab: order total overflows")
+)
+
+// sumLineKobo sums integer minor-unit (kobo) line prices exactly (PM-008/PM-011:
+// cart totals are exact with no drift). It rejects a negative line price (which
+// could silently offset the total) and guards against int64 overflow (no
+// wrap-around). The catalog is the source of prices; this is the server-side total.
+func sumLineKobo(prices []int64) (int64, error) {
+	var total int64
+	for _, p := range prices {
+		if p < 0 {
+			return 0, ErrNegativeLinePrice
+		}
+		if total > math.MaxInt64-p {
+			return 0, ErrTotalOverflow
+		}
+		total += p
+	}
+	return total, nil
+}
+
+// ErrBarcodeMismatch signals a scanned barcode that does not match the sample's
+// minted barcode on record — a possible tube swap or mislabel (EC-001/LB-005).
+// Accessioning and result entry reject it: no result on an unverified
+// sample↔patient bond (§4.3 "right patient, right result").
+var ErrBarcodeMismatch = errors.New("lab: scanned barcode does not match the sample on record (possible mix-up) — recollection/verification required")
+
+// normalizeBarcode canonicalizes a barcode for comparison (case + surrounding
+// whitespace only; internal characters are significant).
+func normalizeBarcode(b string) string { return strings.ToUpper(strings.TrimSpace(b)) }
+
+// verifyBarcodeScan checks a scanned barcode against the sample's minted barcode.
+// An empty scan means the step did not scan (backward-compatible for flows that
+// don't) and passes; a non-empty scan MUST match the recorded barcode exactly
+// (after normalization), else ErrBarcodeMismatch. A scan against a sample that has
+// no recorded barcode is a mismatch — there is nothing to bind against.
+func verifyBarcodeScan(scanned, expected string) error {
+	if strings.TrimSpace(scanned) == "" {
+		return nil
+	}
+	if normalizeBarcode(scanned) != normalizeBarcode(expected) {
+		return ErrBarcodeMismatch
+	}
+	return nil
+}
+
+// authorizeOrderAccess is the pure object-level read decision for a lab order and
+// its results/custody (LR-010, §4.6). Fail-closed: an empty requester is never
+// authorized (guards the empty-requester/empty-owner fail-open); otherwise the
+// data-subject patient, the owning lab, or an admin may read — everyone else is
+// denied (cross-patient IDOR).
+func authorizeOrderAccess(requesterID, patientID, labOwner string, isAdmin bool) bool {
+	if strings.TrimSpace(requesterID) == "" {
+		return false
+	}
+	if isAdmin {
+		return true
+	}
+	return requesterID == patientID || (labOwner != "" && requesterID == labOwner)
+}
+
+// statusRank orders result severity for the never-downgrade backstop.
+func statusRank(s ResultStatus) int {
+	switch s {
+	case ResultCritical:
+		return 2
+	case ResultAbnormal:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func labrefToStatus(s labref.Status) (ResultStatus, bool) {
+	switch s {
+	case labref.StatusCritical:
+		return ResultCritical, true
+	case labref.StatusAbnormal:
+		return ResultAbnormal, true
+	case labref.StatusNormal:
+		return ResultNormal, true
+	default: // UNKNOWN — cannot machine-interpret; keep the entered status
+		return "", false
+	}
+}
+
+// deriveEffectiveStatus is the fail-safe result backstop (LR-002/003, §4.4/§4.12).
+// It runs the pure labref interpreter over the entered value/unit/reference range
+// and:
+//   - NEVER downgrades the scientist's manual status, and
+//   - UPGRADES it when the engine derives a more severe interpretation (e.g. a
+//     panic potassium entered as NORMAL becomes CRITICAL) — so a critical value
+//     can never be silently released without the HL-7 escalation path.
+//
+// It also reports a unit mismatch (mg/dL vs mmol/L transposition) so EnterResults
+// can reject the line (LR-008/EC-002) rather than interpret a wrong-unit value.
+func deriveEffectiveStatus(entered ResultStatus, analyte, value, unit, refRange string) (ResultStatus, bool) {
+	var effective ResultStatus
+
+	interp := labref.Interpret(analyte, value, unit, refRange)
+	effective = entered
+	if derived, ok := labrefToStatus(interp.Status); ok && statusRank(derived) > statusRank(entered) {
+		effective = derived
+	}
+	return effective, interp.UnitMismatch
 }

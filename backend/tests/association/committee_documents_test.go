@@ -1,25 +1,18 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Committee membership management, and document-vault access.
-//
 // WHY THIS EXISTS
-// ---------------
 // A member could ASK to join a committee and nobody could answer: the request
 // wrote a PENDING row and there was no endpoint to accept or decline it, add
 // anyone directly, remove anyone, or give them a position. The committee member
 // list was therefore a list nobody could change.
-//
 // The document vault had the mirror problem: documents could be listed and
 // acknowledged, but the file behind one could not be fetched — the bucket is
 // not public, so a stored object key is not a URL.
-//
 // The properties pinned here are the access ones, because both features hand
 // out things that are meant to be scoped: committee membership, and a signed URL
 // to an organisation's private documents.
-//
 // Live-DB, same harness as founder_and_scoping_test.go.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -46,8 +39,8 @@ func TestCommitteeRequests_ApproveDeclineAndAuthority(t *testing.T) {
 		t.Fatalf("seed committee: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
 	})
 
 	var membership string
@@ -127,8 +120,8 @@ func TestCommitteeRequests_DeclineLetsThemAskAgain(t *testing.T) {
 		t.Fatalf("seed committee: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
 	})
 	var membership string
 	if err := pool.QueryRow(ctx,
@@ -174,14 +167,14 @@ func TestAddCommitteeMembers_DropsForeignMemberships(t *testing.T) {
 	_, foreign := seedMember(t, ctx, pool, resB.OrganisationID, "@cmteforeign.test")
 
 	var committeeID string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`INSERT INTO assoc_committees (organisation_id, name) VALUES ($1,'Members only') RETURNING id::text`,
 		orgA).Scan(&committeeID); err != nil {
 		t.Fatalf("seed committee: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
 	})
 
 	n, err := svc.AddCommitteeMembers(ctx, adminA, committeeID, []string{foreign})
@@ -219,7 +212,9 @@ func TestResolveDocumentDownload_ScopesToTheOrganisation(t *testing.T) {
 	openDoc = seed("Constitution", "association/document/"+orgID+"/abc.pdf", false)
 	restrictedDoc = seed("Board minutes", "association/document/"+orgID+"/def.pdf", true)
 	filelessDoc = seed("Legacy entry", "", false)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM assoc_documents WHERE organisation_id=$1`, orgID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_documents WHERE organisation_id=$1`, orgID)
+	})
 
 	// A member of the organisation can fetch an open document.
 	key, err := svc.ResolveDocumentDownload(ctx, memberID, openDoc)
@@ -241,12 +236,12 @@ func TestResolveDocumentDownload_ScopesToTheOrganisation(t *testing.T) {
 	// An outsider gets nothing, and the same answer as for a document that does
 	// not exist, so the endpoint does not confirm what it will not serve.
 	outsider := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		outsider, outsider+"@docoutsider.test"); err != nil {
 		t.Fatalf("seed outsider: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, outsider)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsider) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, outsider) })
 	if _, err := svc.ResolveDocumentDownload(ctx, outsider, openDoc); err == nil {
 		t.Error("an outsider must not get a download URL for another organisation's document")
 	}

@@ -1,4 +1,3 @@
-// ── Paymax · Admin — AdminHeader ─────────────────────────────────────────────
 // Shared screen header (back arrow + title) with a role chip in the right slot
 // showing the currently-selected admin role. Composes the shared ScreenHeader.
 

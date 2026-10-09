@@ -1,8 +1,6 @@
-// ── Paymax · Admin Console — Asset controls ──────────────────────────────────
 // Trading controls per tradable asset, filtered by kind (crypto / stock) and
 // searchable by symbol. Each asset → AssetControlRow with buy/sell/withdrawal
 // toggles. With `asset.config` a sensitive toggle requires a reason (collected in
-// a confirm sheet) before it calls useUpdateAssetControl().mutate({id, patch});
 // the change may enter a maker-checker pending state (surfaced from the response).
 // Fee / min / max are editable via a small inline editor, also permission-gated.
 // Without permission everything renders read-only (disabled).
@@ -11,11 +9,11 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, Modal, Pressable, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SlidersHorizontal } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
@@ -80,7 +78,6 @@ export default function AdminAssetsScreen() {
     return list.filter((a) => a.kind === kind && (!q || a.symbol.toLowerCase().includes(q)));
   }, [list, kind, query]);
 
-  // ─── Toggle (sensitive → reason required) ──────────────────────────────────
   const requestToggle = (asset: AssetControl, field: ToggleField, next: boolean) => {
     if (!canEdit) return;
     setNotice(undefined);
@@ -113,7 +110,6 @@ export default function AdminAssetsScreen() {
     );
   };
 
-  // ─── Inline fee / min / max editor ─────────────────────────────────────────
   const beginEdit = (asset: AssetControl) => {
     setEditId(asset.id);
     setFeeBps(String(asset.feeBps));

@@ -1,10 +1,8 @@
 package healthlab
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for two defects found live during Laboratory
 // (Module 16) UAT, both in Handover (chain-of-custody phlebotomist → courier
 // handoff, HL-6):
-//
 //   - allowedSampleTransitions had no SampleCollected -> SampleHandedOver
 //     edge, even though Handover's own switch treats SampleCollected as a
 //     valid starting state. Every handover call failed with "illegal sample
@@ -14,9 +12,7 @@ package healthlab
 //     custody-mutating action in this package (Collect, Accession): any
 //     authenticated caller, including the order's own patient, could
 //     reassign chain-of-custody to an arbitrary custodian.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -35,7 +31,7 @@ func handoverPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping lab handover live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -97,13 +93,13 @@ func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		t.Fatalf("seed sample: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, sampleID)
-		pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, sampleID)
-		pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, sampleID)
+		_, _ = pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, sampleID)
+		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
 	})
-	return
+	return labID, orderID, sampleID, phleboID, strangerID, patientID
 }
 
 // TestLiveDB_Handover_CollectedToHandedOverSucceeds locks the transition-map
@@ -111,8 +107,8 @@ func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 // phlebotomist of the owning lab.
 func TestLiveDB_Handover_CollectedToHandedOverSucceeds(t *testing.T) {
 	pool := handoverPool(t)
-	ctx := context.Background()
-	labID, _, sampleID, phleboID, _, _ := seedHandoverFixture(t, ctx, pool)
+	ctx := t.Context()
+	labID, _, sampleID, phleboID, _, _ := seedHandoverFixture(t, ctx, pool) //nolint:dogsled // tuple: subset needed
 
 	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, verifiedPhlebotomistID: phleboID}, nil, nil, nil, nil)
 
@@ -139,7 +135,7 @@ func TestLiveDB_Handover_CollectedToHandedOverSucceeds(t *testing.T) {
 // must be refused, never allowed to reassign custody.
 func TestLiveDB_Handover_RejectsCallerWithoutPhlebotomistCredential(t *testing.T) {
 	pool := handoverPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	labID, _, sampleID, phleboID, strangerID, patientID := seedHandoverFixture(t, ctx, pool)
 
 	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, verifiedPhlebotomistID: phleboID}, nil, nil, nil, nil)

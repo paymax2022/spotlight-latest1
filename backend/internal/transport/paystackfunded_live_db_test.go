@@ -1,12 +1,10 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for RequestRidePaystackFunded / QuoteRide
 // (backend/internal/transport/mobility_service.go), the externally-funded
 // ride-hailing checkout path — the transport counterpart of
 // restaurant/paystackfunded_live_db_test.go. Same fixtures shape as
 // request_ride_orphan_escrow_live_db_test.go / cash_ride_live_db_test.go.
-//
 // What these pin:
 //  1. A Tier-0 rider (fresh auth.users row, on_auth_user_created defaults
 //     user_profiles.kyc_tier=0) is refused by the wallet-funded path but can
@@ -19,7 +17,6 @@ package transport
 //  6. Cancelling a Paystack-funded ride NEVER credits the rider's wallet
 //     (settlement.Refund) — it goes through the injected ExternalRefunder.
 //  7. adjustEscrow refuses to RAISE a Paystack-funded trip's held amount.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

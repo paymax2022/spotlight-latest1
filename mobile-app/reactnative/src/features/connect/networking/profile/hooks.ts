@@ -15,7 +15,6 @@ export const profileKeys = {
     [...profileKeys.all, 'recommendations', 'user', userId] as const,
 };
 
-// ── Experience (PR-07) ───────────────────────────────────────────────────────
 export function useExperience() {
   return useQuery({ queryKey: profileKeys.experience(), queryFn: () => profileApi.getExperience() });
 }
@@ -53,7 +52,6 @@ export function useDeleteExperience() {
   });
 }
 
-// ── Education (PR-08) ────────────────────────────────────────────────────────
 export function useEducation() {
   return useQuery({ queryKey: profileKeys.education(), queryFn: () => profileApi.getEducation() });
 }
@@ -91,7 +89,6 @@ export function useDeleteEducation() {
   });
 }
 
-// ── About (PR-09) ────────────────────────────────────────────────────────────
 export function useAbout() {
   return useQuery({ queryKey: profileKeys.about(), queryFn: () => profileApi.getAbout() });
 }
@@ -107,12 +104,10 @@ export function useUpdateAbout() {
   });
 }
 
-// ── Strength (PR-11) — band + missing only (PN-1) ────────────────────────────
 export function useStrength() {
   return useQuery({ queryKey: profileKeys.strength(), queryFn: () => profileApi.getStrength() });
 }
 
-// ── Recommendations (RC-02 / RC-03) ──────────────────────────────────────────
 export function useRecommendationInbox() {
   return useQuery({
     queryKey: profileKeys.recommendationInbox(),

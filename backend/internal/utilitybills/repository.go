@@ -4,7 +4,6 @@ package utilitybills
 // and writes the tables created by supabase/migrations/2026061310*_utility_*.sql —
 // whose shape is NOT changed by this migration (iron rule: additive only). Every
 // column list below was taken from those migration files, not guessed.
-//
 // Access is via the pgx pool (the money-path convention in this repo), never the
 // Supabase REST client the Next.js implementation used.
 
@@ -17,24 +16,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // ErrNotFound is returned when a requested row does not exist. Handlers map it
 // to 404.
 var ErrNotFound = errors.New("utilitybills: not found")
-
-// pgUniqueViolation is Postgres's unique_violation SQLSTATE. The TS source
-// branches on the same value (`insertError.code === '23505'`) to turn a lost
-// idempotency race into a replay rather than a 500.
-const pgUniqueViolation = "23505"
-
-// isUniqueViolation reports whether err is a Postgres unique-constraint failure.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
-}
 
 // Repository owns all utility_* table access.
 type Repository struct {
@@ -44,11 +33,9 @@ type Repository struct {
 // NewRepository constructs the repository over the pgx pool.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// ── Row types ────────────────────────────────────────────────────────────────
-//
 // These are DB row shapes, deliberately separate from model.go's domain types
-// (Product/Provider/ProviderMapping), which carry only the fields pricing.go and
-// routing.go consume. Domain() converts one to the other.
+// (Product/Provider/ProviderMapping), which carry only the fields  and
+//  consume. Domain() converts one to the other.
 
 // BillerRow mirrors public.utility_billers.
 type BillerRow struct {
@@ -127,7 +114,6 @@ func (p ProviderRow) Domain() Provider {
 
 // TimeoutMs reads the provider's configured purchase timeout out of its config
 // JSONB, porting provider-timeout.ts's getUtilityProviderTimeoutMs: an integer
-// >= 1000 in config.timeout_ms wins, capped at 120s; otherwise the caller's
 // default (the env fallback, resolved once at wiring time) applies.
 func (p ProviderRow) TimeoutMs(fallbackMs int) int {
 	const minMs, maxMs = 1000, 120_000
@@ -176,8 +162,8 @@ func (m MappingRow) Domain() ProviderMapping {
 	}
 }
 
-// Route pairs a routing.go RouteCandidate with the full DB rows behind it. The
-// pure filter/sort in routing.go deliberately works on the slim domain types, so
+// Route pairs a  RouteCandidate with the full DB rows behind it. The
+// pure filter/sort in  deliberately works on the slim domain types, so
 // the service re-associates the winner with its rows by Provider.ID (unique per
 // product: utility_provider_product_mappings has UNIQUE(provider_id, product_id)).
 type Route struct {
@@ -267,8 +253,6 @@ type DisputeRow struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// ── Catalogue reads ──────────────────────────────────────────────────────────
-
 const billerCols = `id, category, name, code, country, status, requires_validation, customer_reference_label`
 
 func scanBiller(row pgx.Row) (*BillerRow, error) {
@@ -288,6 +272,21 @@ func (r *Repository) GetBiller(ctx context.Context, id string) (*BillerRow, erro
 	}
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: get biller: %w", err)
+	}
+	return b, nil
+}
+
+// GetBillerByCode loads one ACTIVE biller by its public code (the slug shown in
+// the billers list, e.g. 'vtpass-eko-electric'). Powers the member-facing
+// ?biller=<code> products filter — clients hold codes, not uuids.
+func (r *Repository) GetBillerByCode(ctx context.Context, code string) (*BillerRow, error) {
+	b, err := scanBiller(r.db.QueryRow(ctx,
+		`SELECT `+billerCols+` FROM public.utility_billers WHERE code = $1 AND status = 'active'`, code))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: utility biller code %s", ErrNotFound, code)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: get biller by code: %w", err)
 	}
 	return b, nil
 }
@@ -448,8 +447,6 @@ func (r *Repository) GetRouteCandidates(ctx context.Context, productID string) (
 	return out, rows.Err()
 }
 
-// ── Category settings ────────────────────────────────────────────────────────
-
 // GetCategorySetting loads the category-level controls, or (nil, nil) when the
 // category has no row — service.ts's assertCategoryAvailableForPayment treats a
 // missing row as "no category-level restriction", NOT as a failure.
@@ -498,7 +495,6 @@ func (r *Repository) ListCategorySettings(ctx context.Context) ([]CategorySettin
 // the TS query exactly — including its status set, which counts wallet_debited /
 // provider_pending / successful / disputed and deliberately EXCLUDES failed and
 // reversed (money that came back does not consume the day's allowance).
-//
 // One deliberate divergence, flagged: the TS source computes "today" with
 // `new Date(); start.setHours(0,0,0,0)` — midnight in the SERVER's local zone,
 // whatever that happens to be. This uses the database's own date_trunc in UTC, to
@@ -518,8 +514,6 @@ func (r *Repository) CategorySpendToday(ctx context.Context, userID, category st
 	}
 	return total, nil
 }
-
-// ── Transactions ─────────────────────────────────────────────────────────────
 
 const transactionCols = `id, user_id, category, biller_id, product_id, provider_id, provider_mapping_id,
 	customer_reference, customer_name, amount_kobo, convenience_fee_kobo, retail_amount_kobo,
@@ -544,9 +538,14 @@ func scanTransaction(row pgx.Row) (*TransactionRow, error) {
 // pay (the pre-check). The second is the unique constraint on idempotency_key,
 // caught as 23505 by InsertTransaction — a pre-check alone loses the race between
 // two concurrent identical requests.
-func (r *Repository) GetTransactionByIdempotencyKey(ctx context.Context, key string) (*TransactionRow, error) {
+// The lookup is CALLER-SCOPED (user_id = $2): replaying on key alone would hand
+// any caller another member's transaction — amount, token, customer reference —
+// on a guessed key. A foreign key colliding on insert is instead the durable
+// signal of a cross-member clash, mapped to ErrIdempotencyKeyConflict there
+// (same convention as finance/transfers' findWalletTransferByKey).
+func (r *Repository) GetTransactionByIdempotencyKey(ctx context.Context, userID, key string) (*TransactionRow, error) {
 	t, err := scanTransaction(r.db.QueryRow(ctx,
-		`SELECT `+transactionCols+` FROM public.utility_transactions WHERE idempotency_key = $1`, key))
+		`SELECT `+transactionCols+` FROM public.utility_transactions WHERE idempotency_key = $1 AND user_id = $2`, key, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // not a failure: "nobody has used this key" is the normal path
 	}
@@ -554,6 +553,21 @@ func (r *Repository) GetTransactionByIdempotencyKey(ctx context.Context, key str
 		return nil, fmt.Errorf("utilitybills: get transaction by idempotency key: %w", err)
 	}
 	return t, nil
+}
+
+// idempotencyKeyInUse reports whether ANY row already holds this key — the
+// UNSCOPED probe used ONLY inside InsertTransaction's 23505 branch, after the
+// caller-scoped re-read missed, to tell a foreign-key clash (409) apart from a
+// collision on some other unique column. It returns no row data, so a foreign
+// row's fields can never leak through it.
+func (r *Repository) idempotencyKeyInUse(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM public.utility_transactions WHERE idempotency_key = $1)`, key).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("utilitybills: idempotency key probe: %w", err)
+	}
+	return exists, nil
 }
 
 // GetTransaction loads a transaction by id with NO ownership filter. Admin/
@@ -613,8 +627,7 @@ func (r *Repository) ListUserTransactions(ctx context.Context, userID string, li
 
 // ListPending returns transactions still in a non-terminal, requery-eligible
 // state (initiated, wallet_debited, provider_pending), oldest first, up to
-// limit. Feeds the scheduled requery sweep (jobs.go's StartPendingSweep).
-//
+// limit. Feeds the scheduled requery sweep ().
 // No age/TTL filter, matching the TS source's requeryPendingUtilityTransactions
 // exactly: anything in this set already failed to resolve synchronously inside
 // PayUtility (a provider timeout is the only way a row lands here), so there is
@@ -643,7 +656,6 @@ func (r *Repository) ListPending(ctx context.Context, limit int) ([]TransactionR
 }
 
 // InsertTransaction creates the initiated transaction row.
-//
 // Returns (row, false, nil) on a fresh insert and (existing, true, nil) when the
 // unique idempotency_key was claimed concurrently — porting service.ts's 23505
 // branch, which re-reads the winner's row and reports it as already processed
@@ -665,17 +677,33 @@ func (r *Repository) InsertTransaction(ctx context.Context, t *TransactionRow) (
 			$13, $14, $15, $16, $17,
 			$18, $19, $20
 		) RETURNING `+transactionCols,
-		nullIfEmpty(t.ID), t.UserID, t.Category, t.BillerID, t.ProductID, t.ProviderID, t.ProviderMappingID,
+		dbutil.NullStr(t.ID), t.UserID, t.Category, t.BillerID, t.ProductID, t.ProviderID, t.ProviderMappingID,
 		t.CustomerReference, t.CustomerName, t.AmountKobo, t.ConvenienceFeeKobo, t.RetailAmountKobo,
 		t.ProviderCostKobo, t.GrossProfitKobo, t.GrossMarginBps, t.Status, t.ReceiptNumber,
 		t.IdempotencyKey, t.PaymentSource, metadata))
 	if err == nil {
 		return inserted, false, nil
 	}
-	if isUniqueViolation(err) {
-		existing, rerr := r.GetTransactionByIdempotencyKey(ctx, t.IdempotencyKey)
+	if dbutil.IsUniqueViolation(err) {
+		// Same-caller concurrent insert: the winner's row is the answer
+		// (caller-scoped re-read — a foreign row is never returned here) —
+		// but ONLY when it records the same purchase. A key replayed against
+		// different material params is idempotency-key misuse, not a retry:
+		// adopting the stored row would report a transaction this request
+		// never made (post-merge audit D4), so divergence fails closed with
+		// the same 409 sentinel a cross-member clash gets.
+		existing, rerr := r.GetTransactionByIdempotencyKey(ctx, t.UserID, t.IdempotencyKey)
 		if rerr == nil && existing != nil {
+			if !sameTransactionParams(existing, t) {
+				return nil, false, ErrIdempotencyKeyConflict
+			}
 			return existing, true, nil
+		}
+		// The caller-scoped read missed. If the key is nonetheless taken, it is
+		// held by a DIFFERENT member — a cross-user reuse, which is a 409
+		// conflict, never a replay of their row.
+		if inUse, perr := r.idempotencyKeyInUse(ctx, t.IdempotencyKey); perr == nil && inUse {
+			return nil, false, ErrIdempotencyKeyConflict
 		}
 		// The collision was on some OTHER unique column (receipt_number is the only
 		// other one). Surface it rather than pretending it was a replay.
@@ -684,12 +712,36 @@ func (r *Repository) InsertTransaction(ctx context.Context, t *TransactionRow) (
 	return nil, false, fmt.Errorf("utilitybills: insert transaction: %w", err)
 }
 
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
+// sameTransactionParams compares the material params a same-caller
+// idempotency-key replay must agree on for the stored row to be THIS purchase:
+// what is being bought (category + biller + product), for whom (customer
+// reference — the meter/account the value lands on), for how much (amount and
+// retail totals), and through which rail (payment source). Anything else
+// (status, provider outcome, attempts) is outcome, not request.
+func sameTransactionParams(a, b *TransactionRow) bool {
+	return a.Category == b.Category &&
+		a.BillerID == b.BillerID &&
+		sameStrPtr(a.ProductID, b.ProductID) &&
+		a.CustomerReference == b.CustomerReference &&
+		a.AmountKobo == b.AmountKobo &&
+		a.RetailAmountKobo == b.RetailAmountKobo &&
+		a.PaymentSource == b.PaymentSource
 }
+
+// sameStrPtr compares two nullable strings by value.
+func sameStrPtr(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// ErrStatusGuard is returned by UpdateTransaction when the patch carries
+// GuardStatuses and the row's current status is outside the allowed set — a
+// concurrent writer (the stuck-recovery path, an admin reversal, or the other
+// plane) already settled it. Distinguished from ErrNotFound so the caller can
+// re-read and adopt the winner's state instead of overwriting it.
+var ErrStatusGuard = errors.New("utilitybills: status guard rejected update")
 
 // TransactionPatch is the settle-time update applied after the provider answers.
 // Only non-nil fields are written, so a patch can advance the status without
@@ -706,6 +758,14 @@ type TransactionPatch struct {
 	// previously-failed transaction must not leave the old reason behind). Takes
 	// precedence over FailureReason.
 	ClearFailureReason bool
+	// GuardStatuses, when non-empty, restricts the update to rows whose status
+	// is in the set — a compare-and-swap so a settle write cannot resurrect a
+	// transaction that recovery or an admin already moved to a terminal state.
+	GuardStatuses []string
+	// GuardUpdatedAt, when set, additionally requires the row to still be at the
+	// observed updated_at version — the writer-versus-recovery CAS: a claim
+	// bumps updated_at, so a stale writer's settle write refuses to land.
+	GuardUpdatedAt *time.Time
 }
 
 // UpdateTransaction applies a partial patch and returns the updated row.
@@ -741,11 +801,24 @@ func (r *Repository) UpdateTransaction(ctx context.Context, id string, patch Tra
 		add("failure_reason", *patch.FailureReason)
 	}
 
-	args = append(args, id)
 	q := `UPDATE public.utility_transactions SET ` + strings.Join(sets, ", ") +
-		fmt.Sprintf(` WHERE id = $%d RETURNING `, len(args)) + transactionCols
+		fmt.Sprintf(` WHERE id = $%d`, len(args)+1)
+	args = append(args, id)
+	if len(patch.GuardStatuses) > 0 {
+		args = append(args, patch.GuardStatuses)
+		q += fmt.Sprintf(` AND status = ANY($%d)`, len(args))
+	}
+	if patch.GuardUpdatedAt != nil {
+		args = append(args, *patch.GuardUpdatedAt)
+		q += fmt.Sprintf(` AND updated_at = $%d`, len(args))
+	}
+	guarded := len(patch.GuardStatuses) > 0 || patch.GuardUpdatedAt != nil
+	q += ` RETURNING ` + transactionCols
 	t, err := scanTransaction(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
+		if guarded {
+			return nil, fmt.Errorf("%w: utility transaction %s", ErrStatusGuard, id)
+		}
 		return nil, fmt.Errorf("%w: utility transaction %s", ErrNotFound, id)
 	}
 	if err != nil {
@@ -754,7 +827,69 @@ func (r *Repository) UpdateTransaction(ctx context.Context, id string, patch Tra
 	return t, nil
 }
 
-// ── Events ───────────────────────────────────────────────────────────────────
+// LedgerEntryExists reports whether ANY ledger_entries row carries this exact
+// idempotency key. The stuck-recovery path (AUD-BILL-005) uses it to tell
+// whether a debit or compensation leg actually posted; the caller supplies the
+// full key list because the two writer planes suffix keys differently — the TS
+// journal writes the key verbatim, this module's ledger appends per-side
+// suffixes (:debit / :credit / :rev_debit / :rev_credit).
+func (r *Repository) LedgerEntryExists(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.ledger_entries WHERE idempotency_key = $1)`, key).
+		Scan(&exists); err != nil {
+		return false, fmt.Errorf("utilitybills: ledger entry probe: %w", err)
+	}
+	return exists, nil
+}
+
+// LedgerCreditByReferenceExists probes ledger_entries by REFERENCE rather than
+// idempotency key. The Paystack VALIDATION_REFUND leg is keyed on the intent id,
+// which the transaction row does not store — its presence is detectable only
+// through the payment reference the leg carries.
+func (r *Repository) LedgerCreditByReferenceExists(ctx context.Context, reference string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.ledger_entries
+			WHERE reference = $1 AND type = 'CREDIT')`, reference).
+		Scan(&exists); err != nil {
+		return false, fmt.Errorf("utilitybills: ledger reference probe: %w", err)
+	}
+	return exists, nil
+}
+
+// adminSettleWindow is how long a just-'failed' row must age before an ADMIN
+// reversal may claim it. While a row is freshly failed its compensator
+// (recovery, the in-flight writer's auto-reverse) is likely still inside its
+// probe→post window — the window serialises admin compensation behind it
+// without a schema-level lock.
+const adminSettleWindow = time.Minute
+
+// ClaimForSettlement compare-and-swaps a transaction into a settle-in-progress
+// state: status flips to 'failed' (outside every other claim set, so a second
+// claimer — a racing sweep, replay, or admin — cannot enter the probe→post
+// window concurrently) and the row is returned with its fresh updated_at.
+// nil, nil means the row is not claimable: another writer moved it, or it is a
+// 'failed' row still inside the admin settle window.
+// Claimable statuses: the requery-eligible set, plus 'failed' rows older than
+// adminSettleWindow (whose compensator has long since finished or died).
+func (r *Repository) ClaimForSettlement(ctx context.Context, id string, seenUpdatedAt time.Time, reason string) (*TransactionRow, error) {
+	t, err := scanTransaction(r.db.QueryRow(ctx, `
+		UPDATE public.utility_transactions
+		SET status = 'failed', failure_reason = $3, updated_at = now()
+		WHERE id = $1 AND updated_at = $2
+		  AND (status IN ('initiated','wallet_debited','provider_pending','disputed')
+		       OR (status = 'failed' AND updated_at <= now() - $4::interval))
+		RETURNING `+transactionCols,
+		id, seenUpdatedAt, reason, fmt.Sprintf("%d seconds", int64(adminSettleWindow.Seconds()))))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: claim for settlement: %w", err)
+	}
+	return t, nil
+}
 
 // AddEvent appends to the immutable per-transaction event trail. BEST-EFFORT by
 // design (the TS source does not check its result either): an event that fails to
@@ -779,8 +914,6 @@ func (r *Repository) AddEvent(ctx context.Context, transactionID, eventType, mes
 	return nil
 }
 
-// ── Provider attempts ────────────────────────────────────────────────────────
-
 // StartAttempt records the 'started' attempt row before the provider call, so an
 // attempt that never returns still leaves a trace. Mirrors recordProviderAttempt.
 func (r *Repository) StartAttempt(ctx context.Context, transactionID, providerID, mappingID string, attemptNumber int, requestKey string) (*AttemptRow, error) {
@@ -792,7 +925,7 @@ func (r *Repository) StartAttempt(ctx context.Context, transactionID, providerID
 		RETURNING id, transaction_id, provider_id, provider_mapping_id, attempt_number, status,
 		          request_idempotency_key, provider_reference, message, raw_response, started_at,
 		          completed_at, duration_ms, timeout_ms`,
-		transactionID, providerID, nullIfEmpty(mappingID), attemptNumber, requestKey).
+		transactionID, providerID, dbutil.NullStr(mappingID), attemptNumber, requestKey).
 		Scan(&a.ID, &a.TransactionID, &a.ProviderID, &a.ProviderMappingID, &a.AttemptNumber, &a.Status,
 			&a.RequestIdempotencyKey, &a.ProviderReference, &a.Message, &a.RawResponse, &a.StartedAt,
 			&a.CompletedAt, &a.DurationMs, &a.TimeoutMs)
@@ -871,8 +1004,6 @@ func (r *Repository) ListAttempts(ctx context.Context, transactionID string) ([]
 	return out, rows.Err()
 }
 
-// ── Disputes ─────────────────────────────────────────────────────────────────
-
 // InsertDispute opens a dispute against a transaction.
 func (r *Repository) InsertDispute(ctx context.Context, transactionID, userID, reason string) (*DisputeRow, error) {
 	var d DisputeRow
@@ -886,4 +1017,112 @@ func (r *Repository) InsertDispute(ctx context.Context, transactionID, userID, r
 		return nil, fmt.Errorf("utilitybills: insert dispute: %w", err)
 	}
 	return &d, nil
+}
+
+// Saved beneficiaries are a convenience feature, not a money path — but they are
+// USER-SCOPED PII (a meter number, a smartcard number, a phone number, plus the
+// label the member gave it). Every query below therefore carries the user_id
+// predicate in SQL rather than filtering in Go: an ownership check that lives in
+// the WHERE clause cannot be forgotten by a later caller, and a cross-user read
+// returns zero rows instead of somebody else's meter.
+
+// BeneficiaryRepository owns public.saved_utility_beneficiaries.
+type BeneficiaryRepository struct {
+	db *pgxpool.Pool
+}
+
+// NewBeneficiaryRepository constructs the repository over the pgx pool.
+func NewBeneficiaryRepository(db *pgxpool.Pool) *BeneficiaryRepository {
+	return &BeneficiaryRepository{db: db}
+}
+
+const beneficiaryCols = `id, user_id, category, biller_id, label, customer_reference, customer_name, created_at`
+
+func scanBeneficiary(row pgx.Row) (*BeneficiaryRow, error) {
+	var b BeneficiaryRow
+	if err := row.Scan(&b.ID, &b.UserID, &b.Category, &b.BillerID, &b.Label,
+		&b.CustomerReference, &b.CustomerName, &b.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// List returns a member's saved beneficiaries, newest first, optionally filtered
+// by category. Ports service.ts's listUtilityBeneficiaries.
+func (r *BeneficiaryRepository) List(ctx context.Context, userID, category string) ([]BeneficiaryRow, error) {
+	q := `SELECT ` + beneficiaryCols + ` FROM public.saved_utility_beneficiaries WHERE user_id = $1`
+	args := []any{userID}
+	if category != "" {
+		args = append(args, category)
+		q += fmt.Sprintf(` AND category = $%d`, len(args))
+	}
+	q += ` ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: list beneficiaries: %w", err)
+	}
+	defer rows.Close()
+	out := []BeneficiaryRow{}
+	for rows.Next() {
+		b, err := scanBeneficiary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("utilitybills: scan beneficiary: %w", err)
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
+// Save upserts a beneficiary on the table's natural key
+// UNIQUE(user_id, biller_id, customer_reference), porting the TS upsert's
+// onConflict exactly. Re-saving the same meter under a new label renames it
+// rather than creating a duplicate.
+func (r *BeneficiaryRepository) Save(ctx context.Context, userID, category, billerID, label, customerReference, customerName string) (*BeneficiaryRow, error) {
+	var name any
+	if customerName != "" {
+		name = customerName
+	}
+	b, err := scanBeneficiary(r.db.QueryRow(ctx, `
+		INSERT INTO public.saved_utility_beneficiaries
+			(user_id, category, biller_id, label, customer_reference, customer_name)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_id, biller_id, customer_reference) DO UPDATE
+		SET label = EXCLUDED.label,
+		    category = EXCLUDED.category,
+		    customer_name = COALESCE(EXCLUDED.customer_name, public.saved_utility_beneficiaries.customer_name)
+		RETURNING `+beneficiaryCols,
+		userID, category, billerID, label, customerReference, name))
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: save beneficiary: %w", err)
+	}
+	return b, nil
+}
+
+// Delete removes a beneficiary the caller owns. The user_id predicate is the
+// authZ: deleting someone else's row reports ErrNotFound and changes nothing.
+func (r *BeneficiaryRepository) Delete(ctx context.Context, userID, beneficiaryID string) error {
+	tag, err := r.db.Exec(ctx, `
+		DELETE FROM public.saved_utility_beneficiaries WHERE id = $1 AND user_id = $2`,
+		beneficiaryID, userID)
+	if err != nil {
+		return fmt.Errorf("utilitybills: delete beneficiary: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: utility beneficiary %s", ErrNotFound, beneficiaryID)
+	}
+	return nil
+}
+
+// TouchLastUsed stamps last_transaction_at when a saved beneficiary is paid, so
+// the client can order by recency. Best-effort: a failure here must never affect
+// a payment, so the caller logs and continues.
+func (r *BeneficiaryRepository) TouchLastUsed(ctx context.Context, userID, billerID, customerReference string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE public.saved_utility_beneficiaries SET last_transaction_at = now()
+		WHERE user_id = $1 AND biller_id = $2 AND customer_reference = $3`,
+		userID, billerID, customerReference)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("utilitybills: touch beneficiary: %w", err)
+	}
+	return nil
 }

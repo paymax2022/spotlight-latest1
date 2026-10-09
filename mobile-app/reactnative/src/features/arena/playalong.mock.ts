@@ -1,4 +1,3 @@
-// ── Arena Play-Along — mock question bank (dev / offline) ────────────────────
 // Used when the backend returns no questions (dev). Each question carries the
 // correct option + an explanation so the quiz can give instant gamified feedback
 // (points, streaks, reveal). In production the backend serves questions WITHOUT

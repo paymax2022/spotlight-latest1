@@ -9,7 +9,6 @@ import (
 // on the new TOCTOU-safe debit primitive. The guard runs BEFORE the tx is opened,
 // so it is safe to exercise with a nil pool (no DB touched). This documents that a
 // zero/negative debit can never open a transaction or take the wallet lock.
-//
 // NOTE: not run here (no Go toolchain in this environment); compiles against the
 // package and asserts the pre-DB guard.
 func TestDebitWithBalanceCheckRejectsNonPositive(t *testing.T) {
@@ -33,7 +32,6 @@ func TestDebitWithBalanceCheckRejectsNonPositive(t *testing.T) {
 // DEBIT/REVERSAL_CREDIT are -balance. A TOCTOU fix is only correct if the in-tx
 // balance read classifies entry types identically to the pooled read — otherwise the
 // under-lock sufficiency check would disagree with the displayed balance.
-//
 // This asserts the SQL text mentions each type on the side the model requires; it is
 // a guard against someone editing one reader's classification but not the shared const.
 func TestBalanceProjectionClassification(t *testing.T) {

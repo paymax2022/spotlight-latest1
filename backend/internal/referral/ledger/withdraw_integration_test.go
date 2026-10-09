@@ -9,18 +9,17 @@ package ledger
 //   (5) Account-status gate (REF-009) — a suspended/locked platform_users
 //       account is refused at the withdrawal request, even once its reward
 //       has already accrued to 'eligible'.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
 // DATABASE_URL: the root .env points DATABASE_URL at the PRODUCTION Supabase
 // pooler and this test moves money. Bring-up: point TEST_DATABASE_URL at a
 // disposable, migrated Postgres. It creates only rows keyed by fresh UUIDs and
 // does not truncate tables, so it is safe to run repeatedly.
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/referral/ledger/ -v
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -154,7 +153,7 @@ func TestWithdrawEligible_KYCGate_Integration(t *testing.T) {
 	seedEligibleReward(t, pool, uid, 100_000)
 
 	_, err := svc.WithdrawEligible(ctx, uid, "wd-"+uid)
-	if err != ErrKYCRequired {
+	if !errors.Is(err, ErrKYCRequired) {
 		t.Fatalf("expected ErrKYCRequired, got %v", err)
 	}
 }
@@ -181,7 +180,7 @@ func TestWithdrawEligible_AccountStatusGate_Integration(t *testing.T) {
 	// suspended, mirroring the admin console's "suspend" action.
 	mustExec(t, pool, `UPDATE platform_users SET status='suspended' WHERE id=$1`, suspended)
 
-	if _, err := svc.WithdrawEligible(ctx, suspended, "wd-suspended-"+suspended); err != ErrAccountNotEligible {
+	if _, err := svc.WithdrawEligible(ctx, suspended, "wd-suspended-"+suspended); !errors.Is(err, ErrAccountNotEligible) {
 		t.Fatalf("suspended account: expected ErrAccountNotEligible, got %v", err)
 	}
 
@@ -191,7 +190,7 @@ func TestWithdrawEligible_AccountStatusGate_Integration(t *testing.T) {
 	seedEligibleReward(t, pool, lockedIndefinite, 10_000)
 	mustExec(t, pool, `UPDATE platform_users SET status='locked', locked_until=NULL WHERE id=$1`, lockedIndefinite)
 
-	if _, err := svc.WithdrawEligible(ctx, lockedIndefinite, "wd-locked-"+lockedIndefinite); err != ErrAccountNotEligible {
+	if _, err := svc.WithdrawEligible(ctx, lockedIndefinite, "wd-locked-"+lockedIndefinite); !errors.Is(err, ErrAccountNotEligible) {
 		t.Fatalf("indefinitely-locked account: expected ErrAccountNotEligible, got %v", err)
 	}
 

@@ -6,20 +6,16 @@ import (
 	"spotlight/backend/internal/finance/settlement"
 )
 
-// ---------------------------------------------------------------------------
 // ProviderFeeKobo — a fixed amount paid 100% to the PROVIDER on top of the
 // percentage split. The provider-side mirror of ServiceFeeKobo (100% platform)
 // and TipKobo (100% rider).
-//
 // Motivating case: the restaurant takeaway packaging fee. The restaurant buys
 // the packs, so the fee is a cost pass-through — the platform and the rider must
 // take no cut of it, exactly as the restaurant takes no cut of a rider's tip.
-//
 // These call settlement.ComputeLegs, which is the SAME function Service.Settle
 // uses. That matters: the pre-existing invariant tests re-implement the formula
 // locally, so a change to the production expression could not fail them. Tests
 // that mirror the code under test only prove the mirror.
-// ---------------------------------------------------------------------------
 
 const (
 	pctProvider = 0.80
@@ -27,14 +23,15 @@ const (
 	pctRider    = 0.10
 )
 
-func riderRef(s string) *string { return &s }
+//go:fix inline
+func riderRef(s string) *string { return new(s) }
 
 func baseSplit() settlement.Split {
 	return settlement.Split{
 		ProviderID:  "restaurant-owner",
 		ProviderPct: pctProvider,
 		PlatformPct: pctPlatform,
-		RiderID:     riderRef("rider-1"),
+		RiderID:     new("rider-1"),
 		RiderPct:    pctRider,
 	}
 }

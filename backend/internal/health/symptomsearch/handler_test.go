@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 // service's metricsReader port resolves.
 type metricsFakeRepo struct {
 	*fakeRepo
+
 	metrics *SafetyMetrics
 	err     error
 }
@@ -49,7 +51,7 @@ func newSearchRouter(h *Handler, uid string, mw ...gin.HandlerFunc) *gin.Engine 
 
 func doJSON(t *testing.T, r *gin.Engine, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range header {
 		req.Header.Set(k, v)
@@ -58,8 +60,6 @@ func doJSON(t *testing.T, r *gin.Engine, method, path, body string, header map[s
 	r.ServeHTTP(w, req)
 	return w
 }
-
-// ─── POST /symptom-search ────────────────────────────────────────────────────
 
 func TestHTTP_SymptomSearch_HappyPath(t *testing.T) {
 	svc, _ := newTestService()
@@ -120,7 +120,6 @@ func TestHTTP_SymptomSearch_Unauthenticated401(t *testing.T) {
 	}
 }
 
-// ─── Rate limit (in-memory fallback path; the Redis path shares the header
 //     and 429 plumbing and mirrors maps.redisAllow) ──────────────────────────
 
 func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
@@ -139,10 +138,10 @@ func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("request 3: status = %d, want 429", w.Code)
 	}
-	if got := w.Header().Get("X-RateLimit-Limit"); got != "2" {
+	if got := w.Header().Get("X-Ratelimit-Limit"); got != "2" {
 		t.Fatalf("X-RateLimit-Limit = %q, want 2", got)
 	}
-	if got := w.Header().Get("X-RateLimit-Remaining"); got != "0" {
+	if got := w.Header().Get("X-Ratelimit-Remaining"); got != "0" {
 		t.Fatalf("X-RateLimit-Remaining = %q, want 0", got)
 	}
 	var body map[string]any
@@ -158,8 +157,6 @@ func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
 		t.Fatalf("different device must have its own window, got %d", w.Code)
 	}
 }
-
-// ─── GET /admin/symptom/metrics ──────────────────────────────────────────────
 
 func TestHTTP_AdminSymptomMetrics_ExactShape(t *testing.T) {
 	med := 421.5
@@ -270,5 +267,31 @@ func TestHTTP_AdminSymptomMetrics_PortAbsent404(t *testing.T) {
 	w := doJSON(t, r, http.MethodGet, "/symptom/metrics", "", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+// Stale buckets must be swept from the in-memory fallback — the store
+// previously never evicted, so one-shot keys accumulated forever.
+func TestSearchLimiterSweepsStaleBuckets(t *testing.T) {
+	l := &searchLimiter{store: map[string]*searchBucket{}, limit: 2, window: time.Minute}
+	l.store["stale"] = &searchBucket{count: 1, windowStart: time.Now().Add(-2 * time.Minute)}
+
+	if _, ok := l.allow("fresh"); !ok {
+		t.Fatal("new key should pass")
+	}
+	if got := len(l.store); got != 1 {
+		t.Fatalf("stale bucket survived the sweep: size = %d, want 1", got)
+	}
+}
+
+// The device half of the key derives from the caller-set X-Device-Id header,
+// so a key flood must not grow the fallback store without bound.
+func TestSearchLimiterBoundedUnderKeyFlood(t *testing.T) {
+	l := &searchLimiter{store: map[string]*searchBucket{}, limit: 2, window: time.Minute, maxKeys: 10}
+	for i := range 100 {
+		l.allow("u1|dev-" + strconv.Itoa(i))
+	}
+	if got := len(l.store); got > 10 {
+		t.Fatalf("store exceeded the cap: %d entries, want <= 10", got)
 	}
 }

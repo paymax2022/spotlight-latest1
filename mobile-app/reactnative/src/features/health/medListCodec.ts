@@ -1,8 +1,6 @@
-// ── Medication list codec (med_list field, M6) ────────────────────────────────
 // Stored as a JSON string of {name, dose} so it fits IntakeValue (string) and the
 // answers payload without a schema/type change. Tolerates a legacy plain-text
 // value (treated as a single medication name).
-//
 // Split out of IntakeField.tsx (which imports react-native) so it can be unit
 // tested with plain node:test — no RN runtime required.
 import type { IntakeValue } from './types';

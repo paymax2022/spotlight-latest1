@@ -1,4 +1,4 @@
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 export type PaymentServiceId = 'airtime' | 'data' | 'electricity' | 'cable-tv' | 'education';
 

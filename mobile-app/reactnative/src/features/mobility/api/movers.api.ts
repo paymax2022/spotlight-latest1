@@ -1,11 +1,16 @@
-// ── Movers — API wrapper ─────────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Accepting a bid is a money mutation
-// (escrow fund) and carries an Idempotency-Key; escrow releases only on
 // completion confirmation. Bid amounts come from providers via the SERVER.
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type { MoverJob, MoverQuoteRequest } from '../types/modes.types';
+import type { CardDirectIntent, CardDirectStatus } from '../utils/cardDirect';
+import {
+  buildMoversCardDirectBody,
+  moversCardDirectStatusPath,
+  MOVERS_CARD_DIRECT_BASE,
+  normalizeMoversStatus,
+  type MoversCardDirectInput,
+} from '../utils/moversCardDirect';
 import {
   makeMoverJob,
   moverStore,
@@ -61,7 +66,6 @@ export async function getMoverJobs(): Promise<MoverJob[]> {
   return unwrap<MoverJob[]>(await api.get(`${BASE}/mobility/movers`));
 }
 
-// ─── Accept bid (money mutation → escrow fund → Idempotency-Key) ───────────────
 export async function acceptBid(id: string, bidId: string, idempotencyKey: string): Promise<MoverJob> {
   if (USE_MOCK) {
     await delay(800);
@@ -80,7 +84,60 @@ export async function acceptBid(id: string, bidId: string, idempotencyKey: strin
   );
 }
 
-// ─── Confirm completion (release escrow → settle provider; Idempotency-Key) ────
+// ── Card-direct (pay the accepted bid by debit card, never the wallet KYC gate) ──
+// backend/internal/transport/paystackcheckout (movers domain). Charged at BID
+// ACCEPTANCE: the server reads the bid's amount itself (this request carries only
+// job_id + bid_id), Paystack collects it, the server re-checks the job/bid and
+// escrows it. If the bid was withdrawn/changed or the move is no longer open when
+// the charge confirms, the charge is refunded. The wallet rail (acceptBid) keeps
+// its KYC gate unchanged.
+
+export type MoverCardDirectIntent = CardDirectIntent;
+export type MoverCardDirectStatus = CardDirectStatus & { moveId?: string };
+
+export async function initiateMoverPaystack(
+  req: MoversCardDirectInput & { idempotencyKey: string },
+): Promise<MoverCardDirectIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    const bid = moverStore.active?.bids.find((b) => b.id === req.bidId);
+    return {
+      reference: `moversorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: bid?.amountKobo ?? 0,
+      status: 'pending',
+    };
+  }
+  return unwrap<MoverCardDirectIntent>(
+    await api.post(
+      `${BASE}${MOVERS_CARD_DIRECT_BASE}/initiate`,
+      buildMoversCardDirectBody(req),
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getMoverPaystackStatus(reference: string): Promise<MoverCardDirectStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    const j = moverStore.active;
+    if (j) {
+      // The mock "charge" funds the first bid the way the wallet mock does.
+      const bid = j.acceptedBid ?? j.bids[0] ?? null;
+      j.acceptedBid = bid ? { ...bid, createdAt: new Date().toISOString() } : null;
+      j.fareKobo = bid?.amountKobo ?? null;
+      j.phase = 'bid_accepted';
+      j.paymentStatus = 'escrowed';
+    }
+    return { reference, status: 'confirmed', amountKobo: j?.fareKobo ?? 0, moveId: j?.id ?? 'mock-move-1' };
+  }
+  return normalizeMoversStatus(
+    unwrap<{ reference: string; status: CardDirectStatus['status']; amountKobo?: number; moveId?: string }>(
+      await api.get(`${BASE}${moversCardDirectStatusPath(reference)}`),
+    ),
+  );
+}
+
 export async function confirmCompletion(id: string, idempotencyKey: string): Promise<MoverJob> {
   if (USE_MOCK) {
     await delay(700);

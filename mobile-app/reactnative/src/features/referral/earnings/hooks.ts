@@ -1,4 +1,3 @@
-// ── Referral Earnings & Rewards React Query hooks (v5) ───────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as earningsApi from './api';

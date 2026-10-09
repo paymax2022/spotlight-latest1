@@ -1,13 +1,10 @@
-// ── Push notifications (client) ──────────────────────────────────────────────
 // Client-side delivery for visitor + election notifications:
 //   • registers the device for push and sends the Expo push token to the backend
 //   • shows incoming notifications in the foreground
 //   • deep-links to the right screen when a notification is tapped
-//
 // expo-notifications is lazy-required (not top-level imported) because the
 // package crashes at module-init time in Expo Go SDK 53+ — before any guard
 // can run. All callers already check `isExpoGo` before touching the module.
-//
 // expo-router is lazy-required to break the require cycle:
 //   push.ts → expo-router → _layout.tsx → push.ts
 
@@ -189,6 +186,10 @@ export function usePushNotifications(enabled: boolean): void {
 
     return () => {
       responseSub.remove();
+      // Sign-out flips `enabled` off. Clearing the guard lets the next sign-in
+      // in this app process register again, so the device token is re-posted
+      // under the new user's session instead of staying mapped to the last one.
+      registered.current = false;
     };
   }, [enabled]);
 }

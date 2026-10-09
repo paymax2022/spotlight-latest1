@@ -1,12 +1,11 @@
 // Applicant: track my own application — status, timeline, and what I need to do next.
-//
 // Scoped to the authenticated user by construction: every row is reached through the
 // application that `user_id` owns, so there is no id parameter an applicant could
 // tamper with to read someone else's application.
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { summariseCompliance } from '@/src/server/services/academy/compliance';
+import { summariseCompliance } from '@/src/server/services/academy';
 
 type RequiredAction = {
   key: string;
@@ -94,7 +93,6 @@ function buildActions(
 
   // The application fee is charged at submit time and is non-refundable. If it did not
   // settle, nothing downstream can proceed.
-  //
   // `application_fee_paid` is NUMERIC (the naira amount collected), not a boolean — a
   // `=== true` test here silently never matches and would tell every applicant their
   // fee was outstanding.

@@ -18,9 +18,7 @@ import (
 )
 
 // registerOTPRoutes wires POST /api/auth/otp/{request,verify}.
-//
 // SCOPE — read this before assuming more than it does.
-//
 // This is a SECOND OTP system. Today every OTP a user receives is minted and
 // mailed by Supabase Auth, not by us (docs/audit/USER_MANAGEMENT_AUDIT.md, B1:
 // no SMTP on either cloud project and a project-wide budget of two emails an
@@ -30,9 +28,7 @@ import (
 // the two is a deliberate follow-up, not something to infer from this file —
 // the audit is explicit that two coexisting verification paradigms is the state
 // to avoid, so whichever one wins should win on purpose.
-//
 // GATING — three independent conditions, all fail CLOSED:
-//
 //  1. FEATURE_OTP_EMAIL_ENABLED is off by default.
 //  2. The shared pgx pool must exist. Postgres is the authoritative store (see
 //     migration 20270193000000 for why it is not Redis), so with no pool there
@@ -113,7 +109,6 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 	}
 
 	// Signup budget for the admin creation path, which GoTrue does not gate.
-	//
 	// The same Postgres fixed-window limiter the OTP flows use — atomic, and
 	// shared across replicas, which is the property the in-process
 	// middleware.AuthRateLimiter on this route cannot offer. The IP is hashed

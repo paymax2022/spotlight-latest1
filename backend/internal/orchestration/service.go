@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"log"
+	"spotlight/backend/go-common/timeutil"
 	"strings"
 	"time"
 
@@ -125,7 +126,6 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	// Pull the current spread rule card once per quote (ADR-032): the markup lives
 	// in fx_markup_rates, shared with the legacy FX service, so an admin change is
 	// live on the very next quote. One query per quote, not one per candidate.
-	//
 	// Fail closed. Pricing from a rule card we could not confirm would charge a
 	// spread nobody configured.
 	if err := s.spread.Refresh(ctx); err != nil {
@@ -133,82 +133,15 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	}
 	corridor := Corridor(source, dest)
 
-	// 0. Compliance screening (KYC/AML/sanctions) is a first-class, server-side
-	//    gate: a blocked or errored screen returns compliance_block and we do NOT
-	//    price the request. Fail-closed on screener error.
-	if apiErr := s.screen(ctx, customerID, corridor, req.Amount); apiErr != nil {
+	// Compliance screening, rate freshness, and limits are fail-closed gates run
+	// before pricing: a request that fails a gate is never quoted or executed.
+	if apiErr := s.quoteGates(ctx, customerID, tier, corridor, source, dest, req.Amount); apiErr != nil {
 		return nil, apiErr
 	}
 
-	// 0b. Rate-integrity gate (RT-002): when a rate feed governs this corridor and
-	//     its last rate is stale, refuse to price — no conversion is ever quoted on
-	//     a stale rate. Untracked corridors defer to live provider freshness.
-	if s.rates != nil && !s.rates.Fresh(source, dest, s.now()) {
-		return nil, NewError(ErrRateExpired, "rate_stale", "The "+corridor+" rate is stale; pricing is temporarily unavailable.")
-	}
-
-	// 0c. Limits & velocity are a hard gate (spec §4 invariant 8): per-transaction
-	//     min/max, tier caps, daily/monthly cumulative, and anti-structuring
-	//     velocity are checked before pricing so an over-limit request is never
-	//     quoted or executed.
-	if s.limits != nil {
-		if apiErr := s.limits.Check(ctx, customerID, tier, source, req.Amount, s.now()); apiErr != nil {
-			return nil, apiErr
-		}
-	}
-
-	// 1. Fan out to provider adapters (parallel in production; sequential is fine
-	//    for deterministic adapters).
-	type scored struct {
-		pq   *ProviderQuote
-		rate float64 // customer all-in rate post spread
-	}
-	pqs := map[string]scored{}
-	maxRate := 0.0
-	for _, p := range s.order {
-		pq, err := p.Quote(ctx, source, dest, req.Amount, amountType, rail)
-		if err != nil || pq == nil || !pq.Viable || pq.Rate == 0 {
-			continue
-		}
-		rate := s.spread.CustomerRate(pq.Rate, corridor, tier)
-		pqs[p.Name()] = scored{pq: pq, rate: rate}
-		if rate > maxRate {
-			maxRate = rate
-		}
-	}
-	if len(pqs) == 0 {
-		return nil, NewError(ErrRoutingUnavailable, "routing_unavailable", "No provider can route "+corridor+" right now.")
-	}
-
-	// 2. Build candidates with scoring inputs.
-	estDestOf := func(rate float64) int64 {
-		if amountType == AmountSource {
-			return convertMinor(req.Amount, source, dest, rate)
-		}
-		return req.Amount // destination-pegged
-	}
-	var candidates []Candidate
-	for name, sc := range pqs {
-		destEst := estDestOf(sc.rate)
-		coverable, liq := s.settleConfidence(name, dest, destEst)
-		var exposurePenalty float64
-		if !coverable {
-			exposurePenalty = 1 // hard-penalise breaching exposure
-		}
-		candidates = append(candidates, Candidate{
-			Provider:        name,
-			Corridor:        corridor,
-			Rail:            rail,
-			AllInRate:       sc.rate,
-			Destination:     NewMoney(destEst, dest),
-			Cost:            costCompetitiveness(sc.rate, maxRate),
-			CoverageFit:     1,
-			Liquidity:       liq,
-			Reliability:     sc.pq.Reliability,
-			FloatCost:       0.02,
-			ExposurePenalty: exposurePenalty,
-			Viable:          coverable,
-		})
+	candidates, pqs, apiErr := s.quoteCandidates(ctx, corridor, tier, source, dest, req.Amount, amountType, rail)
+	if apiErr != nil {
+		return nil, apiErr
 	}
 
 	rank := s.router.Rank(candidates)
@@ -260,6 +193,95 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	s.book.Put(q)
 	_ = s.store.SaveQuote(ctx, q)
 	return q, nil
+}
+
+// quoteGates runs the fail-closed pre-pricing checks. Any failure is the
+// APIError to surface to the caller.
+func (s *Service) quoteGates(ctx context.Context, customerID, tier, corridor, source, dest string, amount int64) *APIError {
+	// Compliance screening (KYC/AML/sanctions) is a first-class, server-side
+	// gate: a blocked or errored screen returns compliance_block and we do NOT
+	// price the request. Fail-closed on screener error.
+	if apiErr := s.screen(ctx, customerID, corridor, amount); apiErr != nil {
+		return apiErr
+	}
+
+	// Rate-integrity gate (RT-002): when a rate feed governs this corridor and
+	// its last rate is stale, refuse to price — no conversion is ever quoted on
+	// a stale rate. Untracked corridors defer to live provider freshness.
+	if s.rates != nil && !s.rates.Fresh(source, dest, s.now()) {
+		return NewError(ErrRateExpired, "rate_stale", "The "+corridor+" rate is stale; pricing is temporarily unavailable.")
+	}
+
+	// Limits & velocity are a hard gate (spec §4 invariant 8): per-transaction
+	// min/max, tier caps, daily/monthly cumulative, and anti-structuring
+	// velocity are checked before pricing so an over-limit request is never
+	// quoted or executed.
+	if s.limits != nil {
+		if apiErr := s.limits.Check(ctx, customerID, tier, source, amount, s.now()); apiErr != nil {
+			return apiErr
+		}
+	}
+	return nil
+}
+
+// scoredQuote is a provider quote paired with its customer all-in rate post
+// spread.
+type scoredQuote struct {
+	pq   *ProviderQuote
+	rate float64
+}
+
+// quoteCandidates fans out to provider adapters (parallel in production;
+// sequential is fine for deterministic adapters), applies the corridor/tier
+// spread, and builds scored router candidates.
+func (s *Service) quoteCandidates(ctx context.Context, corridor, tier, source, dest string, amount int64, amountType AmountType, rail Rail) ([]Candidate, map[string]scoredQuote, *APIError) {
+	pqs := map[string]scoredQuote{}
+	maxRate := 0.0
+	for _, p := range s.order {
+		pq, err := p.Quote(ctx, source, dest, amount, amountType, rail)
+		if err != nil || pq == nil || !pq.Viable || pq.Rate == 0 {
+			continue
+		}
+		rate := s.spread.CustomerRate(pq.Rate, corridor, tier)
+		pqs[p.Name()] = scoredQuote{pq: pq, rate: rate}
+		if rate > maxRate {
+			maxRate = rate
+		}
+	}
+	if len(pqs) == 0 {
+		return nil, nil, NewError(ErrRoutingUnavailable, "routing_unavailable", "No provider can route "+corridor+" right now.")
+	}
+
+	estDestOf := func(rate float64) int64 {
+		if amountType == AmountSource {
+			return convertMinor(amount, source, dest, rate)
+		}
+		return amount // destination-pegged
+	}
+	var candidates []Candidate
+	for name, sc := range pqs {
+		destEst := estDestOf(sc.rate)
+		coverable, liq := s.settleConfidence(name, dest, destEst)
+		var exposurePenalty float64
+		if !coverable {
+			exposurePenalty = 1 // hard-penalise breaching exposure
+		}
+		candidates = append(candidates, Candidate{
+			Provider:        name,
+			Corridor:        corridor,
+			Rail:            rail,
+			AllInRate:       sc.rate,
+			Destination:     NewMoney(destEst, dest),
+			Cost:            costCompetitiveness(sc.rate, maxRate),
+			CoverageFit:     1,
+			Liquidity:       liq,
+			Reliability:     sc.pq.Reliability,
+			FloatCost:       0.02,
+			ExposurePenalty: exposurePenalty,
+			Viable:          coverable,
+		})
+	}
+	return candidates, pqs, nil
 }
 
 // settleConfidence reports whether a provider can settle the dest amount and a
@@ -539,7 +561,7 @@ func (s *Service) Rates(ctx context.Context, tier string) []IndicativeRate {
 		log.Printf("[orchestration] spread refresh failed, serving indicative rates from the last-known card: %v", err)
 	}
 	pairs := [][2]string{{"USD", "NGN"}, {"EUR", "NGN"}, {"GBP", "NGN"}, {"USD", "GHS"}, {"USD", "KES"}, {"USD", "XAF"}}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := timeutil.RFC3339(time.Now())
 	out := make([]IndicativeRate, 0, len(pairs))
 	for _, p := range pairs {
 		corr := Corridor(p[0], p[1])
@@ -592,3 +614,44 @@ func (s *Service) SeedBalance(ctx context.Context, customerID, currency string, 
 func round4(f float64) float64 { return float64(int64(f*10000+0.5)) / 10000 }
 
 func shortRef() string { return strings.ToUpper(strings.ReplaceAll(uuid.New().String(), "-", ""))[:8] }
+
+// StartReconScheduler runs daily reconciliation against the settlement source,
+// emitting recon.completed per provider. Stops when ctx is cancelled (spec §8).
+func StartReconScheduler(ctx context.Context, svc *Service, src SettlementSource, interval time.Duration) {
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _ = svc.RunDailyReconciliation(ctx, src, time.Now())
+			}
+		}
+	}()
+}
+
+// StartTreasuryMonitor runs a background loop that periodically rebalances any
+// float bucket at/below its low-water mark and emits balance.low alerts. Stops
+// when ctx is cancelled. (V2 automated treasury, spec §7.)
+func StartTreasuryMonitor(ctx context.Context, svc *Service, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				svc.AutoRebalance(ctx)
+			}
+		}
+	}()
+}

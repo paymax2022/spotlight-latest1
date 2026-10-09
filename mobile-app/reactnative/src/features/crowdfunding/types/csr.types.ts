@@ -1,4 +1,3 @@
-// ── Crowdfunding — Corporate CSR (Section M) types ───────────────────────────
 // Feature-flagged OFF until corporate partner onboarding (CSR_ENABLED).
 // All monetary amounts are integers in minor units (kobo).
 

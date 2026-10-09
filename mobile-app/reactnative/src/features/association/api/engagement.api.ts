@@ -1,11 +1,10 @@
-// ── Association — Engagement API wrapper ──────────────────────────────────────
 // Mock-flagged data layer for announcements, notifications, meetings, tasks,
 // documents. Mirrors association.api.ts. Flip USE_MOCK (constants) when real
 // endpoints land.
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   Announcement,
   AnnouncementSummary,
@@ -23,7 +22,7 @@ import type {
   TaskStatus,
   DocumentSummary,
   DocumentDetail,
-} from '../types/engagement.types';
+} from '../types';
 import {
   MOCK_ANNOUNCEMENTS,
   MOCK_NOTIFICATIONS,
@@ -41,8 +40,6 @@ const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 // frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
 const notInFixtureMode = (action: string) =>
   new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
-
-// ─── Announcements ────────────────────────────────────────────────────────────
 
 const toAnnSummary = (a: Announcement): AnnouncementSummary => {
   const { id, title, preview, audience, postedAt, author, urgent, read, requiresAck, acknowledged } = a;
@@ -74,8 +71,6 @@ export async function acknowledgeAnnouncement(id: string): Promise<{ ok: true }>
   return data;
 }
 
-// ─── Notifications ────────────────────────────────────────────────────────────
-
 export async function getNotifications(): Promise<AppNotification[]> {
   if (USE_MOCK) { await delay(); return MOCK_NOTIFICATIONS; }
   const { data } = await api.get(`${BASE}/notifications`);
@@ -87,8 +82,6 @@ export async function markNotificationsRead(): Promise<{ ok: true }> {
   const { data } = await api.post(`${BASE}/notifications/read`, {});
   return data;
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 const toMeetingSummary = (m: Meeting): MeetingSummary => {
   const { id, title, mode, startsAt, endsAt, location, state, rsvp, attendeeCount } = m;
@@ -168,8 +161,6 @@ export async function checkInMeeting(id: string): Promise<{ ok: true }> {
   return data;
 }
 
-// ─── Tasks ────────────────────────────────────────────────────────────────────
-
 const toTaskSummary = (t: Task): TaskSummary => {
   const { id, title, status, priority, dueDate, assigneeName, committee } = t;
   return { id, title, status, priority, dueDate, assigneeName, committee };
@@ -204,8 +195,6 @@ export async function updateTaskStatus(id: string, status: TaskStatus): Promise<
   const { data } = await api.patch(`${BASE}/tasks/${id}`, { status });
   return data;
 }
-
-// ─── Documents ────────────────────────────────────────────────────────────────
 
 const toDocSummary = (d: DocumentDetail): DocumentSummary => {
   const { id, title, category, kind, sizeLabel, updatedAt, restricted, requiresAck, acknowledged } = d;

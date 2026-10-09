@@ -96,7 +96,6 @@ export async function getTransactionById(id: string): Promise<Transaction> {
   return mapTransactionFromSupabase(data);
 }
 
-// Receipt is the same row as the transaction; exposed via a separate function
 // so the receipt screen can call it independently.
 export async function getReceipt(id: string): Promise<Receipt> {
   const supabase = createSupabaseClient();

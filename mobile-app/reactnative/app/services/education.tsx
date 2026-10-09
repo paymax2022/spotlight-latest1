@@ -18,11 +18,11 @@ import { getEducationProducts, getEducationProviders, initiateEducationPaystack,
 import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow2 } from '@/constants/shadows';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { EducationProduct, EducationProvider } from '@/types/billing';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';

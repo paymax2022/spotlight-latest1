@@ -12,7 +12,6 @@ import (
 // fee perfectly and still recorded a price that was never charged on replay.
 
 // assertEscrowMatchesQuote guards the idempotent-replay path.
-//
 // The bug it prevents: Escrow is idempotent on the Idempotency-Key, so a replay
 // returns the settlement escrowed on the FIRST attempt, while BookAppointment
 // recomputes the quote from the doctor's live consult_fee_kobo. If the doctor

@@ -24,6 +24,7 @@
 | `DATABASE_URL` | web + backend | **SECRET** | money-path | pgx pool; use session-pooler URL |
 | `REDIS_URL` | web + backend | SECRET if hosted has auth | money-path | idempotency / Redlock / asynq |
 | `CORS_ALLOW_ORIGINS` | backend | config | all | lock to real origins in prod |
+| `TRUSTED_PROXY_CIDRS` | backend | config | all | comma-separated LB/proxy CIDRs allowed to set `X-Forwarded-For`; default = GCP external HTTPS LB frontend ranges (`130.211.0.0/22,35.191.0.0/16`); `none` distrusts forwarded headers entirely (ClientIP = RemoteAddr). Client IPs feed rate limits, OTP budgets, and consent/audit records (AUD-SEC-001, AUD-BE-004) |
 | `APP_PORT` | backend | config | all | default 8080 |
 | `SENTRY_DSN` | frontend-web | config | observability | enables Sentry in prod |
 

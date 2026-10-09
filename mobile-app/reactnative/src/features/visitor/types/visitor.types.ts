@@ -1,4 +1,3 @@
-// ── Visitor & Estate Access Management — Type Contract ───────────────────────
 // Source of truth for the Visitor module (PRD: docs/prd/Visitor.md).
 // Owned by the "Backend" role. Frontend codes against these types only and
 // must not reach into the mock implementation in ../api/visitor.api.ts.
@@ -81,7 +80,6 @@ export interface CodeAttendance {
   lastQueriedAt?: string;       // last time a guard looked the code up at a gate
 }
 
-// §12 Visitor entity (subset captured at creation; rest captured at gate)
 export interface VisitorDetails {
   id?: string;
   name: string;
@@ -139,8 +137,6 @@ export interface RestrictionStatus {
   effectiveFrom: string;            // ISO
   source: 'payments';
 }
-
-// ── Inputs ───────────────────────────────────────────────────────────────────
 
 export interface CreateAccessCodeInput {
   codeType: CodeType;
@@ -247,7 +243,6 @@ export interface HandoverInput {
   idempotencyKey: string;
 }
 
-// ── Notifications (Section W) ────────────────────────────────────────────────
 export type VisitorNotificationType =
   | 'arrival'        // VM-161
   | 'checked_in'     // VM-162
@@ -267,7 +262,6 @@ export interface VisitorNotification {
   accessCodeId?: string;
 }
 
-// ── Blacklist (VM-241 / 244) ─────────────────────────────────────────────────
 export type BlacklistMatchKind = 'phone' | 'id' | 'plate';
 
 export interface BlacklistEntry {
@@ -289,7 +283,6 @@ export interface BlacklistInput {
   idempotencyKey: string;
 }
 
-// ── Incident / suspicious (VM-242 / 217) ─────────────────────────────────────
 export type IncidentKind = 'suspicious' | 'incident';
 export type IncidentSeverity = 'low' | 'medium' | 'high';
 
@@ -309,7 +302,6 @@ export interface IncidentReport extends Omit<IncidentInput, 'idempotencyKey'> {
   createdAt: string;     // ISO
 }
 
-// ── Analytics (Section X / §14) ──────────────────────────────────────────────
 export interface VisitorAnalytics {
   rangeLabel: string;
   totalEntries: number;
@@ -322,7 +314,6 @@ export interface VisitorAnalytics {
   restrictionImpact: { restrictedResidents: number; avgRestoreMinutes: number };
 }
 
-// ── Lookup (VM-204) ──────────────────────────────────────────────────────────
 export interface ResidentDirectoryEntry {
   id: string;
   name: string;
@@ -336,7 +327,6 @@ export interface LookupResults {
   residents: ResidentDirectoryEntry[];
 }
 
-// ── Event guest bulk (VM-107) ────────────────────────────────────────────────
 export interface EventGuestInput {
   eventName: string;
   guestNames: string[];

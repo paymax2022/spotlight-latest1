@@ -5,7 +5,6 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy for the Referral Earning System member API.
 //   /api/v1/referral/<...>  →  Go: /api/finance/referral/<...>
-// Auth + feature-flag guarded; the Go side applies per-route logic. Admin
 // routes are NOT proxied here (the admin app calls /api/referral/admin/* on Go
 // directly). Money mutations forward the caller's Idempotency-Key header.
 
@@ -36,6 +35,11 @@ export async function PUT(request: Request, ctx: { params: Promise<{ path: strin
 }
 
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  const { path } = await ctx.params;
+  return forward(request, path);
+}
+
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   return forward(request, path);
 }

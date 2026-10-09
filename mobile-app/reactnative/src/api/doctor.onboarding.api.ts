@@ -1,14 +1,8 @@
-// ── Doctor (Telemedicine, provider-side) — Section A API client ──────────────
-// Section A = Splash, Onboarding & Authentication (20 entries). Phase A style:
-// every function resolves demo data so screens render without a live API;
 // `DEMO_*` exports double as `placeholderData` in useQuery. ADDITIVE to all
 // earlier api files — nothing earlier changes.
-//
-// Each function branches on `DOCTOR_USE_MOCK` (from doctor.client.ts): the MOCK
 // branch returns demo data via `wait()`, the LIVE branch calls the real backend
 // under `/api/v1/doctor` via the shared doctorGet/doctorPost helpers. Mutations
 // pass the `Idempotency-Key` header through doctorPost.
-//
 // CONSOLIDATED + heavy REUSE:
 //   - Entries 5/6 (doctor / specialist profile update) REUSE Section B
 //     (doctor.profile.api + useProfileBuilder) — no api here.
@@ -23,7 +17,6 @@ import { DOCTOR_USE_MOCK, doctorGet, doctorPost } from '@/api/doctor.client';
 import { LEGAL_DOC_ORDER, PERMISSION_ORDER, PERMISSION_LABELS } from '@/features/doctor/constants/onboarding';
 // Re-export the shared money formatter so Section A screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
-// Re-export the REUSED Batch 7 account-status read so entries 17–20 pull the
 // account state from a single import site (no re-implementation).
 export { getAccountStatus, DEMO_ACCOUNT_STATUS } from '@/api/doctor.batch7.api';
 
@@ -56,9 +49,7 @@ const wait = <T>(value: T, ms = 350): Promise<T> =>
 
 const iso = (daysAgo: number): string => new Date(Date.now() - daysAgo * 86400000).toISOString();
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRY 2 — APP INTRO CAROUSEL
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_ONBOARDING_SLIDES: OnboardingSlide[] = [
   { id: 'sl-1', title: 'Practise from anywhere',
@@ -75,18 +66,14 @@ export const DEMO_ONBOARDING_SLIDES: OnboardingSlide[] = [
     icon: 'shield-checkmark-outline', accent: 'warning' },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRIES 3 & 4 — UPGRADE TO MERCHANT + PROVIDER TYPE
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_MERCHANT_UPGRADE_STATUS: MerchantUpgradeStatus = {
   state: 'not_started',
   updatedAt: iso(0),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRIES 8–12 — LEGAL CONSENTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 const LEGAL_DOCS_BY_KIND: Record<LegalDocKind, LegalDocument> = {
   terms_of_service: {
@@ -156,9 +143,7 @@ export const DEMO_CONSENT_STATUS: ConsentStatus = {
   updatedAt: iso(2),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ENTRIES 13–16 — OS PERMISSIONS
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_PERMISSION_STATES: PermissionStates = {
   permissions: [
@@ -170,36 +155,28 @@ export const DEMO_PERMISSION_STATES: PermissionStates = {
   updatedAt: iso(1),
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
 // READ ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Entry 2 ──
 export async function getOnboardingSlides(): Promise<OnboardingSlide[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_ONBOARDING_SLIDES);
   return doctorGet<OnboardingSlide[]>('/onboarding/slides');
 }
 
-// ── Entries 3 & 4 ──
 export async function getMerchantUpgradeStatus(): Promise<MerchantUpgradeStatus> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_MERCHANT_UPGRADE_STATUS);
   return doctorGet<MerchantUpgradeStatus>('/onboarding/merchant-upgrade');
 }
 
-// ── Entries 8–12 ──
 // GET /onboarding/legal is wired server-side to the SAME read as ListConsents
 // (internal/doctor/service_account_tail.go: "Read-only thin projection over the
 // existing ListConsents read") — it returns the caller's own acceptance records,
 // never document content. There is no title/body/sections/version for any kind
-// anywhere in the backend; nothing to fetch, versioned or otherwise. Calling it
 // crashed consent/[kind].tsx on `doc.sections.length` for every kind, for every
 // user, the moment they tapped in from the (now-working) consents hub.
-//
 // The consents hub already labels this content "Demo legal copy" to users, so
 // the live path now serves the same LEGAL_DOCS_BY_KIND fixture the mock branch
 // always has — real, complete copy for all five kinds, not new text invented
 // here. DOCTOR_USE_MOCK stops mattering for this one call because both branches
-// resolve to the same content; that is a statement about what actually exists,
 // not a bug.
 export async function getLegalDocument(kind: LegalDocKind): Promise<LegalDocument> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_LEGAL_DOCUMENTS[kind]);
@@ -210,7 +187,6 @@ export async function getLegalDocument(kind: LegalDocKind): Promise<LegalDocumen
 // (kind, version) ever decided, not the {accepted, outstanding, allAccepted}
 // object ConsentStatus promises (internal/doctor: ListConsents -> Service
 // .ListConsents -> Repository.ListConsents, all typed []LegalConsent). No
-// endpoint anywhere computes that aggregate; it has only ever existed as a
 // client-side type. consents.tsx read `status.outstanding` straight off
 // whatever this returned, so `status` was really the bare array, `.outstanding`
 // was `undefined` on it, and reading `.length` off that crashed on the very
@@ -251,14 +227,12 @@ export async function getConsentStatus(): Promise<ConsentStatus> {
   };
 }
 
-// ── Entries 13–16 ──
 // Same "aggregate exists only as a client type" pattern as getConsentStatus
 // above. GET /onboarding/permissions (internal/doctor: ListPermissions ->
 // Service.ListPermissions -> Repository.ListPermissions, typed []AppPermission)
 // returns a flat, per-kind row list — never the {permissions, updatedAt}
 // wrapper PermissionStates promises. Two more differences layer on top:
 //   - the field is permissionKind on the wire, not kind (AppPermissionStatus.kind)
-//   - Go's AppPermission carries no `required` field at all; PERMISSION_LABELS
 //     is already this client's own source of truth for it (permissions/index.tsx
 //     reads PERMISSION_LABELS[k].required directly for its own "all required
 //     decided?" check), so the aggregate reuses that rather than inventing a
@@ -278,7 +252,6 @@ export async function getPermissionStates(): Promise<PermissionStates> {
   const byKind = new Map(rows.map((r) => [r.permissionKind, r]));
 
   // Always all four kinds, matching permissions/index.tsx's own comment ("always
-  // four kinds; an 'empty' permission is undetermined") — a kind the user has
   // never decided on is a real, meaningful state here, not an absence to omit.
   const permissions: AppPermissionStatus[] = PERMISSION_ORDER.map((kind) => {
     const row = byKind.get(kind);
@@ -293,16 +266,13 @@ export async function getPermissionStates(): Promise<PermissionStates> {
   return { permissions, updatedAt: new Date().toISOString() };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATIONS
-// ═══════════════════════════════════════════════════════════════════════════
 
 // POST /onboarding/merchant-upgrade (internal/doctor Service.RequestMerchantUpgrade)
 // returns the doctor_merchant_upgrades row directly — {id, userId, state,
 // selectedType?, requestedAt?, completedAt?, detail?, createdAt, updatedAt} —
 // not the {status: MerchantUpgradeStatus} wrapper RequestMerchantUpgradeResult
 // promises. The live JSON has no top-level `status` key, so any caller reading
-// `result.status.state` got `undefined`; no screen does today (the upgrade
 // screen only branches on success/failure), so this was dormant, not crashing.
 // Translated at the call site: same fields, correct wrapper, and the wire's
 // `requestedAt` mapped to the client's `startedAt` (a naming difference, not a
@@ -314,7 +284,6 @@ interface MerchantUpgradeWire {
   updatedAt:     string;
 }
 
-// ── Entry 3 — request user→merchant (provider) upgrade ──
 export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput): Promise<RequestMerchantUpgradeResult> {
   if (DOCTOR_USE_MOCK) {
     void input.idempotencyKey;
@@ -341,7 +310,6 @@ export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput)
 // SelectProviderTypeResult promises. Also dormant today: provider-type.tsx
 // awaits the mutation but never reads its resolved value, relying instead on
 // the separately-invalidated useMerchantUpgradeStatus query.
-//
 // The profile draft has no `state` field to report anyway — SetProviderType's
 // own doc comment notes the canonical upgrade state only flips at publish, this
 // call just patch-merges the choice into the draft. So rather than parse an
@@ -368,7 +336,6 @@ export async function selectProviderType(input: SelectProviderTypeInput): Promis
   };
 }
 
-// ── Entries 8–12 — accept a legal document (versioned) ──
 export async function acceptConsent(input: AcceptConsentInput): Promise<AcceptConsentResult> {
   if (DOCTOR_USE_MOCK) {
     const record: LegalConsentRecord = {
@@ -390,9 +357,7 @@ export async function acceptConsent(input: AcceptConsentInput): Promise<AcceptCo
   // so a body key of `kind` left it permanently unpopulated and every acceptance
   // failed binding with a 400 before touching the database — nobody has ever
   // been able to accept a legal document through this screen.
-  //
   // AcceptConsentInput itself keeps `kind`, matching every other client type in
-  // this module (LegalConsentRecord.kind, AppPermissionStatus.kind, …); only the
   // wire body translates, the same way viewerIDForCounting translates at its own
   // boundary rather than renaming a name used everywhere else.
   return doctorPost<AcceptConsentResult>(
@@ -402,7 +367,6 @@ export async function acceptConsent(input: AcceptConsentInput): Promise<AcceptCo
   );
 }
 
-// ── Entries 13–16 — record an OS permission decision ──
 export async function recordPermissionDecision(input: RecordPermissionDecisionInput): Promise<RecordPermissionDecisionResult> {
   if (DOCTOR_USE_MOCK) {
     const required = input.kind === 'camera' || input.kind === 'microphone';

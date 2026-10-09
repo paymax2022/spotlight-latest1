@@ -9,6 +9,7 @@
  * single applicants page plus the review API route that had no admin UI
  * calling it before this.
  */
+import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   listRegistrationApplications,
@@ -48,6 +49,12 @@ const REVIEW_ACTIONS: { label: string; status: ApplicationStatus; variant: 'prim
   { label: 'Disqualify', status: 'disqualified', variant: 'danger' },
 ];
 
+const STATUS_FILTERS: ApplicationStatus[] = [
+  'submitted', 'under_review', 'more_information_requested', 'shortlisted', 'approved', 'waitlisted', 'rejected', 'disqualified',
+];
+
+const humanize = (v: string): string => v.replace(/_/g, ' ');
+
 function field(formData: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
     const value = formData?.[key];
@@ -59,6 +66,7 @@ function field(formData: Record<string, unknown>, ...keys: string[]): string {
 export default function RegistrationApplicantsPage() {
   const [contests, setContests] = useState<RegistrationContest[]>([]);
   const [contestSlug, setContestSlug] = useState('');
+  const [status, setStatus] = useState<ApplicationStatus | ''>('');
   const [applications, setApplications] = useState<RegistrationDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,10 +76,16 @@ export default function RegistrationApplicantsPage() {
   const [acting, setActing] = useState<string | null>(null);
 
   useEffect(() => {
+    // Honour ?status= so links like /admin/registration?status=submitted open
+    // already filtered instead of silently showing everything.
+    const fromUrl = new URLSearchParams(window.location.search).get('status');
+    if (fromUrl && (STATUS_FILTERS as string[]).includes(fromUrl)) setStatus(fromUrl as ApplicationStatus);
+  }, []);
+
+  useEffect(() => {
     // No auto-select. This used to jump to the first contest in the list, so the
     // page opened pre-filtered to an arbitrary contest and usually reported
     // "0 applicants" — with the real ones one dropdown change away and no hint
-    // that a filter was even applied. Default to All contests and let the
     // operator narrow.
     listRegistrationContests()
       .then(setContests)
@@ -82,13 +96,13 @@ export default function RegistrationApplicantsPage() {
     setLoading(true);
     setError(null);
     try {
-      setApplications(await listRegistrationApplications({ contestSlug: contestSlug || undefined }));
+      setApplications(await listRegistrationApplications({ contestSlug: contestSlug || undefined, status: status || undefined }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [contestSlug]);
+  }, [contestSlug, status]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,6 +119,11 @@ export default function RegistrationApplicantsPage() {
       return haystack.includes(q);
     });
   }, [applications, query]);
+
+  const contestTitle = useCallback(
+    (slug: string) => contests.find((c) => c.slug === slug)?.title ?? slug,
+    [contests],
+  );
 
   const act = useCallback(async (id: string, status: ApplicationStatus) => {
     setActing(id);
@@ -140,6 +159,17 @@ export default function RegistrationApplicantsPage() {
               <option key={c.slug} value={c.slug}>{c.title}</option>
             ))}
           </select>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as ApplicationStatus | '')}
+            style={{ padding: '8px 10px', borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13, minWidth: 160 }}
+            aria-label="Filter by status"
+          >
+            <option value="">All statuses</option>
+            {STATUS_FILTERS.map((st) => (
+              <option key={st} value={st}>{humanize(st).replace(/^./, (c) => c.toUpperCase())}</option>
+            ))}
+          </select>
           <Input
             placeholder="Search name, email, reference…"
             value={query}
@@ -152,6 +182,12 @@ export default function RegistrationApplicantsPage() {
           </span>
         </div>
       </Card>
+
+      <p style={{ color: colors.muted, fontSize: 13, margin: '0 0 12px' }}>
+        This list is contest applicants only. Role and module applications (restaurant owner, doctor,
+        pharmacy, seller…) are reviewed in{' '}
+        <Link href="/admin/merchant-onboarding" style={{ color: colors.primary }}>Merchant Onboarding</Link>.
+      </p>
 
       <Card>
         {loading && <p style={{ color: colors.muted }}>Loading applicants…</p>}
@@ -171,7 +207,7 @@ export default function RegistrationApplicantsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {['Reference', 'Applicant', 'Email', 'State', 'Status', 'Updated', ''].map((h) => (
+                  {['Reference', 'Applicant', 'Email', 'Module', 'Role', 'State', 'Status', 'Updated', ''].map((h) => (
                     <th key={h} style={thCell}>{h}</th>
                   ))}
                 </tr>
@@ -186,6 +222,8 @@ export default function RegistrationApplicantsPage() {
                         <td style={tdCell}>{a.reference}</td>
                         <td style={tdCell}>{field(data, 'personal.firstName', 'account.fullName')}</td>
                         <td style={tdCell}>{field(data, 'personal.email', 'account.email')}</td>
+                        <td style={tdCell}>Contest · {contestTitle(a.contestSlug)}</td>
+                        <td style={tdCell}>{a.role ? humanize(a.role) : '—'}</td>
                         <td style={tdCell}>{field(data, 'personal.state', 'audition.state')}</td>
                         <td style={tdCell}>
                           <Badge text={a.status.replace(/_/g, ' ')} color={STATUS_BADGE[a.status] ?? colors.muted} />

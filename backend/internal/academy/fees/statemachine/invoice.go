@@ -1,7 +1,5 @@
 package feesstatemachine
 
-// ── Invoice state machine (build-spec §3.1) ───────────────────────────────────
-//
 //	draft → issued → partially_paid ⇄ (Payment events) → paid
 //	issued/partially_paid → overdue (due_date passed, balance > 0)
 //	overdue → partially_paid | paid  (payments land after going overdue)
@@ -9,7 +7,6 @@ package feesstatemachine
 //	any non-terminal state → waived      (admin/scholarship override, audited)
 //	any non-terminal state → written_off (admin write-off, audited)
 //	Terminal: paid, waived, written_off
-//
 // SF-2 (CRITICAL): this machine governs INVOICE STATUS ONLY. Balance is a
 // DERIVED value computed elsewhere from the sum of Payment events against the
 // invoice (mirrors ledger discipline). This library MUST NEVER compute, store,
@@ -113,7 +110,6 @@ func invoiceTarget(from InvoiceState, event Event) InvoiceState {
 
 // InvoiceCanTransition reports whether from→to is a legal invoice transition.
 // Pure. Includes the "any non-terminal → waived/written_off" fan-in edges.
-//
 // NOTE: Go has no method overloading, so the four machines in this single
 // package cannot each literally export a symbol named `CanTransition`. Each
 // machine therefore exports its own `<Machine>CanTransition` /

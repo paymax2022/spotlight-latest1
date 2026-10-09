@@ -202,7 +202,6 @@ func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code s
 // reservePromoRedemption is the AUTHORITATIVE usage-limit check. It claims this order's
 // slot on the promo in ONE short transaction: lock the promo row, count the redemptions
 // that are by then committed, and — if there is room — write this order's redemption.
-//
 // The lock is what makes the limit real. promoUsageOK (used earlier, to size the
 // discount) reads the counts on the pool with nothing locked, and a count-and-compare at
 // READ COMMITTED is not a constraint: N concurrent placements each see only committed
@@ -212,14 +211,12 @@ func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code s
 // on every redemption), so it has to actually hold. SELECT ... FOR UPDATE serializes
 // concurrent redeemers of the SAME promo; committing publishes this redemption to the
 // next waiter. Different promos never contend.
-//
 // TRANSACTION SCOPE IS LOAD-BEARING. This runs in its own short tx that commits before
 // settlement.Escrow is called, and it must stay that way. An earlier shape took this
 // lock on the ORDER's transaction and held it across Escrow — but Escrow needs a second
 // pool connection, so every in-flight order pinned two, and at concurrency ≥ half the
 // pool every connection was held by an order tx waiting for a connection that could
 // never free. That is a deadlock of the whole order path, not a slowdown.
-//
 // The reservation is still taken BEFORE the escrow, so a loser of the limit race is
 // rejected with no money to unwind. The cost of the split is that the redemption is no
 // longer atomic with the order row: a crash between here and the order insert leaves a
@@ -231,7 +228,7 @@ func (s *Service) reservePromoRedemption(ctx context.Context, promoID, orderID, 
 	if err != nil {
 		return fmt.Errorf("restaurant: begin promo reservation: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var usageLimit, perUserLimit *int
 	if err := tx.QueryRow(ctx,
@@ -294,7 +291,6 @@ func (s *Service) releasePromoReservationSafe(ctx context.Context, promoID *stri
 // redemption row keeps counting against usage_limit forever. It also stops a
 // restaurant-initiated cancellation from silently burning a customer's per-user
 // allowance. Runs on the caller's tx so it commits with the cancellation itself.
-//
 // This is NOT a ledger record — redemptions are campaign bookkeeping, so deleting the
 // row is the correct way to un-consume it; the money movement is reversed separately by
 // settlement.Refund, which posts its own balanced entries and rewrites nothing.
@@ -305,7 +301,6 @@ func releasePromoRedemption(ctx context.Context, tx pgx.Tx, orderID string) erro
 
 // promoFunderCapKobo is the LARGEST discount the declared funder can actually bear on
 // an order whose settlement gross is grossKobo.
-//
 // The escrow only ever holds what the customer paid (gross − discount) — there is no
 // outside pot to draw a discount from, so it is funded by shrinking exactly ONE
 // settlement leg (settlement.Split.DiscountFundedByPlatform picks which). Settle fails
@@ -313,7 +308,6 @@ func releasePromoRedemption(ctx context.Context, tx pgx.Tx, orderID string) erro
 // settlement that can never complete and an escrow stranded forever. So the bound is
 // checked at placement instead, before any money moves, and it is derived from the very
 // same arithmetic Settle uses (int64(float64(gross)*pct)) so the two cannot drift:
-//
 //   - platform-funded   → it comes out of the platform leg, which is splitPlatformPct
 //     of the gross;
 //   - restaurant-funded → it falls out of the provider REMAINDER (total − platform −
@@ -369,22 +363,22 @@ func (s *Service) CreatePromo(ctx context.Context, restaurantID, userID string, 
 	switch req.Kind {
 	case PromoPercent:
 		if req.ValueBp < 1 || req.ValueBp > 10000 {
-			return nil, fmt.Errorf("restaurant: percent promo needs value_bp in [1,10000]")
+			return nil, errors.New("restaurant: percent promo needs value_bp in [1,10000]")
 		}
 	case PromoFixed:
 		if req.AmountKobo < 1 {
-			return nil, fmt.Errorf("restaurant: fixed promo needs amount_kobo >= 1")
+			return nil, errors.New("restaurant: fixed promo needs amount_kobo >= 1")
 		}
 	case PromoFreeDelivery:
 		// No value needed — the discount is the order's delivery fee at checkout.
 	default:
-		return nil, fmt.Errorf("restaurant: promo kind must be 'percent', 'fixed' or 'free_delivery'")
+		return nil, errors.New("restaurant: promo kind must be 'percent', 'fixed' or 'free_delivery'")
 	}
 	if req.MinSubtotalKobo < 0 || (req.MaxDiscountKobo != nil && *req.MaxDiscountKobo < 0) {
-		return nil, fmt.Errorf("restaurant: promo amounts must be non-negative")
+		return nil, errors.New("restaurant: promo amounts must be non-negative")
 	}
 	if req.StartsAt != nil && req.EndsAt != nil && req.EndsAt.Before(*req.StartsAt) {
-		return nil, fmt.Errorf("restaurant: promo ends_at is before starts_at")
+		return nil, errors.New("restaurant: promo ends_at is before starts_at")
 	}
 	p := &Promo{
 		ID: uuid.New().String(), RestaurantID: &restaurantID, Code: req.Code,

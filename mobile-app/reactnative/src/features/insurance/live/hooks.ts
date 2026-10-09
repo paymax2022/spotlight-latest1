@@ -1,6 +1,4 @@
-// ── Insurance (live) — React Query hooks ────────────────────────────────────
 // Screens stay declarative; caching, retry and invalidation live here.
-//
 // Retry policy: a 4xx is the server telling us the request was wrong, so
 // retrying it just delays the error state the user needs to see. Only transient
 // failures (no response, 5xx) are retried.
@@ -34,7 +32,6 @@ function retryTransientOnly(failureCount: number, error: unknown): boolean {
 
 const commonQuery = { retry: retryTransientOnly } as const;
 
-// ── Catalog ─────────────────────────────────────────────────────────────────
 export function useLiveProducts(line?: ProductLine | null) {
   return useQuery({
     queryKey: [KEY, 'products', line ?? 'all'],
@@ -100,7 +97,6 @@ export function useFieldOptions(args: {
   });
 }
 
-// ── Quote / purchase ────────────────────────────────────────────────────────
 export function useCreateLiveQuote() {
   return useMutation({
     mutationFn: (args: { productCode: string; inputs: Record<string, unknown> }) =>
@@ -122,7 +118,6 @@ export function usePurchasePolicy() {
   });
 }
 
-// ── Policies ────────────────────────────────────────────────────────────────
 export function useLivePolicies() {
   return useQuery({
     queryKey: [KEY, 'policies'],
@@ -164,7 +159,6 @@ export function useCancelPolicy(id: string) {
   });
 }
 
-// ── Claims ──────────────────────────────────────────────────────────────────
 export function useLiveClaims() {
   return useQuery({
     queryKey: [KEY, 'claims'],
@@ -208,7 +202,6 @@ export function useAddClaimEvidence(claimId: string) {
   });
 }
 
-// ── Derived ─────────────────────────────────────────────────────────────────
 export interface CoverSummary {
   activePolicies: number;
   totalSumInsuredKobo: number;

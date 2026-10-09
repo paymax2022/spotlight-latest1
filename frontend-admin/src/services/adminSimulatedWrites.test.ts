@@ -132,12 +132,10 @@ describe('services with real backends are live by default', () => {
     vi.stubGlobal('fetch', fetchFn);
 
     // Settlement HAS a live endpoint now, so fixture mode has no honest answer
-    // left: it refuses instead of reporting the literal 3 it used to (see the
     // header of investAdminService.ts and docs/audit/ADMIN_SIMULATED_WRITES.md).
     const invest = await import('@/services/investAdminService');
     await expect(invest.runSettlement()).rejects.toThrow(/fixture mode/i);
 
-    // The withdrawal decision keeps an in-memory fixture branch; asking for it
     // must serve that fixture, not fire a request.
     const crypto = await import('@/services/cryptoAdminService');
     const decided = await crypto.adminDecideWithdrawal('wd_c1', { decision: 'reject', note: 'reviewed' } as never);

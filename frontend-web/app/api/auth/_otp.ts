@@ -19,6 +19,8 @@
  * turn "that code is wrong" into a confusing second error.
  */
 
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
+
 const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
 
@@ -30,12 +32,17 @@ export type GoResult =
 /** Purposes the Go OTP service accepts. `login` is not self-issuable. */
 export type OtpPurpose = 'verify_email' | 'password_reset' | 'login';
 
-export async function callGo(path: string, body: unknown): Promise<GoResult> {
+export async function callGo(path: string, body: unknown, request?: Request): Promise<GoResult> {
   let upstream: Response;
   try {
     upstream = await fetch(`${GO_BACKEND_URL}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // The Go OTP service keeps per-IP send/verify budgets — forward the
+      // resolved client IP or every web caller shares the BFF's (AUD-BE-014).
+      headers: {
+        'Content-Type': 'application/json',
+        ...(request ? clientIpHeaders(request) : {}),
+      },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       cache: 'no-store',

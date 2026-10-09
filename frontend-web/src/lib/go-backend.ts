@@ -9,6 +9,8 @@
  *   return proxyToGoBackend(request, '/api/finance/telemedicine/doctors');
  */
 import { NextResponse } from 'next/server';
+import { clientIpHeaders, getRequestIp } from '@/src/lib/rate-limit/client-ip';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 
 export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
@@ -25,11 +27,40 @@ export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:80
  */
 const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
 
+/**
+ * Per-client ceiling applied to EVERY proxied call (AUD-SEC-001): ~147 route
+ * handlers funnel through this function, and almost none carried their own
+ * limiter, so payment-initiation and wallet-debit money paths were un-throttled.
+ * Keyed on the proxy-aware client IP (forged XFF collapses into one shared
+ * bucket rather than minting fresh buckets per request). Deliberately generous —
+ * this sheds abusive floods, it does not shape normal UX: a fast dashboard
+ * burst is hundreds of calls, a flood is thousands. 0 disables.
+ */
+function proxyRateLimit(): { limit: number; windowMs: number } {
+  const limit = Number(process.env.PROXY_RATE_LIMIT ?? 600);
+  const windowMs = Number(process.env.PROXY_RATE_WINDOW_MS ?? 60_000);
+  return {
+    limit: Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : 600,
+    windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 60_000,
+  };
+}
+
 export async function proxyToGoBackend(
   request: Request,
   goPath: string,
-  options?: { method?: string; body?: unknown; headers?: Record<string, string> },
+  options?: { method?: string; body?: unknown; headers?: Record<string, string>; rateLimitKey?: string },
 ): Promise<Response> {
+  const { limit, windowMs } = proxyRateLimit();
+  if (limit > 0) {
+    const rl = checkRateLimit(`go-proxy:${options?.rateLimitKey ?? getRequestIp(request)}`, limit, windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many requests — slow down and retry.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.resetInMs / 1000)) } },
+      );
+    }
+  }
+
   const url = new URL(request.url);
   const targetUrl = `${GO_BACKEND_URL}${goPath}${url.search}`;
 
@@ -39,6 +70,12 @@ export async function proxyToGoBackend(
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
+    // Propagate the resolved client IP so the Go backend's IP-keyed controls
+    // (auth rate limits, OTP budgets, suspicious-login signals, audit rows)
+    // see the real caller, not this BFF's address. Go trusts it only when this
+    // host is inside TRUSTED_PROXY_CIDRS — otherwise it fails closed to the
+    // direct peer IP, i.e. today's behaviour (AUD-BE-014).
+    ...clientIpHeaders(request),
   };
 
   // Forward the Authorization header so Go backend can validate the JWT.
@@ -70,8 +107,19 @@ export async function proxyToGoBackend(
     if (options?.body !== undefined) {
       body = JSON.stringify(options.body);
     } else {
+      // A multipart upload must reach Go as the exact bytes with its own
+      // `multipart/form-data; boundary=...` header. Reading it as text corrupts
+      // the binary and forcing application/json drops the boundary, so the Go
+      // handler's FormFile("file") fails (insurance uploads answered 400).
+      const incomingType = request.headers.get('content-type') ?? '';
+      const isMultipart = /^multipart\/form-data\b/i.test(incomingType);
       try {
-        body = await request.text();
+        if (isMultipart) {
+          body = await request.arrayBuffer();
+          headers['Content-Type'] = incomingType;
+        } else {
+          body = await request.text();
+        }
       } catch {
         body = undefined;
       }
@@ -115,7 +163,17 @@ export async function proxyToGoBackend(
   // the proxied response. NextResponse is the same response type the JSON error
   // helpers return, which the middleware is already proven to decorate.
   const responseBody = await upstream.text();
-  return new NextResponse(responseBody, {
+  // Null-body statuses (101/204/205/304) may not carry a body — the Fetch
+  // Response constructor THROWS TypeError on one, even an empty string, so a
+  // successful upstream 204 (mark-read, prefs writes, deletes: Gin answers
+  // `c.Status(204)` all over) surfaced to callers as a 500. Forward them with
+  // a null body so the status reaches the client intact.
+  const nullBodyStatus =
+    upstream.status === 101 ||
+    upstream.status === 204 ||
+    upstream.status === 205 ||
+    upstream.status === 304;
+  return new NextResponse(nullBodyStatus ? null : responseBody, {
     status: upstream.status,
     headers: { 'Content-Type': 'application/json' },
   });

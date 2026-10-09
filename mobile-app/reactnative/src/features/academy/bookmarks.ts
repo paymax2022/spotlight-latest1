@@ -1,6 +1,4 @@
-// ── Academy bookmarks — pure list operations ─────────────────────────────────
 // Bookmarks are keyed by their canonical `href` (the lesson/topic/past-question
-// route). Pure + testable; the mock/live API layer wraps these with the module
 // bookmark list and the offline sync.
 
 import type { Bookmark } from './types';

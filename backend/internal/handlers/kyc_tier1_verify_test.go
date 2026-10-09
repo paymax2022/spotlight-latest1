@@ -6,7 +6,6 @@ package handlers
 // must NEVER fall through to a silent unverified write. Written before the fix
 // (see the PR retiring the admin manual-approval bypass) to prove the fail-
 // closed behavior, not just the happy path a mock could fake.
-//
 // The provider-call happy path (a real PASSED check auto-elevating the tier)
 // is NOT re-tested here — that logic lives entirely in kycverify's own
 // orchestrator/statemachine and is already covered by
@@ -76,7 +75,7 @@ func newTier1TestContext(body string) (*gin.Context, *httptest.ResponseRecorder)
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/kyc/tier1", strings.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/kyc/tier1", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("Idempotency-Key", "idem-test-key")
 	c.Set("user_id", "11111111-1111-1111-1111-111111111111")
@@ -121,6 +120,22 @@ func TestSubmitTier1_InvalidIdentifier_RefusesBeforeAnyProviderCall(t *testing.T
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, 0, fake.consentCalls)
 	require.Nil(t, fake.runCheckArgs)
+}
+
+func TestSubmitTier1_NonNumericIdentifier_RefusesBeforeAnyProviderCall(t *testing.T) {
+	// 11 characters long but not a BVN/NIN: must be refused before consent is
+	// recorded or the provider is called (it would otherwise ride into a query string).
+	for _, id := range []string{"1234567890a", "1&bvn=2#x_y", "           ", "١٢٣٤٥٦٧٨٩٠١"} {
+		fake := &fakeKycVerifyGateway{}
+		h := &KYCConnectHandler{kycVerify: fake}
+		c, w := newTier1TestContext(`{"identifier":"` + id + `","identifierType":"bvn","consentVersion":"2026-07-ndpa-cbn-v1"}`)
+
+		h.SubmitTier1(c)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, "identifier %q", id)
+		assert.Equal(t, 0, fake.consentCalls, "identifier %q", id)
+		require.Nil(t, fake.runCheckArgs, "identifier %q", id)
+	}
 }
 
 func TestSubmitTier1_ValidRequest_RunsRealIDNumberCheck(t *testing.T) {

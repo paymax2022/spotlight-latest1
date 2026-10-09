@@ -1,8 +1,6 @@
-// ── Doctor — AI assistance hooks ─────────────────────────────────────────────
 // Phase 3. The three AI screens: consultation-note summary, prescription safety
 // checker, and lab-result explanation. Each AI result is wrapped in the shared
 // `AiEnvelope<T>` (status: idle | generating | ready | error). The "generating"
-// transition is surfaced via the mutation's `isPending`; the resolved value is
 // the ready envelope. Generate mutations carry an auto-generated Idempotency-Key.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -32,11 +30,10 @@ export function useAiNoteSummary(appointmentId: string) {
     queryKey:  ['doctor', 'ai', 'note-summary', appointmentId],
     queryFn:   () => getAiNoteSummary(appointmentId),
     enabled:   !!appointmentId,
-    staleTime: 0, // AI output is per-run; do not cache stale generations
+    staleTime: 0,
   });
 }
 
-// Generate / regenerate. `isPending` represents the 'generating' state; the
 // settled data/error maps to 'ready'/'error'.
 export function useGenerateAiNoteSummary() {
   const qc = useQueryClient();
@@ -81,8 +78,6 @@ export function useAiSafetyReport(id: string) {
     staleTime: 0,
   });
 }
-
-// ─── 8. AI lab result explanation ────────────────────────────────────────────
 
 // Read the cached explanation for a lab result, if present.
 export function useAiLabExplanation(resultId: string) {

@@ -2,6 +2,7 @@ package escrow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,13 +13,11 @@ import (
 // Phase-3 dispute extension. ADDITIVE to the P1 escrow core: it reuses the existing
 // Hold/Release/Refund money legs and the guarded state machine (which already
 // tolerates DISPUTED). A dispute drives HELD → DISPUTED → (RELEASED | REFUNDED):
-//
 //   - RaiseDispute flips an active HELD hold to DISPUTED and records buyer/seller
 //     evidence. No money moves on raise (NL-6: funds stay held).
 //   - Arbitrate resolves a DISPUTED hold with a separation-of-duties guard (the
 //     arbiter may not be the payer or payee) then performs the matching ledger leg
 //     via the existing resolve() path (RELEASED → payee, REFUNDED → payer).
-//
 // Every transition + arbitration decision is audited (NL-12).
 
 // DisputeDecision is the arbiter's ruling.
@@ -46,22 +45,22 @@ type Dispute struct {
 // guarded transition HELD → DISPUTED rejects an already-resolved/disputed hold.
 func (s *Service) RaiseDispute(ctx context.Context, escrowID, raisedBy, evidence string) (*Dispute, error) {
 	if escrowID == "" || raisedBy == "" {
-		return nil, fmt.Errorf("escrow: escrowID and raisedBy required")
+		return nil, errors.New("escrow: escrowID and raisedBy required")
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("escrow: dispute begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var payerID string
 	var payeeID *string
 	var state string
 	const sel = `SELECT payer_id, payee_id, state FROM escrow_holds WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, sel, escrowID).Scan(&payerID, &payeeID, &state); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("escrow: hold not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("escrow: hold not found")
 		}
 		return nil, fmt.Errorf("escrow: load hold for dispute: %w", err)
 	}
@@ -114,7 +113,7 @@ func (s *Service) RaiseDispute(ctx context.Context, escrowID, raisedBy, evidence
 // hold may submit (object-level authZ).
 func (s *Service) AddEvidence(ctx context.Context, escrowID, submittedBy, body string) error {
 	if body == "" {
-		return fmt.Errorf("escrow: evidence body required")
+		return errors.New("escrow: evidence body required")
 	}
 	var payerID string
 	var payeeID *string
@@ -126,8 +125,8 @@ func (s *Service) AddEvidence(ctx context.Context, escrowID, submittedBy, body s
 	}
 	var disputeID string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM escrow_disputes WHERE escrow_id=$1 AND state='OPEN' ORDER BY created_at DESC LIMIT 1`, escrowID).Scan(&disputeID); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("escrow: no open dispute for hold")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("escrow: no open dispute for hold")
 		}
 		return err
 	}
@@ -143,7 +142,7 @@ func (s *Service) AddEvidence(ctx context.Context, escrowID, submittedBy, body s
 // idempotent resolve() ledger path (NL-8/NL-9). The decision is audited (NL-12).
 func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision DisputeDecision, arbiterID string) error {
 	if arbiterID == "" {
-		return fmt.Errorf("escrow: arbiter required")
+		return errors.New("escrow: arbiter required")
 	}
 	if decision != DecisionRelease && decision != DecisionRefund {
 		return fmt.Errorf("escrow: invalid decision %q", decision)
@@ -154,8 +153,8 @@ func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision Dispu
 	var payeeID *string
 	var state string
 	if err := s.db.QueryRow(ctx, `SELECT payer_id, payee_id, state FROM escrow_holds WHERE id=$1`, escrowID).Scan(&payerID, &payeeID, &state); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("escrow: hold not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("escrow: hold not found")
 		}
 		return fmt.Errorf("escrow: load hold for arbitration: %w", err)
 	}
@@ -170,7 +169,7 @@ func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision Dispu
 	switch decision {
 	case DecisionRelease:
 		if payeeID == nil || *payeeID == "" {
-			return fmt.Errorf("escrow: cannot release — no payee on hold")
+			return errors.New("escrow: cannot release — no payee on hold")
 		}
 		if err := s.Release(ctx, escrowID, *payeeID); err != nil {
 			return err
@@ -206,8 +205,8 @@ func (s *Service) GetDispute(ctx context.Context, escrowID string) (*Dispute, er
 	if err := s.db.QueryRow(ctx, q, escrowID).Scan(
 		&d.ID, &d.EscrowID, &d.RaisedBy, &d.State, &d.Decision, &d.ArbiterID, &d.CreatedAt, &d.ResolvedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("escrow: no dispute for hold")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("escrow: no dispute for hold")
 		}
 		return nil, err
 	}
@@ -216,6 +215,6 @@ func (s *Service) GetDispute(ctx context.Context, escrowID string) (*Dispute, er
 
 // Sentinel errors.
 var (
-	ErrDisputeNotParty = fmt.Errorf("escrow: only a party to the escrow may dispute it")
-	ErrArbiterConflict = fmt.Errorf("escrow: arbiter cannot be a party to the escrow (separation of duties)")
+	ErrDisputeNotParty = errors.New("escrow: only a party to the escrow may dispute it")
+	ErrArbiterConflict = errors.New("escrow: arbiter cannot be a party to the escrow (separation of duties)")
 )

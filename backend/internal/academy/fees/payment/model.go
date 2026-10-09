@@ -1,20 +1,17 @@
 // Package feespayment is the EdTech School-Fees PAYMENT ADAPTER (build-spec §4 SF-2 / SF-6 /
 // SF-8). It is a THIN adapter over the EXISTING Paymax rails — it introduces NO new provider
 // integration. It only:
-//
 //   - CreatePaymentIntent: asks the existing provider.PaymentProvider to InitializePayment and
 //     hands the returned authorization URL + reference back to the caller (the parent app).
 //     It persists nothing that duplicates the ledger — the money is captured later, on
 //     confirmation, so an intent is a pure gateway session request (idempotent on the
 //     Idempotency-Key so a retried intent returns the same reference).
-//
 //   - OnChargeSuccess: the confirmation path. It VERIFIES the charge via provider.VerifyPayment,
 //     posts the REAL money move through the injected ledger interface (guardian wallet → school
 //     settlement account), and RECORDS the invoice-side payment via the injected invoice
 //     recorder using the SAME idempotency key, so the money leg and the invoice record replay
 //     together (SF-2 discipline: the invoice balance is DERIVED from its payment events — this
 //     package NEVER mutates a balance). End-to-end idempotent.
-//
 //   - PayInstallment (SF-6): a partial payment against an invoice whose immutable fee schedule
 //     carries an installment_policy. The terms are locked/disclosed at issuance (SF-1 already
 //     makes the schedule immutable). Here we accept a partial amount and drive the same
@@ -68,8 +65,6 @@ type ConfirmResult struct {
 	InvoiceStatus string `json:"invoiceStatus"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreatePaymentIntentRequest starts a checkout session for a full-invoice payment. amountMinor,
 // when 0, means "the invoice's current derived balance" (resolved by the caller/handler before
 // invoking the service). Email is the gateway customer email. Idempotency-Key comes from the
@@ -93,8 +88,6 @@ type PayInstallmentRequest struct {
 	CallbackURL  string `json:"callbackUrl"`
 	Acknowledged bool   `json:"acknowledged"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound            = errors.New("not_found")

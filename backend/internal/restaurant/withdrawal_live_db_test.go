@@ -1,13 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for FOOD-005: the merchant/rider WITHDRAWAL money
 // path (withdrawal.go RequestWithdrawal / MarkWithdrawalPaid / MarkWithdrawalFailed)
 // had zero test coverage — the service existed but was never exercised end to
 // end, and (separately, fixed alongside this) was never reachable via any route.
-//
 // What these tests pin:
-//
 //  1. RequestWithdrawal reserves funds: a balanced ledger DEBIT wallet / CREDIT
 //     suspense pair posts, the wallet balance drops by the withdrawn amount, and
 //     a `processing` restaurant_withdrawals row is created.
@@ -29,9 +26,7 @@ package restaurant
 //     silently matching nothing.
 //  7. RequestWithdrawal refuses outright while FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
 //     is off (WithWithdrawals(false)/unset) — the whole point of the flag.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

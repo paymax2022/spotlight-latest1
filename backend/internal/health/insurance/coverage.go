@@ -2,7 +2,6 @@
 // it splits a charge into the insurer-covered amount and the patient's
 // out-of-pocket (copay + deductible + coinsurance), in integer minor units (kobo)
 // with no floats and exact value conservation (test plan PM-002/PM-007).
-//
 // The health payment path is escrow full-pay today; this is the split math health
 // billing applies once insurance eligibility is wired. The claim-adjudication
 // lifecycle (PM-003) lives in the separate internal/insurance/claims module.
@@ -18,7 +17,6 @@ type Policy struct {
 
 // Split is the computed breakdown. Invariants (guaranteed by construction):
 //   - InsurerKobo + PatientKobo == ChargeKobo (value conservation, PM-007)
-//   - CopayKobo + DeductibleKobo + CoinsuranceKobo == PatientKobo
 type Split struct {
 	ChargeKobo      int64 `json:"chargeKobo"`
 	InsurerKobo     int64 `json:"insurerKobo"`
@@ -36,10 +34,7 @@ func Compute(charge int64, p Policy) Split {
 	if charge <= 0 {
 		return Split{}
 	}
-	pct := p.CoveragePercent
-	if pct < 0 {
-		pct = 0
-	}
+	pct := max(p.CoveragePercent, 0)
 	if pct > 100 {
 		pct = 100
 	}
@@ -75,7 +70,6 @@ func Compute(charge int64, p Policy) Split {
 // + coinsurance); the insurer-covered `Split.InsurerKobo` is a receivable settled
 // separately via a claim, so the provider is made whole across both. An uninsured
 // patient (or no policy) escrows the full charge — the current full-pay behaviour.
-//
 // A fully-covered charge yields holdKobo == 0 (the caller escrows nothing from the
 // patient — a nil escrow reference — and raises a claim for the whole amount).
 func PatientHold(charge int64, policy Policy, insured bool) (holdKobo int64, split Split) {

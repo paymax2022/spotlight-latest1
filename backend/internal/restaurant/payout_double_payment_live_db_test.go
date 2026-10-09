@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for FOOD-009: a real order's restaurant/rider
 // payout was posted TWICE — once automatically at delivery (settleOrder's call
 // to settlement.Settle, which credits the provider/rider wallet directly) and
 // again via the restaurant payout-run tool (BuildRun/ProcessRun, which had no
 // awareness that the same settlement's provider leg had already landed).
-//
 // Root cause: loadUnpaidSettlements' only "already paid" signal was whether a
 // restaurant_payout_lines row existed for the settlement — it never checked
 // whether the ledger already carried Settle()'s own direct credit. Since EVERY
@@ -15,17 +13,15 @@ package restaurant
 // directly), the payout-run tool would always pick it up as "unpaid" the
 // first time anyone ever ran BuildRun for that provider — a systemic, not
 // edge-case, double-payment.
-//
 // Found live: build+process a payout run for a restaurant with one delivered,
 // settled order and watch the owner's wallet balance jump to exactly double
 // the correct amount. This test reproduces that exact sequence and proves
 // BuildRun now excludes the already-paid settlement instead.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -122,7 +118,7 @@ func TestLiveDB_PayoutRunExcludesSettlementAlreadyPaidDirectlyAtDelivery(t *test
 
 	// ProcessRun on a NetMinor=0 draft correctly refuses to disburse (existing
 	// ErrPayoutNothingDue path) rather than posting a zero-amount transfer.
-	if _, err := svc.ProcessRun(ctx, run.ID, "paydup-process-"+run.ID); err != ErrPayoutNothingDue {
+	if _, err := svc.ProcessRun(ctx, run.ID, "paydup-process-"+run.ID); !errors.Is(err, ErrPayoutNothingDue) {
 		t.Fatalf("ProcessRun on the empty run: want ErrPayoutNothingDue, got %v", err)
 	}
 

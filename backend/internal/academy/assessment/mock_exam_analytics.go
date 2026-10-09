@@ -25,16 +25,16 @@ func (s *AnalyticsService) WithCache(cache *CacheService) *AnalyticsService {
 
 // LearnerAnalytics aggregates learner performance data
 type LearnerAnalytics struct {
-	TotalAttempts      int                   `json:"total_attempts"`
-	AverageScore       float64               `json:"average_score"`
-	BestScore          float64               `json:"best_score"`
-	WorstScore         float64               `json:"worst_score"`
-	PassRate           float64               `json:"pass_rate"`
-	PreferredExamType  string                `json:"preferred_exam_type,omitempty"`
-	TrendData          []TrendPoint          `json:"trend_data"`
-	SubjectPerformance []SubjectPerf         `json:"subject_performance"`
-	WeakAreas          []WeakArea            `json:"weak_areas"`
-	Attempts           []AttemptSummary      `json:"attempts"`
+	TotalAttempts      int              `json:"total_attempts"`
+	AverageScore       float64          `json:"average_score"`
+	BestScore          float64          `json:"best_score"`
+	WorstScore         float64          `json:"worst_score"`
+	PassRate           float64          `json:"pass_rate"`
+	PreferredExamType  string           `json:"preferred_exam_type,omitempty"`
+	TrendData          []TrendPoint     `json:"trend_data"`
+	SubjectPerformance []SubjectPerf    `json:"subject_performance"`
+	WeakAreas          []WeakArea       `json:"weak_areas"`
+	Attempts           []AttemptSummary `json:"attempts"`
 }
 
 type TrendPoint struct {
@@ -67,23 +67,23 @@ type AttemptSummary struct {
 
 // AdminAnalytics aggregates system-wide analytics
 type AdminAnalytics struct {
-	TotalLearners       int                    `json:"total_learners"`
-	TotalAttempts       int                    `json:"total_attempts"`
-	ActiveThisWeek      int                    `json:"active_this_week"`
-	AverageSystemScore  float64                `json:"average_system_score"`
-	PassRate            float64                `json:"pass_rate"`
-	MostAttemptedExam   string                 `json:"most_attempted_exam"`
-	TimeRange           string                 `json:"time_range"`
-	ActivityData        []ActivityPoint        `json:"activity_data"`
-	ClassPerformance    []ClassPerf            `json:"class_performance"`
-	GradeDistribution   []GradeCount           `json:"grade_distribution"`
-	ExamStatistics      []ExamStat             `json:"exam_statistics"`
+	TotalLearners      int             `json:"total_learners"`
+	TotalAttempts      int             `json:"total_attempts"`
+	ActiveThisWeek     int             `json:"active_this_week"`
+	AverageSystemScore float64         `json:"average_system_score"`
+	PassRate           float64         `json:"pass_rate"`
+	MostAttemptedExam  string          `json:"most_attempted_exam"`
+	TimeRange          string          `json:"time_range"`
+	ActivityData       []ActivityPoint `json:"activity_data"`
+	ClassPerformance   []ClassPerf     `json:"class_performance"`
+	GradeDistribution  []GradeCount    `json:"grade_distribution"`
+	ExamStatistics     []ExamStat      `json:"exam_statistics"`
 }
 
 type ActivityPoint struct {
-	Date          string `json:"date"`
-	Attempts      int    `json:"attempts"`
-	UniqueLearners int   `json:"unique_learners"`
+	Date           string `json:"date"`
+	Attempts       int    `json:"attempts"`
+	UniqueLearners int    `json:"unique_learners"`
 }
 
 type ClassPerf struct {
@@ -122,7 +122,6 @@ func (s *AnalyticsService) GetLearnerAnalytics(ctx context.Context, userID strin
 		Attempts:           []AttemptSummary{},
 	}
 
-	// Get total attempts and basic stats
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*) as total_attempts,
@@ -138,32 +137,26 @@ func (s *AnalyticsService) GetLearnerAnalytics(ctx context.Context, userID strin
 		return analytics, nil // Return empty analytics on error
 	}
 
-	// Get 7-day trend
 	if err := s.getTrendData(ctx, userID, analytics); err != nil {
 		// Continue on error, analytics still usable
 	}
 
-	// Get subject performance
 	if err := s.getSubjectPerformance(ctx, userID, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get weak areas (topics with low accuracy)
 	if err := s.getWeakAreas(ctx, userID, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get recent attempts
 	if err := s.getRecentAttempts(ctx, userID, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get preferred exam type
 	s.getPreferredExamType(ctx, userID, analytics)
 
-	// Store in cache for next request
 	if s.cache != nil {
-		s.cache.SetLearnerAnalyticsCache(ctx, userID, analytics)
+		_ = s.cache.SetLearnerAnalyticsCache(ctx, userID, analytics)
 	}
 
 	return analytics, nil
@@ -254,7 +247,6 @@ func (s *AnalyticsService) getSubjectPerformance(ctx context.Context, userID str
 			continue
 		}
 
-		// Map subject indices to names
 		for i := range subjectIDs {
 			if i < len(subjects) {
 				subjectMap[i] = SubjectPerf{
@@ -266,8 +258,7 @@ func (s *AnalyticsService) getSubjectPerformance(ctx context.Context, userID str
 		}
 	}
 
-	// Add to analytics in order
-	for i := 0; i < len(subjects); i++ {
+	for i := range subjects {
 		if perf, exists := subjectMap[i]; exists {
 			analytics.SubjectPerformance = append(analytics.SubjectPerformance, perf)
 		}
@@ -388,14 +379,13 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 	}
 
 	analytics := &AdminAnalytics{
-		TimeRange:        timeRange,
-		ActivityData:     []ActivityPoint{},
-		ClassPerformance: []ClassPerf{},
+		TimeRange:         timeRange,
+		ActivityData:      []ActivityPoint{},
+		ClassPerformance:  []ClassPerf{},
 		GradeDistribution: []GradeCount{},
-		ExamStatistics:   []ExamStat{},
+		ExamStatistics:    []ExamStat{},
 	}
 
-	// Calculate date range
 	var startDate time.Time
 	now := time.Now()
 	switch timeRange {
@@ -409,13 +399,11 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 		startDate = now.AddDate(0, 0, -7)
 	}
 
-	// Get total learners
 	row := s.pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT user_id) FROM v_mock_attempt_scores WHERE status = 'graded'
 	`)
-	row.Scan(&analytics.TotalLearners)
+	_ = row.Scan(&analytics.TotalLearners)
 
-	// Get total attempts and stats
 	row = s.pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*) as total_attempts,
@@ -429,40 +417,33 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 		return analytics, nil
 	}
 
-	// Get active learners this week
 	weekAgo := now.AddDate(0, 0, -7)
 	row = s.pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT user_id) FROM v_mock_attempt_scores
 		WHERE status = 'graded' AND submitted_at >= $1
 	`, weekAgo)
-	row.Scan(&analytics.ActiveThisWeek)
+	_ = row.Scan(&analytics.ActiveThisWeek)
 
-	// Get activity data
 	if err := s.getActivityData(ctx, startDate, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get class performance
 	if err := s.getClassPerformance(ctx, startDate, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get grade distribution
 	if err := s.getGradeDistribution(ctx, startDate, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get exam statistics
 	if err := s.getExamStatistics(ctx, startDate, analytics); err != nil {
 		// Continue on error
 	}
 
-	// Get most attempted exam
 	s.getMostAttemptedExam(ctx, startDate, analytics)
 
-	// Store in cache for next request
 	if s.cache != nil {
-		s.cache.SetAdminAnalyticsCache(ctx, timeRange, analytics)
+		_ = s.cache.SetAdminAnalyticsCache(ctx, timeRange, analytics)
 	}
 
 	return analytics, nil

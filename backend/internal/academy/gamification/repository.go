@@ -2,6 +2,7 @@ package gamification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -56,8 +57,6 @@ func (r *Repository) UpsertProfile(ctx context.Context, p *Profile) error {
 	}
 	return nil
 }
-
-// ── Badges ──────────────────────────────────────────────────────────────────────
 
 func (r *Repository) ListBadges(ctx context.Context) ([]Badge, error) {
 	const q = `SELECT id, code, name, criteria, icon FROM academy_badges ORDER BY code`
@@ -155,8 +154,6 @@ func (r *Repository) GrantBadge(ctx context.Context, userID, badgeID string) (bo
 	return tag.RowsAffected() == 1, nil
 }
 
-// ── Challenges ──────────────────────────────────────────────────────────────────
-
 // InsertBadgeNotification writes a "you earned a badge" notification for the
 // learner (best-effort engagement signal; the learner surface reads it). Kept
 // here so the write happens transactionally close to the grant.
@@ -168,15 +165,13 @@ func (r *Repository) InsertBadgeNotification(ctx context.Context, userID, badgeN
 	return err
 }
 
-// ── Class leaderboard ───────────────────────────────────────────────────────
-
 // UserClassID returns the learner's class id from their academy profile (the
 // first profile that has one). ok=false when the user has no class yet.
 func (r *Repository) UserClassID(ctx context.Context, userID string) (classID string, ok bool, err error) {
 	const q = `SELECT class_id::text FROM public.academy_profiles
 	           WHERE user_id = $1 AND class_id IS NOT NULL ORDER BY role LIMIT 1`
 	err = r.db.QueryRow(ctx, q, userID).Scan(&classID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -189,7 +184,7 @@ func (r *Repository) UserClassID(ctx context.Context, userID string) (classID st
 func (r *Repository) ClassCode(ctx context.Context, classID string) (string, error) {
 	var code string
 	err := r.db.QueryRow(ctx, `SELECT code FROM public.academy_classes WHERE id = $1`, classID).Scan(&code)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return code, err
@@ -329,8 +324,6 @@ func (r *Repository) UpsertChallenge(ctx context.Context, in UpsertChallengeRequ
 	return c, nil
 }
 
-// ── Leaderboards ────────────────────────────────────────────────────────────────
-
 func (r *Repository) GetLeaderboard(ctx context.Context, id string) (*Leaderboard, error) {
 	const q = `SELECT id, scope, scope_ref, period, reset_policy FROM academy_leaderboards WHERE id=$1`
 	lb := &Leaderboard{}
@@ -426,4 +419,4 @@ func (r *Repository) RankedEntries(ctx context.Context, leaderboardID, periodKey
 }
 
 // IsNoRows is a small helper so callers don't import pgx just to detect absence.
-func IsNoRows(err error) bool { return err == pgx.ErrNoRows }
+func IsNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }

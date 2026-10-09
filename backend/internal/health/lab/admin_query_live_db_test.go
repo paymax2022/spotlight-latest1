@@ -1,17 +1,12 @@
 package healthlab_test
 
-// ---------------------------------------------------------------------------
-// LIVE-DB regression coverage for a SQL type-ambiguity bug found during
-// Laboratory (Module 16) UAT, in the same shape as PHARMACY-006's
-// AdminListOrders fix: AdminListOrders, AdminCustodyAudit, and
-// AdminEscalations all reused one placeholder as both a `= ''` text-empty
-// check and a `uuid` column comparison — Postgres rejects that the moment
-// the lab_provider_id filter is actually supplied ("operator does not exist:
-// uuid = text"). Fixed with nullable per-parameter comparisons, matching the
-// pharmacy fix exactly, before this was ever hit live.
-//
+// LIVE-DB regression coverage for the SQL type-ambiguity bug class (same shape
+// as PHARMACY-006's AdminListOrders fix): AdminListOrders, AdminCustodyAudit,
+// and AdminEscalations must use nullable per-parameter comparisons — reusing
+// one placeholder as both a `= ''` text-empty check and a `uuid` comparison is
+// rejected by Postgres ("operator does not exist: uuid = text") the moment the
+// lab_provider_id filter is supplied.
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -31,7 +26,7 @@ func adminQueryPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping lab admin-query live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -64,12 +59,12 @@ func seedAdminQueryFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		t.Fatalf("seed order: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
 	})
 	svc = healthlab.NewService(pool, nil, nil, nil, nil, nil, nil, nil)
-	return
+	return svc, labID, orderID
 }
 
 // TestLiveDB_AdminListOrders_FilterByLabProviderIDDoesNotErrorOnUUID locks the
@@ -77,7 +72,7 @@ func seedAdminQueryFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 // type-mismatch error, and must actually scope the result to that lab.
 func TestLiveDB_AdminListOrders_FilterByLabProviderIDDoesNotErrorOnUUID(t *testing.T) {
 	pool := adminQueryPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc, labID, orderID := seedAdminQueryFixture(t, ctx, pool)
 
 	rows, err := svc.AdminListOrders(ctx, "", labID)
@@ -117,7 +112,7 @@ func TestLiveDB_AdminListOrders_FilterByLabProviderIDDoesNotErrorOnUUID(t *testi
 // re-testing custody/escalation business logic.
 func TestLiveDB_AdminCustodyAudit_FilterByLabProviderIDDoesNotErrorOnUUID(t *testing.T) {
 	pool := adminQueryPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc, labID, _ := seedAdminQueryFixture(t, ctx, pool)
 
 	if _, err := svc.AdminCustodyAudit(ctx, labID, ""); err != nil {
@@ -127,7 +122,7 @@ func TestLiveDB_AdminCustodyAudit_FilterByLabProviderIDDoesNotErrorOnUUID(t *tes
 
 func TestLiveDB_AdminEscalations_FilterByLabProviderIDDoesNotErrorOnUUID(t *testing.T) {
 	pool := adminQueryPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc, labID, _ := seedAdminQueryFixture(t, ctx, pool)
 
 	if _, err := svc.AdminEscalations(ctx, labID); err != nil {

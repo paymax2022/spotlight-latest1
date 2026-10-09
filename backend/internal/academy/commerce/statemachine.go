@@ -7,12 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"strings"
+
+	"spotlight/backend/go-common/fsm"
 )
 
-// ── Purchase / BNPL → entitlement state machine (state-machines.md §4) ────────
-//
 // States: cart → checkout → paid | bnpl_active → entitled → (refunded)
-//
 // Only the transitions below are legal. Illegal transitions are rejected with
 // ErrIllegalTransition and audit-logged by the service. canOrder is PURE so it is
 // unit-testable with no DB (commerce_test.go).
@@ -28,26 +28,20 @@ const (
 )
 
 // orderTransitions is the legal adjacency set for the purchase SM.
-var orderTransitions = map[string]map[string]bool{
-	OrderCart:       {OrderCheckout: true},
-	OrderCheckout:   {OrderPaid: true, OrderBNPLActive: true},
-	OrderPaid:       {OrderEntitled: true},
-	OrderBNPLActive: {OrderEntitled: true},
-	OrderEntitled:   {OrderRefunded: true},
+var orderTransitions = fsm.Table[string]{
+	OrderCart:       fsm.Set(OrderCheckout),
+	OrderCheckout:   fsm.Set(OrderPaid, OrderBNPLActive),
+	OrderPaid:       fsm.Set(OrderEntitled),
+	OrderBNPLActive: fsm.Set(OrderEntitled),
+	OrderEntitled:   fsm.Set(OrderRefunded),
 	OrderRefunded:   {}, // terminal
 }
 
 // canOrder reports whether from→to is a legal purchase-SM transition. Pure.
 func canOrder(from, to string) bool {
-	targets, ok := orderTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return orderTransitions.Can(from, to)
 }
 
-// ── Access-card state machine (matches academy_access_cards.state) ────────────
-//
 // States: issued → allocated → activated, with issued → activated allowed
 // (direct member activation of an un-allocated card), and void as an admin sink.
 
@@ -58,23 +52,18 @@ const (
 	CardVoid      = "void"
 )
 
-var cardTransitions = map[string]map[string]bool{
-	CardIssued:    {CardAllocated: true, CardActivated: true, CardVoid: true},
-	CardAllocated: {CardActivated: true, CardVoid: true},
+var cardTransitions = fsm.Table[string]{
+	CardIssued:    fsm.Set(CardAllocated, CardActivated, CardVoid),
+	CardAllocated: fsm.Set(CardActivated, CardVoid),
 	CardActivated: {}, // terminal (idempotent re-activation handled by replay, not transition)
 	CardVoid:      {},
 }
 
 // canCard reports whether from→to is a legal access-card transition. Pure.
 func canCard(from, to string) bool {
-	targets, ok := cardTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return cardTransitions.Can(from, to)
 }
 
-// ── PIN hashing / verification (access cards) ─────────────────────────────────
 // PINs are never stored in plaintext. We store a salted SHA-256 hash as
 // "<saltHex>:<digestHex>" in academy_access_cards.pin_hash. Verification is
 // constant-time. (A KDF like Argon2 is preferable for low-entropy secrets; SHA-256
@@ -113,7 +102,7 @@ func verifyPIN(stored, candidate string) bool {
 }
 
 func splitHash(s string) (salt, digest string, ok bool) {
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] == ':' {
 			return s[:i], s[i+1:], i > 0 && i < len(s)-1
 		}
@@ -126,16 +115,19 @@ func randomPIN(n int) (string, error) {
 	if n <= 0 {
 		n = 6
 	}
+	if n > 64 {
+		n = 6
+	}
 	const digits = "0123456789"
-	out := make([]byte, n)
-	for i := range out {
+	var out strings.Builder
+	for range n {
 		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
 		if err != nil {
 			return "", err
 		}
-		out[i] = digits[idx.Int64()]
+		out.WriteByte(digits[idx.Int64()])
 	}
-	return string(out), nil
+	return out.String(), nil
 }
 
 // randomSerial returns a hex serial for an access card (batch generation).

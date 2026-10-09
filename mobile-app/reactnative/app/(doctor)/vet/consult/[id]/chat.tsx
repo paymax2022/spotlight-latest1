@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageSquare, ShieldCheck, Phone, Video as VideoIcon, NotebookPen } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { MessageBubble, ChatComposer, StateView } from '@/features/doctor/components';
 import { useVetChatThread } from '@/features/doctor/hooks';
@@ -15,7 +15,6 @@ import type { ChatMessageRich } from '@/types/doctor.batch5';
 
 // Vet chat consultation (S.12) — mirrors the human consult chat, REUSING the
 // Batch 2 ChatMessageRich / ChatThreadState shapes via the VetChatThread wrapper.
-// Demo-safe: send is a local no-op (no batch5 send mutation in the contract);
 // rich kinds render via MessageBubble for text + a directional bubble shell.
 export default function VetChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

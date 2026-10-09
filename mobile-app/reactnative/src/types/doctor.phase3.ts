@@ -1,10 +1,8 @@
-// ── Doctor (Telemedicine, provider-side) — Phase 3 Domain Types ──────────────
 // Phase 3 (advanced provider-side flows): veterinary mode + AI assistance +
 // practice management. ADDITIVE to `@/types/doctor`, `@/types/doctor.phase2`
 // and `@/types/doctor.profile` — those shapes are imported/reused, never
 // duplicated. Money amounts are integers in minor units (kobo). Use
 // `import type` for type-only imports.
-//
 // Domains:
 //   Vet:      veterinary mode entry, pet profile, pet prescription, pet lab.
 //   AI:       consultation-note summary, prescription safety checker, lab-result
@@ -23,7 +21,6 @@ import type {
 } from '@/types/doctor';
 import type { ClinicAffiliation } from '@/types/doctor.profile';
 
-// Re-export the primitives Phase 3 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   PatientSummary,
@@ -37,11 +34,7 @@ export type {
 } from '@/types/doctor';
 export type { ClinicAffiliation } from '@/types/doctor.profile';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // VETERINARY
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── 1. Veterinary doctor mode ───────────────────────────────────────────────
 
 export type PetSpecies =
   | 'dog'
@@ -89,8 +82,6 @@ export interface VetDashboard {
   earningsTodayKobo: number;
 }
 
-// ─── 2. Pet profile (review during a consult) ────────────────────────────────
-
 export interface PetOwner {
   id:          string;
   name:        string;
@@ -119,7 +110,7 @@ export interface PetHistoryItem {
 
 export interface PetImage {
   id:        string;
-  uri:       string;              // local URI now; remote URL after Phase C
+  uri:       string;
   caption?:  string;
   takenAt:   string;              // ISO datetime
 }
@@ -143,8 +134,6 @@ export interface PetProfile {
   history:           PetHistoryItem[];
   images:            PetImage[];
 }
-
-// ─── 3. Pet prescription (create) ────────────────────────────────────────────
 
 export type PetDrugCategory =
   | 'antibiotic'
@@ -206,8 +195,6 @@ export interface PetPrescription {
   status:      'draft' | 'issued' | 'dispensed';
 }
 
-// ─── 4. Pet lab orders & results ─────────────────────────────────────────────
-
 export type PetLabCategory = 'blood' | 'stool' | 'urine' | 'imaging' | 'skin' | 'other';
 
 export interface PetLabTest {
@@ -252,8 +239,6 @@ export interface PetLabResult {
   reviewed:   boolean;
 }
 
-// ─── 5. Pet store recommendation ─────────────────────────────────────────────
-
 export type PetProductCategory = 'food' | 'supplement' | 'grooming' | 'medicine' | 'accessory';
 
 export interface PetStoreProduct {
@@ -280,11 +265,8 @@ export interface PetProductRecommendation {
   sharedWithOwner: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // AI ASSISTANCE
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ─── Shared AI-result envelope ───────────────────────────────────────────────
 // Every AI screen wraps its structured output in `AiEnvelope<T>` so the UI can
 // drive a consistent generating → ready → error lifecycle, surface the model
 // label / disclaimer, and track whether the doctor has accepted/edited it.
@@ -348,8 +330,6 @@ export interface AiSafetyOutput {
 
 export type AiSafetyReport = AiEnvelope<AiSafetyOutput>;
 
-// ─── 8. AI lab result explanation ────────────────────────────────────────────
-
 export interface AiLabFlagExplanation {
   testName:    string;
   flag:        'normal' | 'low' | 'high';
@@ -366,11 +346,7 @@ export interface AiLabExplanationOutput {
 
 export type AiLabExplanation = AiEnvelope<AiLabExplanationOutput>;
 
-// ═══════════════════════════════════════════════════════════════════════════
 // PRACTICE MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── 9. Doctor quality analytics ─────────────────────────────────────────────
 
 export type AnalyticsPeriod = '7d' | '30d' | '90d' | '12m';
 
@@ -402,8 +378,6 @@ export interface QualityAnalytics {
   rankingLabel:     string;                 // "Top 5% of GPs on Spotlight"
 }
 
-// ─── 10. Multi-clinic / provider management ──────────────────────────────────
-
 export type ClinicRole = 'owner' | 'lead' | 'consultant' | 'locum' | 'volunteer';
 
 export interface ClinicSchedule {
@@ -427,9 +401,7 @@ export interface ClinicPortfolio {
   memberships:    ClinicMembership[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
 
@@ -518,7 +490,6 @@ export interface CheckPrescriptionSafetyInput {
   idempotencyKey: string;
 }
 
-// 8. AI lab explanation (read-style generate; no persistence)
 export interface ExplainLabResultInput {
   resultId:       string;
   idempotencyKey: string;

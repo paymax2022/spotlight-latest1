@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Laboratory vertical stack (HEALTH-BUILD Phase 2). Mounts under the shared

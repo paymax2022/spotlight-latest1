@@ -1,18 +1,24 @@
 package services
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/domain"
+	"spotlight/backend/internal/integrations"
 	"strings"
 	"time"
 
-	"spotlight/backend/internal/config"
-	"spotlight/backend/internal/domain"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ── Domain types (aliased from domain to avoid an import cycle with repos) ────
 
 type Session = domain.Session
 type LoginActivity = domain.LoginActivitySnapshot
@@ -50,8 +56,6 @@ const (
 	PolicyForceReset    = "force_password_reset"
 )
 
-// ── Ports (interfaces for testability) ───────────────────────────────────────
-
 // SecurityNotifier delivers a fire-and-forget security alert to the user.
 // Failures are intentionally swallowed by the service (mirrors Resend policy).
 type SecurityNotifier interface {
@@ -64,8 +68,6 @@ type AuditSink interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
 }
 
-// ── Service ──────────────────────────────────────────────────────────────────
-
 type SessionService interface {
 	// IssueSession persists a session for a fresh login. Returns the family id.
 	IssueSession(userID string, tokens IssuedTokens, lc LoginContext) (string, error)
@@ -74,7 +76,7 @@ type SessionService interface {
 	RotateRefresh(oldRefreshToken string, tokens IssuedTokens, lc LoginContext) (*Session, error)
 	// ValidateAccess returns the active session bound to an access token, or an
 	// error if revoked/expired/unknown (fail-closed).
-	ValidateAccess(accessToken string) (*Session, error)
+	ValidateAccess(ctx context.Context, accessToken string) (*Session, error)
 	ListMySessions(userID string) ([]Session, error)
 	RevokeOne(actorUserID, userID, sessionID, reason string) error
 	RevokeAll(actorUserID, userID, reason string) (int, error)
@@ -106,7 +108,7 @@ func HashToken(token string) string {
 
 func (s *sessionService) IssueSession(userID string, tokens IssuedTokens, lc LoginContext) (string, error) {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(tokens.RefreshToken) == "" {
-		return "", fmt.Errorf("user and refresh token required")
+		return "", errors.New("user and refresh token required")
 	}
 	expiresIn := tokens.ExpiresIn
 	if expiresIn <= 0 {
@@ -135,7 +137,7 @@ func (s *sessionService) IssueSession(userID string, tokens IssuedTokens, lc Log
 
 func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedTokens, lc LoginContext) (*Session, error) {
 	if strings.TrimSpace(oldRefreshToken) == "" || strings.TrimSpace(tokens.RefreshToken) == "" {
-		return nil, fmt.Errorf("refresh tokens required")
+		return nil, errors.New("refresh tokens required")
 	}
 	oldHash := HashToken(oldRefreshToken)
 	now := time.Now().UTC()
@@ -162,7 +164,7 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 		if s.audit != nil {
 			s.audit.LogAction(reused.UserID, reused.UserID, "session.token_reuse", "auth", "session_family", reused.FamilyID, nil, nil, lc.IPAddress, lc.UserAgent, "critical")
 		}
-		return nil, fmt.Errorf("refresh token reuse detected: session family revoked")
+		return nil, errors.New("refresh token reuse detected: session family revoked")
 	}
 
 	sess, err := s.store.GetByRefreshHash(oldHash)
@@ -170,10 +172,10 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 		return nil, err
 	}
 	if sess == nil {
-		return nil, fmt.Errorf("session not found")
+		return nil, errors.New("session not found")
 	}
 	if !sess.Active(now) {
-		return nil, fmt.Errorf("session revoked or expired")
+		return nil, errors.New("session revoked or expired")
 	}
 
 	expiresIn := tokens.ExpiresIn
@@ -195,19 +197,19 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 	return sess, nil
 }
 
-func (s *sessionService) ValidateAccess(accessToken string) (*Session, error) {
+func (s *sessionService) ValidateAccess(ctx context.Context, accessToken string) (*Session, error) {
 	if strings.TrimSpace(accessToken) == "" {
-		return nil, fmt.Errorf("access token required")
+		return nil, errors.New("access token required")
 	}
 	sess, err := s.store.GetByAccessHash(HashToken(accessToken))
 	if err != nil {
 		return nil, err
 	}
 	if sess == nil {
-		return nil, fmt.Errorf("session not found")
+		return nil, errors.New("session not found")
 	}
 	if !sess.Active(time.Now().UTC()) {
-		return nil, fmt.Errorf("session revoked or expired")
+		return nil, errors.New("session revoked or expired")
 	}
 	_ = s.store.TouchLastSeen(sess.ID, time.Now().UTC())
 	return sess, nil
@@ -215,14 +217,14 @@ func (s *sessionService) ValidateAccess(accessToken string) (*Session, error) {
 
 func (s *sessionService) ListMySessions(userID string) ([]Session, error) {
 	if strings.TrimSpace(userID) == "" {
-		return nil, fmt.Errorf("user required")
+		return nil, errors.New("user required")
 	}
 	return s.store.ListActiveByUser(userID)
 }
 
 func (s *sessionService) RevokeOne(actorUserID, userID, sessionID, reason string) error {
 	if strings.TrimSpace(sessionID) == "" {
-		return fmt.Errorf("session id required")
+		return errors.New("session id required")
 	}
 	// Object-level authz: confirm the session belongs to the caller (unless the
 	// caller is acting on themselves the handler already checked perms for admin).
@@ -231,10 +233,10 @@ func (s *sessionService) RevokeOne(actorUserID, userID, sessionID, reason string
 		return err
 	}
 	if sess == nil {
-		return fmt.Errorf("session not found")
+		return errors.New("session not found")
 	}
 	if strings.TrimSpace(userID) != "" && sess.UserID != userID {
-		return fmt.Errorf("forbidden: session does not belong to user")
+		return errors.New("forbidden: session does not belong to user")
 	}
 	if err := s.store.RevokeSession(sessionID, fallbackReason(reason, "user_revoked")); err != nil {
 		return err
@@ -247,7 +249,7 @@ func (s *sessionService) RevokeOne(actorUserID, userID, sessionID, reason string
 
 func (s *sessionService) RevokeAll(actorUserID, userID, reason string) (int, error) {
 	if strings.TrimSpace(userID) == "" {
-		return 0, fmt.Errorf("user required")
+		return 0, errors.New("user required")
 	}
 	n, err := s.store.RevokeAllForUser(userID, fallbackReason(reason, "user_revoked_all"))
 	if err != nil {
@@ -276,7 +278,7 @@ func (s *sessionService) AdminForceLogout(actorUserID, userID, reason string) (i
 
 func (s *sessionService) AdminForcePasswordReset(actorUserID, userID, reason string) error {
 	if strings.TrimSpace(userID) == "" {
-		return fmt.Errorf("user required")
+		return errors.New("user required")
 	}
 	if err := s.store.SetForceFlags(userID, true, false); err != nil {
 		return err
@@ -399,4 +401,182 @@ func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
 		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*math.Sin(dLon/2)*math.Sin(dLon/2)
 	return r * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+// EmailVerifier turns "this person controls this mailbox" into "this account is
+// confirmed".
+// It exists as a seam so the otp package never learns about Supabase, and so the
+// OTP handler can be tested without a GoTrue instance.
+type EmailVerifier interface {
+	// ConfirmEmail marks the account for this address confirmed.
+	// Returns (false, nil) when there is NO account for the address. That is not
+	// an error: the OTP endpoints deliberately accept any address, so proving
+	// control of a mailbox with no account behind it is an ordinary outcome, and
+	// the caller must answer identically either way or the endpoint becomes a
+	// user-enumeration oracle.
+	ConfirmEmail(ctx context.Context, email string) (bool, error)
+}
+
+// supabaseEmailVerifier reads the user id straight from auth.users and writes the
+// confirmation through GoTrue's admin API.
+// The read is SQL because GoTrue's admin list endpoint filters differently across
+// versions and PostgREST cannot reach the auth schema; the write is the admin API
+// because GoTrue owns that schema (see AdminConfirmEmail).
+type supabaseEmailVerifier struct {
+	db       *pgxpool.Pool
+	supabase *integrations.SupabaseRestClient
+}
+
+// NewSupabaseEmailVerifier returns nil when either dependency is missing, so a
+// caller can treat nil as "confirmation is not available here" rather than
+// discovering it at the first verification.
+func NewSupabaseEmailVerifier(db *pgxpool.Pool, supabase *integrations.SupabaseRestClient) EmailVerifier {
+	if db == nil || supabase == nil || !supabase.Enabled() {
+		return nil
+	}
+	return &supabaseEmailVerifier{db: db, supabase: supabase}
+}
+
+func (v *supabaseEmailVerifier) ConfirmEmail(ctx context.Context, email string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false, nil
+	}
+
+	id, alreadyConfirmed, err := authUserByEmail(ctx, v.db, email)
+	if err != nil {
+		return false, err
+	}
+	if id == "" {
+		return false, nil // no account — an ordinary outcome, not a failure
+	}
+	if alreadyConfirmed {
+		// Re-confirming is harmless, but skipping the round trip means a user who
+		// verifies twice does not depend on GoTrue being reachable the second time.
+		return true, nil
+	}
+	if err := v.supabase.AdminConfirmEmail(ctx, id); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// authUserByEmail resolves a GoTrue user id from a lowercased address via SQL —
+// this pool runs as service_role, which cannot read auth.users, and
+// platform_users.id mirrors auth.users.id 1:1 (rbac_identity_bridge migration).
+// One shared copy exists because a second "how we find a user" implementation
+// is how the lowercasing drifts and mixed-case addresses silently report "no
+// account". email_verified_at is platform_users' own confirmation timestamp.
+// Returns ("", false, nil) when there is no such user.
+func authUserByEmail(ctx context.Context, db *pgxpool.Pool, email string) (string, bool, error) {
+	var confirmed bool
+	var err error
+
+	var id string
+
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || db == nil {
+		return "", false, nil
+	}
+	err = db.QueryRow(ctx, `
+		SELECT id::text, email_verified_at IS NOT NULL
+		  FROM public.platform_users
+		 WHERE lower(email) = $1
+		   AND deleted_at IS NULL
+		 LIMIT 1`, email).Scan(&id, &confirmed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, confirmed, nil
+}
+
+// resendNotifier delivers suspicious-login alerts via Resend, fire-and-forget.
+// Matches the project's email policy (CLAUDE.md): no queue, failures are silent.
+// PII discipline: the email body contains the event TYPE and coarse signals
+// only — never tokens, passwords, or full device fingerprints.
+type resendNotifier struct {
+	cfg      config.Config
+	supabase *integrations.SupabaseRestClient
+	http     *http.Client
+}
+
+// NewResendNotifier returns a SecurityNotifier. When the Resend key is empty the
+// notifier is a no-op (still satisfies the interface) so the rest of the flow
+// continues to function in environments without email configured.
+func NewResendNotifier(cfg config.Config, supabase *integrations.SupabaseRestClient) SecurityNotifier {
+	return &resendNotifier{cfg: cfg, supabase: supabase, http: &http.Client{Timeout: 5 * time.Second}}
+}
+
+func (n *resendNotifier) NotifySuspiciousLogin(userID, email, eventType string, signals map[string]any) {
+	// Fire-and-forget: never block login on notification delivery.
+	go n.deliver(userID, email, eventType)
+}
+
+func (n *resendNotifier) deliver(userID, email, eventType string) {
+	defer func() { _ = recover() }() // never let a notification panic crash the request goroutine
+
+	to := strings.TrimSpace(email)
+	if to == "" && n.supabase != nil && n.supabase.Enabled() && strings.TrimSpace(userID) != "" {
+		to = n.lookupEmail(context.Background(), userID)
+	}
+	if to == "" || strings.TrimSpace(n.cfg.ResendAPIKey) == "" {
+		return // nothing we can do; stay silent
+	}
+
+	subject := "Security alert on your Paymax account"
+	body := fmt.Sprintf(
+		"We detected a security event (%s) on your account. If this was you, no action is needed. "+
+			"If you do not recognise this activity, reset your password and review your active sessions immediately.",
+		humanizeEvent(eventType),
+	)
+	payload := map[string]any{
+		"from":    n.cfg.ResendFromEmail,
+		"to":      []string{to},
+		"subject": subject,
+		"text":    body,
+	}
+	b, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+n.cfg.ResendAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.http.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+func (n *resendNotifier) lookupEmail(ctx context.Context, userID string) string {
+	var rows []struct {
+		Email string `json:"email"`
+	}
+	if err := n.supabase.REST(ctx, http.MethodGet, "platform_users", map[string]string{"select": "email", "id": "eq." + userID, "limit": "1"}, nil, &rows); err != nil || len(rows) == 0 { //nolint:goconst // PostgREST select key; literal is self-describing
+		return ""
+	}
+	return rows[0].Email
+}
+
+func humanizeEvent(eventType string) string {
+	switch eventType {
+	case EventNewDevice:
+		return "sign-in from a new device"
+	case EventNewIP:
+		return "sign-in from a new location"
+	case EventImpossibleTravel:
+		return "sign-in from an unexpected location"
+	case EventFailedSpike:
+		return "multiple failed sign-in attempts"
+	case EventTokenReuse:
+		return "a session security violation"
+	case EventForcedReset:
+		return "a required password reset"
+	default:
+		return "unusual account activity"
+	}
 }

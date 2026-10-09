@@ -2,12 +2,15 @@ package gamification
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
 )
 
 // Repository is the parameterized data layer for gamification tables.
@@ -17,14 +20,6 @@ type Repository struct {
 
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
-}
-
-func decodeJSON(raw []byte) map[string]any {
-	out := map[string]any{}
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &out)
-	}
-	return out
 }
 
 const missionCols = `id, slug, title, description, mission_type, target_count,
@@ -103,8 +98,8 @@ func (r *Repository) CreateMission(ctx context.Context, in MissionInput) (*Missi
 			 cash_reward_kobo, campaign_id, is_active, starts_at, ends_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING ` + missionCols
-	return scanMission(r.db.QueryRow(ctx, q, in.Slug, in.Title, nullable(in.Description), mt, tc,
-		in.PointsReward, in.CashRewardKobo, nullable(in.CampaignID), in.IsActive, in.StartsAt, in.EndsAt))
+	return scanMission(r.db.QueryRow(ctx, q, in.Slug, in.Title, dbutil.NullStr(in.Description), mt, tc,
+		in.PointsReward, in.CashRewardKobo, dbutil.NullStr(in.CampaignID), in.IsActive, in.StartsAt, in.EndsAt))
 }
 
 // GetProgress returns a user's progress against a mission (nil row → zero state).
@@ -115,7 +110,7 @@ func (r *Repository) GetProgress(ctx context.Context, missionID, userID string) 
 	var p MissionProgress
 	err := r.db.QueryRow(ctx, q, missionID, userID).Scan(
 		&p.ID, &p.MissionID, &p.UserID, &p.Progress, &p.Status, &p.ClaimedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return &MissionProgress{MissionID: missionID, UserID: userID, Progress: 0, Status: ProgressInProgress}, nil
 	}
 	if err != nil {
@@ -148,18 +143,24 @@ func (r *Repository) ListUserProgress(ctx context.Context, userID string) ([]Mis
 // MarkClaimed flips a progress row to 'claimed' with the claim idempotency key,
 // only if it is currently 'completed'. Returns true when this call performed the
 // transition (so the caller knows whether to grant the reward exactly once).
+//
+// This is a bare UPDATE — deliberately never an upsert. The previous
+// INSERT ... ON CONFLICT shape guarded only the conflict arm, so a caller with
+// NO progress row (the common case) hit the plain INSERT and stamped 'claimed'
+// at progress 0 — an unearned claim that would also have minted a real
+// referral-ledger accrual for any mission carrying cash_reward_kobo. A mission
+// is claimable only once the progress pipeline has written status='completed';
+// anything else is a no-op and the service reports "mission not completed yet".
 func (r *Repository) MarkClaimed(ctx context.Context, missionID, userID, idemKey string) (bool, error) {
 	const q = `
-		INSERT INTO referral_mission_progress (mission_id, user_id, progress, status, claimed_at, claim_idempotency_key)
-		VALUES ($1, $2, 0, 'claimed', now(), $3)
-		ON CONFLICT (mission_id, user_id) DO UPDATE
-			SET status = 'claimed', claimed_at = now(), claim_idempotency_key = EXCLUDED.claim_idempotency_key, updated_at = now()
-			WHERE referral_mission_progress.status = 'completed'
+		UPDATE referral_mission_progress
+		SET status = 'claimed', claimed_at = now(), claim_idempotency_key = $3, updated_at = now()
+		WHERE mission_id = $1 AND user_id = $2 AND status = 'completed'
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q, missionID, userID, idemKey).Scan(&id)
-	if err == pgx.ErrNoRows {
-		return false, nil // not completed / already claimed
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // no row / in_progress / already claimed
 	}
 	if err != nil {
 		return false, fmt.Errorf("gamification: mark claimed: %w", err)
@@ -198,7 +199,7 @@ func (r *Repository) ListRanks(ctx context.Context) ([]Rank, error) {
 		if err := rows.Scan(&rk.ID, &rk.Slug, &rk.Name, &rk.TierOrder, &rk.MinPoints, &raw); err != nil {
 			return nil, err
 		}
-		rk.Perks = decodeJSON(raw)
+		rk.Perks = jsonx.UnmarshalOr(raw, map[string]any{})
 		out = append(out, rk)
 	}
 	return out, rows.Err()
@@ -206,8 +207,8 @@ func (r *Repository) ListRanks(ctx context.Context) ([]Rank, error) {
 
 // CreateRank inserts a rank (admin builder).
 func (r *Repository) CreateRank(ctx context.Context, in RankInput) (*Rank, error) {
-	perks, _ := json.Marshal(in.Perks)
-	if len(perks) == 0 || string(perks) == "null" {
+	perks, _ := jsonx.MarshalObject(in.Perks)
+	if len(perks) == 0 {
 		perks = []byte("{}")
 	}
 	const q = `
@@ -222,7 +223,7 @@ func (r *Repository) CreateRank(ctx context.Context, in RankInput) (*Rank, error
 		&rk.ID, &rk.Slug, &rk.Name, &rk.TierOrder, &rk.MinPoints, &raw); err != nil {
 		return nil, fmt.Errorf("gamification: create rank: %w", err)
 	}
-	rk.Perks = decodeJSON(raw)
+	rk.Perks = jsonx.UnmarshalOr(raw, map[string]any{})
 	return &rk, nil
 }
 
@@ -250,7 +251,7 @@ func (r *Repository) ListBadges(ctx context.Context) ([]Badge, error) {
 		if icon != nil {
 			b.Icon = *icon
 		}
-		b.Criteria = decodeJSON(raw)
+		b.Criteria = jsonx.UnmarshalOr(raw, map[string]any{})
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -280,7 +281,7 @@ func (r *Repository) Leaderboard(ctx context.Context, period, scope string, limi
 		if err := rows.Scan(&e.Period, &e.Scope, &e.UserID, &e.RankPosition, &e.Points, &raw); err != nil {
 			return nil, err
 		}
-		e.Metric = decodeJSON(raw)
+		e.Metric = jsonx.UnmarshalOr(raw, map[string]any{})
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -316,7 +317,7 @@ func (r *Repository) ListContests(ctx context.Context, onlyActive bool) ([]Conte
 		if camp != nil {
 			ct.CampaignID = *camp
 		}
-		ct.PrizeConfig = decodeJSON(raw)
+		ct.PrizeConfig = jsonx.UnmarshalOr(raw, map[string]any{})
 		out = append(out, ct)
 	}
 	return out, rows.Err()
@@ -342,7 +343,7 @@ func (r *Repository) GetStreak(ctx context.Context, userID string) (Streak, erro
 		last *time.Time
 	)
 	err := r.db.QueryRow(ctx, q, userID).Scan(&st.Current, &st.Longest, &last, &st.Unit)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Streak{Found: false}, nil
 	}
 	if err != nil {
@@ -351,11 +352,4 @@ func (r *Repository) GetStreak(ctx context.Context, userID string) (Streak, erro
 	st.LastActiveDate = last
 	st.Found = true
 	return st, nil
-}
-
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

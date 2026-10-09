@@ -2,8 +2,10 @@ package fractionalre
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,8 +20,6 @@ type Repository struct {
 }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-// ── Sponsors ──────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateSponsor(ctx context.Context, s *Sponsor) error {
 	const q = `
@@ -48,8 +48,6 @@ func (r *Repository) ListSponsors(ctx context.Context) ([]Sponsor, error) {
 	}
 	return out, rows.Err()
 }
-
-// ── Assets ────────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateAsset(ctx context.Context, a *Asset) error {
 	const q = `
@@ -147,8 +145,6 @@ func (r *Repository) PatchAsset(ctx context.Context, id string, navKobo *int64, 
 	return nil
 }
 
-// ── Offerings ─────────────────────────────────────────────────────────────────
-
 func (r *Repository) CreateOffering(ctx context.Context, o *Offering) error {
 	const q = `
 		INSERT INTO fre_offerings
@@ -231,10 +227,21 @@ func (r *Repository) SetClose(ctx context.Context, id, proposedBy, approvedBy st
 	return err
 }
 
+// SetCloseProposer records the maker's close proposal — but only while nobody
+// has claimed the close (close_approved_by IS NULL). A mid-flight re-proposal
+// would otherwise swap the maker under a running checker and wedge the round:
+// the checker's resume would then fail the maker!=checker comparison.
 func (r *Repository) SetCloseProposer(ctx context.Context, id, proposedBy string) error {
-	const q = `UPDATE fre_offerings SET close_proposed_by=$2, status='closing', updated_at=now() WHERE id=$1`
-	_, err := r.db.Exec(ctx, q, id, proposedBy)
-	return err
+	const q = `UPDATE fre_offerings SET close_proposed_by=$2, status='closing', updated_at=now()
+		WHERE id=$1 AND status IN ('open','closing') AND close_approved_by IS NULL`
+	ct, err := r.db.Exec(ctx, q, id, proposedBy)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrInvalidTransition
+	}
+	return nil
 }
 
 // RecomputeOfferingProjections rebuilds raised_kobo / units_sold / investor_count
@@ -256,11 +263,13 @@ func (r *Repository) RecomputeOfferingProjections(ctx context.Context, offeringI
 	return err
 }
 
-// ── Subscriptions ─────────────────────────────────────────────────────────────
-
 // InsertSubscription writes a new subscription. The UNIQUE idempotency_key makes
 // a duplicate (double-subscribe) a no-op: pgx returns a unique-violation which
 // the caller maps to a fetch of the existing row.
+//
+// Deprecated: kept for tests/tools; the money path uses
+// InsertSubscriptionIfCapacity so capacity and open-status are enforced under
+// the offering row lock.
 func (r *Repository) InsertSubscription(ctx context.Context, s *Subscription) error {
 	const q = `
 		INSERT INTO fre_subscriptions (offering_id, user_id, units, amount_kobo, status, settlement_id, idempotency_key, risk_ack_id)
@@ -269,6 +278,123 @@ func (r *Repository) InsertSubscription(ctx context.Context, s *Subscription) er
 	return r.db.QueryRow(ctx, q, s.OfferingID, s.UserID, s.Units, s.AmountKobo, string(s.Status),
 		s.SettlementID, s.IdempotencyKey, s.RiskAckID).
 		Scan(&s.ID, &s.CreatedAt)
+}
+
+// InsertSubscriptionIfCapacity inserts a subscription only while the offering
+// is still 'open' AND selling those units would not exceed share_count. The
+// offering row is locked FOR UPDATE so concurrent subscribes serialize: a
+// close proposal or a refund claim that already moved the offering out of
+// 'open' refuses the insert (ErrOfferingNotOpen) instead of stranding a new
+// escrowed subscription in a closing round; likewise share_count can never be
+// oversubscribed (ErrOfferingSoldOut). The UNIQUE idempotency_key race map is
+// unchanged: a losing caller gets 23505 and fetches the winner.
+func (r *Repository) InsertSubscriptionIfCapacity(ctx context.Context, s *Subscription) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var shareCount int64
+	var status string
+	if err := tx.QueryRow(ctx,
+		`SELECT share_count, status FROM fre_offerings WHERE id=$1 FOR UPDATE`, s.OfferingID).
+		Scan(&shareCount, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("fractionalre: lock offering: %w", err)
+	}
+	if status != string(OfferingOpen) {
+		return ErrOfferingNotOpen
+	}
+	var sold int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(SUM(units),0) FROM fre_subscriptions
+		 WHERE offering_id=$1 AND status IN ('escrowed','allocated')`, s.OfferingID).
+		Scan(&sold); err != nil {
+		return fmt.Errorf("fractionalre: units sold: %w", err)
+	}
+	// Comparing as a subtraction avoids a sold+units int64 overflow.
+	if s.Units > shareCount-sold {
+		return ErrOfferingSoldOut
+	}
+	const q = `
+		INSERT INTO fre_subscriptions (offering_id, user_id, units, amount_kobo, status, settlement_id, idempotency_key, risk_ack_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING id, created_at`
+	if err := tx.QueryRow(ctx, q, s.OfferingID, s.UserID, s.Units, s.AmountKobo, string(s.Status),
+		s.SettlementID, s.IdempotencyKey, s.RiskAckID).Scan(&s.ID, &s.CreatedAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// AllocateSubscription atomically flips ONE subscription escrowed→allocated and
+// posts its cap-table units, certificate ref and document row in the same tx.
+// The guarded UPDATE makes a crashed-then-retried allocation convergent: a sub
+// already allocated returns allocated=false and no second units are issued.
+func (r *Repository) AllocateSubscription(ctx context.Context, sub *Subscription, entry *CapTableEntry, doc *Document) (bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	ct, err := tx.Exec(ctx,
+		`UPDATE fre_subscriptions SET status='allocated', updated_at=now() WHERE id=$1 AND status='escrowed'`,
+		sub.ID)
+	if err != nil {
+		return false, err
+	}
+	if ct.RowsAffected() == 0 {
+		return false, nil // already allocated by an earlier pass — converged
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO fre_cap_table (asset_id, offering_id, user_id, units, cost_kobo, source, cert_ref)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (asset_id, user_id) DO UPDATE
+		SET units = fre_cap_table.units + EXCLUDED.units,
+		    cost_kobo = fre_cap_table.cost_kobo + EXCLUDED.cost_kobo,
+		    updated_at = now()`,
+		entry.AssetID, entry.OfferingID, entry.UserID, entry.Units, entry.CostKobo, entry.Source, entry.CertRef); err != nil {
+		return false, fmt.Errorf("fractionalre: cap-table upsert: %w", err)
+	}
+	if entry.CertRef != nil {
+		if _, err := tx.Exec(ctx,
+			`UPDATE fre_cap_table SET cert_ref=$3, updated_at=now() WHERE asset_id=$1 AND user_id=$2`,
+			entry.AssetID, entry.UserID, *entry.CertRef); err != nil {
+			return false, fmt.Errorf("fractionalre: cert ref: %w", err)
+		}
+	}
+	if doc != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO fre_documents (asset_id, offering_id, user_id, doc_type, object_key, label, created_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			doc.AssetID, doc.OfferingID, doc.UserID, doc.DocType, doc.ObjectKey, doc.Label, nil); err != nil {
+			return false, fmt.Errorf("fractionalre: certificate doc: %w", err)
+		}
+	}
+	return true, tx.Commit(ctx)
+}
+
+// ClaimClose atomically moves an offering into a close branch and records the
+// checker. It serializes concurrent checkers (only the first claim wins) and
+// refuses once a close has already run: status must be open|closing|refunding
+// and either nobody claimed yet (close_approved_by IS NULL) or the SAME
+// checker is resuming their own crashed close. claimStatus is 'closing' for
+// the allocate branch and 'refunding' for the refund branch, so a claimed
+// refund can never be re-entered as an allocation and vice versa.
+func (r *Repository) ClaimClose(ctx context.Context, offeringID, checkerID string, claimStatus OfferingStatus) (bool, error) {
+	const q = `UPDATE fre_offerings SET status=$3, close_approved_by=$2, updated_at=now()
+		WHERE id=$1
+		  AND status IN ('open','closing','refunding')
+		  AND (close_approved_by IS NULL OR close_approved_by=$2)`
+	ct, err := r.db.Exec(ctx, q, offeringID, checkerID, string(claimStatus))
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
 }
 
 func (r *Repository) GetSubscriptionByKey(ctx context.Context, key string) (*Subscription, error) {
@@ -309,8 +435,6 @@ func (r *Repository) UpdateSubscriptionStatus(ctx context.Context, id string, st
 	return err
 }
 
-// ── Cap table ─────────────────────────────────────────────────────────────────
-
 // UpsertCapTable adds units to an investor's holding in an asset (allocation or
 // secondary buy). pct_bps is recomputed by RecomputeCapTablePct afterwards.
 func (r *Repository) UpsertCapTable(ctx context.Context, e *CapTableEntry) error {
@@ -331,7 +455,7 @@ func (r *Repository) TransferUnits(ctx context.Context, assetID, sellerID, buyer
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var sellerUnits int64
 	if err := tx.QueryRow(ctx, `SELECT units FROM fre_cap_table WHERE asset_id=$1 AND user_id=$2 FOR UPDATE`, assetID, sellerID).
@@ -426,8 +550,6 @@ func (r *Repository) ListHoldings(ctx context.Context, userID string) ([]CapTabl
 	return out, rows.Err()
 }
 
-// ── Investor profile ──────────────────────────────────────────────────────────
-
 func (r *Repository) GetInvestorProfile(ctx context.Context, userID string) (*InvestorProfile, error) {
 	const q = `
 		SELECT id, user_id, classification, declared_annual_income_kobo, ytd_invested_kobo, ytd_year,
@@ -504,7 +626,7 @@ func (r *Repository) SumYTDInvested(ctx context.Context, userID string, year int
 		),0)
 		+ COALESCE((
 		  SELECT SUM(amount_kobo) FROM fre_secondary_orders
-		  WHERE buyer_id=$1 AND status IN ('escrowed','settled') AND EXTRACT(YEAR FROM created_at)=$2
+		  WHERE buyer_id=$1 AND status IN ('escrowed','transferred','settled') AND EXTRACT(YEAR FROM created_at)=$2
 		),0)`
 	var total int64
 	err := r.db.QueryRow(ctx, q, userID, year).Scan(&total)
@@ -537,8 +659,6 @@ func (r *Repository) InsertOverride(ctx context.Context, userID string, override
 	return err
 }
 
-// ── Risk acknowledgements ─────────────────────────────────────────────────────
-
 func (r *Repository) InsertRiskAck(ctx context.Context, a *RiskAcknowledgement) error {
 	const q = `INSERT INTO fre_risk_acknowledgements (user_id, offering_id, scope, disclosure_ref, scroll_completed, ip_address)
 		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, acknowledged_at`
@@ -562,8 +682,6 @@ func (r *Repository) GetOfferRiskAck(ctx context.Context, userID, offeringID str
 	return id, true, nil
 }
 
-// ── Distributions ─────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertDistribution(ctx context.Context, d *Distribution) error {
 	const q = `INSERT INTO fre_distributions
 		(asset_id, offering_id, period_label, gross_kobo, fee_kobo, withholding_kobo, net_kobo, status, maker_id, submitted_at, idempotency_key)
@@ -580,6 +698,22 @@ func (r *Repository) GetDistribution(ctx context.Context, id string) (*Distribut
 		FROM fre_distributions WHERE id=$1`
 	d := &Distribution{}
 	err := r.db.QueryRow(ctx, q, id).Scan(&d.ID, &d.AssetID, &d.OfferingID, &d.PeriodLabel, &d.GrossKobo, &d.FeeKobo,
+		&d.WithholdingKobo, &d.NetKobo, &d.Status, &d.MakerID, &d.CheckerID, &d.SubmittedAt, &d.ApprovedAt, &d.PaidAt,
+		&d.IdempotencyKey, &d.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return d, err
+}
+
+// GetDistributionByKey resolves a distribution run by its (scoped) idempotency
+// key for the ScheduleDistribution replay check.
+func (r *Repository) GetDistributionByKey(ctx context.Context, key string) (*Distribution, error) {
+	const q = `SELECT id, asset_id, offering_id, period_label, gross_kobo, fee_kobo, withholding_kobo, net_kobo,
+		status, maker_id, checker_id, submitted_at, approved_at, paid_at, idempotency_key, created_at
+		FROM fre_distributions WHERE idempotency_key=$1`
+	d := &Distribution{}
+	err := r.db.QueryRow(ctx, q, key).Scan(&d.ID, &d.AssetID, &d.OfferingID, &d.PeriodLabel, &d.GrossKobo, &d.FeeKobo,
 		&d.WithholdingKobo, &d.NetKobo, &d.Status, &d.MakerID, &d.CheckerID, &d.SubmittedAt, &d.ApprovedAt, &d.PaidAt,
 		&d.IdempotencyKey, &d.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -686,8 +820,6 @@ func (r *Repository) ListPayoutsForUser(ctx context.Context, userID string, limi
 	return out, rows.Err()
 }
 
-// ── Secondary market ──────────────────────────────────────────────────────────
-
 // InsertListing writes a listing carrying the client's Idempotency-Key. The
 // partial UNIQUE index on idempotency_key makes a duplicate list-for-sale a
 // unique-violation which the service maps to a replay of the original listing.
@@ -760,7 +892,7 @@ func (r *Repository) DecrementListing(ctx context.Context, id string, units int6
 
 func (r *Repository) SetListingStatus(ctx context.Context, id, status, reason string) error {
 	const q = `UPDATE fre_secondary_listings SET status=$2, halted_reason=$3, updated_at=now() WHERE id=$1`
-	_, err := r.db.Exec(ctx, q, id, status, nullStr(reason))
+	_, err := r.db.Exec(ctx, q, id, status, dbutil.NullStr(reason))
 	return err
 }
 
@@ -788,6 +920,70 @@ func (r *Repository) SetOrderStatus(ctx context.Context, id, status string) erro
 	const q = `UPDATE fre_secondary_orders SET status=$2, updated_at=now() WHERE id=$1`
 	_, err := r.db.Exec(ctx, q, id, status)
 	return err
+}
+
+// CompleteSecondaryTransfer atomically performs the unit leg of a secondary
+// buy — decrement the listing's units_remaining and move units seller→buyer on
+// the cap table — then flips the order escrowed→transferred, all in one tx.
+// The guarded order-status flip makes a crash between order insert and settle
+// convergent on replay: a 'transferred' or terminal order returns moved=false
+// and the transfer never runs twice.
+func (r *Repository) CompleteSecondaryTransfer(ctx context.Context, o *SecondaryOrder) (bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM fre_secondary_orders WHERE id=$1 FOR UPDATE`, o.ID).Scan(&status); err != nil {
+		return false, fmt.Errorf("fractionalre: lock order: %w", err)
+	}
+	if status != "escrowed" {
+		return false, nil // transfer already committed (or order terminal)
+	}
+	ct, err := tx.Exec(ctx, `UPDATE fre_secondary_listings
+		SET units_remaining = units_remaining - $2,
+		    status = CASE WHEN units_remaining - $2 <= 0 THEN 'filled' ELSE status END,
+		    updated_at = now()
+		WHERE id=$1 AND units_remaining >= $2`, o.ListingID, o.Units)
+	if err != nil {
+		return false, err
+	}
+	if ct.RowsAffected() == 0 {
+		return false, ErrInsufficientUnits
+	}
+	var sellerUnits int64
+	if err := tx.QueryRow(ctx,
+		`SELECT units FROM fre_cap_table WHERE asset_id=$1 AND user_id=$2 FOR UPDATE`,
+		o.AssetID, o.SellerID).Scan(&sellerUnits); err != nil {
+		return false, fmt.Errorf("fractionalre: seller holding: %w", err)
+	}
+	if sellerUnits < o.Units {
+		return false, ErrInsufficientUnits
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE fre_cap_table SET units=units-$3, cost_kobo=GREATEST(cost_kobo-$4,0), updated_at=now()
+		 WHERE asset_id=$1 AND user_id=$2`,
+		o.AssetID, o.SellerID, o.Units, o.AmountKobo); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO fre_cap_table (asset_id, user_id, units, cost_kobo, source)
+		VALUES ($1,$2,$3,$4,'secondary')
+		ON CONFLICT (asset_id, user_id) DO UPDATE
+		SET units = fre_cap_table.units + EXCLUDED.units,
+		    cost_kobo = fre_cap_table.cost_kobo + EXCLUDED.cost_kobo,
+		    updated_at = now()`,
+		o.AssetID, o.BuyerID, o.Units, o.AmountKobo); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE fre_secondary_orders SET status='transferred', updated_at=now() WHERE id=$1`, o.ID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (r *Repository) ListOrdersForUser(ctx context.Context, userID string, limit, offset int) ([]SecondaryOrder, error) {
@@ -825,8 +1021,6 @@ func (r *Repository) UpdateMarketControls(ctx context.Context, enabled bool, fee
 	_, err := r.db.Exec(ctx, q, enabled, feeBps, adminID)
 	return err
 }
-
-// ── Watchlist / goals / auto-invest / documents ───────────────────────────────
 
 func (r *Repository) AddWatch(ctx context.Context, userID, offeringID string) error {
 	const q = `INSERT INTO fre_watchlist (user_id, offering_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`
@@ -975,8 +1169,6 @@ func (r *Repository) FindOpenOfferingForAutoInvest(ctx context.Context, assetTyp
 	return r.GetOffering(ctx, id)
 }
 
-// ── Escrow reconciliation (admin read) ────────────────────────────────────────
-
 // ListReconciliation compares, per live offering, the raised_kobo projection
 // against the recomputed sum of escrowed/allocated subscription amounts.
 // Read-only; both figures are integer kobo.
@@ -1063,4 +1255,62 @@ func (r *Repository) GetCertificate(ctx context.Context, userID, investmentID st
 		return nil, ErrNotFound
 	}
 	return d, err
+}
+
+// auditLogger writes immutable, append-only rows to fre_audit_log. Every admin
+// mutation and every money-path event emits one (iron rule: emit an audit event
+// on every money mutation). Failures are non-fatal to the caller but logged.
+type auditLogger struct {
+	db *pgxpool.Pool
+}
+
+func newAuditLogger(db *pgxpool.Pool) *auditLogger { return &auditLogger{db: db} }
+
+// log appends an audit row. oldVal/newVal may be nil. Returns the insert error
+// so money paths can decide whether to treat audit failure as fatal (they do
+// for the critical mutations — see service callers).
+func (a *auditLogger) log(ctx context.Context, actorID, action, entityType, entityID, reason string, oldVal, newVal any) error {
+	var oldJSON, newJSON []byte
+	if oldVal != nil {
+		oldJSON, _ = json.Marshal(oldVal)
+	}
+	if newVal != nil {
+		newJSON, _ = json.Marshal(newVal)
+	}
+	const q = `
+		INSERT INTO fre_audit_log (actor_id, action, entity_type, entity_id, old_value, new_value, reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	_, err := a.db.Exec(ctx, q, actorID, action, entityType, dbutil.NullStr(entityID), oldJSON, newJSON, dbutil.NullStr(reason))
+	return err
+}
+
+// AuditEntry is a read row from fre_audit_log.
+type AuditEntry struct {
+	ID         string    `json:"id"`
+	ActorID    string    `json:"actor_id"`
+	Action     string    `json:"action"`
+	EntityType string    `json:"entity_type"`
+	EntityID   *string   `json:"entity_id,omitempty"`
+	Reason     *string   `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ListAudit returns recent audit entries (admin read).
+func (s *Service) ListAudit(ctx context.Context, limit, offset int) ([]AuditEntry, error) {
+	const q = `SELECT id, actor_id, action, entity_type, entity_id, reason, created_at
+		FROM fre_audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := s.repo.db.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.EntityType, &e.EntityID, &e.Reason, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

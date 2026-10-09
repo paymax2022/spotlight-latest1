@@ -52,8 +52,6 @@ func body(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// ── Reads (ungated) ────────────────────────────────────────────────────────────
-
 func (s *Server) adminDashboard(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Admin.Dashboard())
 }
@@ -104,8 +102,6 @@ func (s *Server) adminAudit(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) adminAdmins(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Admin.Admins())
 }
-
-// ── Mutations (RBAC-gated + audited + maker-checker in the service) ────────────
 
 func (s *Server) adminReviewKyc(w http.ResponseWriter, r *http.Request) {
 	var b struct{ Decision, Reason string }

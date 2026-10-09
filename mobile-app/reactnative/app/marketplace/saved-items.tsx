@@ -1,4 +1,3 @@
-// ── Screen 8 — Saved Items (wishlist) ────────────────────────────────────────
 // Return-later list. Grid of saved cards with a "price changed" badge when the
 // current price differs from the price at save time. Empty state is an invitation
 // ("Save items you're considering — we'll tell you if the price drops"), not a
@@ -9,10 +8,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ArrowDown, ArrowUp, HeartOff } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSavedItems } from '@/features/marketplace/hooks';

@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Pill, ChevronRight, Store } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { StateView, StatusBadge } from '@/features/doctor/components';
 import type { StatusTone } from '@/features/doctor/components';

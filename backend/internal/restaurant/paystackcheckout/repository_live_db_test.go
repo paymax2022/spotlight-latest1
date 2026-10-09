@@ -4,7 +4,6 @@ package paystackcheckout
 // public.restaurant_order_paystack_intents. Skipped unless TEST_DATABASE_URL
 // is set (mirrors every other live-DB test in this codebase — see
 // restaurant/tierlimit_live_db_test.go's tierPool).
-//
 // What these pin:
 //  1. PutIntent is idempotent on idempotency_key — a replay returns the
 //     EXISTING row rather than inserting a second one.
@@ -16,6 +15,7 @@ package paystackcheckout
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -98,7 +98,7 @@ func TestLiveDB_GetByReference_UnknownIsErrUnknownReference(t *testing.T) {
 	t.Cleanup(pool.Close)
 	repo := NewIntentStore(pool)
 
-	if _, err := repo.GetByReference(context.Background(), "foodorder:does-not-exist-"+uuid.New().String()); err != ErrUnknownReference {
+	if _, err := repo.GetByReference(context.Background(), "foodorder:does-not-exist-"+uuid.New().String()); !errors.Is(err, ErrUnknownReference) {
 		t.Fatalf("err = %v, want ErrUnknownReference", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestLiveDB_ClaimForProcessing_AtomicUnderConcurrency(t *testing.T) {
 	const attempts = 20
 	results := make([]bool, attempts)
 	var wg sync.WaitGroup
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -180,5 +180,44 @@ func TestLiveDB_MarkStatus_SetsOrderIDAndRefundReference(t *testing.T) {
 	}
 	if rec.OrderID == nil || *rec.OrderID != orderID {
 		t.Errorf("order id = %v, want %s", rec.OrderID, orderID)
+	}
+}
+
+// TestLiveDB_PutIntent_ForeignKeyIsCollisionNotReplay pins the caller-scoped
+// replay fix: an idempotency key that already belongs to a DIFFERENT customer
+// must NOT resolve to that customer's intent (reference, amount, request).
+// Keys are client-chosen — before the customer_id scope on the replay select,
+// any caller could read a stranger's checkout by guessing their key.
+func TestLiveDB_PutIntent_ForeignKeyIsCollisionNotReplay(t *testing.T) {
+	pool := repoPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	repo := NewIntentStore(pool)
+
+	idemKey := "repo-scope-" + uuid.New().String()
+	owner := sampleRecord(idemKey)
+	if _, inserted, err := repo.PutIntent(ctx, owner); err != nil || !inserted {
+		t.Fatalf("owner PutIntent: inserted=%v err=%v", inserted, err)
+	}
+
+	foreign := sampleRecord(idemKey) // different CustomerID, same key
+	existing, inserted, err := repo.PutIntent(ctx, foreign)
+	if err == nil {
+		t.Fatalf("foreign PutIntent returned no error and existing=%+v — a foreign key replayed the owner's intent", existing)
+	}
+	if inserted {
+		t.Fatal("foreign PutIntent reported a fresh insert under a taken key")
+	}
+	if existing != nil {
+		t.Fatalf("foreign PutIntent leaked the owner's intent record: %+v", existing)
+	}
+
+	// The owner's own replay still resolves to their original row.
+	replay, inserted, err := repo.PutIntent(ctx, owner)
+	if err != nil || inserted {
+		t.Fatalf("owner replay PutIntent: inserted=%v err=%v", inserted, err)
+	}
+	if replay == nil || replay.CustomerID != owner.CustomerID {
+		t.Fatalf("owner replay resolved to %+v, want their own row", replay)
 	}
 }

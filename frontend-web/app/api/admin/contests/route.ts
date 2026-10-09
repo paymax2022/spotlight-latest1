@@ -72,7 +72,6 @@ export async function POST(request: Request) {
 
     if (!title) return errorResponse('Contest title is required.', 400);
     if (!slug) return errorResponse('Contest slug is required.', 400);
-    // Categories are admin-managed rows now, not a const in this file. Active
     // only, so deactivating one stops new contests using it while leaving the
     // contests already filed under it alone.
     const allowedCategories = await allowedCategorySlugs();
@@ -138,15 +137,16 @@ export async function POST(request: Request) {
     // Publish votable contests into the voting plane so the mobile app can see
     // them. The registration definition and the votable contest are different
     // records; this is the seam between them.
-    //
     // Best-effort by design: the contest IS saved at this point, and failing the
     // response here would tell an admin their contest was not created when it
     // was. The outcome is reported instead, so a failure is visible rather than
     // silent.
     const publish = await publishContestToVotingPlane(createAdminClient(), contest).catch(
       (err): Awaited<ReturnType<typeof publishContestToVotingPlane>> => {
+        // Log the real error server-side — String(err) carries fetch/Error
+        // internals and must not reach the response body.
         console.error('[admin/contests] publish to voting plane threw', err);
-        return { published: false, reason: 'failed', detail: String(err) };
+        return { published: false, reason: 'failed' };
       },
     );
 

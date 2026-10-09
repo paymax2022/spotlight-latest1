@@ -14,9 +14,7 @@ import (
 // TM-005 live-DB integration test: a persisted clinical note is IMMUTABLE — the
 // append-only trigger (migration 20261030000200) makes any UPDATE or DELETE fail, so
 // a signed note can never be altered or removed (a correction is a new note).
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset. Bring-up:
-//
 //	supabase start
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/consult/ -run TestClinicalNoteImmutable_LiveDB

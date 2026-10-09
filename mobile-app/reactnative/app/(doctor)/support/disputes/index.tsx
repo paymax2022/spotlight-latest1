@@ -3,14 +3,13 @@ import { View, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, DisputeRow } from '@/features/doctor/components';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useDisputes } from '@/features/doctor/hooks';
 
-// ── Section AA — Dispute list (AA.7-14 as one Dispute union) ───────────────────
 // NEW screen: the unified dispute list. The eight dispute kinds collapse to one
 // Dispute union rendered through the reusable DisputeRow. Tapping a row opens the
 // dispute detail; the CTA opens the create-dispute flow.

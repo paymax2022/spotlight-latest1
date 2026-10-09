@@ -8,8 +8,6 @@ import "testing"
 // The DB-bound service/repo methods are validated indirectly by the invariants these
 // building blocks guarantee, with the integration suite asserting them against pgx.
 
-// ── Live-session state machine: allowed + illegal transitions ──────────────────
-
 func TestCanSession_AllowedTransitions(t *testing.T) {
 	allowed := [][2]SessionState{
 		{SessionScheduled, SessionLive},
@@ -40,8 +38,6 @@ func TestCanSession_IllegalTransitions(t *testing.T) {
 		}
 	}
 }
-
-// ── Moderation decision → state + hide enforcement ─────────────────────────────
 
 func TestReportStateForAction(t *testing.T) {
 	if reportStateForAction(ActionNone) != ReportDismissed {
@@ -74,8 +70,6 @@ func TestDecideHide_MapsToActioned(t *testing.T) {
 		t.Fatal("decide(hide) must resolve the report as actioned")
 	}
 }
-
-// ── Discussion visibility filter (visible-only list) ───────────────────────────
 
 // filterVisible mirrors the WHERE state='visible' the repo query applies. Exercising
 // it here proves hidden posts are excluded from member-facing lists without a DB.
@@ -151,8 +145,6 @@ func TestScopeHelpers(t *testing.T) {
 		t.Error("group is not a DM scope")
 	}
 }
-
-// ── Provider stub: deterministic, never a real stream ──────────────────────────
 
 func TestStubRoomProvider_Deterministic(t *testing.T) {
 	p := providerOrStub(nil)

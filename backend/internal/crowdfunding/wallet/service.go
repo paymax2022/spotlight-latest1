@@ -4,15 +4,44 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/timeutil"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 )
+
+// walletDebitLimiter is the minimal seam the creator-withdrawal money path
+// depends on for the fail-closed KYC-tier / daily-debit gate. *tiers.Service
+// satisfies it in production; unit tests inject a fake via WithTiers. Modeled as
+// a local interface — mirrors social's walletDebitLimiter. A payout debits the
+// creator's own wallet, so the STRICT gate is used: it is a wallet cash-out,
+// not a checkout purchase, so the Tier-0 checkout allowance (ADR-043) does NOT
+// apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("crowdfunding/wallet: money path requires a tier gate (not wired)")
+
+// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used by
+// ANOTHER member's withdrawal request (409). Replay lookups are scoped to the
+// caller, so a foreign key cannot replay a stranger's withdrawal back; the
+// surviving unique-violation on insert is the durable proof of the clash
+// (same convention as finance/transfers' ErrIdempotencyKeyConflict).
+var ErrIdempotencyKeyConflict = errors.New("crowdfunding/wallet: idempotency key already used by another withdrawal")
 
 // Service exposes the campaign wallet, ledger projection, bank accounts, and the
 // withdrawal flow. It never stores a balance: every balance is derived from the
@@ -20,17 +49,47 @@ import (
 type Service struct {
 	db     *pgxpool.Pool
 	ledger *financeledger.Service // required for SubmitWithdrawal's payout leg; nil fails that path closed
+	tiers  walletDebitLimiter     // required for SubmitWithdrawal's debit gate; nil fails that path closed
 }
 
-// NewService constructs a wallet Service over a pgx pool.
+// NewService constructs a wallet Service over a pgx pool. The tier-limit gate
+// is built from the same pool (tiers.NewService needs only the DB) — same
+// convention as social.NewService; a nil pool leaves the gate unwired and the
+// payout path then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool) *Service {
-	return &Service{db: db}
+	s := &Service{db: db}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
 }
 
 // WithLedger injects the finance ledger used by SubmitWithdrawal's payout
 // money-path. Non-breaking: existing NewService(db) callers keep a nil ledger
 // and the payout path fails closed until one is wired.
 func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; return s }
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the withdrawal
+// payout debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical
+// transfer rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over
+// daily cap → ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate
+// refuses via ErrTierGateUnwired. The error is propagated UNWRAPPED so the
+// handler maps the tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
 
 // ErrLedgerUnavailable is returned when SubmitWithdrawal is invoked without a
 // wired finance ledger. Fail-closed: we refuse to transition without posting money.
@@ -39,10 +98,7 @@ var ErrLedgerUnavailable = errors.New("crowdfunding/wallet: finance ledger not c
 // ErrCampaignNotFound is returned when a campaign id resolves to no row.
 var ErrCampaignNotFound = errors.New("crowdfunding/wallet: campaign not found")
 
-// ─── Wallet summary (fully derived — no stored balance) ──────────────────────
-
 // GetWallet returns a campaign's derived wallet summary.
-//
 // Derivation (all kobo, integers only):
 //   - totalRaised     = Σ contributions in (escrowed, released)
 //   - escrow          = Σ contributions in (escrowed)            [held until release]
@@ -51,22 +107,18 @@ var ErrCampaignNotFound = errors.New("crowdfunding/wallet: campaign not found")
 //   - pending         = Σ cf_withdrawals in (PENDING, PROCESSING, APPROVED) [in-flight out]
 //   - available       = the creator's REAL ledger user_wallet balance − pending
 //
-// "available" used to be derived as released − totalWithdrawn − pending — the
-// FULL gross contribution total, with no accounting for the 10% platform cut
-// Contribute() already deducted via settlement.Settle before the money ever
-// reached the creator's own wallet. That overstated what a creator could
-// actually withdraw by exactly the platform fee: a campaign that raised
-// ₦10,000 shows ₦10,000 "available", but only ₦9,000 ever lands in the
-// creator's user_wallet — requesting the full displayed amount passed this
-// function's own available-balance check and then failed downstream with an
-// unexplained "insufficient funds" from SubmitWithdrawal's ledger.Debit,
-// which checks the SAME account this now reads. Reading that real balance
-// directly (rather than re-deriving an approximation of it) means the two
-// can never disagree again. Falls back to the old approximation only when no
-// ledger is wired (s.ledger == nil, e.g. a read-only context that never
-// configured one) — a read that can't reach the real balance is better than
-// no read at all, but a wired payout path must never trust it as a gate.
+// "available" must be the creator's REAL ledger wallet balance − pending — NOT
+// derived as released − totalWithdrawn − pending. That derivation ignores the
+// platform fee settlement.Settle deducts before money reaches the wallet, so it
+// overstates availability and lets an over-large request through only to fail
+// downstream on an unexplained "insufficient funds". Reading the real balance
+// keeps the gate and the payout's ledger.Debit check in agreement. Falls back
+// to the approximation only when no ledger is wired (s.ledger == nil) — a wired
+// payout path must never trust it as a gate.
 func (s *Service) GetWallet(ctx context.Context, campaignID string) (*CampaignWalletSummary, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrCampaignNotFound
+	}
 	var (
 		title     string
 		creatorID string
@@ -126,8 +178,6 @@ func (s *Service) GetWallet(ctx context.Context, campaignID string) (*CampaignWa
 	}, nil
 }
 
-// ─── Ledger projection (signed entries with running balance) ─────────────────
-
 type rawEntry struct {
 	id          string
 	typ         string
@@ -143,6 +193,9 @@ type rawEntry struct {
 // The projection is ordered oldest→newest so the running balance accumulates,
 // then returned newest-first for the client feed.
 func (s *Service) GetLedger(ctx context.Context, campaignID string) ([]LedgerEntry, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrCampaignNotFound
+	}
 	// Verify the campaign exists so a bad id is a 404, not an empty list.
 	var exists bool
 	if err := s.db.QueryRow(ctx, `SELECT TRUE FROM campaigns WHERE id = $1`, campaignID).Scan(&exists); err != nil {
@@ -250,18 +303,15 @@ func projectRunningBalance(raw []rawEntry) []LedgerEntry {
 			BalanceKobo: balance,
 			Reference:   e.reference,
 			Status:      e.status,
-			CreatedAt:   e.createdAt.UTC().Format(time.RFC3339),
+			CreatedAt:   timeutil.RFC3339(e.createdAt),
 		})
 	}
-	// Reverse into newest-first.
 	out := make([]LedgerEntry, len(asc))
 	for i := range asc {
 		out[len(asc)-1-i] = asc[i]
 	}
 	return out
 }
-
-// ─── Bank accounts ───────────────────────────────────────────────────────────
 
 // GetBankAccounts returns a user's saved (masked) bank accounts, default first.
 func (s *Service) GetBankAccounts(ctx context.Context, userID string) ([]BankAccount, error) {
@@ -286,14 +336,11 @@ func (s *Service) GetBankAccounts(ctx context.Context, userID string) ([]BankAcc
 	return out, rows.Err()
 }
 
-// ─── Withdrawal (money-path: pays out immediately, no admin approval) ────────
-
 // SubmitWithdrawal pays out a creator's withdrawal immediately — no separate
 // admin-approval step. Campaign review is the gate on whether a campaign can
 // accept contributions at all (see crowdfunding.Service.Contribute); once it
 // can, contributions settle into the wallet on arrival and the creator may
 // withdraw at will.
-//
 // IRON RULES: requires a non-empty idempotencyKey; validates the amount against
 // the derived available balance fail-closed; posts a BALANCED double-entry via
 // the finance ledger (DEBIT AccountEscrow / CREDIT AccountProviderClearing,
@@ -302,7 +349,6 @@ func (s *Service) GetBankAccounts(ctx context.Context, userID string) ([]BankAcc
 // a replay never posts twice; writes an immutable cf_audit_logs row in the same
 // tx as the terminal status flip. A missing ledger dependency fails closed
 // BEFORE any state change.
-//
 // TODO(prod): trigger the actual payout-rail transfer once a disbursement
 // provider is wired into this surface (see internal/provider/disbursement).
 // Funds are parked in AccountProviderClearing meanwhile — we do not fabricate a
@@ -318,10 +364,35 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 		return nil, ErrLedgerUnavailable
 	}
 
-	// Idempotent replay: return the prior request unchanged.
-	if existing, ok, err := s.findByIdempotencyKey(ctx, idempotencyKey); err != nil {
+	// Idempotent replay: return the prior request unchanged. The lookup is
+	// CALLER-SCOPED (creator_id): a key another member already used must NOT
+	// replay their withdrawal back to this caller — that would leak their
+	// reference/amount/bank label. A foreign key misses here and collides at
+	// the cf_withdrawals unique constraint below → 409.
+	if existing, existingCampaignID, ok, err := s.findByIdempotencyKey(ctx, creatorID, idempotencyKey); err != nil {
 		return nil, err
 	} else if ok {
+		// A caller-scoped hit is a true replay ONLY when the request is the
+		// same withdrawal: same campaign, same amount, same payout
+		// destination. A key replayed against different material params is
+		// idempotency-key misuse — acking the stored row would tell the
+		// creator a different withdrawal "went through" (post-merge audit
+		// D4). Divergence on campaign or amount conflicts outright.
+		if existingCampaignID != campaignID || existing.AmountKobo != in.AmountKobo {
+			return nil, ErrIdempotencyKeyConflict
+		}
+		// The row stores the resolved bank LABEL, not the account id, so the
+		// destination check resolves this request's account the same way the
+		// write path does and compares. An unresolvable account id is a
+		// failure in its own right — the stored row is never returned to a
+		// request whose destination cannot be verified.
+		wantLabel, lerr := s.resolveBankLabel(ctx, creatorID, in.BankAccountID)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if wantLabel != existing.BankLabel {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return existing, nil
 	}
 
@@ -357,44 +428,42 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	reference := "SPL-CFWD-" + id[:8]
 	now := time.Now()
 
-	// Post the balanced double-entry (money leaves the CREATOR'S wallet) BEFORE
-	// the row exists — a deterministic key derived from the withdrawal id makes
-	// a retry-after-partial-failure safe to replay.
-	//
-	// DEBIT the creator's own user_wallet, not the shared escrow standing
-	// account: Contribute()'s instant settle already moved the creator's 90%
-	// share OUT of escrow and into their user_wallet via settlement.Settle
-	// (escrow → provider wallet). Debiting escrow here would have drained
-	// OTHER campaigns' unsettled contributions instead of this creator's own
-	// balance — ledger.Debit is also TOCTOU-safe (advisory-locked balance
-	// check), which the manual escrow posting below was not.
-	payoutIdem := "cf:withdraw:payout:" + id
-	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
-	if err != nil {
-		return nil, fmt.Errorf("crowdfunding/wallet: resolve clearing account: %w", err)
-	}
-	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, in.AmountKobo); err != nil &&
-		!errors.Is(err, financeledger.ErrDuplicate) {
-		return nil, fmt.Errorf("crowdfunding/wallet: post withdrawal payout: %w", err)
+	// This endpoint only FILES the withdrawal request — it moves NO money.
+	// adminext.ApproveWithdrawal is the single payout leg: it debits the
+	// creator's wallet into provider_clearing under the deterministic key
+	// "cf:withdraw:payout:<withdrawal id>" and flips PENDING→COMPLETED.
+	// Debiting here (as this path previously did) parked the member's funds in
+	// clearing forever while telling them the withdrawal was "COMPLETED" — no
+	// disbursement provider is wired downstream of clearing yet.
+	// The tier gate stays as an early fail-closed check on the requested amount.
+	if err := s.enforceDebitLimit(ctx, creatorID, in.AmountKobo); err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `
 		INSERT INTO cf_withdrawals
 			(id, campaign_id, creator_id, reference, amount_kobo, bank_label, status, reason, idempotency_key, requested_at)
-		VALUES ($1,$2,$3,$4,$5,$6,'COMPLETED',$7,$8,$9)`
+		VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9)`
 	if _, err := tx.Exec(ctx, ins,
 		id, campaignID, creatorID, reference, in.AmountKobo, bankLabel, in.Reason, idempotencyKey, now,
 	); err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-user key clash — cf_withdrawals.idempotency_key is
+		// UNIQUE. Report it as a conflict rather than a server fault (the M16
+		// convention; a same-caller race loses nothing — the retry replays).
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("crowdfunding/wallet: insert withdrawal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.payout',$2,'')`,
+		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.requested',$2,'')`,
 		creatorID, reference,
 	); err != nil {
 		return nil, fmt.Errorf("crowdfunding/wallet: write audit row: %w", err)
@@ -406,28 +475,37 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	return &WithdrawalResult{
 		ID:          id,
 		Reference:   reference,
-		Status:      "COMPLETED",
+		Status:      "PENDING",
 		AmountKobo:  in.AmountKobo,
 		BankLabel:   bankLabel,
-		RequestedAt: now.UTC().Format(time.RFC3339),
+		RequestedAt: timeutil.RFC3339(now),
 	}, nil
 }
 
-func (s *Service) findByIdempotencyKey(ctx context.Context, key string) (*WithdrawalResult, bool, error) {
+// findByIdempotencyKey returns the caller's own prior withdrawal under this
+// key — scoped to THIS creator — plus the campaign it was filed against
+// (WithdrawalResult carries no campaign field; the caller needs it to verify
+// the replay matches THIS request's path param). A key another member already
+// used returns (nil, "", false, nil) and is caught by the unique constraint
+// on insert → ErrIdempotencyKeyConflict; an unscoped lookup would replay a
+// stranger's withdrawal (leaking their reference/amount/bank label) on a
+// guessed key.
+func (s *Service) findByIdempotencyKey(ctx context.Context, creatorID, key string) (*WithdrawalResult, string, bool, error) {
 	const q = `
-		SELECT id, reference, amount_kobo, bank_label, status, requested_at
-		FROM cf_withdrawals WHERE idempotency_key = $1`
+		SELECT id, reference, amount_kobo, bank_label, status, requested_at, campaign_id
+		FROM cf_withdrawals WHERE idempotency_key = $1 AND creator_id = $2`
 	var r WithdrawalResult
 	var requestedAt time.Time
-	err := s.db.QueryRow(ctx, q, key).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt)
+	var campaignID string
+	err := s.db.QueryRow(ctx, q, key, creatorID).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt, &campaignID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
-	r.RequestedAt = requestedAt.UTC().Format(time.RFC3339)
-	return &r, true, nil
+	r.RequestedAt = timeutil.RFC3339(requestedAt)
+	return &r, campaignID, true, nil
 }
 
 func (s *Service) resolveBankLabel(ctx context.Context, userID, bankAccountID string) (string, error) {
@@ -442,4 +520,189 @@ func (s *Service) resolveBankLabel(ctx context.Context, userID, bankAccountID st
 		return "", err
 	}
 	return bankName + " " + masked, nil
+}
+
+// Register wires the crowdfunding wallet routes onto the supplied router group.
+// The caller (finance route wiring) is responsible for mounting `rg` under the
+// crowdfunding prefix and applying auth middleware that sets `user_id`.
+// ledgerSvc is required for the withdrawal payout money-path; nil fails that
+// path closed rather than skipping it silently.
+// Routes (relative to rg):
+//
+//	GET  /campaigns/:id/wallet              → wallet summary (derived)
+//	GET  /campaigns/:id/ledger              → projected ledger feed
+//	GET  /ledger/:id                        → single projected ledger entry
+//	GET  /bank-accounts                     → caller's saved bank accounts
+//	POST /campaigns/:id/withdrawal-request  → pay out a withdrawal immediately
+func Register(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service) {
+	h := NewHandler(NewService(db).WithLedger(ledgerSvc))
+
+	rg.GET("/campaigns/:id/wallet", h.GetWallet)
+	rg.GET("/campaigns/:id/ledger", h.GetLedger)
+	rg.GET("/ledger/:id", h.GetLedgerEntry)
+	rg.GET("/bank-accounts", h.GetBankAccounts)
+	rg.POST("/campaigns/:id/withdrawal-request", h.SubmitWithdrawal)
+}
+
+// CampaignWalletSummary mirrors the client CampaignWalletSummary type.
+// All balances are derived, never stored.
+type CampaignWalletSummary struct {
+	CampaignID         string `json:"campaignId"`
+	CampaignTitle      string `json:"campaignTitle"`
+	AvailableKobo      int64  `json:"availableKobo"`
+	PendingKobo        int64  `json:"pendingKobo"`
+	EscrowKobo         int64  `json:"escrowKobo"`
+	TotalRaisedKobo    int64  `json:"totalRaisedKobo"`
+	TotalWithdrawnKobo int64  `json:"totalWithdrawnKobo"`
+	Frozen             bool   `json:"frozen"`
+}
+
+// LedgerEntry mirrors the client LedgerEntry type. amountKobo is signed
+// (+credit / -debit) and balanceKobo is the running balance after this entry.
+type LedgerEntry struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"` // LedgerEntryType (see ledgerEntryType constants)
+	Description string `json:"description"`
+	AmountKobo  int64  `json:"amountKobo"`
+	BalanceKobo int64  `json:"balanceKobo"`
+	Reference   string `json:"reference"`
+	Status      string `json:"status"` // POSTED | PENDING | REVERSED
+	CreatedAt   string `json:"createdAt"`
+}
+
+// BankAccount mirrors the client BankAccount type.
+type BankAccount struct {
+	ID                  string `json:"id"`
+	BankName            string `json:"bankName"`
+	AccountNumberMasked string `json:"accountNumberMasked"`
+	AccountName         string `json:"accountName"`
+	IsDefault           bool   `json:"isDefault"`
+}
+
+// WithdrawalRequestInput mirrors the client WithdrawalRequestInput type.
+// campaignId comes from the route path; the body carries the rest.
+type WithdrawalRequestInput struct {
+	AmountKobo    int64   `json:"amountKobo" binding:"required,min=100"`
+	BankAccountID string  `json:"bankAccountId" binding:"required"`
+	Reason        string  `json:"reason"`
+	EvidenceLabel *string `json:"evidenceLabel"`
+}
+
+// WithdrawalResult is the object returned after a withdrawal is paid out.
+type WithdrawalResult struct {
+	ID          string `json:"id"`
+	Reference   string `json:"reference"`
+	Status      string `json:"status"` // COMPLETED on success; PENDING only on an idempotent replay that hasn't posted yet
+	AmountKobo  int64  `json:"amountKobo"`
+	BankLabel   string `json:"bankLabel"`
+	RequestedAt string `json:"requestedAt"`
+}
+
+// Ledger entry type / status enum values (mirror the client LedgerEntryType and
+// LedgerEntry.status unions). The SQL projection in service.go emits these
+// literals directly; they are documented here as the canonical contract:
+//	type:   CONTRIBUTION | WITHDRAWAL | REFUND | REVERSAL | MILESTONE_RELEASE
+//	status: POSTED | PENDING | REVERSED
+
+// Handler binds the wallet Service to gin routes.
+type Handler struct{ svc *Service }
+
+// NewHandler constructs a wallet Handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusNotFound, ErrCampaignNotFound),
+)
+
+// GetWallet — GET /campaigns/:id/wallet. Returns the derived wallet object.
+func (h *Handler) GetWallet(c *gin.Context) {
+	w, err := h.svc.GetWallet(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	// Object returned directly so the client `res.data?.data ?? res.data` unwraps it.
+	c.JSON(http.StatusOK, w)
+}
+
+// GetLedger — GET /campaigns/:id/ledger. Returns the projected ledger feed.
+func (h *Handler) GetLedger(c *gin.Context) {
+	entries, err := h.svc.GetLedger(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": entries})
+}
+
+// GetLedgerEntry — GET /ledger/:id. Returns a single projected ledger entry.
+func (h *Handler) GetLedgerEntry(c *gin.Context) {
+	entry, err := h.svc.GetLedgerEntry(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ledger entry not found"})
+		return
+	}
+	c.JSON(http.StatusOK, entry)
+}
+
+// GetBankAccounts — GET /bank-accounts. Returns the caller's saved accounts.
+func (h *Handler) GetBankAccounts(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	accounts, err := h.svc.GetBankAccounts(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": accounts})
+}
+
+// SubmitWithdrawal — POST /campaigns/:id/withdrawal-request.
+// MONEY-PATH: requires an Idempotency-Key and pays out immediately (no
+// separate admin-approval step — see Service.SubmitWithdrawal).
+func (h *Handler) SubmitWithdrawal(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	campaignID := c.Param("id")
+
+	idempotencyKey := ginutil.IdempotencyKey(c)
+	if idempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header is required"})
+		return
+	}
+
+	var in WithdrawalRequestInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+
+	res, err := h.svc.SubmitWithdrawal(c.Request.Context(), userID, campaignID, idempotencyKey, in)
+	if err != nil {
+		writeWithdrawalErr(c, err)
+		return
+	}
+	// Object returned directly to match the client unwrap.
+	c.JSON(http.StatusCreated, res)
+}
+
+// writeWithdrawalErr maps SubmitWithdrawal's domain errors onto HTTP
+// statuses — extracted so the mapping is unit-testable without a database.
+func writeWithdrawalErr(c *gin.Context, err error) {
+	switch {
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, ErrTierGateUnwired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrCampaignNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrLedgerUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		// 409 + stable code for a cross-member Idempotency-Key reuse (the
+		// same contract as finance/transfers' idempotency_key_conflict).
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+	}
 }

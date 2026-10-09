@@ -1,13 +1,9 @@
 'use client';
 
-// ── Crowdfunding — owner feature-request queue ───────────────────────────────
-//
 // Featuring is deliberately not self-serve: `featured` is an editorial placement on
 // the public discovery rail, so a campaign owner can only REQUEST it. (Un-featuring
 // needs no approval, which is why this queue only ever grants placement.)
-//
 // PRESENTATIONAL ONLY. The page owns the data, the writes and the refetch, so this
-// component can never show a state the server did not return — it has no way to
 // mutate a request. The only state it keeps is which row has its reject panel open
 // and what has been typed into it.
 
@@ -112,7 +108,6 @@ export default function FeatureRequestQueue({
       {loading ? (
         <p style={{ color: colors.muted, fontSize: 13, marginTop: '0.75rem' }}>Loading…</p>
       ) : loadError ? (
-        // Never let an unreachable queue read as an empty one — that is how pending
         // work goes unnoticed.
         <div style={{ marginTop: '0.75rem' }}>
           <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>

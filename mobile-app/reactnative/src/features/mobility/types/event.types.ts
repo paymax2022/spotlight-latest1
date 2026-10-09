@@ -1,9 +1,6 @@
-// ── Paymax Mobility — Event Transport types ──────────────────────────────────
 // Types for the event-transport mode (Spotlight): organizers publish transport
-// offers tied to an event; riders book seats with a QR boarding pass; an
 // optional ticket+ride bundle links a ticket_ref. Mirrors
 // docs/prd/transportation/BUILD-CONTRACT-LOGISTICS-EVENT.md.
-//
 // IRON RULES: all money is integer minor units (kobo). Never floats for money.
 // Fares/totals are server-computed — the client only *displays* them.
 
@@ -12,9 +9,7 @@ import type { Kobo } from './mobility.types';
 // Re-exported so event screens can import shared money types from one place.
 export type { Kobo, Place } from './mobility.types';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // OFFER
-// ═══════════════════════════════════════════════════════════════════════════════
 export type EventOfferType =
   | 'group_ride'
   | 'fan_bus'
@@ -61,9 +56,7 @@ export interface OfferCreateRequest {
   idempotencyKey: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BOOKING
-// ═══════════════════════════════════════════════════════════════════════════════
 export type BookingStatus =
   | 'booked'
   | 'confirmed'

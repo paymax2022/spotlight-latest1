@@ -1,18 +1,12 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 5 API client ────────────────
-// Batch 5 = spec sections S · T · U · V (VETERINARY). Phase A style: every
-// function resolves demo data so screens render without a live API; `DEMO_*`
 // exports double as `placeholderData` in useQuery. ADDITIVE to the Phase 1 /
 // Phase 2 / Section B / Phase 3 / Batch 1-4 api files — nothing earlier changes.
-//
 // CONSOLIDATED + heavy REUSE of Phase 3 vet/pet work and the Batch 2 rich
 // chat/call/clinical-note demo data. Pure helpers `computePetDosage` and
-// `checkPetRxWarnings` are exported for UI import. Money is always an integer in
 // kobo.
-//
 // TODO(Phase C): replace each body with the live endpoint and pass the
 //   Idempotency-Key header on every mutation below.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import {
   DEMO_PET_PROFILE,
   DEMO_PET_PRESCRIPTION,
@@ -91,10 +85,6 @@ const iso = (daysAgo: number): string => new Date(Date.now() - daysAgo * 8640000
 const isoDate = (daysFromNow: number): string =>
   new Date(Date.now() + daysFromNow * 86400000).toISOString().slice(0, 10);
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PURE HELPERS (no I/O — safe for UI import)
-// ═══════════════════════════════════════════════════════════════════════════
-
 // Dose-by-weight: dosePerKgMg * weightKg, computed for the drug's low/high
 // bounds with the suggested midpoint rounded. Pure — returns a display-only
 // PetDosageCalculation (mirrors the Phase 3 shape exactly).
@@ -150,11 +140,8 @@ export function checkPetRxWarnings(drug: PetDrug, species: PetSpecies, allergies
   return warnings;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION S — VETERINARY CONSULTATION
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ─── Demo: vet appointments / queue ──────────────────────────────────────────
 export const DEMO_VET_APPOINTMENTS: VetAppointment[] = [
   {
     id: 'va-1', ref: 'VET-9F2A41', consultType: 'video', status: 'scheduled', slotDate: isoDate(0), createdAt: iso(1), isHmo: false,
@@ -170,7 +157,6 @@ export const DEMO_VET_APPOINTMENTS: VetAppointment[] = [
   },
 ];
 
-// ─── Demo: pet owner requests ────────────────────────────────────────────────
 export const DEMO_PET_OWNER_REQUESTS: PetOwnerRequest[] = [
   {
     id: 'req-1', ref: 'REQ-7C1B88',
@@ -188,7 +174,6 @@ export const DEMO_PET_OWNER_REQUESTS: PetOwnerRequest[] = [
   },
 ];
 
-// ─── Demo: vet chat / call (REUSE Batch 2 rich demo data) ────────────────────
 export const DEMO_VET_CHAT_THREAD: VetChatThread = {
   thread: DEMO_THREAD_STATE,
   messages: DEMO_RICH_MESSAGES,
@@ -208,13 +193,11 @@ export const DEMO_VET_CLINICAL_NOTE: VetClinicalNote = {
   treatmentPlan: 'Rest and lead-only exercise for 7 days. Carprofen 100mg PO BID with food. Recheck in 1 week.',
 };
 
-// ─── Demo: pet emergency warnings (REUSE RedFlagWarning) ──────────────────────
 export const DEMO_PET_EMERGENCY_WARNINGS: PetEmergencyWarning[] = [
   { id: 'pew-1', severity: 'critical', label: 'Suspected GDV (bloat)', action: 'Refer to emergency vet immediately', petId: 'pet-1', petSpecies: 'dog', detectedAt: iso(0) },
   { id: 'pew-2', severity: 'warning', label: 'Persistent inappetence > 48h', action: 'Recommend in-person review', petId: 'pet-2', petSpecies: 'cat', detectedAt: iso(0) },
 ];
 
-// ─── Demo: vet referral ──────────────────────────────────────────────────────
 export const DEMO_VET_SPECIALISTS: VetSpecialist[] = [
   { id: 'vs-1', name: 'Dr. Ngozi Eze', initials: 'NE', avatarColor: Colors.primary, specialty: 'Veterinary Orthopaedics', clinic: 'Lagos Animal Referral Hospital' },
   { id: 'vs-2', name: 'Dr. Sola Adeyemi', initials: 'SA', avatarColor: Colors.teal, specialty: 'Veterinary Dermatology', clinic: 'Pawscare Specialist Centre' },
@@ -228,7 +211,6 @@ export const DEMO_VET_REFERRALS: VetReferral[] = [
   },
 ];
 
-// ─── Demo: vet consult summary + history ─────────────────────────────────────
 export const DEMO_VET_CONSULT_SUMMARY: VetConsultSummary = {
   id: 'vcs-1', ref: 'VET-9F2A41', petId: 'pet-1', petName: 'Bingo', petSpecies: 'dog', ownerName: 'Tunde Akinwale',
   vetName: 'Dr. Amaka Obi', consultType: 'video',
@@ -244,9 +226,7 @@ export const DEMO_VET_CONSULT_HISTORY: VetConsultHistoryItem[] = [
   { id: 'vch-3', ref: 'VET-1B0C44', petName: 'Whiskers', petSpecies: 'cat', ownerName: 'Fatima Bello', consultType: 'chat', summary: 'Mild GI upset — bland diet, monitor.', feeKobo: 300000, date: isoDate(-6) },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION T — PET E-PRESCRIPTION
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_PET_PHARMACIES: PetPharmacy[] = [
   { id: 'pph-1', name: 'VetMeds Pharmacy, Lekki', address: '14 Admiralty Way, Lekki Phase 1', acceptsEPrescription: true },
@@ -271,9 +251,7 @@ export const DEMO_PET_REFILL_REQUESTS: PetRefillRequest[] = [
   { id: 'rfl-2', ref: 'RFL-8C1B22', prescriptionId: 'prx-2', prescriptionRef: 'PRX-7C1B88', petName: 'Whiskers', petSpecies: 'cat', ownerName: 'Fatima Bello', drugSummary: 'Doxycycline 50mg OD', status: 'approved', requestedAt: iso(3), decidedAt: iso(2) },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION U — VET LAB & PET HEALTH
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_PET_LAB_CATALOGUE: PetLabCatalogueEntry[] = [
   { test: { id: 'plt-cbc',   name: 'Complete Blood Count', code: 'CBC',  category: 'blood' },   priceKobo: 450000, turnaroundHours: 24, sampleType: 'Whole blood (EDTA)', forSpecies: ['dog', 'cat', 'rabbit', 'rodent'] },
@@ -328,9 +306,7 @@ export const DEMO_PET_CHRONIC_MONITORING: PetChronicMonitoringEntry[] = [
   { id: 'pcm-2', petId: 'pet-1', condition: 'Hip dysplasia', metricLabel: 'Lameness score', value: '3/5', trend: 'stable',    recordedAt: iso(30) },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION V — PET STORE / VET-RECOMMENDED PRODUCTS
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const DEMO_PET_PRODUCT_DETAIL: PetProductDetail = {
   product: DEMO_PET_PRODUCTS[0],
@@ -360,11 +336,8 @@ export const DEMO_PET_PRODUCT_FULFILMENTS: PetProductFulfilment[] = [
   },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // READ ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section S ──
 export async function getVetAppointments(): Promise<VetAppointment[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_APPOINTMENTS);
   return doctorGet<VetAppointment[]>('/vet/appointments');
@@ -415,7 +388,6 @@ export async function getVetConsultHistory(): Promise<VetConsultHistoryItem[]> {
   return doctorGet<VetConsultHistoryItem[]>('/vet/consults/history');
 }
 
-// ── Section T ──
 export async function getPetPharmacies(): Promise<PetPharmacy[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_PHARMACIES);
   return doctorGet<PetPharmacy[]>('/vet/pharmacies');
@@ -431,7 +403,6 @@ export async function getPetRefillRequests(): Promise<PetRefillRequest[]> {
   return doctorGet<PetRefillRequest[]>('/vet/refills');
 }
 
-// ── Section U ──
 export async function getPetLabCatalogue(species?: PetSpecies): Promise<PetLabCatalogueEntry[]> {
   if (DOCTOR_USE_MOCK) {
     const list = species ? DEMO_PET_LAB_CATALOGUE.filter((e) => e.forSpecies.includes(species)) : DEMO_PET_LAB_CATALOGUE;
@@ -470,7 +441,6 @@ export async function getPetChronicMonitoring(petId: string): Promise<PetChronic
   return doctorGet<PetChronicMonitoringEntry[]>(`/vet/pets/${petId}/chronic-monitoring`);
 }
 
-// ── Section V ──
 export async function getPetProductDetail(productId: string): Promise<PetProductDetail> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_PRODUCT_DETAIL);
   return doctorGet<PetProductDetail>(`/vet/products/${productId}`);
@@ -486,11 +456,8 @@ export async function getPetProductFulfilment(id: string): Promise<PetProductFul
   return doctorGet<PetProductFulfilment | undefined>(`/vet/product-fulfilments/${id}`);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATIONS
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Section S ──
 export async function respondToPetRequest(input: RespondToPetRequestInput): Promise<RespondToPetRequestResult> {
   if (DOCTOR_USE_MOCK) return wait({ requestId: input.requestId, status: input.accept ? 'accepted' : 'declined' }, 500);
   return doctorPost<RespondToPetRequestResult>(`/vet/requests/${input.requestId}/respond`, input, input.idempotencyKey);
@@ -512,7 +479,6 @@ export async function createVetReferral(input: CreateVetReferralInput): Promise<
   return doctorPost<CreateVetReferralResult>('/vet/referrals', input, input.idempotencyKey);
 }
 
-// ── Section T ──
 export async function issuePetPrescription(input: IssuePetPrescriptionInput): Promise<IssuePetPrescriptionResult> {
   if (DOCTOR_USE_MOCK) {
     const ref = `PRX-${input.idempotencyKey.slice(-6).toUpperCase()}`;
@@ -542,7 +508,6 @@ export async function reviewPetRefill(input: ReviewPetRefillInput): Promise<Revi
   return doctorPost<ReviewPetRefillResult>(`/vet/refills/${input.refillId}/review`, input, input.idempotencyKey);
 }
 
-// ── Section U ──
 export async function addPetLabInterpretation(input: AddPetLabInterpretationInput): Promise<AddPetLabInterpretationResult> {
   if (DOCTOR_USE_MOCK) {
     void input.interpretation;
@@ -572,7 +537,6 @@ export async function savePetChronicMonitoring(input: SavePetChronicMonitoringIn
   return doctorPost<SavePetChronicMonitoringResult>(`/vet/pets/${input.petId}/chronic-monitoring`, input, input.idempotencyKey);
 }
 
-// ── Section V ──
 export async function shareProductWithOwner(input: ShareProductWithOwnerInput): Promise<ShareProductWithOwnerResult> {
   if (DOCTOR_USE_MOCK) {
     void input.note;

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -13,17 +14,12 @@ import (
 	"spotlight/backend/internal/insurance/gateway"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // LIVE PROVIDER TESTS
-// ════════════════════════════════════════════════════════════════════════════
-//
 // These exercise the REAL MyCover API. They SKIP unless a key is available, so
 // CI and offline runs are unaffected; run them with a key present to prove the
 // adapter actually talks to the provider rather than to a fixture.
-//
 // They are strictly READ-ONLY. No test here purchases anything: a purchase
 // debits Paymax's prefunded distributor wallet and creates a real policy record.
-//
 // The key is read from the environment or backend/.env and is NEVER printed,
 // logged, or asserted on beyond its presence.
 
@@ -57,7 +53,7 @@ func keysFromDotEnv(t *testing.T) (key, base string) {
 		if err != nil {
 			continue
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
@@ -186,7 +182,6 @@ func TestLive_ListClaims(t *testing.T) {
 
 // TestLive_ComputePrice is the anchor live assertion for the money path: a real,
 // deterministic, server-computed premium that needs no wallet funding.
-//
 // Verified live on Bastion FlexiCare Mini Retail:
 //
 //	payment_plan  1 -> NGN 4,000   ->    400,000 kobo
@@ -221,9 +216,7 @@ func TestLive_ComputePrice(t *testing.T) {
 		{12, 4_800_000},
 	} {
 		inputs := map[string]any{}
-		for k, v := range base {
-			inputs[k] = v
-		}
+		maps.Copy(inputs, base)
 		inputs[FieldPaymentPlan] = tc.plan
 
 		q, err := c.GetQuote(ctx, gateway.QuoteRequest{Product: product, Inputs: inputs})
@@ -318,7 +311,6 @@ func TestLive_BrokenProductsAreDetected(t *testing.T) {
 // fetches the product's REAL published schema and derives the money-input spec
 // from it, exactly as catalog.ResolveProduct derives it from the stored copy of
 // that same schema.
-//
 // Hand-writing the spec here would prove nothing about production. Deriving it
 // from the provider's own schema is what makes the live tests below exercise the
 // real seam.
@@ -348,7 +340,6 @@ func liveProduct(t *testing.T, ctx context.Context, c *Client, p gateway.Provide
 // TestLive_DeclaredValueIsPricedInNaira is the live proof of the money-unit bug
 // and of its fix, on a PERCENTAGE-rated product where the premium is a direct
 // function of the declared value.
-//
 // MyCover's `value` field is denominated in NAIRA; every Paymax client submits
 // INTEGER KOBO. Nothing converted between them, so the provider was told a
 // ₦200,000 phone was worth ₦20,000,000 and priced it accordingly:

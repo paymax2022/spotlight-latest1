@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/restriction/appeal — raise a restriction appeal.
+// Raise a restriction appeal.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -12,7 +12,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const reason = String(body?.reason ?? '').trim();
     const detail = String(body?.detail ?? '').trim();
     if (!reason) throw new ApiError('reason is required', 400);

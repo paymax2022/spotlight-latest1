@@ -4,17 +4,16 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // handler_clinical.go — Wave 3a (human-side CLINICAL) Gin handlers.
-//
 // One handler per service_clinical.go method. Reuses the shared helpers from
-// handler.go / handler_account.go (h.userID, h.fail, h.idemKey, h.rawBody) and
+// handler.go / handler_account.go (h.userID, h.fail, h.rawBody) and
 // mirrors the established style: reads return 200 with the projection; creates
 // return 201; state transitions / message sends require an Idempotency-Key (the
 // service enforces it) and return 200/201. Everything is scoped to the authed doctor.
-
-// ══ PHARMACY ════════════════════════════════════════════════════════════════
 
 func (h *Handler) ListPharmacyFulfilments(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -64,7 +63,7 @@ func (h *Handler) ReviewSubstitute(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReviewSubstitute(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.ReviewSubstitute(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -81,7 +80,7 @@ func (h *Handler) ConfirmFulfilmentReceived(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ConfirmFulfilmentReceived(c.Request.Context(), uid, c.Param("fulfilmentId"), h.idemKey(c), raw)
+	res, err := h.svc.ConfirmFulfilmentReceived(c.Request.Context(), uid, c.Param("fulfilmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -137,7 +136,7 @@ func (h *Handler) ReviewRefill(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReviewRefill(c.Request.Context(), uid, c.Param("refillId"), h.idemKey(c), raw)
+	res, err := h.svc.ReviewRefill(c.Request.Context(), uid, c.Param("refillId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -193,7 +192,7 @@ func (h *Handler) ReportPharmacy(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReportPharmacy(c.Request.Context(), uid, c.Param("pharmacyId"), h.idemKey(c), raw)
+	res, err := h.svc.ReportPharmacy(c.Request.Context(), uid, c.Param("pharmacyId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -223,7 +222,7 @@ func (h *Handler) SendPharmacyMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SendPharmacyMessage(c.Request.Context(), uid, c.Param("fulfilmentId"), h.idemKey(c), raw)
+	res, err := h.svc.SendPharmacyMessage(c.Request.Context(), uid, c.Param("fulfilmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -243,8 +242,6 @@ func (h *Handler) ListDeliveryAlerts(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ LABS (extended) ═════════════════════════════════════════════════════════
 
 func (h *Handler) ListLabCatalogue(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -307,7 +304,7 @@ func (h *Handler) ShareLabOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ShareLabOrder(c.Request.Context(), uid, c.Param("orderId"), h.idemKey(c), raw)
+	res, err := h.svc.ShareLabOrder(c.Request.Context(), uid, c.Param("orderId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -320,7 +317,7 @@ func (h *Handler) CancelLabOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CancelLabOrder(c.Request.Context(), uid, c.Param("orderId"), h.idemKey(c))
+	res, err := h.svc.CancelLabOrder(c.Request.Context(), uid, c.Param("orderId"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -376,7 +373,7 @@ func (h *Handler) AddLabInterpretation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.AddLabInterpretation(c.Request.Context(), uid, c.Param("resultId"), h.idemKey(c), raw)
+	res, err := h.svc.AddLabInterpretation(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -393,7 +390,7 @@ func (h *Handler) ShareLabExplanation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ShareLabExplanation(c.Request.Context(), uid, c.Param("resultId"), h.idemKey(c), raw)
+	res, err := h.svc.ShareLabExplanation(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -410,15 +407,13 @@ func (h *Handler) ReportSuspiciousResult(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReportSuspiciousResult(c.Request.Context(), uid, c.Param("resultId"), h.idemKey(c), raw)
+	res, err := h.svc.ReportSuspiciousResult(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ REFERRALS & COLLABORATION ═══════════════════════════════════════════════
 
 func (h *Handler) ListReferrals(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -455,7 +450,7 @@ func (h *Handler) CreateReferral(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreateReferral(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreateReferral(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -498,7 +493,7 @@ func (h *Handler) AcceptIncomingReferral(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.AcceptIncomingReferral(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.AcceptIncomingReferral(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -515,7 +510,7 @@ func (h *Handler) RejectIncomingReferral(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RejectIncomingReferral(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.RejectIncomingReferral(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -558,7 +553,7 @@ func (h *Handler) CreateOpinionRequest(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreateOpinionRequest(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreateOpinionRequest(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -588,7 +583,7 @@ func (h *Handler) SendCareTeamMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SendCareTeamMessage(c.Request.Context(), uid, c.Param("threadId"), h.idemKey(c), raw)
+	res, err := h.svc.SendCareTeamMessage(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -621,8 +616,6 @@ func (h *Handler) ListSpecialists(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ FOLLOW-UP CARE ══════════════════════════════════════════════════════════
 
 func (h *Handler) ListFollowUps(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -659,7 +652,7 @@ func (h *Handler) CreateFollowUp(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreateFollowUp(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreateFollowUp(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -676,7 +669,7 @@ func (h *Handler) ReviewFollowUp(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReviewFollowUp(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.ReviewFollowUp(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -693,7 +686,7 @@ func (h *Handler) CompleteFollowUp(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CompleteFollowUp(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.CompleteFollowUp(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -710,7 +703,7 @@ func (h *Handler) SetFollowUpReminder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SetFollowUpReminder(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.SetFollowUpReminder(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -766,7 +759,7 @@ func (h *Handler) SaveCarePlan(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SaveCarePlan(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SaveCarePlan(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -826,15 +819,13 @@ func (h *Handler) RecordAdherenceCheck(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RecordAdherenceCheck(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.RecordAdherenceCheck(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ══ HMO ═════════════════════════════════════════════════════════════════════
 
 func (h *Handler) GetHMOCoverage(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -884,7 +875,7 @@ func (h *Handler) RequestPreAuth(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RequestPreAuth(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.RequestPreAuth(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -953,7 +944,7 @@ func (h *Handler) SendHMOSupportMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SendHMOSupportMessage(c.Request.Context(), uid, c.Param("threadId"), h.idemKey(c), raw)
+	res, err := h.svc.SendHMOSupportMessage(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -979,15 +970,13 @@ func (h *Handler) AckFraudWarning(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.AckFraudWarning(c.Request.Context(), uid, c.Param("warningId"), h.idemKey(c))
+	res, err := h.svc.AckFraudWarning(c.Request.Context(), uid, c.Param("warningId"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ MEDICAL RECORDS ═════════════════════════════════════════════════════════
 
 func (h *Handler) GetRecordsDashboard(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -1063,7 +1052,7 @@ func (h *Handler) ShareRecord(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ShareRecord(c.Request.Context(), uid, c.Param("patientId"), h.idemKey(c), raw)
+	res, err := h.svc.ShareRecord(c.Request.Context(), uid, c.Param("patientId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -1080,7 +1069,7 @@ func (h *Handler) RequestRecordAccess(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RequestRecordAccess(c.Request.Context(), uid, c.Param("patientId"), h.idemKey(c), raw)
+	res, err := h.svc.RequestRecordAccess(c.Request.Context(), uid, c.Param("patientId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -1097,7 +1086,7 @@ func (h *Handler) ExportRecord(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ExportRecord(c.Request.Context(), uid, c.Param("patientId"), h.idemKey(c), raw)
+	res, err := h.svc.ExportRecord(c.Request.Context(), uid, c.Param("patientId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return

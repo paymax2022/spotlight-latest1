@@ -9,29 +9,24 @@ import (
 )
 
 // predictor.go — the history-based destination deflector (MAPSERVICE.md §6, MS-2).
-//
 // Predict answers a paid geocode for FREE by matching the typed query against the
 // USER'S OWN confirmed destinations: the places this user has actually been sent
 // to or travelled to. Those rows carry both a human address (the typed label) and
 // real coordinates (the confirmed result), so a match short-circuits the whole
 // provider chain at zero external cost.
-//
 // Real, user-scoped history sources used here (all verified to exist and to carry
 // BOTH an address text column AND lat/lng coordinates, scoped to the requesting
 // user — see supabase/migrations):
-//
 //   - trips        — rider_id, dest_address, dest_lat, dest_lng
 //                    (ride destinations; 20260616290000_transport.sql +
 //                     20260623000000_transport_mobility.sql adds dest_lat/lng)
 //   - parcels      — sender_id, dropoff_address, dropoff_lat, dropoff_lng
 //                    (parcel drop-offs; 20260624000000_transport_modes.sql)
-//
 // Deliberately EXCLUDED (kept conservative — false positives are worse than a
 // miss): restaurant `orders.delivery_address` has NO coordinate columns, so it
 // cannot yield a point to deflect to; `towing_jobs.dest_address` likewise has no
 // destination coordinates; `business_deliveries` is scoped by business_id, not a
 // personal user. We only query tables that genuinely have (user, address, lat, lng).
-//
 // Strategy: per source, fetch the user's recent, coordinate-bearing destinations
 // whose normalized address relates to the query (exact / prefix / substring),
 // score each candidate with the pure scoreHistoryMatch (biased upward when the
@@ -156,7 +151,6 @@ func (p *HistoryPredictor) Predict(ctx context.Context, userID, normalizedAddr s
 // prefix / substring, case-insensitive) keeps the row set tiny; final scoring is
 // done in Go by scoreHistoryMatch. All SQL is parameterized and scoped to userID;
 // NULL coordinates are excluded (no point = nothing to deflect to).
-//
 // Table/column identifiers come from the static historySources allow-list (never
 // user input), so building the statement with fmt-style identifier substitution
 // is safe; the only bound parameters are userID, the query, and the limit.
@@ -203,7 +197,6 @@ func (p *HistoryPredictor) candidates(ctx context.Context, src historySource, us
 // normalized query and a normalized candidate address (both already lowercased /
 // whitespace-collapsed by NormalizeQuery), it returns a confidence in [0,1] and
 // whether the pair is a usable match.
-//
 // Scoring rule:
 //   - empty query or candidate            → (0, false)        — nothing to match.
 //   - exact equality                      → 0.90 base         — a known place.

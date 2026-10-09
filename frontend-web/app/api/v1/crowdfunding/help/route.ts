@@ -3,7 +3,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/crowdfunding/help — help-center articles.
+// Help-center articles.
 export async function GET(request: Request) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {

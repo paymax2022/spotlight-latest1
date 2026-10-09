@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/ledger"
 )
 
@@ -33,8 +34,6 @@ var (
 	ErrMoveOutRequired       = errors.New("realtor: move-out inspection has not been submitted for this lease")
 	ErrLedgerNotConfigured   = errors.New("realtor: ledger service not configured")
 )
-
-// ── Overview ──────────────────────────────────────────────────────────────────
 
 // Overview returns the headline counts/aggregates for the admin dashboard.
 // Field names mirror the admin client's RealtorOverview type (camelCase).
@@ -63,15 +62,15 @@ func (r *Repository) Overview(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
-// ── Listings moderation ───────────────────────────────────────────────────────
-
 // AdminListing mirrors the admin client's AdminListing type.
 type AdminListing struct {
 	ID            string   `json:"id"`
 	Title         string   `json:"title"`
 	Area          string   `json:"area"`
 	City          string   `json:"city"`
+	CoverURL      string   `json:"coverUrl"`
 	Mode          string   `json:"mode"`
+	PropertyType  string   `json:"propertyType"`
 	PriceKobo     int64    `json:"priceKobo"`
 	Verification  string   `json:"verification"`
 	OwnerName     string   `json:"ownerName"`
@@ -83,7 +82,8 @@ type AdminListing struct {
 // PendingListings returns listings awaiting moderation (status pending_verification).
 func (r *Repository) PendingListings(ctx context.Context, limit, offset int) ([]AdminListing, error) {
 	const q = `
-		SELECT l.id, l.title, COALESCE(p.area,''), COALESCE(p.city,''), l.mode, l.price_kobo,
+		SELECT l.id, l.title, COALESCE(p.area,''), COALESCE(p.city,''),
+		       COALESCE(l.media->>0,''), l.mode, COALESCE(u.property_type,''), l.price_kobo,
 		       l.verification, COALESCE(pf.name,''),
 		       (l.verification IN ('document_backed','inspected','verified')) AS owner_verified,
 		       l.created_at
@@ -103,7 +103,8 @@ func (r *Repository) PendingListings(ctx context.Context, limit, offset int) ([]
 	for rows.Next() {
 		var a AdminListing
 		var submitted time.Time
-		if err := rows.Scan(&a.ID, &a.Title, &a.Area, &a.City, &a.Mode, &a.PriceKobo,
+		if err := rows.Scan(&a.ID, &a.Title, &a.Area, &a.City, &a.CoverURL, &a.Mode,
+			&a.PropertyType, &a.PriceKobo,
 			&a.Verification, &a.OwnerName, &a.OwnerVerified, &submitted); err != nil {
 			return nil, err
 		}
@@ -120,7 +121,7 @@ func (r *Repository) GetListingStatus(ctx context.Context, id string) (string, s
 	err := r.db.QueryRow(ctx,
 		`SELECT status, verification FROM realtor_listings WHERE id=$1`, id).
 		Scan(&status, &verification)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNotFound
 	}
 	if err != nil {
@@ -147,8 +148,6 @@ func (r *Repository) DecideListing(ctx context.Context, id, decision string) (st
 	default:
 		return "", errors.New("realtor: invalid decision")
 	}
-	// Additive moderation transition: updates only the listing status/verification
-	// columns (never a money/ledger column). The decision is audited by the caller.
 	ct, err := r.db.Exec(ctx,
 		`UPDATE realtor_listings SET status=$2, verification=$3, updated_at=now() WHERE id=$1`,
 		id, newStatus, newVerification)
@@ -160,8 +159,6 @@ func (r *Repository) DecideListing(ctx context.Context, id, decision string) (st
 	}
 	return newStatus, nil
 }
-
-// ── Verifications ─────────────────────────────────────────────────────────────
 
 // VerificationRequest mirrors the admin client's VerificationRequest type.
 type VerificationRequest struct {
@@ -256,8 +253,6 @@ func (r *Repository) DecideVerification(ctx context.Context, id, status string) 
 	}
 }
 
-// ── Payments ──────────────────────────────────────────────────────────────────
-
 // AdminPayment mirrors the admin client's AdminPayment type.
 type AdminPayment struct {
 	ID             string `json:"id"`
@@ -314,8 +309,6 @@ func mapPaymentStatus(s string) string {
 	}
 }
 
-// ── Escrow ────────────────────────────────────────────────────────────────────
-
 // EscrowAccount mirrors the admin client's EscrowAccount type.
 type EscrowAccount struct {
 	ID             string `json:"id"`
@@ -364,8 +357,6 @@ func (r *Repository) Escrow(ctx context.Context, limit, offset int) ([]EscrowAcc
 	return out, rows.Err()
 }
 
-// ── Escrow resolution (PROPMGMT-002: inspection-gated release) ─────────────────
-
 // EscrowResolution mirrors the admin client's response shape for a resolved
 // (or disputed) escrow deposit.
 type EscrowResolution struct {
@@ -386,21 +377,14 @@ func isValidEscrowDecision(d string) bool {
 }
 
 // ResolveEscrow applies an admin decision to a refundable lease deposit held in
-// the shared 'settlement' standing account (ADR-040 pattern — deposits are NOT
-// held in a dedicated per-deposit account; realtor_escrow_deposits is the
-// bookkeeping record of what is earmarked). Money mutation Iron Rules:
-//   - idempotency: PostReversal/PostJournal are called with a deterministic key
-//     derived from the deposit id, so a retried admin call is a safe no-op
-//     (ledger.ErrDuplicate).
-//   - balanced double-entry: PostReversal / PostJournal always post a balanced
-//     pair; no balance column is ever written directly.
-//   - fail-closed inspection gate: released_to_tenant / forfeited_to_landlord
-//     REQUIRE a realtor_move_outs row with submitted_at set — this is the whole
-//     point of "inspection-gated release" (PROPMGMT-002). 'disputed' does not
-//     require a move-out submission (an admin may flag a dispute proactively)
-//     and leaves the deposit resolvable again later (only status='released' is
-//     a terminal state — see the guard below).
-//   - audit: every branch writes an immutable realtor_admin_audit_log row.
+// the shared 'settlement' standing account (ADR-040: realtor_escrow_deposits is
+// the earmark bookkeeping record, not a per-deposit ledger account). Ledger posts
+// use deterministic idempotency keys derived from the deposit id, so a retried
+// admin call is a safe ledger.ErrDuplicate no-op. released_to_tenant /
+// forfeited_to_landlord REQUIRE a realtor_move_outs row with submitted_at set
+// (inspection-gated release, PROPMGMT-002); 'disputed' does not and is
+// non-terminal — only status='released' is terminal. Every branch writes an
+// immutable realtor_admin_audit_log row.
 func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, adminID string) (*EscrowResolution, error) {
 	if !isValidEscrowDecision(decision) {
 		return nil, ErrInvalidEscrowDecision
@@ -424,7 +408,7 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 		JOIN realtor_portfolios pf ON pf.id = p.portfolio_id
 		WHERE e.id = $1`, id).
 		Scan(&leaseID, &amountKobo, &status, &tenantID, &ownerID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -443,10 +427,10 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 	if decision == "released_to_tenant" || decision == "forfeited_to_landlord" {
 		var submittedAt *time.Time
 		moveErr := r.db.QueryRow(ctx, `SELECT submitted_at FROM realtor_move_outs WHERE lease_id = $1`, leaseID).Scan(&submittedAt)
-		if moveErr != nil && moveErr != pgx.ErrNoRows {
+		if moveErr != nil && !errors.Is(moveErr, pgx.ErrNoRows) {
 			return nil, moveErr
 		}
-		if moveErr == pgx.ErrNoRows || submittedAt == nil {
+		if errors.Is(moveErr, pgx.ErrNoRows) || submittedAt == nil {
 			return nil, ErrMoveOutRequired
 		}
 	}
@@ -500,7 +484,7 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 	if decision == "disputed" {
 		res, err := r.db.Exec(ctx,
 			`UPDATE realtor_escrow_deposits SET status='disputed', resolution_note=$2, resolved_by=$3 WHERE id=$1`,
-			id, nullStr(note), adminID)
+			id, dbutil.NullStr(note), adminID)
 		if err != nil {
 			return nil, err
 		}
@@ -509,7 +493,7 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 		newStatus = "released"
 		res, err := r.db.Exec(ctx,
 			`UPDATE realtor_escrow_deposits SET status='released', released_at=NOW(), resolved_to=$2, resolution_note=$3, resolved_by=$4 WHERE id=$1`,
-			id, resolvedTo, nullStr(note), adminID)
+			id, resolvedTo, dbutil.NullStr(note), adminID)
 		if err != nil {
 			return nil, err
 		}
@@ -526,23 +510,12 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 	return out, nil
 }
 
-// ── Audit log ─────────────────────────────────────────────────────────────────
-
 // InsertAudit appends an immutable admin-audit row (mirrors invest_admin_audit_log).
 func (r *Repository) InsertAudit(ctx context.Context, adminID, action, entityType, entityID, reason string, oldVal, newVal any) error {
 	ob, _ := json.Marshal(oldVal)
 	nb, _ := json.Marshal(newVal)
 	const q = `INSERT INTO realtor_admin_audit_log (admin_id, action, entity_type, entity_id, old_value, new_value, reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := r.db.Exec(ctx, q, adminID, action, entityType, nullStr(entityID), ob, nb, nullStr(reason))
+	_, err := r.db.Exec(ctx, q, adminID, action, entityType, dbutil.NullStr(entityID), ob, nb, dbutil.NullStr(reason))
 	return err
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

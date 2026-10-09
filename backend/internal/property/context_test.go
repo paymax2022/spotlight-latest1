@@ -1,30 +1,25 @@
 package property
 
-// ---------------------------------------------------------------------------
 // context.go coverage: the pure validContextTypes gate (DB-free), plus
 // live-DB tests for GetContext's role-merge/de-dup behavior and
 // SwitchContext's fail-closed membership check — both of which query real
 // tables (estate_residents, estates, estate_properties, realtor_portfolios,
 // property_active_context) and cannot be exercised without a live Postgres.
-//
 // Gated on TEST_DATABASE_URL only (never DATABASE_URL — see
 // backend/tests/TEST_STRATEGY.md "Live-DB suites" rule 1; DATABASE_URL points
 // at the production Supabase pooler). Run locally with:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./backend/internal/property/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ── validContextTypes gate (pure, no DB) ──────────────────────────────────
 
 func TestValidContextTypes_OnlyFourAccepted(t *testing.T) {
 	cases := []struct {
@@ -49,8 +44,6 @@ func TestValidContextTypes_OnlyFourAccepted(t *testing.T) {
 		t.Errorf("validContextTypes has %d entries, want exactly 4 (estate|property|agency|org)", len(validContextTypes))
 	}
 }
-
-// ── Live-DB fixtures ───────────────────────────────────────────────────────
 
 func newPropertyTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -81,11 +74,9 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 		id, id+"@property-test.invalid"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }
-
-// ── GetContext: role merge / de-duplication ───────────────────────────────
 
 // TestLiveDB_GetContext_MergesDualRolesOnOneEntity is PROPERTY-UNIT-002: a
 // user who is BOTH landlord and tenant of the same property, and both
@@ -102,13 +93,15 @@ func TestLiveDB_GetContext_MergesDualRolesOnOneEntity(t *testing.T) {
 	// admin_id owner -> should merge into ONE estate entity with
 	// roles ⊇ {resident, estate_admin}.
 	estateID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estates (id, name, admin_id) VALUES ($1, 'Dual Role Estate', $2)`,
 		estateID, user); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
-	if _, err := pool.Exec(ctx,
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1, $2, 'resident')`,
 		estateID, user); err != nil {
 		t.Fatalf("seed estate_residents: %v", err)
@@ -116,13 +109,15 @@ func TestLiveDB_GetContext_MergesDualRolesOnOneEntity(t *testing.T) {
 
 	// Property: user is BOTH landlord_id and tenant_id on the same row.
 	propID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_properties (id, estate_id, unit_label, landlord_id, tenant_id)
 		 VALUES ($1, $2, 'Flat 3B', $3, $3)`,
 		propID, estateID, user); err != nil {
 		t.Fatalf("seed estate_properties: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_properties WHERE id=$1`, propID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_properties WHERE id=$1`, propID)
+	})
 
 	resp, err := svc.GetContext(ctx, user)
 	if err != nil {
@@ -171,35 +166,39 @@ func TestLiveDB_GetContext_AggregatesAllFourSources(t *testing.T) {
 
 	// E1: resident only.
 	e1 := uuid.NewString()
-	pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E1',$2)`, e1, otherAdmin)
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e1) })
-	if _, err := pool.Exec(ctx, `INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1,$2,'resident')`, e1, user); err != nil {
+	_, _ = pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E1',$2)`, e1, otherAdmin)
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, e1) })
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1,$2,'resident')`, e1, user); err != nil {
 		t.Fatalf("seed E1 resident: %v", err)
 	}
 
 	// E2: admin_id ownership only (no estate_residents row).
 	e2 := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E2',$2)`, e2, user); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E2',$2)`, e2, user); err != nil {
 		t.Fatalf("seed E2: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e2) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, e2) })
 
 	// P1: landlord assignment, on a third estate so it doesn't collide with E1/E2.
 	e3 := uuid.NewString()
-	pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E3',$2)`, e3, otherAdmin)
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e3) })
+	_, _ = pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E3',$2)`, e3, otherAdmin)
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, e3) })
 	p1 := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estate_properties (id, estate_id, unit_label, landlord_id) VALUES ($1,$2,'P1',$3)`, p1, e3, user); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estate_properties (id, estate_id, unit_label, landlord_id) VALUES ($1,$2,'P1',$3)`, p1, e3, user); err != nil {
 		t.Fatalf("seed P1: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_properties WHERE id=$1`, p1) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_properties WHERE id=$1`, p1)
+	})
 
 	// A1: agency/portfolio ownership.
 	a1 := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'A1')`, a1, user); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'A1')`, a1, user); err != nil {
 		t.Fatalf("seed A1: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM realtor_portfolios WHERE id=$1`, a1) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM realtor_portfolios WHERE id=$1`, a1)
+	})
 
 	resp, err := svc.GetContext(ctx, user)
 	if err != nil {
@@ -228,15 +227,8 @@ func TestLiveDB_GetContext_AggregatesAllFourSources(t *testing.T) {
 }
 
 func hasRole(roles []string, want string) bool {
-	for _, r := range roles {
-		if r == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(roles, want)
 }
-
-// ── SwitchContext: fail-closed membership ─────────────────────────────────
 
 // TestLiveDB_SwitchContext_FailClosedOnNonHeldContext is PROPERTY-AUTHZ-006:
 // switching into a context the caller has NO role in must error and must NOT
@@ -254,7 +246,7 @@ func TestLiveDB_SwitchContext_FailClosedOnNonHeldContext(t *testing.T) {
 	}
 
 	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM property_active_context WHERE user_id=$1`, user).Scan(&count); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM property_active_context WHERE user_id=$1`, user).Scan(&count); err != nil {
 		t.Fatalf("query property_active_context: %v", err)
 	}
 	if count != 0 {
@@ -274,11 +266,13 @@ func TestLiveDB_SwitchContext_SucceedsIntoHeldContext(t *testing.T) {
 	admin := seedAuthUser(t, pool)
 
 	estateID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Held Estate',$2)`, estateID, admin); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Held Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
-	if _, err := pool.Exec(ctx, `INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1,$2,'resident')`, estateID, user); err != nil {
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1,$2,'resident')`, estateID, user); err != nil {
 		t.Fatalf("seed estate_residents: %v", err)
 	}
 
@@ -291,7 +285,7 @@ func TestLiveDB_SwitchContext_SucceedsIntoHeldContext(t *testing.T) {
 	}
 
 	var gotType, gotID string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT context_type, context_id::TEXT FROM property_active_context WHERE user_id=$1`, user).
 		Scan(&gotType, &gotID); err != nil {
 		t.Fatalf("reload property_active_context: %v", err)
@@ -323,7 +317,7 @@ func TestLiveDB_SwitchContext_InvalidContextTypeRejected(t *testing.T) {
 		t.Fatal("SwitchContext with contextType=\"vehicle\" must be rejected")
 	}
 	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM property_active_context WHERE user_id=$1`, user).Scan(&count); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM property_active_context WHERE user_id=$1`, user).Scan(&count); err != nil {
 		t.Fatalf("query property_active_context: %v", err)
 	}
 	if count != 0 {

@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for FOOD-001: the restaurant/rider payout-run
 // DISBURSEMENT subsystem (payout.go BuildRun/ProcessRun) had zero test coverage.
 // The only existing payout-adjacent test (payout_readiness_live_db_test.go)
 // covers the read-only eligibility check (payout_readiness.go), not the real
 // money-moving transfer logic here. Skipped unless TEST_DATABASE_URL is set.
-//
 // Design constraint that shapes these tests: a payout RUN is scoped to exactly
 // ONE (provider_type, provider_id, period_key) — see the unique index
 // uq_restaurant_payout_runs_provider_period and BuildRun's signature. There is
@@ -19,7 +17,6 @@ package restaurant
 // cross-credit each other's wallet, which is the real-world equivalent of the
 // scenario (a payout admin processing a batch of runs touching both restaurant
 // owners and riders in one sitting).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -42,11 +39,11 @@ func processRunPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping payout ProcessRun live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	return pool
@@ -71,7 +68,7 @@ func prSeedRestaurant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, own
 		restID, ownerID); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM restaurants WHERE id=$1`, restID) })
 	return restID
 }
 
@@ -83,13 +80,13 @@ func prSeedRestaurantSettlement(t *testing.T, ctx context.Context, pool *pgxpool
 	oid := uuid.New().String()
 	settID := uuid.New().String()
 	totalKobo := providerKobo + feeKobo + 10000
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, provider_kobo, fee_kobo, idempotency_key, status, settled_at)
 		VALUES ($1,$2,'food_delivery',$3,$4,$5,$6,$7,'settled',now())`,
 		settID, "order:"+oid, customerID, totalKobo, providerKobo, feeKobo, "pr-"+settID); err != nil {
 		t.Fatalf("seed settlement: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, total_kobo, status, idempotency_key, delivery_address, settlement_id)
 		VALUES ($1,$2,$3,$4,$4,'delivered',$5,'1 Test St',$6)`,
 		oid, customerID, restID, totalKobo, "prorder-"+oid, settID); err != nil {
@@ -106,13 +103,13 @@ func prSeedRiderSettlement(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	oid := uuid.New().String()
 	settID := uuid.New().String()
 	totalKobo := riderShare + providerKobo + feeKobo
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, provider_kobo, fee_kobo, idempotency_key, status, settled_at)
 		VALUES ($1,$2,'food_delivery',$3,$4,$5,$6,$7,'settled',now())`,
 		settID, "order:"+oid, customerID, totalKobo, providerKobo, feeKobo, "pr-"+settID); err != nil {
 		t.Fatalf("seed settlement: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO orders (id, customer_id, restaurant_id, rider_id, subtotal_kobo, total_kobo, status, idempotency_key, delivery_address, settlement_id)
 		VALUES ($1,$2,$3,$4,$5,$5,'delivered',$6,'1 Test St',$7)`,
 		oid, customerID, restID, riderID, totalKobo, "prorder-"+oid, settID); err != nil {
@@ -126,7 +123,7 @@ func prSeedRiderSettlement(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 func prWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) int64 {
 	t.Helper()
 	var bal int64
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_CREDIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
 		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
 		WHERE a.user_id=$1`, userID).Scan(&bal); err != nil {
@@ -139,7 +136,6 @@ func prWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 // account by one or more payout runs' own deterministic journals — the DEBIT leg(s)
 // PostJournal writes under "<run.IdempotencyKey>:debit" (repository.go suffixes the
 // balanced pair ":debit"/":credit"). 0 means nothing was posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
 // global standing account also moved by estate dues, academy, connect, realtor and other
 // suites, and `go test ./...` runs packages concurrently against one database (make test
@@ -157,7 +153,7 @@ func prSettlementDebitKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	var total int64
 	for _, k := range runIdemKeys {
 		var paid int64
-		if err := pool.QueryRow(ctx,
+		if err := pool.QueryRow(context.WithoutCancel(ctx),
 			`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
 			  WHERE idempotency_key=$1 AND type='DEBIT' AND account_id=$2`,
 			k+":debit", settleAcc.ID).Scan(&paid); err != nil {
@@ -174,7 +170,7 @@ func prSettlementDebitKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 func prPayoutLineCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, settlementID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM restaurant_payout_lines WHERE settlement_id=$1`, settlementID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM restaurant_payout_lines WHERE settlement_id=$1`, settlementID).Scan(&n); err != nil {
 		t.Fatalf("payout line count: %v", err)
 	}
 	return n
@@ -194,7 +190,7 @@ func newProcessRunService(pool *pgxpool.Pool) *Service {
 func TestLiveDB_ProcessRunHappyPath(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -276,7 +272,7 @@ func TestLiveDB_ProcessRunHappyPath(t *testing.T) {
 func TestLiveDB_ProcessRunNeverDoublePays(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -350,7 +346,7 @@ func TestLiveDB_ProcessRunNeverDoublePays(t *testing.T) {
 func TestLiveDB_ProcessRunMixedProviderBatch(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -416,7 +412,7 @@ func TestLiveDB_ProcessRunMixedProviderBatch(t *testing.T) {
 func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -435,7 +431,7 @@ func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([]error, racers)
 	statuses := make([]string, racers)
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -449,7 +445,7 @@ func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 	wg.Wait()
 
 	successes := 0
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		if results[i] == nil {
 			successes++
 			if statuses[i] != PayoutStatusPaid {
@@ -482,7 +478,7 @@ func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	if _, err := svc.ProcessRun(ctx, uuid.New().String(), "idem-unknown-run"); !errors.Is(err, ErrPayoutRunNotFound) {
@@ -491,7 +487,6 @@ func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 }
 
 // TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise: FOOD-002.
-//
 // ProcessRun's real sequence is: (1) atomically claim the run draft->processing,
 // (2) post the ledger transfer, (3) atomically finalise processing->paid. If the
 // process dies after (2) commits but before (3) does, the run was stuck at
@@ -500,7 +495,6 @@ func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 // and returned a bare "not disbursable" error. The money had already moved;
 // only the run's own bookkeeping never caught up. Nothing else in the codebase
 // reconciled this (no cron, no admin retry-to-paid path).
-//
 // This simulates that exact crash window directly — claim the run and post the
 // real ledger transfer by hand, WITHOUT running the finalise step — then calls
 // ProcessRun again exactly as an operator retrying a stuck run would, and
@@ -510,7 +504,7 @@ func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 func TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -528,7 +522,7 @@ func TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise(t *testing.T) 
 
 	// Manually reproduce steps (1) and (2) of ProcessRun, then STOP — simulating
 	// the process dying before step (3)'s finalise UPDATE commits.
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`UPDATE restaurant_payout_runs SET status='processing' WHERE id=$1 AND status='draft'`, run.ID); err != nil {
 		t.Fatalf("simulate claim: %v", err)
 	}
@@ -552,7 +546,7 @@ func TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise(t *testing.T) 
 	}
 	// Confirm the crash state: money moved, run bookkeeping did not.
 	var stuckStatus string
-	if err := pool.QueryRow(ctx, `SELECT status FROM restaurant_payout_runs WHERE id=$1`, run.ID).Scan(&stuckStatus); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM restaurant_payout_runs WHERE id=$1`, run.ID).Scan(&stuckStatus); err != nil {
 		t.Fatalf("read stuck run: %v", err)
 	}
 	if stuckStatus != PayoutStatusProcessing {

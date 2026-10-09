@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// ── Money-path test doubles ───────────────────────────────────────────────────
-
 // fakeWallet records every debit and returns a preset error. Crucially it also
 // enforces idempotency the way the real ledger does: a repeated idempotency key is
 // a no-op (does NOT double-charge). This lets us prove the boost charge is
@@ -108,8 +106,6 @@ func newBoostServiceWithFakes(w *fakeWallet, tg *fakeTiers) (*BoostService, *fak
 	return svc, store, au
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────────
-
 func TestBoost_RequiresIdempotencyKey(t *testing.T) {
 	w := newFakeWallet()
 	svc, store, _ := newBoostServiceWithFakes(w, &fakeTiers{})
@@ -187,8 +183,8 @@ func TestBoost_ChargesServerPriceToRevenueAccount(t *testing.T) {
 	if w.gotCredit != "paymax-revenue-1" {
 		t.Fatalf("credit side must be the paymax_revenue account, got %q", w.gotCredit)
 	}
-	if w.gotKey != "idem-x" {
-		t.Fatalf("idempotency key must flow to the ledger, got %q", w.gotKey)
+	if w.gotKey != "connect:discovery:boost:user-42:idem-x" {
+		t.Fatalf("namespaced idempotency key must flow to the ledger, got %q", w.gotKey)
 	}
 	if b.PriceKobo != 50000 || b.DurationMinutes != 30 {
 		t.Fatalf("boost row must record server price/duration, got %d/%d", b.PriceKobo, b.DurationMinutes)
@@ -217,6 +213,85 @@ func TestBoost_InsufficientFundsAbortsAndSkipsProjection(t *testing.T) {
 	}
 	if au.calls != 0 {
 		t.Fatal("no audit event when the charge fails")
+	}
+}
+
+// fakeConfirmer stands in for the durable ledger replay check — it reports the
+// journal as posted only when the probed key equals onlyKey (empty ⇒ whatever
+// posted says), mirroring that the ledger carries the journal under ONE key.
+type fakeConfirmer struct {
+	posted  bool
+	onlyKey string
+	err     error
+	calls   int
+	gotKeys []string
+}
+
+func (f *fakeConfirmer) ConfirmDebit(_ context.Context, _, _, idemKey string, _ int64) (bool, error) {
+	f.calls++
+	f.gotKeys = append(f.gotKeys, idemKey)
+	if f.onlyKey != "" && idemKey != f.onlyKey {
+		return false, nil
+	}
+	return f.posted, f.err
+}
+
+func TestBoost_DuplicateWithoutDurableProof_FailsClosed(t *testing.T) {
+	// The wallet claims the key is already used — but NOTHING durable backs the
+	// claim (a stale Redis lock, or a foreign journal holding the key). The
+	// confirmer says the journal is not posted: the purchase must fail and no
+	// boost row may be minted on phantom money.
+	w := newFakeWallet()
+	w.returnErr = errors.New("ledger: duplicate idempotency key")
+	conf := &fakeConfirmer{posted: false}
+	svc, store, _ := newBoostServiceWithFakes(w, &fakeTiers{})
+	svc.SetDebitConfirmer(conf)
+
+	_, err := svc.Purchase(context.Background(), "user-1", "idem-dup", 0)
+	if err == nil {
+		t.Fatal("an unconfirmed duplicate must fail closed")
+	}
+	if conf.calls == 0 {
+		t.Fatal("a duplicate must be confirmed against the ledger of record")
+	}
+	if store.inserts != 0 {
+		t.Fatal("no boost row on an unconfirmed duplicate")
+	}
+}
+
+func TestBoost_DuplicateConfirmed_Converges(t *testing.T) {
+	// Crash-after-commit replay: the wallet reports duplicate because OUR journal
+	// is already durably posted — the confirmer proves it, so the purchase
+	// converges and records exactly one boost row.
+	w := newFakeWallet()
+	w.returnErr = errors.New("ledger: duplicate idempotency key")
+	conf := &fakeConfirmer{posted: true, onlyKey: "connect:discovery:boost:user-1:idem-crash"}
+	svc, store, _ := newBoostServiceWithFakes(w, &fakeTiers{})
+	svc.SetDebitConfirmer(conf)
+
+	b, err := svc.Purchase(context.Background(), "user-1", "idem-crash", 0)
+	if err != nil {
+		t.Fatalf("a durably-confirmed duplicate must converge, got %v", err)
+	}
+	if b == nil || store.inserts != 1 {
+		t.Fatal("confirmed duplicate must produce the boost row")
+	}
+	if b.IdempotencyKey != "connect:discovery:boost:user-1:idem-crash" {
+		t.Fatalf("boost must record the namespaced key, got %q", b.IdempotencyKey)
+	}
+}
+
+func TestBoost_ForeignProjectionRow_FailsClosed(t *testing.T) {
+	// The projection row already exists under the derived key but describes a
+	// DIFFERENT purchase (foreign claim): the replay must refuse to adopt it.
+	w := newFakeWallet()
+	svc, store, _ := newBoostServiceWithFakes(w, &fakeTiers{})
+	foreign := &Boost{UserID: "user-9", Status: BoostActive, PriceKobo: 1, DurationMinutes: 5, LedgerRef: "connect:boost:user-9"}
+	store.byKey["connect:discovery:boost:user-1:idem-fk"] = foreign
+
+	_, err := svc.Purchase(context.Background(), "user-1", "idem-fk", 0)
+	if err == nil {
+		t.Fatal("a foreign boost row under the key must fail closed")
 	}
 }
 

@@ -1,4 +1,3 @@
-// ── Admin — Paymax Mobility service ──────────────────────────────────────────
 // Mock-backed (Go backend admin endpoints not live yet). Mirrors fxAdminService /
 // crowdfundingAdminService shape: flip USE_MOCK to false and the fetch branches
 // hit /api/finance/admin/transport/... per the Mobility BUILD-CONTRACT.
@@ -16,7 +15,6 @@ import type {
   ReportSummary, MobilityAuditEntry,
 } from '@/types/mobility';
 
-// Mock by default; flip with NEXT_PUBLIC_MOBILITY_ADMIN_USE_MOCK=false once the
 // admin control-plane endpoints are live on the Go backend.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_ADMIN_USE_MOCK);
 
@@ -24,8 +22,6 @@ const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_ADMIN_USE_MOCK)
 // see backend/internal/app/finance_routes.go's `adminTr` group), so the caller
 // must spell the full path out. apiRoot() strips any trailing /api/v1 from the
 // proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy
 // path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
 // for the same regression. Every request 404'd against <proxy>/dashboard instead
@@ -35,14 +31,9 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const DASHBOARD: MobilityDashboard = {
   totalTrips: 18_420,
@@ -215,8 +206,6 @@ function pushAudit(action: string, target: string, reason: string | null) {
   ];
 }
 
-// ─── Live-mode helpers & response adapters ────────────────────────────────────
-// The Go admin handlers return snake_case rows inside envelopes ({drivers:[…]},
 // {trips:[…]}, {tiers:[…]}…) while the console types are camelCase — these
 // helpers fetch (throwing on !res.ok) and map to the UI contract. Fields the
 // backend does not track yet (zones, expiries, per-day series) get honest
@@ -301,7 +290,6 @@ function mapTrip(t: Row): TripRow {
   };
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
 export async function getDashboard(): Promise<MobilityDashboard> {
   if (USE_MOCK) { await delay(); return DASHBOARD; }
   // Backend /dashboard has no live-trip/verification counts — fill them from
@@ -329,7 +317,6 @@ export async function getDashboard(): Promise<MobilityDashboard> {
   };
 }
 
-// ─── Drivers ──────────────────────────────────────────────────────────────────
 export async function getDrivers(status?: DriverVerificationStatus | ''): Promise<DriverSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -390,7 +377,6 @@ export async function setDriverVerification(id: string, decision: DriverVerifica
   return sendJson(`/drivers/${id}/verification`, 'PATCH', decision);
 }
 
-// ─── Vehicles ─────────────────────────────────────────────────────────────────
 export async function getVehicles(status?: VehicleStatus | ''): Promise<VehicleComplianceRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -428,7 +414,6 @@ export async function setVehicleStatus(id: string, patch: VehicleStatusPatch): P
   });
 }
 
-// ─── Trips / Dispatch ─────────────────────────────────────────────────────────
 export async function getTrips(phase?: TripPhase | ''): Promise<TripRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -475,10 +460,8 @@ export async function assignDriver(tripId: string, driverId: string): Promise<{ 
   return sendJson(`/dispatch/${tripId}/assign`, 'POST', { driver_id: driverId });
 }
 
-// ─── Pricing & Commission ─────────────────────────────────────────────────────
 export async function getPricing(): Promise<PricingConfig[]> {
   if (USE_MOCK) { await delay(); return PRICING; }
-  // Backend GET /pricing returns ONE config (zone=default, service=ride_hailing
   // unless queried). Fetch each seeded service class so the console shows all rows.
   const services = ['ride_hailing', 'economy', 'comfort', 'xl', 'premium', 'parcel', 'towing', 'car_hire'];
   const rows = await Promise.all(
@@ -596,7 +579,6 @@ export async function updateIncident(id: string, patch: SafetyIncidentPatch): Pr
   });
 }
 
-// ─── Reports & Audit ──────────────────────────────────────────────────────────
 export async function getReports(): Promise<ReportSummary> {
   if (USE_MOCK) { await delay(); return REPORTS; }
   // Backend summary is a flat aggregate (no zone/day breakdowns yet) — surface

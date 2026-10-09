@@ -1,6 +1,5 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for a defect found live during Ride/Transport
 // (Module 18) UAT: an offer-mode ride request inside the app's own
 // [floor,ceiling] range (validateFareInRange) could still violate the DB's
@@ -11,16 +10,13 @@ package transport
 // row with no owning trip at all — no FSM state, no cancel path (cancel
 // needs a trip id), and outside the reconciler's reach (it only re-drives
 // completed trips).
-//
 // Repro (the seeded 'default'/'ride_hailing' pricing config, unchanged):
 // base_fare_kobo=50000, min_fare_kobo=150000, fare_floor_pct=0.85. A
 // zero-distance route (identical pickup/dest) clamps SystemFare to
 // min_fare_kobo (150000) exactly; offerBounds' floor is
 // round(150000*0.85)=127500 — in app range, but 127500 < 150000 fails the DB
 // constraint outright.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

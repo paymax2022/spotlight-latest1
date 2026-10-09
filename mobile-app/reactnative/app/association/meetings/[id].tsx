@@ -3,19 +3,19 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MapPin, Video, Users, FileText, Clock, CheckCircle2, ScrollText } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import QrCodeView from '@/components/QrCodeView';
-import { useMeeting, useRsvpMeeting, useCheckInMeeting } from '@/features/association/hooks/useEngagement';
-import { formatDateTime } from '@/features/association/utils/associationFormatters';
-import { MEETING_MODE_LABEL } from '@/features/association/constants/engagement.constants';
-import type { RsvpStatus } from '@/features/association/types/engagement.types';
+import { useMeeting, useRsvpMeeting, useCheckInMeeting } from '@/features/association/hooks';
+import { formatDateTime } from '@/features/association/utils';
+import { MEETING_MODE_LABEL } from '@/features/association/constants';
+import type { RsvpStatus } from '@/features/association/types';
 
 const RSVP_OPTIONS: { value: Exclude<RsvpStatus, null>; label: string }[] = [
   { value: 'YES', label: 'Going' },

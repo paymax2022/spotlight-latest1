@@ -79,7 +79,6 @@ export default function MarketplaceAdminPage() {
     loadData();
   }, [service]);
 
-  // Set up WebSocket for real-time updates
   useEffect(() => {
     // Cleared on unmount below. Previously this was returned from
     // ws.onerror, which the WebSocket API never calls — so the fallback
@@ -97,7 +96,6 @@ export default function MarketplaceAdminPage() {
       try {
         const data = JSON.parse(event.data);
 
-        // Update metrics
         setMetrics((prev) => {
           if (!prev) return prev;
 
@@ -113,7 +111,6 @@ export default function MarketplaceAdminPage() {
           return updated;
         });
 
-        // Add to activity feed
         if (data.display_text) {
           const newActivity: ActivityEvent = {
             id: data.listing?.id || crypto.randomUUID(),

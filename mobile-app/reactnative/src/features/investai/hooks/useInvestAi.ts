@@ -1,4 +1,3 @@
-// ── Paymax Invest · AI Investment Education Assistant — Data hooks ────────────
 // React Query hooks mirroring useCrypto.ts so the screens stay declarative and
 // share the same loading / error contracts. The assistant is read-only (no money
 // mutations) — `ask` and `explainAsset` are modelled as mutations because each

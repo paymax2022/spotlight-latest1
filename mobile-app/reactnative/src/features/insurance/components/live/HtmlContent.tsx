@@ -1,18 +1,16 @@
-// ── Insurance (live) — provider HTML, rendered readably ─────────────────────
 // `key_benefits` / `full_benefits` / `how_it_works` / `how_to_claim` arrive from
 // MyCover as rich-text HTML. React Native cannot render markup, and dumping the
 // string into a <Text> shows a person literal "<p>" tags.
-//
 // `live/html.ts` parses it into an allow-listed block list (every tag stripped,
 // only structure kept); this draws those blocks with real components.
 
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import { parseHtmlBlocks } from '../../live/html';
 

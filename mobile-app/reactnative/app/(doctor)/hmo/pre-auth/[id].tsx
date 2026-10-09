@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CheckCircle2, XCircle, Clock, AlertTriangle, ShieldAlert, MessageSquare } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatKobo } from '@/api/doctor.batch4.api';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, StatusBadge, AlertCard } from '@/features/doctor/components';
@@ -26,7 +26,6 @@ const STATUS_CFG: Record<PreAuthStatus, { icon: LucideIcon; color: string; bg: s
 };
 
 // Section O (O7–O10, O19) — pre-auth detail: pending / approved / rejected /
-// coverage-limit-exceeded are STATES of this one screen; HMO fraud warnings
 // surface as acknowledgeable banners.
 export default function PreAuthDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

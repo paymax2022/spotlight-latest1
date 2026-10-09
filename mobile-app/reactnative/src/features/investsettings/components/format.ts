@@ -1,4 +1,3 @@
-// ── Paymax Invest · Settings — small display helpers ─────────────────────────
 // Local to this module so it doesn't depend on another feature's utils.
 
 /** Human "time ago" string (e.g. '3h ago', '2d ago', 'just now'). */

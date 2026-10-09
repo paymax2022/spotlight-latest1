@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// ── test doubles ────────────────────────────────────────────────────────────
-
 // memStore mirrors the semantics PostgresStore guarantees, including the atomic
 // Consume. Behaviour that depends on SQL (real concurrency, expiry evaluated by
 // the database clock) is covered by the live-DB suite in tests/otp.
@@ -153,8 +151,6 @@ func newTestService(t *testing.T, mutate func(*Config)) (*Service, *memStore, *f
 	return svc, store, sender, limiter
 }
 
-// ── construction ────────────────────────────────────────────────────────────
-
 // A service that boots without a pepper stores digests a rainbow table reverses,
 // and reports healthy while doing it. Refusing to construct is the whole defence.
 func TestNewServiceRefusesWithoutPepper(t *testing.T) {
@@ -171,8 +167,6 @@ func TestNewServiceRejectsAbsurdLength(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidLength", err)
 	}
 }
-
-// ── the happy path and single use ───────────────────────────────────────────
 
 func TestIssueThenVerifySucceedsAndConsumes(t *testing.T) {
 	ctx := context.Background()
@@ -235,8 +229,6 @@ func TestStoredRecordDoesNotContainThePlaintextCode(t *testing.T) {
 		}
 	}
 }
-
-// ── failure paths ───────────────────────────────────────────────────────────
 
 func TestVerifyWrongCodeCountsAnAttempt(t *testing.T) {
 	ctx := context.Background()
@@ -323,14 +315,12 @@ func TestVerifyWithADifferentPurposeFails(t *testing.T) {
 // An address that was never issued a code must answer exactly like a wrong code.
 // Any other answer is a user-enumeration oracle.
 func TestVerifyUnknownAddressLooksLikeAWrongCode(t *testing.T) {
-	svc, _, _, _ := newTestService(t, nil)
+	svc, _, _, _ := newTestService(t, nil) //nolint:dogsled // tuple: only svc needed
 	err := svc.Verify(context.Background(), "nobody@nowhere.com", PurposeLogin, "123456", "")
 	if !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("error = %v, want ErrInvalidCode", err)
 	}
 }
-
-// ── rate limiting ───────────────────────────────────────────────────────────
 
 func TestIssueInsideCooldownIsRateLimited(t *testing.T) {
 	ctx := context.Background()
@@ -352,7 +342,7 @@ func TestIssueBeyondHourlyBudgetIsRateLimited(t *testing.T) {
 		c.MaxSendsPerHour = 3
 		c.ResendCooldown = 0 // isolate the hourly budget from the cooldown
 	})
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		// Clear the live code so only the hourly budget can stop us.
 		_ = store.Delete(ctx, svc.key(PurposeLogin, "a@b.com"))
 		if err := svc.Issue(ctx, "a@b.com", "A", PurposeLogin, ""); err != nil {
@@ -403,8 +393,8 @@ func TestIssueIsAlsoLimitedPerIP(t *testing.T) {
 
 func TestVerifyIsLimitedPerIP(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _, _ := newTestService(t, func(c *Config) { c.MaxVerifyPerIP = 2 })
-	for i := 0; i < 2; i++ {
+	svc, _, _, _ := newTestService(t, func(c *Config) { c.MaxVerifyPerIP = 2 }) //nolint:dogsled // tuple: only svc needed
+	for i := range 2 {
 		if err := svc.Verify(ctx, "a@b.com", PurposeLogin, "000000", "8.8.8.8"); !errors.Is(err, ErrInvalidCode) {
 			t.Fatalf("attempt %d error = %v", i, err)
 		}
@@ -426,8 +416,6 @@ func TestLimiterFailureBlocksIssue(t *testing.T) {
 		t.Error("an email was sent despite the limiter failing")
 	}
 }
-
-// ── delivery failure ────────────────────────────────────────────────────────
 
 // If the mail never left, the user must not be locked out by their own cooldown
 // waiting for it.

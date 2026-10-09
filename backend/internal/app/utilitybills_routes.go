@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,12 +32,10 @@ import (
 // The WHOLE thing is inside one `if cfg.FeatureUtilityBillsEnabled && pool != nil`
 // block, cloned from the Maplerad wiring in finance_routes.go: no flag, no money
 // path, and nothing to roll back but the flag.
-//
 // Phase 1 mounts only the MONEY-affecting admin actions (get / requery / reverse
 // / unresolved-bind count). The full 24-route admin surface is Phase 4. They are
 // here now so Phase 2's Next.js proxy has a single writer to call, instead of a
 // second independent implementation deciding transitions on the same rows.
-//
 // Provider credentials come from the environment (NEVER hard-coded, never logged),
 // following RegisterInsurance's convention:
 //
@@ -47,9 +46,7 @@ import (
 // authMW must be the SAME RequireAuthContext middleware the finance group uses.
 // It has to run BEFORE requireUserID on the admin group: requireUserID only reads
 // the user_id that RequireAuthContext populates, so mounting it alone 401s every
-// admin route even with a valid token (the bug documented three times over in
-// finance_routes.go).
-//
+// admin route even with a valid token.
 // ctx is the app-lifetime background context (registerFinanceRoutes's own
 // context.Background()) that scopes the Phase 3 requery-sweep job — the same
 // ctx the Maplerad block passes directly to StartReconcile/StartOrphanSweep.
@@ -69,9 +66,11 @@ func RegisterUtilityBills(
 		return
 	}
 
-	// --- Provider adapters (keyed by utility_providers.adapter_code) ---
 	environment := vtpass.EnvironmentLive
-	if os.Getenv("VTPASS_ENVIRONMENT") == "sandbox" {
+	// Case-insensitive: VTPASS_ENVIRONMENT=SANDBOX used to silently resolve to
+	// live (the env value never matched the lowercase literal), which fired
+	// sandbox credentials at the live endpoint — a 401 on every purchase.
+	if strings.EqualFold(os.Getenv("VTPASS_ENVIRONMENT"), "sandbox") {
 		environment = vtpass.EnvironmentSandbox
 	}
 	vtpassClient := vtpass.New(
@@ -85,12 +84,9 @@ func RegisterUtilityBills(
 		"vtpass": vtpassClient,
 	})
 
-	// --- Commission with a REAL ledger ---
-	// This is the deliberate behaviour change Phase 1 makes explicit: a settled
-	// utility transaction now posts a balanced revenue-recognition leg
+	// A settled utility transaction posts a balanced revenue-recognition leg
 	// (DR provider_clearing → CR commission) and the commission_earnings row
-	// carries its ledger_ref. The Next.js path left ledger_ref null with a
-	// standing TODO. Passing nil here would silently preserve that gap.
+	// carries its ledger_ref. Passing nil here would silently drop that leg.
 	commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), ledgerSvc), pool, cfg)
 
 	svc := utilitybills.NewService(utilitybills.Deps{
@@ -120,7 +116,6 @@ func RegisterUtilityBills(
 	})
 	handler := utilitybills.NewHandler(svc)
 
-	// --- Member routes (auth inherited from the finance group) ---
 	ub := member.Group("/utilitybills")
 	ub.GET("/categories", handler.ListCategories)
 	ub.GET("/billers", handler.ListBillers)
@@ -138,7 +133,6 @@ func RegisterUtilityBills(
 	ub.POST("/beneficiaries", handler.SaveBeneficiary)
 	ub.DELETE("/beneficiaries/:id", handler.DeleteBeneficiary)
 
-	// --- Admin routes (money-affecting only in Phase 1) ---
 	// Mounted on the ROOT engine so they sit outside the member group, with
 	// RequireAuthContext BEFORE requireUserID and per-route RBAC fail-closed.
 	// RequirePermission — NOT RequireAdminConsoleRole, which is an explicit stub.
@@ -151,8 +145,6 @@ func RegisterUtilityBills(
 	admin.POST("/transactions/:id/reverse", perm, handler.AdminReverse)
 	admin.GET("/unresolved", perm, handler.AdminUnresolvedBinds)
 
-	// --- Phase 4: catalogue administration, reports and support tooling ---
-	//
 	// ONE permission for the whole admin surface. The Next.js routes split
 	// 'utility:manage' (catalogue writes) from 'utility:support' (read-only
 	// support tooling); this deliberately collapses both onto
@@ -160,7 +152,6 @@ func RegisterUtilityBills(
 	// — the single Go permission is a superset of each TS one, so nothing
 	// becomes reachable to a caller the TS routes would have refused. An
 	// approved simplification, flagged in the PR rather than assumed.
-	//
 	// Provider catalogue.
 	admin.GET("/providers", perm, handler.AdminListProviders)
 	admin.POST("/providers", perm, handler.AdminCreateProvider)
@@ -205,7 +196,7 @@ func RegisterUtilityBills(
 	admin.GET("/reports/provider-performance", perm, handler.AdminProviderPerformanceReport)
 
 	// Background reconciliation: hourly requery sweep for stuck purchases
-	// (Phase 3, closes UTIL-002 — previously nothing did this automatically).
+	// (UTIL-002).
 	utilitybills.StartPendingSweep(ctx, svc, time.Hour)
 
 	log.Printf("[finance] Utility Bills domain routes registered at /api/finance/utilitybills (vtpass env=%s, configured=%t, adapters=%v)",
@@ -215,7 +206,6 @@ func RegisterUtilityBills(
 // utilityCredentialsKey derives the AES-256-GCM key for
 // utility_providers.credentials from UTILITY_PROVIDER_CREDENTIALS_KEY, once, at
 // wiring time.
-//
 // Returns nil when the variable is unset or unusable, which disables credential
 // ROTATION (ErrCredentialsKeyMissing, a 500 naming the variable) and nothing
 // else. It deliberately does NOT abort startup: the utility money path itself
@@ -236,7 +226,6 @@ func utilityCredentialsKey() []byte {
 }
 
 // utilityProviderTimeoutMs ports provider-timeout.ts's env fallback: an integer
-// >= 1000 in UTILITY_PROVIDER_TIMEOUT_MS, capped at 120s, else 15s. The
 // per-provider config.timeout_ms override is applied later, per call.
 func utilityProviderTimeoutMs() int {
 	const def = 15_000

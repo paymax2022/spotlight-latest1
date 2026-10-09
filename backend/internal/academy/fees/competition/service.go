@@ -2,6 +2,7 @@ package feescompetition
 
 import (
 	"context"
+	"errors"
 
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
@@ -11,7 +12,6 @@ import (
 // this service never mutates status directly. Registration is only permitted while
 // the competition is in open_registration. Scoring writes route through the
 // LeaderboardManager, which enforces the ScoringLocked boundary.
-//
 // Money-free: no ledger, no wallet. Rewards (if any) are academy/rewards' job.
 
 // ErrScoringLocked signals an attempt to create/edit a leaderboard entry once the
@@ -97,7 +97,7 @@ func (s *Service) Transition(ctx context.Context, id, eventStr string) (*Competi
 	}
 	next, err := feesstatemachine.CompetitionTransition(c.Status, ev)
 	if err != nil {
-		if err == feesstatemachine.ErrAlreadyInState {
+		if errors.Is(err, feesstatemachine.ErrAlreadyInState) {
 			// Idempotent no-op: already there.
 			return c, nil
 		}

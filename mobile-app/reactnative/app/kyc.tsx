@@ -8,11 +8,11 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Clock } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
@@ -97,7 +97,8 @@ export default function KycScreen() {
   }
 
   const meta = statusMeta(data.status);
-  const showForm = data.status === 'unverified' || data.status === 'rejected';
+  // 'failed' is the DB enum's name for a rejected submission (kyc_fields migration).
+  const showForm = data.status === 'unverified' || data.status === 'rejected' || data.status === 'failed';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

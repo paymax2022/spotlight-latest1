@@ -70,7 +70,6 @@ export function summariseAcademyRevenue(
       instalmentsPaidNgn += amount;
       continue;
     }
-    // Waived is forgiven, not owed; a cancelled plan's schedule is void. Counting
     // either as outstanding would overstate what the academy is actually owed.
     if (status === 'waived') continue;
     if ((i.planStatus ?? '').toLowerCase() === 'cancelled') continue;

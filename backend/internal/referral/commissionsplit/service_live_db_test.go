@@ -1,19 +1,15 @@
 package commissionsplit_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the referral purchase-commission-split engine: a referrer
 // earns a flat 20% of Spotlight's realized commission on every purchase made
 // by someone they referred, capped per referral CODE (shared across every
 // person that code referred), defaulting silently to Admin (no payout, no
 // record) once retired or when the payer has no human referrer.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, so `go test ./...` without a DB
 // stays green.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/referral/commissionsplit/... -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -54,8 +50,8 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM user_profiles WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id = $1`, userID)
 	})
 	return userID
 }
@@ -79,7 +75,7 @@ func seedReferralLink(t *testing.T, pool *pgxpool.Pool, referrerID string, rewar
 		t.Fatalf("seed referral_links: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrerID)
 	})
 }
 
@@ -102,14 +98,14 @@ func seedAttribution(t *testing.T, pool *pgxpool.Pool, referredID, referrerID st
 		t.Fatalf("seed referral_attributions: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.referral_attributions WHERE referred_user_id = $1`, referredID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_attributions WHERE referred_user_id = $1`, referredID)
 	})
 }
 
 func cleanupRewards(t *testing.T, pool *pgxpool.Pool, referrerID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.referral_rewards WHERE referrer_id = $1`, referrerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_rewards WHERE referrer_id = $1`, referrerID)
 	})
 }
 
@@ -274,6 +270,57 @@ func TestOnEarningRecorded_ReplayOfTheSameEarningNeverDoubleCredits(t *testing.T
 	}
 	if rewardCount != 1 {
 		t.Fatalf("reward_count = %d, want 1 (a replay must never re-increment the cap)", rewardCount)
+	}
+}
+
+// A legacy referrer — attribution already points at them via
+// finance_referral_codes, but they never opened their link page so no
+// referral_links row exists — must still be paid: the hook lazily mints the
+// link, claims a cap slot, credits the wallet, and writes the audit event.
+// Without the mint this purchase silently paid the house while the tiered
+// engine (OnPurchaseSettled) would have paid the referrer from the same
+// attribution row.
+func TestOnEarningRecorded_LegacyReferrerWithoutLinkStillEarns(t *testing.T) {
+	pool := mustLivePool(t)
+	ctx := context.Background()
+	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
+
+	referrer := seedUser(t, pool)
+	referred := seedUser(t, pool)
+	seedAttribution(t, pool, referred, referrer, false) // no seedReferralLink on purpose
+	cleanupRewards(t, pool, referrer)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_engine_events WHERE referrer_id = $1`, referrer)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrer)
+	})
+
+	before, _ := ledgerSvc.GetBalance(ctx, referrer)
+	svc := commissionsplit.NewService(pool, ledgerSvc, true)
+	svc.OnEarningRecorded(ctx, earningFor(referred, "utility", 100_000))
+	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+
+	if got, want := after-before, int64(20_000); got != want {
+		t.Fatalf("referrer balance delta = %d, want %d — a referrer with no referral_links row must still be paid", got, want)
+	}
+
+	var rewardCount int
+	if err := pool.QueryRow(ctx, `SELECT reward_count FROM public.referral_links WHERE referrer_id = $1`, referrer).Scan(&rewardCount); err != nil {
+		t.Fatalf("lazy-minted referral_links row must exist: %v", err)
+	}
+	if rewardCount != 1 {
+		t.Fatalf("reward_count = %d, want 1 (the minted code's first claimed slot)", rewardCount)
+	}
+
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM public.referral_engine_events
+		WHERE event_type = 'commission_split_reward_credited' AND referrer_id = $1`,
+		referrer,
+	).Scan(&auditCount); err != nil {
+		t.Fatalf("count audit events: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("commission_split_reward_credited events = %d, want 1 — a money mutation must emit an audit event", auditCount)
 	}
 }
 

@@ -6,7 +6,40 @@ import type { AdminMenuCounts } from '@/types/admin';
 import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
 import { getAdminMenuCounts, getAdminOverview } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
-import { quickLinks } from './quickLinks';
+type QuickLink = {
+  label: string;
+  href: string;
+  desc: string;
+  stemAccess?: 'read' | 'manage';
+};
+
+const quickLinks: QuickLink[] = [
+  { label: 'Transactions', href: '/admin/finance/transactions', desc: 'Every ledger_entries row across every module — the single source of truth for money movement' },
+  { label: 'Analytics', href: '/admin/analytics', desc: 'Performance and trends overview' },
+  { label: 'Competitions', href: '/admin/competitions', desc: 'Active contests and entry metrics' },
+  { label: 'Chat Sessions', href: '/admin/chatbot', desc: 'Review assistant conversations' },
+  { label: 'Leads Queue', href: '/admin/leads', desc: 'Manage applicant and sponsor leads' },
+  { label: 'Handoff Queue', href: '/admin/handoffs', desc: 'Track callback and escalation requests' },
+  { label: 'STEM Overview', href: '/admin/stem/overview', desc: 'School and emerging STEM program metrics', stemAccess: 'read' },
+  { label: 'STEM Contests', href: '/admin/stem/contests', desc: 'Contest configuration and eligibility controls', stemAccess: 'manage' },
+  { label: 'STEM Leaderboard', href: '/admin/stem/leaderboard', desc: 'Ranking board and score breakdowns', stemAccess: 'read' },
+  { label: 'STEM Voting', href: '/admin/stem/voting', desc: 'Free/paid voting rules and package controls', stemAccess: 'manage' },
+  { label: 'STEM Bootcamp', href: '/admin/stem/bootcamp', desc: 'Cohort planning and reality-show readiness operations', stemAccess: 'manage' },
+  { label: 'STEM Reports', href: '/admin/stem/reports', desc: 'Participation, votes, sponsors, and awards summary', stemAccess: 'read' },
+  { label: 'STEM Sponsors/Awards', href: '/admin/stem/sponsors-awards', desc: 'Sponsor, certificate, and badge operations', stemAccess: 'manage' },
+  { label: 'STEM Submissions', href: '/admin/stem/submissions', desc: 'Submission queue and status workflow', stemAccess: 'read' },
+  { label: 'STEM Judging', href: '/admin/stem/judging', desc: 'Judge scoring records and review actions', stemAccess: 'read' },
+  { label: 'STEM Rubrics', href: '/admin/stem/rubrics', desc: 'Rubric templates and judge assignment controls', stemAccess: 'manage' },
+  { label: 'Schools', href: '/admin/schools', desc: 'School channel onboarding and participation snapshot', stemAccess: 'read' },
+  { label: 'School Profiles', href: '/admin/school-profiles', desc: 'School-linked admins, coaches, and students', stemAccess: 'read' },
+  { label: 'School Teams', href: '/admin/school-teams', desc: 'Track school team setup and project readiness', stemAccess: 'read' },
+  { label: 'Emerging Innovators', href: '/admin/emerging-innovators', desc: 'Independent innovator channel snapshot', stemAccess: 'read' },
+  { label: 'Emerging Teams', href: '/admin/emerging-teams', desc: 'Team entities under emerging innovator channel', stemAccess: 'read' },
+  { label: 'Emerging Projects', href: '/admin/emerging-projects', desc: 'Project entities under emerging innovator channel', stemAccess: 'read' },
+  { label: 'Reality TV', href: '/admin/reality-tv/dashboard', desc: 'Legacy bridge while migrating Reality TV module' },
+  { label: 'Film Academy', href: '/admin/film-academy', desc: 'Legacy bridge while migrating Film Academy module' },
+  { label: 'Users & Services', href: '/admin/users-services', desc: 'Legacy bridge for user/service admin tools' },
+];
 
 /**
  * THE REDESIGN, AND WHY.
@@ -199,20 +232,28 @@ export function AdminDashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 12, marginTop: 14 }}>
             {needsAttention.map((m) => {
               const tint = m.attention.severity === 'critical' ? C.red : C.orange;
-              return (
-                <Link
-                  key={m.key}
-                  href={m.attention.href}
-                  style={{ textDecoration: 'none', color: 'inherit', display: 'block', border: `1px solid ${rgba(tint, 0.35)}`,
-                    background: rgba(tint, 0.06), borderRadius: 10, padding: '12px 14px' }}
-                >
+              const boxStyle: CSSProperties = { textDecoration: 'none', color: 'inherit', display: 'block',
+                border: `1px solid ${rgba(tint, 0.35)}`, background: rgba(tint, 0.06), borderRadius: 10, padding: '12px 14px' };
+              const body = (
+                <>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <span style={{ fontSize: 13, fontWeight: 700 }}>{m.label}</span>
                     <span style={{ fontSize: 22, fontWeight: 800, color: tint }}>{fmt(m.attention.value)}</span>
                   </div>
                   <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{m.attention.label}</div>
-                  <div style={{ fontSize: 12, color: tint, fontWeight: 600, marginTop: 8 }}>Open queue →</div>
-                </Link>
+                  {m.attention.href ? (
+                    <div style={{ fontSize: 12, color: tint, fontWeight: 600, marginTop: 8 }}>Open queue →</div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>{m.attention.note ?? 'No review screen yet'}</div>
+                  )}
+                </>
+              );
+              // An item with no working screen is shown, not linked: a link to a page
+              // that cannot act (or to the legacy bridge) is worse than none.
+              return m.attention.href ? (
+                <Link key={m.key} href={m.attention.href} style={boxStyle}>{body}</Link>
+              ) : (
+                <div key={m.key} style={boxStyle}>{body}</div>
               );
             })}
           </div>
@@ -235,19 +276,22 @@ export function AdminDashboard() {
                 <div style={{ fontSize: 12, color: C.muted }}>{m.volume.label}</div>
 
                 {m.attention.label ? (
-                  <Link
-                    href={m.attention.href}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                      marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' }}
-                  >
-                    <span style={{ fontSize: 12, color: C.muted }}>{m.attention.label}</span>
-                    <span style={{ fontSize: 13, fontWeight: 800,
-                      color: (m.attention.value ?? 0) > 0
-                        ? (m.attention.severity === 'critical' ? C.red : C.orange)
-                        : C.muted }}>
-                      {loaded ? fmt(m.attention.value) : '—'}
-                    </span>
-                  </Link>
+                  (() => {
+                    const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                      marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' };
+                    const row = (
+                      <>
+                        <span style={{ fontSize: 12, color: C.muted }}>{m.attention.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 800,
+                          color: (m.attention.value ?? 0) > 0
+                            ? (m.attention.severity === 'critical' ? C.red : C.orange)
+                            : C.muted }}>
+                          {loaded ? fmt(m.attention.value) : '—'}
+                        </span>
+                      </>
+                    );
+                    return m.attention.href ? <Link href={m.attention.href} style={rowStyle}>{row}</Link> : <div style={rowStyle}>{row}</div>;
+                  })()
                 ) : null}
               </div>
             ))}

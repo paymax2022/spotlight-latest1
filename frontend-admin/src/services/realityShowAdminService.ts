@@ -115,10 +115,8 @@ function webBase(): string {
 
 function authHeaders(json = false): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
   const headers: Record<string, string> = {};
   if (json) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 
@@ -152,8 +150,6 @@ async function patchJson(path: string, body: unknown, label: string): Promise<Re
   });
   return readJsonOrThrow(res, label);
 }
-
-// ── Seasons ──────────────────────────────────────────────────────────────────
 
 export async function listSeasons(): Promise<ShowSeason[]> {
   const json = await getJson('/api/admin/reality-show/seasons', 'Loading seasons');
@@ -199,8 +195,6 @@ export async function updateSeason(
   return json.season as ShowSeason;
 }
 
-// ── Contestants ──────────────────────────────────────────────────────────────
-
 export async function addContestant(
   seasonId: string,
   input: { displayName: string; applicationId: string; stageName?: string; primaryTalent?: string; bioNotes?: string },
@@ -224,8 +218,6 @@ export async function actOnContestant(
   return json.contestant as ShowContestant;
 }
 
-// ── Weeks ────────────────────────────────────────────────────────────────────
-
 export async function createWeek(
   seasonId: string,
   input: { weekNumber: number; title?: string; theme?: string; evictionCount?: number },
@@ -238,8 +230,6 @@ export async function setWeekStatus(weekId: string, status: 'upcoming' | 'open' 
   const json = await patchJson(`/api/admin/reality-show/weeks/${weekId}/status`, { status }, 'Updating week status');
   return json.week as EvictionWeek;
 }
-
-// ── Votes ────────────────────────────────────────────────────────────────────
 
 export interface WeekVotes {
   week: EvictionWeek;
@@ -260,8 +250,6 @@ export async function castVote(weekId: string, contestantId: string, reason?: st
   const json = await postJson(`/api/admin/reality-show/weeks/${weekId}/vote`, { contestantId, reason }, 'Casting vote');
   return json.vote as EvictionVote;
 }
-
-// ── Eviction finalization ────────────────────────────────────────────────────
 
 export interface FinalizeEvictionResult {
   week: EvictionWeek;

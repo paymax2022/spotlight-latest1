@@ -1,23 +1,19 @@
 'use client';
 
 // Contest results — publish/lock screen.
-//
 // WHY THIS EXISTS
 // Organizers had no way to compute and publish a final, tie-broken
 // leaderboard for a round. Publishing is a ONE-TIME, IRREVERSIBLE action
 // server-side (POST .../publish-results — no unpublish/undo endpoint), so
 // this screen never offers an edit/unpublish control once a round is
 // published: there is nothing real for it to call.
-//
 // Tie-break rule is fixed and NOT configurable server-side
 // (total_confirmed_votes DESC, paid_votes DESC, last_vote_at ASC). It is
 // shown here as read-only informational text wherever results appear —
 // never as an editable setting.
-//
 // Contest picker reuses the same listVotingContests()/VotingContest pattern
 // as the templates and packages pages. Round picker is net-new (no existing
 // frontend-admin UI lists voting_rounds) and follows GET
-// /api/admin/voting/rounds?contestId=, the same route + query-param shape
 // already used server-side. Confirm-before-publish uses window.confirm,
 // matching the templates page's delete-confirm — this codebase has no
 // modal/dialog component (checked components/ui/vuexy.tsx), so a plain
@@ -114,7 +110,6 @@ function ContestResultsInner() {
     try {
       // Proposes only — does NOT execute in this request (SEC-005/G-MC
       // maker-checker). Do not set any local "done"/"published" flag off
-      // this response; results.published stays false until a second
       // approver executes the proposal and the round's real status flips,
       // which loadResults() (backed by GET .../results) will reflect.
       const r = await publishRoundResults(roundId);

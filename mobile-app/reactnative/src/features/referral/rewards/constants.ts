@@ -1,10 +1,8 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
-// ── Direct Referral Rewards — module constants ───────────────────────────────
 // Single-level, purchase-triggered revenue share (PRD §5). Distinct from the
 // legacy ambassador/agent referral tree under src/features/referral/*.
-//
 // Mock-first: the mock layer is ON by default so the whole flow walks offline
 // (hub → share → referrals → earnings → milestone). Set
 // EXPO_PUBLIC_REFERRAL_USE_MOCK=false to hit the live engine via the proxy.
@@ -22,11 +20,10 @@ export interface TierDef {
   tier:      ReferralTier;
   label:     string;
   min_count: number;
-  max_count: number | null; // null = open-ended (Elite)
-  rate:      number;         // share of platform margin, e.g. 0.05 = 5%
+  max_count: number | null;
+  rate:      number;
 }
 
-// v1 launch defaults (PRD §2.2). The live engine is config-driven; these mirror
 // the locked defaults so the explainer/hub render sensibly even before a live
 // config version is fetched.
 export const TIER_TABLE: TierDef[] = [
@@ -86,7 +83,6 @@ export function shareMessage(code: string, link: string): string {
   );
 }
 
-// ── Money formatting — kobo (minor units). Never float math on money. ────────
 export function formatNaira(kobo: number | null | undefined, opts?: { decimals?: boolean }): string {
   if (kobo == null) return '—';
   const value = kobo / 100;

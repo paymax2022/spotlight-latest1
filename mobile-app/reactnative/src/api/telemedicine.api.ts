@@ -1,13 +1,8 @@
-// ── Telemedicine — API client ────────────────────────────────────────────────
-// Phase A: every function resolves demo data so screens render without a live
 // API. `DEMO_*` exports are also used as `placeholderData` in useQuery.
-//
-// Phase C: a live branch has been added to every exported function, following
 // the doctor.client.ts / fx.api.ts convention. Flip to live by setting
-// `EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false`.
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import {
@@ -32,8 +27,6 @@ import type {
 const wait = <T>(value: T, ms = 350): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ms));
 
-// ─── Feature flag: flip to false once the Go backend is ready ─────────────────
-// Mock by default; flip with EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false to hit the
 // live /api/v1/telemedicine/* routes (see backend/internal/app/finance_routes.go).
 const TELEMEDICINE_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK, true);
 
@@ -49,8 +42,6 @@ function unwrap<T>(res: { data?: unknown }): T {
 
 // Money fields are mapped in @/features/telemedicine/pricing — kept out of this
 // file so the mapping is unit-testable without pulling in the axios client.
-
-// ─── Demo data ───────────────────────────────────────────────────────────────
 
 export const DEMO_SPECIALTIES: Specialty[] = [
   { id: 'gp',        name: 'General',       icon: 'Stethoscope', accent: Colors.primary,   bg: Colors.iconBgPurple, doctorCount: 24 },
@@ -71,7 +62,6 @@ const DEMO_DOCTORS_RAW: Doctor[] = [
     initials: 'AO', avatarColor: Colors.primary, feeKobo: 350000, rating: 4.9, reviewCount: 312,
     yearsExperience: 12, languages: ['English', 'Igbo'], isOnline: true, nextAvailable: 'Today, 4:30 PM',
     // One featured fixture so mock mode exercises the SAME path as the live API:
-    // without it `getDoctors({ featured: true })` could only ever return [], and the
     // landing screen's Featured section would be unreachable in mock mode.
     featured: true,
   },
@@ -169,8 +159,6 @@ const DEMO_SUMMARY: VisitSummary = {
   followUp: 'Review in 2 weeks. Return sooner if spreading, blistering or fever develops.',
 };
 
-// ─── Read endpoints ──────────────────────────────────────────────────────────
-
 export async function getSpecialties(): Promise<Specialty[]> {
   if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_SPECIALTIES); }
   return unwrap<Specialty[]>(await api.get(`${BASE}/specialties`));
@@ -245,7 +233,6 @@ export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
 }
 
 export async function getDoctorReviews(doctorId: string): Promise<Review[]> {
-  // Not previously present in the mock file; mock branch returns an empty list
   // so callers can adopt this without needing new demo fixtures.
   if (TELEMEDICINE_USE_MOCK) { return wait([]); }
   return unwrap<Review[]>(await api.get(`${BASE}/doctors/${doctorId}/reviews`));
@@ -268,7 +255,6 @@ export async function getAppointment(id: string): Promise<Appointment | undefine
 
 export async function getPrescription(appointmentId: string): Promise<Prescription> {
   // Closest live route: POST /appointments/:id/prescription is how a doctor
-  // issues one; there's no dedicated GET in the route list, so we read it back
   // via the visit summary endpoint's appointment id and fall back to the same
   // path pattern (backend may accept GET on this path for the patient view).
   if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_PRESCRIPTION); }
@@ -280,8 +266,6 @@ export async function getVisitSummary(appointmentId: string): Promise<VisitSumma
   return unwrap<VisitSummary>(await api.get(`${BASE}/appointments/${appointmentId}/summary`));
 }
 
-// ─── Mutations ───────────────────────────────────────────────────────────────
-
 export async function bookAppointment(input: BookAppointmentInput): Promise<BookAppointmentResult> {
   if (TELEMEDICINE_USE_MOCK) {
     const ref = `TM-${input.idempotencyKey.slice(-6).toUpperCase()}`;
@@ -290,7 +274,6 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Book
   }
   // MONEY PATH: requires Idempotency-Key.
   const idempotencyKey = input.idempotencyKey || generateIdempotencyKey();
-  // The server prices the booking itself and ignores any amount we send; the only
   // money field here is `expected_total_kobo`, the total we quoted the patient. If
   // it disagrees with the server's own computation the booking is rejected with a
   // 409 before any money moves — which is what stops the card rail (already
@@ -354,8 +337,6 @@ export async function issuePrescription(
   }
   return unwrap<Prescription>(await api.post(`${BASE}/appointments/${appointmentId}/prescription`, input));
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export function formatKobo(kobo: number): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;

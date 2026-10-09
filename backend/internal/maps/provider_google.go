@@ -2,6 +2,7 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -9,8 +10,7 @@ import (
 
 // Google is used ONLY for autocompleteAddress (consumer checkout/delivery
 // surfaces) and searchExternalPlaces. Nothing else by default.
-//
-// License coherence (enforced here + in guards.go/cache.go):
+// License coherence (enforced here + in ):
 //   - Every result is tagged Source=google and Cacheable=false.
 //   - The cache writer REFUSES to persist these (guardCacheWrite).
 //   - The renderer guard THROWS if a google-sourced point reaches the OpenStack
@@ -127,9 +127,7 @@ func (g *Google) SearchPlaces(ctx context.Context, query string, near *Point) ([
 	return out, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Geocoder (Google Geocoding API) — Source=google, NEVER cacheable.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type googleGeocodeResp struct {
 	Status  string `json:"status"`
@@ -229,10 +227,8 @@ func (g *Google) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResul
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Distance Matrix (Google Distance Matrix API) — driving distance + ETA.
 // Source=google. Used for delivery-fee distance pricing on consumer surfaces.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type googleMatrixResp struct {
 	Status string `json:"status"`
@@ -267,7 +263,7 @@ func googleLatLngList(pts []Point) string {
 // yields a zero cell (callers treat zero distance as "unavailable").
 func (g *Google) Matrix(ctx context.Context, origins, dests []Point) (Matrix, error) {
 	if len(origins) == 0 || len(dests) == 0 {
-		return Matrix{}, fmt.Errorf("maps: google matrix needs origins and destinations")
+		return Matrix{}, errors.New("maps: google matrix needs origins and destinations")
 	}
 	u := fmt.Sprintf(
 		"https://maps.googleapis.com/maps/api/distancematrix/json?origins=%s&destinations=%s&mode=driving&departure_time=now&key=%s",

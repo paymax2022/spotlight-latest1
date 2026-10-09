@@ -1,13 +1,11 @@
 package adminext
 
 // Crowdfunding withdrawal MONEY-PATH (admin approval → payout).
-//
 // This is the payout leg of the creator cash-out flow. SubmitWithdrawal
 // (wallet domain) only files a PENDING request and moves no money; DecideWithdrawal
 // (service.go) flips PENDING→APPROVED/REJECTED but still moves no money. This file
 // adds the single place where a crowdfunding withdrawal actually posts to the
 // finance ledger and pays the creator out.
-//
 // LEDGER MODEL (mirrors internal/finance/settlement):
 //   - Contributions escrow money via settlement.Escrow → ledger.Debit(payer) /
 //     CREDIT AccountEscrow. So UNSETTLED crowdfunding funds live in the shared
@@ -32,7 +30,6 @@ package adminext
 //     The bank transfer itself is a separate rail (see TODO(prod) below); until a
 //     disbursement provider is wired into this admin surface we post to the
 //     clearing account and DO NOT fabricate a provider success.
-//
 // IRON RULES enforced here:
 //   - integer kobo only (BIGINT throughout);
 //   - a deterministic idempotency key derived from the withdrawal id makes the
@@ -101,7 +98,6 @@ type ApproveWithdrawalResult struct {
 }
 
 // ApproveWithdrawal is the crowdfunding withdrawal money-path.
-//
 // Guarded + idempotent. It:
 //  1. loads the withdrawal; a non-PENDING/APPROVED/COMPLETED state (e.g. REJECTED)
 //     is illegal; an already-COMPLETED row is an idempotent no-op;
@@ -116,21 +112,19 @@ type ApproveWithdrawalResult struct {
 // BEFORE any state change. The ledger posting is idempotent (Redis fast-path +
 // DB unique constraint on idempotency_key) so ErrDuplicate on replay is success.
 func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverID, idempotencyKey string) (*ApproveWithdrawalResult, error) {
-	// ── Fail-closed input guards (run before any DB access) ──────────────────
 	if withdrawalID == "" {
-		return nil, fmt.Errorf("adminext: withdrawal id is required")
+		return nil, errors.New("adminext: withdrawal id is required")
 	}
 	if approverID == "" {
-		return nil, fmt.Errorf("adminext: approver id is required")
+		return nil, errors.New("adminext: approver id is required")
 	}
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("adminext: Idempotency-Key is required")
+		return nil, errors.New("adminext: Idempotency-Key is required")
 	}
 	if s.ledger == nil {
 		return nil, ErrLedgerUnavailable
 	}
 
-	// ── (1) Load the withdrawal + validate its state ─────────────────────────
 	var (
 		reference  string
 		creatorID  string
@@ -168,7 +162,6 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		return nil, ErrCampaignFrozen
 	}
 
-	// ── (2) Post the BALANCED, balance-checked double-entry (money leaves the
 	// creator's OWN wallet, not the shared escrow pool — see file header) ────
 	// Deterministic key derived from the withdrawal id ⇒ replay posts nothing twice.
 	payoutIdem := "cf:withdraw:payout:" + withdrawalID
@@ -195,12 +188,11 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 	// then reconcile the clearing account on the provider webhook. We deliberately
 	// DO NOT fabricate a provider success here.
 
-	// ── (3) Guarded state transitions PENDING→APPROVED→COMPLETED, plus audit ──
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// PENDING → APPROVED (skipped/no-op if already APPROVED from a prior attempt).
 	if _, err := tx.Exec(ctx,

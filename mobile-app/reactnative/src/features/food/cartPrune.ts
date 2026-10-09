@@ -1,11 +1,7 @@
-// ── Restaurant & Delivery — dropping kitchens the cart can no longer order from ─
-//
 // A cart persists locally AND on the server, so it long outlives the menu it was
 // built from. When a restaurant is deleted, its lines sit in checkout looking
-// ordinary: they have a name, a price, and they add to the total — but PlaceOrder
 // reads the restaurant row for pricing and open-hours, so the order can never be
 // placed, and the delivery fee for that kitchen can never be quoted.
-//
 // This removes them. Kept pure and separate from the store so the decision can be
 // tested without React Native, and so the store action stays a one-liner.
 
@@ -81,7 +77,6 @@ export function pruneCart(cart: PrunableCart, goneIds: Iterable<string>): PruneR
   }
 
   // The cart-level pointer, re-derived only when the kitchen it named is gone.
-  //
   // Re-pointing is SILENT HOUSEKEEPING and deliberately does not add to
   // removedIds. This pointer is "first restaurant added, never updated", so it
   // routinely names a kitchen whose food left the cart long ago — announcing

@@ -36,6 +36,7 @@ Never expose these to a client. The Go backend reads them via `internal/config`.
 | `ADMIN_API_KEY` | Admin API auth |
 | `PAYSTACK_SECRET_KEY` | Paystack `sk_…` — charges/verification, AND webhook HMAC-SHA512 verification (`provider/paystack/paystack.go` `VerifyWebhookSignature` signs with this key — Paystack has no separate webhook secret, unlike Stripe) |
 | `PAYSTACK_WEBHOOK_SECRET` | Unused — read into config (`PaystackWebhookKey`) but never consumed anywhere. Safe to leave unset; do not rely on it for webhook verification |
+| `PAYSTACK_BASE_URL` | Dev-only Paystack API override — point at the tools/fakes service (e.g. `http://localhost:9100`) to run initialize/verify/refund without real keys. Empty = live `https://api.paystack.co`. `config.Validate()` fails boot if set outside development |
 | `MONNIFY_API_KEY`, `MONNIFY_SECRET_KEY`, `MONNIFY_WEBHOOK_SECRET` | Monnify transfers |
 | `MAPLERAD_SECRET_KEY`, `MAPLERAD_WEBHOOK_SECRET` | Maplerad `sk_…` + webhook |
 | `MAPLERAD_PUBLIC_KEY` | Maplerad publishable key (kept server-side; app never calls Maplerad directly) |

@@ -6,11 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/timeutil"
+
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service owns FeeSchedule creation + the SF-1 immutability guard. It moves no money.
-//
 // SF-1 ENFORCEMENT (the load-bearing invariant of this package): a FeeSchedule is
 // immutable once an Invoice references it. Every mutating operation calls
 // ensureMutable(), which refuses with ErrFeeScheduleImmutable when EITHER:
@@ -20,7 +23,6 @@ import (
 //     if a caller somehow issued an invoice without setting `locked`.
 //
 // This lives in the SERVICE layer (not only the DB trigger) per build-spec §4 SF-1.
-//
 // SF-6: fee_items + installment_policy are captured at Create only and are never exposed
 // to any mutation path, so installment terms are part of the immutable schedule.
 type Service struct {
@@ -34,12 +36,12 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{store: NewRepositor
 func NewServiceWithStore(store Store) *Service { return &Service{store: store} }
 
 func parseDate(s string) (*time.Time, error) {
-	if s == "" {
-		return nil, nil
-	}
-	t, err := time.Parse("2006-01-02", s)
+	t, err := timeutil.ParseDate(s)
 	if err != nil {
 		return nil, ErrInvalidDate
+	}
+	if t.IsZero() {
+		return nil, nil
 	}
 	return &t, nil
 }
@@ -62,10 +64,10 @@ func (s *Service) Create(ctx context.Context, actorID string, req CreateFeeSched
 	}
 	fs, err := s.store.Insert(ctx, FeeSchedule{
 		SchoolID:          req.SchoolID,
-		SessionID:         ptrOrNil(req.SessionID),
-		ClassID:           ptrOrNil(req.ClassID),
-		ClassCode:         ptrOrNil(req.ClassCode),
-		Term:              ptrOrNil(req.Term),
+		SessionID:         ptr.OrNil(req.SessionID),
+		ClassID:           ptr.OrNil(req.ClassID),
+		ClassCode:         ptr.OrNil(req.ClassCode),
+		Term:              ptr.OrNil(req.Term),
 		Name:              req.Name,
 		AmountMinor:       req.AmountMinor,
 		Currency:          req.Currency,

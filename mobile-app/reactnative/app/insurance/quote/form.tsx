@@ -1,10 +1,8 @@
-// ── Protection — the application form ────────────────────────────────────────
 // Renders the product family's real MyCover schema through `DynamicForm`. This
 // screen contains NO product-specific field knowledge: a Bastion health
 // application (gender, an 11-digit NIN, a passport photo, a past date of birth,
 // an instalment plan) and an MCG gadget application (device make/model/serial,
 // a device value with a ₦50,000 floor, two image URLs) are the same code path.
-//
 // Submitting prices the application server-side and moves to review. The
 // premium is never computed here — for percentage-rated plans we can show an
 // indicative figure while the user types, clearly labelled as an estimate, but
@@ -16,10 +14,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Info, ShieldCheck } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
 import {
   DetailSkeleton,
@@ -70,7 +68,6 @@ export default function ApplicationForm() {
   const [consentTicked, setConsentTicked] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
 
-  // The schema may be embedded in the product payload or served separately;
   // whichever arrives first is what we render.
   const activeSchema = schema.data ?? product.data?.formSchema ?? null;
 
@@ -153,7 +150,6 @@ export default function ApplicationForm() {
 
   const submit = async (submittedValues: FormValues) => {
     if (!activeSchema) return;
-    // NDPA: the quote endpoint answers 428 ndpa_consent_required until consent is
     // on record, because pricing SHARES the applicant's details with the
     // underwriter. Record the tick before quoting rather than after, so we never
     // transmit anything the person has not agreed to.
@@ -181,7 +177,6 @@ export default function ApplicationForm() {
       }
       router.push(`/insurance/quote/review?draft=${draft.id}`);
     } catch {
-      // `quote.error` is rendered inline; DynamicForm attributes field errors
       // back onto the inputs that caused them.
     }
   };

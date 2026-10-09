@@ -5,11 +5,13 @@ package config
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/jsonx"
 )
 
 // Config is the referral engine's singleton configuration.
@@ -55,14 +57,14 @@ func (s *Service) Get(ctx context.Context) (Config, error) {
 	err := s.db.QueryRow(ctx, q).Scan(
 		&c.AttributionWindowHours, &c.GraceWindowHours, &chainRaw,
 		&c.HouseAccountCode, &c.BudgetNeutral, &c.WelcomeRewardEnabled)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Defaults(), nil
 	}
 	if err != nil {
 		return Config{}, fmt.Errorf("referral/config: get: %w", err)
 	}
 	if len(chainRaw) > 0 {
-		_ = json.Unmarshal(chainRaw, &c.FallbackChain)
+		c.FallbackChain = jsonx.UnmarshalOr(chainRaw, c.FallbackChain)
 	}
 	if len(c.FallbackChain) == 0 {
 		c.FallbackChain = Defaults().FallbackChain
@@ -72,7 +74,7 @@ func (s *Service) Get(ctx context.Context) (Config, error) {
 
 // Update upserts the singleton config row and returns the persisted value.
 func (s *Service) Update(ctx context.Context, c Config) (Config, error) {
-	chainRaw, err := json.Marshal(c.FallbackChain)
+	chainRaw, err := jsonx.MarshalArray(c.FallbackChain)
 	if err != nil {
 		return Config{}, fmt.Errorf("referral/config: marshal chain: %w", err)
 	}

@@ -4,7 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy: /api/v1/referrals/<...> → Go /v1/referrals/<...>
-// (Direct Referral Rewards engine). Auth + feature-flag guarded; the Go
 // service enforces object-level authZ (own data only), idempotent attribution,
 // and the reward/ledger invariants. State-changing calls forward the
 // Idempotency-Key verbatim (proxyToGoBackend handles that).
@@ -21,3 +20,4 @@ export async function POST(request: Request, ctx: { params: Promise<{ path: stri
 export async function PUT(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
 export async function DELETE(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }

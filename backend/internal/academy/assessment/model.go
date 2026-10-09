@@ -1,6 +1,5 @@
 // Package assessment is the Spotlight Academy assessment sub-package: the question
 // bank + the per-LearningObjective learner-progression engine.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech state-machines.md §1, conventions.md):
 //   - Guarded state machines. The question-item lifecycle (draft→review→approved→
 //     retired) and the learner-progression lifecycle (not_started→in_progress→
@@ -15,8 +14,6 @@
 package assessment
 
 import "time"
-
-// ── Question-item lifecycle ────────────────────────────────────────────────────
 
 // ItemStatus mirrors academy_question_items.status CHECK.
 type ItemStatus string
@@ -44,8 +41,6 @@ type QuestionItem struct {
 	CreatedBy      *string        `json:"created_by,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`
 }
-
-// ── Learner progression (per LearningObjective) ────────────────────────────────
 
 // MasteryState mirrors academy_mastery_records.state CHECK.
 type MasteryState string
@@ -88,8 +83,6 @@ const (
 	EvtRemediated       = "remediated"
 )
 
-// ── Mastery thresholds & guards ────────────────────────────────────────────────
-
 // MasteryThresholds parameterise the progression guards. Kept as data so a future
 // curriculum/version can override them without code changes (conventions.md:
 // "Curriculum is data, not code").
@@ -102,8 +95,6 @@ type MasteryThresholds struct {
 func DefaultThresholds() MasteryThresholds {
 	return MasteryThresholds{MinPracticeAttempts: 3, MasteryScore: 0.7}
 }
-
-// ── Request DTOs ───────────────────────────────────────────────────────────────
 
 // CreateItemRequest — admin POST /academy/question-bank/items.
 type CreateItemRequest struct {

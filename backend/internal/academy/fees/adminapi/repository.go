@@ -5,7 +5,6 @@ package feesadminapi
 // console (frontend-admin/src/services/academyFeesService.ts) calls. These are
 // list/aggregate views ACROSS schools (or filtered by ?schoolId=), distinct from the
 // member per-school nested routes under /api/finance/academy/*.
-//
 // It owns NO money path: every mutation that moves money or advances a guarded state
 // machine already lives in the per-school member/admin packages (feesschedule,
 // feespromotion, feesexport, …). This package only reads the existing academy_fees
@@ -13,13 +12,14 @@ package feesadminapi
 // config mutations that have real backing tables:
 //   - create a DRAFT fee schedule (feeschedule.create), and lock/issue it (SF-1),
 //   - set a per-category government-export opt-in (academy_school_compliance_optins).
-//
 // All monetary amounts are integers in minor units (kobo). Response DTOs use snake_case
 // JSON tags to match the console's mock fixtures verbatim (see handler.go), and every
 // list is returned inside the gin.H{"data": …} envelope used by the sibling fees handlers.
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,7 +34,6 @@ type Repository struct {
 // NewRepository builds the admin oversight repository.
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
-// ── Schools directory (SU-01) ─────────────────────────────────────────────────
 // Reads public.academy_schools (base cols + fees extension: verification_tier, level,
 // owner_user_id). owner_email / bank_account / state are NOT columns on this table, so
 // they are omitted (the console's types mark them optional).
@@ -60,7 +59,6 @@ func (r *Repository) ListSchools(ctx context.Context) ([]School, error) {
 	return out, rows.Err()
 }
 
-// ── Sessions ──────────────────────────────────────────────────────────────────
 // Reads public.academy_sessions. schoolID optional filter.
 
 func (r *Repository) ListSessions(ctx context.Context, schoolID string) ([]Session, error) {
@@ -88,7 +86,6 @@ func (r *Repository) ListSessions(ctx context.Context, schoolID string) ([]Sessi
 	return out, rows.Err()
 }
 
-// ── Classes ───────────────────────────────────────────────────────────────────
 // Reads public.academy_fee_classes with a live student count from academy_students.
 
 func (r *Repository) ListClasses(ctx context.Context, schoolID string) ([]Class, error) {
@@ -114,7 +111,6 @@ func (r *Repository) ListClasses(ctx context.Context, schoolID string) ([]Class,
 	return out, rows.Err()
 }
 
-// ── Fee schedules ─────────────────────────────────────────────────────────────
 // Reads public.academy_fee_schedules (fees extension cols). SF-1: `locked=true` is the
 // issued/immutable state; the console models status as 'draft' | 'issued'.
 
@@ -191,7 +187,6 @@ func (r *Repository) IssueFeeSchedule(ctx context.Context, scheduleID string) (t
 	return time.Now().UTC(), true, nil
 }
 
-// ── Collections aggregate (SC-33) ───────────────────────────────────────────────
 // Aggregates academy_invoices + academy_invoice_payments across a school (or all
 // schools when schoolID == ""). Billed = SUM(total_amount_minor) of non-draft invoices;
 // collected = SUM(succeeded payment amounts); outstanding = billed - collected.
@@ -228,14 +223,10 @@ func (r *Repository) CollectionsOverview(ctx context.Context, schoolID string) (
 	if err != nil {
 		return CollectionsOverview{}, err
 	}
-	c.OutstandingKobo = c.BilledKobo - c.CollectedKobo
-	if c.OutstandingKobo < 0 {
-		c.OutstandingKobo = 0
-	}
+	c.OutstandingKobo = max(c.BilledKobo-c.CollectedKobo, 0)
 	return c, nil
 }
 
-// ── Invoices list (SC-33) ───────────────────────────────────────────────────────
 // Per-invoice rows across a school (or all), with the derived paid amount (SF-2: paid is
 // SUM of succeeded payments, never a stored column). status optional filter.
 
@@ -284,7 +275,6 @@ func (r *Repository) ListInvoices(ctx context.Context, schoolID, status string) 
 	return out, rows.Err()
 }
 
-// ── Promotions list (SC-35/36) ──────────────────────────────────────────────────
 // Aggregates academy_promotion_records into per (school, session, from→to class) batches
 // with promoted/retained counts + the SF-3 two-approval state. The approve/apply
 // mutations already exist per-school; this is the LIST only.
@@ -326,7 +316,8 @@ func (r *Repository) ListPromotions(ctx context.Context, schoolID string) ([]Pro
 			&teacherBy, &teacherAt, &adminBy, &adminAt, &p.ComputedAt); err != nil {
 			return nil, err
 		}
-		p.ID = deriveBatchID(p.SchoolID, p.SessionID, p.FromClass, p.ToClass)
+		sum := sha1.Sum([]byte(p.SchoolID + "|" + p.SessionID + "|" + p.FromClass + "|" + p.ToClass))
+		p.ID = "pr_" + hex.EncodeToString(sum[:6])
 		p.TeacherApprovedBy = teacherBy
 		p.TeacherApprovedAt = teacherAt
 		p.HeadApprovedBy = adminBy
@@ -336,7 +327,6 @@ func (r *Repository) ListPromotions(ctx context.Context, schoolID string) ([]Pro
 	return out, rows.Err()
 }
 
-// ── Competitions (SC-37) ────────────────────────────────────────────────────────
 // Reads public.academy_competitions with derived registered_schools / registered_students
 // counts. registered_students is approximated by the registration count (no per-team
 // student roster table exists yet — see report "still-mocked").
@@ -393,7 +383,6 @@ func (r *Repository) ListCompetitionRegistrations(ctx context.Context, competiti
 	return out, rows.Err()
 }
 
-// ── Government export opt-ins (SC-38, SF-11) ────────────────────────────────────
 // Reads / upserts public.academy_school_compliance_optins (one row per school+category).
 
 func (r *Repository) ListGovOptIns(ctx context.Context, schoolID string) ([]GovOptIn, error) {
@@ -442,7 +431,6 @@ func (r *Repository) SetGovOptIn(ctx context.Context, schoolID, category, actorI
 	return o, nil
 }
 
-// ── Staff role grants (SC-40) ───────────────────────────────────────────────────
 // Cross-school (or single-school) projection of the RBAC user_roles for the fees staff
 // roles. Mirrors feesroles.ListStaffForSchool but supports the all-schools list the
 // console's /fees/roles endpoint needs. Reads canonical RBAC tables (never drifts).
@@ -478,17 +466,9 @@ func (r *Repository) ListRoleGrants(ctx context.Context, schoolID string) ([]Rol
 	return out, rows.Err()
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
 func dateOrEmpty(t *time.Time) string {
 	if t == nil {
 		return ""
 	}
 	return t.Format("2006-01-02")
-}
-
-// deriveBatchID builds a stable, human-readable id for a promotion batch aggregate
-// (promotion records are per-student; the console models a per-cohort batch).
-func deriveBatchID(schoolID, sessionID, fromClass, toClass string) string {
-	return "pr_" + shortHash(schoolID+"|"+sessionID+"|"+fromClass+"|"+toClass)
 }

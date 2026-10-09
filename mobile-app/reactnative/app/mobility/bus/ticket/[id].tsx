@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MapPin, X, Star } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -18,8 +18,12 @@ import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusTicket, useCancelTicket, useRateBusTrip } from '@/features/mobility/hooks/useModes';
 import { BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
+import {
+  busPhaseTone, isTicketActive, cancelPolicyCopy, cancelResultCopy, cancelErrorCopy,
+  parseCancelError,
+} from '@/features/mobility/utils/busTicket';
 
-const dt = (iso: string) => new Date(iso).toLocaleString('en-NG', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const dt = (iso: string) => !iso || Number.isNaN(Date.parse(iso)) ? '—' : new Date(iso).toLocaleString('en-NG', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export default function BusTicketScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -40,7 +44,18 @@ export default function BusTicketScreen() {
     );
   }
 
-  const active = t.phase !== 'cancelled' && t.phase !== 'refunded';
+  const active = isTicketActive(t.phase);
+  const policy = cancelPolicyCopy(t, dt);
+  const cancelNote = cancel.isSuccess && cancel.data
+    ? cancelResultCopy(cancel.data)
+    : cancel.isError
+      ? (() => { const e = parseCancelError(cancel.error); return { tone: 'warning' as const, text: cancelErrorCopy(e.code, e.message) }; })()
+      : null;
+  const pendingRefundNote = t.phase === 'cancelled_pending_refund'
+    ? (t.refundStatus === 'manual_required'
+        ? 'Ticket cancelled. Your refund needs manual review — please contact support.'
+        : 'Ticket cancelled. Your refund is being processed — it has not been returned yet.')
+    : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -52,7 +67,7 @@ export default function BusTicketScreen() {
               <Text style={styles.operator}>{t.operatorName}</Text>
               <Text style={styles.routeLabel}>{t.routeLabel}</Text>
             </View>
-            <StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={t.phase === 'completed' ? 'success' : t.phase === 'cancelled' || t.phase === 'refunded' ? 'danger' : 'info'} />
+            <StatusBadge label={BUS_PHASE_LABEL[t.phase]} tone={busPhaseTone(t.phase)} />
           </View>
 
           <View style={styles.terminals}>
@@ -83,12 +98,15 @@ export default function BusTicketScreen() {
               <Text style={styles.qrHint}>Show this QR to the operator to board.</Text>
             </View>
           ) : (
-            <Text style={styles.voided}>{t.phase === 'refunded' ? 'Refunded — QR voided' : t.phase === 'completed' ? 'Trip completed' : 'QR unavailable'}</Text>
+            <Text style={styles.voided}>{t.phase === 'refunded' ? 'Refunded — QR voided' : t.phase === 'cancelled_pending_refund' ? 'Cancelled — QR voided' : t.phase === 'completed' ? 'Trip completed' : 'QR unavailable'}</Text>
           )}
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
+        {cancelNote || pendingRefundNote ? (
+          <Text style={[styles.note, cancelNote?.tone === 'success' && styles.noteSuccess]}>{cancelNote?.text ?? pendingRefundNote}</Text>
+        ) : null}
         {(t.phase === 'completed' || t.phase === 'boarded') && !rate.isSuccess ? (
           <View style={styles.rateBox}>
             <Text style={styles.rateTitle}>Rate this operator</Text>
@@ -107,10 +125,18 @@ export default function BusTicketScreen() {
             />
           </View>
         ) : active && t.phase !== 'boarded' && t.phase !== 'completed' ? (
-          <Pressable style={styles.cancelBtn} onPress={() => id && cancel.mutate(id)} disabled={cancel.isPending}>
-            <X size={16} color={Colors.error} strokeWidth={2} />
-            <Text style={styles.cancelText}>{cancel.isPending ? 'Cancelling…' : 'Cancel & request refund'}</Text>
-          </Pressable>
+          <View style={styles.cancelBox}>
+            {policy.hint ? <Text style={styles.cancelHint}>{policy.hint}</Text> : null}
+            <Pressable
+              style={[styles.cancelBtn, !policy.enabled && styles.cancelBtnDisabled]}
+              onPress={() => id && policy.enabled && cancel.mutate(id)}
+              disabled={cancel.isPending || !policy.enabled}
+              accessibilityState={{ disabled: cancel.isPending || !policy.enabled }}
+            >
+              <X size={16} color={policy.enabled ? Colors.error : Colors.outline} strokeWidth={2} />
+              <Text style={[styles.cancelText, !policy.enabled && styles.cancelTextDisabled]}>{cancel.isPending ? 'Cancelling…' : policy.label}</Text>
+            </Pressable>
+          </View>
         ) : (
           <PrimaryButton label={rate.isSuccess ? 'Thanks for rating!' : 'My tickets'} onPress={() => router.replace('/mobility/bus/tickets')} />
         )}
@@ -153,6 +179,12 @@ const styles = StyleSheet.create({
   qrHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
   voided: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center', paddingVertical: Spacing.lg },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest },
+  note: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', marginBottom: Spacing.sm },
+  noteSuccess: { color: Colors.primary },
+  cancelBox: { gap: Spacing.xs },
+  cancelHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
+  cancelBtnDisabled: { opacity: 0.6 },
+  cancelTextDisabled: { color: Colors.outline },
   cancelBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, height: 52 },
   cancelText: { ...Typography.labelMd, color: Colors.error },
 });

@@ -7,6 +7,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 )
@@ -26,8 +27,6 @@ func testPricingCfg() *PricingConfig {
 		SurgeMultiplier:       1.0,
 	}
 }
-
-// ─── SystemFare ──────────────────────────────────────────────────────────────
 
 func TestSystemFare_Composition(t *testing.T) {
 	cfg := testPricingCfg()
@@ -56,8 +55,6 @@ func TestSystemFare_SurgeApplied(t *testing.T) {
 		t.Fatalf("surge fare %d should exceed base fare %d", surged, base)
 	}
 }
-
-// ─── offerBounds + range validation ──────────────────────────────────────────
 
 func TestOfferBounds(t *testing.T) {
 	cfg := testPricingCfg()
@@ -95,7 +92,8 @@ func TestValidateFareInRange(t *testing.T) {
 				t.Fatalf("unexpected error for offer %d: %v", tc.offer, err)
 			}
 			if tc.wantErr {
-				ce, ok := err.(*CodedError)
+				ce := &CodedError{}
+				ok := errors.As(err, &ce)
 				if !ok {
 					t.Fatalf("expected *CodedError, got %T", err)
 				}
@@ -110,8 +108,6 @@ func TestValidateFareInRange(t *testing.T) {
 	}
 }
 
-// ─── Driver-profit floor (the core differentiator) ───────────────────────────
-
 func TestEnforceDriverProfitFloor(t *testing.T) {
 	cfg := testPricingCfg() // profit floor ₦1,200; floor enforced on driver NET
 	comm := &CommissionConfig{Tier: "standard", ProviderPct: 0.80, PlatformPct: 0.20}
@@ -125,7 +121,8 @@ func TestEnforceDriverProfitFloor(t *testing.T) {
 	if err == nil {
 		t.Fatal("fare below driver-profit floor must be rejected")
 	}
-	ce, ok := err.(*CodedError)
+	ce := &CodedError{}
+	ok := errors.As(err, &ce)
 	if !ok || ce.Status != http.StatusUnprocessableEntity || ce.Code != CodeProfitFloor {
 		t.Fatalf("want 422 FARE_BELOW_FLOOR, got %+v", err)
 	}
@@ -145,8 +142,6 @@ func TestProfitFloor_LowerCommissionAllowsLowerFare(t *testing.T) {
 		t.Fatalf("low tier should allow 140000 (net 123200 >= 120000), got %v", err)
 	}
 }
-
-// ─── Trip state machine ──────────────────────────────────────────────────────
 
 func TestCanTransition_HappyPath(t *testing.T) {
 	path := []TripPhase{
@@ -196,8 +191,6 @@ func TestCanTransition_SafetyHoldFromActive(t *testing.T) {
 	}
 }
 
-// ─── Mock maps adapter ───────────────────────────────────────────────────────
-
 func TestMockMaps_RouteDeterministic(t *testing.T) {
 	m := NewMockMaps()
 	from := LatLng{Lat: 6.45, Lng: 3.39}
@@ -240,8 +233,6 @@ func TestMockMaps_GeocodeStable(t *testing.T) {
 		t.Error("empty address should error")
 	}
 }
-
-// ─── Commission split integrity ──────────────────────────────────────────────
 
 func TestCommissionSplitsSumToWhole(t *testing.T) {
 	cases := []CommissionConfig{

@@ -28,15 +28,13 @@ vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn(), createClie
 vi.mock('@/src/server/admin/auth', () => ({
   assertAdminPermission: vi.fn().mockResolvedValue({ role: 'admin', actorId: 'admin-1' }),
 }));
-vi.mock('@/src/server/services/academy/installments', () => ({
+vi.mock('@/src/server/services/academy', () => ({
   autoCreateInstallmentPlan: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('@/src/server/services/academy/enrollment', () => ({
   ensureEnrollment: vi.fn().mockResolvedValue(undefined),
 }));
 
 const sendTransactionalEmail = vi.fn().mockResolvedValue({ sent: true, provider: 'mailgun', id: 'msg-1' });
-vi.mock('@/lib/email/transactional', () => ({
+vi.mock('@/lib/email', () => ({
   sendTransactionalEmail: (...args: unknown[]) => sendTransactionalEmail(...args),
 }));
 

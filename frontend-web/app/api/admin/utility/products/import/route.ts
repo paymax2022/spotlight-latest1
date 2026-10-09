@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { handleApiError } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { adminImportUtilityProducts } from '@/src/server/utility/service';
 import { auditUtilityAdminAction, requireUtilityManager, utilityAdminUnavailableResponse } from '../../_utils';
 
@@ -8,7 +8,8 @@ export async function POST(request: Request) {
   if (unavailable) return unavailable;
   try {
     const identity = await requireUtilityManager(request);
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const products = await adminImportUtilityProducts(body.products as Record<string, unknown>[]);
     auditUtilityAdminAction(request, identity, {
       action: 'utility.product.import',

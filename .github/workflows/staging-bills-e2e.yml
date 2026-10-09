@@ -1,0 +1,219 @@
+name: Staging bills-payment e2e
+
+# Exercises the real staging bills rail end-to-end:
+#   mint user → seed wallet (balanced ledger pair) → validate meter →
+#   pay → idempotent replay → wallet-debit + transaction assertions.
+#
+# The wallet seed posts TWO balanced ledger_entries via the Supabase
+# service-role REST API (member CREDIT + provider_clearing DEBIT) — the same
+# double-entry shape a topup would produce, so global conservation (ADR-040)
+# is preserved. It exists because there is no admin credit endpoint by design
+# and Paystack test checkout cannot be driven without dashboard access.
+#
+# ── ON PRINTING ──────────────────────────────────────────────────────────────
+# Same rule as staging-inspect.yml: `railway variable list --kv` once leaked
+# ADMIN_API_KEY into a job log (run 32545670584). This workflow uses --json and
+# NEVER echoes a variable's value. Secret material (service-role key, bearer
+# token) lives only in env vars and is unset before the job ends.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fund_naira:
+        description: 'Wallet seed amount in naira (must cover the purchase)'
+        type: string
+        default: '2000'
+      airtime_naira:
+        description: 'Airtime purchase amount in naira'
+        type: string
+        default: '100'
+      phone:
+        description: 'Customer reference (phone number) for the airtime vend'
+        type: string
+        default: '08011111111'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-bills-e2e
+  cancel-in-progress: false
+
+jobs:
+  bills-e2e:
+    name: bills purchase e2e (staging)
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+      WEB_BASE: https://frontend-web-staging-ec46.up.railway.app
+      FUND_KOBO: ${{ inputs.fund_naira }}00
+      PAY_KOBO: ${{ inputs.airtime_naira }}00
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Fetch backend Supabase credentials (never printed)
+        id: creds
+        run: |
+          set -euo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be.json
+          SB_URL="$(node -e 'const v=JSON.parse(require("fs").readFileSync("be.json","utf8"));process.stdout.write(String(v.SUPABASE_URL||""))')"
+          SB_KEY="$(node -e 'const v=JSON.parse(require("fs").readFileSync("be.json","utf8"));process.stdout.write(String(v.SUPABASE_SERVICE_ROLE_KEY||""))')"
+          rm -f be.json
+          [ -n "$SB_URL" ] && [ -n "$SB_KEY" ] || { echo "SUPABASE_URL/SERVICE_ROLE_KEY missing on backend"; exit 1; }
+          echo "  supabase host: $(node -e 'try{console.log(new URL(process.env.SB_URL).host)}catch{console.log("(unparseable)")}')"
+          # Mask BEFORE exporting — GITHUB_ENV values echo in the step env dump
+          # (the ADMIN_API_KEY leak pattern from run 32545670584).
+          echo "::add-mask::$SB_KEY"
+          echo "SB_URL=$SB_URL" >> "$GITHUB_ENV"
+          echo "SB_KEY=$SB_KEY" >> "$GITHUB_ENV"
+
+      - name: Mint throwaway user + bearer token
+        id: mint
+        run: |
+          set -euo pipefail
+          EMAIL="bills-probe-${GITHUB_RUN_ID}@spotlightng.com"
+          PW="$(openssl rand -hex 16)Aa1!"
+          UID_="$(node -e '
+            const [url,key,email,pw]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1],process.argv[2]];
+            fetch(url+"/auth/v1/admin/users",{method:"POST",headers:{apikey:key,Authorization:"Bearer "+key,"Content-Type":"application/json"},
+              body:JSON.stringify({email,password:pw,email_confirm:true,user_metadata:{full_name:"Bills Probe"}})})
+              .then(r=>r.json()).then(j=>process.stdout.write(j.id||"")).catch(()=>process.stdout.write(""));
+          ' "$EMAIL" "$PW")"
+          [ -n "$UID_" ] || { echo "  user creation failed"; exit 1; }
+          echo "  minted probe user (id ${UID_:0:8}…)"
+          TOKEN="$(node -e '
+            const [url,key,email,pw]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1],process.argv[2]];
+            fetch(url+"/auth/v1/token?grant_type=password",{method:"POST",headers:{apikey:key,"Content-Type":"application/json"},
+              body:JSON.stringify({email,password:pw})}).then(r=>r.json()).then(j=>process.stdout.write(j.access_token||"")).catch(()=>process.stdout.write(""));
+          ' "$EMAIL" "$PW")"
+          [ -n "$TOKEN" ] || { echo "  password grant returned no access_token"; exit 1; }
+          echo "::add-mask::$TOKEN"
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "UID_=$UID_" >> "$GITHUB_ENV"
+
+      - name: Grant the probe user KYC tier 1 (wallet gate is fail-closed on tier 0)
+        run: |
+          set -euo pipefail
+          # user_profiles is auto-created by the handle_new_user trigger; upsert
+          # in case it has not landed yet.
+          code="$(curl -s -o /tmp/prof.json -w "%{http_code}" --max-time 30 -X POST \
+            -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates,return=minimal" \
+            "$SB_URL/rest/v1/user_profiles" \
+            -d "{\"id\":\"$UID_\",\"email\":\"bills-probe-${GITHUB_RUN_ID}@spotlightng.com\",\"kyc_tier\":1,\"kyc_status\":\"verified\",\"kyc_verified_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}")"
+          [ "$code" = "201" ] || [ "$code" = "200" ] || { echo "  profile upsert failed (HTTP $code):"; head -c 300 /tmp/prof.json; exit 1; }
+          echo "  probe user promoted to kyc_tier=1"
+
+      - name: Ensure wallet account + seed balanced funding pair
+        id: fund
+        run: |
+          set -euo pipefail
+          # Wallet account is created lazily — hitting balance first lets the Go
+          # path create it; fall back to a direct insert if it doesn't.
+          curl -s -o /dev/null -H "Authorization: Bearer $TOKEN" --max-time 45 \
+            "$WEB_BASE/api/finance/wallet/balance" || true
+          # The Go plane's member wallet account type is `user_wallet` — NOT
+          # `wallet` (that is the Next.js topup plane; see ledger/repository.go:485).
+          WALLET_ID="$(curl -s --max-time 30 \
+            -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+            "$SB_URL/rest/v1/ledger_accounts?user_id=eq.$UID_&type=eq.user_wallet&select=id" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d);process.stdout.write(String((r[0]||{}).id||""))}catch{process.stdout.write("")}})')"
+          if [ -z "$WALLET_ID" ]; then
+            WALLET_ID="$(curl -s --max-time 30 -X POST \
+              -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+              -H "Content-Type: application/json" -H "Prefer: return=representation" \
+              "$SB_URL/rest/v1/ledger_accounts" \
+              -d "{\"user_id\":\"$UID_\",\"type\":\"user_wallet\",\"currency\":\"NGN\"}" \
+              | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d);process.stdout.write(String((r[0]||{}).id||""))}catch{process.stdout.write("")}})')"
+          fi
+          [ -n "$WALLET_ID" ] || { echo "  could not resolve/create wallet account"; exit 1; }
+          echo "  wallet account resolved (${WALLET_ID:0:8}…)"
+          CLEARING_ID="$(curl -s --max-time 30 \
+            -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+            "$SB_URL/rest/v1/ledger_accounts?type=eq.provider_clearing&user_id=is.null&select=id" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d);process.stdout.write(String((r[0]||{}).id||""))}catch{process.stdout.write("")}})')"
+          [ -n "$CLEARING_ID" ] || { echo "  provider_clearing standing account not found"; exit 1; }
+          REF="staging-bills-probe:${GITHUB_RUN_ID}"
+          code="$(curl -s -o /tmp/seed.json -w "%{http_code}" --max-time 30 -X POST \
+            -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+            -H "Content-Type: application/json" -H "Prefer: return=minimal" \
+            "$SB_URL/rest/v1/ledger_entries" \
+            -d "[{\"account_id\":\"$WALLET_ID\",\"type\":\"CREDIT\",\"amount_kobo\":$FUND_KOBO,\"reference\":\"$REF\",\"idempotency_key\":\"$REF:credit\",\"description\":\"staging bills-probe wallet seed\"},{\"account_id\":\"$CLEARING_ID\",\"type\":\"DEBIT\",\"amount_kobo\":$FUND_KOBO,\"reference\":\"$REF\",\"idempotency_key\":\"$REF:debit\",\"description\":\"staging bills-probe funding leg\"}]")"
+          [ "$code" = "201" ] || { echo "  seed insert failed (HTTP $code):"; head -c 300 /tmp/seed.json; exit 1; }
+          echo "  seeded balanced pair: +${FUND_KOBO}k wallet / -${FUND_KOBO}k provider_clearing"
+
+      - name: Assert pre-purchase balance
+        run: |
+          set -euo pipefail
+          bal="$(curl -s --max-time 45 -H "Authorization: Bearer $TOKEN" \
+            "$WEB_BASE/api/finance/wallet/balance" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.balance_kobo??j.data?.balance_kobo??""))}catch{process.stdout.write("")}})')"
+          echo "  balance_kobo=$bal (want $FUND_KOBO)"
+          [ "$bal" = "$FUND_KOBO" ] || { echo "  BALANCE MISMATCH — seed did not land in the projection"; exit 1; }
+
+      - name: Pay — airtime purchase + idempotent replay
+        id: pay
+        run: |
+          set -uo pipefail
+          BILLER_ID="$(curl -s --max-time 45 -H "Authorization: Bearer $TOKEN" \
+            "$WEB_BASE/api/v1/utility/billers?category=airtime" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);const b=(j.billers||j.data||[])[0]||{};process.stdout.write(String(b.id||b.biller_id||""))}catch{process.stdout.write("")}})')"
+          [ -n "$BILLER_ID" ] || { echo "  no airtime biller in catalog"; exit 1; }
+          PRODUCT_ID="$(curl -s --max-time 45 -H "Authorization: Bearer $TOKEN" \
+            "$WEB_BASE/api/v1/utility/products?category=airtime&biller_id=$BILLER_ID" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);const p=(j.products||j.data||[])[0]||{};process.stdout.write(String(p.id||p.product_id||""))}catch{process.stdout.write("")}})')"
+          [ -n "$PRODUCT_ID" ] || { echo "  no airtime product for biller"; exit 1; }
+          echo "  biller=${BILLER_ID:0:8}… product=${PRODUCT_ID:0:8}… amount=${PAY_KOBO}k"
+          IDEM="bills-probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+          BODY="{\"category\":\"airtime\",\"biller_id\":\"$BILLER_ID\",\"product_id\":\"$PRODUCT_ID\",\"customer_reference\":\"${{ inputs.phone }}\",\"amount_kobo\":$PAY_KOBO}"
+          code1="$(curl -s -o /tmp/pay1.json -w "%{http_code}" --max-time 60 -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -H "Idempotency-Key: $IDEM" "$WEB_BASE/api/v1/utility/pay" -d "$BODY")"
+          echo "  pay #1 -> HTTP $code1  $(head -c 260 /tmp/pay1.json | tr '\n' ' ')"
+          code2="$(curl -s -o /tmp/pay2.json -w "%{http_code}" --max-time 60 -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -H "Idempotency-Key: $IDEM" "$WEB_BASE/api/v1/utility/pay" -d "$BODY")"
+          echo "  pay #2 (replay) -> HTTP $code2  $(head -c 260 /tmp/pay2.json | tr '\n' ' ')"
+          [ "$code1" = "201" ] || { echo "  PURCHASE FAILED — first leg must be 201"; exit 1; }
+          [ "$code2" = "200" ] || { echo "  REPLAY FAILED — second leg must be 200 already_processed"; exit 1; }
+          node -e '
+            const a=JSON.parse(require("fs").readFileSync("/tmp/pay1.json","utf8"));
+            const b=JSON.parse(require("fs").readFileSync("/tmp/pay2.json","utf8"));
+            if(a.transaction?.id!==b.transaction?.id){console.error("  replay returned a DIFFERENT transaction");process.exit(1)}
+            if(!b.already_processed){console.error("  replay did not report already_processed");process.exit(1)}
+            console.log("  replay converged on transaction", a.transaction.id, "status="+a.transaction.status);
+          '
+
+      - name: Assert post-purchase balance + transaction row
+        run: |
+          set -euo pipefail
+          want=$((FUND_KOBO - PAY_KOBO))
+          bal="$(curl -s --max-time 45 -H "Authorization: Bearer $TOKEN" \
+            "$WEB_BASE/api/finance/wallet/balance" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);process.stdout.write(String(j.balance_kobo??j.data?.balance_kobo??""))}catch{process.stdout.write("")}})')"
+          echo "  balance_kobo=$bal (want $want = fund - purchase)"
+          [ "$bal" = "$want" ] || { echo "  BALANCE MISMATCH after purchase"; exit 1; }
+          curl -s --max-time 45 -H "Authorization: Bearer $TOKEN" \
+            "$WEB_BASE/api/v1/utility/transactions?limit=1" | head -c 400
+          echo ""
+
+      - name: Cleanup — delete throwaway user
+        if: always()
+        run: |
+          set -uo pipefail
+          [ -n "${UID_:-}" ] || exit 0
+          node -e '
+            const [url,key,id]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
+            fetch(url+"/auth/v1/admin/users/"+id,{method:"DELETE",headers:{apikey:key,Authorization:"Bearer "+key}})
+              .then(r=>console.log("  deleted probe user: HTTP "+r.status)).catch(e=>console.log("  delete failed: "+e.message));
+          ' "$UID_"
+          unset TOKEN SB_KEY

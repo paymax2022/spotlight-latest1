@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Settings hub ────────────────────────────────────
 // RBAC roster (useAdmins → AdminUser rows with a RoleBadge, read-only), quick
 // links to other admin sections, the current role (switched from the dashboard,
 // not here), and a system-info card with env/version placeholders.
@@ -7,10 +6,10 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { AdminHeader, ListCard, DataRow, RoleBadge, StatusPill } from '@/features/admin/components';
 import { useAdminRole } from '@/features/admin/context/AdminRole';
@@ -25,7 +24,7 @@ const LINKS: { label: string; sublabel: string; route: string }[] = [
   { label: 'Feature Flags', sublabel: 'Toggle features', route: '/admin/flags' },
 ];
 
-const ENV = (process.env.EXPO_PUBLIC_ENV ?? 'development') as string;
+const ENV = (process.env.EXPO_PUBLIC_APP_ENV ?? 'development') as string;
 const VERSION = (process.env.EXPO_PUBLIC_APP_VERSION ?? '1.0.0') as string;
 
 export default function AdminSettingsScreen() {

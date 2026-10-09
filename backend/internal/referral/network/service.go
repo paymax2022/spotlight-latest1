@@ -2,7 +2,9 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	referralevents "spotlight/backend/internal/referral/events"
 	referralledger "spotlight/backend/internal/referral/ledger"
@@ -20,13 +22,11 @@ func NewService(repo *Repository, reward *referralledger.Service, events *referr
 	return &Service{repo: repo, reward: reward, events: events}
 }
 
-// --- ambassador ---
-
 // Apply records an ambassador application. The disclosure MUST be accepted and
 // stored (compliance: paid-ambassador disclosure).
 func (s *Service) Apply(ctx context.Context, userID string, in ApplyInput) (*Ambassador, error) {
 	if !in.DisclosureAccepted || in.DisclosureText == "" {
-		return nil, fmt.Errorf("network: ambassador disclosure must be accepted and stored")
+		return nil, errors.New("network: ambassador disclosure must be accepted and stored")
 	}
 	return s.repo.Apply(ctx, userID, in.Tier, in.DisclosureText)
 }
@@ -51,8 +51,6 @@ func (s *Service) SetStatus(ctx context.Context, ambID, status, approvedBy strin
 	return s.repo.SetAmbassadorStatus(ctx, ambID, status, approvedBy)
 }
 
-// --- team / dashboards ---
-
 // MyNetworks returns networks led by the caller (team dashboard).
 func (s *Service) MyNetworks(ctx context.Context, leadUserID string) ([]Network, error) {
 	return s.repo.NetworksByLead(ctx, leadUserID)
@@ -65,7 +63,7 @@ func (s *Service) NetworkMembers(ctx context.Context, networkID, callerUserID st
 		return nil, err
 	}
 	if !isAdmin && n.LeadUserID != callerUserID {
-		return nil, fmt.Errorf("network: forbidden")
+		return nil, errors.New("network: forbidden")
 	}
 	return s.repo.ListMembers(ctx, networkID)
 }
@@ -75,18 +73,16 @@ func (s *Service) MyOverrides(ctx context.Context, beneficiaryID string) ([]Over
 	return s.repo.OverridesByBeneficiary(ctx, beneficiaryID, 200)
 }
 
-// --- policies ---
-
 func (s *Service) ListPolicies(ctx context.Context) ([]OverridePolicy, error) {
 	return s.repo.ListPolicies(ctx)
 }
 
 func (s *Service) SetPolicy(ctx context.Context, in PolicyInput) (*OverridePolicy, error) {
 	if in.Tier == "" {
-		return nil, fmt.Errorf("network: policy tier required")
+		return nil, errors.New("network: policy tier required")
 	}
 	if in.OverrideBps < 0 || in.PerMemberCapKobo < 0 || in.MonthlyCapKobo < 0 {
-		return nil, fmt.Errorf("network: policy values must be non-negative")
+		return nil, errors.New("network: policy values must be non-negative")
 	}
 	return s.repo.UpsertPolicy(ctx, in)
 }
@@ -94,7 +90,6 @@ func (s *Service) SetPolicy(ctx context.Context, in PolicyInput) (*OverridePolic
 // AccrueOverride is the heart of the override engine. For one network member's
 // VERIFIED activity it computes a capped override for the network lead and accrues
 // it through the RB0 reward ledger (idempotent), enforcing every §7 invariant:
-//
 //  1. ACTIVITY-BASED: the base is the member's verified activity/revenue
 //     (referral_engine_events qualifying-action/transaction value), NOT recruitment.
 //     A member who only signed up (no value-bearing events) yields a zero base and
@@ -108,14 +103,14 @@ func (s *Service) SetPolicy(ctx context.Context, in PolicyInput) (*OverridePolic
 // zero activity).
 func (s *Service) AccrueOverride(ctx context.Context, in AccrueOverrideInput) (*Override, error) {
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("network: idempotency key required for override accrual")
+		return nil, errors.New("network: idempotency key required for override accrual")
 	}
 	n, err := s.repo.GetNetwork(ctx, in.NetworkID)
 	if err != nil {
 		return nil, err
 	}
 	if n.Status != "active" {
-		return nil, fmt.Errorf("network: network not active")
+		return nil, errors.New("network: network not active")
 	}
 	leadID := n.LeadUserID
 
@@ -125,7 +120,7 @@ func (s *Service) AccrueOverride(ctx context.Context, in AccrueOverrideInput) (*
 		return nil, err
 	}
 	if mem == nil || mem.Status != "active" {
-		return nil, fmt.Errorf("network: source user is not an active member")
+		return nil, errors.New("network: source user is not an active member")
 	}
 
 	// (2) HOUSE-EXCLUDED: house-attributed signups never form an override base.
@@ -264,4 +259,97 @@ func (s *Service) recordExcluded(ctx context.Context, leadID, sourceUserID, reas
 // ListNetworks returns all agent networks with member counts (admin directory).
 func (s *Service) ListNetworks(ctx context.Context, status string) ([]NetworkSummary, error) {
 	return s.repo.ListNetworks(ctx, status)
+}
+
+// Ambassador statuses.
+const (
+	AmbApplied   = "applied"
+	AmbApproved  = "approved"
+	AmbSuspended = "suspended"
+	AmbRejected  = "rejected"
+)
+
+// Ambassador is a member's ambassador profile + tier + disclosure record.
+type Ambassador struct {
+	ID                   string     `json:"id"`
+	UserID               string     `json:"user_id"`
+	Tier                 string     `json:"tier"`
+	Status               string     `json:"status"`
+	DisclosureText       string     `json:"disclosure_text,omitempty"`
+	DisclosureAcceptedAt *time.Time `json:"disclosure_accepted_at,omitempty"`
+	AppliedAt            time.Time  `json:"applied_at"`
+	ApprovedBy           string     `json:"approved_by,omitempty"`
+	ApprovedAt           *time.Time `json:"approved_at,omitempty"`
+}
+
+// Network is an agent/team/ambassador network led by one user.
+type Network struct {
+	ID          string    `json:"id"`
+	LeadUserID  string    `json:"lead_user_id"`
+	Name        string    `json:"name"`
+	NetworkType string    `json:"network_type"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Member is a member of a network. IsHouseAttributed mirrors the member's
+// referral_attributions.is_house and drives the override-base exclusion.
+type Member struct {
+	ID                string    `json:"id"`
+	NetworkID         string    `json:"network_id"`
+	MemberUserID      string    `json:"member_user_id"`
+	IsHouseAttributed bool      `json:"is_house_attributed"`
+	Status            string    `json:"status"`
+	JoinedAt          time.Time `json:"joined_at"`
+}
+
+// Override is a recorded activity-based override accrual.
+type Override struct {
+	ID               string    `json:"id"`
+	BeneficiaryID    string    `json:"beneficiary_id"`
+	NetworkID        string    `json:"network_id,omitempty"`
+	SourceUserID     string    `json:"source_user_id,omitempty"`
+	CampaignID       string    `json:"campaign_id,omitempty"`
+	ActivityBaseKobo int64     `json:"activity_base_kobo"`
+	OverrideBps      int       `json:"override_bps"`
+	AmountKobo       int64     `json:"amount_kobo"`
+	CapAppliedKobo   int64     `json:"cap_applied_kobo"`
+	RewardLedgerID   string    `json:"reward_ledger_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// OverridePolicy is the per-tier override rate + caps.
+type OverridePolicy struct {
+	ID               string `json:"id"`
+	Tier             string `json:"tier"`
+	OverrideBps      int    `json:"override_bps"`
+	PerMemberCapKobo int64  `json:"per_member_cap_kobo"`
+	MonthlyCapKobo   int64  `json:"monthly_cap_kobo"`
+	IsActive         bool   `json:"is_active"`
+}
+
+// ApplyInput is the ambassador application payload (disclosure mandatory).
+type ApplyInput struct {
+	Tier               string `json:"tier"`
+	DisclosureText     string `json:"disclosure_text"`
+	DisclosureAccepted bool   `json:"disclosure_accepted"`
+}
+
+// PolicyInput sets a per-tier override policy (admin).
+type PolicyInput struct {
+	Tier             string `json:"tier"`
+	OverrideBps      int    `json:"override_bps"`
+	PerMemberCapKobo int64  `json:"per_member_cap_kobo"`
+	MonthlyCapKobo   int64  `json:"monthly_cap_kobo"`
+	IsActive         bool   `json:"is_active"`
+}
+
+// AccrueOverrideInput requests an activity-based override accrual for a network
+// lead, driven by ONE member's verified activity. The service excludes the member
+// if they are house-attributed, applies the tier rate, and enforces the cap.
+type AccrueOverrideInput struct {
+	NetworkID      string // network the source member belongs to
+	SourceUserID   string // member whose VERIFIED activity drives this override
+	CampaignID     string // optional
+	IdempotencyKey string // required; idempotent accrual
 }

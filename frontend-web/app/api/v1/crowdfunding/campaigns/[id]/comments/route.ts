@@ -4,8 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Campaign comments and Q&A → Go /api/finance/crowdfunding/campaigns/:id/comments.
-//
-// The mobile client has called these paths since the screen was written; nothing
 // served them, so the comments page 404'd on load. This is the missing hop.
 
 // GET — no user is required AT THIS HOP. Go's finance group demands a bearer

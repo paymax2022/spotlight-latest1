@@ -3,7 +3,6 @@
 // the mobile client's multi-position contract by synthesising ONE position per
 // election. Returns the raw shapes the mobile app expects (see
 // contracts/visitor.openapi.yaml + src/features/election/types in the app).
-//
 // NOTE (schema limitation, documented in docs/visitor/09-ENDPOINT-INVENTORY.md):
 // the DB is single-position, so every election exposes a single synthesized
 // position `${electionId}:main`. To support true multi-position ballots, add an

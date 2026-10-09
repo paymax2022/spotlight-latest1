@@ -1,15 +1,13 @@
-// ── Paymax · Admin Console — Risk limits ─────────────────────────────────────
 // Exposure controls. Each limit shows label/scope/value. With `risk.config` the
-// value is editable inline (major units → minor) behind a required reason; the
 // change may land in a maker-checker pending state (surfaced from the response).
 // Read-only otherwise.
 
 import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';

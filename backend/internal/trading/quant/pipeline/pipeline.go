@@ -20,8 +20,8 @@ import (
 
 // Inputs is one evaluation's full context.
 type Inputs struct {
-	Asset  string
-	Prices []float64
+	Asset   string
+	Prices  []float64
 	Returns []float64
 
 	// Regime classification inputs.
@@ -30,16 +30,15 @@ type Inputs struct {
 	RegimeConfig      regime.RegimeConfig
 
 	// Risk state + config.
-	State        risk.PortfolioState
-	Limits       risk.Limits
-	Ladder       risk.DrawdownLadderConfig
-	Circuit      risk.CircuitInputs
+	State         risk.PortfolioState
+	Limits        risk.Limits
+	Ladder        risk.DrawdownLadderConfig
+	Circuit       risk.CircuitInputs
 	CircuitConfig risk.CircuitConfig
-	Clusters     [][]string
-	WithinWindow bool
-	TargetVolBps risk.Bps // vol-target used to produce the raw pre-cap size
+	Clusters      [][]string
+	WithinWindow  bool
+	TargetVolBps  risk.Bps // vol-target used to produce the raw pre-cap size
 
-	// Committee config.
 	Committee committee.Config
 
 	// Strategy catalog (defaults to signals.DefaultCatalog when nil).
@@ -67,11 +66,11 @@ type CandidateEval struct {
 
 // Result is the pipeline outcome plus the complete reasoning trace (§15).
 type Result struct {
-	Regime    regime.RegimeState
-	Evals     []CandidateEval
-	Final     *Order // the chosen approved candidate, or nil for NO TRADE
-	Approved  bool
-	Reason    string
+	Regime   regime.RegimeState
+	Evals    []CandidateEval
+	Final    *Order // the chosen approved candidate, or nil for NO TRADE
+	Approved bool
+	Reason   string
 }
 
 // Evaluate runs the full pipeline and returns the decision + trace.

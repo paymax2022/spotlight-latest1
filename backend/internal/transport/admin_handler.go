@@ -4,7 +4,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // AdminHandler serves the admin transport endpoints. Every mutation is audited
 // in the underlying AdminService.
@@ -44,10 +49,10 @@ func (h *AdminHandler) DriverDetail(c *gin.Context) {
 
 // SetVerification is the guarded driver-verification transition.
 func (h *AdminHandler) SetVerification(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req VerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetVerification(c.Request.Context(), adminID, c.Param("id"), req.Status, req.Reason); err != nil {
@@ -69,10 +74,10 @@ func (h *AdminHandler) ListVehicles(c *gin.Context) {
 
 // SetVehicleStatus updates a vehicle compliance record.
 func (h *AdminHandler) SetVehicleStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req VehicleStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetVehicleStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -104,10 +109,10 @@ func (h *AdminHandler) DispatchLive(c *gin.Context) {
 
 // ManualAssign assigns a driver to a trip.
 func (h *AdminHandler) ManualAssign(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req AssignRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ManualAssign(c.Request.Context(), adminID, c.Param("trip_id"), req.DriverID, ""); err != nil {
@@ -129,10 +134,10 @@ func (h *AdminHandler) GetPricing(c *gin.Context) {
 
 // PatchPricing updates pricing config (audited).
 func (h *AdminHandler) PatchPricing(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req PricingPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cfg, err := h.svc.PatchPricing(c.Request.Context(), adminID, req)
@@ -155,10 +160,10 @@ func (h *AdminHandler) ListCommission(c *gin.Context) {
 
 // PatchCommission updates a commission tier (audited).
 func (h *AdminHandler) PatchCommission(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CommissionPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cfg, err := h.svc.PatchCommission(c.Request.Context(), adminID, c.Param("tier"), req)
@@ -181,10 +186,10 @@ func (h *AdminHandler) ListIncidents(c *gin.Context) {
 
 // PatchIncident updates a safety case (audited).
 func (h *AdminHandler) PatchIncident(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req SafetyIncidentPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchIncident(c.Request.Context(), adminID, c.Param("id"), req); err != nil {

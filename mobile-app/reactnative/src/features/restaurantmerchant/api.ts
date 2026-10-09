@@ -1,11 +1,7 @@
-// ── Restaurant merchant — API wrapper ────────────────────────────────────────
 // Owner-facing store & menu management against the Go backend (BASE
-// /api/finance/restaurant). Talks LIVE by default (real operational data); set
 // EXPO_PUBLIC_RESTAURANT_MERCHANT_USE_MOCK=true for an offline in-memory stub.
-//
 // Backend contract (mapped snake_case → camelCase here):
 //   GET    /restaurant/mine                          → core store[]
-//   POST   /restaurant                               → create store (is_open=false)
 //   GET    /restaurant/:id                           → { restaurant, categories:[{items}] }
 //   PATCH  /restaurant/:id                           → update profile
 //   PATCH  /restaurant/:id/availability              → open/close
@@ -92,7 +88,6 @@ function mapKYB(r: any, documents: string[] = []): RestaurantKYB {
   };
 }
 
-// ── Offline stub (only when USE_MOCK) ─────────────────────────────────────────
 let mockStore: MerchantStore = {
   id: 'r-demo', name: 'My Kitchen', description: '', address: '1 Demo Street, Lagos', isOpen: false,
   packagingFeeKobo: 20000, // the platform default, ₦200
@@ -110,7 +105,6 @@ let mockKYB: RestaurantKYB = {
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
 const delay = (ms = 220) => new Promise<void>((r) => setTimeout(r, ms));
 
-// ── Store ─────────────────────────────────────────────────────────────────────
 export async function getMyStores(): Promise<MerchantStore[]> {
   if (USE_MOCK) { await delay(); return [mockStore]; }
   return unwrap<any[]>(await api.get(`${BASE}/mine`)).map(mapStore);
@@ -182,8 +176,6 @@ export async function getPayoutReadiness(): Promise<OutletPayoutReadiness[]> {
   }));
 }
 
-// ── Staff ────────────────────────────────────────────────────────────────────
-
 export interface UserLookup {
   user_id: string;
   email?: string;
@@ -249,7 +241,6 @@ export async function setAvailability(id: string, isOpen: boolean): Promise<Merc
   return mapStore(unwrap<any>(await api.patch(`${BASE}/${enc(id)}/availability`, { is_open: isOpen })));
 }
 
-// ── Menu ──────────────────────────────────────────────────────────────────────
 export async function createCategory(id: string, name: string): Promise<MerchantMenuCategory> {
   if (USE_MOCK) {
     await delay();
@@ -315,7 +306,6 @@ export async function deleteItem(id: string, itemId: string): Promise<void> {
   await api.delete(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`);
 }
 
-// ── Earnings (read-only) ──────────────────────────────────────────────────────
 export async function getEarnings(): Promise<MerchantEarnings> {
   if (USE_MOCK) { await delay(); return { paidOutKobo: 0, pendingKobo: 0, runs: [] }; }
   const d = unwrap<any>(await api.get(`${BASE}/earnings`));
@@ -332,9 +322,7 @@ export async function getEarnings(): Promise<MerchantEarnings> {
   };
 }
 
-// ── KYB (Know-Your-Business) onboarding (owner only) ──────────────────────────
 // Opening for orders requires status='approved' (ADR-033, fail-closed — see
-// manage.tsx's availabilityKybNotice). draft/needs_more_info/rejected are editable;
 // submitted/under_review/approved are locked until a reviewer acts.
 
 export type SaveKYBInput = Pick<

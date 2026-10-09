@@ -1,10 +1,14 @@
 package creators
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes creator member + admin endpoints. The authenticated caller is the
@@ -57,17 +61,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.POST("/creators/payouts/:payoutId/paid", guard("creators.payout"), h.AdminPayoutPaid)
 }
 
-func actor(c *gin.Context) (string, bool) {
-	uid := c.GetString("user_id")
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
-		return "", false
-	}
-	return uid, true
-}
+func actor(c *gin.Context) (string, bool) { return ginutil.RequireUser(c) }
 
 func idem(c *gin.Context) (string, bool) {
-	k := c.GetHeader("Idempotency-Key")
+	k := ginutil.IdempotencyKey(c)
 	if k == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return "", false
@@ -88,12 +85,12 @@ func (h *Handler) Apply(c *gin.Context) {
 	}
 	var req applyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Apply(c.Request.Context(), uid, req.DisplayName, req.Bio, req.Handle)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "profile": p})
@@ -104,7 +101,7 @@ func (h *Handler) Discover(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	profiles, err := h.svc.Discover(c.Request.Context(), c.Query("search"), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "creators": profiles})
@@ -119,7 +116,7 @@ func (h *Handler) MyContent(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	items, err := h.svc.MyContent(c.Request.Context(), uid, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "content": items})
@@ -133,7 +130,7 @@ func (h *Handler) MySubscriptions(c *gin.Context) {
 	}
 	subs, err := h.svc.MySubscriptions(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "subscriptions": subs})
@@ -142,7 +139,7 @@ func (h *Handler) MySubscriptions(c *gin.Context) {
 func (h *Handler) Storefront(c *gin.Context) {
 	p, err := h.svc.GetProfile(c.Request.Context(), c.Param("creatorId"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "profile": p})
@@ -163,12 +160,12 @@ func (h *Handler) Tip(c *gin.Context) {
 	}
 	var req tipRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	t, err := h.svc.Tip(c.Request.Context(), uid, c.Param("creatorId"), key, req.AmountKobo)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "tip": t})
@@ -188,12 +185,12 @@ func (h *Handler) CreateContent(c *gin.Context) {
 	}
 	var req createContentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cnt, err := h.svc.CreateContent(c.Request.Context(), uid, req.Title, req.Body, req.PriceKobo, AgeRating(req.AgeRating))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "content": cnt})
@@ -211,11 +208,11 @@ func (h *Handler) Purchase(c *gin.Context) {
 	ent, err := h.svc.PurchaseContent(c.Request.Context(), uid, c.Param("contentId"), key)
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err {
-		case ErrAgeRestricted, ErrContentNotAvailable:
+		switch {
+		case errors.Is(err, ErrAgeRestricted), errors.Is(err, ErrContentNotAvailable):
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "entitlement": ent})
@@ -229,10 +226,10 @@ func (h *Handler) View(c *gin.Context) {
 	cnt, err := h.svc.ViewContent(c.Request.Context(), uid, c.Param("contentId"))
 	if err != nil {
 		status := http.StatusForbidden
-		if err == ErrContentNotAvailable {
+		if errors.Is(err, ErrContentNotAvailable) {
 			status = http.StatusNotFound
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "content": cnt})
@@ -251,12 +248,12 @@ func (h *Handler) CreateTier(c *gin.Context) {
 	}
 	var req createTierRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	t, err := h.svc.CreateTier(c.Request.Context(), uid, req.Name, req.PriceKobo, req.IntervalSecs)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "tier": t})
@@ -273,7 +270,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 	sub, err := h.svc.Subscribe(c.Request.Context(), uid, c.Param("tierId"), key)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "subscription": sub})
@@ -285,7 +282,7 @@ func (h *Handler) CancelSub(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Cancel(c.Request.Context(), c.Param("subId"), uid); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -298,7 +295,7 @@ func (h *Handler) Balance(c *gin.Context) {
 	}
 	bal, err := h.svc.Balance(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "balance_kobo": bal})
@@ -315,36 +312,34 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 	}
 	var req payoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.RequestPayout(c.Request.Context(), uid, req.AmountKobo)
 	if err != nil {
 		status := http.StatusBadRequest
-		if err == ErrPayoutKYC {
+		if errors.Is(err, ErrPayoutKYC) {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "payout": p})
 }
 
-// --- admin ---
-
 func (h *Handler) AdminApprove(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if err := h.svc.Approve(c.Request.Context(), c.Param("creatorId"), uid); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 func (h *Handler) AdminSuspend(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if err := h.svc.Suspend(c.Request.Context(), c.Param("creatorId"), uid); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -356,23 +351,23 @@ type moderateRequest struct {
 }
 
 func (h *Handler) AdminModerate(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	var req moderateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Moderate(c.Request.Context(), c.Param("contentId"), ModerationState(req.Decision), uid, req.Reason); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 func (h *Handler) AdminPayoutPaid(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if err := h.svc.MarkPayoutPaid(c.Request.Context(), c.Param("payoutId"), uid); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

@@ -1,26 +1,25 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests replacing two stubs that reported `ok` while asserting nothing.
-//
 // The stubs they replace were gated on newTestService(), whose constructor
 // t.Skip()s unconditionally — so no environment could ever run them, and the
 // bodies behind the gate were commented-out prose. A test that cannot fail is
 // worse than an absent one: it reads as coverage in every CI lane, including
 // the promotion to main that is meant to be the safety net for direct develop
 // pushes.
-//
 // Both drive the REAL exported Service against live Postgres via liveMktService
 // (remoderation_live_db_test.go), which is the harness in this package that
 // actually works — it falls back from MARKETPLACE_TEST_DATABASE_URL to
 // TEST_DATABASE_URL, so `TEST_DATABASE_URL=… go test ./tests/marketplace/...`
 // executes them.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	mkt "spotlight/backend/internal/marketplace"
@@ -46,7 +45,6 @@ func walletBalanceKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 }
 
 // seedLedgerCapableSeller seeds a seller that can actually hold money.
-//
 // seedTrustedSeller writes only mkt_trust_scores, so its id has no auth.users
 // row — and ledger_accounts.user_id references auth.users. Any test whose
 // assertion reaches the ledger therefore fails on a foreign key AFTER the
@@ -68,7 +66,6 @@ func seedLedgerCapableSeller(t *testing.T, ctx context.Context, pool *pgxpool.Po
 // TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller executes the §8 boost
 // cascade: rejecting a listing must not leave the seller paying for a boost that
 // promotes a policy-removed listing.
-//
 // This is the case the replaced stub flagged as possibly missing entirely ("if
 // moderation rejection doesn't auto-cascade to active boosts, this is a real gap
 // against §8's row"). The cascade does exist in RejectListing, but nothing
@@ -121,34 +118,63 @@ func TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller(t *testing.T) {
 	}
 }
 
-// TestLiveDB_VerifyID_IsIdempotentUpsertOnly executes the badge-permanence
-// guarantee against the database: VerifyID is an upsert that only ever SETS, so a
-// retried call after a provider timeout must not toggle an existing badge off.
-//
-// The structural sibling of this test proves it by reading service.go and noting
-// no revoke method exists. That reasoning is sound but cannot catch a regression
-// in the repository's SQL — an UPSERT written as an overwrite would satisfy the
-// structural argument and still clear the badge. This runs it.
-func TestLiveDB_VerifyID_IsIdempotentUpsertOnly(t *testing.T) {
+// TestLiveDB_VerifyID_BadgeRequiresAdminReview executes the P0 trust-badge
+// forgery fix end-to-end: a self-serve verification POST must file a PENDING
+// request (mkt_verification_requests) — the badge is granted ONLY by the admin
+// ReviewKYC decision, never synchronously. It also locks the two invariants the
+// queue depends on: one open request per kind, and badge permanence once granted.
+func TestLiveDB_VerifyID_BadgeRequiresAdminReview(t *testing.T) {
 	svc, pool := liveMktService(t)
 	ctx := context.Background()
 
-	user := seedTrustedSeller(t, ctx, pool)
-
-	if err := svc.VerifyID(ctx, user); err != nil {
-		t.Fatalf("first VerifyID: %v", err)
+	// ReviewKYC resolves platform_users via the auth.users insert trigger, so
+	// the member must be a real auth user — but NO mkt_trust_scores row, since
+	// the badge must start false.
+	user := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO auth.users (id, email) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`,
+		user, user+"@seed.test"); err != nil {
+		t.Fatalf("seed auth user: %v", err)
 	}
-	first := verifiedIDBadge(t, ctx, pool, user)
-	if !first {
-		t.Fatal("verified_id_badge is false after VerifyID — the badge was never set")
+	testsupport.CleanupUser(t, pool, user)
+	admin := seedTrustedSeller(t, ctx, pool) // any actor id; ReviewKYC only audits it
+
+	// 1. Self-serve submit files a PENDING request — badge must NOT be set.
+	if _, err := svc.SubmitIDVerification(ctx, user, mkt.VerificationIDInput{
+		IDType: "nin", DocumentURL: "marketplace/" + user + "/doc.jpg",
+	}); err != nil {
+		t.Fatalf("submit id verification: %v", err)
+	}
+	if verifiedIDBadge(t, ctx, pool, user) {
+		t.Fatal("verified_id_badge became true from a self-serve submit — the badge must wait for admin review")
 	}
 
-	// The retry a KYC provider outage produces.
-	if err := svc.VerifyID(ctx, user); err != nil {
-		t.Fatalf("second VerifyID must be idempotent, got: %v", err)
+	// 2. A second submit while one is pending is refused (one open request per kind).
+	if _, err := svc.SubmitIDVerification(ctx, user, mkt.VerificationIDInput{
+		IDType: "bvn", DocumentURL: "marketplace/" + user + "/doc2.jpg",
+	}); err == nil {
+		t.Fatal("a second pending ID request must be refused")
+	}
+
+	// 3. Admin approval grants the badge — the ONLY granting path left.
+	if _, err := svc.ReviewKYC(ctx, admin, "admin", user, mkt.KycReviewInput{
+		Decision: "approve", ReasonCode: "docs_verified",
+	}); err != nil {
+		t.Fatalf("admin approve: %v", err)
 	}
 	if !verifiedIDBadge(t, ctx, pool, user) {
-		t.Error("verified_id_badge flipped to false on the second call — VerifyID is a toggle, not an upsert")
+		t.Fatal("verified_id_badge is false after admin approval — the review path must grant it")
+	}
+
+	// 4. Permanence: a later reject decision (nothing pending now) must not
+	// clear an already-granted badge.
+	if _, err := svc.ReviewKYC(ctx, admin, "admin", user, mkt.KycReviewInput{
+		Decision: "reject", ReasonCode: "spot_check",
+	}); err != nil {
+		t.Fatalf("admin reject: %v", err)
+	}
+	if !verifiedIDBadge(t, ctx, pool, user) {
+		t.Error("verified_id_badge flipped to false — badges are permanent once granted")
 	}
 }
 
@@ -158,6 +184,9 @@ func verifiedIDBadge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 	if err := pool.QueryRow(ctx,
 		`SELECT COALESCE(verified_id_badge,false) FROM mkt_trust_scores WHERE user_id=$1::uuid`, userID,
 	).Scan(&badge); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false // no trust row yet — badge starts false
+		}
 		t.Fatalf("read trust_scores: %v", err)
 	}
 	return badge
@@ -165,14 +194,12 @@ func verifiedIDBadge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 
 // TestLiveDB_RejectListing_WorksOnALiveListing is the regression test for the
 // from-state bug this suite uncovered.
-//
 // RejectListing hardcoded pending_review as the from-state it wrote against,
 // while SetListingStatus updates `WHERE status = from`. Rejecting an ACTIVE
 // listing therefore matched zero rows and surfaced as ErrConflict, "conflicting
 // concurrent write" — a race that was not happening. The FSM lists
 // active → removed_policy as a legal edge and the guard allowed it, so the
 // failure was purely the write disagreeing with the rule it had just enforced.
-//
 // It mattered most in the worst case: a live, selling, prohibited listing could
 // not be pulled, and because the error returned before the §8 cascade, its paid
 // boost kept promoting it.

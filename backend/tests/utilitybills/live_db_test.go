@@ -1,14 +1,10 @@
 package utilitybills_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration suite for the Utility Bills money path (Phase 1).
-//
 // Skipped unless TEST_DATABASE_URL is set (the pattern from
 // backend/internal/restaurant/availability_live_db_test.go). Requires the utility
 // migrations plus 20270206000000_utility_provider_bind.sql.
-//
 // What it proves, and why each one is here:
-//
 //	1. A successful purchase debits the wallet exactly once, posts a BALANCED
 //	   ledger pair, persists the vended token, and records commission with a
 //	   non-null ledger_ref.
@@ -24,10 +20,8 @@ package utilitybills_test
 //	   double-purchasing.
 //	6. The wallet's tier daily-limit still fires (it is the ONLY limit this module
 //	   enforces on the wallet).
-//
 // The provider is the real vtpass adapter in SANDBOX mode, which simulates the
 // documented EKEDC meter outcomes locally — no network, no credentials.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -91,7 +85,6 @@ type fixture struct {
 // newFixture seeds a self-contained catalogue (provider → biller → product →
 // mapping) plus a funded member at the given KYC tier, and builds the service
 // over the real sandbox vtpass adapter.
-//
 // requiresValidation is a parameter rather than a constant because it changes
 // which sandbox meters are REACHABLE. VTpass's sandbox merchant-verify only
 // recognises the two "good" meters, so on a biller that requires validation the
@@ -101,7 +94,6 @@ type fixture struct {
 // the provider-failure and provider-pending paths needs a biller that does not
 // require validation — which is exactly how the airtime/data billers are seeded
 // in production.
-//
 // Every seeded row is uniquely suffixed so concurrent runs on the shared local
 // database cannot collide on the UNIQUE(code) constraints.
 func newFixture(t *testing.T, tier int, fundKobo int64, requiresValidation bool) *fixture {
@@ -169,7 +161,6 @@ func newFixture(t *testing.T, tier int, fundKobo int64, requiresValidation bool)
 		_, _ = pool.Exec(bg, `DELETE FROM public.utility_providers WHERE id=$1`, providerID)
 	})
 
-	// --- Finance primitives (nil Redis: the DB unique constraint is the durable
 	// idempotency layer, and the tests must exercise THAT, not a cache) ---
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	tiersSvc := tiers.NewService(pool)
@@ -260,8 +251,6 @@ func (f *fixture) pay(t *testing.T, meter string, amountKobo int64, key string) 
 	}, key)
 }
 
-// ── 1 + 2: success, balanced ledger, token, commission, idempotent replay ────
-
 func TestLiveDB_UtilityPay_SuccessAndIdempotentReplay(t *testing.T) {
 	f := newFixture(t, 2 /* Tier2: ₦200k/day */, 2_000_000 /* ₦20,000 float */, true /* requires validation */)
 	ctx := context.Background()
@@ -326,7 +315,6 @@ func TestLiveDB_UtilityPay_SuccessAndIdempotentReplay(t *testing.T) {
 
 	// Commission: the earning row exists AND carries a ledger_ref. Recording it
 	// with a null ledger_ref is exactly the gap this phase closes.
-	//
 	// The recorded revenue is NOT asserted to equal gross profit. When an active
 	// commission_config row matches (the local database seeds one for every
 	// Utility_Bills service — e.g. Electricity/Eko at 100 bps + ₦100 convenience),
@@ -373,7 +361,6 @@ func TestLiveDB_UtilityPay_SuccessAndIdempotentReplay(t *testing.T) {
 		}
 	}
 
-	// ── 2. Idempotent replay ────────────────────────────────────────────────
 	entriesBefore := f.totalWalletEntries(t)
 	netBefore := f.walletNet(t)
 
@@ -395,8 +382,6 @@ func TestLiveDB_UtilityPay_SuccessAndIdempotentReplay(t *testing.T) {
 		t.Fatalf("replay moved the wallet by %d, want 0", netBefore-got)
 	}
 }
-
-// ── 3: definite provider failure → auto-reversed, NET ZERO ──────────────────
 
 func TestLiveDB_UtilityPay_ProviderFailureAutoReverses(t *testing.T) {
 	f := newFixture(t, 2, 2_000_000, false /* no validation: the failure meters must reach the purchase call */)
@@ -443,8 +428,6 @@ func TestLiveDB_UtilityPay_ProviderFailureAutoReverses(t *testing.T) {
 	}
 }
 
-// ── 4: pending/timeout → provider_pending, NOT reversed ────────────────────
-
 func TestLiveDB_UtilityPay_PendingDoesNotReverse(t *testing.T) {
 	f := newFixture(t, 2, 2_000_000, false /* no validation: the timeout meter must reach the purchase call */)
 
@@ -484,15 +467,13 @@ func TestLiveDB_UtilityPay_PendingDoesNotReverse(t *testing.T) {
 	}
 }
 
-// ── 5: an UNKNOWN outbound outcome blocks a retry ──────────────────────────
-
 func TestLiveDB_BindRegistry_UnknownOutcomeBlocksRetry(t *testing.T) {
 	pool := livePool(t)
 	ctx := context.Background()
 	reg := utilitybills.NewBindRegistry(pool)
 	key := "test-bind-" + uuid.New().String()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, key)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, key)
 	})
 
 	claim, err := reg.Claim(ctx, key, "vtpass", "eko-electric", "prepaid", "")
@@ -530,7 +511,7 @@ func TestLiveDB_BindRegistry_UnknownOutcomeBlocksRetry(t *testing.T) {
 	// retry (or a failover to the next provider) is safe.
 	otherKey := "test-bind-failed-" + uuid.New().String()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, otherKey)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, otherKey)
 	})
 	if _, err := reg.Claim(ctx, otherKey, "vtpass", "eko-electric", "prepaid", ""); err != nil {
 		t.Fatalf("claim: %v", err)
@@ -544,8 +525,6 @@ func TestLiveDB_BindRegistry_UnknownOutcomeBlocksRetry(t *testing.T) {
 		t.Fatalf("re-armed claim = %+v, want Fresh with Attempts=2", again)
 	}
 }
-
-// ── 6: the wallet tier daily limit still fires ─────────────────────────────
 
 func TestLiveDB_UtilityPay_WalletDailyLimitStillFires(t *testing.T) {
 	// Tier 1 caps daily wallet debits at ₦50,000 (5,000,000 kobo). Fund well above
@@ -572,8 +551,6 @@ func TestLiveDB_UtilityPay_WalletDailyLimitStillFires(t *testing.T) {
 	}
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────
-
 func deref(s *string) string {
 	if s == nil {
 		return "<nil>"
@@ -588,4 +565,55 @@ func containsAny(haystack string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+// Foreign-claim fail-closed: another rail (or a crafted replay) holding the
+// "<key>:debit" ledger base key for a DIFFERENT journal must not let the
+// purchase proceed — swallowing ErrDuplicate there marks wallet_debited and
+// vends with no money moved. Expect a conflict, a failed transaction, and a
+// wallet that never moved.
+func TestLiveDB_UtilityPay_ForeignDebitKeyClaimFailsClosed(t *testing.T) {
+	f := newFixture(t, 2, 2_000_000, false /* purchase must be reachable */)
+	ctx := context.Background()
+
+	key := "test-util-foreign-" + uuid.New().String()
+
+	// Pre-claim the ledger base key PayUtility will debit under, with a journal
+	// that is NOT this purchase (standing→standing, different amount+ref).
+	settleAcc, err := f.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement account: %v", err)
+	}
+	revAcc, err := f.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
+	if err := f.ledger.PostJournal(ctx, ledger.JournalEntry{
+		Reference:       "foreign-claim:" + key,
+		IdempotencyKey:  key + ":debit",
+		AmountKobo:      1,
+		DebitAccountID:  settleAcc.ID,
+		CreditAccountID: revAcc.ID,
+	}); err != nil {
+		t.Fatalf("seed foreign claim: %v", err)
+	}
+	// Keep conservation: the foreign journal is a balanced pair already.
+
+	before := f.walletNet(t)
+	_, err = f.pay(t, meterFailAnomaly, 500_000, key)
+	if !errors.Is(err, utilitybills.ErrIdempotencyKeyConflict) {
+		t.Fatalf("foreign debit-key claim must surface ErrIdempotencyKeyConflict, got %v", err)
+	}
+
+	var status string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT status FROM public.utility_transactions WHERE idempotency_key = $1`, key).Scan(&status); err != nil {
+		t.Fatalf("read txn status: %v", err)
+	}
+	if status != string(utilitybills.StatusFailed) {
+		t.Fatalf("status = %s, want failed — a foreign key claim must not advance the saga", status)
+	}
+	if got := f.walletNet(t) - before; got != 0 {
+		t.Fatalf("wallet moved %d kobo on a foreign-claimed debit key, want 0", got)
+	}
 }

@@ -11,13 +11,19 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -50,7 +56,7 @@ var forwardTransitions = map[string]map[string]bool{
 }
 
 // ErrIllegalTransition is returned when a non-forward state move is requested.
-var ErrIllegalTransition = fmt.Errorf("referral/ledger: illegal state transition")
+var ErrIllegalTransition = errors.New("referral/ledger: illegal state transition")
 
 // MinWithdrawTier is the verified KYC-tier floor required to withdraw referral
 // earnings into the wallet. Mirrors the referral payout gate (referral/finance
@@ -59,22 +65,16 @@ const MinWithdrawTier = 1
 
 // ErrKYCRequired is returned when the caller's verified KYC tier is below
 // MinWithdrawTier.
-var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withdraw")
+var ErrKYCRequired = errors.New("referral/ledger: verified KYC required to withdraw")
 
 // ErrAccountNotEligible is returned when the beneficiary's platform_users
-// account status blocks referral money movement (REF-009) — both the actual
-// payout (Transition to 'paid') and a withdrawal request.
-//
-// SCOPE NOTE: this gates Refer & Earn's OWN money-path entry points
-// (Transition, WithdrawEligible) — it does NOT touch
-// finance/ledger.Service.Credit itself, which is the shared primitive used
-// across many other modules (wallet top-up, transfers, other reward paths).
-// Changing that function's semantics would have app-wide blast radius outside
-// this module's authority. Gating both of Refer & Earn's own callers achieves
-// the same practical outcome for this module — a suspended/locked/deleted
-// account can no longer accrue a real wallet credit through EITHER path this
-// module exposes — without touching shared infrastructure.
-var ErrAccountNotEligible = fmt.Errorf("referral/ledger: account status blocks this action")
+// account status blocks referral money movement (REF-009) — both a payout
+// (Transition to 'paid') and a withdrawal request.
+// SCOPE: this gates Refer & Earn's OWN entry points, NOT the shared
+// finance/ledger.Service.Credit primitive — changing that would have app-wide
+// blast radius. Gating both callers achieves the same outcome here without
+// touching shared infrastructure.
+var ErrAccountNotEligible = errors.New("referral/ledger: account status blocks this action")
 
 // AuditSink records a durable audit event for a money mutation. Optional; wired
 // by the route registrar to the referral events sink. Must be idempotent on key.
@@ -141,7 +141,7 @@ func (s *Service) Accrue(ctx context.Context, in AccrueInput) (string, error) {
 		return "", fmt.Errorf("referral/ledger: accrue negative amount %d", in.AmountKobo)
 	}
 	if in.BeneficiaryID == "" && in.HouseAccountID == "" {
-		return "", fmt.Errorf("referral/ledger: accrue requires a beneficiary or house account")
+		return "", errors.New("referral/ledger: accrue requires a beneficiary or house account")
 	}
 	currency := in.Currency
 	if currency == "" {
@@ -162,17 +162,17 @@ func (s *Service) Accrue(ctx context.Context, in AccrueInput) (string, error) {
 		RETURNING id`
 	var id string
 	err := s.db.QueryRow(ctx, q,
-		nullable(in.BeneficiaryID),
-		nullable(in.HouseAccountID),
-		nullable(in.ReferredUserID),
-		nullable(in.CampaignID),
+		dbutil.NullStr(in.BeneficiaryID),
+		dbutil.NullStr(in.HouseAccountID),
+		dbutil.NullStr(in.ReferredUserID),
+		dbutil.NullStr(in.CampaignID),
 		kind,
 		in.AmountKobo,
 		currency,
 		in.IsHouse, // also drives excluded_from_override + excluded_from_kfactor
 		in.IdempotencyKey,
 	).Scan(&id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Duplicate accrual (same idempotency key) — fetch existing id.
 		return s.idByKey(ctx, in.IdempotencyKey)
 	}
@@ -213,21 +213,11 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 
 	// Real payout: post a balanced credit to the human beneficiary's wallet.
 	// House rows are notional and skip the wallet entirely.
-	//
-	// REF-009 (closing the accrual/payout-side half): a suspended/locked/
-	// deleted beneficiary is refused HERE too, not just at WithdrawEligible.
-	// This closes the remaining gap deliberately left open when REF-009 was
-	// first scoped to the withdrawal path alone — on reflection, gating only
-	// withdrawal while still letting the payout itself land would just move
-	// the same "money reaches a suspended account" outcome one step earlier,
-	// and would risk the exact class of bug REF-011 just fixed elsewhere in
-	// this file: a state transition succeeding while the money movement it
-	// describes silently doesn't happen (or, here, happens somewhere it
-	// shouldn't). Failing the WHOLE transition (no state change, no credit)
-	// when the gate rejects means the reward simply stays at its current
-	// state — safe to retry once the account is reinstated, matching this
-	// function's existing "state and money move together, or neither does"
-	// contract.
+	// REF-009: a suspended/locked/deleted beneficiary is refused here too, not
+	// just at WithdrawEligible — gating withdrawal alone would still let money
+	// land on a suspended account. Failing the WHOLE transition (no state
+	// change, no credit) leaves the reward safe to retry, matching this
+	// function's "state and money move together, or neither does" contract.
 	if nextState == StatePaid && !isHouse && beneficiaryID != nil && *beneficiaryID != "" && amountKobo > 0 {
 		if err := s.checkAccountEligibleForMoneyMovement(ctx, *beneficiaryID); err != nil {
 			return err
@@ -238,7 +228,7 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 		}
 		ref := "referral:payout:" + rewardID
 		if err := s.finance.Credit(ctx, *beneficiaryID, ref, idempotencyKey, acc.ID, amountKobo); err != nil {
-			if err != financeledger.ErrDuplicate {
+			if !errors.Is(err, financeledger.ErrDuplicate) {
 				return fmt.Errorf("referral/ledger: post payout: %w", err)
 			}
 		}
@@ -248,7 +238,6 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 	// drains the beneficiary's wallet and restores the standing referral
 	// reward account. A clawback of a not-yet-paid (or house) row never
 	// credited a wallet in the first place, so it stays state-only (REF-011).
-	//
 	// The idempotency key is derived from rewardID alone — NOT the caller's
 	// idempotencyKey — so a replayed clawback (with any key, or none at all
 	// beyond ClawBack's own arg) is always a safe no-op, and it can never
@@ -267,7 +256,7 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 		// restoreAccountID=acc.ID (standing account gets its balance back),
 		// releaseAccountID=wallet.ID (beneficiary's wallet is drained).
 		if err := s.finance.PostReversal(ctx, acc.ID, wallet.ID, amountKobo, refAndKey, refAndKey); err != nil {
-			if err != financeledger.ErrDuplicate {
+			if !errors.Is(err, financeledger.ErrDuplicate) {
 				return fmt.Errorf("referral/ledger: post clawback reversal: %w", err)
 			}
 		}
@@ -352,7 +341,6 @@ type WithdrawResult struct {
 // Spotlight wallet. Each eligible row is transitioned eligible→paid, which posts
 // a balanced double-entry (DR referral_reward_expense / CR user_wallet) with a
 // per-row idempotency key. The operation is:
-//
 //   - idempotent  — replayed with the same idempotencyKey it credits nothing twice
 //     (the pay primitive dedups on key and the state flip is guarded WHERE state=eligible);
 //   - serialized  — a per-user advisory lock prevents a concurrent second withdraw
@@ -366,10 +354,10 @@ type WithdrawResult struct {
 // Money is integer kobo throughout. Returns the amount moved and remaining eligible.
 func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempotencyKey string) (*WithdrawResult, error) {
 	if beneficiaryID == "" {
-		return nil, fmt.Errorf("referral/ledger: withdraw requires a beneficiary")
+		return nil, errors.New("referral/ledger: withdraw requires a beneficiary")
 	}
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("referral/ledger: withdraw requires an idempotency key")
+		return nil, errors.New("referral/ledger: withdraw requires an idempotency key")
 	}
 
 	// (4) KYC/tier gate — fail-closed.
@@ -398,7 +386,7 @@ func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempoten
 	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext($1))`, lockName+beneficiaryID); err != nil {
 		return nil, fmt.Errorf("referral/ledger: withdraw lock: %w", err)
 	}
-	defer func() {
+	defer func() { //nolint:contextcheck // deliberate: unlock must not die with the request ctx
 		// Unlock on a fresh context; the request ctx may already be done.
 		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockName+beneficiaryID)
 	}()
@@ -477,7 +465,7 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 	const q = `SELECT COALESCE(kyc_tier, 0) FROM user_profiles WHERE id = $1 AND kyc_status = 'verified'`
 	var tier int
 	err := s.db.QueryRow(ctx, q, userID).Scan(&tier)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -494,7 +482,6 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 // platform_users.status, CHECK'd to one of
 // 'active','pending','suspended','locked','deleted' (see
 // supabase/migrations/20260527100000_enterprise_auth_rbac.sql).
-//
 // Fail-open ONLY when no platform_users row exists for this id: a missing row
 // is not itself evidence of suspension (some beneficiaries may predate or sit
 // outside platform_users sync), so this narrow, additive gate does not block
@@ -507,7 +494,7 @@ func (s *Service) checkAccountEligibleForMoneyMovement(ctx context.Context, user
 		deletedAt   *time.Time
 	)
 	err := s.db.QueryRow(ctx, q, userID).Scan(&status, &lockedUntil, &deletedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -596,9 +583,86 @@ func (s *Service) idByKey(ctx context.Context, key string) (string, error) {
 	return id, nil
 }
 
-func nullable(s string) any {
-	if s == "" {
-		return nil
+// Handler exposes reward-ledger endpoints (member summary + admin views).
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// MySummary handles GET /api/finance/referral/my-rewards — the caller's reward
+// summary across states (M-HOME-03).
+func (h *Handler) MySummary(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
 	}
-	return s
+	sum, err := h.svc.GetSummary(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, sum)
+}
+
+// MyEligible handles GET /api/finance/referral/withdraw-eligible — the caller's
+// eligible (withdrawable) reward rows.
+func (h *Handler) MyEligible(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	sum, err := h.svc.GetSummary(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"beneficiary_id": userID,
+		"eligible_kobo":  sum.EligibleKobo,
+		"currency":       "NGN",
+	})
+}
+
+// MyWithdraw handles POST /api/finance/referral/withdraw — sweep the caller's
+// eligible referral rewards into their Spotlight wallet. Money mutation: requires
+// an Idempotency-Key header (fail-closed) and a verified KYC tier. The balanced
+// double-entry + audit event are posted inside the service.
+func (h *Handler) MyWithdraw(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	idem := ginutil.IdempotencyKey(c)
+	if idem == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		return
+	}
+	res, err := h.svc.WithdrawEligible(c.Request.Context(), userID, idem)
+	if err != nil {
+		if errors.Is(err, ErrKYCRequired) || errors.Is(err, ErrAccountNotEligible) {
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// AdminList handles GET /api/referral/admin/ledger — reward ledger view
+// (RBAC referral.ledger.view). Optional ?beneficiary= filter.
+func (h *Handler) AdminList(c *gin.Context) {
+	beneficiary := c.Query("beneficiary")
+	entries, err := h.svc.ListByBeneficiary(c.Request.Context(), beneficiary, 200)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"entries": entries})
 }

@@ -1,7 +1,6 @@
 package loyalty
 
 // PURE money-path invariant tests — no live DB.
-//
 // The loyalty Service is pgx-backed and delegates all points movement to
 // points.Service (service.go: AwardFor -> points.Earn, Redeem -> points.Redeem), so
 // the earn/burn ledger, the tier re-evaluation transaction and the redemption insert
@@ -9,28 +8,21 @@ package loyalty
 // what needs an integration test). Loyalty owns NO points ledger of its own, so the
 // "no negative balance / burn <= balance" invariants live in the points package, not
 // here — this file exercises what loyalty DOES own purely:
-//
 //   - rank(Tier) (service.go): the tier ordering that drives (a) monotonic
 //     no-downgrade tier re-evaluation and (b) MinTier reward gating. This is the
 //     single pure comparator both money-adjacent paths depend on.
-//
-// It also documents a real ordering bug found while reading (see the BUG note and
-// TestRank_BlackTierIsUnordered).
-//
 // Symbols under test are unexported, so this file is in-package (package loyalty).
 
 import "testing"
 
-// ---------------------------------------------------------------------------
 // rank(Tier) — the tier comparator
-// ---------------------------------------------------------------------------
 
 // TestRank_Ordering verifies the P1/P2 tiers are strictly ascending: TIER1 < TIER2
 // < TIER3. This ordering is what makes tier re-evaluation MONOTONIC (a member is
 // never auto-downgraded: tierForTx refuses any candidate whose rank < the current
 // tier) and what gates rewards (Redeem refuses when rank(member) < rank(MinTier)).
 func TestRank_Ordering(t *testing.T) {
-	if !(rank(Tier1) < rank(Tier2) && rank(Tier2) < rank(Tier3)) {
+	if rank(Tier1) >= rank(Tier2) || rank(Tier2) >= rank(Tier3) {
 		t.Errorf("tiers must be strictly ascending: TIER1=%d TIER2=%d TIER3=%d",
 			rank(Tier1), rank(Tier2), rank(Tier3))
 	}
@@ -74,16 +66,14 @@ func TestRank_MinTierGating(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// rank(TierBlack) is now the highest tier (above TIER3), fixing the latent defect
-// where BLACK fell through to 0 and a MinTier=BLACK reward gate would admit EVERY
-// member (rank(anyTier) >= 0). BLACK membership is also tracked in a separate table
+// rank(TierBlack) must be the highest tier (above TIER3): if BLACK fell through
+// to rank 0, a MinTier=BLACK reward gate would admit EVERY member
+// (rank(anyTier) >= 0). BLACK membership is also tracked in a separate table
 // (black.go); this asserts the comparator itself is correct + fail-closed.
-// ---------------------------------------------------------------------------
 
 func TestRank_BlackTierIsHighest(t *testing.T) {
 	// BLACK must outrank every real tier.
-	if !(rank(TierBlack) > rank(Tier3)) {
+	if rank(TierBlack) <= rank(Tier3) {
 		t.Errorf("BLACK must be the highest tier: rank(BLACK)=%d, rank(TIER3)=%d",
 			rank(TierBlack), rank(Tier3))
 	}
@@ -94,7 +84,7 @@ func TestRank_BlackTierIsHighest(t *testing.T) {
 		}
 	}
 	// A Black member clears a Black gate.
-	if !(rank(TierBlack) >= rank(TierBlack)) {
+	if rank(TierBlack) < rank(TierBlack) {
 		t.Error("a BLACK member must be eligible for a MinTier=BLACK gate")
 	}
 }
@@ -107,9 +97,7 @@ func TestRank_UnknownTierIsZero(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DOC — needs a live-DB integration test (no injectable seam here):
-//
 //   - AwardFor (service.go): resolves the module/trigger -> rule_key binding, then
 //     points.Earn awards points and ReevaluateTier upgrades the tier in one tx. The
 //     "earn adds points, never negative" and "burn <= balance" invariants live in the
@@ -123,4 +111,3 @@ func TestRank_UnknownTierIsZero(t *testing.T) {
 //     insufficient points — the "burn <= balance" guard), and a PENDING loyalty_
 //     redemptions insert. Assert the debit and the PENDING fulfilment are atomic and
 //     that a replay does not double-burn.
-// ---------------------------------------------------------------------------

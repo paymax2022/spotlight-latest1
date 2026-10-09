@@ -2,14 +2,22 @@ package connectmoderation
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
+	connectsafety "spotlight/backend/internal/connect/safety"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	connectsafety "spotlight/backend/internal/connect/safety"
 )
+
+const keyError = "error"
 
 // validConvStates mirror connect_conversations.safety_state CHECK.
 var validConvStates = map[string]bool{
@@ -94,7 +102,7 @@ func (s *Service) RecordDecision(ctx context.Context, adminID string, req Decisi
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `INSERT INTO connect_moderation_decisions
 		(target_type, target_id, decision, reason_codes, reviewer_id, case_id)
@@ -130,7 +138,7 @@ func (s *Service) SetConversationState(ctx context.Context, adminID, convID stri
 		return fmt.Errorf("connect: set conversation state: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: conversation not found")
+		return errors.New("connect: conversation not found")
 	}
 	return s.safety.WriteAudit(ctx, connectsafety.AuditInput{
 		ActorID:    adminID,
@@ -176,7 +184,7 @@ type txExecer interface {
 // a moderation decision and its audit entry commit atomically (never one without
 // the other). Mirrors the insert the safety service performs.
 func writeAuditTx(ctx context.Context, q txExecer, adminID, action, entityType, entityID string, newVal map[string]any) error {
-	raw, _ := json.Marshal(newVal)
+	raw := jsonx.Marshal(newVal)
 	const ins = `INSERT INTO connect_audit_log
 		(actor_id, actor_role, action, entity_type, entity_id, new_value)
 		VALUES (NULLIF($1,'')::uuid, 'admin', $2, $3, $4, $5::jsonb)`
@@ -184,4 +192,134 @@ func writeAuditTx(ctx context.Context, q txExecer, adminID, action, entityType, 
 		return fmt.Errorf("connect: write moderation audit: %w", err)
 	}
 	return nil
+}
+
+// Decision values (mirror connect_moderation_decisions.decision CHECK).
+var decisions = map[string]bool{
+	"flagged": true, "warned": true, "cleared": true,
+	"restricted": true, "escalated": true, "removed": true,
+}
+
+// ValidDecision reports whether d is an allowed moderation decision.
+func ValidDecision(d string) bool { return decisions[d] }
+
+// targetTypes mirror connect_moderation_decisions.target_type CHECK.
+var targetTypes = map[string]bool{
+	"message": true, "conversation": true, "profile": true, "media": true, "user": true,
+}
+
+// ValidTargetType reports whether t is an allowed moderation target type.
+func ValidTargetType(t string) bool { return targetTypes[t] }
+
+// FlaggedConversation is a queue row for the moderation surface.
+type FlaggedConversation struct {
+	ID          string    `json:"id"`
+	MatchID     string    `json:"match_id"`
+	SafetyState string    `json:"safety_state"`
+	FlagCount   int       `json:"flag_count"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// FlaggedMessage is a flagged message with its stored reason codes.
+type FlaggedMessage struct {
+	ID             string    `json:"id"`
+	ConversationID string    `json:"conversation_id"`
+	SenderID       string    `json:"sender_id"`
+	ReasonCodes    []string  `json:"reason_codes"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Decision mirrors a row of public.connect_moderation_decisions.
+type Decision struct {
+	ID          string    `json:"id"`
+	TargetType  string    `json:"target_type"`
+	TargetID    string    `json:"target_id"`
+	Decision    string    `json:"decision"`
+	ReasonCodes []string  `json:"reason_codes"`
+	Model       *string   `json:"model,omitempty"`
+	ReviewerID  *string   `json:"reviewer_id,omitempty"`
+	CaseID      *string   `json:"case_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// DecisionRequest is the admin body to record a moderation decision.
+type DecisionRequest struct {
+	TargetType  string   `json:"target_type" binding:"required"`
+	TargetID    string   `json:"target_id" binding:"required"`
+	Decision    string   `json:"decision" binding:"required"`
+	ReasonCodes []string `json:"reason_codes"`
+	CaseID      string   `json:"case_id"`
+}
+
+// ConvActionRequest sets a conversation's safety state (admin).
+type ConvActionRequest struct {
+	SafetyState string `json:"safety_state" binding:"required"`
+	Reason      string `json:"reason"`
+}
+
+// Handler exposes the admin moderation endpoints (RBAC enforced at route layer).
+type Handler struct{ svc *Service }
+
+// NewHandler wires the moderation handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// ListFlaggedConversations — GET /api/connect/admin/moderation/conversations
+func (h *Handler) ListFlaggedConversations(c *gin.Context) {
+	list, err := h.svc.ListFlaggedConversations(c.Request.Context(), ptr.DerefZero(ginutil.IntParam(c, "limit")))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// ListFlaggedMessages — GET /api/connect/admin/moderation/messages?conversation_id=
+func (h *Handler) ListFlaggedMessages(c *gin.Context) {
+	list, err := h.svc.ListFlaggedMessages(c.Request.Context(), c.Query("conversation_id"), ptr.DerefZero(ginutil.IntParam(c, "limit")))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// RecordDecision — POST /api/connect/admin/moderation/decisions
+func (h *Handler) RecordDecision(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	var req DecisionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	d, err := h.svc.RecordDecision(c.Request.Context(), adminID, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": d})
+}
+
+// ListDecisions — GET /api/connect/admin/moderation/decisions
+func (h *Handler) ListDecisions(c *gin.Context) {
+	list, err := h.svc.ListDecisions(c.Request.Context(), ptr.DerefZero(ginutil.IntParam(c, "limit")))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// SetConversationState — PATCH /api/connect/admin/moderation/conversations/:id
+func (h *Handler) SetConversationState(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	var req ConvActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.SetConversationState(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": c.Param("id"), "safety_state": req.SafetyState}})
 }

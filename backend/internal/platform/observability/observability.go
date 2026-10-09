@@ -1,6 +1,5 @@
 // Package observability wires error tracking (Sentry) and distributed tracing
 // (OpenTelemetry → Google Cloud Trace) for the backend.
-//
 // Both are strictly opt-in via environment, so local/dev runs are unaffected:
 //   - Sentry activates only when SENTRY_DSN is set.
 //   - OTel→Cloud Trace activates only when GOOGLE_CLOUD_PROJECT is set (Cloud Run
@@ -34,7 +33,6 @@ const serviceName = "paymax-backend"
 func Init(appEnv string) func(context.Context) {
 	var shutdowns []func(context.Context)
 
-	// ── Errors → Sentry ─────────────────────────────────────────────────────────
 	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
 		if err := sentry.Init(sentry.ClientOptions{
 			Dsn:              dsn,
@@ -50,7 +48,6 @@ func Init(appEnv string) func(context.Context) {
 		}
 	}
 
-	// ── Traces + metrics → OpenTelemetry → Cloud Trace / Cloud Monitoring ────────
 	if projectID := os.Getenv("GOOGLE_CLOUD_PROJECT"); projectID != "" {
 		res, _ := resource.Merge(resource.Default(), resource.NewSchemaless(
 			attribute.String("service.name", serviceName),

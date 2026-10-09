@@ -7,12 +7,9 @@ package fractionalre
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 )
-
-// ── Idempotent replay (Subscribe / ListFraction / BuyFraction) ────────────────
 
 // TestFetchReplay verifies the shared replay gate every keyed path uses:
 // a key that already produced a row replays it; a fresh key proceeds; a lookup
@@ -45,7 +42,7 @@ func TestFetchReplay(t *testing.T) {
 func TestListFractionRequiresIdempotencyKey(t *testing.T) {
 	s := &Service{}
 	for _, key := range []string{"", "   "} {
-		if _, err := s.ListFraction(context.Background(), "seller-1", key, ListFractionRequest{AssetID: "a", Units: 1}); err != ErrIdempotencyKey {
+		if _, err := s.ListFraction(context.Background(), "seller-1", key, ListFractionRequest{AssetID: "a", Units: 1}); !errors.Is(err, ErrIdempotencyKey) {
 			t.Errorf("key %q: expected ErrIdempotencyKey, got %v", key, err)
 		}
 	}
@@ -54,12 +51,10 @@ func TestListFractionRequiresIdempotencyKey(t *testing.T) {
 // TestBuyFractionRequiresIdempotencyKey documents the same guard on the buy path.
 func TestBuyFractionRequiresIdempotencyKey(t *testing.T) {
 	s := &Service{}
-	if _, err := s.BuyFraction(context.Background(), "buyer-1", " ", "listing-1", BuyFractionRequest{Units: 1}); err != ErrIdempotencyKey {
+	if _, err := s.BuyFraction(context.Background(), "buyer-1", " ", "listing-1", BuyFractionRequest{Units: 1}); !errors.Is(err, ErrIdempotencyKey) {
 		t.Errorf("expected ErrIdempotencyKey, got %v", err)
 	}
 }
-
-// ── Beneficiaries (share cap + input validation) ──────────────────────────────
 
 func TestValidateBeneficiaryInput(t *testing.T) {
 	cases := []struct {
@@ -116,8 +111,6 @@ func TestBeneficiaryCapCheck(t *testing.T) {
 	}
 }
 
-// ── Reconciliation math ───────────────────────────────────────────────────────
-
 func TestReconcileDelta(t *testing.T) {
 	cases := []struct {
 		name               string
@@ -139,8 +132,6 @@ func TestReconcileDelta(t *testing.T) {
 		})
 	}
 }
-
-// ── Auto-invest runner ────────────────────────────────────────────────────────
 
 // fakeAutoInvestStore is an in-memory autoInvestStore (no DB).
 type fakeAutoInvestStore struct {
@@ -353,7 +344,7 @@ func TestAutoInvestIdemKeyDeterminism(t *testing.T) {
 	if k1 != k2 {
 		t.Fatalf("key must be timezone-invariant: %q vs %q", k1, k2)
 	}
-	if want := fmt.Sprintf("autoinvest:plan-x:%s", "2026-08-01T06:00:00Z"); k1 != want {
+	if want := "autoinvest:plan-x:" + "2026-08-01T06:00:00Z"; k1 != want {
 		t.Fatalf("key format changed: got %q want %q (breaks crash-replay)", k1, want)
 	}
 	if k1 == autoInvestIdemKey("plan-y", at) || k1 == autoInvestIdemKey("plan-x", at.Add(time.Hour)) {

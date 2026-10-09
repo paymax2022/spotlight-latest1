@@ -2,6 +2,7 @@ package savings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // TargetService implements Group Target savings: a shared pot many members fund
@@ -23,25 +25,42 @@ type TargetService struct {
 	db    *pgxpool.Pool
 	led   *ledger.Service
 	audit Auditor
+	tiers walletDebitLimiter // fail-closed KYC-tier / daily-debit gate on member debits
 }
 
 func NewTargetService(db *pgxpool.Pool, led *ledger.Service, audit Auditor) *TargetService {
-	return &TargetService{db: db, led: led, audit: audit}
+	s := &TargetService{db: db, led: led, audit: audit}
+	// Tier-limit gate from the same pool — zero extra wiring at the call site
+	// (same convention as transport.NewService). A nil pool leaves the gate nil
+	// and enforceDebitLimit fails closed via ErrTierGateUnwired.
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *TargetService) WithTiers(t walletDebitLimiter) *TargetService {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
 }
 
 // Create opens a group target with the creator as the first member.
 func (s *TargetService) Create(ctx context.Context, creatorID, name string, targetKobo int64, rule WithdrawalRule, targetDate *time.Time) (*GroupTarget, error) {
 	if creatorID == "" || name == "" {
-		return nil, fmt.Errorf("savings: creator and name required")
+		return nil, errors.New("savings: creator and name required")
 	}
 	if targetKobo <= 0 {
-		return nil, fmt.Errorf("savings: target must be positive")
+		return nil, errors.New("savings: target must be positive")
 	}
 	if rule == RuleOnDate && targetDate == nil {
-		return nil, fmt.Errorf("savings: ON_DATE rule requires a target date")
+		return nil, errors.New("savings: ON_DATE rule requires a target date")
 	}
 	if rule != RuleOnDate && rule != RuleMajority {
-		return nil, fmt.Errorf("savings: unknown withdrawal rule")
+		return nil, errors.New("savings: unknown withdrawal rule")
 	}
 	t := &GroupTarget{
 		ID: uuid.New().String(), CreatorUserID: creatorID, Name: name, TargetKobo: targetKobo,
@@ -51,7 +70,7 @@ func (s *TargetService) Create(ctx context.Context, creatorID, name string, targ
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const insT = `INSERT INTO group_targets (id, creator_user_id, name, target_kobo, withdrawal_rule, target_date, state)
 	              VALUES ($1,$2,$3,$4,$5,$6,'OPEN')`
 	if _, err := tx.Exec(ctx, insT, t.ID, t.CreatorUserID, t.Name, t.TargetKobo, string(t.Rule), t.TargetDate); err != nil {
@@ -75,7 +94,7 @@ func (s *TargetService) Join(ctx context.Context, targetID, userID string) error
 		return err
 	}
 	if t.State != TargetOpen {
-		return fmt.Errorf("savings: target not open")
+		return errors.New("savings: target not open")
 	}
 	const ins = `INSERT INTO group_target_members (id, target_id, user_id) VALUES ($1,$2,$3)
 	             ON CONFLICT (target_id, user_id) DO NOTHING`
@@ -118,14 +137,14 @@ func (s *TargetService) Balance(ctx context.Context, targetID string) (int64, er
 // to the target (object-level authZ). idemKey makes it replay-safe (NL-9).
 func (s *TargetService) Contribute(ctx context.Context, targetID, userID string, amountKobo int64, idemKey string) (int64, error) {
 	if amountKobo <= 0 {
-		return 0, fmt.Errorf("savings: contribution must be positive")
+		return 0, errors.New("savings: contribution must be positive")
 	}
 	t, err := s.get(ctx, targetID)
 	if err != nil {
 		return 0, err
 	}
 	if t.State != TargetOpen && t.State != TargetReached {
-		return 0, fmt.Errorf("savings: target not accepting contributions")
+		return 0, errors.New("savings: target not accepting contributions")
 	}
 	member, err := s.isMember(ctx, targetID, userID)
 	if err != nil {
@@ -133,6 +152,11 @@ func (s *TargetService) Contribute(ctx context.Context, targetID, userID string,
 	}
 	if !member {
 		return 0, ErrForbidden
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a target contribution debits the
+	// member's wallet — the same EnforceWalletDebitLimit the transfer rail runs.
+	if err := enforceDebitLimit(s.tiers, ctx, userID, amountKobo); err != nil {
+		return 0, err
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
@@ -206,13 +230,13 @@ func (s *TargetService) Release(ctx context.Context, actorID, targetID, idemKey 
 		return err
 	}
 	if bal <= 0 {
-		return fmt.Errorf("savings: empty pot")
+		return errors.New("savings: empty pot")
 	}
 	// Flip state first (guarded), then post the escrow→creator credit.
 	const upd = `UPDATE group_targets SET state='RELEASED', updated_at=now() WHERE id=$1 AND state IN ('OPEN','REACHED')`
 	ct, err := s.db.Exec(ctx, upd, targetID)
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("savings: release transition failed")
+		return errors.New("savings: release transition failed")
 	}
 	const drain = `INSERT INTO group_target_ledger (id, target_id, user_id, direction, amount_kobo, idempotency_key)
 	               VALUES ($1,$2,$3,'DEBIT',$4,$5) ON CONFLICT (idempotency_key) DO NOTHING`
@@ -246,13 +270,16 @@ func (s *TargetService) isMember(ctx context.Context, targetID, userID string) (
 }
 
 func (s *TargetService) get(ctx context.Context, targetID string) (*GroupTarget, error) {
-	const q = `SELECT id, creator_user_id, name, target_kobo, withdrawal_rule, target_date, state
+	// created_at/updated_at ride along — the target detail read serialised
+	// zero times while the list read showed real ones.
+	const q = `SELECT id, creator_user_id, name, target_kobo, withdrawal_rule, target_date, state,
+	                  created_at, updated_at
 	           FROM group_targets WHERE id=$1`
 	var t GroupTarget
 	var rule, state string
 	if err := s.db.QueryRow(ctx, q, targetID).Scan(&t.ID, &t.CreatorUserID, &t.Name,
-		&t.TargetKobo, &rule, &t.TargetDate, &state); err != nil {
-		if err == pgx.ErrNoRows {
+		&t.TargetKobo, &rule, &t.TargetDate, &state, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -275,4 +302,4 @@ func (s *TargetService) log(actor, action, resType, resID string, oldV, newV map
 }
 
 // Sentinel errors specific to targets.
-var ErrReleaseRuleUnmet = fmt.Errorf("savings: withdrawal rule not yet satisfied")
+var ErrReleaseRuleUnmet = errors.New("savings: withdrawal rule not yet satisfied")

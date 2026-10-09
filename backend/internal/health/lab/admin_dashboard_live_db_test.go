@@ -1,15 +1,12 @@
 package healthlab_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB coverage for the Laboratory (Module 16) admin-portal gap closure:
 // GET /admin/dashboard (order-state aggregate + trailing-7-day platform
 // revenue + APPROVED-lab count, mirroring PHARMACY-001's AdminDashboard
 // exactly), and the AdminCustodyAudit sample_id filter added so the admin
 // console's per-sample custody-chain drawer can reuse the existing
 // custody-audit query instead of a second read path.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -29,7 +26,7 @@ func adminDashboardPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping lab admin-dashboard live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -123,11 +120,11 @@ func newLabAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) l
 	}
 
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, f.sampleID)
-		pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, f.sampleID)
-		pool.Exec(bg, `DELETE FROM lab_orders WHERE id IN ($1,$2,$3)`, f.scheduledID, f.releasedID, f.closedID)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.lab)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, f.sampleID)
+		_, _ = pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, f.sampleID)
+		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id IN ($1,$2,$3)`, f.scheduledID, f.releasedID, f.closedID)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.lab)
 	})
 	return f
 }
@@ -140,7 +137,7 @@ func newLabAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) l
 // zero. Mirrors PHARMACY-001's TestLiveDB_AdminDashboard_CountsAndTotalsAreExact.
 func TestLiveDB_AdminDashboard_CountsAndTotalsAreExact(t *testing.T) {
 	pool := adminDashboardPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	svc := healthlab.NewService(pool, nil, nil, nil, nil, nil, nil, nil)
 
@@ -202,7 +199,7 @@ func TestLiveDB_AdminDashboard_CountsAndTotalsAreExact(t *testing.T) {
 // Postgres uuid/text type error.
 func TestLiveDB_AdminCustodyAudit_FilterBySampleIDNarrowsToThatSample(t *testing.T) {
 	pool := adminDashboardPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newLabAdminFixture(t, ctx, pool)
 
 	rows, err := f.svc.AdminCustodyAudit(ctx, f.lab, f.sampleID)

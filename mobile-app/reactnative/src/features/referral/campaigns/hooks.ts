@@ -1,4 +1,3 @@
-// ── Referral Campaigns React Query hooks (v5) — M-CMP-01..03 ─────────────────
 
 import { useQuery } from '@tanstack/react-query';
 import * as campaignsApi from './api';

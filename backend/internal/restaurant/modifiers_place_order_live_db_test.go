@@ -1,19 +1,15 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for modifier pricing on the food-delivery money
 // path: OrderItemInput.ModifierIDs must be VALIDATED against the item's own
 // modifier groups, PRICED into the line subtotal (per-unit × quantity), carried
 // into the escrow, and SNAPSHOTTED onto order_item_modifiers so the price is
 // reproducible — with conservation intact at settlement.
-//
 // Regression guard: PlaceOrder never called resolveLineModifiers and never wrote
 // the snapshot, so every chosen modifier was free. A customer could add any
 // number of paid extras at zero cost (the restaurant eats it), required groups
 // went unenforced, and a bogus modifier id was accepted silently.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -104,7 +100,6 @@ func TestLiveDB_OrderModifiersPricedAndSnapshotted(t *testing.T) {
 		t.Errorf("line carries %d modifiers, want 3", len(line.Modifiers))
 	}
 
-	// --- The snapshot is in the DB, with the name + delta as of order time. ---
 	rows, err := pool.Query(ctx,
 		`SELECT modifier_id::text, name, price_delta_kobo FROM order_item_modifiers WHERE order_item_id=$1 ORDER BY price_delta_kobo`,
 		line.ID)
@@ -130,7 +125,6 @@ func TestLiveDB_OrderModifiersPricedAndSnapshotted(t *testing.T) {
 		t.Errorf("snapshot deltas sum to %d, want %d", snapTotal, perUnitDelta)
 	}
 
-	// --- The customer paid for them. ---
 	var debited int64
 	if err := pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries WHERE reference=$1 AND type='DEBIT'`,
@@ -148,7 +142,6 @@ func TestLiveDB_OrderModifiersPricedAndSnapshotted(t *testing.T) {
 		t.Errorf("customer paid %d, want %d", balBefore-balAfter, gross)
 	}
 
-	// --- The snapshot survives a later menu edit: the price is NOT rewritten. ---
 	if _, err := pool.Exec(ctx, `UPDATE menu_modifiers SET price_delta_kobo=999_000, name='Renamed' WHERE id=$1`, extraOpts[0]); err != nil {
 		t.Fatalf("re-price modifier: %v", err)
 	}
@@ -164,7 +157,6 @@ func TestLiveDB_OrderModifiersPricedAndSnapshotted(t *testing.T) {
 		t.Errorf("after a menu re-price the order subtotal reads %d, want %d", reread.SubtotalKobo, subtotal)
 	}
 
-	// --- Settlement: modifier money is food revenue, split 80/10/10, conservation holds.
 	deliverWithRider(t, ctx, f, order.ID)
 	wantPlatform := int64(float64(gross) * splitPlatformPct)
 	wantRider := int64(float64(gross) * splitRiderPct)

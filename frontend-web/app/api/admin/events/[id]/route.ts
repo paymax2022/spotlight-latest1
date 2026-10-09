@@ -19,7 +19,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const current = listEvents().find((e) => e.id === params.id);
     if (!current) return errorResponse('Event not found', 404);
     const event = updateEvent(params.id, body, identity.actorId);

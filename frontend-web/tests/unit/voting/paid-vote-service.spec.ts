@@ -53,10 +53,6 @@ vi.mock('@/src/server/voting/core', () => ({
 
 import { verifyVotePayment, recordVoteFraudSignals } from '@/src/server/voting/core';
 
-// ---------------------------------------------------------------------------
-// Generic chainable/thenable fake for `supabase.from(table)...`
-// ---------------------------------------------------------------------------
-
 function makeTableClient(responses: Record<string, unknown[]>) {
   const callIndex: Record<string, number> = {};
   const calls: { table: string; method: string; args: unknown[] }[] = [];
@@ -132,7 +128,6 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
     vi.clearAllMocks();
   });
 
-  // PV-001 / PV-002 --------------------------------------------------------
   it('PV-001/PV-002: successful payment credits exactly the purchased+bonus votes, once', async () => {
     const tx = pendingTx();
     const { client, calls } = makeTableClient({
@@ -171,7 +166,6 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
     expect((txUpdates[0].args[0] as any).vote_credit_status).toBe('credited');
   });
 
-  // PV-003 -------------------------------------------------------------------
   it('PV-003: paid-vote crediting never touches the free-vote daily-limit tables', async () => {
     const tx = pendingTx();
     const { client, calls } = makeTableClient({
@@ -197,7 +191,6 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
     expect(freeLimitTables).toHaveLength(0);
   });
 
-  // PV-004 ---------------------------------------------------------------
   it('PV-004: a failed payment credits no votes and marks the transaction failed, not successful', async () => {
     const tx = pendingTx();
     const { client, calls } = makeTableClient({
@@ -227,7 +220,6 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
     expect((txUpdates[0].args[0] as any).payment_status).toBe('failed');
   });
 
-  // PV-006 -----------------------------------------------------------------
   it('PV-006: an amount mismatch (minor-unit exact check) is rejected, flagged, and credits nothing', async () => {
     const tx = pendingTx({ amount_expected: '500.00' });
     const { client, calls } = makeTableClient({
@@ -280,7 +272,6 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
     expect(vi.mocked(incrementVoteTotals)).toHaveBeenCalledTimes(1);
   });
 
-  // PV-007 -------------------------------------------------------------------
   it('PV-007: a network drop during verification credits nothing and leaves the transaction retry-safe', async () => {
     const tx = pendingTx();
     const { client: dropClient, calls: dropCalls } = makeTableClient({
@@ -300,7 +291,6 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
     );
     expect(droppedUpdates).toHaveLength(0);
 
-    // Retry: transaction is still 'pending' (nothing persisted from the drop),
     // so a second call with a healthy verify succeeds and credits exactly once.
     const { client: retryClient } = makeTableClient({
       vote_transactions: [{ data: tx, error: null }],
@@ -323,9 +313,7 @@ describe('verifyAndCreditPaidVote (real logic, mocked Supabase)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // PV-012 — currency/pricing per contest
-// ---------------------------------------------------------------------------
 
 describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pricing', () => {
   beforeEach(() => {
@@ -367,6 +355,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
           error: null,
         },
       ],
+      contestants: [{ data: { id: 'contestant-A' }, error: null }],
       vote_transactions: [{ data: { id: 'tx-usd-1' }, error: null }],
     });
     vi.mocked(createAdminClient).mockReturnValue(client);
@@ -402,7 +391,6 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
   // NF-007 -------------------------------------------------------------------
   // Contest UAT Batch 3, TS-11 NF-007 (payment gateway outage degrades
   // safely). PV-007 above already proves the VERIFY side of this for a
-  // network drop mid-verification; this is the missing INITIATE-side half —
   // the paystack init call is the only thing initiate does that can reach the
   // gateway, and it runs AFTER the pending vote_transactions row is already
   // written. Nothing in initiatePaidVote credits votes or moves money (that
@@ -427,6 +415,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
           error: null,
         },
       ],
+      contestants: [{ data: { id: 'contestant-A' }, error: null }],
       vote_transactions: [{ data: { id: 'tx-outage-1' }, error: null }],
     });
     vi.mocked(createAdminClient).mockReturnValue(outageClient);
@@ -461,6 +450,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
           error: null,
         },
       ],
+      contestants: [{ data: { id: 'contestant-A' }, error: null }],
       vote_transactions: [{ data: { id: 'tx-outage-2' }, error: null }],
     });
     vi.mocked(createAdminClient).mockReturnValue(retryClient);
@@ -471,12 +461,9 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
   });
 });
 
-// ---------------------------------------------------------------------------
 // PV-010 — webhook authenticity, exercising the real protected implementation
 // (tests/unit/voting/free-vote.spec.ts already covers the HMAC algorithm
-// structurally; this covers the actual exported function that the live
 // webhook route calls).
-// ---------------------------------------------------------------------------
 
 describe('verifyPaystackWebhookSignature (real implementation) — PV-010', () => {
   const ORIGINAL_KEY = process.env.PAYSTACK_SECRET_KEY;
@@ -490,8 +477,6 @@ describe('verifyPaystackWebhookSignature (real implementation) — PV-010', () =
     process.env.PAYSTACK_SECRET_KEY = ORIGINAL_KEY;
   });
 
-  // The module is vi.mock()'d at the top of this file (for the PV-012 suite's
-  // initializePaystackPayment stub); pull the REAL implementation via
   // importActual so this suite proves the actual protected function, not the mock.
   async function realModule() {
     return vi.importActual<typeof import('@/src/server/voting/payment/paystack')>(

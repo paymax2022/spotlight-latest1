@@ -2,15 +2,28 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { ACCESS_CODE_COLUMNS, genNumericCode, mapAccessCode } from '@/src/server/visitor/visitor.service';
+import {
+  ACCESS_CODE_COLUMNS,
+  genNumericCode,
+  getResidentContext,
+  mapAccessCode,
+} from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/event — bulk-create event-guest access codes.
+// Bulk-create event-guest access codes.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
+    const ctx = await getResidentContext(supabase, user.id);
+    if (!ctx) {
+      throw new ApiError(
+        "You're not registered as a resident of any estate yet. Ask your estate manager to add you before you can invite visitors.",
+        403,
+      );
+    }
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const eventName = String(body?.eventName ?? '').trim();
     const guestCount = Math.max(1, Math.min(Number(body?.guestCount ?? 1), 500));
     const validFrom: string = body?.validFrom;
@@ -19,10 +32,12 @@ export async function POST(request: Request) {
 
     if (!eventName) throw new ApiError('eventName is required', 400);
     if (!validFrom || !validUntil) throw new ApiError('validFrom and validUntil are required', 400);
-    if (!estateId) throw new ApiError('estateId is required', 400);
+    if (estateId && estateId !== ctx.estateId) throw new ApiError('Forbidden', 403);
+
+    const targetEstateId = ctx.estateId;
 
     const inserts = Array.from({ length: guestCount }, (_, i) => ({
-      estate_id: estateId,
+      estate_id: targetEstateId,
       issued_by: user.id,
       visitor_name: `${eventName} Guest ${i + 1}`,
       code_type: 'event_guest',

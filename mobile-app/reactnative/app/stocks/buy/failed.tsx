@@ -3,10 +3,10 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CircleX, CalendarClock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 
 export default function StockBuyFailedScreen() {
@@ -18,10 +18,10 @@ export default function StockBuyFailedScreen() {
   const retry = () => {
     if (marketClosed) {
       // Market order can't fill while closed — send the user back to the entry screen to switch to a limit order.
-      router.replace({ pathname: '/stocks/buy/index', params: { symbol: p.symbol } });
+      router.replace({ pathname: '/stocks/buy', params: { symbol: p.symbol } });
       return;
     }
-    router.replace({ pathname: '/stocks/buy/index', params: { symbol: p.symbol } });
+    router.replace({ pathname: '/stocks/buy', params: { symbol: p.symbol } });
   };
 
   return (

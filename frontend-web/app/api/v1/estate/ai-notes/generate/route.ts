@@ -8,7 +8,7 @@ import { mapNote } from '../route';
 
 const COLS = 'id, estate_id, meeting_id, title, summary, action_items, source, created_by, created_at';
 
-// POST /api/v1/estate/ai-notes/generate — admin generates a summary from a
+// Admin generates a summary from a
 // meeting's recorded minutes using the deterministic extractive summariser.
 export async function POST(request: Request) {
   try {
@@ -18,7 +18,8 @@ export async function POST(request: Request) {
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can generate notes', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const meetingId = String(body?.meetingId ?? '');
     if (!meetingId) throw new ApiError('meetingId is required', 400);
 

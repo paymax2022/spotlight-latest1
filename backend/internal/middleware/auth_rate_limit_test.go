@@ -58,13 +58,14 @@ func TestKeysAreIndependent(t *testing.T) {
 	}
 }
 
-// The reason this limiter exists rather than reusing StemRateLimit: that one's
-// map never evicts, so an attacker rotating IPs grows it without bound.
+// The reason this limiter exists rather than reusing the shared stem store:
+// its key must exclude everything the caller controls, and its map must stay
+// bounded under key rotation.
 func TestExpiredBucketsAreEvicted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	l := newTestLimiter(5, time.Minute, &now)
 
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		l.Allow("ip-" + strconv.Itoa(i))
 	}
 	if l.Size() < 500 {
@@ -90,7 +91,7 @@ func TestMiddlewareReturns429WithRetryAfter(t *testing.T) {
 
 	call := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/auth/login", nil)
 		req.RemoteAddr = "203.0.113.9:1234"
 		r.ServeHTTP(w, req)
 		return w
@@ -124,7 +125,7 @@ func TestClientSuppliedHeadersCannotResetTheBudget(t *testing.T) {
 
 	send := func(role string) int {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/auth/login", nil)
 		req.RemoteAddr = "203.0.113.10:9999"
 		if role != "" {
 			req.Header.Set("x-stem-role", role)
@@ -139,14 +140,51 @@ func TestClientSuppliedHeadersCannotResetTheBudget(t *testing.T) {
 	}
 }
 
+// A key-rotation flood inside one window must not grow the map without bound:
+// the periodic sweep alone cannot help because every bucket is still fresh.
+func TestAllowIsBoundedUnderKeyRotation(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	l := newTestLimiter(1, time.Minute, &now)
+	l.maxKeys = 100
+
+	for i := range 1_000 {
+		l.Allow("ip-" + strconv.Itoa(i))
+	}
+	if got := l.Size(); got > 100 {
+		t.Fatalf("map exceeded the cap: size = %d, want <= 100", got)
+	}
+}
+
+// When every bucket is still live at the cap, new keys must still be admitted —
+// evicting a batch beats failing closed on legitimate clients during a flood.
+func TestAllowAtCapStillCountsNewKeys(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	l := newTestLimiter(1, time.Minute, &now)
+	l.maxKeys = 10
+
+	for i := range 10 {
+		l.Allow("ip-" + strconv.Itoa(i))
+	}
+	// All 10 buckets are fresh; the 11th distinct key forces eviction.
+	ok, remaining, _ := l.Allow("ip-fresh")
+	if !ok {
+		t.Fatal("a new key at cap should still get a budget")
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining = %d, want 0 after the first hit on a limit-1 bucket", remaining)
+	}
+	if got := l.Size(); got > 10 {
+		t.Fatalf("size = %d, want <= 10", got)
+	}
+}
+
 func TestConcurrentAllowIsRaceFree(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	l := newTestLimiter(100, time.Minute, &now)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 200; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); l.Allow("shared") }()
+	for range 200 {
+		wg.Go(func() { ; l.Allow("shared") })
 	}
 	wg.Wait()
 

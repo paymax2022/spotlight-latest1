@@ -1,4 +1,3 @@
-// ── Paymax Health — Veterinary API layer (Phase 3) ───────────────────────────
 // Self-contained, mock-first data layer for the Vet vertical. Reuses the shared
 // USE_MOCK flag + HEALTH_API_BASE; live endpoints live under /vet.
 // IRON RULES: kobo only · HL-2 VCN gating · HL-3 dispense-once e-Rx · HL-8
@@ -8,7 +7,7 @@
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
 import { uploadProviderCredential, addProviderCredential } from '../api';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   Pet,
   PetInput,
@@ -55,7 +54,6 @@ const now = Date.now();
 const iso = (offsetMin: number) => new Date(now + offsetMin * 60_000).toISOString();
 const isoDay = (offsetDays: number) => new Date(now + offsetDays * 86_400_000).toISOString();
 
-// ── Mock: pets ────────────────────────────────────────────────────────────────
 let MOCK_PETS: Pet[] = [
   {
     id: 'pet_bella',
@@ -87,7 +85,6 @@ let MOCK_PETS: Pet[] = [
   },
 ];
 
-// ── Mock: pet records ─────────────────────────────────────────────────────────
 const MOCK_PET_RECORDS: PetRecordEntry[] = [
   { id: 'prc_1', petId: 'pet_bella', kind: 'consult_note', title: 'Skin allergy review', summary: 'Mild atopic dermatitis; advised antihistamine course.', at: isoDay(-12), providerName: 'Dr. Adeyemi', sensitive: true },
   { id: 'prc_2', petId: 'pet_bella', kind: 'vaccination', title: 'Rabies booster', summary: 'Administered; next due in 12 months.', at: isoDay(-60), providerName: 'Dr. Adeyemi' },
@@ -97,7 +94,6 @@ const MOCK_PET_RECORDS: PetRecordEntry[] = [
   { id: 'prc_6', petId: 'pet_milo', kind: 'lab_result', title: 'Blood panel', summary: 'All values within normal range.', at: isoDay(-90), providerName: 'Dr. Okoro', sensitive: true },
 ];
 
-// ── Mock: vaccinations ──────────────────────────────────────────────────────────
 const MOCK_VACCINATIONS: VaccinationEntry[] = [
   { id: 'vac_1', petId: 'pet_bella', vaccine: 'Rabies', status: 'up_to_date', lastGivenAt: isoDay(-60), dueAt: isoDay(305) },
   { id: 'vac_2', petId: 'pet_bella', vaccine: 'DHPP (Distemper/Parvo)', status: 'due_soon', lastGivenAt: isoDay(-330), dueAt: isoDay(20) },
@@ -106,7 +102,6 @@ const MOCK_VACCINATIONS: VaccinationEntry[] = [
   { id: 'vac_5', petId: 'pet_milo', vaccine: 'Rabies', status: 'due_soon', lastGivenAt: isoDay(-340), dueAt: isoDay(15) },
 ];
 
-// ── Mock: vets (HL-2 VCN credential + geo) ──────────────────────────────────────
 const MOCK_VETS: Vet[] = [
   {
     id: 'vet_adeyemi',
@@ -173,7 +168,6 @@ const MOCK_VETS: Vet[] = [
   },
 ];
 
-// ── Mock: availability ──────────────────────────────────────────────────────────
 function buildAvailability(vetId: string): AvailabilityDay[] {
   const vet = MOCK_VETS.find((v) => v.id === vetId) ?? MOCK_VETS[0];
   const days: AvailabilityDay[] = [];
@@ -195,7 +189,6 @@ function buildAvailability(vetId: string): AvailabilityDay[] {
   return days;
 }
 
-// ── Mock: appointments (state machine walk-through) ──────────────────────────────
 let MOCK_APPOINTMENTS: Appointment[] = [
   {
     id: 'appt_001',
@@ -251,7 +244,6 @@ let MOCK_APPOINTMENTS: Appointment[] = [
   },
 ];
 
-// ── Mock: consult ────────────────────────────────────────────────────────────────
 const MOCK_CONSULTS: VetConsult[] = [
   {
     id: 'vcns_001',
@@ -270,7 +262,6 @@ const MOCK_CONSULTS: VetConsult[] = [
   },
 ];
 
-// ── Mock: consult summaries (SOAP) ──────────────────────────────────────────────
 const MOCK_SUMMARIES: ConsultSummary[] = [
   {
     id: 'sum_003',
@@ -293,7 +284,6 @@ const MOCK_SUMMARIES: ConsultSummary[] = [
   },
 ];
 
-// ── Mock: e-prescriptions (HL-3) ─────────────────────────────────────────────────
 const MOCK_PRESCRIPTIONS: EPrescription[] = [
   {
     id: 'erx_003',
@@ -342,13 +332,11 @@ const MOCK_PRESCRIPTIONS: EPrescription[] = [
   },
 ];
 
-// ── Mock: pet meds & refills ─────────────────────────────────────────────────────
 const MOCK_MEDS: PetMedication[] = [
   { id: 'med_1', petId: 'pet_bella', petName: 'Bella', drugName: 'Apoquel 16mg', dosage: '1 tablet', frequency: 'Once daily', nextRefillAt: isoDay(3), refillsRemaining: 2, prescriptionId: 'erx_bella', active: true },
   { id: 'med_2', petId: 'pet_milo', petName: 'Milo', drugName: 'Metronidazole 50mg', dosage: '1 tablet', frequency: 'Twice daily', nextRefillAt: isoDay(-1), refillsRemaining: 0, prescriptionId: 'erx_003', active: true },
 ];
 
-// ── Mock: home-visit tracking ────────────────────────────────────────────────────
 const MOCK_HOME_VISIT: HomeVisitTracking = {
   appointmentId: 'appt_002',
   vetName: 'Dr. Hassan Bello',
@@ -363,20 +351,17 @@ const MOCK_HOME_VISIT: HomeVisitTracking = {
   address: '12B Ozumba Mbadiwe Ave, Victoria Island, Lagos',
 };
 
-// ── Mock: reviews ────────────────────────────────────────────────────────────────
 const MOCK_REVIEWS: VetReview[] = [
   { id: 'rev1', author: 'Chioma E.', rating: 5, body: 'Dr. Adeyemi was patient and thorough. Bella’s skin cleared up fast.', at: isoDay(-5) },
   { id: 'rev2', author: 'Femi A.', rating: 4, body: 'Good tele-consult, helpful advice. Slight wait to start.', at: isoDay(-14) },
 ];
 
-// ── Mock: emergency vet options (HL-11) ──────────────────────────────────────────
 const MOCK_EMERGENCY: EmergencyVetOption[] = [
   { id: 'emrg_1', name: 'Lagos Animal Emergency Hospital', address: '3 Bourdillon Rd, Ikoyi', distanceLabel: '2.1 km', phone: '+234 700 911 0000', open24h: true, lat: 6.452, lng: 3.435 },
   { id: 'emrg_2', name: 'PawCare 24/7 Emergency', address: '24 Admiralty Way, Lekki', distanceLabel: '1.4 km', phone: '+234 700 922 1111', open24h: true, lat: 6.4406, lng: 3.4719 },
   { id: 'emrg_3', name: 'Vetcare Surgical Centre (After-hours)', address: '14 Allen Ave, Ikeja', distanceLabel: '6.8 km', phone: '+234 700 933 2222', open24h: false, lat: 6.6018, lng: 3.3515 },
 ];
 
-// ── Mock: provider ───────────────────────────────────────────────────────────────
 let MOCK_PROFILE: ProviderProfile = {
   status: 'approved',
   applicationId: 'vetapp_001',
@@ -391,7 +376,6 @@ let MOCK_PROFILE: ProviderProfile = {
   credential: { authority: 'VCN', licenseNo: 'VCN-2014-0912', status: 'verified' },
 };
 
-// ── Mock: Mode B (assisted) VCN verification — coarse stage only ────────────────
 // The member-facing status NEVER carries register data, matched fields, reviewer
 // identity, or notes — only the coarse stage + granted capability.
 let MOCK_VCN_STATUS: VcnStatus = {
@@ -439,16 +423,13 @@ const MOCK_PROVIDER_HOME_NAV: ProviderHomeNav = {
   phone: '+234 803 444 5555',
 };
 
-// ══ PETS ════════════════════════════════════════════════════════════════════
 const SPECIES_FROM_WIRE: Record<string, Pet['species']> = {
   DOG: 'dog', CAT: 'cat', BIRD: 'bird', RABBIT: 'rabbit', REPTILE: 'reptile',
 };
 const SEX_FROM_WIRE: Record<string, Pet['sex']> = { MALE: 'male', FEMALE: 'female' };
 
-// Maps the backend's minimal Pet row (snake_case; see Go healthvet.Pet) onto
 // the richer mobile Pet display shape. microchipId/neutered are not on this
 // row (there is no such column server-side) so they stay undefined rather
-// than being invented; avatarColor/ageLabel are computed the same way the
 // create/update paths already do below (PET_COLORS / ageLabelFromDob), not
 // fabricated per-pet data.
 function mapPet(raw: any, index: number): Pet {
@@ -558,7 +539,6 @@ export async function scheduleVaccination(vaccinationId: string, dueAt: string):
   return data;
 }
 
-// ══ VETS (HL-2 credential-gated discovery) ══════════════════════════════════
 export async function getVets(query?: VetQuery): Promise<Vet[]> {
   if (USE_MOCK) {
     await delay();
@@ -615,7 +595,6 @@ export async function submitReview(input: SubmitReviewInput): Promise<VetReview>
   return data;
 }
 
-// ══ APPOINTMENTS (HL-9 held payment) ════════════════════════════════════════
 export async function getAppointments(): Promise<Appointment[]> {
   if (USE_MOCK) {
     await delay();
@@ -694,7 +673,6 @@ export async function cancelAppointment(id: string): Promise<Appointment> {
   return data;
 }
 
-// ══ CONSULT ═════════════════════════════════════════════════════════════════
 export async function getConsult(id: string): Promise<VetConsult> {
   if (USE_MOCK) {
     await delay();
@@ -745,7 +723,6 @@ export async function completeConsult(id: string): Promise<{ ok: true; summaryId
   return data;
 }
 
-// ══ CONSULT SUMMARY ═════════════════════════════════════════════════════════
 export async function getConsultSummary(id: string): Promise<ConsultSummary> {
   if (USE_MOCK) {
     await delay();
@@ -756,7 +733,6 @@ export async function getConsultSummary(id: string): Promise<ConsultSummary> {
   return data;
 }
 
-// ══ E-PRESCRIPTION (HL-3 / HL-8) ════════════════════════════════════════════
 export async function getPrescription(id: string): Promise<EPrescription> {
   if (USE_MOCK) {
     await delay();
@@ -799,7 +775,6 @@ export async function sendRxToPharmacy(prescriptionId: string): Promise<EPrescri
   return data;
 }
 
-// ══ PET MEDS & REFILLS ══════════════════════════════════════════════════════
 export async function getMedications(petId?: string): Promise<PetMedication[]> {
   if (USE_MOCK) {
     await delay();
@@ -818,7 +793,6 @@ export async function requestRefill(medId: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-// ══ HOME VISIT TRACKING ═════════════════════════════════════════════════════
 export async function getHomeVisitTracking(appointmentId: string): Promise<HomeVisitTracking> {
   if (USE_MOCK) {
     await delay();
@@ -828,7 +802,6 @@ export async function getHomeVisitTracking(appointmentId: string): Promise<HomeV
   return data;
 }
 
-// ══ EMERGENCY (HL-11) ═══════════════════════════════════════════════════════
 export async function getEmergencyVets(): Promise<EmergencyVetOption[]> {
   if (USE_MOCK) {
     await delay();
@@ -838,13 +811,11 @@ export async function getEmergencyVets(): Promise<EmergencyVetOption[]> {
   return data;
 }
 
-// ══ PROVIDER ════════════════════════════════════════════════════════════════
 // `${VET_API}/provider/profile` and `${VET_API}/provider/onboarding` were
 // never implemented backend side — backend/internal/app/health_vet_routes.go
 // has no /provider group at all. Same bug and same fix as pharmacy/lab's
 // identical onboarding 404s: the generic provider-application backend
 // (backend/internal/health/providers/*, mounted at
-// /api/finance/health/providers/applications*) already supports domain=VET
 // (service.go validType accepts 'vet') and was simply never called. This
 // client type's own `applicationId?` field and the Mode B comment already
 // anticipated this — the wiring was just never finished. Repointed here
@@ -943,7 +914,6 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
   };
 }
 
-// ── Mode B (assisted) VCN verification (HL-2) ───────────────────────────────────
 // Member submits credentials + documents + consent; ops confirms out-of-band.
 // The member only ever receives a coarse stage — no register/match detail.
 export async function submitVcnVerification(input: SubmitVcnInput): Promise<VcnStatus> {

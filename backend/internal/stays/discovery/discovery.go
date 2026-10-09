@@ -9,8 +9,16 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyError = "error"
 
 // Handler exposes member discovery routes under /api/finance/stays.
 type Handler struct {
@@ -71,7 +79,7 @@ func (h *Handler) listDestinations(c *gin.Context, q string, limit int) ([]Desti
 func (h *Handler) Destinations(c *gin.Context) {
 	out, err := h.listDestinations(c, strings.TrimSpace(c.Query("q")), 20)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -122,7 +130,7 @@ func (h *Handler) Deals(c *gin.Context) {
 		LIMIT 20`
 	rows, err := h.db.Query(c.Request.Context(), sql)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -135,14 +143,14 @@ func (h *Handler) Deals(c *gin.Context) {
 			&p.Name, &p.City, &p.Area, &p.Star, &p.PropertyType,
 			&p.LeadPriceKobo, &p.WasPriceKobo, &p.Currency, &p.CoverURL,
 			&p.ReviewScore, &p.ReviewCount, &p.FreeCancellation); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		d.Property = p
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -152,15 +160,15 @@ func (h *Handler) Deals(c *gin.Context) {
 // of opaque property keys (most-recent first). The client decodes each key back
 // into a PropertyCard. 401 when unauthenticated.
 func (h *Handler) Saved(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	const sql = `SELECT property_key FROM public.stays_saved WHERE user_id=$1 ORDER BY created_at DESC`
 	rows, err := h.db.Query(c.Request.Context(), sql, uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -168,13 +176,13 @@ func (h *Handler) Saved(c *gin.Context) {
 	for rows.Next() {
 		var k string
 		if err := rows.Scan(&k); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		keys = append(keys, k)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": keys})
@@ -185,16 +193,16 @@ func (h *Handler) Saved(c *gin.Context) {
 // it idempotent: if the key was saved it becomes unsaved (saved=false); if it was
 // not saved it becomes saved (saved=true). 401 when unauthenticated.
 func (h *Handler) ToggleSaved(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	key := c.Param("key")
 	ctx := c.Request.Context()
 	tag, err := h.db.Exec(ctx, `DELETE FROM public.stays_saved WHERE user_id=$1 AND property_key=$2`, uid, key)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	saved := false
@@ -202,7 +210,7 @@ func (h *Handler) ToggleSaved(c *gin.Context) {
 		if _, err := h.db.Exec(ctx,
 			`INSERT INTO public.stays_saved (user_id, property_key) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 			uid, key); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		saved = true
@@ -258,9 +266,9 @@ func tierFor(inWindow int) staysTier {
 // handler, so the snapshot is computed here and labelled as such. Read-only.
 // Reads the stays_reservation table (created by stays_core).
 func (h *Handler) Loyalty(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	ctx := c.Request.Context()
@@ -306,7 +314,7 @@ type HomeFeed struct {
 func (h *Handler) Home(c *gin.Context) {
 	trending, err := h.listDestinations(c, "", 8)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": HomeFeed{
@@ -315,4 +323,128 @@ func (h *Handler) Home(c *gin.Context) {
 		TrendingDestinations: trending,
 		Saved:                []any{},
 	}})
+}
+
+// Saved guests — a member's stored fellow-traveller profiles for fast checkout
+// prefill. Non-money, per-member scoped (user_id from the auth context). Same
+// Handler / pgx pool as the rest of the discovery surface; additive.
+
+// SavedGuest is a stored traveller profile row.
+type SavedGuest struct {
+	ID        string `json:"id"`
+	FullName  string `json:"full_name"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	IsLead    bool   `json:"is_lead"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListSavedGuests handles GET /api/finance/stays/saved-guests — the caller's
+// saved guests (oldest-first). 401 when unauthenticated.
+func (h *Handler) ListSavedGuests(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	const sql = `
+		SELECT id::text, full_name, email, phone, is_lead, created_at
+		FROM public.stays_saved_guests
+		WHERE user_id=$1
+		ORDER BY created_at`
+	rows, err := h.db.Query(c.Request.Context(), sql, uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	defer rows.Close()
+	out := make([]SavedGuest, 0)
+	for rows.Next() {
+		var g SavedGuest
+		var createdAt any
+		if err := rows.Scan(&g.ID, &g.FullName, &g.Email, &g.Phone, &g.IsLead, &createdAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+			return
+		}
+		g.CreatedAt = timeString(createdAt)
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AddSavedGuest handles POST /api/finance/stays/saved-guests — creates a saved
+// guest for the caller and returns the created row. 401 when unauthenticated.
+func (h *Handler) AddSavedGuest(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	var body struct {
+		FullName string `json:"full_name"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`
+		IsLead   bool   `json:"is_lead"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if body.FullName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "full_name required"})
+		return
+	}
+	const sql = `
+		INSERT INTO public.stays_saved_guests (user_id, full_name, email, phone, is_lead)
+		VALUES ($1,$2,$3,$4,$5)
+		RETURNING id::text, full_name, email, phone, is_lead, created_at`
+	var g SavedGuest
+	var createdAt any
+	if err := h.db.QueryRow(c.Request.Context(), sql, uid, body.FullName, body.Email, body.Phone, body.IsLead).
+		Scan(&g.ID, &g.FullName, &g.Email, &g.Phone, &g.IsLead, &createdAt); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	g.CreatedAt = timeString(createdAt)
+	c.JSON(http.StatusCreated, gin.H{"data": g})
+}
+
+// RemoveSavedGuest handles DELETE /api/finance/stays/saved-guests/:id — deletes
+// one of the caller's saved guests. Idempotent. 401 when unauthenticated.
+func (h *Handler) RemoveSavedGuest(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
+		return
+	}
+	id := c.Param("id")
+	// UUID-shape gate: stays_saved_guests.id is uuid — a malformed id can never
+	// match a row, so answer not-found rather than letting Postgres's 22P02
+	// syntax error surface as a 500 (E2E wave-6 prod probe).
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: "saved guest not found"})
+		return
+	}
+	if _, err := h.db.Exec(c.Request.Context(),
+		`DELETE FROM public.stays_saved_guests WHERE user_id=$1 AND id=$2`, uid, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+}
+
+// timeString renders a scanned timestamp value as an RFC3339 string (or "").
+func timeString(v any) string {
+	switch t := v.(type) {
+	case interface{ Format(string) string }:
+		return t.Format("2006-01-02T15:04:05Z07:00")
+	case string:
+		return t
+	default:
+		return ""
+	}
 }

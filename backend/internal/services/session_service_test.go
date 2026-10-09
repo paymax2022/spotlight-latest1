@@ -7,8 +7,6 @@ import (
 	"spotlight/backend/internal/config"
 )
 
-// ── In-memory fake store ─────────────────────────────────────────────────────
-
 type fakeSessionStore struct {
 	sessions       map[string]*Session // id -> session
 	seq            int
@@ -198,8 +196,6 @@ func testCfg() config.Config {
 	}
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
-
 func TestRefreshRotationIssuesNewTokenAndInvalidatesPrior(t *testing.T) {
 	store := newFakeStore()
 	svc := NewSessionService(store, &fakeNotifier{}, &fakeAudit{}, testCfg())
@@ -258,11 +254,11 @@ func TestValidateAccessRejectsRevokedSession(t *testing.T) {
 	svc := NewSessionService(store, &fakeNotifier{}, &fakeAudit{}, testCfg())
 
 	id, _ := svc.IssueSession("u1", IssuedTokens{AccessToken: "acc", RefreshToken: "r0", ExpiresIn: 3600}, LoginContext{})
-	if _, err := svc.ValidateAccess("acc"); err != nil {
+	if _, err := svc.ValidateAccess(t.Context(), "acc"); err != nil {
 		t.Fatalf("active session should validate: %v", err)
 	}
 	_ = store.RevokeSession(id, "test")
-	if _, err := svc.ValidateAccess("acc"); err == nil {
+	if _, err := svc.ValidateAccess(t.Context(), "acc"); err == nil {
 		t.Fatalf("revoked session must fail validation (fail-closed)")
 	}
 }
@@ -282,10 +278,10 @@ func TestRevokeAllKillsSiblingSessions(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("expected 2 revoked, got %d", n)
 	}
-	if _, err := svc.ValidateAccess("a1"); err == nil {
+	if _, err := svc.ValidateAccess(t.Context(), "a1"); err == nil {
 		t.Fatalf("u1 session a1 should be revoked")
 	}
-	if _, err := svc.ValidateAccess("b1"); err != nil {
+	if _, err := svc.ValidateAccess(t.Context(), "b1"); err != nil {
 		t.Fatalf("u2 session must remain active: %v", err)
 	}
 }
@@ -327,7 +323,7 @@ func TestSuspiciousLoginForceResetPolicyRevokesSessions(t *testing.T) {
 	if got := store.forceFlags["u1"]; !got[0] {
 		t.Fatalf("expected force_password_reset flag set")
 	}
-	if _, err := svc.ValidateAccess("a1"); err == nil {
+	if _, err := svc.ValidateAccess(t.Context(), "a1"); err == nil {
 		t.Fatalf("force-reset policy must revoke active sessions")
 	}
 }

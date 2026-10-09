@@ -7,9 +7,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
 
 // Handler exposes the EdTech School onboarding + verification surface over Gin.
 //   - member: create draft school, list my schools, get, update, export (verified only).
@@ -27,10 +33,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user (RequireAuthContext sets c.Set("user_id", …)).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -38,7 +43,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -50,21 +55,21 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrInvalidTier):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_verification_tier", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_verification_tier", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIllegalTierMove):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_verification_tier_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_verification_tier_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrSchoolNotVerified):
-		c.JSON(http.StatusForbidden, gin.H{"error": "school_not_verified", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "school_not_verified", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrMissingName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -103,8 +108,6 @@ func RegisterFeesSchool(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac
 	return h
 }
 
-// ── Member handlers ─────────────────────────────────────────────────────────────
-
 func (h *Handler) Create(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -112,7 +115,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	var req CreateSchoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Create(c.Request.Context(), u, req)
@@ -152,7 +155,7 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 	var req UpdateSchoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Update(c.Request.Context(), u, c.Param("schoolId"), req)
@@ -176,8 +179,6 @@ func (h *Handler) Export(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers (RBAC academy.fees.school.verify / platform_edtech_admin) ─────
-
 func (h *Handler) Verify(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -185,7 +186,7 @@ func (h *Handler) Verify(c *gin.Context) {
 	}
 	var req VerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Verify(c.Request.Context(), u, c.Param("schoolId"), VerificationTier(req.Tier))

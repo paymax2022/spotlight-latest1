@@ -1,14 +1,10 @@
 package healthvet
 
-// Live-DB regression for the patient appointment-history read the mobile Vet
-// module calls (getAppointments()) but which had no backend route at all
-// until now:
+// Live-DB coverage for the patient appointment-history read the mobile Vet
+// module calls (getAppointments()):
 //   GET /health/vet/appointments  (patient's own appointment history, ListAppointmentsForPatient)
-//
-// Previously 404ed unconditionally — this pins that the service method behind
-// the new route actually returns real rows, correctly scoped.
-//
-// Skips unless TEST_DATABASE_URL is set.
+// Pins that the service method behind the route returns real rows, correctly
+// scoped. Skips unless TEST_DATABASE_URL is set.
 
 import (
 	"context"
@@ -28,11 +24,11 @@ func listAppointmentsLivePool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping vet list-appointments live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	t.Cleanup(pool.Close)
@@ -57,7 +53,7 @@ func seedVetProvider(t *testing.T, ctx context.Context, pool *pgxpool.Pool, owne
 		t.Fatalf("seed vet provider: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_providers WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_providers WHERE id=$1`, id)
 	})
 	return id
 }
@@ -71,7 +67,7 @@ func seedVetService(t *testing.T, ctx context.Context, pool *pgxpool.Pool, provi
 		t.Fatalf("seed vet service: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM vet_services WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM vet_services WHERE id=$1`, id)
 	})
 	return id
 }
@@ -84,7 +80,7 @@ func seedVetPet(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID s
 		t.Fatalf("seed pet: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM pets WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM pets WHERE id=$1`, id)
 	})
 	return id
 }
@@ -103,7 +99,7 @@ func seedVetAppointment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, p
 		t.Fatalf("seed appointment: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_appointments WHERE id=$1`, apptID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_appointments WHERE id=$1`, apptID)
 	})
 	// service_id mirrors the real Book() path, which always pins a valid,
 	// active vet_services row before inserting the payment leg.
@@ -118,7 +114,7 @@ func seedVetAppointment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, p
 
 func TestLiveDB_ListAppointmentsForPatient_ScopedToCaller(t *testing.T) {
 	pool := listAppointmentsLivePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	patient := uuid.New().String()
@@ -156,7 +152,7 @@ func TestLiveDB_ListAppointmentsForPatient_ScopedToCaller(t *testing.T) {
 // (see health/lab's ListOrdersForPatient regression).
 func TestLiveDB_ListAppointmentsForPatient_EmptyIsEmptyNotNil(t *testing.T) {
 	pool := listAppointmentsLivePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	got, err := svc.ListAppointmentsForPatient(ctx, uuid.New().String())

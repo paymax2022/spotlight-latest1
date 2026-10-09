@@ -1,15 +1,12 @@
 package connect_test
 
-// ---------------------------------------------------------------------------
 // CONNECT-001 (P0 blocker) — the admin "Gift transactions ledger" page
 // (frontend-admin/app/admin/connect/gifting/page.tsx, via
 // connectAdminService.ts listGifts() -> GET /api/connect/admin/gifts) 404'd
 // in production: connectgifting.Register() only ever wired the MEMBER group
 // (/gifts, /gifts/sent, /gifts/catalog); there was no admin registration.
-//
 // This live-DB test proves, against a real Postgres + the real RBAC RPCs
 // (user_has_permission), the three things that actually matter for the fix:
-//
 //   1. The admin list route (connectgifting.RegisterAdmin -> ListAdmin) reads
 //      REAL connect_gifts rows (seeded here, not mocked) and maps them into
 //      the shape the admin UI expects.
@@ -19,14 +16,11 @@ package connect_test
 //      including the deliberate limit_state short-circuit (see admin.go:
 //      every row is "within" by construction, so any other requested value
 //      must come back empty).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres"
 //	export SUPABASE_URL="http://127.0.0.1:54321"
 //	export SUPABASE_SERVICE_ROLE_KEY="<local service role key>"
 //	cd backend && go test ./tests/connect/... -run TestGiftingAdminLedger -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -77,7 +71,6 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 	t.Cleanup(pool.Close)
 	supabase := giftingSupabaseForTest(t)
 
-	// --- Seed two auth.users (the gift parties) + two platform_users (the
 	// admin caller and the blocked, permission-less caller) ---
 	sender := uuid.NewString()
 	recipient := uuid.NewString()
@@ -102,7 +95,7 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 		t.Fatalf("grant connect-moderator to admin caller: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id=$1 AND role_id=$2`, adminCaller, moderatorRoleID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM user_roles WHERE user_id=$1 AND role_id=$2`, adminCaller, moderatorRoleID)
 	})
 
 	// Sanity check: the migration this test exercises must actually be
@@ -116,7 +109,6 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 		t.Fatal("connect.gifting.view permission not found — run supabase/migrations/20270301000000_connect_gifting_admin_rbac.sql against the test DB first")
 	}
 
-	// --- Seed two real connect_gifts rows directly (the money path itself —
 	// Service.Send / the ledger transfer — is covered by other tests; this
 	// test is about the ADMIN READ surface reading what Send() would have
 	// written) ---
@@ -136,11 +128,10 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 		t.Fatalf("seed reversed gift: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_gifts WHERE id IN ($1,$2)`, sentID, reversedID)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id IN ($1,$2)`, sender, recipient)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_gifts WHERE id IN ($1,$2)`, sentID, reversedID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id IN ($1,$2)`, sender, recipient)
 	})
 
-	// --- Wire the exact same stack production uses: real RBAC (PostgREST +
 	// user_has_permission RPC) + connectgifting.RegisterAdmin ---
 	rbacRepo := repositories.NewRBACSupabaseRepository(supabase)
 	rbacSvc := services.NewRBACService(rbacRepo)
@@ -165,7 +156,7 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 
 	doReq := func(t *testing.T, caller, query string) (*httptest.ResponseRecorder, []giftingAdminRow) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/connect/admin/gifts"+query, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/connect/admin/gifts"+query, nil)
 		req.Header.Set("X-Test-User", caller)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -280,7 +271,7 @@ func seedGiftingAdminPlatformUser(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatalf("seed platform_users row: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM platform_users WHERE id = $1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id = $1`, id)
 	})
 	return id
 }

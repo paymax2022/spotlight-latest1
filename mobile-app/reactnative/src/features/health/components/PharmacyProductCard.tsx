@@ -1,11 +1,11 @@
 import React from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
 import { Pill, Star, ShieldCheck, Store, Plus, Minus, ShoppingCart } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { formatNaira } from '../constants/health.constants';
 import type { PharmacyProduct } from '../pharmacy/types';
 
@@ -45,7 +45,6 @@ export default function PharmacyProductCard({
   return (
     // The card itself is a plain View. Its body and its cart control are two
     // SEPARATE pressables side by side, never nested: react-native-web renders
-    // `accessibilityRole="button"` as a real <button>, and a <button> inside a
     // <button> is invalid HTML — React logs a hydration error and screen
     // readers cannot address the inner control.
     <View style={[styles.card, shadow1]}>

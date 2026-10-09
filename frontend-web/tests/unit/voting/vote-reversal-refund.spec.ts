@@ -26,10 +26,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest } from '../golden-path/_fixtures';
 
-// ---------------------------------------------------------------------------
 // (A) MODEL: refund-on-reversal idempotency against a mocked wallet layer
-// ---------------------------------------------------------------------------
-//
 // Mirrors src/server/wallet/service.ts#reverseWalletDebit semantics:
 //   - first call posts a REVERSAL_DEBIT ledger entry and returns
 //     { alreadyProcessed: false }
@@ -106,15 +103,12 @@ describe('vote reversal refunds wallet (model, idempotent)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // (B) ROUTE: real handler — PROPOSE behavior only (UAT Batch 8, SEC-005/G-MC)
-//
 // The route no longer executes a reversal directly — it only proposes one via
 // contest_admin_approvals (dual control). The vote-lookup / already-reversed /
 // wallet-refund assertions that used to live here now target
 // executeVoteReversal directly in sensitive-actions-service.test.ts, which is
 // where that behavior actually lives post-refactor.
-// ---------------------------------------------------------------------------
 
 vi.mock('@/src/server/admin/auth', () => ({
   assertAdminPermission: vi.fn(),

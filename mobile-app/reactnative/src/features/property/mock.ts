@@ -1,4 +1,3 @@
-// ── Property Management — in-memory mock data ────────────────────────────────
 // Used when EXPO_PUBLIC_PROPERTY_USE_MOCK !== 'false' (the default). Mirrors the
 // shapes returned by the canonical /api/finance/property/* + realtor endpoints so
 // flipping to live is a no-op for the screens.
@@ -18,7 +17,7 @@ export const MOCK_CONTEXTS: PropertyContext[] = [
 
 export function mockContextEnvelope(): ContextEnvelope {
   return {
-    activeContext: { type: MOCK_CONTEXTS[0].type, id: MOCK_CONTEXTS[0].id },
+    activeContext: { type: 'estate', id: MOCK_CONTEXTS[0].id },
     contexts:      MOCK_CONTEXTS,
   };
 }

@@ -25,6 +25,43 @@ function buildWebReturnUrl(origin: string, ref: string) {
   return `${origin}/services/paystack/${encodeURIComponent(ref)}`;
 }
 
+type PaystackIntentInput = {
+  category: UtilityCategory;
+  billerId: string;
+  productId: string;
+  customerReference: string;
+  amountKobo?: number;
+};
+
+// intentMatchesRequest is the intent-lane equivalent of payUtility's
+// replayMatchesRequest: a stored intent is a true replay ONLY when it
+// describes the same purchase — what is being bought (category + biller +
+// product), for whom (customer reference), and — when the caller priced it
+// explicitly — for how much (stored amount_kobo is the RESOLVED price, so an
+// omitted amountKobo simply can't be compared). The rail needs no check: this
+// table only ever holds paystack intents.
+function intentMatchesRequest(intent: Record<string, unknown>, input: PaystackIntentInput): boolean {
+  if (
+    intent.category !== input.category
+    || intent.biller_id !== input.billerId
+    || intent.product_id !== input.productId
+    || intent.customer_reference !== input.customerReference
+  ) {
+    return false;
+  }
+  if (input.amountKobo !== undefined && Number(intent.amount_kobo) !== input.amountKobo) return false;
+  return true;
+}
+
+function replayedIntent(intent: Record<string, unknown>) {
+  return {
+    alreadyProcessed: true,
+    intent,
+    authorizationUrl: String(intent.authorization_url ?? ''),
+    paymentReference: String(intent.payment_reference ?? ''),
+  };
+}
+
 export async function initiateUtilityPaystackPayment(input: {
   request: Request;
   userId: string;
@@ -45,12 +82,15 @@ export async function initiateUtilityPaystackPayment(input: {
     .maybeSingle();
 
   if (existing.data) {
-    return {
-      alreadyProcessed: true,
-      intent: existing.data as Record<string, unknown>,
-      authorizationUrl: String(existing.data.authorization_url ?? ''),
-      paymentReference: String(existing.data.payment_reference ?? ''),
-    };
+    const intent = existing.data as Record<string, unknown>;
+    // Same contract payUtility enforces: the lookup is global on
+    // idempotency_key, so a foreign member's row must 409 (never replay their
+    // checkout URL/payment reference back), and a same-caller hit is a true
+    // replay only when the request describes the same purchase.
+    if (intent.user_id !== input.userId || !intentMatchesRequest(intent, input)) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
+    return replayedIntent(intent);
   }
 
   const quote = await quoteUtilityPayment({
@@ -63,7 +103,6 @@ export async function initiateUtilityPaystackPayment(input: {
   const paymentReference = reference();
   const intentId = crypto.randomUUID();
   // Capture WHERE this payment was started from, same as the registration
-  // payment flow (src/server/registration/return-origin.ts): the callback is
   // reached by a top-level navigation from Paystack and so has no Origin of
   // its own, so this is the only point that can identify the caller's origin.
   // Re-validated on the way back out before ever being used as a redirect
@@ -72,7 +111,12 @@ export async function initiateUtilityPaystackPayment(input: {
   const callbackPath =
     `/api/v1/utility/paystack/callback?reference=${encodeURIComponent(paymentReference)}` +
     (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
-  const callbackUrl = new URL(callbackPath, input.request.url).toString();
+  // The callbackUrl is handed to Paystack and followed by the payer's BROWSER —
+  // a public URL, so it must be built on the public site origin. request.url is
+  // http://0.0.0.0:PORT on Railway/cPanel (the server binds the wildcard
+  // address), which Paystack would echo back as a dead redirect.
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+  const callbackUrl = new URL(callbackPath, siteUrl).toString();
 
   const { error: insertError } = await supabase.from('utility_paystack_intents').insert({
     id: intentId,
@@ -89,7 +133,30 @@ export async function initiateUtilityPaystackPayment(input: {
     metadata: input.metadata ?? {},
   });
 
-  if (insertError) throw new ApiError(`Failed to create Paystack utility intent: ${insertError.message}`, 500);
+  if (insertError) {
+    // The unique constraint is the second idempotency layer: a concurrent
+    // writer (or a replayed request whose response was lost) claimed the key
+    // between the pre-check and this insert. Re-read it and apply the same
+    // caller-scope + param check instead of surfacing a raw 500.
+    if ((insertError as { code?: string }).code === '23505') {
+      const { data: dup } = await supabase
+        .from('utility_paystack_intents')
+        .select('*')
+        .eq('idempotency_key', input.idempotencyKey)
+        .maybeSingle();
+      if (dup) {
+        const dupIntent = dup as Record<string, unknown>;
+        if (dupIntent.user_id !== input.userId || !intentMatchesRequest(dupIntent, input)) {
+          throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+        }
+        return replayedIntent(dupIntent);
+      }
+    }
+    // ApiError's message reaches the client — log the PostgREST detail
+    // server-side, never embed it.
+    console.error('[utility/paystack] intent insert failed:', insertError.message);
+    throw new ApiError('Failed to create Paystack utility intent', 500);
+  }
 
   const authorizationUrl = await initializePaystackPayment({
     reference: paymentReference,
@@ -218,7 +285,6 @@ export function redirectToApp(transactionId?: string, returnOrigin?: string | nu
   // web, e.g. :8083) or a plain browser tab on a dead navigation even though
   // the charge itself was correctly verified and recorded server-side. Prefer
   // the origin the payment was started from (re-validated — see
-  // return-origin.ts) and land on the resolver screen by reference, which
   // works for success, pending, AND failed alike.
   if (isReturnableOrigin(returnOrigin) && reference) {
     return NextResponse.redirect(buildWebReturnUrl(returnOrigin as string, reference));

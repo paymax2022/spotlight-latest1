@@ -1,11 +1,8 @@
-// ── Admin — FX Orchestration types ───────────────────────────────────────────
 // Control-plane contract for the Paymax FX console (spec §13). All money is
 // integer minor units (kobo/cents). Mirrors the normalized API entities (§11).
 
 export type Provider = 'eversend' | 'maplerad';
 export type BreakerState = 'closed' | 'open' | 'half_open';
-
-// ─── A. Overview dashboard ────────────────────────────────────────────────────
 
 export interface ProviderMixRow {
   provider: Provider;
@@ -33,8 +30,6 @@ export interface FxOverview {
   topCorridors: CorridorVolumeRow[];
   breakers: { provider: Provider; state: BreakerState }[];
 }
-
-// ─── B. Transactions explorer ─────────────────────────────────────────────────
 
 export type FxTxType = 'conversion' | 'transfer' | 'collection';
 export type FxTxStatus = 'pending' | 'processing' | 'successful' | 'failed' | 'reversed';
@@ -89,8 +84,6 @@ export interface FxTxFilter {
   search?: string;
 }
 
-// ─── C. Routing configuration ─────────────────────────────────────────────────
-
 export interface RoutingWeights {
   corridor: string;
   tier: string;          // customer tier label
@@ -108,8 +101,6 @@ export interface RouteSimResult {
   ranked: { provider: Provider; allInRate: number; score: number; viable: boolean; note?: string }[];
 }
 
-// ─── D. Provider management ───────────────────────────────────────────────────
-
 export interface ProviderConfig {
   provider: Provider;
   displayName: string;
@@ -123,8 +114,6 @@ export interface ProviderConfig {
   breaker: BreakerState;
   adapterStatus: 'live' | 'sandbox' | 'down';
 }
-
-// ─── E. Treasury & liquidity ──────────────────────────────────────────────────
 
 export interface FloatBucket {
   provider: Provider;
@@ -146,8 +135,6 @@ export interface RebalanceEvent {
   createdAt: string;
 }
 
-// ─── F. Spread & pricing ──────────────────────────────────────────────────────
-
 export interface SpreadRule {
   id: string;
   corridor: string;
@@ -160,8 +147,6 @@ export interface SpreadRule {
   updatedAt: string;
   active: boolean;
 }
-
-// ─── I. Reconciliation ────────────────────────────────────────────────────────
 
 export type ReconBreakType = 'amount' | 'rate' | 'fee' | 'timing' | 'missing';
 export type ReconBreakStatus = 'open' | 'investigating' | 'resolved' | 'escalated';
@@ -188,8 +173,6 @@ export interface ReconBreak {
   createdAt: string;
 }
 
-// ─── G. Customers (KYC/KYB) ───────────────────────────────────────────────────
-
 export type CustomerType = 'individual' | 'business';
 export type CustomerVerification = 'unverified' | 'pending' | 'review' | 'approved' | 'rejected' | 'suspended';
 
@@ -215,8 +198,6 @@ export interface CustomerDetail extends AdminCustomer {
   notes: string | null;
 }
 
-// ─── H. Compliance & Risk ─────────────────────────────────────────────────────
-
 export type ScreeningKind = 'sanctions' | 'pep' | 'aml_rule' | 'velocity';
 export type CaseStatus = 'open' | 'in_review' | 'cleared' | 'blocked' | 'sar_filed';
 
@@ -230,8 +211,6 @@ export interface ScreeningAlert {
   status: CaseStatus;
   createdAt: string;
 }
-
-// ─── L. Webhooks & Developer ──────────────────────────────────────────────────
 
 export type WebhookDeliveryStatus = 'delivered' | 'retrying' | 'failed';
 
@@ -264,8 +243,6 @@ export interface ApiKey {
   createdAt: string;
 }
 
-// ─── M. Analytics & Reports ───────────────────────────────────────────────────
-
 export interface MarginByCorridor {
   corridor: string;
   volumeUsdCents: number;
@@ -283,7 +260,7 @@ export interface ProviderReliability {
 
 export interface RoutingEfficiency {
   corridor: string;
-  chosenVsBestBps: number;   // avg bps gap chosen vs best-possible (lower = better)
+  chosenVsBestBps: number;
   optimalPct: number;        // % of routes that picked best-possible
 }
 
@@ -293,8 +270,6 @@ export interface FxAnalytics {
   routingEfficiency: RoutingEfficiency[];
   retentionCohorts: { cohort: string; m1: number; m2: number; m3: number }[];
 }
-
-// ─── J. Beneficiaries & Collections ───────────────────────────────────────────
 
 export interface VirtualAccountReg {
   id: string;
@@ -326,8 +301,6 @@ export interface BeneficiaryValidationIssue {
   count: number;
 }
 
-// ─── K. Cards ─────────────────────────────────────────────────────────────────
-
 export type IssuedCardStatus = 'active' | 'frozen' | 'terminated';
 
 export interface IssuedCard {
@@ -351,8 +324,6 @@ export interface SuspiciousCardActivity {
   severity: 'low' | 'medium' | 'high';
   createdAt: string;
 }
-
-// ─── N. Settings: catalogues + feature flags ──────────────────────────────────
 
 export interface CorridorConfig {
   corridor: string;

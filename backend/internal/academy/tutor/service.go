@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -82,8 +84,6 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient_balance")
 )
 
-// ── Onboard / verify / vetting ────────────────────────────────────────────────────
-
 // OnboardTutor onboards the caller as a tutor in status 'pending'. Idempotent on the
 // user (academy_tutors.user_id is UNIQUE): a re-onboard updates bio/subjects and returns
 // the existing tutor. Audited.
@@ -129,8 +129,6 @@ func (s *Service) SuspendTutor(ctx context.Context, adminID, tutorID string) (*T
 	}
 	return s.repo.SetTutorStatus(ctx, adminID, tutorID, TutorSuspended, "", nil)
 }
-
-// ── Reads ────────────────────────────────────────────────────────────────────────
 
 // ListTutors returns verified tutors, optionally filtered by subject (public).
 func (s *Service) ListTutors(ctx context.Context, subject string) ([]Tutor, error) {
@@ -196,8 +194,6 @@ func (s *Service) ListMySubmissions(ctx context.Context, userID string) ([]Grade
 	return s.reader.ListGradesByTutor(ctx, t.ID)
 }
 
-// ── Assignments / grading ──────────────────────────────────────────────────────────
-
 // Assign creates an assignment for the caller's tutor profile targeting a class group
 // and/or a single learner. Audited.
 func (s *Service) Assign(ctx context.Context, userID, classGroupID, learnerID, kind, title, contentRef string, dueAt *time.Time) (*Assignment, error) {
@@ -213,11 +209,11 @@ func (s *Service) Assign(ctx context.Context, userID, classGroupID, learnerID, k
 	}
 	a := Assignment{
 		TutorID:      t.ID,
-		ClassGroupID: ptrOrNil(classGroupID),
-		LearnerID:    ptrOrNil(learnerID),
+		ClassGroupID: ptr.OrNil(classGroupID),
+		LearnerID:    ptr.OrNil(learnerID),
 		Kind:         kind,
 		Title:        title,
-		ContentRef:   ptrOrNil(contentRef),
+		ContentRef:   ptr.OrNil(contentRef),
 		DueAt:        dueAt,
 	}
 	return s.repo.InsertAssignment(ctx, userID, a)
@@ -239,8 +235,6 @@ func (s *Service) Grade(ctx context.Context, userID, assignmentID, learnerID str
 	}
 	return s.repo.GradeAssignment(ctx, userID, assignmentID, learnerID, score, feedback, t.ID, earnMinor)
 }
-
-// ── Earnings ───────────────────────────────────────────────────────────────────────
 
 // AccrueEarning APPENDS a pending earning for a tutor (consult / class / assignment).
 // Append-only: never mutates an existing entry. Audited.
@@ -293,8 +287,6 @@ func (s *Service) GetMyEarnings(ctx context.Context, userID string) (*Earnings, 
 	return &Earnings{Entries: entries, PendingMinor: pending, Payouts: payouts}, nil
 }
 
-// ── Payouts (guarded SM; idempotent; money via rail) ──────────────────────────────
-
 // RequestPayout withdraws funds from the tutor's DERIVED pending balance via the injected
 // PayoutRail. It honours the money rules:
 //  1. requires an Idempotency-Key (idempotent: a replay returns the SAME payout, ONE rail call);
@@ -319,7 +311,7 @@ func (s *Service) RequestPayout(ctx context.Context, tutorUserID string, amountM
 
 	// (1) Replay: a prior payout for this key short-circuits with NO second rail call.
 	if prior, err := s.repo.FindPayoutByIdem(ctx, idemKey); err == nil {
-		return &PayoutResult{Payout: prior, Ref: derefStr(prior.PayoutRef), Replayed: true}, nil
+		return &PayoutResult{Payout: prior, Ref: ptr.DerefZero(prior.PayoutRef), Replayed: true}, nil
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -345,10 +337,11 @@ func (s *Service) RequestPayout(ctx context.Context, tutorUserID string, amountM
 	}
 	if !inserted {
 		// Lost the idem race with a concurrent request → return the durable winner (one rail call).
-		if winner, ferr := s.repo.FindPayoutByIdem(ctx, idemKey); ferr == nil {
-			return &PayoutResult{Payout: winner, Ref: derefStr(winner.PayoutRef), Replayed: true}, nil
+		winner, ferr := s.repo.FindPayoutByIdem(ctx, idemKey)
+		if ferr != nil {
+			return nil, ferr
 		}
-		return nil, err
+		return &PayoutResult{Payout: winner, Ref: ptr.DerefZero(winner.PayoutRef), Replayed: true}, nil
 	}
 
 	// (5) Call the PayoutRail (idempotent on idemKey). On error, drive requested→failed.
@@ -369,26 +362,7 @@ func (s *Service) RequestPayout(ctx context.Context, tutorUserID string, amountM
 	return &PayoutResult{Payout: paid, Ref: ref, Replayed: false}, nil
 }
 
-// ── Admin ──────────────────────────────────────────────────────────────────────────
-
 // ListPayouts (admin) lists all payouts, optionally for one tutor.
 func (s *Service) ListPayouts(ctx context.Context, tutorID string) ([]Payout, error) {
 	return s.repo.ListPayouts(ctx, tutorID)
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
-}
-
-func derefStr(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }

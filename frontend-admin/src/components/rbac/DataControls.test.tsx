@@ -6,9 +6,7 @@ import { renderHook } from '@testing-library/react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { usePagination, Pagination } from './DataControls'
 
-// ---------------------------------------------------------------------------
 // usePagination
-// ---------------------------------------------------------------------------
 
 const makeItems = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
 
@@ -42,10 +40,6 @@ describe('usePagination', () => {
     expect(result.current.slice).toHaveLength(0)
   })
 })
-
-// ---------------------------------------------------------------------------
-// Pagination component
-// ---------------------------------------------------------------------------
 
 describe('Pagination component', () => {
   it('renders page info and nav buttons', () => {

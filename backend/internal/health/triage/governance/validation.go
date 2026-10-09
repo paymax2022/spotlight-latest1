@@ -2,7 +2,6 @@ package governance
 
 import (
 	"context"
-
 	"spotlight/backend/internal/health/triage"
 )
 
@@ -20,20 +19,17 @@ type VignetteStore interface {
 type Report struct {
 	TotalVignettes int `json:"total_vignettes"`
 
-	// ── Emergency sensitivity (recall on expected_emergency) — computed FIRST. ──
 	EmergencyTotal       int      `json:"emergency_total"`        // # vignettes expecting an emergency
 	EmergencyDetected    int      `json:"emergency_detected"`     // # of those the engine flagged emergency
 	EmergencyMissed      int      `json:"emergency_missed"`       // FALSE NEGATIVES — the dangerous misses
 	EmergencySensitivity float64  `json:"emergency_sensitivity"`  // detected / total (0..1); recall
 	EmergencyMissedCodes []string `json:"emergency_missed_codes"` // which vignettes were missed
 
-	// ── Triage accuracy. ──
 	LevelMatches int     `json:"level_matches"` // exact disposition-level matches
 	OverTriage   int     `json:"over_triage"`   // engine MORE urgent than expected (safe-side)
 	UnderTriage  int     `json:"under_triage"`  // engine LESS urgent than expected (risk-side)
 	Accuracy     float64 `json:"accuracy"`      // level_matches / total
 
-	// ── Per-language parity (sensitivity + accuracy by language code). ──
 	ByLanguage map[string]LanguageReport `json:"by_language"`
 }
 
@@ -105,7 +101,6 @@ func (s *ValidationService) RunShadowEval(ctx context.Context, engine triage.Eng
 			EmergencyCorrect: emergencyCorrect,
 		})
 
-		// ── Emergency sensitivity (recall) — computed FIRST. ──
 		lr := rep.ByLanguage[v.Language]
 		lr.Total++
 		if v.ExpectedEmergency {
@@ -120,7 +115,6 @@ func (s *ValidationService) RunShadowEval(ctx context.Context, engine triage.Eng
 			}
 		}
 
-		// ── Triage accuracy + over/under-triage. ──
 		if levelMatch {
 			rep.LevelMatches++
 			lr.LevelMatches++
@@ -201,4 +195,32 @@ func (s *ValidationService) SeedVignettes(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// amendMode is the decision for how an edit is applied so clinical content is
+// versioned, never destructively overwritten (test plan §4.8; HR-003/AD-006/LR-006
+// pattern). A DRAFT (not yet live) is edited in place; any REVIEW/APPROVED/PUBLISHED
+// (live or sign-off-track) content is branched to a NEW draft at version+1 so the
+// signed-off version is immutable and retained; a DEPRECATED/unknown item cannot be
+// edited (create a fresh item instead — a retired safety rule is never revived by an
+// in-place edit).
+type amendMode int
+
+const (
+	amendInPlace    amendMode = iota // draft: edit in place
+	amendNewVersion                  // live/sign-off-track: branch a new version, never mutate
+	amendRejected                    // terminal/unknown: edit not permitted
+)
+
+// amendModeFor is the pure amendment decision, shared by EditContent and EditRule
+// so the never-destructive rule has one tested source of truth.
+func amendModeFor(state triage.ContentState) amendMode {
+	switch state {
+	case triage.ContentDraft:
+		return amendInPlace
+	case triage.ContentReview, triage.ContentApproved, triage.ContentPublished:
+		return amendNewVersion
+	default:
+		return amendRejected
+	}
 }

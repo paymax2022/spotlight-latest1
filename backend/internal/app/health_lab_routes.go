@@ -7,6 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/commission"
@@ -24,17 +26,11 @@ import (
 // RegisterHealthLab wires HEALTH-BUILD Phase-2 Laboratory onto the finance member
 // group + a health lab admin group. It is the ONLY wiring point for the lab
 // vertical and edits no existing file. All reuse is by import:
-//
 //   - escrow.Service         — HL-9 payment HELD→RELEASE→REFUND (idempotent).
-//
 //   - transport.Service      — phlebotomist dispatch + results courier (last-mile rail).
-//
 //   - healthrecords.Service  — HL-8 result release → consent-gated, signed-URL vault.
-//
 //   - finance/kyc.Service    — HL-10 payout KYC gating.
-//
 //   - member: /api/finance/health/lab/*  (member-authenticated; user_id mirrored)
-//
 //   - admin : /api/health/lab/admin/*    (per-route RBAC health.lab.*)
 //
 // Gated by FeatureHealthLabEnabled at the orchestrator. Auditing is nil-safe.
@@ -85,7 +81,6 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	// --- Member routes (/api/finance/health/lab) — HEALTH-BUILD §6 Laboratory ---
 	lg := member.Group("/health/lab")
 	lg.GET("/tests", h.ListTests)                    // catalog: prep, TAT, price
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
@@ -97,19 +92,18 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.GET("/orders/:id/results", h.Results)         // object-level authZ (HL-8)
 	lg.GET("/orders/:id/custody", h.Custody)         // chain-of-custody trail (HL-6/12)
 	lg.POST("/orders/:id/schedule", h.Schedule)      // phlebotomist dispatch (HOME)
-	lg.POST("/orders/:id/collect", h.Collect)        // phlebotomist: sample + custody (HL-6)
-	lg.POST("/orders/:id/results", h.EnterResults)   // scientist enter + validate (HL-7)
-	lg.POST("/orders/:id/release", h.Release)        // sign-off → vault; release payment (HL-7/8/9)
-	lg.POST("/orders/:id/cancel", h.Cancel)          // pre-collection → refund (HL-9)
-	lg.POST("/samples/:id/accession", h.Accession)   // lab intake, HL-6 chain gate
-	lg.POST("/samples/:id/handover", h.Handover)     // custody transfer (HL-6)
-	lg.POST("/samples/:id/breach", h.FlagBreach)     // chain break → recollect (HL-6)
+	lg.POST("/orders/:id/collect", h.Collect)
+	lg.POST("/orders/:id/results", h.EnterResults) // scientist enter + validate (HL-7)
+	lg.POST("/orders/:id/release", h.Release)      // sign-off → vault; release payment (HL-7/8/9)
+	lg.POST("/orders/:id/cancel", h.Cancel)        // pre-collection → refund (HL-9)
+	lg.POST("/samples/:id/accession", h.Accession) // lab intake, HL-6 chain gate
+	lg.POST("/samples/:id/handover", h.Handover)   // custody transfer (HL-6)
+	lg.POST("/samples/:id/breach", h.FlagBreach)   // chain break → recollect (HL-6)
 
-	// --- Admin routes (/api/health/lab/admin, RBAC health.lab.*) ---
 	ag := admin.Group("")
 	// Identical bug to PHARMACY-006: `admin` here is adminGroupTop5
 	// (top5_admin_group.go), which applies ONLY requireUserID() — a guard
-	// that checks c.GetString("user_id") with nothing upstream of it ever
+	// that checks ginutil.UserID(c) with nothing upstream of it ever
 	// setting that context key. Every lab admin route (old and new) 401'd
 	// "authentication required" regardless of token validity. Fixed the same
 	// way pharmacy was: the caller (finance_routes.go) now passes a plain
@@ -134,15 +128,13 @@ func isHealthLabAdmin(c *gin.Context, rbac services.RBACService) bool {
 	if rbac == nil {
 		return false
 	}
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		return false
 	}
 	ok, err := rbac.CheckPermission(uid, "health.lab.orders", "global", "")
 	return err == nil && ok
 }
-
-// ─── Adapters: bridge the reused rails to the package's narrow interfaces ─────
 
 type labEscrowAdapter struct{ e *escrow.Service }
 

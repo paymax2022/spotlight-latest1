@@ -5,10 +5,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { X, Link2, MessageCircle, QrCode } from 'lucide-react-native';
 import { Facebook, Twitter, Linkedin } from '@/components/icons/socialBrandIcons';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useCampaign } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.api';
 

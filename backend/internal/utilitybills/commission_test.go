@@ -141,7 +141,6 @@ func TestApplyCommissionConvenienceFee_LowerFeeReducesRetail(t *testing.T) {
 	if got.ConvenienceFeeKobo != 0 || got.RetailAmountKobo != 500_000 || got.GrossProfitKobo != 10_000 {
 		t.Fatalf("fee removal: got %+v", got)
 	}
-	// floor(10000 * 10000 / 500000) == 200
 	if got.GrossMarginBps != 200 {
 		t.Fatalf("margin bps: got %d want 200", got.GrossMarginBps)
 	}

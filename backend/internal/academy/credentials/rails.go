@@ -7,7 +7,6 @@ import "context"
 // this interface; the concrete adapter (RBACService.AssignRoleToUser + KYC) is wired
 // at the composition root. This module NEVER rebuilds role-upgrade or KYC — it only
 // surfaces unlocked roles and routes the application; Paymax owns the onboarding.
-//
 // UpgradeRole MUST be idempotent on `ref`: the same (userID, role, ref) returns the
 // same paymax reference with no second onboarding. `ref` is the earning-application
 // id so a replayed apply routes to the same upgrade. The application's

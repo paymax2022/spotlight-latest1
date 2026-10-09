@@ -11,6 +11,7 @@ import {
   runBasicFraudChecks,
   validateStepData,
 } from '@/src/features/registration/validation';
+import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
 import {
   findLiveRegistrationForContest,
@@ -20,7 +21,6 @@ import {
   listRegistrationContests,
   getRegistrationContestBySlug,
 } from '@/src/server/registration/store';
-// Contest definitions also stay in the in-memory catalog; re-export so routes
 // importing them from this module resolve.
 export { listRegistrationContests, getRegistrationContestBySlug } from '@/src/server/registration/store';
 import {
@@ -57,7 +57,6 @@ function nowIso() {
 }
 
 // Exported for RG-005 (contestant/reference number uniqueness) test coverage.
-//
 // The random suffix used to be 4 base36 chars (~1.68M combinations). Under a
 // registration burst (many applicants submitting in the same millisecond —
 // the `stamp` component only changes once per ms), the birthday bound puts a
@@ -75,9 +74,17 @@ export function makeReference(contestSlug: string) {
   return `${prefix}-${stamp}-${rand}`;
 }
 
+// UUID_RE is declared below (module-level, line ~290) — hoisting is fine
+// because this only runs at call time.
 export async function getRegistrationDraft(applicationId: string): Promise<RegistrationDraft | null> {
   if (!applicationId || typeof applicationId !== 'string') {
     throw new Error('Invalid application ID');
+  }
+  // registrations.id is uuid — a malformed id can never match. Return
+  // not-found (callers map it to 404) instead of letting Postgres 22P02
+  // surface as a 500 in every [id] route that calls this.
+  if (!UUID_RE.test(applicationId)) {
+    return null;
   }
 
   const { data, error } = await getSupabase()
@@ -88,7 +95,6 @@ export async function getRegistrationDraft(applicationId: string): Promise<Regis
 
   if (error) {
     if (error.code === 'PGRST116') {
-      // Not found
       console.warn('[registration/supabase-store] registration not found:', applicationId);
       return null;
     }
@@ -220,7 +226,6 @@ export async function saveRegistrationStep(params: {
   nextDraft.completionPercent = calculateCompletionPercent(steps, mergedData);
   nextDraft.fraudFlags = runBasicFraudChecks(nextDraft);
 
-  // Update in Supabase
   const { error: updateError } = await getSupabase()
     .from('registrations')
     .update({
@@ -309,12 +314,20 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
   const inMemory = getRegistrationContestBySlug(slugOrId) || resolveContestRegistration(slugOrId);
   if (inMemory) return inMemory;
 
-  const bySlug = await getPersistedContestBySlug(slugOrId);
-  if (bySlug) return bySlug;
+  // listPersistedContests() THROWS on a read failure (e.g. a prod column drift
+  // on contests). An unreadable catalog cannot confirm any slug, so the
+  // contest is unresolvable — the caller maps that to 404. Swallowing it here
+  // (with a log) is what stops a bogus slug from surfacing as a 500.
+  try {
+    const bySlug = await getPersistedContestBySlug(slugOrId);
+    if (bySlug) return bySlug;
 
-  if (UUID_RE.test(slugOrId)) {
-    const byId = await getPersistedContestById(slugOrId);
-    if (byId) return byId;
+    if (UUID_RE.test(slugOrId)) {
+      const byId = await getPersistedContestById(slugOrId);
+      if (byId) return byId;
+    }
+  } catch (error) {
+    console.warn('[registration] persisted contest lookup failed; treating as unresolvable:', error);
   }
 
   return null;
@@ -359,11 +372,9 @@ export async function startRegistrationDraft(params: {
   }
 
   // One live application per contest per user.
-  //
   // The check sits HERE, after resolution, rather than in the route: callers
   // pass either a slug or a contest id (the mobile contest screen passes an id),
   // so a check on the raw request value would miss half the duplicates. Migration
-  // 20270125000000 adds a partial unique index as the real authority; this exists
   // to hand back the existing application instead of a constraint violation.
   if (params.userId) {
     const existing = await findLiveRegistrationForContest(params.userId, {
@@ -434,7 +445,6 @@ export async function startRegistrationDraft(params: {
 
   const draft = rowToDraft(data);
 
-  // Create status event
   await getSupabase().from('registration_status_events').insert({
     registration_id: draft.id,
     new_status: 'draft',
@@ -457,7 +467,6 @@ export async function submitRegistrationApplication(applicationId: string) {
   const draft = await getRegistrationDraft(applicationId);
   if (!draft) throw new Error('Application not found.');
 
-  // Check if already submitted
   if (['submitted', 'awaiting_payment', 'under_review'].includes(draft.status)) {
     return { success: true, draft, alreadySubmitted: true };
   }
@@ -477,7 +486,55 @@ export async function submitRegistrationApplication(applicationId: string) {
   }
 
   const now = nowIso();
-  const nextStatus: ApplicationStatus = draft.formData['payment.paymentStatus'] === 'pending' ? 'awaiting_payment' : 'submitted';
+
+  // AUD-BILL-002 — 'payment.paymentStatus' is merged wholesale from the
+  // client PATCH (saveRegistrationStep), so a bare claim of 'paid' with any
+  // (or no) reference previously transitioned a PAID contest straight to
+  // 'submitted' with zero money changing hands. Gate the transition on proof:
+  // a completed intent row for the application, or the recorded reference
+  // re-verifying with Paystack for at least the server-quoted fee (the fee is
+  // re-read from the contest here, not trusted from formData).
+  const lockedContest = await resolveAnyContest(draft.contestSlug).catch(() => null);
+  const feeNgn = lockedContest
+    ? lockedContest.registrationFeeNgn || 0
+    : Number(draft.formData['payment.feeAmount'] || 0);
+  const isPaidContest = lockedContest
+    ? lockedContest.isPaid
+    : feeNgn > 0 || draft.formData['derived.isPaidContest'] === true;
+  let paymentProven = false;
+  if (isPaidContest && draft.formData['payment.paymentStatus'] === 'paid') {
+    const intent = await getRegistrationPaymentIntentByApplicationAndMethod(applicationId, 'PAYSTACK');
+    if (intent?.status === 'completed' || intent?.status === 'verified') {
+      paymentProven = true;
+    } else {
+      // Pre-intent wizard path: the PATCHed reference can still be real —
+      // verify it against Paystack and backfill the intent so the charge is
+      // reconcilable by the gateway sweep/recover path.
+      const ref = String(draft.formData['payment.transactionReference'] || '').trim();
+      const verification = ref ? await verifyPaystackPayment(ref).catch(() => null) : null;
+      if (verification?.success && verification.amountKobo >= Math.round(feeNgn * 100)) {
+        paymentProven = true;
+        try {
+          const recorded = await createRegistrationPaymentIntent({
+            applicationId,
+            amountKobo: Math.round(feeNgn * 100),
+            paymentReference: ref,
+            idempotencyKey: `submit-verify:${ref}`,
+          });
+          await markRegistrationPaymentIntentStatus(recorded.id, 'completed');
+        } catch {
+          // best-effort bookkeeping — the verified charge already gates submit
+        }
+      }
+    }
+  }
+  const nextStatus: ApplicationStatus = isPaidContest
+    ? paymentProven
+      ? 'submitted'
+      : 'awaiting_payment'
+    : draft.formData['payment.paymentStatus'] === 'pending'
+      ? 'awaiting_payment'
+      : 'submitted';
 
   const { error } = await getSupabase()
     .from('registrations')
@@ -497,7 +554,6 @@ export async function submitRegistrationApplication(applicationId: string) {
   draft.submittedAt = now;
   draft.completionPercent = 100;
 
-  // Create status event
   await getSupabase().from('registration_status_events').insert({
     registration_id: applicationId,
     old_status: 'draft',
@@ -514,8 +570,6 @@ export async function submitRegistrationApplication(applicationId: string) {
   // whatever the field actually resolved to (should be `true`, since
   // validateStepData now requires it — see field-catalog.ts's defaultRequired
   // on both keys — but this reads form_data directly rather than assuming).
-  //
-  // ip_address/device_fingerprint are left null: this function has no access
   // to the request's IP or a device fingerprint. The only caller is
   // app/api/registration/applications/[id]/submit/route.ts, which is on the
   // brownfield-protected legacy list (.claude/hooks/protect-legacy.sh) and
@@ -535,7 +589,6 @@ export async function submitRegistrationApplication(applicationId: string) {
   const { error: consentError } = await getSupabase().from('registration_consent_records').insert(consentRows);
   if (consentError) {
     // Do not block a successful submission on the audit log failing to write —
-    // the applicant's submission already succeeded and was recorded above;
     // losing the audit trail for one submission is a lesser failure than
     // silently rejecting an otherwise-valid submission because of it.
     console.error(`Failed to record registration consent audit rows for ${applicationId}: ${consentError.message}`);
@@ -552,7 +605,6 @@ export async function submitRegistrationApplication(applicationId: string) {
 // Paystack charge could still leave an application looking unpaid forever
 // because the record proving it happened was gone. Fixed: the table already
 // existed for exactly this (its own migration says so); this is that move.
-//
 // applyRegistrationPaymentSuccess had the same bug one level up: it wrote
 // "paid" onto the in-memory store.ts draft Map, which getRegistrationDraft
 // (above, Postgres-only) never reads — so even a successful verify() call
@@ -618,7 +670,6 @@ export async function getRegistrationPaymentIntentByReference(
 // back button, a retry with a fresh Idempotency-Key) is invisible to the
 // idempotency-key lookup above and previously fell straight into an INSERT,
 // hitting that constraint and 500ing. Callers must check this before
-// inserting: reuse (retry) the existing row for 'initiated'/'failed', or
 // short-circuit entirely for 'completed'/'verified'.
 export async function getRegistrationPaymentIntentByApplicationAndMethod(
   applicationId: string,
@@ -660,7 +711,6 @@ export async function createRegistrationPaymentIntent(input: {
 // intent row, in place — required because `unique_payment_per_app_method`
 // permits only one row per (application_id, method), so a retry can never be
 // a second INSERT. `reference` and `idempotency_key` both carry their own
-// UNIQUE constraint too; both must be values not already in use, which a
 // freshly generated reference and the caller's new Idempotency-Key satisfy.
 export async function retryRegistrationPaymentIntent(
   id: string,
@@ -731,10 +781,8 @@ export async function applyRegistrationPaymentSuccess(
     // is the applicant-facing "how did you pay", whose options are
     // Card / Bank Transfer / USSD / Wallet. Writing the gateway here meant
     // validateStepData's select-option check rejected the very value this
-    // function had just recorded, so a successfully PAID application could
     // never be submitted (submitRegistration validates every step).
     'payment.method': PAYSTACK_METHOD_OPTION,
-    // The gateway is still worth keeping; it just does not belong in a field
     // that means something else.
     'payment.gateway': params.method,
   };
@@ -778,12 +826,10 @@ export async function listRegistrationApplications(filter: {
 
   let drafts = (data || []).map(rowToDraft);
 
-  // Filter by category
   if (filter.contestCategory) {
     drafts = drafts.filter((d) => d.formData['contest.category'] === filter.contestCategory);
   }
 
-  // Filter by age
   if (filter.minAge !== undefined || filter.maxAge !== undefined) {
     drafts = drafts.filter((d) => {
       const age = d.formData['derived.age'] as number | undefined;
@@ -794,7 +840,6 @@ export async function listRegistrationApplications(filter: {
     });
   }
 
-  // Filter by query (search in reference or name)
   if (filter.query) {
     const q = filter.query.toLowerCase();
     drafts = drafts.filter(
@@ -880,11 +925,9 @@ export async function reviewRegistrationApplication(
   // moderation pipeline below — cheap synchronous checks first, so a missing
   // consent never pays for an (external-service-calling) moderation/
   // compositing pass it's about to reject anyway. Exactly matches the
-  // moderation gate's own contract: throw and return before any DB write, so
   // a blocked review leaves the application entirely untouched and the admin
   // sees a failed action they can retry after resolving it (re-request
   // consent from the applicant).
-  //
   // NEITHER key is universal across the 5 hand-tailored live contest forms
   // (forms/*.ts) — this was verified by running buildRegistrationSteps for
   // every slug, not assumed:
@@ -906,7 +949,6 @@ export async function reviewRegistrationApplication(
   // each key is enforced only when this registration's OWN built form
   // actually collects it (checked dynamically below via
   // buildRegistrationSteps, not a hardcoded per-slug list, so a future new
-  // contest template is covered automatically); publicProfile.publicVotingConsent
   // is additionally scoped to contests with derived.supportsVoting true,
   // matching the flag every form already gates its own public-voting step on.
   if (PROMOTING_STATUSES.includes(input.status)) {
@@ -929,7 +971,6 @@ export async function reviewRegistrationApplication(
   // the applicant to a public contestant, run their photo through moderation
   // + background-removal BEFORE any DB write, so a failed/rejected photo
   // leaves the application entirely untouched (admin can retry the action).
-  //
   // promote_registration_to_contestant() reads
   // form_data->>'media.photoUrl' (falling back to 'media.headshotUrl')
   // verbatim into contestants.photo_url — see
@@ -937,7 +978,6 @@ export async function reviewRegistrationApplication(
   // line ~104. By rewriting that same key here before the RPC fires, the
   // RPC's existing COALESCE picks up the processed image with zero SQL
   // changes.
-  //
   // AD-003/CS-004: contest_templates now has a connect_contest_id bridge
   // column (supabase/migrations/20270212000000_contest_templates_connect_bridge.sql)
   // linking it to connect_contests — the table registrations actually
@@ -945,7 +985,6 @@ export async function reviewRegistrationApplication(
   // id, then look up an active template for it via
   // resolveActiveTemplateForContest(). If one is configured (with a
   // 'contestant' slot), we run the full compositing pipeline
-  // (processContestantPhoto); otherwise (the common case, until an admin
   // sets one up in the template manager) we fall back to
   // processContestantPhotoNoTemplate exactly as before. See
   // src/server/registration/photo-pipeline.ts module doc.
@@ -1017,7 +1056,6 @@ export async function reviewRegistrationApplication(
   // The status transition goes through review_registration_application (migration
   // 20270125000000), which changes the status, records the audit event AND moves
   // the voting roster in one transaction.
-  //
   // This used to be a plain UPDATE here. It looked fine and it was not: approving
   // from the admin console changed the status but never called
   // promote_registration_to_contestant, so the applicant never became a
@@ -1065,7 +1103,6 @@ export async function getRegistrationStatusTimeline(
   }));
 }
 
-// Helper: Convert Supabase row to RegistrationDraft
 function rowToDraft(row: any): RegistrationDraft {
   return {
     id: row.id,

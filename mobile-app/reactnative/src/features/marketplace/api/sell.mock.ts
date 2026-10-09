@@ -1,10 +1,5 @@
-// ── Marketplace — Sell mock fixtures + responders ────────────────────────────
-//
-// Powers MKT_USE_MOCK=true so the entire Sell group (screens 10–17) runs fully
 // offline with no backend. Fixtures are authored in the same camelCase shape the
-// shared client's deepCamel() would produce, so mock and live paths return
 // identical types to the screens.
-//
 // This module OWNS the Sell slice of the mock world: a client-side listing store
 // (create/update/submit/pause/resume/delete + mark-sold), an AI-prefill heuristic
 // stand-in, category attribute schemas for the dynamic Attribute form, a
@@ -32,7 +27,6 @@ const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString
 /** The signed-in seller id used to seed & filter "my listings" in mock mode. */
 export const MOCK_SELF_SELLER_ID = 'seller_self';
 
-// ─── Category attribute schemas (drive the dynamic Attribute form, screen 12) ─
 // Live builds read these from GET /categories/:id. In mock mode we ship a small
 // schema-per-category so the Attribute form has something to render. Shape mirrors
 // a config-driven form: { fields: [{ key, label, type, required, options?, unit? }] }.
@@ -193,7 +187,6 @@ const ATTRIBUTE_SCHEMAS: Record<string, AttributeSchema> = {
 };
 
 // The Category.attributeSchema field is typed as an open Record on the shared
-// type; our AttributeSchema is a concrete shape. `asSchema` widens it for the
 // literal so it satisfies Record<string, unknown> without losing our structure
 // (AttributeFields.normalizeSchema narrows it back on the read side).
 const asSchema = (s: AttributeSchema): Record<string, unknown> => s as unknown as Record<string, unknown>;
@@ -227,7 +220,6 @@ export async function mockSellCategory(id: string): Promise<Category> {
   return c;
 }
 
-// ─── AI-prefill heuristic (client-side stand-in for the vision model) ─────────
 // The real Smart Composer calls a server vision model on the first photo. Until
 // that lands we mock it: derive a plausible category + title + attribute guesses
 // from a tiny keyword table, keyed off the picked filename/uri when present, else
@@ -275,8 +267,6 @@ export async function mockAiPrefill(hint: string): Promise<AiPrefillResult> {
   };
 }
 
-// ─── Fair-price estimate (client stand-in for the server comps band) ──────────
-// Live: FairPriceBand comes from the category/listing read model. Mock: a small
 // per-category baseline widened ±25% so the Price screen always has a band.
 
 const CATEGORY_MEDIAN_KOBO: Record<string, number> = {
@@ -298,8 +288,6 @@ export function mockFairPriceBand(categoryId: string | null | undefined): FairPr
     p75Kobo: Math.round(median * 1.28),
   };
 }
-
-// ─── Listing store (create / update / submit / lifecycle / mark-sold) ─────────
 
 let listingSeq = 100;
 const listingStore = new Map<string, Listing>();
@@ -535,9 +523,7 @@ export async function mockMyListings(): Promise<Listing[]> {
     .sort((a, b) => (b.createdAt < a.createdAt ? -1 : 1));
 }
 
-// ─── Image presign (mock) ─────────────────────────────────────────────────────
 // The real presign endpoint (POST /listings/media/presign) is being added by
-// another agent; contract assumed: { uploadUrl, fileUrl }. Mock returns a
 // mock:// uploadUrl so the client PUT is skipped and the flow round-trips offline.
 
 export async function mockPresignMedia(input: { fileName: string; mimeType: string }): Promise<{ uploadUrl: string; fileUrl: string }> {
@@ -545,8 +531,6 @@ export async function mockPresignMedia(input: { fileName: string; mimeType: stri
   const key = `marketplace/listings/${Date.now()}-${input.fileName}`;
   return { uploadUrl: `mock://r2/${key}`, fileUrl: key };
 }
-
-// ─── Boosts ───────────────────────────────────────────────────────────────────
 
 const BOOST_TIERS: BoostTier[] = [
   { tier: 'spotlight_3d', durationDays: 3, priceKobo: 50_000, weight: 1.0, label: 'Spotlight — 3 days', description: 'Top of category results and a highlighted card for 3 days.' },
@@ -565,7 +549,6 @@ export async function mockBoostTiers(): Promise<BoostTier[]> {
   return BOOST_TIERS;
 }
 
-// Mirrors the real ComputeBoostQuote: package mode looks up the tier;
 // custom mode rounds the [now, endsAt) range up to whole days and prices at
 // the flat daily rate — so the mock quote and the mock purchase always agree,
 // same as the real endpoint and PurchaseBoost share one computation.

@@ -5,7 +5,6 @@ package marketplace
 // existing admin pricing/moderation conventions (admin_handler.go,
 // repository.go, audit.go): every mutation requires reason_code and writes
 // an mkt_admin_audit_log row via Service.writeAudit.
-//
 // Kept in its own file (rather than folded into admin_handler.go/
 // repository.go/service.go) to stay a scoped, additive diff — sibling agents
 // own the rest of those files (service_boost.go, search/, taxonomy,
@@ -20,8 +19,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
-
-// ─── Models ────────────────────────────────────────────────────────────────
 
 // BannerSlot/BannerCtaType/bannerPersistedStatus mirror frontend-admin's
 // MktBannerSlot/MktBannerCtaType (types/marketplaceAdmin.ts). Only "draft" and
@@ -134,8 +131,6 @@ type CategoryContentInput struct {
 	SEODescription string `json:"seo_description"`
 	ReasonCode     string `json:"reason_code"`
 }
-
-// ─── Repository ────────────────────────────────────────────────────────────
 
 const bannerCols = `id, slot, title, subtitle, image_url, cta_label, cta_type, cta_value, status, start_at, end_at, sort_order, created_at, updated_at`
 
@@ -301,8 +296,6 @@ func (r *Repository) UpsertCategoryContent(ctx context.Context, categoryID strin
 	return &cc, nil
 }
 
-// ─── Service ───────────────────────────────────────────────────────────────
-
 // ListBanners is a plain read — no audit needed.
 func (s *Service) ListBanners(ctx context.Context) ([]Banner, error) {
 	return s.repo.ListBanners(ctx)
@@ -409,8 +402,6 @@ func (s *Service) UpsertCategoryContent(ctx context.Context, adminID, categoryID
 	})
 	return after, nil
 }
-
-// ─── Handlers ──────────────────────────────────────────────────────────────
 
 // AdminListBanners GET /admin/cms/banners
 func (h *Handler) AdminListBanners(c *gin.Context) {

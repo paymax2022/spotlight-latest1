@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 const SRC = path.resolve(fileURLToPath(import.meta.url), '../../../src');
+const RN_STUB = path.resolve(fileURLToPath(import.meta.url), '../stubs/react-native.mjs');
 const EXTS = ['.ts', '.tsx', '.mts', '.js', '.mjs', '.cjs', '.json'];
 
 function resolveWithExt(abs) {
@@ -25,6 +26,9 @@ function resolveWithExt(abs) {
 }
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === 'react-native') {
+    return { url: pathToFileURL(RN_STUB).href, shortCircuit: true };
+  }
   let abs = null;
   if (specifier.startsWith('@/')) {
     abs = path.join(SRC, specifier.slice(2));

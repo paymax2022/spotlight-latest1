@@ -1,8 +1,5 @@
-// ── Film Academy — hub ───────────────────────────────────────────────────────
-// A NATIVE screen. The app and the web app are separate interfaces; a service
 // tile must never hand the user to a browser. This calls the same
 // /api/academy/* endpoints the web console uses — sharing an API is fine.
-//
 // Money note: academy_batches stores training_fee_ngn in NAIRA, not kobo. It
 // predates the kobo convention used across finance, so it is formatted as-is.
 
@@ -13,10 +10,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Clapperboard, CalendarDays, Clock, FileText, GraduationCap, ClipboardList } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getOverview } from '@/features/filmAcademy/api';
 import type { FilmAcademyBatch } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';

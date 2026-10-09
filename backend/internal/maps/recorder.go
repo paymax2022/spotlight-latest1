@@ -5,6 +5,8 @@ import (
 	"log"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,7 +35,7 @@ var resolutionInsertCols = []string{
 
 // recordArgs maps a ResolutionEvent to the positional INSERT args (pure helper,
 // unit-testable without a DB). The DB defaults ts to now() when zero; empty
-// optional string columns are written as NULL via nullable().
+// optional string columns are written as NULL via dbutil.NullStr().
 func recordArgs(e ResolutionEvent) []any {
 	ts := e.TS
 	if ts.IsZero() {
@@ -41,27 +43,21 @@ func recordArgs(e ResolutionEvent) []any {
 	}
 	return []any{
 		e.RequestType,
-		nullable(e.Surface),
-		nullable(e.H3Cell),
-		nullable(string(e.Tier)),
+		dbutil.NullStr(e.Surface),
+		dbutil.NullStr(e.H3Cell),
+		dbutil.NullStr(string(e.Tier)),
 		e.ChosenSource,
-		nullable(e.Provider),
+		dbutil.NullStr(e.Provider),
 		float64(e.Confidence),
 		e.Escalated,
 		e.CostUnit,
 		e.OutcomePin,
-		nullable(e.UserID),
+		dbutil.NullStr(e.UserID),
 		ts,
 	}
 }
 
 // nullable returns nil for empty strings so optional text/uuid columns store NULL.
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
 
 // Record inserts one ResolutionEvent. Best-effort: errors are logged and nil is
 // returned so a recorder failure never blocks a request (MS-6).
@@ -80,8 +76,6 @@ func (r *Recorder) Record(ctx context.Context, e ResolutionEvent) error {
 	}
 	return nil
 }
-
-// --- admin rollups for the dashboard -------------------------------------
 
 // DeflectionStats aggregates resolution outcomes since a cutoff for the cost
 // dashboard. "Deflected" = resolved with no paid provider call (cost_unit = 0:
@@ -196,8 +190,6 @@ func (r *Recorder) RecentEvents(ctx context.Context, limit int) ([]ResolutionEve
 	}
 	return out, rows.Err()
 }
-
-// --- rollup result types -------------------------------------------------
 
 // TierDeflection is paid vs deflected counts for one coverage tier.
 type TierDeflection struct {

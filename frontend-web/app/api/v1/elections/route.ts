@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, mapElection } from '@/src/server/elections/elections.service';
 
-// GET /api/v1/elections — elections for the caller's estate (newest first).
+// Elections for the caller's estate (newest first).
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/elections — create/schedule an election (estate admin).
+// Create/schedule an election (estate admin).
 // Single-position schema: candidates from all positions are flattened onto the
 // election (see service note). Window drives live/closed; status starts 'open'.
 export async function POST(request: Request) {
@@ -37,7 +37,8 @@ export async function POST(request: Request) {
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can create elections', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const title = String(body?.title ?? '').trim();
     const startsAt = body?.startsAt;
     const endsAt = body?.endsAt;

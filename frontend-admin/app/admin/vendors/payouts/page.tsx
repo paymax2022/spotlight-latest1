@@ -12,7 +12,6 @@ const STATUS_OPTIONS = ['', 'available', 'accepted', 'en_route', 'in_progress', 
 
 const defaultFilters: VendorPayoutFilters = { status: '', estateId: '' };
 
-// A job flagged as disputed by convention (title contains "dispute"); the backend
 // has no vendor-dispute surface, so this is read-only signalling only.
 function isDisputed(r: VendorPayoutRow): boolean {
   return /dispute/i.test(r.title);

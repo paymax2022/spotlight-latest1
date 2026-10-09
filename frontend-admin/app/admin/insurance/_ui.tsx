@@ -6,7 +6,6 @@ import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the Insurance console — matches the Connect /
-// Referral admin light-card inline-style convention. All insurance pages import
 // from this file via relative path, so everything they need is exported here.
 
 export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
@@ -118,9 +117,7 @@ export function StateBlock({ loading, error, empty, emptyText = 'No records foun
   return <>{children}</>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Honest state rendering
-//
 // These exist because the alternative — a console that fills gaps with plausible
 // numbers — is the failure mode this whole screen set was rebuilt to remove. An
 // operator must always be able to tell three things apart:
@@ -128,7 +125,6 @@ export function StateBlock({ loading, error, empty, emptyText = 'No records foun
 //   2. the backend reported nothing for this field (show "not reported"),
 //   3. the call failed (show what failed, where, and why).
 // Never collapse (2) or (3) into a zero.
-// ═══════════════════════════════════════════════════════════════════════════
 
 /** Placeholder for a field the backend did not report. Never a 0. */
 export function NotReported({ hint }: { hint?: string }) {
@@ -313,20 +309,16 @@ export function DisclosureNote({ children }: PropsWithChildren) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Provider float — the prefunded distributor wallet
-//
 // MyCover settles binds against a balance Paymax funds in advance. When it
 // empties, EVERY purchase fails at the provider, and any customer already
 // debited is owed a refund. That makes the float the highest-consequence number
 // in this module, so it gets a page-top alarm rather than a tile in a grid.
-//
 // Verified 2026-08-31 by a live purchase attempt on MyCover staging: a fully
 // valid payload was rejected with "v2 Error: Insufficient wallet fund for
 // purchase". MyCover's own /wallet/balance returns 403 for our credential, so
 // the balance may be unreadable by machine — which is a THIRD state, distinct
 // from funded and from empty, and is rendered as such.
-// ═══════════════════════════════════════════════════════════════════════════
 
 /** The float shape this module renders. Mirrors ProviderFloat structurally. */
 export interface FloatView {

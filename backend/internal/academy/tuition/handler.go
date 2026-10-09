@@ -9,7 +9,14 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyUnauthorized = "unauthorized"
+
+const keyError = "error"
 
 // Handler exposes the member-facing and admin tuition payment endpoints.
 type Handler struct {
@@ -18,14 +25,6 @@ type Handler struct {
 
 // NewHandler builds the tuition handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-// idemKey reads the Idempotency-Key header (canonical or lowercase).
-func idemKey(c *gin.Context) string {
-	if v := c.GetHeader("Idempotency-Key"); v != "" {
-		return v
-	}
-	return c.GetHeader("idempotency-key")
-}
 
 // ConfirmPaymentRequest is the request body for POST /api/finance/academy/tuition/confirm.
 type ConfirmPaymentRequest struct {
@@ -45,37 +44,36 @@ type WaiveTuitionRequest struct {
 	Reason string `json:"reason"` // Optional reason for audit trail
 }
 
+// errMap holds the sentinel→status table; writeErr layers the three sentinels'
+// machine-readable "code" field on top so the response envelope is unchanged.
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusBadRequest, ErrZeroPayment, ErrInvalidPlanType, ErrInvalidPaymentAmount),
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusPaymentRequired, ErrPaymentNotConfirmed),
+	httperr.R(http.StatusConflict, ErrReferenceReused, ErrDuplicate, ErrNoPendingInstallments),
+	httperr.R(http.StatusNotFound, ErrApplicationNotFound, ErrBatchNotFound, ErrPlanNotFound, ErrNotFound),
+)
+
 // writeErr maps domain errors onto HTTP status codes.
-// Ordering matters: most specific sentinels first, catch-all 500 last.
 func writeErr(c *gin.Context, err error) {
+	var code string
 	switch {
-	case errors.Is(err, ErrZeroPayment),
-		errors.Is(err, ErrInvalidPlanType),
-		errors.Is(err, ErrInvalidPaymentAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-
-	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-
 	case errors.Is(err, ErrPaymentNotConfirmed):
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error(), "code": "payment_not_confirmed"})
-
+		code = "payment_not_confirmed"
 	case errors.Is(err, ErrReferenceReused):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "reference_reused"})
-
-	case errors.Is(err, ErrApplicationNotFound),
-		errors.Is(err, ErrBatchNotFound),
-		errors.Is(err, ErrPlanNotFound),
-		errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-
+		code = "reference_reused"
 	case errors.Is(err, ErrDuplicate):
-		// On idempotency collision, return 409 Conflict
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "idempotency_collision"})
-
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		code = "idempotency_collision"
 	}
+	status := errMap.Code(err)
+	body := gin.H{keyError: httperr.Msg(c, status, err)}
+	if status == http.StatusInternalServerError {
+		body[keyError] = "internal server error"
+	}
+	if code != "" {
+		body["code"] = code
+	}
+	c.JSON(status, body)
 }
 
 // ConfirmPayment handles POST /api/finance/academy/tuition/confirm.
@@ -84,22 +82,22 @@ func writeErr(c *gin.Context, err error) {
 func (h *Handler) ConfirmPayment(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
-	idempKey := idemKey(c)
+	idempKey := ginutil.IdempotencyKey(c)
 	if idempKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Idempotency-Key header is required",
-			"code":  "idempotency_key_required",
+			keyError: "Idempotency-Key header is required",
+			"code":   "idempotency_key_required",
 		})
 		return
 	}
 
 	var req ConfirmPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -115,17 +113,49 @@ func (h *Handler) ConfirmPayment(c *gin.Context) {
 	})
 }
 
+// ConfirmPaymentInternal handles POST /internal/finance/academy/tuition/confirm.
+// The route is service-token authenticated upstream (middleware.RequireServiceToken),
+// so no user JWT exists — the payer is resolved from the payment row by the
+// service. The Idempotency-Key header is optional here: when absent the key is
+// derived as `academy-tuition-confirm:{paymentId}:{reference}`, identical to the
+// derivation the Next.js confirm route applies, so a webhook/recover fulfilment
+// and a late client retry collapse onto ONE logical operation (redis claim →
+// 409 idempotency_collision → the caller treats it as already-in-flight).
+func (h *Handler) ConfirmPaymentInternal(c *gin.Context) {
+	var req ConfirmPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+
+	idempKey := ginutil.IdempotencyKey(c)
+	if idempKey == "" {
+		idempKey = "academy-tuition-confirm:" + req.PaymentID + ":" + req.Reference
+	}
+
+	result, err := h.svc.ConfirmPaymentInternal(c.Request.Context(), idempKey, req.PlanID, req.PaymentID, req.Reference)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    result,
+	})
+}
+
 // ValidatePayment handles POST /api/finance/academy/tuition/validate (quote endpoint).
 func (h *Handler) ValidatePayment(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	var req ValidatePaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -144,13 +174,13 @@ func (h *Handler) ValidatePayment(c *gin.Context) {
 func (h *Handler) GetTuitionStatus(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	appID := c.Param("application_id")
 	if appID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "application_id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "application_id is required"})
 		return
 	}
 
@@ -170,13 +200,13 @@ func (h *Handler) GetTuitionStatus(c *gin.Context) {
 func (h *Handler) WaiveTuition(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	paymentID := c.Param("id")
 	if paymentID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "payment id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "payment id is required"})
 		return
 	}
 
@@ -198,13 +228,13 @@ func (h *Handler) WaiveTuition(c *gin.Context) {
 func (h *Handler) MarkPlanCompleted(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	planID := c.Param("id")
 	if planID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "plan id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "plan id is required"})
 		return
 	}
 
@@ -225,7 +255,7 @@ func (h *Handler) MarkPlanCompleted(c *gin.Context) {
 func (h *Handler) CreatePlan(c *gin.Context) {
 	actorID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
@@ -233,7 +263,7 @@ func (h *Handler) CreatePlan(c *gin.Context) {
 		ApplicationID string `json:"applicationId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -252,13 +282,8 @@ func (h *Handler) CreatePlan(c *gin.Context) {
 // requireUserID extracts the user ID from the auth context.
 // Returns empty string and error if not authenticated.
 func requireUserID(c *gin.Context) (string, error) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		return "", errors.New("user_id not found in context")
+	if u := ginutil.UserID(c); u != "" {
+		return u, nil
 	}
-	uid, ok := userID.(string)
-	if !ok {
-		return "", errors.New("user_id is not a string")
-	}
-	return uid, nil
+	return "", errors.New("user_id not found in context")
 }

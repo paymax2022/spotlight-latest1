@@ -1,13 +1,18 @@
 package healthvet
 
 import (
+	"errors"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/tiers"
+	healthrx "spotlight/backend/internal/health/rx"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	healthrx "spotlight/backend/internal/health/rx"
+	"github.com/google/uuid"
 )
 
 // Handler exposes the HEALTH-BUILD §6 Veterinary API. AuthN is the finance auth
@@ -26,34 +31,38 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 	return &Handler{svc: svc, isAdmin: isAdmin}
 }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
-func fail(c *gin.Context, status int, msg string) {
-	c.JSON(status, gin.H{"success": false, "error": msg})
-}
-
-func idemKey(c *gin.Context, body string) string {
-	if hk := c.GetHeader("Idempotency-Key"); hk != "" {
-		return hk
-	}
-	return body
-}
-
 // CreatePet — POST /pets  (owner; seeds vault PET record, HL-8)
+// Requires Idempotency-Key (header, or the body's idempotency_key fallback like
+// Book): a replay returns the original pet rather than writing a duplicate.
 func (h *Handler) CreatePet(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	var p Pet
-	if err := c.ShouldBindJSON(&p); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+	var req struct {
+		Pet
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	out, err := h.svc.CreatePet(c.Request.Context(), id, p)
+	// Header wins; the body field is the module's established alternate spelling
+	// (same convention as Book). Missing either is a client error — a mutation
+	// that cannot dedupe itself must not run (HL-9 convention).
+	req.Pet.IdempotencyKey = strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
+	if req.Pet.IdempotencyKey == "" {
+		ginutil.FailOK(c, http.StatusBadRequest, "Idempotency-Key required")
+		return
+	}
+	out, err := h.svc.CreatePet(c.Request.Context(), id, req.Pet)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, ErrPetMissingIdem) {
+			status = http.StatusBadRequest
+		}
+		ginutil.FailOK(c, status, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "pet": out})
@@ -61,17 +70,17 @@ func (h *Handler) CreatePet(c *gin.Context) {
 
 // ListPets — GET /pets  (owner reads own pets only, HL-8)
 func (h *Handler) ListPets(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	// Anything ListPets returns past the auth check is an internal failure
-	// (e.g. a DB error), not an auth one — mapping it to 401 like the old code
-	// did made a query bug indistinguishable from a bad/missing token.
+	// (e.g. a DB error), not an auth one — mapping it to 401 would make a query
+	// bug indistinguishable from a bad/missing token.
 	pets, err := h.svc.ListPets(c.Request.Context(), id)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pets": pets})
@@ -96,7 +105,7 @@ func (h *Handler) DiscoverVets(c *gin.Context) {
 	}
 	vets, err := h.svc.DiscoverVets(c.Request.Context(), lat, lng, radius)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "vets": vets})
@@ -104,9 +113,9 @@ func (h *Handler) DiscoverVets(c *gin.Context) {
 
 // UpsertService — POST /services  (verified vet owner; fee governance, HL-2)
 func (h *Handler) UpsertService(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -119,7 +128,13 @@ func (h *Handler) UpsertService(c *gin.Context) {
 		Active     bool   `json:"active"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid); an
+	// empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(req.ProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
 		return
 	}
 	out, err := h.svc.UpsertService(c.Request.Context(), id, VetService{
@@ -127,7 +142,7 @@ func (h *Handler) UpsertService(c *gin.Context) {
 		VisitType: VisitType(req.VisitType), PriceKobo: req.PriceKobo, Active: req.Active,
 	})
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "service": out})
@@ -135,9 +150,9 @@ func (h *Handler) UpsertService(c *gin.Context) {
 
 // Book — POST /appointments  (owner; tele/home/clinic; payment HELD, HL-9)
 func (h *Handler) Book(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -150,27 +165,42 @@ func (h *Handler) Book(c *gin.Context) {
 		IdempotencyKey string `json:"idempotency_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid); an
+	// empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(req.ProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
 		return
 	}
 	start, err := time.Parse(time.RFC3339, req.SlotStart)
 	if err != nil {
-		fail(c, http.StatusBadRequest, "invalid slot_start (RFC3339)")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid slot_start (RFC3339)")
 		return
 	}
 	end, err := time.Parse(time.RFC3339, req.SlotEnd)
 	if err != nil {
-		fail(c, http.StatusBadRequest, "invalid slot_end (RFC3339)")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid slot_end (RFC3339)")
 		return
 	}
 	in := BookInput{
 		ProviderID: req.ProviderID, PetID: req.PetID, ServiceID: req.ServiceID,
 		VisitType: VisitType(req.VisitType), SlotStart: start, SlotEnd: end,
-		IdempotencyKey: idemKey(c, req.IdempotencyKey),
+		IdempotencyKey: strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey),
 	}
 	a, err := h.svc.Book(c.Request.Context(), id, in)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
+		switch {
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, escrow.ErrTierGateUnwired):
+			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+		default:
+			ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		}
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "appointment": a})
@@ -178,14 +208,14 @@ func (h *Handler) Book(c *gin.Context) {
 
 // Accept — POST /appointments/:id/accept  (verified vet, HL-2)
 func (h *Handler) Accept(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	a, err := h.svc.Accept(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -193,14 +223,14 @@ func (h *Handler) Accept(c *gin.Context) {
 
 // Confirm — POST /appointments/:id/confirm
 func (h *Handler) Confirm(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	a, err := h.svc.Confirm(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -208,9 +238,9 @@ func (h *Handler) Confirm(c *gin.Context) {
 
 // Cancel — POST /appointments/:id/cancel  (owner/vet; refund HELD, HL-9)
 func (h *Handler) Cancel(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -219,7 +249,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	a, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -227,14 +257,14 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // Dispatch — POST /appointments/:id/dispatch  (home visit on transport rail)
 func (h *Handler) Dispatch(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	a, err := h.svc.Dispatch(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -242,14 +272,14 @@ func (h *Handler) Dispatch(c *gin.Context) {
 
 // StartConsult — POST /consults/:id/start  (verified vet; :id is appointment id)
 func (h *Handler) StartConsult(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	a, err := h.svc.StartConsult(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -257,9 +287,9 @@ func (h *Handler) StartConsult(c *gin.Context) {
 
 // CompleteConsult — POST /consults/:id/complete  (verified vet; SOAP + care loop)
 func (h *Handler) CompleteConsult(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -279,7 +309,7 @@ func (h *Handler) CompleteConsult(c *gin.Context) {
 		LabTestIDs         []string `json:"lab_test_ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	items := make([]healthrx.Item, 0, len(req.RxItems))
@@ -297,7 +327,7 @@ func (h *Handler) CompleteConsult(c *gin.Context) {
 	}
 	res, err := h.svc.CompleteConsult(c.Request.Context(), id, c.Param("id"), in)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": res})
@@ -305,9 +335,9 @@ func (h *Handler) CompleteConsult(c *gin.Context) {
 
 // ScheduleVaccination — POST /pets/:id/vaccinations  (owner; reminder via scheduler)
 func (h *Handler) ScheduleVaccination(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -315,17 +345,17 @@ func (h *Handler) ScheduleVaccination(c *gin.Context) {
 		DueAt   string `json:"due_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	dueAt, err := time.Parse(time.RFC3339, req.DueAt)
 	if err != nil {
-		fail(c, http.StatusBadRequest, "invalid due_at (RFC3339)")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid due_at (RFC3339)")
 		return
 	}
 	v, err := h.svc.ScheduleVaccination(c.Request.Context(), id, c.Param("id"), req.Vaccine, dueAt)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "vaccination": v})
@@ -333,9 +363,9 @@ func (h *Handler) ScheduleVaccination(c *gin.Context) {
 
 // EmergencySOS — POST /sos  (HL-11: routes to nearest in-person vet + disclaimer)
 func (h *Handler) EmergencySOS(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -343,12 +373,12 @@ func (h *Handler) EmergencySOS(c *gin.Context) {
 		Lng float64 `json:"lng"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	res, err := h.svc.EmergencySOS(c.Request.Context(), id, req.Lat, req.Lng)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sos": res})
@@ -356,14 +386,14 @@ func (h *Handler) EmergencySOS(c *gin.Context) {
 
 // ListMyAppointments — GET /appointments  (owner reads own appointment history)
 func (h *Handler) ListMyAppointments(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	appts, err := h.svc.ListAppointmentsForPatient(c.Request.Context(), id)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointments": appts})
@@ -371,10 +401,66 @@ func (h *Handler) ListMyAppointments(c *gin.Context) {
 
 // Get — GET /appointments/:id  (object-level authZ: owner / vet / admin)
 func (h *Handler) Get(c *gin.Context) {
-	a, err := h.svc.Get(c.Request.Context(), uid(c), c.Param("id"), h.isAdmin(c))
+	a, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		fail(c, http.StatusForbidden, err.Error())
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
+}
+
+// Admin handlers — RBAC health.vet.* applied at route registration. These are
+// admin-basis oversight reads/controls (VCN audit, appointment oversight, e-Rx
+// audit, service/fee governance). PII is never surfaced (ids/state only).
+
+// AdminListAppointments — GET /admin/appointments?state=&provider_id=
+func (h *Handler) AdminListAppointments(c *gin.Context) {
+	rows, err := h.svc.AdminListAppointments(c.Request.Context(), c.Query("state"), c.Query("provider_id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "appointments": rows})
+}
+
+// AdminVCNAudit — GET /admin/vcn-audit  (VCN credential audit, HL-2/HL-12)
+func (h *Handler) AdminVCNAudit(c *gin.Context) {
+	rows, err := h.svc.AdminVCNAudit(c.Request.Context())
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "providers": rows})
+}
+
+// AdminERxAudit — GET /admin/erx-audit?provider_id=  (e-prescription audit, HL-3/HL-12)
+func (h *Handler) AdminERxAudit(c *gin.Context) {
+	rows, err := h.svc.AdminERxAudit(c.Request.Context(), c.Query("provider_id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rows})
+}
+
+// AdminDeactivateService — POST /admin/services/:id/deactivate  (fee governance)
+func (h *Handler) AdminDeactivateService(c *gin.Context) {
+	if err := h.svc.AdminDeactivateService(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate. See
+// Service.AdminDashboard / AdminDashboard (service.go) for exactly what is
+// computed and why fields this batch cannot honestly compute are left off the
+// shape entirely rather than fabricated.
+func (h *Handler) AdminDashboard(c *gin.Context) {
+	d, err := h.svc.AdminDashboard(c.Request.Context())
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
 }

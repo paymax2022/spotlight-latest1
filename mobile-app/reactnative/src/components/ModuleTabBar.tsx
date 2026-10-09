@@ -1,5 +1,3 @@
-// ── In-module bottom navigation ──────────────────────────────────────────────
-//
 // A module-scoped footer for the Stack-based modules (association, crowdfunding,
 // film academy, voting, utility payments). Each of those is an expo-router
 // Stack with a deep sub-tree — association alone has ~20 nested route folders —
@@ -8,7 +6,6 @@
 // MarketTabBar documents. This renders as a sibling of <Stack/> in the module
 // layout instead: navigation semantics are untouched, and the bar draws only the
 // destinations it is given.
-//
 // VISIBILITY IS DELIBERATELY NARROW. The bar shows only when the current path is
 // one of its own tabs — never on a pushed detail screen. Those screens are
 // reached with a back affordance and several carry their own bottom CTA (the
@@ -19,10 +16,10 @@ import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 export interface ModuleTab {
   /** Absolute route, e.g. '/association/directory'. Must be a real screen. */
@@ -48,7 +45,18 @@ function normalise(path: string): string {
   return withoutQuery.length > 1 ? withoutQuery.replace(/\/+$/, '') : withoutQuery;
 }
 
-export default function ModuleTabBar({ tabs }: { tabs: readonly ModuleTab[] }) {
+export default function ModuleTabBar({
+  tabs,
+  alsoVisibleOn = [],
+}: {
+  tabs: readonly ModuleTab[];
+  /**
+   * Route prefixes (e.g. '/association/create') whose screens show the bar even
+   * though they are not one of its tabs. No tab is highlighted there. Opt-in per
+   * flow: every other pushed screen keeps the narrow default above.
+   */
+  alsoVisibleOn?: readonly string[];
+}) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const current = normalise(pathname ?? '');
@@ -60,8 +68,14 @@ export default function ModuleTabBar({ tabs }: { tabs: readonly ModuleTab[] }) {
     return exact?.href ?? null;
   }, [tabs, current]);
 
-  // Not one of our destinations — a pushed detail screen. Draw nothing.
-  if (!activeHref) return null;
+  const inOptedInFlow = alsoVisibleOn.some((prefix) => {
+    const p = normalise(prefix);
+    return current === p || current.startsWith(`${p}/`);
+  });
+
+  // Not one of our destinations and not an opted-in flow — a pushed detail
+  // screen. Draw nothing.
+  if (!activeHref && !inOptedInFlow) return null;
 
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>

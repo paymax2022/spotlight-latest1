@@ -1,9 +1,6 @@
 package spotlightwealth_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the Spotlight Wealth module.
-//
-// spotlightwealth.Service (spotlightwealth.NewService(pool, ledgerSvc, audit))
 // talks to a concrete *pgxpool.Pool for every mutation (JoinChallenge,
 // CompleteChallenge) and to the real ledger.Service for the reward's balanced
 // double-entry posting. None of this can run without a migrated Postgres. This
@@ -12,7 +9,6 @@ package spotlightwealth_test
 // fully written end-to-end so it can be un-skipped the moment infra is
 // available — the skip is NOT a stub; every step below drives the real Service
 // against real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply the spotlightwealth migration (spotlight_challenges,
 //     spotlight_challenge_members, spotlight_reward_ledger,
@@ -27,14 +23,13 @@ package spotlightwealth_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/spotlightwealth/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id — no truncation, no shared fixtures, safe to run repeatedly
 // against the same test database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -123,9 +118,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// ---------------------------------------------------------------------------
 // CompleteChallenge: idempotency, balanced posting, reward wallet history.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_CompleteChallenge_IdempotentRetry_OneLedgerCreditOneRewardRow
 // drives a real challenge completion twice with the SAME Idempotency-Key and
@@ -217,7 +210,7 @@ func TestLiveDB_CompleteChallenge_RequiresJoinFirst(t *testing.T) {
 	stranger := uuid.New().String()
 
 	_, err := svc.CompleteChallenge(ctx, stranger, challengeID, newIdemKey(t, "never-joined"))
-	if err != spotlightwealth.ErrForbidden {
+	if !errors.Is(err, spotlightwealth.ErrForbidden) {
 		t.Fatalf("CompleteChallenge without joining first: err = %v, want ErrForbidden", err)
 	}
 
@@ -246,7 +239,7 @@ func TestLiveDB_CompleteChallenge_RequiresIdempotencyKey(t *testing.T) {
 	}
 
 	_, err := svc.CompleteChallenge(ctx, userID, challengeID, "")
-	if err != spotlightwealth.ErrBadInput {
+	if !errors.Is(err, spotlightwealth.ErrBadInput) {
 		t.Fatalf("CompleteChallenge with empty Idempotency-Key: err = %v, want ErrBadInput", err)
 	}
 
@@ -311,7 +304,7 @@ func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 	userID := seedUser(t, ctx, pool)
 
 	_, err := svc.JoinChallenge(ctx, userID, challengeID)
-	if err != spotlightwealth.ErrChallengeEnded {
+	if !errors.Is(err, spotlightwealth.ErrChallengeEnded) {
 		t.Fatalf("JoinChallenge on an ended challenge: err = %v, want ErrChallengeEnded", err)
 	}
 
@@ -324,9 +317,7 @@ func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Leaderboard: ranks learning points, live read-path smoke check.
-// ---------------------------------------------------------------------------
 
 // seedLearningPoints inserts a spotlight_learning_points row for a synthetic
 // user and returns the user id.

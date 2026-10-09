@@ -190,6 +190,32 @@ components:
       properties:
         contestant_id: { type: string }
         vote_quantity: { type: integer, minimum: 1, description: Number of votes to cast (admin unlimited) }
+    RosterEntry:
+      type: object
+      description: One contestant with its live vote tally, rank, and social stats.
+      properties:
+        contestant_id: { type: string }
+        name: { type: string }
+        stage_name: { type: string }
+        category: { type: string }
+        state: { type: string }
+        bio: { type: string }
+        photo_url: { type: string }
+        media_url: { type: string }
+        status: { type: string }
+        is_active: { type: boolean }
+        contest_id: { type: string }
+        free_votes: { type: integer }
+        paid_votes: { type: integer }
+        total_votes: { type: integer }
+        rank: { type: integer }
+        like_count: { type: integer }
+        share_count: { type: integer }
+        liked_by_me:
+          type: boolean
+          description: >
+            Whether the authenticated caller has liked this contestant.
+            Always false for the public share-resolve endpoint, which has no caller.
 
 paths:
   # ── Wallet-paid votes (in-app wallet debit, no Paystack redirect) ──────────
@@ -571,3 +597,100 @@ paths:
         '401': { description: Not authenticated }
         '403': { description: Missing contests:manage permission }
         '404': { description: Contest not found }
+  /v1/connect/contestants/{id}/like:
+    post:
+      summary: Like a contestant (member)
+      description: >
+        Records the caller's like of a contestant. Idempotent — liking twice
+        is not an error. Returns the contestant with its fresh like_count and
+        liked_by_me=true.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contestant ID
+      responses:
+        '200':
+          description: Like recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RosterEntry' }
+        '401': { description: Not authenticated }
+        '404': { description: Contestant not found }
+    delete:
+      summary: Unlike a contestant (member)
+      description: Removes the caller's like, if any. Idempotent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contestant ID
+      responses:
+        '200':
+          description: Like removed (or was never present)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RosterEntry' }
+        '401': { description: Not authenticated }
+  /v1/connect/contestants/{id}/share:
+    post:
+      summary: Record a profile share and get a shareable link token (member)
+      description: >
+        Records a share action and returns a token to build a shareable link
+        from (client's web base URL + `path`). Opening that link lets someone
+        without the app view the contestant and get routed to install/open
+        the app and vote. No Idempotency-Key required — a duplicate share row
+        from a double-tap has no money/vote consequence, only a display count.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contestant ID
+      responses:
+        '201':
+          description: Share recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      path: { type: string, example: /vote-link/a1b2c3d4e5f6 }
+                      share_count: { type: integer }
+        '401': { description: Not authenticated }
+        '404': { description: Contestant not found }
+  /v1/connect/share/{token}:
+    get:
+      summary: Resolve a share token (PUBLIC — no auth)
+      description: >
+        Looks up which contestant a share link points to. Unauthenticated by
+        design: the person following a shared link has no session yet — this
+        is what the web landing page calls to show who they're being asked
+        to vote for before they've installed the app or signed up.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The contestant the token resolves to
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RosterEntry' }
+        '404': { description: Share link not found }

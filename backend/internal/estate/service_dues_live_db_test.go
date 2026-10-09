@@ -1,27 +1,21 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Estate module's PayDues money path (docs/qa/modules/estate.md
 // ESTATE-INT-001/002, ESTATE-VAL-001/002, ESTATE-AUTHZ-004/005, ESTATE-IDEM-001,
 // ESTATE-CONC-001). This is the first time PayDues has been exercised against a
 // live database — every prior estate test either nil-DB-guards the money path
 // (isolation_test.go, modules_test.go) or documents the isolation contract
 // without a live DB (isolation_test.go's TestCrossEstateIsolationContract).
-//
 // Follows the pattern used by internal/restaurant/payout_double_payment_live_db_test.go
 // and internal/property/context_test.go: TEST_DATABASE_URL-gated, pgxpool via
 // t.Cleanup, real ledger wired via ledger.NewService(ledger.NewRepository(pool), nil),
 // wallets funded through the ledger (never a direct balance UPDATE — wallet
 // balances are a ledger projection, never mutated directly, per CLAUDE.md).
-//
 // Package `estate` (not `estate_test`) so the tests can call the unexported
 // helpers (existingReceipt) directly when proving the CONC-001 fix.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -38,8 +32,6 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func estateDuesTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -63,8 +55,6 @@ func newDuesTestService(pool *pgxpool.Pool) (*Service, *ledger.Service) {
 	svc := NewService(pool, nil).WithLedger(led).WithTiers(tiers.NewService(pool))
 	return svc, led
 }
-
-// ── fixture helpers ─────────────────────────────────────────────────────────
 
 // seedDuesUser inserts a throwaway auth.users row + a KYC tier-3 user_profiles
 // row (so EnforceCheckoutDebitLimit's Tier-0 checkout-allowance branch never
@@ -94,14 +84,14 @@ func seedEstate(t *testing.T, ctx context.Context, pool *pgxpool.Pool, adminID s
 	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Dues Test Estate',$2)`, estateID, adminID); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM estates WHERE id=$1`, estateID) })
 	seedResident(t, ctx, pool, estateID, adminID, "estate_admin")
 	return estateID
 }
 
 func seedResident(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID, userID, role string) {
 	t.Helper()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_residents (estate_id, user_id, unit, role) VALUES ($1,$2,'',$3)
 		 ON CONFLICT (estate_id, user_id) DO UPDATE SET role=EXCLUDED.role`,
 		estateID, userID, role); err != nil {
@@ -127,7 +117,7 @@ func fundWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) int64 {
 	t.Helper()
 	var bal int64
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_CREDIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
 		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
 		WHERE a.user_id=$1`, userID).Scan(&bal); err != nil {
@@ -140,7 +130,6 @@ func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 // standing settlement account: the CREDIT side written by ledger.Debit (repository.go
 // suffixes the pair ":debit"/":credit" on the caller's Idempotency-Key). 0 means the
 // payment never posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
 // global standing account also moved by restaurant payouts, academy, connect, realtor
 // and other suites, and `go test ./...` runs packages concurrently against one database
@@ -154,7 +143,7 @@ func duesSettlementLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		t.Fatalf("settlement standing acct: %v", err)
 	}
 	var credited int64
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
 		  WHERE idempotency_key=$1 AND type='CREDIT' AND account_id=$2`,
 		idemKey+":credit", acc.ID).Scan(&credited); err != nil {
@@ -172,20 +161,22 @@ func seedInvoice(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID
 		status = "pending"
 	}
 	invID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_dues_invoices (id, estate_id, resident_id, category, amount_kobo, due_date, status)
 		 VALUES ($1,$2,$3,'service_charge',$4,NOW()+interval '7 days',$5)`,
 		invID, estateID, residentID, amountKobo, status); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM estate_dues_invoices WHERE id=$1`, invID)
+	})
 	return invID
 }
 
 func paymentCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, invoiceID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM estate_payments WHERE invoice_id=$1 AND status='successful'`, invoiceID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM estate_payments WHERE invoice_id=$1 AND status='successful'`, invoiceID).Scan(&n); err != nil {
 		t.Fatalf("payment count: %v", err)
 	}
 	return n
@@ -194,7 +185,7 @@ func paymentCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, invoice
 func invoiceStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, invoiceID string) string {
 	t.Helper()
 	var s string
-	if err := pool.QueryRow(ctx, `SELECT status FROM estate_dues_invoices WHERE id=$1`, invoiceID).Scan(&s); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM estate_dues_invoices WHERE id=$1`, invoiceID).Scan(&s); err != nil {
 		t.Fatalf("invoice status: %v", err)
 	}
 	return s
@@ -203,13 +194,11 @@ func invoiceStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, invoic
 func auditCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID, subjectID, action string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM estate_audit_log WHERE estate_id=$1 AND subject_id=$2 AND action=$3`, estateID, subjectID, action).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM estate_audit_log WHERE estate_id=$1 AND subject_id=$2 AND action=$3`, estateID, subjectID, action).Scan(&n); err != nil {
 		t.Fatalf("audit count: %v", err)
 	}
 	return n
 }
-
-// ── ESTATE-INT-001 / ESTATE-INT-002 ─────────────────────────────────────────
 
 // TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction
 // covers ESTATE-INT-001 (balanced DEBIT payer / CREDIT settlement, invoice ->
@@ -231,7 +220,7 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 	invID := seedInvoice(t, ctx, pool, estateID, resident, amount, "pending")
 
 	// ESTATE-INT-002 precondition: an active HARD restriction on the resident.
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_dues_restrictions (id, estate_id, resident_id, level, reason, active, applied_by)
 		 VALUES ($1,$2,$3,'hard','defaulted',TRUE,$4)`,
 		uuid.New().String(), estateID, resident, admin); err != nil {
@@ -276,7 +265,7 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 	// ESTATE-INT-002: restriction lifted.
 	var active bool
 	var liftedAt *time.Time
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT active, lifted_at FROM estate_dues_restrictions WHERE estate_id=$1 AND resident_id=$2 ORDER BY created_at DESC LIMIT 1`,
 		estateID, resident).Scan(&active, &liftedAt); err != nil {
 		t.Fatalf("read restriction: %v", err)
@@ -288,8 +277,6 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 		t.Error("restriction lifted_at not set")
 	}
 }
-
-// ── ESTATE-VAL-001 ──────────────────────────────────────────────────────────
 
 // TestLiveDB_PayDues_RejectsAmountOverride covers ESTATE-VAL-001: the server
 // re-prices to the invoice's own stored amount and never trusts a client
@@ -375,8 +362,6 @@ func TestLiveDB_PayDues_RejectsAmountOverride(t *testing.T) {
 	})
 }
 
-// ── ESTATE-VAL-002 ──────────────────────────────────────────────────────────
-
 func TestLiveDB_PayDues_RejectsWaivedInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
 	ctx := context.Background()
@@ -404,8 +389,6 @@ func TestLiveDB_PayDues_RejectsWaivedInvoice(t *testing.T) {
 		t.Errorf("payment rows = %d after rejected pay, want 0 (no ledger posting)", n)
 	}
 }
-
-// ── ESTATE-AUTHZ-004 (same-estate IDOR) ─────────────────────────────────────
 
 func TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -439,8 +422,6 @@ func TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice(t *testing.T) {
 		t.Errorf("invoice status = %q, want still pending", got)
 	}
 }
-
-// ── ESTATE-AUTHZ-005 (cross-estate IDOR) ────────────────────────────────────
 
 func TestLiveDB_PayDues_RejectsCrossEstateInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -477,8 +458,6 @@ func TestLiveDB_PayDues_RejectsCrossEstateInvoice(t *testing.T) {
 		t.Errorf("estate-B invoice status = %q, want still pending (untouched by the estate-A caller)", got)
 	}
 }
-
-// ── ESTATE-IDEM-001 ──────────────────────────────────────────────────────────
 
 func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -522,16 +501,12 @@ func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	}
 }
 
-// ── ESTATE-CONC-001 ──────────────────────────────────────────────────────────
-
 // TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce fires two GENUINELY
 // concurrent PayDues calls (real goroutines + sync.WaitGroup, not sequential
 // calls dressed up as concurrent) with the SAME Idempotency-Key against the
 // SAME pending invoice, and proves the settlement posts exactly once.
-//
 // This uncovered a real bug (see the regression-guard proof in the task
 // report): before the fix, a caller that lost the race — its
-// `INSERT INTO estate_payments ... ON CONFLICT (idempotency_key) DO NOTHING`
 // affected 0 rows because the other goroutine's insert had already committed —
 // fell through to update the (already-updated) invoice, lift the (already-
 // lifted) restriction, write a SECOND DUES_PAY audit row, and return a
@@ -561,7 +536,7 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	results := make([]*DuesPayment, n)
 	errs := make([]error, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			results[i], errs[i] = svc.PayDues(ctx, estateID, resident, PayDuesRequest{
@@ -572,7 +547,7 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	wg.Wait()
 
 	var successIDs []string
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successIDs = append(successIDs, results[i].ID)
 		}

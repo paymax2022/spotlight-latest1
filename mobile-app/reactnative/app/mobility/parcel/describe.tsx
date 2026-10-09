@@ -4,10 +4,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Camera, Check, ShieldAlert, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -18,14 +18,16 @@ import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcelEstimate, useBookParcel } from '@/features/mobility/hooks/useModes';
-import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { usePurchasePayment, useGatewayCheckout, PaymentSheet } from '@/features/payments';
+import * as parcelAPI from '@/features/mobility/api/parcel.api';
+import { parcelCardDirectResolverRoute } from '@/features/mobility/utils/cardDirect';
 import {
   PARCEL_CATEGORIES,
   PARCEL_SIZES,
   PARCEL_SPEEDS,
   PROHIBITED_ITEMS,
 } from '@/features/mobility/constants/modes.constants';
-import { formatNairaWhole, nairaToKobo } from '@/features/mobility/utils/mobilityFormatters';
+import { formatNairaWhole, nairaToKobo, newIdempotencyKey } from '@/features/mobility/utils/mobilityFormatters';
 import type { ParcelCategory, ParcelSize, ParcelSpeed, ParcelEstimate, Place } from '@/features/mobility/types/modes.types';
 import { withPlusCode } from '@/lib/addressLookup';
 
@@ -66,6 +68,16 @@ export default function ParcelDescribeScreen() {
   const est: ParcelEstimate | undefined = estimate.data;
   // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
   const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
+  // Card runs through the genuinely separate, server-initiated Paystack rail
+  // (transport/paystackcheckout, parcel domain) — NOT usePurchasePayment's
+  // built-in wallet-top-up-then-spend card rail, which is blocked for Tier-0
+  // senders ("Verification needed"). No wallet debit ever occurs on this rail,
+  // so it works without KYC; the server quotes + verifies the amount. The
+  // wallet rail above keeps its KYC gate unchanged.
+  const paystackCheckout = useGatewayCheckout();
+  useEffect(() => {
+    if (paystackCheckout.error) setSubmitError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
 
   const declaredValueKobo = nairaToKobo(Number(declaredValue) || 0);
 
@@ -89,6 +101,7 @@ export default function ParcelDescribeScreen() {
     pay.start({
       amountKobo: est.totalKobo,
       title: 'Pay for delivery',
+      domain: 'parcel',
       // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
       charge: () =>
         book.mutateAsync({
@@ -100,6 +113,26 @@ export default function ParcelDescribeScreen() {
           paymentMethod: 'wallet',
         }),
       onPaid: (parcel) => router.replace(`/mobility/parcel/${parcel.id}`),
+      // Card → server-initiated Paystack checkout (same shape as estimate.tsx).
+      onCard: async () => {
+        await paystackCheckout.start({
+          domain: 'parcel',
+          initialize: async () => {
+            const r = await parcelAPI.initiateParcelPaystack({
+              pickup, dropoff, category, size, speed, declaredValueKobo,
+              receiverName: receiverName.trim(),
+              receiverPhone: receiverPhone.trim(),
+              prohibitedAck,
+              idempotencyKey: newIdempotencyKey('parcel-paystack'),
+            });
+            if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+            return { authorizationUrl: r.authorizationUrl, reference: r.reference };
+          },
+          onResolved: (res) => {
+            router.replace(parcelCardDirectResolverRoute(res.reference) as never);
+          },
+        });
+      },
     });
   };
 
@@ -202,6 +235,8 @@ export default function ParcelDescribeScreen() {
       )}
       {/* Shared wallet/card chooser — drives the booking charge above. */}
       <PaymentSheet controller={pay} />
+      {/* Hosts the in-app Paystack checkout for the card-direct rail. */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }

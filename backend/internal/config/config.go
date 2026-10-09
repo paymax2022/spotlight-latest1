@@ -1,8 +1,12 @@
 package config
 
 import (
+	"encoding/base64"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -13,12 +17,28 @@ type Config struct {
 	Port                   string
 	SupabaseURL            string
 	SupabaseServiceRoleKey string
-	AdminAPIKey            string
-	CORSAllowOrigins       string
+	// SupabaseJWTSecret enables local HS256 verification of Supabase access
+	// tokens (ADR-PR395: removes the per-request GoTrue GET /auth/v1/user call
+	// that saturates first under load). Only consulted when AuthJWTLocalVerify
+	// is true.
+	SupabaseJWTSecret  string
+	AuthJWTLocalVerify bool
+	// AuthIdentityCacheTTLSeconds caches the per-request RBAC identity lookups
+	// (status/roles/global perms) for this many seconds; 0 = live lookups.
+	// Opt-in because a suspend/lock takes up to this long to take effect.
+	AuthIdentityCacheTTLSeconds int
+	AdminAPIKey                 string
+	CORSAllowOrigins            string
+	// TrustedProxyCIDRs is a CSV of CIDRs/IPs whose X-Forwarded-For/X-Real-Ip
+	// headers Gin may trust when resolving c.ClientIP(). c.ClientIP() feeds
+	// rate limits, audit records, and the suspicious-login engine, so it must
+	// not be caller-controlled. Default: the GCP external HTTPS LB frontend
+	// ranges (the hop in front of Cloud Run). Set TRUSTED_PROXY_CIDRS=none to
+	// distrust forwarded headers entirely (ClientIP = RemoteAddr).
+	TrustedProxyCIDRs      string
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
 
-	// ── Session / refresh-token hardening (#19) ──────────────────────────────
 	// Feature-flagged surface (default OFF). When OFF, the new self/admin session
 	// endpoints return 503 feature-disabled and the middleware session check is a
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
@@ -34,15 +54,36 @@ type Config struct {
 	SuspiciousEscalationPolicy string
 
 	// Direct Postgres connection (pgx) for money-path operations.
-	// Format: postgres://user:pass@host:port/db?sslmode=require
 	DatabaseURL string
 
 	// Redis URL for cache, Redlock, asynq, and WS pub/sub.
 	RedisURL string
+	// RedisRequired promotes Redis from a latency optimization to a hard
+	// readiness dependency: when true, /readyz reports 503 while Redis is
+	// unreachable (E2E-FR-050). DEFAULT OFF — Redis has a DB-unique fallback
+	// for idempotency and nil-safe degradation everywhere it is used, so when
+	// this is unset a down Redis reports "degraded" in the readiness components
+	// payload but the probe stays 200.
+	RedisRequired bool
+	// SchedulerEnabled runs the in-process durable-job poller
+	// (scheduler.Service.Poll) that drains scheduler_jobs. DEFAULT ON —
+	// without a poller, durable jobs are produced but never execute
+	// (E2E-BE-005). Set SCHEDULER_ENABLED=false only if an external process
+	// owns the drain (none exists today; the claim is SKIP LOCKED + UNIQUE run
+	// key, so per-replica pollers are safe anyway).
+	SchedulerEnabled bool
+	// SchedulerPollIntervalSeconds is the scheduler RunDue tick (default 5s).
+	SchedulerPollIntervalSeconds int
 
 	// Paystack credentials.
 	PaystackSecretKey  string
 	PaystackWebhookKey string
+	// PaystackBaseURL overrides the Paystack API base URL (default
+	// https://api.paystack.co). Local/dev only: set it to the Paystack fake
+	// (tools/fakes, e.g. http://localhost:9100) so the full
+	// initialize/verify/refund surface runs without real keys. Never set this
+	// in production — it reroutes every Paystack call the process makes.
+	PaystackBaseURL string
 
 	// Crypto real provider (retail crypto price feed + on-chain withdrawal broadcast).
 	// CryptoProvider selects the implementation: "mock" (default, deterministic, no
@@ -59,18 +100,20 @@ type Config struct {
 	// Maplerad credentials (FX + alternative VA provider).
 	MapleradSecretKey     string
 	MapleradPublicKey     string
-	MapleradProd          bool // false = sandbox
+	MapleradProd          bool
 	MapleradWebhookSecret string
+	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
+	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
+	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
+	MapleradBaseURL string
 	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
 	FeatureMapleradEnabled bool
-	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path
-	// (Next.js → Go migration, Phase 1+): member /api/finance/utilitybills/*
-	// routes, admin routes, and background jobs (pending-transaction requery
-	// sweep). DEFAULT OFF — no flag, no money path. Phase 0 (this package's
-	// pure domain types/logic) has nothing gated by it; the flag exists now
-	// so Phase 1 can wire behind it without a second config PR.
+	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path:
+	// member /api/finance/utilitybills/* routes, admin routes, and background
+	// jobs (pending-transaction requery sweep). DEFAULT OFF — no flag, no
+	// money path; the flag exists ahead of the Phase 1 wiring.
 	FeatureUtilityBillsEnabled bool
 
 	// Eversend credentials (FX provider 2).
@@ -83,7 +126,7 @@ type Config struct {
 	MonnifyAPIKey        string
 	MonnifySecretKey     string
 	MonnifyContractCode  string
-	MonnifyProd          bool // false = sandbox
+	MonnifyProd          bool
 	MonnifyWebhookSecret string
 
 	// Multi-provider bank-transfer routing.
@@ -152,14 +195,11 @@ type Config struct {
 	// Shared secret guarding /internal/referrals/* (service-to-service purchase
 	// hooks). Empty ⇒ those endpoints fail closed (503).
 	ReferralRewardsInternalSecret string
-	// Referral purchase-commission-split: a flat 20% of Spotlight's realized
+	// Referral purchase-commission-split: a flat 20% of Spotlight's realised
 	// commission on a purchase, paid to the referred payer's referrer, capped at
 	// referral_links.reward_cap rewarded purchases per CODE (not per referred
-	// user). Hooked into commission.Service (see referral/commissionsplit) —
-	// distinct from, and off by default same as, FeatureReferralRewardsEnabled's
-	// OLDER tiered engine above. Off by default: a brand-new money-path feature
-	// ships dark until explicitly verified in an environment, same posture as
-	// every other feature flag here.
+	// user). Hooked into commission.Service (see referral/commissionsplit);
+	// distinct from the older tiered engine above. DEFAULT OFF — new money path.
 	FeatureReferralCommissionSplitEnabled bool
 	FeatureTierLimitsEnabled              bool
 	FeatureFXEnabled                      bool
@@ -176,13 +216,12 @@ type Config struct {
 	AssocCardSigningSecret string
 	FeatureEventsEnabled   bool
 	FeatureEstateEnabled   bool
-	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded (card /
-	// bank-transfer) estate dues payment path (estate/paystackcheckout) — a
-	// dues invoice paid for directly via Paystack, posted DR provider-clearing
-	// / CR settlement, that never touches the payer's wallet and therefore
-	// never runs the KYC-tier gate. Default OFF. Same audited design as
-	// restaurant's FeatureRestaurantPaystackCheckoutEnabled, adapted to dues'
-	// immediate-settle model (no escrow/hold-release step to mirror).
+	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
+	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
+	// Paystack payment posted DR provider-clearing / CR settlement, never
+	// touching the payer's wallet, so no KYC-tier gate. Default OFF. Same
+	// audited design as FeatureRestaurantPaystackCheckoutEnabled, minus the
+	// escrow/hold-release step (dues settle immediately).
 	FeatureEstateDuesPaystackCheckoutEnabled bool
 	FeatureCrowdfundingEnabled               bool
 	FeatureRestaurantEnabled                 bool
@@ -193,16 +232,14 @@ type Config struct {
 	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
 	// explicitly turned on (see Service.WithWithdrawals).
 	FeatureRestaurantWithdrawalsEnabled bool
-	// FeatureRestaurantPaystackCheckoutEnabled gates the Paystack-funded (card /
-	// bank-transfer) food-order checkout path (restaurant/paystackcheckout) —
-	// an order paid for directly via Paystack, escrowed via
-	// settlement.EscrowExternal, that never touches the customer's wallet and
-	// therefore never runs the KYC-tier gate. Default OFF. This is a DIFFERENT,
-	// audited design from the rejected FEATURE_CHECKOUT_TOPUP_TIER0 (which
-	// topped up the wallet then spent it — see docs/audit/checkout-allowance-audit-findings.md)
-	// and must never be confused with it: this flag adds a new, wallet-free
-	// payment rail; it does not relax the tier gate on the existing
-	// wallet-funded PlaceOrder path, which stays fail-closed regardless.
+	// FeatureRestaurantPaystackCheckoutEnabled gates the Paystack-funded
+	// (card/bank-transfer) food-order checkout path (restaurant/paystackcheckout):
+	// an order paid directly via Paystack, escrowed via
+	// settlement.EscrowExternal, never touching the customer's wallet, so no
+	// KYC-tier gate. Default OFF. This is the audited alternative to the
+	// rejected FEATURE_CHECKOUT_TOPUP_TIER0 top-up-then-spend design (see
+	// docs/audit/checkout-allowance-audit-findings.md): a new wallet-free rail;
+	// the tier gate on wallet-funded PlaceOrder stays fail-closed regardless.
 	FeatureRestaurantPaystackCheckoutEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
@@ -214,27 +251,77 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
-	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded (card /
-	// bank-transfer) ride-hailing checkout path (transport/paystackcheckout) —
-	// a ride paid for directly via Paystack, escrowed via
-	// settlement.EscrowExternal, that never touches the rider's wallet and
-	// therefore never runs the KYC-tier gate. Default OFF. Mirrors
-	// restaurant's FeatureRestaurantPaystackCheckoutEnabled exactly — same
-	// audited design, ported to ride-hailing's instant-pricing flow only (no
-	// offer-mode negotiation). See restaurant/paystackcheckout's doc comment
-	// for why this is a different, safe design from the rejected
-	// FEATURE_CHECKOUT_TOPUP_TIER0.
+	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
+	// (card/bank-transfer) ride-hailing checkout path
+	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
+	// via settlement.EscrowExternal, never touching the rider's wallet, so no
+	// KYC-tier gate. Default OFF. Same audited design as
+	// FeatureRestaurantPaystackCheckoutEnabled, ported to ride-hailing's
+	// instant-pricing flow (no offer-mode negotiation).
 	FeatureTransportPaystackCheckoutEnabled bool
+	// FeatureTransportPaystackParcelEnabled gates CARD-DIRECT parcel booking
+	// (transport/paystackcheckout Engine + ParcelDomain): the sender pays by
+	// debit card straight through Paystack, escrowed via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate.
+	// Default OFF. Inert unless FeatureTransportPaystackCheckoutEnabled (the
+	// shared-engine master switch) AND FeatureTransportModesEnabled (parcel
+	// routes) are also on. One flag per service so each lifecycle can be
+	// rolled out / killed independently (ADR-PR522-mobility-card-direct).
+	FeatureTransportPaystackParcelEnabled bool
+	// FeatureTransportPaystackTowingEnabled gates CARD-DIRECT towing / roadside
+	// booking (transport/paystackcheckout Engine + TowingDomain): the user pays by
+	// debit card straight through Paystack, escrowed via settlement.EscrowExternal
+	// — no wallet debit, so no KYC-tier gate. Default OFF. Inert unless
+	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
+	// FeatureTransportModesEnabled (towing routes) are also on. Gates ONLY new
+	// checkouts; confirm / status / refund / reconcile for money already collected
+	// stay live (ADR-PR522-mobility-card-direct H7).
+	FeatureTransportPaystackTowingEnabled bool
+	// FeatureTransportPaystackMoversEnabled gates CARD-DIRECT mover bid acceptance
+	// (transport/paystackcheckout Engine + MoversDomain): the customer pays the
+	// ACCEPTED BID by debit card straight through Paystack, escrowed via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate. Charged at bid
+	// acceptance (the amount is the bid read server-side). Default OFF. Inert unless
+	// FeatureTransportPaystackCheckoutEnabled (shared-engine master switch) AND
+	// FeatureTransportModesEnabled (mover routes) are also on. Gates ONLY new
+	// checkouts; confirm / status / refund / reconcile for money already collected
+	// stay live (ADR-PR522-mobility-card-direct H7).
+	FeatureTransportPaystackMoversEnabled bool
+	// FeatureTransportPaystackCarHireEnabled gates CARD-DIRECT car hire
+	// (transport/paystackcheckout Engine + CarHireDomain): ONE debit-card charge
+	// = fare + refundable deposit, escrowed as TWO settlements via
+	// settlement.EscrowExternal — no wallet debit, so no KYC-tier gate. Cancel
+	// before activation and the deposit on completion go back to the CARD as
+	// exact partial gateway refunds. Extensions stay wallet-only (refused for a
+	// card hire). Default OFF. Inert unless FeatureTransportPaystackCheckoutEnabled
+	// (shared-engine master switch) AND FeatureTransportModesEnabled (car-hire
+	// routes) are also on. Gates ONLY new checkouts; confirm / status / refund /
+	// reconcile for money already collected stay live. Verify the Paystack partial
+	// refund behaviours (ADR "Partial refunds (car hire)", UNVERIFIED list) with
+	// one real test-mode run BEFORE enabling.
+	FeatureTransportPaystackCarHireEnabled bool
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
 	// scheduled* + admin /api/finance/admin/transport/scheduled* routes and the
 	// transport-scheduler worker. No flag, no scheduled dispatch.
 	FeatureTransportSchedulingEnabled bool
-	FeatureAICareEnabled              bool
-	FeatureDisputesEnabled            bool
-	FeatureRatingsEnabled             bool
-	FeaturePharmacyEnabled            bool
+	// FeatureTransportBusDeferredSettlementEnabled (FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT,
+	// DEFAULT OFF): wallet bus tickets keep the fare in ESCROW (refundable) until
+	// departure + TransportBusSettleGraceMinutes instead of paying the operator at
+	// booking. Off = legacy settle-on-issue (cancel of a settled ticket is refused,
+	// never faked). See ADR-PR559-bus-wallet-fixes.
+	FeatureTransportBusDeferredSettlementEnabled bool
+	// FeatureTransportBusLifecycleSweeperEnabled (FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER,
+	// DEFAULT OFF): advance bus schedules/tickets to departed/completed/no_show.
+	FeatureTransportBusLifecycleSweeperEnabled bool
+	TransportBusSettleGraceMinutes             int // TRANSPORT_BUS_SETTLE_GRACE_MINUTES (default 30)
+	TransportBusCancelCutoffMinutes            int // TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES (default 120, clamped 60-1440)
+	TransportBusMinBookingLeadMinutes          int // TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES (default 15)
+	FeatureAICareEnabled                       bool
+	FeatureDisputesEnabled                     bool
+	FeatureRatingsEnabled                      bool
+	FeaturePharmacyEnabled                     bool
 	// Symptom-based medication search (term → concept → condition cluster →
 	// therapeutic class → live SKUs, triage tiers T1–T4). DEFAULT OFF. Gates
 	// /pharmacy/symptom-search, /pharmacy/classes/{id}/skus and the
@@ -286,12 +373,29 @@ type Config struct {
 	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
 	FeatureAcademyTuitionEnabled          bool // Academy tuition payment path (Phases 1–5 Go migration)
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
-	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
+	// FeatureConnectFlagSet records whether FEATURE_CONNECT_ENABLED was present
+	// and non-empty in the environment at boot. Needed because the Connect
+	// wallet/KYC mounts (/api/v1/wallet, /api/v1/kyc, /api/v1/me/tier) predate
+	// the flag and must stay mounted when it is UNSET to avoid breaking
+	// existing deployments — they unmount only when the flag is explicitly set
+	// to a false value (E2E-SEC-064).
+	FeatureConnectFlagSet bool
+	// FeatureConnectWalletFundEnabled mounts POST /api/v1/wallet/fund, the
+	// Connect wallet top-up. DEFAULT OFF — E2E-SEC-052: the handler credits the
+	// user wallet from provider_clearing (the account reserved for verified
+	// Paystack webhooks) with no payment proof, so any authenticated user could
+	// mint money. The documented funding rail — debit the member's Paymax
+	// super-app wallet — was never implemented; keep the route unmounted until
+	// that design lands. When OFF the route 404s even for a valid session.
+	FeatureConnectWalletFundEnabled    bool
+	FeatureContestStageEvictionEnabled bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
+	FeatureContestantSocialEnabled     bool // Contestant likes + profile-share links (contestant_likes/contestant_shares)
 	// Property Management suite (unification umbrella over estate + realtor):
 	// role context, rent passport, stay→gate-pass bridge. DEFAULT OFF. The estate
 	// and realtor modules keep their own flags; this gates only the /property/*
 	// cross-module surface.
 	FeaturePropertySuiteEnabled bool
+	FeaturePropertyRolesEnabled bool
 
 	// Fractional Real Estate / Land crowd-investing module. DEFAULT OFF. Gates
 	// the /api/finance/fractionalre[/admin] surface (internal/fractionalre).
@@ -315,7 +419,6 @@ type Config struct {
 	// customer for a purchase that is then refused at escrow. Default OFF.
 	FeatureCheckoutTopupTier0 bool
 
-	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
 	// surface (internal/business). The CAC registration fee is a real idempotent
 	// wallet debit → paymax_revenue. DEFAULT OFF — no flag, no registration path.
@@ -327,13 +430,18 @@ type Config struct {
 	CACVASApiKey         string // Bearer / consumer key
 	CACVASConsumerSecret string // HMAC request-signing secret
 
-	// ── Internal service-authenticated Ledger API (Stage 1.5c) ───────────────
 	// Lets the separate trading service post cash legs through the AUTHORITATIVE
 	// double-entry ledger (it does not run its own money ledger). DEFAULT OFF.
 	// Gates POST /internal/finance/ledger/journal + GET /internal/finance/ledger/balance.
 	// The endpoints are ADDITIONALLY guarded by a constant-time service-token check
 	// against LedgerServiceToken — never a user JWT.
 	FeatureInternalLedgerAPIEnabled bool
+	// Lets the Next.js gateway-fulfilment arm (Paystack webhook/recover) confirm a
+	// paid academy tuition instalment when the payer's client never reaches the
+	// member confirm route. DEFAULT OFF. Gates
+	// POST /internal/finance/academy/tuition/confirm — additionally guarded by the
+	// same RequireServiceToken check (LedgerServiceToken; empty ⇒ fail-closed 503).
+	FeatureInternalAcademyAPIEnabled bool
 	// Shared Bearer service token authenticating the trading service to the internal
 	// ledger API. Server-side ONLY; NEVER shipped to a client and NEVER a user JWT.
 	// Empty ⇒ the internal ledger endpoints fail closed (503), even when the flag is on.
@@ -353,6 +461,21 @@ type Config struct {
 	// via underwriter-gateway). DEFAULT OFF. Gates /api/finance/insurance[/admin]
 	// and /internal/webhooks/{mycover,octamile} (internal/insurance).
 	FeatureInsuranceEnabled bool
+
+	// FeatureInsuranceProviderImportEnabled mounts the admin routes that mirror the
+	// policies the provider (MyCover) holds into insurance_provider_policy. Read-only
+	// and money-free; default OFF so it ships dark and is switched on per environment.
+	FeatureInsuranceProviderImportEnabled bool
+
+	// FeatureInsuranceNINRequired gates the member policy-purchase path
+	// (POST /api/finance/insurance/policies) on a Dojah-verified NIN. DEFAULT
+	// TRUE — it is a compliance rail, not a feature toggle: a bind without a
+	// verified identity must be an explicit per-environment opt-out, not the
+	// forgotten default (same precedent as FeatureTierLimitsEnabled /
+	// TRANSFER_FAILOVER_ENABLED). When on and Dojah cannot answer
+	// (unconfigured creds, outage, non-verdict) the purchase fails CLOSED
+	// before the policy row or any ledger leg exists.
+	FeatureInsuranceNINRequired bool
 
 	// Hotel Booking / Stays module (Property Suite). Dual-rail supply-gateway
 	// (bedbank + direct extranet). DEFAULT OFF. Gates /api/finance/stays,
@@ -391,9 +514,8 @@ type Config struct {
 	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
 
 	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
-	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
-	// be read from the request body, so a member could break a lock for free by
-	// sending 0.
+	// maturity, in basis points (1000 = 10%). MUST stay server-side: a
+	// client-supplied value would let a member break a lock for free by sending 0.
 	SavingsEarlyBreakPenaltyBps int
 	FeatureCreatorsEnabled      bool // Creator & Talent Monetisation
 	FeatureLoyaltyEnabled       bool // Unified Loyalty & Paymax Black
@@ -420,11 +542,9 @@ type Config struct {
 	InfermedicaBaseURL   string
 	TriageWhatsAppSecret string
 
-	// ── MapService (provider-agnostic maps abstraction) ──────────────────────
 	// Provider selection is config-driven via MapsConfigPath (a {primitive ->
 	// provider} map per surface). Keys below are SERVER-SIDE ONLY and are never
 	// shipped to the mobile/web client — all provider calls are proxied.
-	//
 	// Single legitimate key per provider. We never rotate keys/accounts to evade
 	// free-tier limits (provider-terms violation). Cost control is via caching,
 	// PostGIS, quotas, and graceful degradation only.
@@ -455,21 +575,33 @@ type Config struct {
 	MapsMapboxToken string
 
 	// Cost-guard knobs: per-user proxy rate limit + budget-alert webhook.
-	MapsRateLimitPerMin    int    // per-user requests/min on /api/finance/maps/* (default 120)
+	MapsRateLimitPerMin int // per-user requests/min on /api/finance/maps/* (default 120)
+	// FinanceTransferRatePerMin caps per-user transfer-initiate requests/min —
+	// E2E-SEC-058: money mutations had no rate limit (15 rapid transfers, no
+	// 429). Covers the transfer initiates plus the other money-moving writes
+	// that share the budget: resolve-account, beneficiaries, fx/convert, and
+	// the FX-orchestrator conversion/transfer/VA/beneficiary/card-fund posts.
+	FinanceTransferRatePerMin int
+	// FinancePinRatePerMin is the tighter budget for /transfers/pin|pin/verify —
+	// a verify oracle on a 4-6 digit space needs less headroom than a
+	// money transfer does.
+	FinancePinRatePerMin   int
 	MapsBudgetAlertWebhook string // POST budget alerts (50/75/90%) here; "" = log only
 
-	// ── MapService v2 (MAPSERVICE.md) ──
+	// Connect voting cost guards: per-user POSTs/min on the vote endpoints.
+	// The paid path debits a wallet, so it gets the tighter budget.
+	ConnectFreeVoteRatePerMin int // contests/:id/vote (default 30)
+	ConnectPaidVoteRatePerMin int // contests/:id/paid-vote + vote-bridge debit (default 10)
+
 	MapsHereKey      string // HERE API key (accuracy fallback); mock when empty
 	MapsGazetteerKey string // 32-byte AES key for gazetteer PII (NDPA); Noop when empty
 	MapsV2ConfigPath string // optional JSON override for v2 thresholds/order/budgets
 
-	// ── AI assist (server-side LLM) ──────────────────────────────────────────
 	// SERVER-SIDE ONLY. Read from ANTHROPIC_API_KEY; default "" disables AI assist
 	// (endpoints return a clearly-marked "not configured" envelope, never fabricated
 	// medical content). This key is NEVER shipped to a client — all calls are proxied.
 	AnthropicAPIKey string
 
-	// ── Doctor AI per-doctor rate / cost guard ───────────────────────────────
 	// A fixed-window guard (Redis INCR + EXPIRE) applied BEFORE each paid LLM call
 	// in the doctor AI service, keyed by the authenticated doctor's user id. It
 	// caps both per-minute burst and per-day spend. When Redis is unavailable the
@@ -479,7 +611,6 @@ type Config struct {
 	DoctorAIRatePerMin int
 	DoctorAIRatePerDay int
 
-	// ── Doctor RTC (real-time call) credentials ──────────────────────────────
 	// SERVER-SIDE ONLY. The VideoSDK secret is used to SIGN short-lived join
 	// tokens and is NEVER shipped to a client. Empty creds disable the provider:
 	// the call session returns an empty token + a "not configured" flag (never a
@@ -487,14 +618,12 @@ type Config struct {
 	VideoSDKAPIKey string
 	VideoSDKSecret string
 
-	// ── Paymax Connect ───────────────────────────────────────────────────────
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
 	// NEVER shipped to a client. Empty disables verification hashing (fail-closed).
 	ConnectVerificationPepper string
 
-	// ── Cloudflare R2 (S3-compatible object storage) ─────────────────────────
 	// SERVER-SIDE ONLY. Used to mint short-lived presigned PUT/GET URLs for the
 	// doctor module's binary uploads (profile photo, documents, licence renewal,
 	// chat attachments, dispute evidence). The client uploads directly to the
@@ -507,7 +636,6 @@ type Config struct {
 	R2SecretAccessKey string
 	R2Region          string
 
-	// ── Academy rails seam (RAILS_MODE) ──────────────────────────────────────
 	// The four unbacked academy money rails (BNPL, payout, disbursement, billing)
 	// each sit behind their EXISTING provider-agnostic gateway interface. RailsMode
 	// selects the adapter WITHOUT changing the code path:
@@ -539,30 +667,25 @@ type Config struct {
 	BillingAPIKey        string
 	BillingWebhookSecret string
 
-	// ── Notification providers ────────────────────────────────────────────────
-	// Resend: email delivery. Key from resend.com dashboard.
 	// Per-IP, per-route auth throttles. See middleware.AuthRateLimit.
 	AuthRateLimitPerMin       int
 	AuthResetRateLimitPerHour int
 
+	// Resend: email delivery. Key from resend.com dashboard.
 	ResendAPIKey    string
 	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
 
-	// ── Brevo: server-issued email OTP ───────────────────────────────────────
-	// Brevo joins Resend rather than replacing it. Resend is the fire-and-forget
-	// notification path where a silent failure is tolerable; an undelivered OTP
-	// is a failed login, so that path reports and classifies its failures.
-	//
-	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on. No
-	// Brevo credentials exist in this repo or any .env today — the account,
-	// sender domain and template have to be provisioned before this can be
-	// switched on anywhere. See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
+	// Brevo joins Resend rather than replacing it: Resend is the fire-and-forget
+	// notification path (a silent failure is tolerable); an undelivered OTP is a
+	// failed login, so the OTP path reports and classifies its failures.
+	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on; the
+	// Brevo account, sender domain and template must be provisioned first.
+	// See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
 	FeatureOTPEmailEnabled bool
 	// FeatureOTPLoginMFAEnabled turns a correct password into a code challenge
 	// instead of a session. SEPARATE from FeatureOTPEmailEnabled on purpose:
 	// enabling server-issued OTP should not silently add a second factor to
 	// every login.
-	//
 	// ⚠️ It fails CLOSED, which is the point of a second factor and also means an
 	// email outage is a TOTAL LOGIN OUTAGE for everyone. There is no enrolment,
 	// no opt-out and no recovery code: a user who loses access to their mailbox
@@ -631,26 +754,44 @@ func getEnvBool(key string, fallback bool) bool {
 	return fallback
 }
 
+// envPresent reports whether the variable exists AND is non-empty. Used where
+// "unset" and "explicitly set" must be told apart (FEATURE_CONNECT_ENABLED —
+// E2E-SEC-064). An explicit empty value counts as unset.
+func envPresent(key string) bool {
+	v, ok := os.LookupEnv(key)
+	return ok && strings.TrimSpace(v) != ""
+}
+
 func Load() Config {
 	return Config{
-		AppEnv:                 getEnv("APP_ENV", "development"),
-		Port:                   getEnv("APP_PORT", "8080"),
-		SupabaseURL:            getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
-		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
-		AdminAPIKey:            getEnv("ADMIN_API_KEY", ""),
-		CORSAllowOrigins:       getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:4030,http://localhost:8081"),
-		MaxFailedLoginAttempts: getEnvInt("AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5),
-		AccountLockMinutes:     getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
+		AppEnv:                      getEnv("APP_ENV", "development"),
+		Port:                        getEnv("APP_PORT", "8080"),
+		SupabaseURL:                 getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
+		SupabaseServiceRoleKey:      getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		SupabaseJWTSecret:           getEnv("SUPABASE_JWT_SECRET", ""),
+		AuthJWTLocalVerify:          getEnvBool("AUTH_JWT_LOCAL_VERIFY", false),
+		AuthIdentityCacheTTLSeconds: getEnvInt("AUTH_IDENTITY_CACHE_TTL_SECONDS", 0),
+		AdminAPIKey:                 getEnv("ADMIN_API_KEY", ""),
+		CORSAllowOrigins:            getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:4030,http://localhost:8081"),
+		TrustedProxyCIDRs:           getEnv("TRUSTED_PROXY_CIDRS", "130.211.0.0/22,35.191.0.0/16"),
+		MaxFailedLoginAttempts:      getEnvInt("AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5),
+		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
 		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
 		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
 		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
 
-		DatabaseURL:        getEnv("DATABASE_URL", ""),
-		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
-		PaystackSecretKey:  getEnv("PAYSTACK_SECRET_KEY", ""),
-		PaystackWebhookKey: getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+		DatabaseURL:   getEnv("DATABASE_URL", ""),
+		RedisURL:      getEnv("REDIS_URL", "redis://localhost:6379"),
+		RedisRequired: getEnvBool("REDIS_REQUIRED", false),
+		// Default ON: the durable-job poller is the only thing that drains
+		// scheduler_jobs; opt out only when an external worker owns it.
+		SchedulerEnabled:             getEnvBool("SCHEDULER_ENABLED", true),
+		SchedulerPollIntervalSeconds: getEnvInt("SCHEDULER_POLL_INTERVAL_SECONDS", 5),
+		PaystackSecretKey:            getEnv("PAYSTACK_SECRET_KEY", ""),
+		PaystackWebhookKey:           getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+		PaystackBaseURL:              getEnv("PAYSTACK_BASE_URL", ""),
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
 		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
@@ -662,6 +803,7 @@ func Load() Config {
 		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
 		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
 		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
 		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
@@ -719,120 +861,144 @@ func Load() Config {
 		// Iron Rule: every money mutation must pass tier-limit checks fail-closed.
 		// Defaults TRUE so limits are enforced by default; set FEATURE_TIER_LIMITS_ENABLED=false
 		// only for explicit local/dev opt-out. (docs/go-live-readiness.md blocker #1)
-		FeatureTierLimitsEnabled:                 getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
-		FeatureFXEnabled:                         getEnvBool("FEATURE_FX_ENABLED", false),
-		FeatureFXOrchestrationEnabled:            getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
-		FeatureRealtimeEnabled:                   getEnvBool("FEATURE_REALTIME_ENABLED", false),
-		PaymaxWebhookOutURL:                      getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
-		PaymaxWebhookSecret:                      getEnv("PAYMAX_WEBHOOK_SECRET", ""),
-		FeatureGroupsEnabled:                     getEnvBool("FEATURE_GROUPS_ENABLED", false),
-		FeatureAssociationsEnabled:               getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
-		AssocCardSigningSecret:                   getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
-		FeatureEventsEnabled:                     getEnvBool("FEATURE_EVENTS_ENABLED", false),
-		FeatureEstateEnabled:                     getEnvBool("FEATURE_ESTATE_ENABLED", false),
-		FeatureEstateDuesPaystackCheckoutEnabled: getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
-		FeatureCrowdfundingEnabled:               getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
-		FeatureRestaurantEnabled:                 getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
-		FeatureRestaurantWithdrawalsEnabled:      getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
-		FeatureRestaurantPaystackCheckoutEnabled: getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
-		FeatureModuleGateEnforce:                 getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
-		FeatureNutritionEnabled:                  getEnvBool("FEATURE_NUTRITION_ENABLED", false),
-		FeatureTelemedicineEnabled:               getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
-		FeatureVoteBridgeEnabled:                 getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
-		FeatureTransportEnabled:                  getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
-		FeatureTransportModesEnabled:             getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
-		FeatureTransportPaystackCheckoutEnabled:  getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
-		FeatureTransportSchedulingEnabled:        getEnvBool("FEATURE_TRANSPORT_SCHEDULING_ENABLED", false),
-		FeatureAICareEnabled:                     getEnvBool("FEATURE_AICARE_ENABLED", false),
-		FeatureDisputesEnabled:                   getEnvBool("FEATURE_DISPUTES_ENABLED", false),
-		FeatureRatingsEnabled:                    getEnvBool("FEATURE_RATINGS_ENABLED", false),
-		FeaturePharmacyEnabled:                   getEnvBool("FEATURE_PHARMACY_ENABLED", false),
-		FeaturePharmacySymptomSearchEnabled:      getEnvBool("FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED", false),
-		FeatureOnboardingEnabled:                 getEnvBool("FEATURE_ONBOARDING_ENABLED", false),
-		FeatureInvestEnabled:                     getEnvBool("FEATURE_INVEST_ENABLED", false),
-		FeatureInvestPINDevBypass:                getEnvBool("FEATURE_INVEST_PIN_DEV_BYPASS", false),
-		InvestMarketDataBaseURL:                  getEnv("INVEST_MARKETDATA_BASE_URL", ""),
-		InvestMarketDataAPIKey:                   getEnv("INVEST_MARKETDATA_API_KEY", ""),
-		InvestBrokerBaseURL:                      getEnv("INVEST_BROKER_BASE_URL", ""),
-		InvestBrokerAPIKey:                       getEnv("INVEST_BROKER_API_KEY", ""),
-		InvestBrokerWebhookSecret:                getEnv("INVEST_BROKER_WEBHOOK_SECRET", ""),
-		FeatureRealtorEnabled:                    getEnvBool("FEATURE_REALTOR_ENABLED", false),
-		FeatureDoctorEnabled:                     getEnvBool("FEATURE_DOCTOR_ENABLED", false),
-		FeatureDoctorEmergencyDispatchEnabled:    getEnvBool("FEATURE_DOCTOR_EMERGENCY_DISPATCH_ENABLED", false),
-		FeatureMapsEnabled:                       getEnvBool("FEATURE_MAPS_ENABLED", false),
-		FeatureMapsV2Enabled:                     getEnvBool("FEATURE_MAPS_V2_ENABLED", false),
-		FeatureAcademyEnabled:                    getEnvBool("FEATURE_ACADEMY_ENABLED", false),
-		FeatureAcademyExamEnabled:                getEnvBool("FEATURE_ACADEMY_EXAM_ENABLED", false),
-		FeatureAcademySpineEnabled:               getEnvBool("FEATURE_ACADEMY_SPINE_ENABLED", false),
-		FeatureAcademyEduPayEnabled:              getEnvBool("FEATURE_ACADEMY_EDUPAY_ENABLED", false),
-		FeatureAcademyCredentialsEnabled:         getEnvBool("FEATURE_ACADEMY_CREDENTIALS_ENABLED", false),
-		FeatureAcademyLiveEnabled:                getEnvBool("FEATURE_ACADEMY_LIVE_ENABLED", false),
-		FeatureAcademySchoolsEnabled:             getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
-		FeatureAcademyTutorEnabled:               getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
-		FeatureAcademyFeesEnabled:                getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
-		FeatureAcademyTuitionEnabled:             getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
-		FeatureConnectEnabled:                    getEnvBool("FEATURE_CONNECT_ENABLED", false),
-		FeatureContestStageEvictionEnabled:       getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
-		FeaturePropertySuiteEnabled:              getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
-		FeatureFractionalREEnabled:               getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
-		FeatureCryptoEnabled:                     getEnvBool("FEATURE_CRYPTO_ENABLED", false),
-		FeatureTelemedicinePlatformFeeEnabled:    getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
-		FeatureCheckoutTopupTier0:                getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
-		FeatureBusinessRegistryEnabled:           getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
-		CACVASBaseURL:                            getEnv("CAC_VAS_BASE_URL", ""),
-		CACVASApiKey:                             getEnv("CAC_VAS_API_KEY", ""),
-		CACVASConsumerSecret:                     getEnv("CAC_VAS_CONSUMER_SECRET", ""),
-		FeatureInternalLedgerAPIEnabled:          getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
-		LedgerServiceToken:                       getEnv("LEDGER_SERVICE_TOKEN", ""),
-		FeatureLearnEnabled:                      getEnvBool("FEATURE_LEARN_ENABLED", false),
-		FeatureInvestaiEnabled:                   getEnvBool("FEATURE_INVESTAI_ENABLED", false),
-		FeatureSpotlightwealthEnabled:            getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
-		FeatureInsuranceEnabled:                  getEnvBool("FEATURE_INSURANCE_ENABLED", false),
-		FeatureStaysEnabled:                      getEnvBool("FEATURE_STAYS_ENABLED", false),
-		FeaturePlacementEnabled:                  getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
-		FeatureMarketplaceEnabled:                getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
-		ElasticsearchURL:                         getEnv("ELASTICSEARCH_URL", ""),
-		RunWorkersInProcess:                      getEnvBool("RUN_WORKERS_INPROCESS", false),
-		FeatureSocialPayEnabled:                  getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
-		FeatureP2PMarketEnabled:                  getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
-		FeatureSavingsEnabled:                    getEnvBool("FEATURE_SAVINGS_ENABLED", false),
-		FeatureTradingEnabled:                    getEnvBool("FEATURE_TRADING_ENABLED", false),
-		FeatureAITradingEnabled:                  getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
-		TradingFeeBps:                            getEnvInt("TRADING_FEE_BPS", 2000),
-		TradingHurdleBps:                         getEnvInt("TRADING_HURDLE_BPS", 0),
-		SavingsEarlyBreakPenaltyBps:              getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
-		FeatureCreatorsEnabled:                   getEnvBool("FEATURE_CREATORS_ENABLED", false),
-		FeatureLoyaltyEnabled:                    getEnvBool("FEATURE_LOYALTY_ENABLED", false),
-		FeatureCommissionEnabled:                 getEnvBool("FEATURE_COMMISSION_ENABLED", false),
-		FeatureHealthEnabled:                     getEnvBool("FEATURE_HEALTH_ENABLED", false),
-		FeatureHealthPharmacyEnabled:             getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
-		FeatureHealthLabEnabled:                  getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
-		FeatureHealthVetEnabled:                  getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
-		FeatureHealthIntakeEnabled:               getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
-		FeatureHealthTriageEnabled:               getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
-		FeatureHealthTriageWhatsAppEnabled:       getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
-		TriageEngine:                             getEnv("TRIAGE_ENGINE", "mock"),
-		InfermedicaAppID:                         getEnv("INFERMEDICA_APP_ID", ""),
-		InfermedicaAppKey:                        getEnv("INFERMEDICA_APP_KEY", ""),
-		InfermedicaBaseURL:                       getEnv("INFERMEDICA_BASE_URL", ""),
-		TriageWhatsAppSecret:                     getEnv("TRIAGE_WHATSAPP_SECRET", ""),
+		FeatureTierLimitsEnabled:                     getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
+		FeatureFXEnabled:                             getEnvBool("FEATURE_FX_ENABLED", false),
+		FeatureFXOrchestrationEnabled:                getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
+		FeatureRealtimeEnabled:                       getEnvBool("FEATURE_REALTIME_ENABLED", false),
+		PaymaxWebhookOutURL:                          getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
+		PaymaxWebhookSecret:                          getEnv("PAYMAX_WEBHOOK_SECRET", ""),
+		FeatureGroupsEnabled:                         getEnvBool("FEATURE_GROUPS_ENABLED", false),
+		FeatureAssociationsEnabled:                   getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
+		AssocCardSigningSecret:                       getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
+		FeatureEventsEnabled:                         getEnvBool("FEATURE_EVENTS_ENABLED", false),
+		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
+		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantWithdrawalsEnabled:          getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
+		FeatureRestaurantPaystackCheckoutEnabled:     getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureModuleGateEnforce:                     getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
+		FeatureNutritionEnabled:                      getEnvBool("FEATURE_NUTRITION_ENABLED", false),
+		FeatureTelemedicineEnabled:                   getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
+		FeatureVoteBridgeEnabled:                     getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
+		FeatureTransportEnabled:                      getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
+		FeatureTransportModesEnabled:                 getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureTransportPaystackCheckoutEnabled:      getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureTransportPaystackParcelEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_PARCEL_ENABLED", false),
+		FeatureTransportPaystackTowingEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_TOWING_ENABLED", false),
+		FeatureTransportPaystackMoversEnabled:        getEnvBool("FEATURE_TRANSPORT_PAYSTACK_MOVERS_ENABLED", false),
+		FeatureTransportPaystackCarHireEnabled:       getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CARHIRE_ENABLED", false),
+		FeatureTransportSchedulingEnabled:            getEnvBool("FEATURE_TRANSPORT_SCHEDULING_ENABLED", false),
+		FeatureTransportBusDeferredSettlementEnabled: getEnvBool("FEATURE_TRANSPORT_BUS_DEFERRED_SETTLEMENT", false),
+		FeatureTransportBusLifecycleSweeperEnabled:   getEnvBool("FEATURE_TRANSPORT_BUS_LIFECYCLE_SWEEPER", false),
+		TransportBusSettleGraceMinutes:               getEnvInt("TRANSPORT_BUS_SETTLE_GRACE_MINUTES", 30),
+		TransportBusCancelCutoffMinutes:              getEnvInt("TRANSPORT_BUS_CANCEL_CUTOFF_MINUTES", 120),
+		TransportBusMinBookingLeadMinutes:            getEnvInt("TRANSPORT_BUS_MIN_BOOKING_LEAD_MINUTES", 15),
+		FeatureAICareEnabled:                         getEnvBool("FEATURE_AICARE_ENABLED", false),
+		FeatureDisputesEnabled:                       getEnvBool("FEATURE_DISPUTES_ENABLED", false),
+		FeatureRatingsEnabled:                        getEnvBool("FEATURE_RATINGS_ENABLED", false),
+		FeaturePharmacyEnabled:                       getEnvBool("FEATURE_PHARMACY_ENABLED", false),
+		FeaturePharmacySymptomSearchEnabled:          getEnvBool("FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED", false),
+		FeatureOnboardingEnabled:                     getEnvBool("FEATURE_ONBOARDING_ENABLED", false),
+		FeatureInvestEnabled:                         getEnvBool("FEATURE_INVEST_ENABLED", false),
+		FeatureInvestPINDevBypass:                    getEnvBool("FEATURE_INVEST_PIN_DEV_BYPASS", false),
+		InvestMarketDataBaseURL:                      getEnv("INVEST_MARKETDATA_BASE_URL", ""),
+		InvestMarketDataAPIKey:                       getEnv("INVEST_MARKETDATA_API_KEY", ""),
+		InvestBrokerBaseURL:                          getEnv("INVEST_BROKER_BASE_URL", ""),
+		InvestBrokerAPIKey:                           getEnv("INVEST_BROKER_API_KEY", ""),
+		InvestBrokerWebhookSecret:                    getEnv("INVEST_BROKER_WEBHOOK_SECRET", ""),
+		FeatureRealtorEnabled:                        getEnvBool("FEATURE_REALTOR_ENABLED", false),
+		FeatureDoctorEnabled:                         getEnvBool("FEATURE_DOCTOR_ENABLED", false),
+		FeatureDoctorEmergencyDispatchEnabled:        getEnvBool("FEATURE_DOCTOR_EMERGENCY_DISPATCH_ENABLED", false),
+		FeatureMapsEnabled:                           getEnvBool("FEATURE_MAPS_ENABLED", false),
+		FeatureMapsV2Enabled:                         getEnvBool("FEATURE_MAPS_V2_ENABLED", false),
+		FeatureAcademyEnabled:                        getEnvBool("FEATURE_ACADEMY_ENABLED", false),
+		FeatureAcademyExamEnabled:                    getEnvBool("FEATURE_ACADEMY_EXAM_ENABLED", false),
+		FeatureAcademySpineEnabled:                   getEnvBool("FEATURE_ACADEMY_SPINE_ENABLED", false),
+		FeatureAcademyEduPayEnabled:                  getEnvBool("FEATURE_ACADEMY_EDUPAY_ENABLED", false),
+		FeatureAcademyCredentialsEnabled:             getEnvBool("FEATURE_ACADEMY_CREDENTIALS_ENABLED", false),
+		FeatureAcademyLiveEnabled:                    getEnvBool("FEATURE_ACADEMY_LIVE_ENABLED", false),
+		FeatureAcademySchoolsEnabled:                 getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
+		FeatureAcademyTutorEnabled:                   getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
+		FeatureAcademyFeesEnabled:                    getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
+		FeatureAcademyTuitionEnabled:                 getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
+		FeatureConnectEnabled:                        getEnvBool("FEATURE_CONNECT_ENABLED", false),
+		FeatureConnectFlagSet:                        envPresent("FEATURE_CONNECT_ENABLED"),
+		FeatureConnectWalletFundEnabled:              getEnvBool("FEATURE_CONNECT_WALLET_FUND_ENABLED", false),
+		FeatureContestStageEvictionEnabled:           getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
+		FeatureContestantSocialEnabled:               getEnvBool("FEATURE_CONTESTANT_SOCIAL_ENABLED", false),
+		FeaturePropertySuiteEnabled:                  getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
+		FeaturePropertyRolesEnabled:                  getEnvBool("FEATURE_PROPERTY_ROLES_ENABLED", false),
+		FeatureFractionalREEnabled:                   getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
+		FeatureCryptoEnabled:                         getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
+		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
+		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
+		CACVASBaseURL:                                getEnv("CAC_VAS_BASE_URL", ""),
+		CACVASApiKey:                                 getEnv("CAC_VAS_API_KEY", ""),
+		CACVASConsumerSecret:                         getEnv("CAC_VAS_CONSUMER_SECRET", ""),
+		FeatureInternalLedgerAPIEnabled:              getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
+		FeatureInternalAcademyAPIEnabled:             getEnvBool("FEATURE_INTERNAL_ACADEMY_API_ENABLED", false),
+		LedgerServiceToken:                           getEnv("LEDGER_SERVICE_TOKEN", ""),
+		FeatureLearnEnabled:                          getEnvBool("FEATURE_LEARN_ENABLED", false),
+		FeatureInvestaiEnabled:                       getEnvBool("FEATURE_INVESTAI_ENABLED", false),
+		FeatureSpotlightwealthEnabled:                getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
+		FeatureInsuranceEnabled:                      getEnvBool("FEATURE_INSURANCE_ENABLED", false),
+		FeatureInsuranceProviderImportEnabled:        getEnvBool("FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED", false),
+		// Compliance rail — DEFAULT TRUE like FeatureTierLimitsEnabled above.
+		// Set FEATURE_INSURANCE_NIN_REQUIRED=false only for explicit per-env
+		// opt-out (e.g. a dev box with no Dojah credentials).
+		FeatureInsuranceNINRequired:        getEnvBool("FEATURE_INSURANCE_NIN_REQUIRED", true),
+		FeatureStaysEnabled:                getEnvBool("FEATURE_STAYS_ENABLED", false),
+		FeaturePlacementEnabled:            getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
+		FeatureMarketplaceEnabled:          getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
+		ElasticsearchURL:                   getEnv("ELASTICSEARCH_URL", ""),
+		RunWorkersInProcess:                getEnvBool("RUN_WORKERS_INPROCESS", false),
+		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
+		FeatureP2PMarketEnabled:            getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
+		FeatureSavingsEnabled:              getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:              getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:            getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                      getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                   getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:        getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
+		FeatureCreatorsEnabled:             getEnvBool("FEATURE_CREATORS_ENABLED", false),
+		FeatureLoyaltyEnabled:              getEnvBool("FEATURE_LOYALTY_ENABLED", false),
+		FeatureCommissionEnabled:           getEnvBool("FEATURE_COMMISSION_ENABLED", false),
+		FeatureHealthEnabled:               getEnvBool("FEATURE_HEALTH_ENABLED", false),
+		FeatureHealthPharmacyEnabled:       getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
+		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
+		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
+		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
+		FeatureHealthTriageWhatsAppEnabled: getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
+		TriageEngine:                       getEnv("TRIAGE_ENGINE", "mock"),
+		InfermedicaAppID:                   getEnv("INFERMEDICA_APP_ID", ""),
+		InfermedicaAppKey:                  getEnv("INFERMEDICA_APP_KEY", ""),
+		InfermedicaBaseURL:                 getEnv("INFERMEDICA_BASE_URL", ""),
+		TriageWhatsAppSecret:               getEnv("TRIAGE_WHATSAPP_SECRET", ""),
 
-		MapsConfigPath:         getEnv("MAPS_CONFIG_PATH", ""),
-		MapsDefaultSurface:     getEnv("MAPS_DEFAULT_SURFACE", "default"),
-		MapsProvider:           getEnv("MAPS_PROVIDER", "mock"),
-		MapsBaseURL:            getEnv("MAPS_BASE_URL", ""),
-		MapsAPIKey:             getEnv("MAPS_API_KEY", ""),
-		MapsGeoapifyKey:        getEnv("MAPS_GEOAPIFY_KEY", ""),
-		MapsMapTilerKey:        getEnv("MAPS_MAPTILER_KEY", ""),
-		MapsOSRMBaseURL:        getEnv("MAPS_OSRM_BASE_URL", ""),
-		MapsTileStyleURL:       getEnv("MAPS_TILE_STYLE_URL", ""),
-		MapsGoogleKey:          getEnv("MAPS_GOOGLE_KEY", ""),
-		MapsMapboxToken:        getEnv("MAPS_MAPBOX_TOKEN", ""),
-		MapsRateLimitPerMin:    getEnvInt("MAPS_RATE_LIMIT_PER_MIN", 120),
-		MapsBudgetAlertWebhook: getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
-		MapsHereKey:            getEnv("MAPS_HERE_KEY", ""),
-		MapsGazetteerKey:       getEnv("MAPS_GAZETTEER_KEY", ""),
-		MapsV2ConfigPath:       getEnv("MAPS_V2_CONFIG_PATH", ""),
+		MapsConfigPath:            getEnv("MAPS_CONFIG_PATH", ""),
+		MapsDefaultSurface:        getEnv("MAPS_DEFAULT_SURFACE", "default"),
+		MapsProvider:              getEnv("MAPS_PROVIDER", "mock"),
+		MapsBaseURL:               getEnv("MAPS_BASE_URL", ""),
+		MapsAPIKey:                getEnv("MAPS_API_KEY", ""),
+		MapsGeoapifyKey:           getEnv("MAPS_GEOAPIFY_KEY", ""),
+		MapsMapTilerKey:           getEnv("MAPS_MAPTILER_KEY", ""),
+		MapsOSRMBaseURL:           getEnv("MAPS_OSRM_BASE_URL", ""),
+		MapsTileStyleURL:          getEnv("MAPS_TILE_STYLE_URL", ""),
+		MapsGoogleKey:             getEnv("MAPS_GOOGLE_KEY", ""),
+		MapsMapboxToken:           getEnv("MAPS_MAPBOX_TOKEN", ""),
+		MapsRateLimitPerMin:       getEnvInt("MAPS_RATE_LIMIT_PER_MIN", 120),
+		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
+		FinancePinRatePerMin:      getEnvInt("FINANCE_PIN_RATE_PER_MIN", 10),
+		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
+
+		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
+		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),
+		MapsHereKey:               getEnv("MAPS_HERE_KEY", ""),
+		MapsGazetteerKey:          getEnv("MAPS_GAZETTEER_KEY", ""),
+		MapsV2ConfigPath:          getEnv("MAPS_V2_CONFIG_PATH", ""),
 
 		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
 
@@ -845,13 +1011,11 @@ func Load() Config {
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
-		// No default. The previous default was "spotlight-open-mic", a bucket that
-		// does not exist in the R2 account — and because Configured() only checks
-		// that the fields are non-empty, that default made the module look
-		// configured: presign answered 200 and the upload then died at the PUT with
-		// NoSuchBucket, which the client can only report as "couldn't be uploaded".
-		// Empty fails closed at Configured() instead, so an unset bucket says
-		// "uploads are not configured" up front.
+		// No default: the previous default ("spotlight-open-mic") does not exist
+		// in the R2 account, and because Configured() only checks non-emptiness
+		// the presign returned 200 while the upload died at the PUT with
+		// NoSuchBucket. Empty fails closed at Configured() — an unset bucket
+		// reports "uploads are not configured" up front.
 		R2Bucket:          getEnv("R2_BUCKET", ""),
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
@@ -902,8 +1066,208 @@ func Load() Config {
 		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
 		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
 		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
-		TermiiAPIKey:             getEnv("TERMII_API_KEY", ""),
+		TermiiAPIKey:             getEnv("TERMII_API_KEY", getEnv("TERMIL_LIVE_API_KEY", "")), // TERMIL_LIVE_API_KEY: legacy misspelled var on Railway
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
 	}
+}
+
+// IsProd reports whether this is a production deployment.
+func (c Config) IsProd() bool {
+	e := strings.ToLower(strings.TrimSpace(c.AppEnv))
+	return e == "production" || e == "prod"
+}
+
+// MocksAllowed reports whether mock/fake providers and the public dev signing
+// keys are acceptable. Only development-class environments qualify; staging
+// and production must run real providers.
+func (c Config) MocksAllowed() bool {
+	switch strings.ToLower(strings.TrimSpace(c.AppEnv)) {
+	case "", "development", "dev", "local", "test":
+		return true
+	}
+	return false
+}
+
+// isPlaceholder treats empty values and the common template markers as "unset"
+// so a copied-but-unfilled .env fails validation instead of silently running.
+func isPlaceholder(v string) bool {
+	s := strings.TrimSpace(strings.ToLower(v))
+	if s == "" {
+		return true
+	}
+	for _, marker := range []string{"xxxx", "change_me", "changeme", "your_", "your-", "redacted", "placeholder", "todo"} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate enforces fail-fast secret validation: the service must not boot in
+// production with missing, placeholder, or swapped secrets (e.g. a secret key
+// in a public slot); in non-production the same checks log warnings so local
+// dev keeps working with placeholders. Wired in main() before boot.
+func (c Config) Validate() error {
+	var problems []string
+
+	// require: the value must be a real, non-placeholder secret.
+	require := func(cond bool, name, value string) {
+		if cond && isPlaceholder(value) {
+			problems = append(problems, name+" is required but missing/placeholder")
+		}
+	}
+	// prefix: guard against swapped keys (e.g. a public key in the secret slot).
+	prefix := func(value, want, name string) {
+		if !isPlaceholder(value) && !strings.HasPrefix(value, want) {
+			problems = append(problems, fmt.Sprintf("%s does not start with %q — looks like the wrong/swapped key", name, want))
+		}
+	}
+
+	// Core infrastructure — always required to serve real traffic.
+	require(true, "DATABASE_URL", c.DatabaseURL)
+	require(true, "SUPABASE_SERVICE_ROLE_KEY", c.SupabaseServiceRoleKey)
+	// Local JWT verify (ADR-PR395) needs at least one verification material:
+	// SUPABASE_URL (JWKS, covers ES256) or SUPABASE_JWT_SECRET (covers HS256).
+	if c.AuthJWTLocalVerify && isPlaceholder(c.SupabaseURL) && isPlaceholder(c.SupabaseJWTSecret) {
+		problems = append(problems, "AUTH_JWT_LOCAL_VERIFY requires SUPABASE_URL or SUPABASE_JWT_SECRET")
+	}
+
+	// Payment providers — required only when their money path is enabled.
+	paymentsOn := c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled
+	require(paymentsOn, "PAYSTACK_SECRET_KEY", c.PaystackSecretKey)
+	prefix(c.PaystackSecretKey, "sk_", "PAYSTACK_SECRET_KEY")
+
+	// Monnify is one optional disbursement provider; Paystack is the default.
+	// Only demand its secret when it is the configured default.
+	require(c.FeatureBankTransfersEnabled && strings.EqualFold(strings.TrimSpace(c.TransferProviderDefault), "monnify"),
+		"MONNIFY_SECRET_KEY", c.MonnifySecretKey)
+
+	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
+	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
+	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
+		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
+	}
+
+	// Multi-provider KYC verification (ADR-013): when enabled, at least one
+	// provider must be configured and the PII encryption key is mandatory
+	// (photos + government bio-data are stored encrypted at rest).
+	if c.FeatureKYCVerifyEnabled {
+		anyProvider := !isPlaceholder(c.DojahSecretKey) ||
+			(!isPlaceholder(c.SmileIDPartnerID) && !isPlaceholder(c.SmileIDAPIKey)) ||
+			!isPlaceholder(c.YouverifyToken)
+		if !anyProvider {
+			problems = append(problems, "FEATURE_KYC_VERIFY_ENABLED=true but no KYC provider is configured (need Dojah, Smile ID, or Youverify)")
+		}
+		require(true, "KYC_PII_ENC_KEY", c.KYCPIIEncKey)
+		// The PII key must be a base64-encoded 32-byte (AES-256) key.
+		if !isPlaceholder(c.KYCPIIEncKey) {
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(c.KYCPIIEncKey)); err != nil || len(raw) != 32 {
+				problems = append(problems, "KYC_PII_ENC_KEY must be base64 of exactly 32 bytes (AES-256)")
+			}
+		}
+	}
+
+	// Arena (ADR-014): merit entries must be signable — require at least one valid
+	// Ed25519 signing seed (base64 32 bytes) when enabled. Any provided seed must
+	// be well-formed.
+	if c.FeatureArenaEnabled {
+		seeds := map[string]string{
+			"ARENA_SIGNING_SEED_THEORY":    c.ArenaSigningSeedTheory,
+			"ARENA_SIGNING_SEED_PRACTICAL": c.ArenaSigningSeedPractical,
+			"ARENA_SIGNING_SEED_FIRSTAID":  c.ArenaSigningSeedFirstAid,
+		}
+		anySeed := false
+		for name, v := range seeds {
+			if isPlaceholder(v) {
+				continue
+			}
+			anySeed = true
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v)); err != nil || len(raw) != 32 {
+				problems = append(problems, name+" must be base64 of exactly 32 bytes (Ed25519 seed)")
+			}
+		}
+		if !anySeed {
+			problems = append(problems, "FEATURE_ARENA_ENABLED=true but no ARENA_SIGNING_SEED_* is set — merit entries cannot be signed")
+		}
+		// Dedicated crown-award key (NDC-1 defense-in-depth). Optional — falls back to
+		// the practical signer — but must be well-formed when provided.
+		if !isPlaceholder(c.ArenaAwardSigningSeed) {
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(c.ArenaAwardSigningSeed)); err != nil || len(raw) != 32 {
+				problems = append(problems, "ARENA_AWARD_SIGNING_SEED must be base64 of exactly 32 bytes (Ed25519 seed)")
+			}
+		}
+	}
+
+	// Maps: required when the MapService is enabled. Address lookup degrades to a
+	// mock/offline fallback if this is missing, so it is advisory (warn) — but in
+	// production a missing Google key means no real geocoding.
+	if c.FeatureMapsEnabled && isPlaceholder(c.MapsGoogleKey) {
+		problems = append(problems, "MAPS_GOOGLE_KEY is missing while FEATURE_MAPS_ENABLED=true — address lookup will fall back to mock/offline")
+	}
+
+	// Outside development no module may silently run on a mock provider or the
+	// public dev signing key. These are fatal on staging as well as production,
+	// so a mock can never leak past development.
+	var strict []string
+	if !c.MocksAllowed() {
+		validSeed := func(v string) bool {
+			raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v))
+			return !isPlaceholder(v) && err == nil && len(raw) == 32
+		}
+		if c.FeatureAssociationsEnabled && isPlaceholder(c.AssocCardSigningSecret) {
+			strict = append(strict, "ASSOC_CARD_SIGNING_SECRET is required when FEATURE_ASSOCIATIONS_ENABLED=true (membership cards would be signed with the public dev key)")
+		}
+		if c.FeatureArenaEnabled && !(validSeed(c.ArenaSigningSeedTheory) || validSeed(c.ArenaSigningSeedPractical) || validSeed(c.ArenaSigningSeedFirstAid)) {
+			strict = append(strict, "FEATURE_ARENA_ENABLED=true needs at least one valid ARENA_SIGNING_SEED_* (base64 of 32 bytes)")
+		}
+		if (c.FeatureMapsEnabled || c.FeatureTransportEnabled) && isPlaceholder(c.MapsGoogleKey) {
+			strict = append(strict, "MAPS_GOOGLE_KEY is required when Maps/Transport is enabled (otherwise the mock map provider serves fabricated fares)")
+		}
+		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
+			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
+		}
+		if c.MapleradBaseURL != "" {
+			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
+		}
+		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
+			if isPlaceholder(c.PaystackSecretKey) {
+				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
+			}
+		}
+		if c.PaystackBaseURL != "" {
+			strict = append(strict, "PAYSTACK_BASE_URL must not be set outside development — it reroutes every Paystack call away from api.paystack.co")
+		}
+		if c.FeatureAcademyEnabled {
+			switch strings.ToLower(strings.TrimSpace(c.RailsMode)) {
+			case "", "off", "fake":
+				strict = append(strict, "RAILS_MODE must be sandbox or live when FEATURE_ACADEMY_ENABLED=true (fake/off run in-process stubs)")
+			}
+		}
+		if c.FeatureCryptoEnabled {
+			key, base := c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL
+			if c.IsProd() {
+				key, base = c.CryptoQuidaxLiveKey, c.CryptoQuidaxLiveBaseURL
+			}
+			if !strings.EqualFold(strings.TrimSpace(c.CryptoProvider), "quidax") || isPlaceholder(key) || strings.TrimSpace(base) == "" {
+				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
+			}
+		}
+		problems = append(problems, strict...)
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+
+	if c.IsProd() || len(strict) > 0 {
+		return fmt.Errorf("config validation failed (%d problem(s)):\n  - %s",
+			len(problems), strings.Join(problems, "\n  - "))
+	}
+	// Non-production: advisory only, never block local/dev boot.
+	log.Printf("[config] %d configuration warning(s) (non-fatal in %s):", len(problems), c.AppEnv)
+	for _, p := range problems {
+		log.Printf("[config]   - %s", p)
+	}
+	return nil
 }

@@ -46,11 +46,11 @@ jobs:
           SHA="${{ github.event.inputs.sha || github.sha }}"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "image=${{ vars.GCP_ARTIFACT_REGISTRY }}/${IMAGE_NAME}:$SHA" >> "$GITHUB_OUTPUT"
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
       - name: Build & push (immutable, SHA-tagged)
@@ -65,11 +65,11 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       # Migrations run expand-first, decoupled from code that needs them (§10).
       # Staging migrations are applied by the `apply-staging` job in
       # db-migrate.yml (push to `staging`, gated on DB_MIGRATE_STAGING_ENABLED),
@@ -97,11 +97,11 @@ jobs:
     environment: production # protected: required reviewers = human gate
     steps:
       - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       # TODO(you): apply the (already staging-verified, additive) migrations to PROD
       # BEFORE routing traffic to code that requires them.
       - name: Deploy canary (no traffic yet)
@@ -118,10 +118,40 @@ jobs:
             --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
             --to-tags "sha-${{ needs.build.outputs.sha }}=10" --quiet
       - name: Watch canary golden signals
+        # AUD-INFRA-008: was `sleep 30` + TODO — a hollow gate that promoted
+        # anything. Tagged revisions get their own URL (<tag>---<service>),
+        # so we can probe the canary directly regardless of its 10% share.
+        # The probe is /readyz (not /healthz): liveness is a static 200, while
+        # /readyz actually pings the shared DB pool (admin_overview.go Ready),
+        # so a booted-but-DB-dead revision (bad env, unreachable Supabase)
+        # fails this gate instead of promoting. Successes must be CONSECUTIVE —
+        # a crash-looping revision that serves intermittently resets the count.
+        # Still missing vs a full golden-signal gate: error-rate/latency under
+        # live traffic (needs Cloud Monitoring wiring) — tracked in the audit.
         run: |
-          echo "TODO(you): query Cloud Monitoring for error-rate/latency on the canary revision"
-          echo "for ~5-10 min; fail this step to auto-halt promotion (traffic stays 90% on stable)."
-          sleep 30
+          TAG="sha-${{ needs.build.outputs.sha }}"
+          BASE=$(gcloud run services describe "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
+            --format='value(status.url)')
+          # Cloud Run tag-URL convention: https://<tag>---<service-host>
+          URL="https://${TAG}---${BASE#https://}"
+          echo "Probing canary tag URL: $URL/readyz"
+          ok=0
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 "$URL/readyz" >/dev/null; then
+              ok=$((ok + 1))
+              echo "canary /readyz OK ($ok/3 consecutive required)"
+              [ "$ok" -ge 3 ] && break
+            else
+              ok=0
+              echo "canary /readyz failed (attempt $i) — consecutive count reset"
+            fi
+            sleep 15
+          done
+          if [ "$ok" -lt 3 ]; then
+            echo "::error::canary revision never sustained /readyz — halting promotion (traffic stays on stable revision)"
+            exit 1
+          fi
       - name: Promote to 100%
         run: |
           gcloud run services update-traffic "$SERVICE" \

@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Sparkles } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -27,7 +27,7 @@ export default function OfferingModeScreen() {
 
   const toggle = (mode: string) => setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, enabled: !m.enabled } : m)));
   const setNaira = (mode: string, field: 'price' | 'nightlyPrice' | 'cautionDeposit', naira: string) =>
-    setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, [field]: (Number(naira.replace(/[^0-9.]/g, '')) || 0) * 100 } : m)));
+    setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, [field]: Math.round((Number(naira.replace(/[^0-9.]/g, '')) || 0) * 100) } : m)));
 
   const submit = async () => {
     await save.mutateAsync(modes);

@@ -3,15 +3,15 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Armchair } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
-import { errKind } from '@/features/mobility/utils/errKind';
+import { busSeatMapErrKind } from '@/features/mobility/utils/busTicket';
 import { useBusSeatMap } from '@/features/mobility/hooks/useModes';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusSeat } from '@/features/mobility/types/modes.types';
@@ -40,7 +40,7 @@ export default function BusSeatsScreen() {
       {seatMap.isLoading ? (
         <StateView kind="loading" message="Loading seat map…" />
       ) : seatMap.isError || !seatMap.data ? (
-        <MobilityEdgeState kind={errKind(seatMap.error)} actionLabel="Retry" onAction={() => seatMap.refetch()} />
+        <MobilityEdgeState kind={busSeatMapErrKind(seatMap.error)} actionLabel="Retry" onAction={() => seatMap.refetch()} />
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>

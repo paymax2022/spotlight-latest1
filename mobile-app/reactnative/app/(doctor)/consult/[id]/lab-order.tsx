@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Search, X, Package, BadgeCheck, Star, MapPin, Check, Eye, Share2, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatKobo } from '@/api/doctor.batch3.api';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -30,7 +30,6 @@ import {
 import type { LabCatalogueEntry, LabProvider, LabUrgency, CollectionMode } from '@/types/doctor.batch3';
 import type { DiagnosisCode } from '@/types/doctor.batch2';
 
-// ── Section M — Lab test ordering builder ─────────────────────────────────────
 // EXTENDS the Phase 1 create screen: catalogue + search + test-detail sheet,
 // multi-test via LabTestRow, lab packages, reason + diagnosis-linked (Diagnosis
 // SearchSheet), fasting + sample-type instructions, urgency, collection mode,

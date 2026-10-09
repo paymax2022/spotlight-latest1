@@ -26,6 +26,11 @@ export default defineConfig({
           EXPO_PUBLIC_API_BASE_URL: 'http://127.0.0.1:3000',
           EXPO_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
           EXPO_PUBLIC_SUPABASE_ANON_KEY: 'e2e-anon-key',
+          // The suite seeds the mock PIN via localStorage and only route-mocks
+          // pin/status — live mode would send createPin/fetchBanks to a real
+          // backend that 401s the fake session. Pin mock mode so a dev's local
+          // .env can't change what the tests run against.
+          EXPO_PUBLIC_TRANSFERS_USE_MOCK: 'true',
         },
       },
   projects: [

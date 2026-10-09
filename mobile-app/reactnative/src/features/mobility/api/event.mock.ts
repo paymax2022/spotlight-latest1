@@ -1,5 +1,3 @@
-// ── Event Transport — mock seed data ─────────────────────────────────────────
-// All money is integer kobo. Fares/totals are server-owned; the client only
 // displays them. bookOffer mimics the server: increments booked_count, flips to
 // 'full' at capacity, and rejects with a 409-shaped error when capacity exceeded.
 

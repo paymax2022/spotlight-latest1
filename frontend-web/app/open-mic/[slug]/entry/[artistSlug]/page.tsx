@@ -18,7 +18,6 @@ export default async function OpenMicArtistVotingPage({
   const entry = entries.find((e) => slugifyArtist(e.stageName) === params.artistSlug);
   if (!entry) notFound();
 
-  // Compute rank
   const sorted = [...entries].sort((a, b) => b.voteCount - a.voteCount);
   const rank = sorted.findIndex((e) => e.id === entry.id) + 1;
   const totalVotes = entries.reduce((s, e) => s + e.voteCount, 0);

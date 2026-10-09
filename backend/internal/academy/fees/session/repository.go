@@ -6,6 +6,10 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -44,8 +48,6 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// ── Sessions ────────────────────────────────────────────────────────────────────
-
 const sessionCols = `id, school_id, name, term_structure, start_date, end_date, status, created_at`
 
 func scanSession(row pgx.Row) (*AcademicSession, error) {
@@ -57,7 +59,7 @@ func scanSession(row pgx.Row) (*AcademicSession, error) {
 		return nil, err
 	}
 	s.Status = SessionStatus(status)
-	s.TermStructure = rawOrEmptyObject(term)
+	s.TermStructure = jsonx.RawOrEmptyObject(term)
 	return &s, nil
 }
 
@@ -131,8 +133,6 @@ func (r *Repository) SetSessionStatus(ctx context.Context, id string, from, to S
 	return r.GetSession(ctx, id)
 }
 
-// ── Classes ─────────────────────────────────────────────────────────────────────
-
 const classCols = `id, school_id, session_id, name, level, class_teacher_user_id, created_at`
 
 func scanClass(row pgx.Row) (*Class, error) {
@@ -149,8 +149,8 @@ func (r *Repository) InsertClass(ctx context.Context, c Class) (*Class, error) {
 	now := time.Now()
 	const q = `INSERT INTO academy_fee_classes (id, school_id, session_id, name, level, class_teacher_user_id, created_at)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	if _, err := r.db.Exec(ctx, q, id, c.SchoolID, nullStr(deref(c.SessionID)), c.Name,
-		nullStr(deref(c.Level)), nullStr(deref(c.ClassTeacherUserID)), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, c.SchoolID, dbutil.NullStr(ptr.ZeroIfNil(c.SessionID)), c.Name,
+		dbutil.NullStr(ptr.ZeroIfNil(c.Level)), dbutil.NullStr(ptr.ZeroIfNil(c.ClassTeacherUserID)), now); err != nil {
 		return nil, err
 	}
 	return r.GetClass(ctx, id)
@@ -196,7 +196,7 @@ func (r *Repository) UpdateClass(ctx context.Context, id string, req UpdateClass
 	    level = COALESCE($3, level),
 	    class_teacher_user_id = COALESCE($4, class_teacher_user_id)
 	    WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, id, nullStr(req.Name), nullStr(req.Level), nullStr(req.ClassTeacherUserID))
+	tag, err := r.db.Exec(ctx, q, id, dbutil.NullStr(req.Name), dbutil.NullStr(req.Level), dbutil.NullStr(req.ClassTeacherUserID))
 	if err != nil {
 		return nil, err
 	}
@@ -205,8 +205,6 @@ func (r *Repository) UpdateClass(ctx context.Context, id string, req UpdateClass
 	}
 	return r.GetClass(ctx, id)
 }
-
-// ── Audit ───────────────────────────────────────────────────────────────────────
 
 func (r *Repository) WriteAudit(ctx context.Context, actorID, action, entityType, entityID, from, to string, detail any) error {
 	return writeAudit(ctx, r.db, actorID, action, entityType, entityID, from, to, detail)
@@ -217,7 +215,7 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityType, ent
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, entityType, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, entityType, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 
@@ -226,49 +224,11 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// ── small helpers ─────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
-}
-
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
 }
 
 func toJSON(v any) []byte {

@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { X, ShieldCheck, ShieldAlert } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useEarnings, useRequestPayout, useCompletePayoutKyc } from '@/features/creators/hooks';
@@ -61,7 +61,6 @@ export default function Payout() {
       ) : earnings.isError || !earnings.data ? (
         <StateView kind="error" title="Couldn't load earnings" actionLabel="Retry" onAction={() => earnings.refetch()} />
       ) : !kycDone ? (
-        // ── Payout KYC gate ──
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <View style={styles.gateBanner}>
             <ShieldAlert size={22} color={CreatorsColors.warnText} />
@@ -74,7 +73,6 @@ export default function Payout() {
           <PrimaryButton label="Complete KYC" onPress={onCompleteKyc} disabled={legalName.trim().length < 3 || kycRef.trim().length < 5} loading={completeKyc.isPending} style={{ marginTop: Spacing.lg }} />
         </ScrollView>
       ) : (
-        // ── Withdraw form ──
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <View style={styles.kycOk}><ShieldCheck size={16} color={CreatorsColors.ok} /><Text style={styles.kycOkText}>Identity verified — you can withdraw.</Text></View>
           <View style={styles.availCard}>

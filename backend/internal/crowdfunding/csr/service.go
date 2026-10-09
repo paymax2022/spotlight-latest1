@@ -4,10 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/timeutil"
+)
+
+const (
+	keyError = "error"
+	keyData  = "data"
 )
 
 // Service implements the corporate CSR / matching domain over a pgx pool.
@@ -22,6 +34,13 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("csr: not found")
+
+// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used by
+// ANOTHER sponsor's match (409). Replay lookups are scoped to the caller, so a
+// foreign key cannot replay a stranger's match back; the surviving
+// unique-violation on insert is the durable proof of the clash (same
+// convention as finance/transfers' ErrIdempotencyKeyConflict).
+var ErrIdempotencyKeyConflict = errors.New("csr: idempotency key already used by another match")
 
 // impactTags maps campaign categories to a human impact tag for the CSR UI.
 var impactTags = map[string]string{
@@ -42,13 +61,6 @@ func impactTag(category string) string {
 		return t
 	}
 	return "Community"
-}
-
-func rfc3339(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
 }
 
 // GetProfile returns the sponsor's CSR profile, defaulting an empty row when the
@@ -141,7 +153,7 @@ func scanMatch(scan func(dest ...any) error) (*CsrMatch, error) {
 	); err != nil {
 		return nil, err
 	}
-	m.StartedAt = rfc3339(startedAt)
+	m.StartedAt = timeutil.RFC3339(startedAt)
 	return m, nil
 }
 
@@ -170,27 +182,39 @@ func (s *Service) GetMatches(ctx context.Context, sponsorID string) ([]CsrMatch,
 // SetupMatch creates a match offer in PENDING_APPROVAL, reserving `capKobo` of
 // the sponsor's annual budget transactionally. Idempotent on idemKey: a repeat
 // call with the same key returns the existing match without re-reserving budget.
-//
 // IRON RULES: reserving budget mutates money → requires an Idempotency-Key;
 // matches start PENDING_APPROVAL and must be explicitly approved before ACTIVE.
 func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetupInput, idemKey string) (*CsrMatch, error) {
 	if idemKey == "" {
-		return nil, fmt.Errorf("csr: Idempotency-Key is required")
+		return nil, errors.New("csr: Idempotency-Key is required")
 	}
 	if in.CapKobo < 100 {
-		return nil, fmt.Errorf("csr: capKobo must be at least 100")
+		return nil, errors.New("csr: capKobo must be at least 100")
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Idempotency: short-circuit if a match already exists for this key.
-	if existing, ok, err := s.findByIdemKey(ctx, tx, idemKey); err != nil {
+	// Idempotency: short-circuit if a match already exists for this key AND
+	// THIS sponsor — caller-scoped, so a key another sponsor already used
+	// can't replay their match back. A foreign key misses here and collides
+	// at the cf_csr_matches unique constraint below → 409.
+	if existing, ok, err := s.findByIdemKey(ctx, tx, sponsorID, idemKey); err != nil {
 		return nil, err
 	} else if ok {
+		// A caller-scoped hit is a true replay ONLY when the request is the
+		// same match — same campaign, ratio and cap. A key replayed against
+		// different material params is idempotency-key misuse: returning the
+		// stored match would confirm a budget reservation this request never
+		// made (post-merge audit D4). Visibility/message are display-only
+		// annotations and do not affect the reservation, so they are not
+		// material here.
+		if existing.CampaignID != in.CampaignID || existing.Ratio != in.Ratio || existing.CapKobo != in.CapKobo {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return existing, nil
 	}
 
@@ -201,7 +225,7 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 		in.CampaignID,
 	).Scan(&campaignTitle)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("csr: campaign is not available for matching")
+		return nil, errors.New("csr: campaign is not available for matching")
 	}
 	if err != nil {
 		return nil, err
@@ -223,7 +247,7 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 		return nil, err
 	}
 	if committed+in.CapKobo > budget {
-		return nil, fmt.Errorf("csr: cap exceeds remaining annual budget")
+		return nil, errors.New("csr: cap exceeds remaining annual budget")
 	}
 
 	if _, err := tx.Exec(ctx,
@@ -244,6 +268,14 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 		sponsorID, in.CampaignID, campaignTitle, in.Ratio, in.CapKobo, in.Visibility, in.Message, idemKey,
 	).Scan)
 	if err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-sponsor key clash — cf_csr_matches.idempotency_key
+		// is UNIQUE. Report it as a conflict rather than a server fault (the
+		// M16 convention; a same-sponsor race loses nothing — the retry
+		// replays the committed match).
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, err
 	}
 
@@ -253,9 +285,13 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 	return m, nil
 }
 
-func (s *Service) findByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) (*CsrMatch, bool, error) {
-	sql := fmt.Sprintf(`SELECT %s FROM cf_csr_matches WHERE idempotency_key = $1`, matchSelect)
-	m, err := scanMatch(tx.QueryRow(ctx, sql, idemKey).Scan)
+// findByIdemKey returns the caller's own prior match under this key — scoped
+// to THIS sponsor. A key another sponsor already used returns (nil,false,nil)
+// and is caught by the unique constraint on insert → ErrIdempotencyKeyConflict;
+// an unscoped lookup would replay a stranger's match on a guessed key.
+func (s *Service) findByIdemKey(ctx context.Context, tx pgx.Tx, sponsorID, idemKey string) (*CsrMatch, bool, error) {
+	sql := fmt.Sprintf(`SELECT %s FROM cf_csr_matches WHERE idempotency_key = $1 AND sponsor_id = $2`, matchSelect)
+	m, err := scanMatch(tx.QueryRow(ctx, sql, idemKey, sponsorID).Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -272,7 +308,7 @@ func (s *Service) ApproveMatch(ctx context.Context, sponsorID, matchID string) (
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current string
 	err = tx.QueryRow(ctx,
@@ -289,11 +325,7 @@ func (s *Service) ApproveMatch(ctx context.Context, sponsorID, matchID string) (
 		return nil, fmt.Errorf("csr: cannot approve a match in %s state", current)
 	}
 
-	sql := fmt.Sprintf(`
-		UPDATE cf_csr_matches
-		SET status = 'ACTIVE', started_at = NOW(), updated_at = NOW()
-		WHERE id = $1
-		RETURNING %s`, matchSelect)
+	sql := "\n\t\tUPDATE cf_csr_matches\n\t\tSET status = 'ACTIVE', started_at = NOW(), updated_at = NOW()\n\t\tWHERE id = $1\n\t\tRETURNING " + matchSelect
 	m, err := scanMatch(tx.QueryRow(ctx, sql, matchID).Scan)
 	if err != nil {
 		return nil, err
@@ -332,7 +364,7 @@ func (s *Service) GetInvoices(ctx context.Context, sponsorID string) ([]CsrInvoi
 			&inv.VatKobo, &inv.TotalKobo, &inv.Status, &issuedAt); err != nil {
 			return nil, err
 		}
-		inv.IssuedAt = rfc3339(issuedAt)
+		inv.IssuedAt = timeutil.RFC3339(issuedAt)
 		out = append(out, inv)
 	}
 	return out, rows.Err()
@@ -421,9 +453,267 @@ func (s *Service) GetEmployeeGiving(ctx context.Context, sponsorID string) ([]Em
 			return nil, err
 		}
 		if endsAt != nil {
-			e.EndsAt = rfc3339(*endsAt)
+			e.EndsAt = timeutil.RFC3339(*endsAt)
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Register wires the crowdfunding corporate-CSR routes onto the supplied router
+// group, under a /csr prefix. The caller is responsible for mounting `rg` under
+// the crowdfunding prefix and applying auth middleware that sets `user_id`.
+// Routes (relative to rg):
+//
+//	GET  /csr/profile                → sponsor CSR profile (default row)
+//	GET  /csr/campaigns              → matchable (active + verified) campaigns
+//	GET  /csr/campaigns/:id          → a single matchable campaign
+//	GET  /csr/matches                → sponsor's match offers
+//	POST /csr/matches                → set up a match (PENDING_APPROVAL; reserves
+//	                                   budget → requires Idempotency-Key)
+//	POST /csr/matches/:id/approve    → guarded PENDING_APPROVAL → ACTIVE
+//	GET  /csr/invoices               → sponsor's billing records
+//	GET  /csr/impact                 → derived CSR impact summary
+//	GET  /csr/employee-giving        → sponsor's employee-giving campaigns
+func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
+	h := NewHandler(NewService(db))
+
+	csr := rg.Group("/csr")
+
+	csr.GET("/profile", h.GetProfile)
+	csr.GET("/campaigns", h.GetMatchableCampaigns)
+	csr.GET("/campaigns/:id", h.GetMatchableCampaign)
+
+	csr.GET("/matches", h.GetMatches)
+	csr.POST("/matches", h.SetupMatch)
+	csr.POST("/matches/:id/approve", h.ApproveMatch)
+
+	csr.GET("/invoices", h.GetInvoices)
+	csr.GET("/impact", h.GetImpactSummary)
+	csr.GET("/employee-giving", h.GetEmployeeGiving)
+}
+
+// Handler exposes the CSR service over gin. Lists are wrapped in {keyData: ...};
+// single objects are returned directly (mirrors the crowdfunding handlers).
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs a CSR handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// GetProfile — GET /csr/profile.
+func (h *Handler) GetProfile(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	p, err := h.svc.GetProfile(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+// GetMatchableCampaigns — GET /csr/campaigns.
+func (h *Handler) GetMatchableCampaigns(c *gin.Context) {
+	items, err := h.svc.GetMatchableCampaigns(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// GetMatchableCampaign — GET /csr/campaigns/:id.
+func (h *Handler) GetMatchableCampaign(c *gin.Context) {
+	m, err := h.svc.GetMatchableCampaign(c.Request.Context(), c.Param("id"))
+	if errors.Is(err, ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{keyError: "campaign not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, m)
+}
+
+// GetMatches — GET /csr/matches.
+func (h *Handler) GetMatches(c *gin.Context) {
+	sponsorID := ginutil.UserID(c)
+	items, err := h.svc.GetMatches(c.Request.Context(), sponsorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// SetupMatch — POST /csr/matches. Reserves budget → requires Idempotency-Key.
+func (h *Handler) SetupMatch(c *gin.Context) {
+	sponsorID := ginutil.UserID(c)
+	idemKey := ginutil.IdempotencyKey(c)
+	if idemKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header is required"})
+		return
+	}
+	var in MatchSetupInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	m, err := h.svc.SetupMatch(c.Request.Context(), sponsorID, in, idemKey)
+	if err != nil {
+		if errors.Is(err, ErrIdempotencyKeyConflict) {
+			// 409 + stable code for a cross-sponsor Idempotency-Key reuse
+			// (the same contract as finance/transfers' idempotency_key_conflict).
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, m)
+}
+
+// ApproveMatch — POST /csr/matches/:id/approve (guarded PENDING_APPROVAL → ACTIVE).
+func (h *Handler) ApproveMatch(c *gin.Context) {
+	sponsorID := ginutil.UserID(c)
+	m, err := h.svc.ApproveMatch(c.Request.Context(), sponsorID, c.Param("id"))
+	if errors.Is(err, ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{keyError: "match not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, m)
+}
+
+// GetInvoices — GET /csr/invoices.
+func (h *Handler) GetInvoices(c *gin.Context) {
+	sponsorID := ginutil.UserID(c)
+	items, err := h.svc.GetInvoices(c.Request.Context(), sponsorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// GetImpactSummary — GET /csr/impact.
+func (h *Handler) GetImpactSummary(c *gin.Context) {
+	sponsorID := ginutil.UserID(c)
+	summary, err := h.svc.GetImpactSummary(c.Request.Context(), sponsorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, summary)
+}
+
+// GetEmployeeGiving — GET /csr/employee-giving.
+func (h *Handler) GetEmployeeGiving(c *gin.Context) {
+	sponsorID := ginutil.UserID(c)
+	items, err := h.svc.GetEmployeeGiving(c.Request.Context(), sponsorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// Response/request DTOs — shapes match the mobile TypeScript client EXACTLY
+// (camelCase JSON). See mobile-app/reactnative/src/features/crowdfunding/types/csr.types.ts.
+// All monetary amounts are integers in minor units (kobo).
+
+// CsrProfile mirrors the client CsrProfile.
+type CsrProfile struct {
+	CompanyName        string `json:"companyName"`
+	Verified           bool   `json:"verified"`
+	AnnualBudgetKobo   int64  `json:"annualBudgetKobo"`
+	CommittedKobo      int64  `json:"committedKobo"`
+	MatchedKobo        int64  `json:"matchedKobo"`
+	CampaignsSupported int    `json:"campaignsSupported"`
+	EmployeesGiving    int    `json:"employeesGiving"`
+}
+
+// MatchableCampaign mirrors the client MatchableCampaign.
+type MatchableCampaign struct {
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	Category         string  `json:"category"`
+	CoverImage       *string `json:"coverImage"`
+	RaisedKobo       int64   `json:"raisedKobo"`
+	GoalKobo         int64   `json:"goalKobo"`
+	ContributorCount int     `json:"contributorCount"`
+	Verified         bool    `json:"verified"`
+	ImpactTag        string  `json:"impactTag"`
+}
+
+// CsrMatch mirrors the client CsrMatch.
+type CsrMatch struct {
+	ID            string `json:"id"`
+	CampaignID    string `json:"campaignId"`
+	CampaignTitle string `json:"campaignTitle"`
+	Ratio         string `json:"ratio"` // MatchRatio: 1:1 | 2:1 | 0.5:1
+	CapKobo       int64  `json:"capKobo"`
+	MatchedKobo   int64  `json:"matchedKobo"`
+	Status        string `json:"status"` // CsrMatchStatus
+	StartedAt     string `json:"startedAt"`
+	Visibility    string `json:"visibility"` // PUBLIC | ANONYMOUS
+}
+
+// MatchSetupInput mirrors the client MatchSetupInput (request body for POST /matches).
+type MatchSetupInput struct {
+	CampaignID string `json:"campaignId" binding:"required"`
+	Ratio      string `json:"ratio" binding:"required,oneof=1:1 2:1 0.5:1"`
+	CapKobo    int64  `json:"capKobo" binding:"required,min=100"`
+	Visibility string `json:"visibility" binding:"required,oneof=PUBLIC ANONYMOUS"`
+	Message    string `json:"message"`
+}
+
+// CsrInvoice mirrors the client CsrInvoice.
+type CsrInvoice struct {
+	ID          string `json:"id"`
+	Reference   string `json:"reference"`
+	Description string `json:"description"`
+	AmountKobo  int64  `json:"amountKobo"`
+	VatKobo     int64  `json:"vatKobo"`
+	TotalKobo   int64  `json:"totalKobo"`
+	Status      string `json:"status"` // PAID | DUE
+	IssuedAt    string `json:"issuedAt"`
+}
+
+// CategoryMatched is a {category, matchedKobo} pair (CsrImpactSummary.byCategory).
+type CategoryMatched struct {
+	Category    string `json:"category"`
+	MatchedKobo int64  `json:"matchedKobo"`
+}
+
+// MonthlyMatched is a {month, matchedKobo} pair (CsrImpactSummary.monthly).
+type MonthlyMatched struct {
+	Month       string `json:"month"`
+	MatchedKobo int64  `json:"matchedKobo"`
+}
+
+// CsrImpactSummary mirrors the client CsrImpactSummary.
+type CsrImpactSummary struct {
+	TotalMatchedKobo   int64             `json:"totalMatchedKobo"`
+	LivesImpacted      int               `json:"livesImpacted"`
+	CampaignsSupported int               `json:"campaignsSupported"`
+	TopCategory        string            `json:"topCategory"`
+	ByCategory         []CategoryMatched `json:"byCategory"`
+	Monthly            []MonthlyMatched  `json:"monthly"`
+}
+
+// EmployeeGivingCampaign mirrors the client EmployeeGivingCampaign.
+type EmployeeGivingCampaign struct {
+	ID                string `json:"id"`
+	Title             string `json:"title"`
+	GoalKobo          int64  `json:"goalKobo"`
+	RaisedKobo        int64  `json:"raisedKobo"`
+	Participants      int    `json:"participants"`
+	EndsAt            string `json:"endsAt"`
+	CompanyMatchRatio string `json:"companyMatchRatio"` // MatchRatio
 }

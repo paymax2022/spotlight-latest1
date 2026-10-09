@@ -1,7 +1,4 @@
-// ── Marketplace — Meetup safe-spots + self-reported review mocks ─────────────
-//
 // The connect model has no escrow/orders, so meetup safe-spots and reviews no
-// longer hang off an order FSM. Safe-spots back Meetup Mode; reviews are the
 // OPTIONAL, self-reported rating a user can leave after marking a deal complete
 // in the Deal Room. Neither depends on an order record any more.
 import type { Review } from '../types';
@@ -11,7 +8,6 @@ const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
 export const MOCK_ME = 'me';
 
-// ── Meetup safe-spots (a sibling agent may add /meetup/safe-spots; mock here) ──
 export interface SafeSpot {
   id: string;
   name: string;
@@ -33,7 +29,6 @@ export async function mockGetSafeSpots(): Promise<SafeSpot[]> {
   return SAFE_SPOTS;
 }
 
-// ── Reviews — self-reported after a deal is marked complete ──────────────────
 // Keyed by dealId (the Deal Room thread id) instead of an order id: reviews are
 // no longer structurally gated behind a released escrow order.
 const reviews: Review[] = [];

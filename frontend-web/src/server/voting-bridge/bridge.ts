@@ -3,21 +3,19 @@
  * Adds idempotency, KYC gating, and outbox pattern without modifying protected functions
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
-import { checkAndClaimIdempotencyKey, storeIdempotencyResult, releaseIdempotencyKey } from './idempotency';
+import { createAdminClient } from '@/lib/supabase/server';
+import { boundClaimKey, checkAndClaimIdempotencyKey, storeIdempotencyResult, releaseIdempotencyKey } from './idempotency';
 import { assertKycTier } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
 import { isBridgeEnabled } from './feature-flag';
 import { castFreeVoteAtomic } from './free-vote-atomic';
 // The legacy engine this bridge wraps. Imported, never edited — both live in
-// protected files (see .claude/hooks/protect-legacy.sh); free-vote-atomic.ts
 // already takes the same approach with their helpers.
 import { castFreeVote } from '@/src/server/voting/free-vote.service';
 import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import type { FraudStatus } from '@/src/features/voting/types';
 // Shared cross-engine helpers (NOT protected — voting/core/* is Paymax-era
 // shared infrastructure, distinct from the top-level *.service.ts files).
-// Safe to import and call directly; only the *.service.ts files themselves
 // (and the legacy SQL/routes) may never be edited.
 import { verifyVotePayment, recordVoteFraudSignals, recordVoteAudit } from '@/src/server/voting/core';
 
@@ -99,14 +97,12 @@ export async function bridgedCastFreeVote(
 ): Promise<VoteResponse> {
   // Gradual rollout: with the flag off the request is served by the legacy
   // engine this bridge wraps.
-  //
   // It previously returned "Bridge not enabled" and served nothing, despite the
   // comment here promising a fallthrough — castFreeVote was not even imported.
   // The flag DEFAULTS TO DISABLED (feature-flag.ts) and /api/v2/votes/free is
   // what the vote modal calls, so any deployment without VOTES_BRIDGE_ENABLED
   // set had free voting dead rather than merely un-bridged. A rollout flag that
   // breaks the feature when off is not a rollout flag.
-  //
   // The legacy path is the PRE-atomic one, so it carries the D-001/D-002/D-003
   // races claim_free_vote fixes. That is the accepted meaning of "flag off",
   // not a regression introduced here — turn the bridge on to get the atomic
@@ -151,9 +147,20 @@ export async function bridgedCastFreeVote(
   // and releasing theirs would hand this duplicate a second vote.
   let ownsClaim = false;
 
+  // The raw key is unscoped: user B reusing user A's key would otherwise be
+  // served A's cached VoteResponse (a success B never earned) or 409 on A's
+  // in-flight claim. Bind to voter + vote shape; for anonymous votes the
+  // voterIdentifier/device fingerprint keeps distinct voters distinct.
+  const claimKey = boundClaimKey('free-vote', userId ?? 'anon', idempotencyKey, {
+    contestId: req.contestId,
+    contestantId: req.contestantId,
+    voteQuantity: req.voteQuantity ?? 1,
+    voter: req.voterIdentifier ?? '',
+    device: context.deviceFingerprint ?? '',
+  });
+
   try {
-    // Step 1: Idempotency check — return cached result if exists
-    const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
+    const cached = await checkAndClaimIdempotencyKey(claimKey);
     if (cached) {
       return cached as VoteResponse;
     }
@@ -165,14 +172,11 @@ export async function bridgedCastFreeVote(
     }
 
     // Step 3: Atomic claim.
-    //
     // This used to be a bare INSERT into `votes`, which enforced nothing: no
     // daily cap, no timezone-correct day bucket, no totals upsert. The claim
-    // that does all three (claim_free_vote, row-locked; D-001/D-002/D-003) had
     // been written, migrated and unit-tested, but nothing ever called it —
     // castFreeVoteAtomic's only occurrence in the tree was its own definition.
     // This is that missing call site.
-    //
     // deviceFingerprint is passed through rather than defaulted to a placeholder:
     // a contest whose freeVoteLimitScope is 'device' must refuse a vote it cannot
     // attribute (the claim answers 400), because bucketing every fingerprint-less
@@ -198,9 +202,8 @@ export async function bridgedCastFreeVote(
     };
 
     // Step 4: Store result against idempotency key
-    await storeIdempotencyResult(idempotencyKey, result);
+    await storeIdempotencyResult(claimKey, result);
 
-    // Step 5: Enqueue async side effects (non-blocking)
     if (req.shareCode && userId) {
       await enqueueOutboxEvent('referral.triggered', {
         shareCode: req.shareCode,
@@ -224,7 +227,7 @@ export async function bridgedCastFreeVote(
     // refused forever by the 409 guard. The claim row is written before the vote
     // and filled in after, so a failure leaves it holding the empty placeholder.
     if (ownsClaim) {
-      await releaseIdempotencyKey(idempotencyKey);
+      await releaseIdempotencyKey(claimKey);
     }
     console.error('[VoteBridge] castFreeVote error:', error);
     return {
@@ -307,15 +310,22 @@ export async function bridgedVerifyPaidVote(
     }
 
     // Step 2: Verify with the gateway. A read-only round-trip to Paystack — safe
-    // to repeat if a concurrent caller races us here; only the DB write below
     // (Step 4) is the part that must not run twice.
     const verification = await verifyVotePayment(tx.payment_reference);
 
     if (!verification.success) {
-      await supabase
-        .from('vote_transactions')
-        .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
-        .eq('id', tx.id);
+      // Only a TERMINAL gateway status may flip the row to 'failed'. A
+      // 'pending'/'processing' result (or a Paystack outage) is retriable —
+      // writing 'failed' here would brick a charge that later settles, since
+      // both the verify and webhook paths bail on payment_status='failed'
+      // before re-verifying (paid money, no votes, no recovery).
+      const gatewayStatus = verification.raw?.gatewayStatus;
+      if (gatewayStatus === 'failed' || gatewayStatus === 'abandoned' || gatewayStatus === 'reversed') {
+        await supabase
+          .from('vote_transactions')
+          .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
+          .eq('id', tx.id);
+      }
       return { success: false, error: 'Payment verification failed. No votes were added.', statusCode: 400 };
     }
 

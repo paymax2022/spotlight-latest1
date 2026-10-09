@@ -4,11 +4,9 @@ package attribution_test
 // Direct Referral Rewards Engine (System B, referral_links) must attribute
 // correctly through the §7A signup-attribution engine (System A), exactly like
 // a legacy finance_referral_codes code always has.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same convention as
 // internal/finance/referrals/rewards_service_test.go). Point it at a disposable,
 // migrated Postgres:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/referral/attribution/... -v
 
@@ -131,9 +129,7 @@ func TestResolveReferrer_CodeMintedViaReferralLinks_Integration(t *testing.T) {
 // reverse-regression guard: a code that lives ONLY in the legacy
 // finance_referral_codes table (never touched referral_links) must keep
 // resolving correctly — the fix must not break the path that already worked.
-//
 // The code is seeded in upper-case here to isolate the REF-002 fix itself
-// ("does the resolver's finance_referral_codes fallback still work at all")
 // from case handling, which has its own dedicated regression test below
 // (TestResolveReferrer_LegacyFinanceReferralCode_LowercaseStored_Integration,
 // REF-008).

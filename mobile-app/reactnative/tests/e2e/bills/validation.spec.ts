@@ -13,7 +13,7 @@ test.describe('Bills E2E - Validation and error states', () => {
   test('rejects invalid Nigerian phone number for airtime', async ({ page }) => {
     await page.goto('/services/airtime');
     await page.getByText('MTN').first().click();
-    await page.getByPlaceholder('0801 234 5678').fill('12345');
+    await page.getByPlaceholder('801 234 5678').fill('12345');
     await page.getByText('Review Purchase').click();
 
     await expect(page.getByText(/valid phone number|valid Nigerian phone number/i).first()).toBeVisible();

@@ -5,7 +5,6 @@ package extranet
 // at all: gateway.PropertyContent.Photos was always empty for it (see
 // backend/internal/stays/adapters/direct.go), so a host-created listing could
 // never actually show a picture to a guest.
-//
 // Mirrors the marketplace listing-media pattern exactly (backend/internal/
 // marketplace/presign.go + service.go's ThumbPresigner): the R2 bucket is
 // PRIVATE, so only the object KEY is stored — never a public URL. Uploading is
@@ -14,8 +13,7 @@ package extranet
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,6 +21,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/platform/r2"
 )
 
@@ -50,8 +51,6 @@ type PropertyPhoto struct {
 	IsCover    bool   `json:"is_cover"`
 	SortOrder  int    `json:"sort_order"`
 }
-
-// --- repository ---
 
 type propertyPhotoRow struct {
 	ID         string
@@ -105,7 +104,7 @@ func (r *Repository) SetCoverPhoto(ctx context.Context, propertyID, photoID stri
 	if err != nil {
 		return fmt.Errorf("extranet: begin set-cover tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE public.stays_property_photo SET is_cover = false WHERE property_id = $1`, propertyID); err != nil {
 		return err
 	}
@@ -143,7 +142,7 @@ func (r *Repository) DeletePropertyPhoto(ctx context.Context, propertyID, photoI
 	if err != nil {
 		return "", fmt.Errorf("extranet: begin delete-photo tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var wasCover bool
 	if err := tx.QueryRow(ctx, `
@@ -171,8 +170,6 @@ func (r *Repository) CountPropertyPhotos(ctx context.Context, propertyID string)
 	err := r.db.QueryRow(ctx, `SELECT count(*) FROM public.stays_property_photo WHERE property_id = $1`, propertyID).Scan(&n)
 	return n, err
 }
-
-// --- service ---
 
 // PhotoPresigner is the slice of the R2 presigner this needs, so this package
 // does not take a dependency on the whole platform client (matches
@@ -203,10 +200,10 @@ func (s *Service) PresignPhotoUpload(ctx context.Context, userID, propertyID, mi
 	if !ok {
 		return "", "", fmt.Errorf("%w: unsupported mime_type (png, jpeg, webp only)", ErrValidation)
 	}
-	key := "stays/" + propertyID + "/" + randToken() + ext
+	key := "stays/" + propertyID + "/" + cryptox.Token() + ext
 	url, err := s.photos.PresignPut(key, mime, photoPresignTTL)
 	if err != nil {
-		if err == r2.ErrNotConfigured {
+		if errors.Is(err, r2.ErrNotConfigured) {
 			return "", "", ErrUploadsNotConfigured
 		}
 		return "", "", err
@@ -295,24 +292,16 @@ func (s *Service) DeletePhoto(ctx context.Context, userID, propertyID, photoID s
 	return err
 }
 
-func randToken() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// --- handler ---
-
 // PresignPhoto: POST /properties/:propertyId/photos/presign {mime_type}
 func (h *Handler) PresignPhoto(c *gin.Context) {
 	var b struct {
 		MimeType string `json:"mime_type" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	uploadURL, key, err := h.svc.PresignPhotoUpload(c.Request.Context(), uid(c), c.Param("propertyId"), b.MimeType)
+	uploadURL, key, err := h.svc.PresignPhotoUpload(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.MimeType)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -332,10 +321,10 @@ func (h *Handler) CreatePhoto(c *gin.Context) {
 		Caption    string `json:"caption"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	photo, err := h.svc.ConfirmPhotoUpload(c.Request.Context(), uid(c), c.Param("propertyId"), b.StorageKey, b.RoomTypeID, b.Caption)
+	photo, err := h.svc.ConfirmPhotoUpload(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.StorageKey, b.RoomTypeID, b.Caption)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -345,7 +334,7 @@ func (h *Handler) CreatePhoto(c *gin.Context) {
 
 // ListPhotos: GET /properties/:propertyId/photos
 func (h *Handler) ListPhotos(c *gin.Context) {
-	out, err := h.svc.ListPhotos(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.ListPhotos(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -363,18 +352,18 @@ func (h *Handler) UpdatePhoto(c *gin.Context) {
 		IsCover   *bool   `json:"is_cover"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	propertyID, photoID := c.Param("propertyId"), c.Param("photoId")
 	if b.IsCover != nil && *b.IsCover {
-		if err := h.svc.SetCoverPhoto(c.Request.Context(), uid(c), propertyID, photoID); err != nil {
+		if err := h.svc.SetCoverPhoto(c.Request.Context(), ginutil.UserID(c), propertyID, photoID); err != nil {
 			mapErr(c, err)
 			return
 		}
 	}
 	if b.Caption != nil || b.SortOrder != nil {
-		if err := h.svc.UpdatePhoto(c.Request.Context(), uid(c), propertyID, photoID, b.Caption, b.SortOrder); err != nil {
+		if err := h.svc.UpdatePhoto(c.Request.Context(), ginutil.UserID(c), propertyID, photoID, b.Caption, b.SortOrder); err != nil {
 			mapErr(c, err)
 			return
 		}
@@ -384,7 +373,7 @@ func (h *Handler) UpdatePhoto(c *gin.Context) {
 
 // DeletePhoto: DELETE /properties/:propertyId/photos/:photoId
 func (h *Handler) DeletePhoto(c *gin.Context) {
-	if err := h.svc.DeletePhoto(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("photoId")); err != nil {
+	if err := h.svc.DeletePhoto(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("photoId")); err != nil {
 		mapErr(c, err)
 		return
 	}

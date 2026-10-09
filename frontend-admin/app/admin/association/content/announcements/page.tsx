@@ -1,11 +1,9 @@
 'use client';
 
 // Announcements authoring.
-//
 // assoc_announcements had a member-facing READ endpoint and no writer anywhere
 // in the repo, so the table was permanently empty and the members' announcement
 // screen rendered an empty state forever. This page is the writer.
-//
 // The listing is the ADMIN one (GET /admin/organisations/:id/announcements):
 // the member read joins through the caller's own memberships and returns
 // nothing for a platform admin, so authoring here and reading there would have
@@ -24,7 +22,6 @@ import {
 } from '../_content';
 import { Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
-// assoc_announcements.audience is free text on the backend; these are the
 // values the member app filters on, offered as a list so an operator cannot
 // invent a fourth that nothing reads.
 const AUDIENCES = ['ALL', 'CHAPTER', 'COMMITTEE', 'EXECUTIVES'];

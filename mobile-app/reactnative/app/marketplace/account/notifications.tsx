@@ -1,15 +1,13 @@
-// ── Screen 33 — Notification Preferences ─────────────────────────────────────
 // Granular per-category toggles (avoids the all-or-nothing fatigue that drives
 // app-level opt-outs). GET /notification-prefs, PATCH /notification-prefs.
-// Each toggle PATCHes only its own field; the update is optimistic (reflects
 // instantly, rolls back on error) via the account hook.
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';

@@ -101,6 +101,9 @@ func TestMapErr_ExistingSentinelsUnchanged(t *testing.T) {
 		{ErrForbidden, http.StatusForbidden},
 		{ErrConsentRequired, http.StatusPreconditionRequired},
 		{ErrBadState, http.StatusConflict},
+		// A missing policy/quote id is a 404, never a 500 — regression guard for
+		// the not-found branch (a nonexistent id used to leak the driver error).
+		{ErrNotFound, http.StatusNotFound},
 		{errors.New("something else"), http.StatusInternalServerError},
 	}
 	for _, tc := range cases {

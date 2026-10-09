@@ -1,9 +1,6 @@
-// ── Film Academy — pay tuition ───────────────────────────────────────────────
 // A NATIVE screen. Tuition becomes payable only once the admin approves the
-// application; approval is what creates the instalment plan, so if there is no
 // plan there is nothing to pay and this screen says so rather than inventing a
 // figure.
-//
 // Money note: academy amounts are NAIRA (these tables predate the kobo
 // convention used across finance). Paystack takes kobo, hence the ×100 at the
 // gateway boundary — and the server re-verifies both the reference AND the
@@ -16,10 +13,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, CircleCheck, Clock, Lock, GraduationCap } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { usePaystackGateway, PAYSTACK_PUBLIC_KEY } from '@/features/payments';
 import {
   getApplicationStatus,
@@ -244,7 +241,6 @@ export default function FilmAcademyTuitionScreen() {
             )}
 
             {allPaid && !enrolled && (
-              // Paid but not enrolled should be impossible; saying so beats a
               // dead end, and it tells support exactly what to look for.
               <Text style={styles.cardMeta}>
                 Your payment is recorded but your place is still being set up. Pull to

@@ -5,13 +5,10 @@
 // rank hidden (contest-level or an active phase override) still leaked live
 // numbers every 5 seconds for as long as the EventSource stayed open. The
 // route is on the protect-legacy.sh blocked list and its entire query +
-// streaming logic lives inline with no exported function to wrap via the
 // usual voting-bridge adapter pattern — there's no seam to bridge through,
 // so per this repo's convention (see v2/votes/free, v2/votes/paid/verify)
 // the fix is a new route, not an edit to the protected one.
-//
 // Same polling-SSE structure as the old route (Supabase Realtime needs
-// server-side setup this repo doesn't have; polling is safe and scales for
 // < 10k concurrent viewers, per the old route's own comment) — the only
 // change is calling getEffectiveVisibility(contestId) on EVERY poll tick
 // (not just once at connection open), so a stream that outlives an admin
@@ -21,7 +18,6 @@
 // GET /api/leaderboard/[contestId] (D-005) already use: omit vote-count
 // fields when !showVoteCount, omit rank when !showRank — never send a zero
 // or null placeholder in their place, which would itself imply "no votes."
-//
 // Client migration: the ONLY real caller of the old route,
 // frontend-web/app/vote/[contestSlug]/[contestantSlug]/page.tsx, now points
 // at this route instead. The old route is left in place (protected, and no
@@ -58,7 +54,6 @@ export async function GET(request: Request) {
   // Fire-and-forget writes: a client that disconnects between the `closed`
   // check above and the write actually landing can make this reject after
   // the fact (the writer errors once its readable side is torn down). Same
-  // .catch(() => {}) treatment as writer.close() below — the abort handler
   // is the single source of truth for tearing the connection down, not
   // these.
   function send(data: unknown) {

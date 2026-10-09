@@ -2,26 +2,40 @@ import { NextResponse } from 'next/server';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { createAdminClient } from '@/lib/supabase/server';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id: contestantId } = await context.params;
+    // contestants.id is uuid — reject a malformed value before the query so it
+    // doesn't surface as a Postgres 22P02 → 500.
+    if (!UUID_RE.test(contestantId)) {
+      return errorResponse('Invalid contestant ID', 400);
+    }
     const supabase = createAdminClient();
 
+    // Read the contestant from the `contestants` roster — the table
+    // votes.contestant_id / vote_totals.contestant_id reference
+    // (competition_enrollments is a separate, empty enrollment table).
     const { data: enrollment, error } = await supabase
-      .from('competition_enrollments')
+      .from('contestants')
       .select(`
         id,
-        competition_id,
+        contest_id,
+        name,
         stage_name,
-        genre_style,
+        bio,
+        photo_url,
+        category,
         state,
-        profile_photo_url,
-        short_bio,
-        social_links,
-        user_profiles ( full_name, avatar_url )
+        media_url,
+        status,
+        voting_link_slug,
+        total_votes,
+        ranking
       `)
       .eq('id', contestantId)
       .maybeSingle();
@@ -29,8 +43,7 @@ export async function GET(
     if (error) throw error;
     if (!enrollment) return errorResponse('Contestant not found', 404);
 
-    const profile = (enrollment as any).user_profiles ?? {};
-    const contestId = (enrollment as any).competition_id;
+    const contestId = (enrollment as any).contest_id;
 
     const [{ data: totals }, { data: contestTotals }] = await Promise.all([
       supabase
@@ -55,13 +68,13 @@ export async function GET(
     return NextResponse.json({
       id: enrollment.id,
       contestId,
-      name: profile.full_name ?? (enrollment as any).stage_name ?? 'Contestant',
+      name: (enrollment as any).name ?? (enrollment as any).stage_name ?? 'Contestant',
       stageName: (enrollment as any).stage_name || null,
-      category: (enrollment as any).genre_style || null,
+      category: (enrollment as any).category || null,
       state: (enrollment as any).state || null,
-      photoUrl: (enrollment as any).profile_photo_url || profile.avatar_url || null,
-      bio: (enrollment as any).short_bio || null,
-      socialLinks: (enrollment as any).social_links ?? {},
+      photoUrl: (enrollment as any).photo_url || null,
+      bio: (enrollment as any).bio || null,
+      socialLinks: {},
       rank,
       voteCount,
       votePercent: grandTotal > 0 ? Math.round((voteCount / grandTotal) * 1000) / 10 : 0,

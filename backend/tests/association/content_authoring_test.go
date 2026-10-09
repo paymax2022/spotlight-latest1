@@ -1,7 +1,6 @@
 package association_test
 
 // Regression tests for the content-authoring surface.
-//
 // Before it existed, assoc_announcements / meetings / documents / events /
 // tasks / notifications / devices / dues_invoices all had READ endpoints and no
 // writer anywhere in the repo. They were permanently empty, so every one of
@@ -35,14 +34,14 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 		pool.Close()
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.SetKycTier(t, ctx, pool, userID, testsupport.KycTierUnlimited)
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft(label+" "+uuid.New().String()[:8]))
 	if err != nil {
-		testsupport.DeleteUser(context.Background(), pool, userID)
+		testsupport.DeleteUser(ctx, pool, userID)
 		pool.Close()
 		t.Fatalf("publish: %v", err)
 	}
 	// Teardown runs INSIDE the returned closure, in this order, deliberately.
-	//
 	// It used to return pool.Close alone and register the user teardown with
 	// testsupport.CleanupUser (a t.Cleanup). Every caller does `defer done()`,
 	// and Go runs deferred calls BEFORE t.Cleanup callbacks — so the pool was
@@ -50,7 +49,6 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 	// a dead pool. The organisation had no teardown at all. Between them this
 	// left 19 auth.users rows and 149 assoc_organisations rows in the shared
 	// local database.
-	//
 	// Doing the work here keeps the pool open for it and makes the order
 	// explicit: the organisation first (its memberships reference the founder),
 	// then the founder, then close.
@@ -247,6 +245,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, founder)
+	testsupport.SetKycTier(t, ctx, pool, founder, testsupport.KycTierUnlimited)
 	res, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Dues Run "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -325,6 +324,7 @@ func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, founder)
+	testsupport.SetKycTier(t, ctx, pool, founder, testsupport.KycTierUnlimited)
 	mine, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Task Org "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -379,7 +379,6 @@ func TestRegisterDevice_MakesTheDeviceListUsable(t *testing.T) {
 
 // TestFullDuesLifecycle_RunThenPayPostsBalancedLedger is the end-to-end proof
 // that the money path is reachable at all.
-//
 // PayInvoice was already correct — idempotent, balanced, ledger-first — but it
 // takes an invoice id, and NOTHING in the repo could create an invoice. The
 // entire dues rail was therefore dead code. This drives the real sequence:
@@ -398,6 +397,7 @@ func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, founder)
+	testsupport.SetKycTier(t, ctx, pool, founder, testsupport.KycTierUnlimited)
 	org, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Lifecycle "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)

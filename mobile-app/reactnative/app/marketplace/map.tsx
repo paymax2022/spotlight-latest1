@@ -1,6 +1,4 @@
-// ── Screen 4 — Map View ──────────────────────────────────────────────────────
 // Location-driven browsing. In a full native build this hosts clustered pins +
-// a viewport-synced bottom card rail; the marketplace FOUNDATION ships a graceful
 // fallback that renders the same viewport card rail over a map placeholder (the
 // native MapLibre module is optional in this app — mobility guards on it the same
 // way). Location-permission denial falls back to a city-center default with a
@@ -12,11 +10,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, MapPin, List as ListIcon, Navigation } from 'lucide-react-native';
 import * as Location from 'expo-location';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import type { SearchParams } from '@/features/marketplace';

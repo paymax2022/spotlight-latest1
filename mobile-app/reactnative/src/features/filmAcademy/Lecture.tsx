@@ -1,16 +1,14 @@
-// ── Lecture renderer ─────────────────────────────────────────────────────────
 // A deliberately small markdown renderer covering exactly what the curriculum
-// uses: headings, bold, bullet and numbered lists, tables, block quotes and
 // paragraphs. Adding a markdown dependency for this subset would be a large
 // amount of surface area — and shipping the lecture as raw asterisks would be
 // worse than either.
 
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 /** Splits a line into runs, marking the **bold** ones. */
 function inline(text: string): Array<{ text: string; bold: boolean }> {
@@ -66,7 +64,6 @@ function parse(md: string): Block[] {
     if (t.startsWith('# '))   { flush(); blocks.push({ kind: 'h1', text: t.slice(2) }); continue; }
     if (t.startsWith('> '))   { flush(); blocks.push({ kind: 'quote', text: t.slice(2) }); continue; }
 
-    // Table: a run of lines starting and ending with a pipe. The separator row
     // (---) carries no content and is dropped.
     if (t.startsWith('|') && t.endsWith('|')) {
       flush();

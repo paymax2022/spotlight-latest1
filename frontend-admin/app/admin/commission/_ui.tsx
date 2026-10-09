@@ -1,6 +1,5 @@
 'use client';
 
-// Shared presentational primitives for the Commission & Profit console. Mirrors the
 // inline-style pattern used by the Stays admin (`app/admin/stays/_ui.tsx`) so the two
 // consoles look consistent without pulling in a new UI kit.
 

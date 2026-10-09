@@ -16,7 +16,6 @@ function mapAlert(row: any, names: Record<string, string>) {
   };
 }
 
-// GET /api/v1/estate/emergencies
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -30,14 +29,14 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list emergencies'); }
 }
 
-// POST /api/v1/estate/emergencies
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const kind = KINDS.includes(body?.kind) ? body.kind : null;
     if (!kind) throw new ApiError('A valid emergency kind is required', 400);
     const { data: row, error } = await supabase.from('estate_emergency_alerts').insert({

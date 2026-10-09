@@ -1,4 +1,3 @@
-// ── Merchant Onboarding — application state machine (PRD §7.2) ────────────────
 // Pure transition guard shared by the client and mirrored by the server.
 
 import type { ApplicationStatus } from '@/types/merchant';

@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import Layout from '@/components/layout/Layout';
 
-export default function OpenMicLoginPage() {
+function OpenMicLoginPageInner() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const search = useSearchParams();
@@ -124,5 +124,15 @@ export default function OpenMicLoginPage() {
         </div>
       </section>
     </Layout>
+  );
+}
+
+// useSearchParams requires a Suspense boundary or the route falls out of
+// prerendering and is SSR'd on every request.
+export default function OpenMicLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <OpenMicLoginPageInner />
+    </Suspense>
   );
 }

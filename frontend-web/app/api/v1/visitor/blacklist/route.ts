@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 import { mapBlacklist } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/blacklist — list all blacklist entries for the estate.
+// List all blacklist entries for the estate.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -26,7 +26,6 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/visitor/blacklist — add a blacklist entry.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -34,7 +33,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const matchKind: string = String(body?.matchKind ?? '').trim();
     const matchValue: string = String(body?.matchValue ?? '').trim();
     const name: string | null = body?.name ?? null;

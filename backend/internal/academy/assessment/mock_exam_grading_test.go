@@ -10,14 +10,12 @@ import (
 
 // Regression tests for two grading defects found live on 2026-08-12 against
 // the seeded mock-exam content (P4-MOCK-V1):
-//
 //  1. gradeExam distributed marks with integer division (100 / n questions),
 //     so any exam whose question count does not divide 100 could never reach
 //     100% — a perfect 60-question exam scored 60/100 (grade D).
 //  2. The results read-back hydrated top-level score/score_percent/total_time
 //     from performance keys that were never written (score/score_percent
 //     instead of the persisted score_raw/score_pct), returning zeros.
-//
 // Both are pure logic and are covered here DB-free per TEST_STRATEGY.md.
 
 // mockInstance builds an exam instance whose marking scheme has n questions,
@@ -28,7 +26,7 @@ func mockInstance(t *testing.T, n int) *MockExamInstance {
 	for i := 1; i <= n; i++ {
 		keys[fmt.Sprintf("q%d", i)] = "A"
 	}
-	scheme, err := json.Marshal(map[string]interface{}{
+	scheme, err := json.Marshal(map[string]any{
 		"total_marks": 100,
 		"pass_mark":   50,
 		"answer_keys": keys,
@@ -41,8 +39,8 @@ func mockInstance(t *testing.T, n int) *MockExamInstance {
 
 // mockAnswers answers the first `correct` questions with "A" and the rest
 // with "B".
-func mockAnswers(n, correct int) map[string]interface{} {
-	answers := make(map[string]interface{}, n)
+func mockAnswers(n, correct int) map[string]any {
+	answers := make(map[string]any, n)
 	for i := 1; i <= n; i++ {
 		if i <= correct {
 			answers[fmt.Sprintf("q%d", i)] = "A"
@@ -105,7 +103,7 @@ func TestGradeExamEmptyAnswerKeys(t *testing.T) {
 	svc := &MockExamService{}
 	instance := &MockExamInstance{MarkingScheme: json.RawMessage(`{"total_marks":100}`)}
 
-	result := svc.gradeExam(context.Background(), instance, map[string]interface{}{"q1": "A"})
+	result := svc.gradeExam(context.Background(), instance, map[string]any{"q1": "A"})
 	if result.Score != 0 || result.ScorePercent != 0 || result.Grade != "F" {
 		t.Errorf("empty answer keys: got score=%v pct=%v grade=%q, want 0/0/F",
 			result.Score, result.ScorePercent, result.Grade)
@@ -116,10 +114,10 @@ func TestBuildMockExamResultHydratesFromPerformance(t *testing.T) {
 	started := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	submitted := started.Add(30 * time.Minute)
 	attempt := &MockExamAttempt{
-		ID:         "attempt-1",
-		TemplateID: "template-1",
-		Status:     "graded",
-		StartedAt:  started,
+		ID:          "attempt-1",
+		TemplateID:  "template-1",
+		Status:      "graded",
+		StartedAt:   started,
 		SubmittedAt: &submitted,
 		Performance: json.RawMessage(
 			`{"score_raw":75,"score_pct":75,"grade":"C","correct_answers":45,"total_answered":60}`),

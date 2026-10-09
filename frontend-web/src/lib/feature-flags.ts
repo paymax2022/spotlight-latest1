@@ -22,6 +22,19 @@ function envFlag(varName: string): boolean {
   return process.env[varName] === 'true';
 }
 
+/**
+ * envFlagDefaultTrue mirrors the Go backend's getEnvBool(key, true):
+ * 'true'/'1'/'yes' enable, 'false'/'0'/'no' disable, and ANYTHING else —
+ * including unset — resolves to the safe default (enabled). Use only for
+ * enforcement flags where "unknown" must mean "enforce", never "skip".
+ */
+function envFlagDefaultTrue(varName: string): boolean {
+  const v = process.env[varName];
+  if (v === 'true' || v === '1' || v === 'yes') return true;
+  if (v === 'false' || v === '0' || v === 'no') return false;
+  return true;
+}
+
 export const featureFlags = {
   /** EPIC 1 & 3 — Wallet, ledger, topup, virtual accounts */
   wallet: () => envFlag('FEATURE_WALLET_ENABLED'),
@@ -47,6 +60,17 @@ export const featureFlags = {
   /** Top-5 expansion modules (no-new-licence; existing wallet/ledger rails) */
   events: () => envFlag('FEATURE_EVENTS_ENABLED'),
   socialPay: () => envFlag('FEATURE_SOCIAL_PAY_ENABLED'),
+
+  /**
+   * P2P escrow marketplace — MIRRORS the Go backend's FEATURE_P2P_MARKET_ENABLED
+   * (backend/internal/config/config.go → FeatureP2PMarketEnabled gates
+   * RegisterP2PMarket in finance_routes.go, which mounts BOTH /api/finance/p2p/*
+   * AND the shared spray engine at /api/finance/p2p/spray*). The BFF routes
+   * /api/v1/p2p/* and /api/v1/spray/* must gate on THIS flag, not socialPay:
+   * socialPay-off + p2pMarket-on used to 503 healthy upstreams, and
+   * socialPay-on + p2pMarket-off proxied into an unmounted 404 (E2E-SOC-036).
+   */
+  p2pMarket: () => envFlag('FEATURE_P2P_MARKET_ENABLED'),
   savings: () => envFlag('FEATURE_SAVINGS_ENABLED'),
   creators: () => envFlag('FEATURE_CREATORS_ENABLED'),
   loyalty: () => envFlag('FEATURE_LOYALTY_ENABLED'),
@@ -60,8 +84,19 @@ export const featureFlags = {
   /** EPIC 6 — Fintech admin RBAC (maker-checker) */
   fintechAdmin: () => envFlag('FEATURE_FINTECH_ADMIN_ENABLED'),
 
-  /** Block 7 — Per-tier daily wallet and vote limits (fail-closed enforcement) */
-  tierLimits: () => envFlag('FEATURE_TIER_LIMITS_ENABLED'),
+  /**
+   * Block 7 — Per-tier daily wallet and vote limits (fail-closed enforcement).
+   *
+   * DEFAULTS ON — mirrors Go's getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true)
+   * in backend/internal/config/config.go and the Iron Rule that every money
+   * mutation passes tier checks fail-closed. The two sides diverged on prod:
+   * unset meant "enforced" in Go but "bypassed" here, so BFF wallet sends ran
+   * with only a balance check while the Go rail enforced tiers (wave-6, M02).
+   * Set 'false' only as a deliberate local/dev opt-out — note the Go rail
+   * ignores this flag entirely (tiers.Service enforces unconditionally), so an
+   * explicit false still leaves Go enforcing.
+   */
+  tierLimits: () => envFlagDefaultTrue('FEATURE_TIER_LIMITS_ENABLED'),
 
   /**
    * ADR-042 — let an UNVERIFIED (Tier 0) account pay by card at checkout, under a
@@ -104,8 +139,20 @@ export const featureFlags = {
   /** Block 11 — Wallet-to-bank account transfer via Paystack Transfers */
   walletBankTransfers: () => envFlag('FEATURE_BANK_TRANSFERS_ENABLED'),
 
-  /** Block 12 — Saved beneficiaries for repeat bank transfers */
-  beneficiaries: () => envFlag('FEATURE_BENEFICIARIES_ENABLED'),
+  /**
+   * Block 12 — Saved beneficiaries for repeat bank transfers.
+   *
+   * Gates on FEATURE_BANK_TRANSFERS_ENABLED, NOT the retired
+   * FEATURE_BENEFICIARIES_ENABLED. Three layers must agree or the module shows
+   * as visible while its API 503s (or vice-versa): the Go handler serves
+   * /api/finance/transfers/beneficiaries under bankEnabled (handler.go —
+   * beneficiaries ride the bank-transfer rail), and platform_modules.env_flag
+   * for 'beneficiaries' was corrected to FEATURE_BANK_TRANSFERS_ENABLED by
+   * migration 20270320000000 (AUD-OPS-001). The BFF was the odd one out —
+   * FEATURE_BENEFICIARIES_ENABLED is now unread everywhere and safe to remove
+   * from env files.
+   */
+  beneficiaries: () => envFlag('FEATURE_BANK_TRANSFERS_ENABLED'),
 
   /** P3 Lane B — Community groups with wallet-backed dues payments */
   groups: () => envFlag('FEATURE_GROUPS_ENABLED'),
@@ -127,6 +174,13 @@ export const featureFlags = {
 
   /** P3 Lane G — Telemedicine: doctors, appointments, prescriptions */
   telemedicine: () => envFlag('FEATURE_TELEMEDICINE_ENABLED'),
+
+  /** Provider-facing doctor console (/api/v1/doctor/*) — MIRRORS the Go
+   * backend's FEATURE_DOCTOR_ENABLED, which unmounts the whole surface when
+   * off. BFF leaf routes under that prefix must check this or they answer
+   * validation errors on a dark module (error-shape oracle) while every
+   * sibling path correctly 404s upstream. */
+  doctor: () => envFlag('FEATURE_DOCTOR_ENABLED'),
 
   /** Transport — ride-hailing: drivers, trips, fare settlement */
   transport: () => envFlag('FEATURE_TRANSPORT_ENABLED'),
@@ -151,6 +205,16 @@ export const featureFlags = {
 
   /** Group / Association membership — dues, directory, meetings, chat, AI notes */
   association: () => envFlag('FEATURE_ASSOCIATION_ENABLED'),
+
+  /**
+   * Server-issued OTP codes by email — MIRRORS the Go backend's
+   * FEATURE_OTP_EMAIL_ENABLED (backend/internal/config/config.go). While it is
+   * off, reset and verification emails carry only Supabase's link/code and
+   * code-entry UI that submits to Go's OTP endpoints is an unsatisfiable dead
+   * end — surfaces that offer it must hide it (E2E-AUTH-010). Keep the two
+   * envs in step when enabling.
+   */
+  otpEmail: () => envFlag('FEATURE_OTP_EMAIL_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

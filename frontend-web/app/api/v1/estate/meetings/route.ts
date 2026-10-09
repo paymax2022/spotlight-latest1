@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { MEETING_COLUMNS, getResidentContext, mapMeeting } from '@/src/server/meetings/meetings.service';
 
-// GET /api/v1/estate/meetings — meetings for the caller's estate.
+// Meetings for the caller's estate.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/estate/meetings — schedule a meeting (auto-RSVPs the creator 'yes').
+// Schedule a meeting (auto-RSVPs the creator 'yes').
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -34,7 +34,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const title = String(body?.title ?? '').trim();
     if (!title) throw new ApiError('Meeting title is required', 400);
     if (!body?.startsAt) throw new ApiError('Start time is required', 400);

@@ -8,11 +8,11 @@ import {
   Target, Megaphone, Users, FileText, HelpCircle, Gift, MapPin, Snowflake,
   CircleCheck, CalendarX, Ban, AlertTriangle, MessageCircle,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import CampaignProgress from '@/features/crowdfunding/components/CampaignProgress';
@@ -186,7 +186,6 @@ export default function CampaignDetailScreen() {
               // This used to read "N verified file(s)" for every document on the
               // campaign — the word was part of the template, not a fact about the
               // rows. It went unnoticed while `documents` was hardcoded empty and
-              // the row never rendered; the first real attachment made the page
               // tell backers a document had been checked when nothing had checked
               // it. `verified` is granted by review, and the copy has to mean it.
               sub={(() => {

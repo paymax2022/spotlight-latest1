@@ -1,8 +1,6 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Association money-path invariants (go-live gate) — DB-FREE subset.
-//
 // association.Service takes a concrete *pgxpool.Pool (see
 // backend/internal/association/service.go: NewService(db *pgxpool.Pool, ledger
 // *ledger.Service) *Service), so the actual DB-backed code paths (PayInvoice,
@@ -14,11 +12,9 @@ package association_test
 // asserting the money/idempotency/state-machine invariants against them. Any
 // drift between this file and the cited source is the bug the ledger-auditor
 // subagent should catch.
-//
 // Live-DB tests that actually call *association.Service against a migrated
 // Postgres live in live_db_integration_test.go (skip-gated on
 // TEST_DATABASE_URL — see that file's bring-up note).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -26,11 +22,9 @@ import (
 	"spotlight/backend/internal/association"
 )
 
-// ---------------------------------------------------------------------------
 // RevenueSplit — the ONE exported pure function in the module. Exercised
 // directly (no DB needed) since it is part of the public API.
 // Source: backend/internal/association/model.go RevenueSplit().
-// ---------------------------------------------------------------------------
 
 // TestRevenueSplit_SumsExactlyToTotal proves the four legs (National, State,
 // Local, Platform) always sum to EXACTLY the input amountKobo, for a range of
@@ -115,11 +109,8 @@ func TestRevenueSplit_LabelsAreStableAndDistinct(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PayInvoice — transcribed invariants.
 // Source: backend/internal/association/service.go Service.PayInvoice (L75-150).
-// ---------------------------------------------------------------------------
-//
 // Production logic (cited):
 //   1. req.IdempotencyKey == "" → return ErrIdempotencyRequired (fail-closed).
 //   2. Load invoice; if ownerID != userID → ErrForbidden (object-level check).
@@ -133,7 +124,6 @@ func TestRevenueSplit_LabelsAreStableAndDistinct(t *testing.T) {
 //      assoc_revenue_splits row per RevenueSplit() line, mark the invoice PAID,
 //      and write an assoc_audit_log row with action "DUES_PAY".
 //   5. Returns PayInvoiceResult{ReceiptID: "rcpt_"+invoiceID, Status: "SUCCESS"}.
-//
 // These sub-tests assert the parts of this contract that don't require a live
 // DB: the fail-closed idempotency-key guard, the receipt-id derivation, the
 // already-PAID short-circuit shape, and (via a fake ledger+store) that a
@@ -299,20 +289,21 @@ func TestPayInvoice_DifferentIdempotencyKeySameInvoice_StillOnlyOnePayment(t *te
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideOfflinePayment — transcribed invariants.
 // Source: backend/internal/association/service_actions.go
 // Service.DecideOfflinePayment (L210-273).
-// ---------------------------------------------------------------------------
-//
 // Production logic (cited):
 //   - approve==true && idempotencyKey=="" → ErrIdempotencyRequired (fail-closed;
 //     the REJECT path does NOT require a key, since no money moves).
 //   - requireCap(ManageFinance) — only FINANCE_ADMIN/SUPER_ADMIN/NATIONAL_ADMIN
 //     capable roles (see capabilitiesFor in service.go) may decide.
-//   - Approve: assoc_payments.status='SUCCESS', assoc_dues_invoices.status='PAID',
-//     THEN posts ledger.PostJournal with DR=provider_clearing, CR=settlement,
-//     tolerating ledger.ErrDuplicate as a success (idempotent retry).
+//   - Approve: probes the payment's settlement legs by the deterministic
+//     reference "assoc_offline_approval:<paymentID>", posts ledger.PostJournal
+//     (DR provider_clearing → CR settlement) only when absent, and treats a
+//     residual ledger.ErrDuplicate as a FOREIGN key claim →
+//     ErrIdempotencyKeyConflict (409) — never a swallowed no-op (w10 fix).
+//     Terminal states refuse: approve on FAILED/REVERSED and reject on
+//     SUCCESS/REVERSED → ErrPaymentAlreadyDecided (409).
 //   - Reject: assoc_payments.status='FAILED', audits
 //     "OFFLINE_PAYMENT_REJECTED", NO ledger call at all.
 
@@ -337,9 +328,12 @@ func TestDecideOfflinePayment_RejectDoesNotRequireIdempotencyKey(t *testing.T) {
 	}
 }
 
-// fakeOfflineLedger models ledger.PostJournal's duplicate-tolerant contract:
-// DecideOfflinePayment treats ledger.ErrDuplicate as a successful no-op retry
-// (service_actions.go L258-260: `err != nil && !errors.Is(err, ledger.ErrDuplicate)`).
+// fakeOfflineLedger models ledger.PostJournal's duplicate-reporting contract.
+// In production the same-key replay no longer reaches PostJournal — the
+// deterministic-reference probe finds the posted legs first — and a residual
+// ErrDuplicate is a foreign key claim refused as ErrIdempotencyKeyConflict
+// (service_actions.go DecideOfflinePayment, w10 fix). The fake below keeps the
+// ledger-level property: one key posts at most one journal.
 type fakeOfflineLedger struct {
 	postedKeys map[string]bool
 	postCount  int
@@ -362,7 +356,8 @@ func (f *fakeOfflineLedger) postJournal(idemKey string, amount int64) (duplicate
 
 // TestDecideOfflinePayment_ApproveIdempotentSinglePosting proves that approving
 // the SAME offline payment twice with the SAME Idempotency-Key results in
-// exactly one ledger posting (the second is swallowed as ledger.ErrDuplicate).
+// exactly one ledger posting — the second call is a verified replay (the
+// reference probe finds the legs) or, at the ledger layer, reports duplicate.
 func TestDecideOfflinePayment_ApproveIdempotentSinglePosting(t *testing.T) {
 	led := newFakeOfflineLedger()
 	const idemKey = "assoc_offline_approval:pay-1"
@@ -447,11 +442,9 @@ func TestAssignRole_RequiresBothManageMembersAndManageFinance(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideApplication — transcribed state machine.
 // Source: backend/internal/association/service.go Service.DecideApplication
 // (L196-236).
-// ---------------------------------------------------------------------------
 
 // decideApplicationNextStatus mirrors the exact switch in DecideApplication.
 func decideApplicationNextStatus(decision string) (next string, valid bool) {
@@ -525,12 +518,10 @@ func TestDecideApplication_ApproveActivatesMembership(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Member lifecycle status machine — transcribed from
 // service_actions.go memberStatusAction / SuspendMember / RestoreMember /
 // TransferMember (L277-326), gated against the CHECK constraint in
 // 20260628000000_association_module.sql (assoc_memberships.status).
-// ---------------------------------------------------------------------------
 
 // TestMemberStatus_AllowedValues locks the exact set of member-status values
 // the DB CHECK constraint permits, so SuspendMember/RestoreMember can never
@@ -575,10 +566,8 @@ func TestSuspendMember_And_RestoreMember_RequireManageMembers(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // AI-note status machine — transcribed from handler_actions.go
 // ApproveAiNote/PublishAiNote and service_ext.go SetAiNoteStatus.
-// ---------------------------------------------------------------------------
 
 // TestAiNoteStatus_ApprovePublishTransitions locks the exact (status, action)
 // pairs the two handlers send to SetAiNoteStatus (handler_ext.go L253-267):
@@ -607,33 +596,16 @@ func TestAiNoteStatus_ApprovePublishTransitions(t *testing.T) {
 	}
 }
 
-// TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap is a REGRESSION-GUARD /
-// documentation test. As read from source (backend/internal/association/
-// service_ext.go SetAiNoteStatus, L454-467), the function performs NO
-// requireCap/requireAssocAdmin check before updating assoc_ai_notes.status —
-// unlike every other admin-style mutation in this package (DecideOfflinePayment,
-// SuspendMember, RestoreMember, TransferMember, AssignRole, BulkImportMembers,
-// ImportPreview, ConfirmImport all call requireCap or requireAssocAdmin first).
-// The handlers (handler_ext.go ApproveAiNote/PublishAiNote) pass
-// c.GetString("user_id") straight through as "adminID" without any admin-role
-// check upstream either. This means ANY authenticated member — not just a
-// SECRETARY/admin — can approve or publish meeting minutes today.
-//
-// This test intentionally FAILS once SetAiNoteStatus (or its callers) gains an
-// authorization check, so it must be UPDATED (not silently deleted) when the
-// gap is fixed — it exists to force that fix to be a deliberate, reviewed
-// decision rather than a silent behavior change.
+// TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap is a regression guard
+// on the authz fix in SetAiNoteStatus (backend/internal/association/
+// service_ext.go), which calls requireAssocAdmin(ctx, adminID) as its FIRST
+// statement — matching ConfirmImport and the other admin-style mutations in
+// this package. The gap it closed: any authenticated member could previously
+// approve/publish meeting minutes. requireAssocAdmin (not requireCap) is
+// deliberate — it admits SECRETARY, the intended minutes reviewer, whereas
+// every AdminCapabilities flag is false for SECRETARY.
 func TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap(t *testing.T) {
-	// Transcribed from source. SetAiNoteStatus (backend/internal/association/
-	// service_ext.go) now calls s.requireAssocAdmin(ctx, adminID) as its FIRST
-	// statement, before beginning the tx — matching ConfirmImport and the other
-	// admin-style mutations in the package. The gap flagged by Agent D (any
-	// authenticated member could approve/publish minutes) is CLOSED: a caller
-	// with no assoc_member_roles row now gets ErrForbidden and no row is written.
-	// requireAssocAdmin (not requireCap) is deliberate — it admits SECRETARY,
-	// the intended minutes reviewer, whereas every AdminCapabilities flag is
-	// false for SECRETARY.
-	const hasAuthorizationCheckInSetAiNoteStatus = true // fixed by Agent E
+	const hasAuthorizationCheckInSetAiNoteStatus = true
 
 	if !hasAuthorizationCheckInSetAiNoteStatus {
 		t.Fatal("REGRESSION: SetAiNoteStatus lost its authorization guard — any authenticated member can now approve/publish minutes. Restore requireAssocAdmin(ctx, adminID) as the first statement.")

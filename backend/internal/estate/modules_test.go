@@ -2,13 +2,12 @@ package estate_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"spotlight/backend/internal/estate"
 )
-
-// ── Block 29: Dues / Rent money-path invariants (tests-first) ────────────────
 
 // TestPayDuesRequiresIdempotencyKey is the central money rule: a dues payment
 // with no Idempotency-Key must fail closed, never post a ledger entry.
@@ -24,7 +23,7 @@ func TestPayDuesRequiresIdempotencyKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("PayDues must fail closed when Idempotency-Key is empty")
 	}
-	if err != estate.ErrIdempotencyRequired {
+	if !errors.Is(err, estate.ErrIdempotencyRequired) {
 		t.Fatalf("expected ErrIdempotencyRequired, got %v", err)
 	}
 }
@@ -67,8 +66,6 @@ func TestRestrictionLevels(t *testing.T) {
 		t.Error("both soft and hard restriction levels must exist")
 	}
 }
-
-// ── Block 31-37: module request validation invariants ────────────────────────
 
 // TestCreateTaskPriorityStatus verifies task enum domains.
 func TestTaskEnums(t *testing.T) {

@@ -1,17 +1,13 @@
 'use client';
 
 // Finance adjustment approvals — ADR-005 maker-checker (WAL-004).
-//
 // WHY THIS EXISTS
 // Manual wallet credit/debit adjustments >= ₦100,000 are queued as
 // 'pending_approval' by POST /api/v1/admin/adjustments (see
 // frontend-web/src/server/admin/fintech/service.ts's initiateAdjustment())
 // instead of executing immediately — requiring a DIFFERENT admin with
-// finance:adjust:approve to approve or reject before any money moves. That
-// server-side flow already existed and was already tested; this page is the
 // missing checker-side UI that makes it usable (previously a large
 // adjustment queued with no way to ever approve or reject it).
-//
 // Mirrors app/admin/voting/approvals/page.tsx's exact pattern — the
 // established maker-checker UI convention in this codebase: list with a
 // status filter, per-row Approve/Reject buttons, a mandatory-note reject

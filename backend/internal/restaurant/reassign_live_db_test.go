@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for dispatch reassignment (Phase 15): rider decline →
 // re-dispatch (DP-002), ops reassign + offline-assigned sweep (DP-005). Skipped unless
 // TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -79,7 +77,6 @@ func TestLiveDB_DispatchReassign(t *testing.T) {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 
-	// --- DP-002: rider declines an offer → re-dispatch to remaining riders. ---
 	r1 := seedDriverAt(t, ctx, pool, 6.5, 3.4, "online")
 	oid := uuid.New().String()
 	if _, err := pool.Exec(ctx, `
@@ -112,7 +109,6 @@ func TestLiveDB_DispatchReassign(t *testing.T) {
 		t.Error("after decline+re-dispatch, r2 should now have an open offer")
 	}
 
-	// --- DP-005: an assigned order whose rider went offline is reassigned by the sweep. ---
 	offlineRider := seedDriverAt(t, ctx, pool, 6.5, 3.4, "offline")
 	oid2 := uuid.New().String()
 	if _, err := pool.Exec(ctx, `

@@ -2,10 +2,19 @@ package consent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyError = "error"
 )
 
 // CurrentNDPAVersion is the active NDPA consent text version. Bumping this forces
@@ -37,7 +46,7 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 // the same (user, product, version, scope) is a no-op.
 func (s *Service) Grant(ctx context.Context, userID, productCode, scope string) (*Record, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("consent: nil pool")
+		return nil, errors.New("consent: nil pool")
 	}
 	if scope == "" {
 		scope = "provider_data_share"
@@ -62,7 +71,7 @@ func (s *Service) Grant(ctx context.Context, userID, productCode, scope string) 
 // any provider data-share.
 func (s *Service) HasCurrent(ctx context.Context, userID, productCode, scope string) (bool, error) {
 	if s.db == nil {
-		return false, fmt.Errorf("consent: nil pool")
+		return false, errors.New("consent: nil pool")
 	}
 	if scope == "" {
 		scope = "provider_data_share"
@@ -80,4 +89,54 @@ func (s *Service) HasCurrent(ctx context.Context, userID, productCode, scope str
 }
 
 // ErrConsentRequired is returned by callers when the NDPA gate is not satisfied.
-var ErrConsentRequired = fmt.Errorf("consent: NDPA consent required before provider data-share")
+var ErrConsentRequired = errors.New("consent: NDPA consent required before provider data-share")
+
+// Handler exposes member consent routes.
+type Handler struct{ svc *Service }
+
+// NewHandler constructs the consent handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Grant (member): POST /consent {product_code, scope?}
+// Records NDPA consent for the current version before any provider data-share.
+func (h *Handler) Grant(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	var body struct {
+		ProductCode string `json:"product_code" binding:"required"`
+		Scope       string `json:"scope"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	rec, err := h.svc.Grant(c.Request.Context(), userID, body.ProductCode, body.Scope)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rec})
+}
+
+// Status (member): GET /consent?product_code=&scope=
+// Reports whether the caller has granted consent for the current NDPA version.
+func (h *Handler) Status(c *gin.Context) {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
+	productCode := c.Query("product_code")
+	scope := c.Query("scope")
+	ok, err := h.svc.HasCurrent(c.Request.Context(), userID, productCode, scope)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"product_code": productCode,
+		"version":      CurrentNDPAVersion,
+		"granted":      ok,
+	}})
+}

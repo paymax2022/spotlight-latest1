@@ -1,10 +1,9 @@
-// ── Paymax · Admin — ReasonPrompt ────────────────────────────────────────────
 // A small inline reason capture (reuses the shared TextInputField) shown before
 // a privileged action (KYC reject, withdrawal reject, approval reject). Controlled.
 
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Spacing } from '@/constants/spacing';
+import { Spacing } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 
 interface Props {

@@ -1,7 +1,6 @@
 // Package content is the Spotlight Academy Phase-2 CMS sub-package: the publish
 // lifecycle for lessons + content bundles, the content-production pipeline tracker,
 // and per-entity localizations.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech state-machines.md §7, conventions.md):
 //   - Guarded state machines. The publish lifecycle (draft→review→approved→live→
 //     archived) for academy_lessons and academy_content_bundles only accepts listed
@@ -20,8 +19,6 @@ package content
 
 import "time"
 
-// ── Publish lifecycle ──────────────────────────────────────────────────────────
-
 // PublishStatus mirrors the academy_lessons.status / academy_content_bundles.status
 // CHECK (draft, review, approved, live, archived).
 type PublishStatus string
@@ -33,8 +30,6 @@ const (
 	StatusLive     PublishStatus = "live"
 	StatusArchived PublishStatus = "archived"
 )
-
-// ── Production pipeline ─────────────────────────────────────────────────────────
 
 // ProductionStage mirrors academy_content_productions.stage CHECK.
 type ProductionStage string
@@ -56,8 +51,6 @@ const (
 	ProdDone    ProductionStatus = "done"
 	ProdBlocked ProductionStatus = "blocked"
 )
-
-// ── Models ──────────────────────────────────────────────────────────────────────
 
 // Lesson is one academy_edu_lessons row (subset relevant to the CMS publish surface).
 type Lesson struct {
@@ -112,8 +105,6 @@ type Localization struct {
 	Status     string         `json:"status"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
-
-// ── Request DTOs ───────────────────────────────────────────────────────────────
 
 // TransitionRequest — admin publish-transition body for a lesson or bundle.
 type TransitionRequest struct {

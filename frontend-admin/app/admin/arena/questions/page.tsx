@@ -5,11 +5,8 @@
 // This is the FULL ADMIN / teaching-QA view: the 4 options with the correct one
 // highlighted, correct_answer, explanation, time limit and pass mark are ALL
 // shown here — unlike the contestant view. RBAC: arena.admin.questions.
-//
 // Backend contract:
-//   GET  /competitions/:id/questions?stage=&category=  → { questions, counts }
 //   GET  /competitions/:id/questions/stats             → { perStage, totalQuestions }
-//   POST /competitions/:id/questions/import            → { imported, stages }
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';

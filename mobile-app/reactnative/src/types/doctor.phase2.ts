@@ -1,9 +1,6 @@
-// ── Doctor (Telemedicine, provider-side) — Phase 2 Domain Types ──────────────
 // Phase 2 (advanced provider-side flows). ADDITIVE to `@/types/doctor` — Phase 1
 // shapes are imported/reused, never duplicated. Money amounts are integers in
 // minor units (kobo). Use `import type` for type-only imports.
-//
-// Domains: pharmacy substitution & delivery, refills, specialist referrals,
 // advanced medical records, HMO claims, patient follow-up plans, ratings/reviews,
 // payout reports, compliance dashboard.
 
@@ -18,7 +15,6 @@ import type {
   PayoutItem,
 } from '@/types/doctor';
 
-// Re-export the Phase 1 primitives Phase 2 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   PatientSummary,
@@ -30,8 +26,6 @@ export type {
   DoctorAppointment,
   PayoutItem,
 } from '@/types/doctor';
-
-// ─── 1. Pharmacy substitution approval ───────────────────────────────────────
 
 export type PharmacyFulfilmentStatus =
   | 'received'             // pharmacy received the prescription
@@ -61,8 +55,6 @@ export interface PharmacyFulfilment {
   requestedAt:     string;          // ISO datetime
   substitute?:     SubstituteDrug;  // present when status is substitute_requested
 }
-
-// ─── 2. Drug delivery tracking ───────────────────────────────────────────────
 
 export type DeliveryStage =
   | 'confirmed'
@@ -96,8 +88,6 @@ export interface DrugDelivery {
   timeline:        DeliveryEvent[];
 }
 
-// ─── 3. Refill approval ──────────────────────────────────────────────────────
-
 export type RefillStatus = 'pending' | 'approved' | 'rejected';
 
 export interface RefillRequest {
@@ -115,8 +105,6 @@ export interface RefillRequest {
   reviewedAt?:      string;         // ISO datetime
   rejectionReason?: string;
 }
-
-// ─── 4. Specialist referral ──────────────────────────────────────────────────
 
 export type ReferralStatus =
   | 'draft'
@@ -156,8 +144,6 @@ export interface SpecialistReferral {
   createdAt:    string;          // ISO datetime
   scheduledAt?: string;          // ISO datetime when specialist visit booked
 }
-
-// ─── 5. Advanced medical records (aggregated hub) ────────────────────────────
 
 export interface RecordDiagnosisEntry {
   id:          string;
@@ -207,8 +193,6 @@ export interface PatientRecordHub {
   accessLog:     RecordAccessEntry[];
 }
 
-// ─── 6. HMO claim tracking ───────────────────────────────────────────────────
-
 export type ClaimStatus =
   | 'submitted'
   | 'under_review'
@@ -247,8 +231,6 @@ export interface HmoClaim {
   rejectionReason?: string;
 }
 
-// ─── 7. Patient follow-up plans ──────────────────────────────────────────────
-
 export type FollowUpKind = 'free' | 'paid';
 
 export type FollowUpStatus =
@@ -273,8 +255,6 @@ export interface FollowUpPlan {
   isPatientRequest: boolean;     // true when raised by the patient
   rejectionReason?: string;
 }
-
-// ─── 8. Doctor ratings & reviews ─────────────────────────────────────────────
 
 export interface RatingBreakdown {
   stars: 1 | 2 | 3 | 4 | 5;
@@ -307,8 +287,6 @@ export interface ReputationSummary {
   reviews:       DoctorReview[];
 }
 
-// ─── 9. Payout reports (extends Phase 1 earnings) ────────────────────────────
-
 export interface PayoutPeriodBreakdown {
   periodLabel:    string;        // "May 2026"
   consultCount:   number;
@@ -330,8 +308,6 @@ export interface PayoutReport {
   periods:           PayoutPeriodBreakdown[];
   payouts:           PayoutItem[]; // reuse Phase 1 payout rows
 }
-
-// ─── 10. Compliance dashboard ────────────────────────────────────────────────
 
 export type LicenceStatus = 'valid' | 'expiring_soon' | 'expired' | 'suspended';
 
@@ -396,7 +372,6 @@ export interface ComplianceDashboard {
   acknowledgements: PolicyAcknowledgement[];
 }
 
-// ─── Mutation inputs / results ───────────────────────────────────────────────
 // `idempotencyKey` is required on every state-changing / money mutation. Hooks
 // generate it; callers pass `Omit<Input, 'idempotencyKey'>`.
 

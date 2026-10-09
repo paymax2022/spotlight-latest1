@@ -1,18 +1,13 @@
-// ── Merchant workspace resolution ────────────────────────────────────────────
-//
 // Closes the seam between onboarding and the tools an approved merchant actually
 // uses. On approval the Go service writes
-// `workspace_route = "/merchant/<merchant-type-slug>"` (onboarding/service.go),
 // and every capability row in the app links there — but no such route existed:
 // `app/(merchant)` is a route GROUP, and parentheses are not a path segment. So
 // an approved merchant tapped their capability and went nowhere.
-//
 // This maps the slug the server issues onto the screens that really exist, and
 // says plainly when a merchant type has no tooling yet rather than dumping the
 // user on an unrelated screen. (The previous client-side guess sent everyone who
 // was not a doctor to `/services/marketplace` — including restaurant merchants,
 // who have the richest tooling in the app.)
-//
 // Dependency-free so it can run under `node --test`.
 
 import type { MerchantProfile } from '@/types/merchant';

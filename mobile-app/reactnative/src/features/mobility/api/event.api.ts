@@ -1,10 +1,5 @@
-// ── Event Transport — API wrapper ────────────────────────────────────────────
 // Typed data layer the event-transport screens code against. Mirrors
-// parcel.api.ts: mock-flagged, BASE = '/api/v1', Idempotency-Key on money
-// mutations. Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false (or
 // EXPO_PUBLIC_EVENT_USE_MOCK) once the Go endpoints land.
-//
-// IRON RULES: all money is integer kobo; create/book carry an Idempotency-Key;
 // fares/totals come from the SERVER — never computed here.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -32,9 +27,7 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // OFFERS
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getEventOffers(eventId: string): Promise<EventTransportOffer[]> {
   if (USE_MOCK) {
     await delay(400);
@@ -55,7 +48,6 @@ export async function getOffer(id: string): Promise<EventTransportOffer> {
   return unwrap<EventTransportOffer>(await api.get(`${BASE}/mobility/events/transport/${id}`));
 }
 
-// ─── Create offer (organizer; Idempotency-Key) ─────────────────────────────────
 export async function createOffer(req: OfferCreateRequest): Promise<EventTransportOffer> {
   if (USE_MOCK) {
     await delay(800);
@@ -79,7 +71,6 @@ export async function createOffer(req: OfferCreateRequest): Promise<EventTranspo
   );
 }
 
-// ─── Book (money mutation → escrow → settle organizer → QR; Idempotency-Key) ───
 export async function bookOffer(req: BookRequest): Promise<EventBooking> {
   if (USE_MOCK) {
     await delay(900);

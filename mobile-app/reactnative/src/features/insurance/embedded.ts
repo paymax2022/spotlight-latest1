@@ -1,20 +1,15 @@
-// ── Insurance — Embedded cover data layer (IM2) ──────────────────────────────
 // Powers the shared CoverBadge affordance (transport & parcel checkout) and the
 // opt-in flows (wallet-insurance, device-cover). ADDITIVE to IM1. Money is kobo.
-//
 // Embedded bind (PRD §10.3) is idempotent on `sourceEventId` — a replayed trip /
 // parcel / opt-in event never double-binds. The actual wallet debit goes through
-// the shared PaymentSheet; `bindEmbeddedCover` is the "charge" that binds AFTER
 // funds are guaranteed (debit→bind saga, PRD §11). On failure the hold is
 // released / premium auto-reversed (UNCOVERED), surfaced to the user.
-//
 // GAP (whole file): the Go embedded engine (backend/internal/insurance/embedded/
 // register.go) only exposes POST /embedded/events (trigger a bind from an
 // upstream module event) and GET /embedded/events (list known event types) — an
 // event-push model driven by other modules' emit points, NOT the REST
 // offer/get/bind-by-id shape this file calls (`/embedded/cover/:id`,
 // `/embedded/policies/:id`, `/embedded/bind`). None of those three mobile-facing
-// paths exist on Go yet; all three 404 in live mode. This needs either (a) new
 // Go handlers matching this REST shape, or (b) this file rewritten to POST
 // /embedded/events with a `source_event_id` and poll policy state via the IM1
 // GET /policies list instead. Left mock-first pending that decision.
@@ -34,7 +29,6 @@ function uid(prefix: string): string {
   return `${prefix}-${secureRandomId()}`;
 }
 
-// ── Embedded-cover surface (a trip / parcel / wallet / device context) ─────────
 export type CoverContext = 'TRIP' | 'PARCEL' | 'WALLET' | 'DEVICE';
 
 /** Cover status for an inline affordance (CoverBadge). */
@@ -59,7 +53,6 @@ export interface EmbeddedCoverOffer {
   voluntary: boolean;
 }
 
-// ── Mock offers keyed by source event id ─────────────────────────────────────
 const baseOffers: Record<string, EmbeddedCoverOffer> = {
   // Trip / parcel demo contexts reachable from cover/[policyId] mini view.
   'trip-demo-001': {
@@ -124,7 +117,6 @@ const baseOffers: Record<string, EmbeddedCoverOffer> = {
 
 let mockOffers: Record<string, EmbeddedCoverOffer> = { ...baseOffers };
 
-// ── Read ──────────────────────────────────────────────────────────────────────
 export async function getCoverOffer(sourceEventId: string): Promise<EmbeddedCoverOffer | null> {
   if (USE_MOCK) {
     await delay(220);
@@ -151,7 +143,6 @@ export async function getEmbeddedCover(policyId: string): Promise<EmbeddedCoverO
   return data;
 }
 
-// ── Bind embedded / opt-in cover (debit→bind saga; idempotent on sourceEventId)─
 export interface BindEmbeddedResult {
   ok: boolean;
   policy?: Policy;
@@ -214,7 +205,6 @@ function toPolicy(o: EmbeddedCoverOffer): Policy {
   };
 }
 
-// ── React Query hooks ─────────────────────────────────────────────────────────
 const KEY = 'insurance-embedded';
 
 export function useCoverOffer(sourceEventId: string) {

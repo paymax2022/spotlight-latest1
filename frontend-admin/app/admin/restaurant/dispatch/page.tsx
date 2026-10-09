@@ -167,21 +167,17 @@ export default function RiderDispatchPage() {
     return () => clearInterval(t);
   }, [load]);
   // What "needs attention" means on THIS board.
-  //
   // It filtered on `no_rider` (a status orders.status cannot hold), then on
   // `dispatch_failed`. Both read 0 forever, for different reasons: the first is
   // not a real status, and the second IS real but terminal — the queue
   // deliberately excludes closed orders, because an order whose sourcing already
   // gave up needs a refund or a dispute, not a courier. Those used to make up
   // 183 of the board's 345 rows and buried the orders still worth acting on.
-  //
   // The actionable state is an order still SEARCHING past the threshold: auto-
   // dispatch is running and getting nowhere, so a human offering it to a
   // specific rider is the intervention that helps.
-  //
   // Both the count and the threshold come from the SERVER. Counting the rendered
   // array would mean "stalled among the 25 on this page", and hardcoding the
-  // threshold would let the console and the backend disagree about what stalled
   // means.
 
   // Riders this operator can actually hand a job to, out of the roster page in

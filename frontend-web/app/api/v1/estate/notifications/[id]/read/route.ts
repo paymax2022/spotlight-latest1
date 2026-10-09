@@ -3,11 +3,14 @@ import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// POST /api/v1/estate/notifications/[id]/read — mark one notification read.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(params.id)) throw new ApiError('Invalid notification ID', 400);
     const supabase = createAdminClient();
     const { data: existing, error: getErr } = await supabase.from('estate_notifications').select('id, user_id, read_at').eq('id', params.id).maybeSingle();
     if (getErr) throw getErr;

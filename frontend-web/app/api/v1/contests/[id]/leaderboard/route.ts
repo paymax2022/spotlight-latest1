@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
-import { handleApiError } from '@/src/lib/api/responses';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+import { errorResponse, handleApiError } from '@/src/lib/api/responses';
+// E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
+// contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Compute rankChange direction.
@@ -26,6 +30,12 @@ export async function GET(
 ) {
   try {
     const { id: contestId } = await context.params;
+    // Match the sibling contestants/vote-packages routes: non-UUID ids can
+    // never match — reject before the visibility/totals queries instead of
+    // silently returning [] via swallowed PostgREST errors.
+    if (!UUID_RE.test(contestId)) {
+      return errorResponse('Invalid contest ID', 400);
+    }
     const supabase = createAdminClient();
 
     // Respect admin visibility: when the leaderboard is hidden for the contest
@@ -47,17 +57,17 @@ export async function GET(
     const ids = entries.map((e) => e.contestantId);
     if (ids.length > 0) {
       const { data: rows } = await supabase
-        .from('competition_enrollments')
-        .select('id, stage_name, profile_photo_url, genre_style, user_profiles(full_name, avatar_url)')
+        .from('contestants')
+        .select('id, name, stage_name, photo_url, category, state')
         .in('id', ids);
 
       const byId = new Map((rows ?? []).map((r: any) => [r.id, r]));
       for (const e of entries) {
         const r = byId.get(e.contestantId) as any;
         if (r) {
-          e.contestantName = r.user_profiles?.full_name ?? r.stage_name ?? 'Contestant';
+          e.contestantName = r.name ?? r.stage_name ?? 'Contestant';
           e.stageName = r.stage_name ?? null;
-          e.photoUrl = r.profile_photo_url || r.user_profiles?.avatar_url || null;
+          e.photoUrl = r.photo_url || null;
         }
       }
     }
@@ -83,25 +93,27 @@ export async function GET(
     const result = entries.map((e, i) => {
       const currentRank = i + 1; // position in the live sorted result (ordered by total_confirmed_votes desc)
 
-      // Prefer snapshot data; fall back to the stored rank column as "previous rank"
       // (the stored rank was set by the last recomputeRanks call, so it trails live vote order).
       const snapshotPreviousRank = previousRankMap.get(e.contestantId) ?? null;
       const storedRank = e.rank != null ? e.rank : null;
       const previousRank = snapshotPreviousRank ?? storedRank;
 
       return {
-        rank: currentRank,
+        // showRank=false means ranks are hidden — emit null rather than the
+        // derived position (and suppress rankChange, which leaks movement).
+        // Mirrors /api/leaderboard/[contestId], which deletes rank entirely.
+        rank: vis.showRank ? currentRank : null,
         contestant: {
           id: e.contestantId,
           name: e.contestantName ?? 'Contestant',
           category: null,
           photoUrl: (e as any).photoUrl ?? null,
-          rank: currentRank,
+          rank: vis.showRank ? currentRank : null,
           voteCount: vis.showVoteCount ? e.totalConfirmedVotes : null,
           votePercent: 0, // not needed for leaderboard display
-          isTopContestant: currentRank <= 3,
+          isTopContestant: vis.showRank ? currentRank <= 3 : false,
         },
-        rankChange: computeRankChange(currentRank, previousRank),
+        rankChange: vis.showRank ? computeRankChange(currentRank, previousRank) : null,
       };
     });
 

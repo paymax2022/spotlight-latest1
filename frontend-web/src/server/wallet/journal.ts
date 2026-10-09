@@ -81,9 +81,7 @@ export interface LedgerLegInsert {
   metadata: Record<string, unknown> | null;
 }
 
-// ---------------------------------------------------------------------------
 // Pure helpers (no I/O — unit-testable, and the basis of the CI invariant test)
-// ---------------------------------------------------------------------------
 
 /** Signed kobo contribution of one leg, using the same sign rule as wallet_balance. */
 export function signedKobo(leg: Pick<LedgerLegInsert, 'type' | 'amount_kobo'>): number {
@@ -152,9 +150,7 @@ export function buildJournalLegs(input: JournalInput): [LedgerLegInsert, LedgerL
   return [primaryLeg, counterLeg];
 }
 
-// ---------------------------------------------------------------------------
 // Persistence
-// ---------------------------------------------------------------------------
 
 /**
  * Resolve (creating on first use) the standing ledger account for `type`.

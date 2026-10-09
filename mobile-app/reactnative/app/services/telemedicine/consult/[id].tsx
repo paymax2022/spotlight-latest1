@@ -7,10 +7,10 @@ import {
   Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, MessageCircle, Send, NotebookPen, ClipboardList,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { getAppointment, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
 import { DoctorAvatar } from '@/features/telemedicine/components';
 import { useLocalMedia } from '@/features/telemedicine/useLocalMedia';
@@ -240,8 +240,7 @@ const styles = StyleSheet.create({
   // Applied ON TOP of liveTag/liveDot when the session has ended, so they only
   // override what changes: the badge dims and the recording-red dot goes neutral,
   // matching the LIVE -> ENDED label beside them. Both reuse white-overlay alphas
-  // already used in this screen's chrome (0.12 = connBadge, 0.25 = selfPreview
-  // border) rather than introducing new values — constants/colors.ts has no solid
+  // border) rather than introducing new values — constants/tokens.ts has no solid
   // muted token, only gradientMuted, which is a gradient for disabled surfaces.
   endedTag:   { backgroundColor: 'rgba(255,255,255,0.12)' },
   endedDot:   { backgroundColor: 'rgba(255,255,255,0.25)' },

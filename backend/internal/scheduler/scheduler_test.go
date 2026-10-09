@@ -2,11 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
-)
 
-// --- Status constant values -------------------------------------------------
+	"github.com/google/uuid"
+)
 
 func TestJobStatusValues(t *testing.T) {
 	cases := map[JobStatus]string{
@@ -34,8 +36,6 @@ func TestRunStatusValues(t *testing.T) {
 		}
 	}
 }
-
-// --- jobView (read-only projection) ----------------------------------------
 
 func TestJobView_Accessors(t *testing.T) {
 	j := Job{
@@ -96,8 +96,6 @@ func TestJobView_PayloadValue_NilPayload(t *testing.T) {
 	}
 }
 
-// --- runCtx (HandlerCtx implementation) ------------------------------------
-
 func TestRunCtx_Accessors(t *testing.T) {
 	type ctxKey string
 	const k ctxKey = "trace"
@@ -137,10 +135,8 @@ func TestRunCtx_Accessors(t *testing.T) {
 func TestRunCtx_SatisfiesInterfaces(t *testing.T) {
 	var _ HandlerCtx = runCtx{}
 	var hc HandlerCtx = runCtx{ctx: context.Background(), job: Job{ID: "x"}}
-	var _ JobView = hc.Job()
+	var _ = hc.Job()
 }
-
-// --- NewService defaults ----------------------------------------------------
 
 func TestNewService_Defaults(t *testing.T) {
 	// nil pool is fine: constructor does not touch the DB.
@@ -158,8 +154,6 @@ func TestNewService_Defaults(t *testing.T) {
 		t.Errorf("backoffMax = %v, want %v", s.backoffMax, 6*time.Hour)
 	}
 }
-
-// --- RegisterJobType / handlerFor (in-memory registry) ---------------------
 
 func TestRegisterAndLookupHandler(t *testing.T) {
 	s := NewService(nil)
@@ -199,8 +193,60 @@ func TestRegisterJobType_OverwritesExisting(t *testing.T) {
 	if !ok {
 		t.Fatal("handlerFor(k) ok = false after re-register")
 	}
-	if err := h(runCtx{}); err != sentinel {
+	if err := h(runCtx{}); !errors.Is(err, sentinel) {
 		t.Errorf("handler err = %v, want the second (overwriting) handler's error", err)
+	}
+}
+
+// E2E-BE-005: registrations are process-wide — the poller runs on a separate
+// Service instance from the module mounts that register handlers, so a handler
+// registered on one instance MUST resolve on another.
+func TestHandlerFor_ProcessWideRegistry(t *testing.T) {
+	jobType := "test.processwide." + uuid.New().String()
+	registrar := NewService(nil)
+	poller := NewService(nil)
+
+	registrar.RegisterJobType(jobType, func(ctx HandlerCtx) error { return nil })
+
+	h, ok := poller.handlerFor(jobType)
+	if !ok {
+		t.Fatal("poller instance could not resolve handler registered on another instance")
+	}
+	if err := h(runCtx{}); err != nil {
+		t.Errorf("resolved handler returned error: %v", err)
+	}
+}
+
+func TestHasHandler_ProcessWide(t *testing.T) {
+	jobType := "test.hashandler." + uuid.New().String()
+	if NewService(nil).HasHandler(jobType) {
+		t.Fatalf("HasHandler(%q) true before registration", jobType)
+	}
+	NewService(nil).RegisterJobType(jobType, func(ctx HandlerCtx) error { return nil })
+	if !NewService(nil).HasHandler(jobType) {
+		t.Errorf("HasHandler(%q) false on a fresh instance after process-wide registration", jobType)
+	}
+}
+
+// A panicking handler must surface as an error (run failed + retry), never
+// crash the poller goroutine that would take the API process down with it.
+func TestRunHandler_RecoversPanic(t *testing.T) {
+	err := runHandler(func(ctx HandlerCtx) error {
+		panic("boom")
+	}, runCtx{})
+	if err == nil {
+		t.Fatal("runHandler(panicking handler) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "panic") {
+		t.Errorf("runHandler error = %v, want it to mention the panic", err)
+	}
+}
+
+func TestRunHandler_PassesThroughError(t *testing.T) {
+	sentinel := errMarker("nope")
+	err := runHandler(func(ctx HandlerCtx) error { return sentinel }, runCtx{})
+	if !errors.Is(err, sentinel) {
+		t.Errorf("runHandler = %v, want sentinel %v", err, sentinel)
 	}
 }
 

@@ -1,7 +1,6 @@
 'use client';
 
 // SC-38 · Government Export Center (SF-11).
-// Opt-in per data category, per school. Every export is logged immutably in the
 // ComplianceExport audit trail — the log is append-only and never edited.
 
 import { useEffect, useMemo, useState } from 'react';

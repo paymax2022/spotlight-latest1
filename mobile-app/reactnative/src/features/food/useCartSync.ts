@@ -85,7 +85,6 @@ export function useCartSync() {
     const unsubscribe = useCartStore.subscribe((state) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
-      // Debounce: save after 1 second of no changes
       saveTimeoutRef.current = setTimeout(() => {
         const cartSnapshot = {
           restaurantId: state.restaurantId,
@@ -104,7 +103,6 @@ export function useCartSync() {
           console.warn('Local cart save failed:', err);
         });
 
-        // Save to server (async, don't await)
         saveCartToServer(cartSnapshot).catch((err) => {
           console.warn('Server cart save failed:', err);
         });

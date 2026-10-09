@@ -8,11 +8,11 @@ import { ArrowLeft, Headphones, Mail, MessageCircle, Phone, ChevronDown } from '
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Shared support / help screen for the money-services surfaces (FX, bills, cards).

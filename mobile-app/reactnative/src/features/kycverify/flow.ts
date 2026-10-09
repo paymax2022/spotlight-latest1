@@ -1,4 +1,3 @@
-// ── Multi-provider KYC step-up — flow routing (K14 resume) ───────────────────
 // Given the current draft + target tier requirements, decide the next screen.
 // Used both for forward navigation after each PASS and for K14 "Resume KYC",
 // which returns the user to the next incomplete step.

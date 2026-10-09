@@ -1,11 +1,7 @@
-// ── Doctor module — Batch 7 constants ────────────────────────────────────────
 // Static option lists / label maps for Batch 7 (Sections AA · AB · AC · AD —
 // Support & Dispute · Compliance/Privacy/Audit · Settings · Empty/Error/Edge).
 // Pure data only — no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel).
-//
-// REUSE: SUPPORT_CATEGORIES already exists in the constants barrel; the
-// compliance/licence labels live in Phase 2 constants; BankAccount lives in
 // Section B. Here we add only the missing FAQ / dispute / audit-scope /
 // language / theme / 2FA / edge-state maps used by the Batch 7 screens.
 
@@ -28,8 +24,6 @@ import type {
   AppStatusMode,
   AccountState,
 } from '@/types/doctor.batch7';
-
-// ─── Section AA — support & dispute ──────────────────────────────────────────
 
 export const FAQ_CATEGORY_LABELS: Record<FaqCategory, string> = {
   getting_started:  'Getting started',
@@ -98,8 +92,6 @@ export const EVIDENCE_KIND_LABELS: Record<EvidenceKind, string> = {
   video:      'Video',
 };
 
-// ─── Section AB — compliance, privacy & audit ────────────────────────────────
-
 export const AUDIT_SCOPE_LABELS: Record<AuditScope, string> = {
   prescription: 'Prescription audit',
   consultation: 'Consultation audit trail',
@@ -159,8 +151,6 @@ export const ACCOUNT_REVIEW_REASON_LABELS: Record<AccountReviewReason, string> =
   policy_violation:     'Policy violation',
 };
 
-// ─── Section AC — settings ───────────────────────────────────────────────────
-
 export const TWO_FACTOR_METHODS: { value: TwoFactorMethod; label: string }[] = [
   { value: 'none',          label: 'Off' },
   { value: 'authenticator', label: 'Authenticator app' },
@@ -182,7 +172,6 @@ export const DEVICE_PLATFORM_ICONS: Record<DevicePlatform, string> = {
 };
 
 // NOTE: named APP_LANGUAGE_OPTIONS (not LANGUAGE_OPTIONS) — the Section B
-// profile constants already export a `LANGUAGE_OPTIONS: string[]` for "languages
 // spoken". This is the typed app-UI language selector for the language-settings
 // screen, so it is deliberately distinct to avoid a barrel collision.
 export const APP_LANGUAGE_OPTIONS: { value: AppLanguage; label: string }[] = [
@@ -199,8 +188,6 @@ export const THEME_OPTIONS: { value: AppTheme; label: string }[] = [
   { value: 'light',  label: 'Light' },
   { value: 'dark',   label: 'Dark' },
 ];
-
-// ─── Section AD — empty, error & edge-state ──────────────────────────────────
 
 export const EDGE_STATE_TONES: Record<EdgeStateTone, string> = {
   neutral: '#94A3B8',

@@ -1,5 +1,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+// E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
+// contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { getVotingSettings } from '@/src/server/voting/free-vote.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -10,6 +12,9 @@ export async function GET(
 ) {
   try {
     const { contestId } = await context.params;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(contestId)) {
+      return errorResponse('Invalid contest ID', 400);
+    }
     const { searchParams } = new URL(request.url);
     const roundId = searchParams.get('roundId') ?? undefined;
     const limit = Math.min(500, Number(searchParams.get('limit') ?? 50));
@@ -38,13 +43,11 @@ export async function GET(
       return errorResponse('Leaderboard is not public for this contest', 403);
     }
 
-    // Handle leaderboard freeze
     if (
       settings.leaderboardFreezeEnabled &&
       settings.leaderboardFreezeAt &&
       Date.now() >= Date.parse(settings.leaderboardFreezeAt)
     ) {
-      // Return last frozen snapshot instead of live totals
       const supabase = createAdminClient();
       const { data: snapshot } = await supabase
         .from('leaderboard_snapshots')
@@ -74,8 +77,8 @@ export async function GET(
 
     if (contestantIds.length > 0) {
       const { data: contestants } = await supabase
-        .from('competition_enrollments')
-        .select('id, user_id, stage_name, profiles:user_profiles(full_name, avatar_url, state)')
+        .from('contestants')
+        .select('id, name, stage_name, photo_url, category, state')
         .in('id', contestantIds);
 
       const byId = new Map((contestants ?? []).map((c: any) => [c.id, c]));
@@ -83,10 +86,10 @@ export async function GET(
       for (const entry of leaderboard) {
         const c = byId.get(entry.contestantId) as any;
         if (c) {
-          entry.contestantName = c.profiles?.full_name ?? c.stage_name ?? 'Contestant';
+          entry.contestantName = c.name ?? c.stage_name ?? 'Contestant';
           entry.stageName = c.stage_name ?? null;
-          entry.photoUrl = c.profiles?.avatar_url ?? null;
-          entry.state = c.profiles?.state ?? null;
+          entry.photoUrl = c.photo_url ?? null;
+          entry.state = c.state ?? null;
         }
       }
     }

@@ -1,5 +1,3 @@
-// ── Admin — Points (loyalty points ledger + balances) ops console ────────────
-// Mock by default. Flip with NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK=false to hit the live
 // Go backend. NOTE: the points admin surface is THIN — points are administered via
 // the loyalty admin group. The only relevant real admin route is
 // GET /api/loyalty/admin/memberships/:userId (RBAC loyalty.read), which
@@ -18,8 +16,6 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK';
 // Points admin oversight lives under the loyalty admin group at /api/loyalty/admin/*
 // (verified against backend/internal/app/top5_p2_routes.go RegisterLoyalty, same
 // group loyaltyAdminService.ts uses).
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin')`,
 // which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
 // it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
 // stopped matching, the replace was a no-op, and the one live call
@@ -29,10 +25,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,7 +38,6 @@ async function getJson<T>(path: string): Promise<T> {
 
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
-// ── Types ────────────────────────────────────────────────────────────────────
 export interface PointsDashboard {
   members_total: number;
   points_in_circulation: number;     // outstanding points liability (count, not kobo)
@@ -74,7 +66,6 @@ export interface PointsMembership {
   joined_at: string;
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 const DASHBOARD: PointsDashboard = {
   members_total: 48_200,
   points_in_circulation: 12_840_000,
@@ -93,7 +84,6 @@ export async function getPointsDashboard(): Promise<PointsDashboard> {
   return getJson<PointsDashboard>('/points/dashboard');
 }
 
-// ── Ledger (mock-only — points ledger is append-only / NL-4, no admin list route) ─
 const LEDGER: PointsLedgerEntry[] = [
   { id: 'pl_9901', user_masked: 'usr_2210', kind: 'earn', points: 1_200, reason: 'Wallet top-up reward', created_at: iso(0.4) },
   { id: 'pl_9890', user_masked: 'usr_1980', kind: 'redeem', points: -5_000, reason: 'Catalog: ₦1,000 airtime', created_at: iso(1.3) },
@@ -109,7 +99,6 @@ export async function listPointsLedger(opts?: { kind?: string; q?: string }): Pr
   return rows;
 }
 
-// ── Balances — real endpoint: GET /api/loyalty/admin/memberships/:userId ─────
 const MEMBERSHIPS: Record<string, PointsMembership> = {
   usr_2210: { user_id: 'usr_2210', tier: 'Gold', points_balance: 8_400, lifetime_points: 42_100, joined_at: iso(8_760) },
   usr_1980: { user_id: 'usr_1980', tier: 'Silver', points_balance: 1_200, lifetime_points: 12_800, joined_at: iso(4_380) },

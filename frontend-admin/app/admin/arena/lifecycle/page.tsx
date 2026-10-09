@@ -1,7 +1,6 @@
 'use client';
 
 // A5 — Lifecycle transition console. RBAC: arena.admin.manage (Competition Admin).
-// Contestants grouped by state; run guarded transitions per the LOCKED state
 // machine (ARENA-PRD §8). Only legal `to` states are offered — the backend
 // rejects anything else (NDC-5). Advancement (QUALIFIED/FINALIST/CROWNED) is
 // computed from the Merit leaderboard ONLY — never money/engagement (NDC-1).

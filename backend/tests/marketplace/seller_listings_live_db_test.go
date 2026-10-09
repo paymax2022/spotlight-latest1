@@ -1,6 +1,5 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // GET /sellers/:id/listings (public, no auth) backed every "My Listings" self
 // view AND every buyer-facing storefront view off the exact same query, with
 // no status filter — a buyer browsing a seller's public portfolio could see
@@ -9,7 +8,6 @@ package marketplace_test
 // (public) now only returns active listings; MyListingsForSeller (the new
 // authenticated GET /my-listings) still returns every status, since that's
 // what the seller needs to manage the lifecycle of their own listings.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

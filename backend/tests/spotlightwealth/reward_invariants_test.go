@@ -1,8 +1,6 @@
 package spotlightwealth_test
 
-// ---------------------------------------------------------------------------
 // Spotlight Wealth money-path invariants (go-live gate) — DB-FREE subset.
-//
 // spotlightwealth.Service takes a concrete *pgxpool.Pool and *ledger.Service
 // (see backend/internal/spotlightwealth/service.go: NewService(db *pgxpool.Pool,
 // led *ledger.Service, audit Auditor) *Service), so CompleteChallenge cannot be
@@ -13,12 +11,10 @@ package spotlightwealth_test
 // asserting the money/idempotency/leaderboard invariants against them. Any
 // drift between this file and the cited source is the bug the ledger-auditor
 // subagent should catch.
-//
 // Live-DB tests that actually call *spotlightwealth.Service against a migrated
 // Postgres + real ledger.Service live in live_db_integration_test.go
 // (skip-gated on TEST_DATABASE_URL — see that file's bring-up
 // note).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -26,17 +22,11 @@ import (
 	"spotlight/backend/internal/spotlightwealth"
 )
 
-// ---------------------------------------------------------------------------
 // koboToMoney / Money display conversion.
 // Source: backend/internal/spotlightwealth/model.go:23-31.
-//   type Money struct { Amount float64; Currency string }
-//   func koboToMoney(kobo int64, currency string) Money {
-//       return Money{Amount: float64(kobo) / 100.0, Currency: currency}
-//   }
 // koboToMoney is unexported; this file transcribes the exact formula so the
 // display conversion (used for reward balances/history) is locked without
 // requiring package-internal access.
-// ---------------------------------------------------------------------------
 
 func koboToMoneyMirror(kobo int64, currency string) spotlightwealth.Money {
 	return spotlightwealth.Money{Amount: float64(kobo) / 100.0, Currency: currency}
@@ -73,16 +63,13 @@ func TestDefaultCurrency_IsNGN(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // CompleteChallenge — reward idempotency + balanced posting.
 // Source: backend/internal/spotlightwealth/service.go
 //   CompleteChallenge (L142-201).
-//
 // Production logic (cited):
 //   1. userID=="" -> ErrForbidden; idemKey=="" -> ErrBadInput (fail-closed,
 //      L143-148).
 //   2. Loads challenge + membership state in one query (L150-162); memberState
-//      == "" (never joined) -> ErrForbidden (L163-165).
 //   3. Guarded UPDATE spotlight_challenge_members SET state='COMPLETED' ...
 //      WHERE state='JOINED' (L167-169) — RowsAffected==1 means this call is the
 //      FIRST completion (L173: `firstCompletion := ct.RowsAffected() == 1`).
@@ -101,7 +88,6 @@ func TestDefaultCurrency_IsNGN(t *testing.T) {
 //      ITSELF is the primary idempotency mechanism; the ledger/DB idempotency
 //      keys are the second line of defence for the pathological case of two
 //      concurrent first-completions racing the UPDATE.
-// ---------------------------------------------------------------------------
 
 // fakeChallengeLedger models ledger.Service.Credit's duplicate-tolerant
 // contract: calling Credit twice with the SAME idempotency key is a no-op on
@@ -304,11 +290,6 @@ func TestCompleteChallenge_RequiresIdempotencyKey(t *testing.T) {
 
 // TestCompleteChallenge_RewardSourcedFromPaymaxRevenue_NeverMinted documents
 // the funding side of the credit (service.go:179-184):
-//
-//	revAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
-//	...
-//	s.led.Credit(ctx, userID, "spotlight:reward:"+id, idemKey+":wallet", revAcc.ID, rewardKobo)
-//
 // i.e. the member's wallet credit is the OTHER side of a debit against the
 // paymax_revenue standing account — a real redistribution, never a mint. This
 // test locks the exact reference-string format ("spotlight:reward:"+id) that
@@ -322,10 +303,8 @@ func TestCompleteChallenge_RewardSourcedFromPaymaxRevenue_NeverMinted(t *testing
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Leaderboard — ranks LEARNING points, never profit/gains.
 // Source: backend/internal/spotlightwealth/service.go Leaderboard (L208-232).
-//
 // Production logic (cited):
 //   SELECT display_name, points, user_id FROM spotlight_learning_points
 //   ORDER BY points DESC LIMIT 50
@@ -335,7 +314,6 @@ func TestCompleteChallenge_RewardSourcedFromPaymaxRevenue_NeverMinted(t *testing
 //   layer as LEARNING points (lessons/quizzes), never profit — see model.go:62-67
 //   `LeaderboardEntry` comment: "points are LEARNING points, explicitly NOT
 //   profit."
-// ---------------------------------------------------------------------------
 
 // rankLeaderboardMirror transcribes Leaderboard's exact ranking + "You"
 // relabeling logic against a slice of (displayName, points, userID) rows
@@ -445,14 +423,12 @@ func TestLeaderboardEntry_ShapeHasNoMoneyField(t *testing.T) {
 	// artifact a reviewer should diff against.
 }
 
-// ---------------------------------------------------------------------------
 // RewardWallet — balance is derived (SUM), never a mutated column.
 // Source: backend/internal/spotlightwealth/service.go RewardWallet (L238-271):
 //   `SELECT COALESCE(SUM(amount_kobo),0) FROM spotlight_reward_ledger WHERE
 //   user_id=$1` — the balance is ALWAYS a live aggregate over the append-only
 //   ledger table, matching the iron rule "wallet balances are projections of
 //   the ledger — never UPDATE a balance column directly."
-// ---------------------------------------------------------------------------
 
 // TestRewardWallet_BalanceIsSumOfLedgerEntries_PositiveAndNegative proves the
 // balance formula sums BOTH credits (positive amount_kobo, per model.go:73

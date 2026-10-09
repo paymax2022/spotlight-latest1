@@ -1,4 +1,3 @@
-// ── Crowdfunding — Formatters & fee math ─────────────────────────────────────
 // All money is in kobo (integer minor units). Display helpers convert to ₦.
 
 import { PLATFORM_FEE_BPS } from '../constants/crowdfunding.constants';

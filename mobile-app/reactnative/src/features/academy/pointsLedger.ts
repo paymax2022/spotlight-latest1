@@ -1,8 +1,6 @@
-// ── Spotlight Academy — reward-points ledger (pure, idempotent) ──────────────
 // Reward points are non-monetary, but earn/redeem follows money-path discipline:
 // an append-only ledger + idempotent awards so a replayed exam submit or a
 // re-played challenge can't farm points. This module is pure (no I/O, no module
-// state) so it is unit-testable; the mock/live API layer wraps it with the
 // module-scoped balance/history and the offline queue.
 
 import type { RewardBalance, RewardLedgerEntry } from './types';

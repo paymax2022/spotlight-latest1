@@ -29,14 +29,13 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// ── In-memory fakes (hoisted so vi.mock factories below can close over them) ──
-
 const { store, creditedKeys, creditCalls, resetFakes } = vi.hoisted(() => {
   const store: {
     bridge_outbox: Array<Record<string, any>>;
     finance_referral_codes: Array<Record<string, any>>;
+    referral_links: Array<Record<string, any>>;
     referral_events: Array<Record<string, any>>;
-  } = { bridge_outbox: [], finance_referral_codes: [], referral_events: [] };
+  } = { bridge_outbox: [], finance_referral_codes: [], referral_links: [], referral_events: [] };
 
   const creditedKeys = new Set<string>();
   const creditCalls: Array<{ userId: string; idempotencyKey: string; amountKobo: number }> = [];
@@ -44,6 +43,7 @@ const { store, creditedKeys, creditCalls, resetFakes } = vi.hoisted(() => {
   function resetFakes() {
     store.bridge_outbox = [];
     store.finance_referral_codes = [];
+    store.referral_links = [];
     store.referral_events = [];
     creditedKeys.clear();
     creditCalls.length = 0;
@@ -52,12 +52,8 @@ const { store, creditedKeys, creditCalls, resetFakes } = vi.hoisted(() => {
   return { store, creditedKeys, creditCalls, resetFakes };
 });
 
-// ── Minimal chainable fake Supabase query builder ──────────────────────────────
-
 // unescapeLikePattern undoes referrals/service.ts's escapeLikePattern() so
 // this fake can compare against the ORIGINAL value the caller passed to
-// ilike() (that function backslash-escapes %, _ and \ to keep an ilike()
-// call behaving as an exact match rather than a wildcard scan; real Postgres
 // interprets that escaping itself, so the fake has to mirror it here).
 function unescapeLikePattern(pattern: string): string {
   return pattern.replace(/\\([\\%_])/g, '$1');
@@ -68,7 +64,6 @@ function matchFilters(row: Record<string, any>, filters: Array<[string, string, 
     if (op === 'eq') return row[col] === val;
     if (op === 'in') return Array.isArray(val) && val.includes(row[col]);
     // REF-008: finance_referral_codes lookups are now case-insensitive
-    // (resolveCodeToReferrer uses .ilike() with an escaped exact pattern
     // instead of .eq()) — mirror that here rather than exact-matching.
     if (op === 'ilike') {
       const rowVal = row[col];
@@ -189,9 +184,8 @@ function fakeCreateAdminClient() {
   };
 }
 
-// ── Module mocks ────────────────────────────────────────────────────────────────
 // Both `@/lib/supabase/server` (used by referrals/service.ts) and
-// `@/lib/supabase/admin` (used by voting-bridge/outbox.ts, which just
+// `@/lib/supabase/server` (used by voting-bridge/outbox.ts, which just
 // re-exports the same factory from './server') are mocked identically so both
 // drain paths operate on the exact same in-memory `bridge_outbox` table.
 
@@ -200,7 +194,7 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(),
 }));
 
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: fakeCreateAdminClient,
 }));
 
@@ -218,8 +212,6 @@ vi.mock('@/src/server/wallet/service', () => ({
     return { alreadyProcessed: false, amountKobo: input.amountKobo };
   }),
 }));
-
-// ── Import real implementations AFTER mocks ─────────────────────────────────────
 
 import { processPendingOutboxEvents } from '@/src/server/voting-bridge/outbox';
 import { processReferralOutbox } from '@/src/server/referrals/service';
@@ -280,7 +272,6 @@ describe('REF-001: referral.triggered outbox convergence', () => {
     expect(store.bridge_outbox[0].status).toBe('done');
 
     // Path 2: the dedicated referral drain (referrals/service.ts) queries for
-    // `status = 'pending'` rows — the row is already 'done', so it finds
     // nothing to reprocess. This models the real production guard: the FIRST
     // path to claim a row transitions it out of 'pending' before crediting.
     const result = await processReferralOutbox();

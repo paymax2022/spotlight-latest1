@@ -21,13 +21,16 @@ vi.mock('@/src/server/voting/totals.service', () => ({
   getVoteTotals: vi.fn(),
   incrementVoteTotals: vi.fn(),
 }));
+// E2E-X-026: the freeze route now snapshots via the bridge-owned leaderboard service.
+vi.mock('@/src/server/voting-bridge/leaderboard.service', () => ({ getLeaderboard: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn() }));
 
 import { POST as freezePOST } from '../../../app/api/admin/voting/[contestId]/freeze/route';
 import { POST as adjustPOST } from '../../../app/api/admin/voting/[contestId]/adjust/route';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
-import { getLeaderboard, getVoteTotals, incrementVoteTotals } from '@/src/server/voting/totals.service';
+import { getVoteTotals, incrementVoteTotals } from '@/src/server/voting/totals.service';
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 

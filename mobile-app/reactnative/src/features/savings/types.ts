@@ -1,7 +1,5 @@
-// ── Savings domain types ─────────────────────────────────────────────────────
 // Money is always integer minor units (kobo). Never floats, never strings for math.
 
-// Vault: OPEN → (LOCKED | FLEX) → MATURED | CLOSED
 export type VaultStatus = 'OPEN' | 'LOCKED' | 'FLEX' | 'MATURED' | 'CLOSED';
 
 export type SaveFrequency = 'daily' | 'weekly' | 'monthly';
@@ -48,9 +46,6 @@ export interface EarlyWithdrawQuote {
   allowed:      boolean;
 }
 
-// ── Ajo / Esusu ──────────────────────────────────────────────────────────────
-// Circle: FORMING → ACTIVE → (CYCLE×n) → COMPLETED
-// Member: INVITED → ACTIVE → DEFAULTED | EXITED
 export type CircleStatus = 'FORMING' | 'ACTIVE' | 'COMPLETED';
 export type MemberStatus = 'INVITED' | 'ACTIVE' | 'DEFAULTED' | 'EXITED';
 export type CycleStatus  = 'UPCOMING' | 'COLLECTING' | 'PAID';
@@ -85,7 +80,7 @@ export interface AjoCircle {
   memberCount:      number;
   members:          AjoMember[];
   cycles:           AjoCycle[];
-  currentCycle:     number;        // 1-indexed; 0 while FORMING
+  currentCycle:     number;
   /** NL-7 — Paymax is ledger/escrow only, never guarantor. Always false. */
   paymaxGuarantees: false;
 }
@@ -97,7 +92,6 @@ export interface CreateCircleInput {
   memberCount:      number;
 }
 
-// ── Group Target ─────────────────────────────────────────────────────────────
 export type WithdrawalRule = 'on-date' | 'majority-approval';
 
 export interface GroupTargetContributor {
@@ -128,7 +122,6 @@ export interface CreateGroupTargetInput {
   withdrawalRule: WithdrawalRule;
 }
 
-// ── Home summary ─────────────────────────────────────────────────────────────
 export interface SavingsSummary {
   totalSavedKobo:  number;
   vaultCount:      number;

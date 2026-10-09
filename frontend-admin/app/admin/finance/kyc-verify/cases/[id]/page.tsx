@@ -1,7 +1,6 @@
 'use client';
 
 // AK2 — KYC Verification case detail.
-// RBAC: finance.admin.kyc (role: KYC Ops for decisions). Shows the full session,
 // every check (type/provider/status/confidence/extracted fields/reason), and
 // evidence refs as ACCESS-LOGGED links — raw selfies/documents/bio-data are
 // NEVER rendered inline. Actions: Approve / Reject / Request re-submit (reason

@@ -42,7 +42,6 @@ func (s *Service) primaryMembership(ctx context.Context, userID string) (members
 // membershipForObject resolves the caller's membership in the organisation that
 // OWNS the given object, rather than whichever organisation happens to be their
 // primary one.
-//
 // The member-write endpoints below (announcement ack, meeting RSVP/check-in,
 // document ack, committee join, event RSVP/register/feedback) previously
 // resolved the caller's own primary membership and then wrote a join row keyed
@@ -50,7 +49,6 @@ func (s *Service) primaryMembership(ctx context.Context, userID string) (members
 // that organisation. A member of org A could therefore RSVP to, check into and
 // issue themselves a ticket for org B's meetings and events, and inflate
 // another organisation's attendance counts.
-//
 // `table` is always an internal constant, never user input. Returns ErrForbidden
 // when the caller holds no usable membership in the owning org (fail-closed),
 // which is also the correct answer for a non-existent object id — existence is
@@ -71,8 +69,6 @@ func (s *Service) membershipForObject(ctx context.Context, userID, table, object
 	}
 	return membershipID, orgID, nil
 }
-
-// ─── Engagement ───────────────────────────────────────────────────────────────
 
 func (s *Service) AcknowledgeAnnouncement(ctx context.Context, userID, announcementID string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_announcements", announcementID)
@@ -100,8 +96,6 @@ func (s *Service) MarkNotificationsRead(ctx context.Context, userID string) erro
 	}
 	return nil
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 func (s *Service) RsvpMeeting(ctx context.Context, userID, meetingID, status string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_meetings", meetingID)
@@ -135,8 +129,6 @@ func (s *Service) CheckInMeeting(ctx context.Context, userID, meetingID string) 
 	return nil
 }
 
-// ─── Tasks ────────────────────────────────────────────────────────────────────
-
 func (s *Service) UpdateTaskStatus(ctx context.Context, userID, taskID, status string) error {
 	const q = `
 		UPDATE assoc_tasks SET status = $3
@@ -150,8 +142,6 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, userID, taskID, status s
 	}
 	return nil
 }
-
-// ─── Documents ────────────────────────────────────────────────────────────────
 
 func (s *Service) AcknowledgeDocument(ctx context.Context, userID, documentID string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_documents", documentID)
@@ -167,8 +157,6 @@ func (s *Service) AcknowledgeDocument(ctx context.Context, userID, documentID st
 	return nil
 }
 
-// ─── Committees ───────────────────────────────────────────────────────────────
-
 // RequestJoinCommittee creates a PENDING committee-member row and audit-logs
 // the request. Idempotent (ON CONFLICT DO NOTHING).
 func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID string) error {
@@ -180,7 +168,7 @@ func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `
 		INSERT INTO assoc_committee_members (committee_id, membership_id, status)
@@ -194,8 +182,6 @@ func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID 
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Events ───────────────────────────────────────────────────────────────────
 
 func (s *Service) RsvpEvent(ctx context.Context, userID, eventID, rsvp string) error {
 	mid, _, err := s.membershipForObject(ctx, userID, "assoc_events", eventID)
@@ -213,7 +199,6 @@ func (s *Service) RsvpEvent(ctx context.Context, userID, eventID, rsvp string) e
 }
 
 // RegisterEvent registers the caller for an event. Idempotent.
-//
 // A PAID event now raises an invoice instead of issuing a free ticket:
 // assoc_events.paid / fee_kobo were read and rendered by three query paths but
 // nothing ever charged them, so every "paid" event handed out tickets for free.
@@ -243,7 +228,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 			return nil, fmt.Errorf("association: event capacity: %w", err)
 		}
 		if taken >= *capacity {
-			return nil, fmt.Errorf("association: event is full")
+			return nil, errors.New("association: event is full")
 		}
 	}
 
@@ -255,7 +240,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if !paid || feeKobo <= 0 {
 		if _, err := tx.Exec(ctx, `
@@ -346,8 +331,6 @@ func (s *Service) SubmitEventFeedback(ctx context.Context, userID, eventID strin
 	return nil
 }
 
-// ─── Admin: offline payments ──────────────────────────────────────────────────
-
 // DecideOfflinePayment approves or rejects an offline payment submission.
 // Approval posts a balanced double-entry: DR provider_clearing → CR settlement.
 // Requires Idempotency-Key for the approve path (iron rule: fail-closed).
@@ -373,28 +356,32 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	var invoiceID string
+	// Lock the payment row for the whole decision. FOR UPDATE serialises two
+	// concurrent approvals (or an approve racing a reject) so only the first
+	// decider proceeds; the second sees the terminal state below.
+	var invoiceID, payStatus string
 	var amountKobo int64
 	if err := tx.QueryRow(ctx,
-		`SELECT invoice_id, amount_kobo FROM assoc_payments WHERE id=$1`, paymentID,
-	).Scan(&invoiceID, &amountKobo); err != nil {
+		`SELECT invoice_id, amount_kobo, status FROM assoc_payments WHERE id=$1 FOR UPDATE`, paymentID,
+	).Scan(&invoiceID, &amountKobo, &payStatus); err != nil {
 		return fmt.Errorf("association: payment not found: %w", err)
 	}
 
+	journalRef := "assoc_offline_approval:" + paymentID
+
 	if approve {
+		// Terminal states: a rejected or reversed payment can never be
+		// approved — its money position was already decided.
+		if payStatus == "FAILED" || payStatus == "REVERSED" {
+			return ErrPaymentAlreadyDecided
+		}
 		// Ledger FIRST, bookkeeping second. The previous order committed
 		// status='SUCCESS' / invoice='PAID' and only then posted the journal, so a
 		// ledger failure (or a crash in that window) left a durably PAID invoice
 		// with no ledger entries and no compensating path — and the error surfaced
 		// to the admin was indistinguishable from "nothing happened".
-		//
-		// PostJournal is idempotent on IdempotencyKey, so the reverse order is
-		// safe under retry: a replay posts nothing new and the bookkeeping below
-		// converges. Rolling back the tx on a ledger error now leaves no trace,
-		// which is the correct fail-closed outcome.
-		//
 		// Double-entry: DR provider_clearing (external cash received) → CR settlement.
 		clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 		if err != nil {
@@ -404,14 +391,41 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 		if err != nil {
 			return fmt.Errorf("association: settlement account: %w", err)
 		}
-		if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-			Reference:       "assoc_offline_approval:" + paymentID,
-			IdempotencyKey:  idempotencyKey,
-			AmountKobo:      amountKobo,
-			DebitAccountID:  clearing.ID,
-			CreditAccountID: settle.ID,
-		}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-			return fmt.Errorf("association: offline payment ledger: %w", err)
+		// The durable idempotency unit is the PAYMENT, not the caller's key:
+		// the journal carries the deterministic reference
+		// "assoc_offline_approval:<paymentID>", so the legs' presence answers
+		// "did this approval already move money" for a same-key retry, a
+		// different-key re-approve AND a crash between the journal commit and
+		// the bookkeeping commit alike.
+		posted, err := s.offlineApprovalLegsPosted(ctx, journalRef, clearing.ID, settle.ID, amountKobo)
+		if err != nil {
+			return err
+		}
+		if payStatus == "SUCCESS" && posted {
+			// Already decided and settled — a replay of ANY key converges
+			// without re-posting or re-auditing.
+			return nil
+		}
+		if !posted {
+			// PostJournal is NOT identity-verified (repo.PostJournal returns
+			// ErrDuplicate for any pre-existing key, unlike DebitWithBalanceCheck),
+			// so ErrDuplicate here is NEVER an innocent no-op: the probe above
+			// already proved this payment's legs are absent, so the key is held
+			// by a different journal (foreign reuse) or an uncommitted Redis
+			// claim. The old code swallowed it and committed SUCCESS/PAID with
+			// zero ledger legs — a phantom-settled invoice. Fail closed as a
+			// 409 instead; a fresh key retries cleanly.
+			if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
+				Reference:       journalRef,
+				IdempotencyKey:  idempotencyKey,
+				AmountKobo:      amountKobo,
+				DebitAccountID:  clearing.ID,
+				CreditAccountID: settle.ID,
+			}); errors.Is(err, ledger.ErrDuplicate) {
+				return ErrIdempotencyKeyConflict
+			} else if err != nil {
+				return fmt.Errorf("association: offline payment ledger: %w", err)
+			}
 		}
 
 		if _, err := tx.Exec(ctx, `UPDATE assoc_payments SET status='SUCCESS', approved_by=$2 WHERE id=$1`, paymentID, adminID); err != nil {
@@ -452,6 +466,17 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	}
 
 	// Reject path: no money movement, just status update + audit.
+	switch payStatus {
+	case "FAILED":
+		return nil // already rejected — idempotent replay
+	case "SUCCESS", "REVERSED":
+		// The settlement journal already posted (or was clawed back): a status
+		// flip cannot undo ledger legs — that takes a reversing entry. The old
+		// unconditional UPDATE flipped an approved payment to FAILED while the
+		// invoice stayed PAID and the legs stood, leaving books contradicting
+		// the ledger. Fail closed.
+		return ErrPaymentAlreadyDecided
+	}
 	if _, err := tx.Exec(ctx, `UPDATE assoc_payments SET status='FAILED' WHERE id=$1`, paymentID); err != nil {
 		return fmt.Errorf("association: reject payment: %w", err)
 	}
@@ -460,8 +485,6 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Admin: member lifecycle ──────────────────────────────────────────────────
 
 func (s *Service) SuspendMember(ctx context.Context, adminID, memberID, reason string) error {
 	return s.memberStatusAction(ctx, adminID, memberID, "SUSPENDED", "MEMBER_SUSPEND", map[string]any{"reason": reason})
@@ -485,7 +508,7 @@ func (s *Service) memberStatusAction(ctx context.Context, adminID, memberID, sta
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_memberships SET status=$2 WHERE id=$1`, memberID, status); err != nil {
 		return fmt.Errorf("association: member status: %w", err)
 	}
@@ -508,7 +531,7 @@ func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		UPDATE assoc_memberships
 		SET chapter_id = (
@@ -545,7 +568,7 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `INSERT INTO assoc_member_roles (id, membership_id, role, granted_by) VALUES ($1,$2,$3,$4)
 		           ON CONFLICT (membership_id, role) DO UPDATE SET granted_by=EXCLUDED.granted_by, granted_at=now()`
 	if _, err := tx.Exec(ctx, q, uuid.New().String(), memberID, role, adminID); err != nil {
@@ -556,8 +579,6 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Admin: bulk import ───────────────────────────────────────────────────────
 
 // BulkImportRow is one record from the CSV (header row is skipped).
 // Required: email. Optional: name, phone, member_code, category_label, chapter_label.
@@ -596,12 +617,12 @@ func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, 
 	if err != nil {
 		return 0, fmt.Errorf("association: import: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	count := 0
 	for {
 		rec, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -672,6 +693,29 @@ func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, 
 		return 0, fmt.Errorf("association: import: commit: %w", err)
 	}
 	return count, nil
+}
+
+// offlineApprovalLegsPosted reports whether the balanced approval journal for
+// this payment is durably written — probed by the journal's deterministic
+// REFERENCE, not the caller's Idempotency-Key, because the key is caller-chosen
+// and differs across retries while the payment can only ever be settled once.
+// Both legs must exist on their expected standing accounts at the payment's
+// amount — a lone leg or an amount mismatch counts as NOT posted (the pair
+// commits atomically inside repo.PostJournal, so a mismatch means the rows
+// found belong to something else).
+// Modeled on social's legPosted: reads the ledger of record directly.
+func (s *Service) offlineApprovalLegsPosted(ctx context.Context, reference, debitAccountID, creditAccountID string, amountKobo int64) (bool, error) {
+	const q = `
+		SELECT
+			EXISTS(SELECT 1 FROM ledger_entries
+			       WHERE account_id=$2 AND type='DEBIT' AND reference=$1 AND amount_kobo=$3),
+			EXISTS(SELECT 1 FROM ledger_entries
+			       WHERE account_id=$4 AND type='CREDIT' AND reference=$1 AND amount_kobo=$3)`
+	var deb, cre bool
+	if err := s.db.QueryRow(ctx, q, reference, debitAccountID, amountKobo, creditAccountID).Scan(&deb, &cre); err != nil {
+		return false, fmt.Errorf("association: verify approval legs: %w", err)
+	}
+	return deb && cre, nil
 }
 
 // parseImportRow extracts up to 6 fields from a CSV record.

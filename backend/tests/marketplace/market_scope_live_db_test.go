@@ -1,23 +1,18 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for the listing/category market boundary.
-//
 // Market is this module's tenancy boundary: GET /categories is scoped to one
 // market and so is search. Nothing enforced that a listing's category lived in
 // the listing's market, so a listing could be reachable from one half of a
 // market's UI and invisible to the other. 210 of 229 rows in the local database
 // were in exactly that state, seeded by remoderation_live_db_test.go's fixture.
-//
 // Two layers, tested separately because they fail for different reasons:
 //   - the service guard, so the caller gets a field error naming category_id
 //   - the composite FK (20270119000000), so nothing reaches the table by any
 //     other path — a direct INSERT included
-//
 // SKIPPED without MARKETPLACE_TEST_DATABASE_URL / TEST_DATABASE_URL:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/marketplace/... -run MarketScope -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -44,7 +39,7 @@ func seedCategoryInMarket(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		t.Fatalf("seed %s category: %v", market, err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_categories WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_categories WHERE id=$1`, id)
 	})
 	return id
 }
@@ -91,7 +86,7 @@ func TestMarketScope_CreateListingAcceptsSameMarketCategory(t *testing.T) {
 		t.Fatalf("CreateListing rejected a same-market category: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
 	})
 	if l.MarketID != "NG" {
 		t.Errorf("listing market = %q, want NG", l.MarketID)
@@ -118,8 +113,6 @@ func TestMarketScope_DatabaseRejectsCrossMarketInsert(t *testing.T) {
 		t.Errorf("rejected by %v, want mkt_listings_category_market_fk", err)
 	}
 }
-
-// ─── Price bands ─────────────────────────────────────────────────────────────
 
 // mkt_price_bands carries the same (category_id, market_id) pair as mkt_listings
 // and had the same category-only FK. Nothing writes the table yet — it appears in
@@ -163,6 +156,6 @@ func TestMarketScope_PriceBandAcceptsSameMarketCategory(t *testing.T) {
 		t.Fatalf("same-market price band rejected: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_price_bands WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_price_bands WHERE id=$1`, id)
 	})
 }

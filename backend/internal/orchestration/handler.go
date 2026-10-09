@@ -1,8 +1,11 @@
 package orchestration
 
 import (
+	"errors"
 	"io"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 
 	"github.com/gin-gonic/gin"
 )
@@ -10,8 +13,8 @@ import (
 // Handler exposes the normalized FX API over Gin.
 type Handler struct {
 	svc   *Service
-	sec   SecondaryStore  // beneficiaries + rate alerts; nil → handlers fall back to stubs
-	biz   BusinessStore   // FX business-admin console; nil → handlers fall back to honest defaults
+	sec   SecondaryStore    // beneficiaries + rate alerts; nil → handlers fall back to stubs
+	biz   BusinessStore     // FX business-admin console; nil → handlers fall back to honest defaults
 	cards CardStore         // FX virtual cards; nil → handlers fall back to stubs
 	coll  CollectionStore   // FX collections / virtual accounts; nil → handlers fall back to stubs
 	verif VerificationStore // FX customer KYC verification; nil → handlers fall back to stubs
@@ -44,8 +47,6 @@ func (h *Handler) WithCollections(s CollectionStore) *Handler { h.coll = s; retu
 // the contract-shaped stub (submissions are echoed but not persisted).
 func (h *Handler) WithVerification(s VerificationStore) *Handler { h.verif = s; return h }
 
-func customerID(c *gin.Context) string { return c.GetString("user_id") }
-
 func tier(c *gin.Context) string {
 	if t := c.GetString("customer_tier"); t != "" {
 		return t
@@ -57,6 +58,7 @@ func writeErr(c *gin.Context, e *APIError) {
 	if e.RequestID == "" {
 		e.RequestID = c.GetString("request_id")
 	}
+	e.Message = httperr.Sanitize(c, e.HTTPStatus(), e.Message)
 	c.JSON(e.HTTPStatus(), gin.H{"error": e})
 }
 
@@ -71,7 +73,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 		bindErr(c, err)
 		return
 	}
-	q, apiErr := h.svc.CreateQuote(c.Request.Context(), customerID(c), tier(c), req)
+	q, apiErr := h.svc.CreateQuote(c.Request.Context(), ginutil.UserID(c), tier(c), req)
 	if apiErr != nil {
 		writeErr(c, apiErr)
 		return
@@ -81,7 +83,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 
 // LockQuote handles POST /v1/quotes/:id/lock.
 func (h *Handler) LockQuote(c *gin.Context) {
-	q, apiErr := h.svc.LockQuote(c.Request.Context(), customerID(c), c.Param("id"))
+	q, apiErr := h.svc.LockQuote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if apiErr != nil {
 		writeErr(c, apiErr)
 		return
@@ -96,7 +98,7 @@ func (h *Handler) CreateConversion(c *gin.Context) {
 		bindErr(c, err)
 		return
 	}
-	conv, apiErr := h.svc.ExecuteConversion(c.Request.Context(), customerID(c), c.GetHeader("Idempotency-Key"), req)
+	conv, apiErr := h.svc.ExecuteConversion(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
 	if apiErr != nil {
 		writeErr(c, apiErr)
 		return
@@ -111,7 +113,7 @@ func (h *Handler) CreateTransfer(c *gin.Context) {
 		bindErr(c, err)
 		return
 	}
-	tr, apiErr := h.svc.ExecuteTransfer(c.Request.Context(), customerID(c), c.GetHeader("Idempotency-Key"), req)
+	tr, apiErr := h.svc.ExecuteTransfer(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
 	if apiErr != nil {
 		writeErr(c, apiErr)
 		return
@@ -126,7 +128,7 @@ func (h *Handler) CreateCollection(c *gin.Context) {
 		bindErr(c, err)
 		return
 	}
-	va, apiErr := h.svc.CreateCollection(c.Request.Context(), customerID(c), req)
+	va, apiErr := h.svc.CreateCollection(c.Request.Context(), ginutil.UserID(c), req)
 	if apiErr != nil {
 		writeErr(c, apiErr)
 		return
@@ -148,7 +150,19 @@ func (h *Handler) InboundWebhook(c *gin.Context) {
 		return
 	}
 	// Normalize into the unified ledger (idempotent), then acknowledge.
-	_ = h.svc.HandleProviderEvent(c.Request.Context(), prov, payload)
+	// Permanent refusals (APIError: missing event id, currency mismatch, bad
+	// amount) are acknowledged — a retry would refuse identically. Transient
+	// failures (store errors, refund failures) return 5xx so the provider
+	// redelivers instead of the deposit/refund being silently dropped.
+	if err := h.svc.HandleProviderEvent(c.Request.Context(), prov, payload); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			c.JSON(http.StatusOK, gin.H{"received": true, "refused": apiErr.Code})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"received": false, "error": "processing failed — retry"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"received": true})
 }
 
@@ -162,7 +176,7 @@ func (h *Handler) GetRates(c *gin.Context) {
 // a bare Money array leaked the internal ledger shape and rendered blank
 // wallet cards. available == ledger until holds are modelled.
 func (h *Handler) GetBalances(c *gin.Context) {
-	b, err := h.svc.Balances(c.Request.Context(), customerID(c))
+	b, err := h.svc.Balances(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -176,7 +190,7 @@ func (h *Handler) GetBalances(c *gin.Context) {
 
 // ListTransactions handles GET /v1/transactions.
 func (h *Handler) ListTransactions(c *gin.Context) {
-	tx, err := h.svc.Transactions(c.Request.Context(), customerID(c))
+	tx, err := h.svc.Transactions(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -186,7 +200,7 @@ func (h *Handler) ListTransactions(c *gin.Context) {
 
 // GetTransaction handles GET /v1/transactions/:id.
 func (h *Handler) GetTransaction(c *gin.Context) {
-	tx, ok, err := h.svc.Transaction(c.Request.Context(), customerID(c), c.Param("id"))
+	tx, ok, err := h.svc.Transaction(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -196,4 +210,77 @@ func (h *Handler) GetTransaction(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, tx)
+}
+
+// ErrorType is the normalized error taxonomy from the spec (§5.1, Appendix C).
+type ErrorType string
+
+const (
+	ErrInvalidRequest      ErrorType = "invalid_request"
+	ErrAuthentication      ErrorType = "authentication"
+	ErrRateExpired         ErrorType = "rate_expired"
+	ErrInsufficientFloat   ErrorType = "insufficient_float"
+	ErrInsufficientBalance ErrorType = "insufficient_balance"
+	ErrRoutingUnavailable  ErrorType = "routing_unavailable"
+	ErrProviderError       ErrorType = "provider_error"
+	ErrComplianceBlock     ErrorType = "compliance_block"
+	ErrConflict            ErrorType = "conflict"
+	ErrRateLimited         ErrorType = "rate_limited"
+	ErrLimitExceeded       ErrorType = "limit_exceeded"
+	ErrInternal            ErrorType = "internal"
+)
+
+// APIError is the normalized error envelope returned on all 4xx/5xx (§5.1).
+type APIError struct {
+	Type        ErrorType `json:"type"`
+	Code        string    `json:"code"`
+	Message     string    `json:"message"`
+	Param       *string   `json:"param,omitempty"`
+	ProviderRef *string   `json:"providerRef,omitempty"`
+	RequestID   string    `json:"requestId,omitempty"`
+}
+
+func (e *APIError) Error() string { return e.Message }
+
+// NewError builds an APIError.
+func NewError(t ErrorType, code, message string) *APIError {
+	return &APIError{Type: t, Code: code, Message: message}
+}
+
+// WithParam attaches the offending field name.
+func (e *APIError) WithParam(p string) *APIError { e.Param = &p; return e }
+
+// WithProviderRef attaches the upstream provider reference.
+func (e *APIError) WithProviderRef(r string) *APIError { e.ProviderRef = &r; return e }
+
+// HTTPStatus maps the normalized error type to an HTTP status code.
+func (e *APIError) HTTPStatus() int {
+	switch e.Type {
+	case ErrInvalidRequest:
+		return http.StatusBadRequest
+	case ErrAuthentication:
+		return http.StatusUnauthorized
+	case ErrRateExpired, ErrConflict:
+		return http.StatusConflict
+	case ErrInsufficientFloat, ErrInsufficientBalance, ErrComplianceBlock, ErrRoutingUnavailable, ErrLimitExceeded:
+		return http.StatusUnprocessableEntity
+	case ErrRateLimited:
+		return http.StatusTooManyRequests
+	case ErrProviderError:
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// asAPIError coerces any error into an APIError (internal by default).
+func asAPIError(err error) *APIError {
+	if err == nil {
+		return nil
+	}
+	ae := &APIError{}
+	if errors.As(err, &ae) {
+		return ae
+	}
+	return NewError(ErrInternal, "internal_error", err.Error())
 }

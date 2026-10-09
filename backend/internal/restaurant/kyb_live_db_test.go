@@ -1,11 +1,9 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for merchant KYB onboarding (Phase 8): the owner
 // save→document→submit flow (with validation), the admin decision driving the KYB
 // state machine + go-live, and the needs_more_info bounce. Skipped unless
 // TEST_DATABASE_URL is set. Requires the restaurant + KYB migrations.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -150,7 +148,9 @@ func TestLiveDB_AdminApproveWithNoKYBRowMakesOutletPayable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'No-KYB Kitchen','1 St',FALSE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM restaurants WHERE id=$1`, restID)
+	})
 
 	// Sanity: reproduces the ORIGINAL bug's starting point — no restaurant_kyb row.
 	if _, hasKYB, err := svc.loadKYB(ctx, restID); err != nil || hasKYB {
@@ -168,7 +168,7 @@ func TestLiveDB_AdminApproveWithNoKYBRowMakesOutletPayable(t *testing.T) {
 
 	var isOpen bool
 	var kybStatus *string
-	if err := pool.QueryRow(ctx, `SELECT is_open, kyb_status FROM restaurants WHERE id=$1`, restID).Scan(&isOpen, &kybStatus); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT is_open, kyb_status FROM restaurants WHERE id=$1`, restID).Scan(&isOpen, &kybStatus); err != nil {
 		t.Fatalf("read restaurant: %v", err)
 	}
 	if !isOpen {
@@ -195,7 +195,7 @@ func TestLiveDB_AdminApproveWithNoKYBRowMakesOutletPayable(t *testing.T) {
 	if err := svc.AdminDecideApplication(ctx, restID, admin, "reject", "closing"); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT kyb_status FROM restaurants WHERE id=$1`, restID).Scan(&kybStatus); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT kyb_status FROM restaurants WHERE id=$1`, restID).Scan(&kybStatus); err != nil {
 		t.Fatalf("read restaurant after reject: %v", err)
 	}
 	if kybStatus == nil || *kybStatus != "rejected" {
@@ -213,7 +213,7 @@ func statusOf(k *KYB) KYBStatus {
 func kybStatusOf(t *testing.T, ctx context.Context, pool *pgxpool.Pool, restID string) string {
 	t.Helper()
 	var st string
-	if err := pool.QueryRow(ctx, `SELECT status FROM restaurant_kyb WHERE restaurant_id=$1`, restID).Scan(&st); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM restaurant_kyb WHERE restaurant_id=$1`, restID).Scan(&st); err != nil {
 		t.Fatalf("read kyb status: %v", err)
 	}
 	return st

@@ -2,7 +2,9 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"spotlight/backend/go-common/jsonx"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,7 +14,6 @@ import (
 // repository_vet.go — pgx data access for Wave 3b (VETERINARY / PET-side) endpoint
 // groups: vet profile, pet profile, pet vaccinations, pet e-prescriptions, pet labs,
 // pet store. Mirrors repository_clinical.go exactly.
-//
 // Every read is scoped to the owning vet's user_id (defence in depth on top of RLS);
 // child rows (vaccinations, results, recommendations, fulfilments) also carry user_id
 // and are scoped the same way. Mutations on tables with a UNIQUE idempotency_key
@@ -22,14 +23,11 @@ import (
 // append) are status-guarded scoped UPDATEs (naturally idempotent). None post ledger
 // entries — they are clinical / document writes, not value movements (price_kobo /
 // total_kobo are surfaced as-is, never mutated as a balance).
-//
 // Reference / inventory paths with no backing table in the migration (vet appointments,
 // pet-owner requests, vet chat / call / soap-note, emergency warnings, vet specialists,
 // pet referrals, consult summary / history, pet pharmacies, pet refills, pet lab
 // catalogue, pet chronic-monitoring) have no repository method — the service layer
 // returns an empty projection (or echoes the request body for no-table writes).
-
-// ══ VET PROFILE ═════════════════════════════════════════════════════════════
 
 func (r *Repository) GetVetProfile(ctx context.Context, userID string) (*VetProfile, error) {
 	const q = `
@@ -56,13 +54,11 @@ func (r *Repository) UpsertVetMode(ctx context.Context, userID string, enabled b
 		SET vet_mode_enabled = EXCLUDED.vet_mode_enabled,
 		    detail = doctor_vet_profiles.detail || $4::jsonb,
 		    updated_at = now()`
-	if _, err := r.db.Exec(ctx, q, id, userID, enabled, jsonOrEmptyObject(detail)); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, enabled, jsonx.RawOrEmptyObject(detail)); err != nil {
 		return nil, err
 	}
 	return r.GetVetProfile(ctx, userID)
 }
-
-// ══ PETS ════════════════════════════════════════════════════════════════════
 
 func (r *Repository) ListPets(ctx context.Context, userID string) ([]Pet, error) {
 	const q = `
@@ -104,7 +100,7 @@ func (r *Repository) AppendPetGrowth(ctx context.Context, userID, petID string, 
 		UPDATE doctor_pets
 		SET growth_history = growth_history || $3::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, petID, userID, jsonOrEmptyArray(measurement))
+	tag, err := r.db.Exec(ctx, q, petID, userID, jsonx.RawOrEmptyArray(measurement))
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +109,6 @@ func (r *Repository) AppendPetGrowth(ctx context.Context, userID, petID string, 
 	}
 	return r.GetPet(ctx, userID, petID)
 }
-
-// ══ PET VACCINATIONS ════════════════════════════════════════════════════════
 
 func (r *Repository) ListPetVaccinations(ctx context.Context, userID, petID string) ([]PetVaccination, error) {
 	const q = `
@@ -166,7 +160,7 @@ func (r *Repository) InsertPetVaccinationReminder(ctx context.Context, userID, p
 		INSERT INTO doctor_pet_vaccinations (id, pet_id, user_id, vaccine, due_at, reminder_set, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,true,$6::jsonb,$7)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, petID, userID, vaccine, dueAt, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, petID, userID, vaccine, dueAt, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -201,8 +195,6 @@ func (r *Repository) getPetVaccinationByIdem(ctx context.Context, userID, idemKe
 	}
 	return v, err
 }
-
-// ══ PET PRESCRIPTIONS ═══════════════════════════════════════════════════════
 
 func (r *Repository) ListPetPrescriptions(ctx context.Context, userID string) ([]PetPrescription, error) {
 	const q = `
@@ -245,7 +237,7 @@ func (r *Repository) InsertPetPrescription(ctx context.Context, userID string, p
 		INSERT INTO doctor_pet_prescriptions (id, user_id, pet_id, ref, status, items, idempotency_key)
 		VALUES ($1,$2,$3,$4,'draft',$5::jsonb,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, petID, ref, jsonOrEmptyArray(items), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, petID, ref, jsonx.RawOrEmptyArray(items), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -318,8 +310,6 @@ func (r *Repository) SendPetPrescription(ctx context.Context, userID, prescripti
 	return r.GetPetPrescription(ctx, userID, prescriptionID)
 }
 
-// ══ PET LAB ORDERS ══════════════════════════════════════════════════════════
-
 func (r *Repository) ListPetLabOrders(ctx context.Context, userID string) ([]PetLabOrder, error) {
 	const q = `
 		SELECT id, user_id, pet_id, ref, status, tests, created_at, updated_at
@@ -348,7 +338,7 @@ func (r *Repository) InsertPetLabOrder(ctx context.Context, userID string, petID
 		INSERT INTO doctor_pet_lab_orders (id, user_id, pet_id, ref, status, tests, idempotency_key)
 		VALUES ($1,$2,$3,$4,'ordered',$5::jsonb,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, petID, ref, jsonOrEmptyArray(tests), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, petID, ref, jsonx.RawOrEmptyArray(tests), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -383,8 +373,6 @@ func (r *Repository) getPetLabOrderByIdem(ctx context.Context, userID, idemKey s
 	}
 	return o, err
 }
-
-// ══ PET LAB RESULTS ═════════════════════════════════════════════════════════
 
 func (r *Repository) ListPetLabResultInbox(ctx context.Context, userID string) ([]PetLabResult, error) {
 	const q = `
@@ -466,8 +454,6 @@ func (r *Repository) SetPetLabInterpretation(ctx context.Context, userID, result
 	}
 	return r.GetPetLabResult(ctx, userID, resultID)
 }
-
-// ══ PET STORE ═══════════════════════════════════════════════════════════════
 
 func (r *Repository) ListPetProducts(ctx context.Context, userID string) ([]PetProduct, error) {
 	const q = `
@@ -552,7 +538,7 @@ func (r *Repository) InsertPetRecommendation(ctx context.Context, userID string,
 		INSERT INTO doctor_pet_recommendations (id, user_id, pet_id, product_id, status, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'recommended',$5::jsonb,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, petID, productID, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, petID, productID, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +580,7 @@ func (r *Repository) SharePetRecommendation(ctx context.Context, userID, recomme
 		UPDATE doctor_pet_recommendations
 		SET status = 'shared', shared_at = COALESCE(shared_at, now()), detail = detail || $3::jsonb
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, recommendationID, userID, jsonOrEmptyObject(detail))
+	tag, err := r.db.Exec(ctx, q, recommendationID, userID, jsonx.RawOrEmptyObject(detail))
 	if err != nil {
 		return nil, err
 	}
@@ -603,8 +589,6 @@ func (r *Repository) SharePetRecommendation(ctx context.Context, userID, recomme
 	}
 	return r.getPetRecommendationByID(ctx, userID, recommendationID)
 }
-
-// ══ PET PRODUCT FULFILMENTS ═════════════════════════════════════════════════
 
 func (r *Repository) ListPetFulfilments(ctx context.Context, userID string) ([]PetFulfilment, error) {
 	const q = `
@@ -638,4 +622,151 @@ func (r *Repository) GetPetFulfilment(ctx context.Context, userID, id string) (*
 		return nil, ErrNotFound
 	}
 	return f, err
+}
+
+// pgx data access for the VET licence / verification /
+// profile-publish / profile-draft "tail" endpoints. Additive to repository_vet.go
+// (separate file to avoid colliding with concurrent edits there).
+// Every method targets the single per-vet row in doctor_vet_profiles
+// (user_id UNIQUE — migration 20260625000000_doctor_module.sql:797) and is scoped
+// by user_id (defence in depth on top of RLS). None post ledger entries — these are
+// onboarding / document writes, not value movements.
+// doctor_vet_profiles has NO idempotency_key column (migration :795-807), so these
+// mutations cannot ON CONFLICT-dedupe on a key; the Idempotency-Key header is still
+// required at the service layer (mirrors the human-side RenewLicence / SubmitVerification
+// / SaveProfileDraft / PublishProfile, whose backing tables likewise lack the column).
+// The UPDATEs are naturally idempotent: re-applying the same patch / status transition
+// yields the same row.
+
+// RenewVetLicenceRecord re-enters vet verification on licence renewal: it records the
+// (optional) new licence number and flips verification back to 'pending', merging any
+// supplied renewal detail into the detail jsonb. Mirrors the human-side
+// repository_account.go RenewLicence path (which re-submits a 'renewal' verification).
+// Scoped to the owning vet (user_id). Returns ErrNotFound when no vet row exists.
+func (r *Repository) RenewVetLicenceRecord(ctx context.Context, userID string, licenceNumber *string, detail []byte) (*VetProfile, error) {
+	const q = `
+		UPDATE doctor_vet_profiles
+		SET licence_number = COALESCE($2, licence_number),
+		    verification   = 'pending',
+		    detail         = detail || $3::jsonb,
+		    updated_at     = now()
+		WHERE user_id = $1`
+	tag, err := r.db.Exec(ctx, q, userID, licenceNumber, jsonx.RawOrEmptyObject(detail))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetVetProfile(ctx, userID)
+}
+
+// SubmitVetVerificationRecord submits the vet's verification: it flips the vet-scoped
+// verification column to 'pending' and merges the submitted documents / notes into the
+// detail jsonb. Mirrors the human-side InsertVerification ('pending' on submit), but
+// targets the vet profile column rather than doctor_verifications — that shared table's
+// kind CHECK is limited to ('initial','renewal','resubmission') (migration :80-81) and
+// has no vet/role column, so the correct vet-scoped sink is doctor_vet_profiles.verification.
+// Scoped to the owning vet (user_id). Returns ErrNotFound when no vet row exists.
+func (r *Repository) SubmitVetVerificationRecord(ctx context.Context, userID string, detail []byte) (*VetProfile, error) {
+	const q = `
+		UPDATE doctor_vet_profiles
+		SET verification = 'pending',
+		    detail       = detail || $2::jsonb,
+		    updated_at   = now()
+		WHERE user_id = $1`
+	tag, err := r.db.Exec(ctx, q, userID, jsonx.RawOrEmptyObject(detail))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetVetProfile(ctx, userID)
+}
+
+// PublishVetProfile marks the vet profile live (is_published = true). Fail-closed:
+// the row is only published when its verification is 'approved' (mirrors the human-side
+// repository_account.go PublishProfile guard). Scoped to the owning vet (user_id).
+// Returns ErrNotEligible when no vet row exists or verification is not approved.
+func (r *Repository) PublishVetProfile(ctx context.Context, userID string) (*VetProfile, error) {
+	const q = `
+		UPDATE doctor_vet_profiles
+		SET is_published = true, updated_at = now()
+		WHERE user_id = $1 AND verification = 'approved'`
+	tag, err := r.db.Exec(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		// Either no vet profile row or verification not approved → caller maps to 403/404.
+		return nil, ErrNotEligible
+	}
+	return r.GetVetProfile(ctx, userID)
+}
+
+// SaveVetProfileDraftRecord patch-merges the supplied JSON into profile_draft
+// (jsonb || jsonb), creating the vet row on first write. Mirrors the human-side
+// repository_account.go SaveProfileDraft, which carries this exact history:
+// this was a plain UPDATE (this doc's own comment claimed "upserts" while the
+// query never did), and nothing on the vet onboarding path ever creates a
+// doctor_vet_profiles row before this call — selecting "veterinarian" in
+// provider-type.tsx patches the HUMAN doctor_profiles table, and the only
+// other creator (UpsertVetMode) is never invoked from onboarding. So the FIRST
+// "Continue" tap on the vet profile builder's first screen always hit
+// ErrNotFound/404, for every vet, with no way to proceed.
+// Idempotent: a replayed / empty patch is a no-op merge. Scoped to the owning
+// vet (user_id).
+func (r *Repository) SaveVetProfileDraftRecord(ctx context.Context, userID string, patch []byte) (*VetProfile, error) {
+	const q = `
+		INSERT INTO doctor_vet_profiles (user_id, profile_draft)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (user_id) DO UPDATE
+		SET profile_draft = doctor_vet_profiles.profile_draft || EXCLUDED.profile_draft,
+		    updated_at    = now()`
+	if _, err := r.db.Exec(ctx, q, userID, jsonx.RawOrEmptyObject(patch)); err != nil {
+		return nil, err
+	}
+	return r.GetVetProfile(ctx, userID)
+}
+
+// marshalVetRenewalDetail builds the detail jsonb merged on licence renewal from the
+// typed verification request (notes + documents), so the renewal artefacts are retained
+// on the vet row even though there is no separate vet verifications table.
+func marshalVetRenewalDetail(req SubmitVerificationRequest) []byte {
+	m := map[string]any{}
+	if req.Notes != nil {
+		m["renewalNotes"] = *req.Notes
+	}
+	if len(req.Documents) > 0 {
+		m["renewalDocuments"] = req.Documents
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// marshalVetVerificationDetail builds the detail jsonb merged on verification submit
+// from the typed verification request (kind + notes + documents).
+func marshalVetVerificationDetail(req SubmitVerificationRequest) []byte {
+	m := map[string]any{}
+	if req.Kind != "" {
+		m["verificationKind"] = req.Kind
+	}
+	if req.MDCNNumber != nil {
+		m["verificationLicenceNumber"] = *req.MDCNNumber
+	}
+	if req.Notes != nil {
+		m["verificationNotes"] = *req.Notes
+	}
+	if len(req.Documents) > 0 {
+		m["verificationDocuments"] = req.Documents
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(m)
+	return b
 }

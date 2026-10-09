@@ -2,15 +2,16 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
+	"spotlight/backend/go-common/strutil"
 )
 
 // HERE is HERE Technologies (Geocoding & Search v1, Autosuggest, Routing v8). It
 // is an ACCURACY fallback used alongside Google for low-coverage areas and
 // traffic-aware routing (MAPSERVICE.md §10).
-//
-// License coherence (enforced here + in guards.go/cache.go):
+// License coherence (enforced here + in ):
 //   - Every result is tagged Source=here and Cacheable=false. HERE results, like
 //     Google's, are NEVER persisted to the OSM cache and may only be rendered on a
 //     HERE/Google basemap on the surface that produced them.
@@ -44,10 +45,6 @@ func (h *HERE) Capabilities() Capset {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Geocoder
-// ─────────────────────────────────────────────────────────────────────────────
-
 // hereItem is the subset of a HERE Geocoding & Search item we consume.
 type hereItem struct {
 	Title   string `json:"title"`
@@ -75,7 +72,6 @@ type hereSearchResp struct {
 //	with the average of the per-field scores (street/houseNumber/postalCode/…),
 //	which are also 0..1, so a high overall match with weak individual fields is
 //	penalized. When no field scores are present we fall back to queryScore alone.
-//
 //	confidence = queryScore                              (no field scores)
 //	confidence = 0.7*queryScore + 0.3*avg(fieldScore)    (field scores present)
 func hereConfidence(it hereItem) Confidence {
@@ -121,7 +117,7 @@ func (h *HERE) Geocode(ctx context.Context, address string) (GeoResult, error) {
 	lat, lng := it.Position.Lat, it.Position.Lng
 	conf := hereConfidence(it)
 	return GeoResult{
-		Lat: lat, Lng: lng, Address: firstNonEmpty(it.Address.Label, it.Title),
+		Lat: lat, Lng: lng, Address: strutil.FirstNonEmpty(it.Address.Label, it.Title),
 		PlusCode: "", // HERE does not return Plus Codes; left empty (server may derive).
 		Provider: h.Name(), Source: SourceHere, Cacheable: false,
 		Confidence: conf, H3Cell: PointCellKey(lat, lng),
@@ -140,7 +136,7 @@ func (h *HERE) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResult,
 	conf := Confidence(1.0) // reverse from an exact coordinate is fully confident.
 	if len(r.Items) > 0 {
 		it := r.Items[0]
-		addr = firstNonEmpty(it.Address.Label, it.Title)
+		addr = strutil.FirstNonEmpty(it.Address.Label, it.Title)
 		if it.Scoring.QueryScore > 0 {
 			conf = hereConfidence(it)
 		}
@@ -151,10 +147,6 @@ func (h *HERE) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResult,
 		Confidence: conf, H3Cell: PointCellKey(lat, lng),
 	}, nil
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Autocompleter
-// ─────────────────────────────────────────────────────────────────────────────
 
 func (h *HERE) Autocomplete(ctx context.Context, query, _ string, near *Point) ([]Suggestion, error) {
 	if query == "" {
@@ -178,7 +170,7 @@ func (h *HERE) Autocomplete(ctx context.Context, query, _ string, near *Point) (
 	}
 	out := make([]Suggestion, 0, len(r.Items))
 	for _, it := range r.Items {
-		label := firstNonEmpty(it.Address.Label, it.Title)
+		label := strutil.FirstNonEmpty(it.Address.Label, it.Title)
 		lat, lng := it.Position.Lat, it.Position.Lng
 		out = append(out, Suggestion{
 			Label: label, PlaceID: it.ID,
@@ -190,9 +182,7 @@ func (h *HERE) Autocomplete(ctx context.Context, query, _ string, near *Point) (
 	return out, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Router (HERE Routing v8) — optional; provides traffic-aware ETAs.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type hereRouteResp struct {
 	Routes []struct {
@@ -227,7 +217,7 @@ func (h *HERE) Route(ctx context.Context, origin, dest Point, opts RouteOptions)
 		return Route{}, err
 	}
 	if len(r.Routes) == 0 || len(r.Routes[0].Sections) == 0 {
-		return Route{}, fmt.Errorf("maps: here no route")
+		return Route{}, errors.New("maps: here no route")
 	}
 	var distM, durS float64
 	var poly string

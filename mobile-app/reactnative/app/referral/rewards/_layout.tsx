@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Direct Referral Rewards stack (PRD §5) — single-level, purchase-triggered
 // revenue share. Distinct from the legacy ambassador/agent screens elsewhere

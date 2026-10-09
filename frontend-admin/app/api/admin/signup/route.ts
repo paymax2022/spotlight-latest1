@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { isSessionValid, resolveEnforce, SESSION_COOKIE } from '../../../../middleware';
+import { extractSessionToken } from '../../../../middleware';
+import { requireAdminSession } from '../../_lib/require-admin-session';
 import {
   ADMIN_TIER_ROLE_LABELS,
   ADMIN_TIER_ROLE_SLUGS,
@@ -75,21 +76,6 @@ function configuredSignupCode(): string {
   return sanitizeSignupCode(process.env[SIGNUP_CODE_ENV] ?? '');
 }
 
-function extractSessionToken(cookieHeader: string | null): string | undefined {
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() !== SESSION_COOKIE) continue;
-    try {
-      return decodeURIComponent(part.slice(idx + 1).trim());
-    } catch {
-      return part.slice(idx + 1).trim();
-    }
-  }
-  return undefined;
-}
-
 /** Only values an `inet` column will accept — a bad header must not fail the insert. */
 function clientIp(request: Request): string | null {
   const forwarded = request.headers.get('x-forwarded-for') ?? '';
@@ -99,12 +85,12 @@ function clientIp(request: Request): string | null {
 }
 
 async function sessionState(request: Request): Promise<{ present: boolean; userId: string | null }> {
-  if (!resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
-    return { present: false, userId: null };
-  }
-  const token = extractSessionToken(request.headers.get('cookie'));
-  if (!(await isSessionValid(token))) return { present: false, userId: null };
-  return { present: true, userId: decodeJwtSubject(token) };
+  // A valid Supabase JWT only proves the caller is SOME user — the public
+  // anon key and every registered account satisfy isSessionValid. A session
+  // vouch must mean the backend admits this identity as a console admin
+  // (menu-counts sits behind RequireAdminConsoleRole); fail closed otherwise.
+  if (!(await requireAdminSession(request))) return { present: false, userId: null };
+  return { present: true, userId: decodeJwtSubject(extractSessionToken(request.headers.get('cookie'))) };
 }
 
 async function consoleAdminCount(sb: SupabaseClient): Promise<number | null> {
@@ -124,7 +110,6 @@ async function resolveMode(request: Request): Promise<{
 }> {
   const sb = serviceClient();
   const session = await sessionState(request);
-  // No service client means the count cannot be read; null (not 0) keeps the
   // bootstrap door shut rather than opening it on an outage.
   const count = sb ? await consoleAdminCount(sb) : null;
   // Read through the sanitizer, so a code below MIN_SIGNUP_CODE_LENGTH counts
@@ -260,7 +245,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     email: input.email,
     password: input.password,
     email_confirm: true,
-    // handle_new_user() copies raw_user_meta_data.role into user_profiles.role;
     // it is written explicitly below too, so this is belt and braces for the
     // case where the trigger is absent or has been replaced.
     user_metadata: { full_name: fullName, role: PROFILE_ROLE_FOR_ADMIN },

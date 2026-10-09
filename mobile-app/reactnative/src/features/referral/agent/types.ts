@@ -1,13 +1,10 @@
-// ── Referral Agent / Team Zone types (M-AGT-01..07) ──────────────────────────
 // Team dashboard, onboard sub-referrers, member detail, override ledger, team
 // leaderboard, training, disclosure. Money is ALWAYS integer kobo.
-//
 // COMPLIANCE (PRD §7, §10): agent/team overrides are a CAPPED percentage of the
 // VERIFIED ACTIVITY/REVENUE of network members — NEVER a payment for recruiting
 // people. Every override field carries the activity basis and the cap, and the
 // disclosure copy is load-bearing. No multi-level "downline recruitment" bonus.
 
-// ── Team / network dashboard (M-AGT-01) ──────────────────────────────────────
 export interface TeamDashboard {
   teamName: string;
   memberCount: number;
@@ -24,7 +21,6 @@ export interface TeamDashboard {
   capUsedKobo: number;
 }
 
-// ── Onboard sub-referrers (M-AGT-02) ─────────────────────────────────────────
 export type InviteState = 'pending' | 'accepted' | 'declined';
 
 export interface TeamInvite {
@@ -40,7 +36,6 @@ export interface OnboardResult {
   inviteId: string;
 }
 
-// ── Team member (M-AGT-03 list + detail) ─────────────────────────────────────
 export type MemberStatus = 'active' | 'onboarding' | 'inactive';
 
 export interface TeamMember {
@@ -72,7 +67,6 @@ export interface MemberDetail extends TeamMember {
   rows: MemberActivityRow[];
 }
 
-// ── Override ledger (M-AGT-04) ───────────────────────────────────────────────
 export interface OverrideLedgerRow {
   id: string;
   memberName: string;
@@ -97,7 +91,6 @@ export interface OverrideLedger {
   rows: OverrideLedgerRow[];
 }
 
-// ── Team leaderboard & targets (M-AGT-05) ────────────────────────────────────
 export interface TeamLeaderboardRow {
   rank: number;
   name: string;
@@ -120,7 +113,6 @@ export interface TeamLeaderboard {
   targets: TeamTarget[];
 }
 
-// ── Training / resources (M-AGT-06) ──────────────────────────────────────────
 export interface TrainingResource {
   id: string;
   title: string;
@@ -131,7 +123,6 @@ export interface TrainingResource {
   icon: string;
 }
 
-// ── Agent earnings disclosure (M-AGT-07) ─────────────────────────────────────
 export interface AgentDisclosure {
   /** Override rate applied to verified activity, 0..1. */
   overrideRate: number;

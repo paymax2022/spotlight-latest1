@@ -9,10 +9,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { checkAndClaimIdempotencyKey } from '@/server/voting-bridge/idempotency';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 
-vi.mock('@/lib/supabase/admin');
+vi.mock('@/lib/supabase/server');
 
 const UNIQUE_VIOLATION = { code: '23505', message: 'duplicate key value' };
 

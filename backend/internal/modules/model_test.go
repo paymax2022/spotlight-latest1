@@ -140,8 +140,6 @@ func TestActionFor(t *testing.T) {
 	}
 }
 
-// ─── coming_soon ─────────────────────────────────────────────────────────────
-
 // TestParseStatusAcceptsComingSoon: the third state must round-trip, and near-misses
 // must still be rejected rather than coerced — silently resolving a typo to 'hidden'
 // would pull a live module off the grid.

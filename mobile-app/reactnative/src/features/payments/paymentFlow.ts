@@ -1,6 +1,4 @@
-// ── Shared checkout — pure flow helpers ──────────────────────────────────────
 // Side-effect-free so they unit-test under plain Node (node --test). The stateful
-// controller (usePurchasePayment) composes these; keeping the decisions here means
 // the security-relevant rule (when a wallet debit needs a PIN) is testable.
 
 export type PayMethod = 'wallet' | 'card';
@@ -24,11 +22,9 @@ export function isValidPin(pin: string): boolean {
   return /^\d{4}$/.test(pin);
 }
 
-// ── Card rail: top up, then spend ────────────────────────────────────────────
 // The card rail funds the WALLET for the exact purchase amount and then runs the
 // module's ordinary wallet charge, so the net wallet change is zero and the money
 // travels on one ledger.
-//
 // It used to charge the card directly at the PSP and then ALSO run the module's
 // charge — which escrows from the wallet. The customer paid twice, and when the
 // wallet was short the escrow failed after the card had already been charged, so
@@ -121,18 +117,14 @@ export const WALLET_PIN_REQUIRED = parsePinRequiredFlag(
   process.env.EXPO_PUBLIC_WALLET_PIN_REQUIRED,
 );
 
-// ── KYC spend limit (client pre-check) ───────────────────────────────────────
 // Every checkout in this app ends in a wallet debit, and the server gates those
 // fail-closed on the caller's KYC tier: Tier 0 has no usable wallet, and every
 // capped tier has a daily debit ceiling.
-//
 // Checking it here is NOT a duplicate of that gate — it is what stops the card rail
 // from taking the customer's money before discovering the spend will be refused.
 // The card flow charges Paystack first and only then runs the module's fulfilment,
 // so without this a Tier 0 customer completes a card charge and *then* gets a 403,
 // leaving funds in a wallet they are not allowed to spend and no order.
-//
-// The server remains the authority. This only ever declines early; it never
 // authorises anything.
 
 /** The caller's tier allowance, as reported by GET /api/v1/me/tier. */
@@ -187,7 +179,7 @@ export function evaluateSpendLimit(
   limit: SpendLimit | null | undefined,
   amountKobo: number,
 ): SpendDecision {
-  if (!limit) return ALLOWED; // unknown — let the server decide
+  if (!limit) return ALLOWED;
 
   if (limit.walletDisabled) {
     // A disabled wallet may still carry a capped purchase allowance. Refusing

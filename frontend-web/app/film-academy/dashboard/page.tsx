@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Layout from '@/components/layout/Layout';
 import { authHeaders } from '@/src/lib/auth/client';
-import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
+import { loadPaystackClient } from '@/src/lib/payments';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(n);

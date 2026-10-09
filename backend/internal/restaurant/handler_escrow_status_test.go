@@ -1,7 +1,6 @@
 package restaurant
 
 // Pure unit tests for the money-path HTTP status mapping on the order-escrow paths.
-//
 // These exist to pin the errors.Is chain, not just the switch. PlaceOrder wraps the tier
 // gate's error with fmt.Errorf("...: %w", err) and settlement.Escrow wraps the ledger's
 // the same way, so a future refactor that swaps a single %w for %v would silently turn a
@@ -9,6 +8,7 @@ package restaurant
 // green, because they match sentinels on the service return rather than on the status.
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -54,15 +54,61 @@ func TestEscrowErrStatus(t *testing.T) {
 		{
 			// Not a money-path refusal — the caller keeps its own default.
 			name:   "unrelated validation error is not claimed",
-			err:    fmt.Errorf("restaurant: menu item x not found in restaurant y"),
+			err:    errors.New("restaurant: menu item x not found in restaurant y"),
 			wantOK: false,
 		},
 		{
 			// The fail-closed tier LOOKUP failure (no profile row / DB error) is not a
 			// caller fault and deliberately falls through to the 500 default.
 			name:   "undeterminable tier is not claimed as a 403",
-			err:    fmt.Errorf("restaurant: order escrow tier gate: tiers: enforce limit (fail closed): no rows in result set"),
+			err:    errors.New("restaurant: order escrow tier gate: tiers: enforce limit (fail closed): no rows in result set"),
 			wantOK: false,
+		},
+		// --- pricing rejections (probe B4): a refused cart is never a 500 ---
+		{
+			name:     "closed restaurant, wrapped as priceOrder returns it",
+			err:      fmt.Errorf("%w (%s)", ErrRestaurantClosed, "rest-1"),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "restaurant not found, wrapped as priceOrder returns it",
+			err:      fmt.Errorf("%w (%s)", ErrRestaurantNotFound, "rest-1"),
+			wantCode: http.StatusNotFound, wantOK: true,
+		},
+		{
+			name:     "menu item not found",
+			err:      fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, "item-1", "rest-1"),
+			wantCode: http.StatusNotFound, wantOK: true,
+		},
+		{
+			name:     "menu item unavailable (86'd)",
+			err:      fmt.Errorf("%w (%s)", ErrMenuItemUnavailable, "Probe Rice"),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "cart under the house minimum",
+			err:      fmt.Errorf("%w: cart subtotal %d kobo, restaurant minimum %d kobo", ErrBelowMinOrder, 500, 2000),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "malformed line (quantity cap)",
+			err:      fmt.Errorf("%w: quantity %d for '%s' exceeds the per-line maximum of %d", ErrOrderInvalid, 99, "Rice", 20),
+			wantCode: http.StatusBadRequest, wantOK: true,
+		},
+		{
+			name:     "bad scheduled slot (lead window)",
+			err:      fmt.Errorf("%w: a scheduled slot must be at least %v in the future", ErrScheduledSlotInvalid, scheduledMinLead),
+			wantCode: http.StatusBadRequest, wantOK: true,
+		},
+		{
+			name:     "scheduled slot while closed reuses the closed sentinel",
+			err:      fmt.Errorf("%w at the requested slot", ErrRestaurantClosed),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "external amount mismatch is a conflict",
+			err:      ErrExternalAmountMismatch,
+			wantCode: http.StatusConflict, wantOK: true,
 		},
 	}
 

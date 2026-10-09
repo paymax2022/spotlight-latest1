@@ -2,11 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TriageScaffold } from '@/features/triage/components';
@@ -30,7 +30,6 @@ export default function TriageInterviewScreen() {
   const [booting, setBooting] = useState(true);
 
   // Kick the loop: re-submit a no-op intake to fetch the first pending question.
-  // (Intake already ran on the previous screen; this fetches the next step.)
   useEffect(() => {
     if (!sessionId) return;
     intake.mutate(

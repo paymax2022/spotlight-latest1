@@ -1,10 +1,8 @@
-// ── Insurance — Partner/driver data layer (IM2) ──────────────────────────────
 // Embedded mobility cover for transport partners (PRD §13 / §15.3). A driver sees
 // their embedded policies, current trip/job cover status, files an embedded claim,
 // uploads inspection photos, tracks claim status, and consents to onboarding
 // cover. Claims reuse the IM2 claims layer types/state machine. ADDITIVE to IM1.
 // Money is kobo.
-//
 // GAP (whole file): no `/partner/*` routes exist anywhere on the Go insurance
 // surface (grepped backend/internal/insurance/** and backend/internal/app/
 // insurance*_routes.go — zero matches for "partner"). Every live-mode call in
@@ -27,7 +25,6 @@ function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// ── Partner embedded policy ───────────────────────────────────────────────────
 export type PartnerPolicyKind = 'DRIVER_PROTECTION' | 'MOTOR' | 'PASSENGER' | 'GIT';
 
 export interface PartnerPolicy {
@@ -70,7 +67,6 @@ export interface OnboardingConsent {
   accepted: boolean;
 }
 
-// ── Mock store ───────────────────────────────────────────────────────────────
 const MOCK_PARTNER_POLICIES: PartnerPolicy[] = [
   {
     id: 'ppol-driver-01', kind: 'DRIVER_PROTECTION', productName: 'Driver Protection (Annual)',
@@ -124,7 +120,6 @@ let mockOnboardingConsent: OnboardingConsent = {
   accepted: false,
 };
 
-// ── Read ──────────────────────────────────────────────────────────────────────
 export async function getPartnerPolicies(): Promise<PartnerPolicy[]> {
   if (USE_MOCK) {
     await delay();
@@ -182,7 +177,6 @@ export async function getOnboardingConsent(): Promise<OnboardingConsent> {
   return data;
 }
 
-// ── Mutations ─────────────────────────────────────────────────────────────────
 // File an embedded claim against an active partner policy — Idempotency-Key on FNOL.
 export async function filePartnerClaim(args: {
   policyId: string;
@@ -273,7 +267,6 @@ export async function acceptOnboardingConsent(args: { idempotencyKey: string }):
   return data;
 }
 
-// ── React Query hooks ─────────────────────────────────────────────────────────
 const KEY = 'insurance-partner';
 
 export function usePartnerPolicies() {

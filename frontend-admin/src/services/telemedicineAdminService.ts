@@ -1,5 +1,3 @@
-// ── Admin — Telemedicine ops console ──────────────────────────────────────────
-// Mock by default. Flip with NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK=false to hit
 // the live Go backend. TELEMEDICINE-004: the backend now has a real admin route
 // group — GET /api/v1/telemedicine/admin/{dashboard,doctors,appointments} and
 // POST /api/v1/telemedicine/admin/doctors/:userId/verify (RBAC-gated on
@@ -19,13 +17,9 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_TELEMEDICINE_ADMI
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK';
 
-// Telemedicine lives at r.Group("/api/v1/telemedicine") in
 // backend/internal/app/finance_routes.go — member routes directly on that
 // group, admin routes under its /admin sub-group (teleAdmin). apiV1() gives
-// the /api/v1 namespace (apiRoot() + '/api/v1'); this appends '/telemedicine'
 // onto it, and the admin-specific helper appends '/admin' further.
-//
-// This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/v1/telemedicine'),
 // which stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
 // for the same regression. The replace became a no-op and every live request
@@ -38,10 +32,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
@@ -75,7 +66,6 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ── Types ────────────────────────────────────────────────────────────────────
 // TelemedDashboard keeps its existing field names (the pages already render
 // them) but every field is now mapped from the REAL backend response
 // (GET /admin/dashboard -> AdminDashboard in
@@ -172,7 +162,6 @@ function maskPatientId(patientId: string): string {
   return patientId ? `${patientId.slice(0, 8)}…` : 'Unknown';
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 const DASHBOARD: TelemedDashboard = {
   clinicians_total: 184,
   clinicians_verified: 152,
@@ -215,7 +204,6 @@ export async function getTelemedDashboard(): Promise<TelemedDashboard> {
     consultations_completed_30d: 0,
     // NOT a 30-day figure — it is the trailing-7-day platform revenue
     // (fee_kobo*15/100 + platform_fee_kobo per completed appointment). Reusing
-    // the field rather than widening TelemedDashboard's shape further; the
     // dashboard page's KPI label is updated to say "(7d)" to match.
     consultation_revenue_30d_kobo: raw.platform_revenue_kobo_week,
     // Not computed by this endpoint — no doctor rating aggregate is part of
@@ -231,7 +219,6 @@ export async function getTelemedDashboard(): Promise<TelemedDashboard> {
   };
 }
 
-// ── Clinicians ───────────────────────────────────────────────────────────────
 const CLINICIANS: ClinicianRecord[] = [
   { id: 'doc_330', name: 'Dr. Adaeze N.', specialty: 'General practice', status: 'pending', mdcn_number: 'MDCN/2019/44821', rating: 0, reviews_count: 0, consult_fee_kobo: 5_000_00, consultations_total: 0, joined_at: dateStr(2) },
   { id: 'doc_311', name: 'Dr. Bola A.', specialty: 'Paediatrics', status: 'verified', mdcn_number: 'MDCN/2014/22018', rating: 4.8, reviews_count: 212, consult_fee_kobo: 7_500_00, consultations_total: 940, joined_at: dateStr(420) },
@@ -247,7 +234,7 @@ export async function listClinicians(opts?: { status?: string; q?: string }): Pr
     return rows;
   }
   const qs = new URLSearchParams();
-  qs.set('limit', '200'); // page-1 fetch; the admin table does its own client-side filtering below
+  qs.set('limit', '200');
   const raw = await getJson<RawAdminDoctor[]>(`/doctors?${qs.toString()}`);
   let rows: ClinicianRecord[] = raw.map((d) => ({
     id: d.id,
@@ -316,7 +303,6 @@ export async function verifyDoctor(userId: string, decision: 'approved' | 'rejec
   };
 }
 
-// ── Consultations ────────────────────────────────────────────────────────────
 const CONSULTS: ConsultationRecord[] = [
   { id: 'cns_7710', patient_masked: 'Ngozi U•••', clinician_name: 'Dr. Bola A.', specialty: 'Paediatrics', status: 'completed', fee_kobo: 7_500_00, scheduled_at: iso(1), prescription_issued: true, created_at: iso(3) },
   { id: 'cns_7705', patient_masked: 'Emeka O•••', clinician_name: 'Dr. Chuka E.', specialty: 'Dermatology', status: 'confirmed', fee_kobo: 8_000_00, scheduled_at: iso(-4), prescription_issued: false, created_at: iso(6) },

@@ -19,7 +19,7 @@ test.describe('Bills E2E - Wallet and financial accuracy', () => {
 
     await page.goto('/services/airtime');
     await page.getByText('MTN').first().click();
-    await page.getByPlaceholder('0801 234 5678').fill('08031234567');
+    await page.getByPlaceholder('801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();
 
@@ -39,7 +39,7 @@ test.describe('Bills E2E - Wallet and financial accuracy', () => {
 
     await page.goto('/services/airtime');
     await page.getByText('MTN').first().click();
-    await page.getByPlaceholder('0801 234 5678').fill('08031234567');
+    await page.getByPlaceholder('801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();
     await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');

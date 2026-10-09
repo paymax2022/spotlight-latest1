@@ -2,12 +2,25 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
+	"maps"
+	"net/http"
 
+	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/timeutil"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/middleware"
 	referralevents "spotlight/backend/internal/referral/events"
+	"spotlight/backend/internal/services"
 )
+
+const keyInvalidBody = "invalid body"
+
+const keyError = "error"
 
 // minPayoutTier is the KYC tier required to receive a referral payout (Tier/KYC
 // gated). Tier 1 (basic verified) is the floor; admins can raise this in policy.
@@ -25,19 +38,17 @@ func NewService(repo *Repository, finance *financeledger.Service, events *referr
 	return &Service{repo: repo, finance: finance, events: events}
 }
 
-// --- payout queue ---
-
 // QueuePayout enqueues a payout request. Tier/KYC is checked at queue time and
 // re-checked at approval (fail-closed). Idempotent on idempotency_key.
 func (s *Service) QueuePayout(ctx context.Context, in PayoutRequest, requestedBy string) (*Payout, error) {
 	if in.BeneficiaryID == "" {
-		return nil, fmt.Errorf("finance: payout requires beneficiary_id")
+		return nil, errors.New("finance: payout requires beneficiary_id")
 	}
 	if in.AmountKobo <= 0 {
-		return nil, fmt.Errorf("finance: payout amount must be positive (kobo)")
+		return nil, errors.New("finance: payout amount must be positive (kobo)")
 	}
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("finance: payout requires an idempotency key")
+		return nil, errors.New("finance: payout requires an idempotency key")
 	}
 	tier, err := s.repo.KYCTier(ctx, in.BeneficiaryID)
 	if err != nil {
@@ -71,7 +82,7 @@ func (s *Service) ApprovePayout(ctx context.Context, payoutID, approvedBy string
 		return nil, err
 	}
 	if p == nil {
-		return nil, fmt.Errorf("finance: payout not found")
+		return nil, errors.New("finance: payout not found")
 	}
 	if p.Status == PayoutPaid {
 		return p, nil // idempotent
@@ -89,7 +100,7 @@ func (s *Service) ApprovePayout(ctx context.Context, payoutID, approvedBy string
 	}
 
 	if s.finance == nil {
-		return nil, fmt.Errorf("finance: ledger unavailable")
+		return nil, errors.New("finance: ledger unavailable")
 	}
 	acc, err := s.finance.GetOrCreateStandingAccount(ctx, financeledger.AccountReferralReward)
 	if err != nil {
@@ -98,7 +109,7 @@ func (s *Service) ApprovePayout(ctx context.Context, payoutID, approvedBy string
 	idemKey := "referral_payout:" + payoutID
 	ref := "referral:payout:" + payoutID
 	if err := s.finance.Credit(ctx, p.BeneficiaryID, ref, idemKey, acc.ID, p.AmountKobo); err != nil {
-		if err != financeledger.ErrDuplicate {
+		if !errors.Is(err, financeledger.ErrDuplicate) {
 			_ = s.repo.MarkPayoutFailed(ctx, payoutID, "ledger_post_failed")
 			return nil, fmt.Errorf("finance: post payout credit: %w", err)
 		}
@@ -124,13 +135,11 @@ func (s *Service) RejectPayout(ctx context.Context, payoutID, approvedBy, reason
 	return nil
 }
 
-// --- reconciliation ---
-
 // Reconcile compares the RB0 reward ledger 'paid' total against wallet payout
 // postings for a period and records a snapshot (balanced or variance).
 func (s *Service) Reconcile(ctx context.Context, since, until, createdBy string) (*Reconciliation, error) {
 	if since == "" || until == "" {
-		return nil, fmt.Errorf("finance: reconcile requires since and until")
+		return nil, errors.New("finance: reconcile requires since and until")
 	}
 	ledgerPaid, err := s.repo.LedgerPaidInPeriod(ctx, since, until)
 	if err != nil {
@@ -145,8 +154,8 @@ func (s *Service) Reconcile(ctx context.Context, since, until, createdBy string)
 	if variance != 0 {
 		status = ReconVariance
 	}
-	ps, _ := time.Parse(time.RFC3339, since)
-	pe, _ := time.Parse(time.RFC3339, until)
+	ps, _ := timeutil.ParseTime(since)
+	pe, _ := timeutil.ParseTime(until)
 	rc := Reconciliation{
 		PeriodStart:    ps,
 		PeriodEnd:      pe,
@@ -162,14 +171,12 @@ func (s *Service) ListReconciliations(ctx context.Context) ([]Reconciliation, er
 	return s.repo.ListReconciliations(ctx)
 }
 
-// --- budgets / burn ---
-
 func (s *Service) UpsertBudget(ctx context.Context, in BudgetInput) (*Budget, error) {
 	if in.BudgetKobo < 0 {
-		return nil, fmt.Errorf("finance: budget must be non-negative")
+		return nil, errors.New("finance: budget must be non-negative")
 	}
 	if in.AlertThresholdPct != nil && (*in.AlertThresholdPct < 0 || *in.AlertThresholdPct > 100) {
-		return nil, fmt.Errorf("finance: alert threshold must be 0..100")
+		return nil, errors.New("finance: alert threshold must be 0..100")
 	}
 	return s.repo.UpsertBudget(ctx, in)
 }
@@ -190,33 +197,25 @@ func (s *Service) ListBudgets(ctx context.Context) ([]Budget, error) {
 	return budgets, nil
 }
 
-// --- float ---
-
 func (s *Service) SnapshotFloat(ctx context.Context, fundedKobo int64, note string) (*Float, error) {
 	if fundedKobo < 0 {
-		return nil, fmt.Errorf("finance: funded amount must be non-negative")
+		return nil, errors.New("finance: funded amount must be non-negative")
 	}
 	return s.repo.SnapshotFloat(ctx, fundedKobo, note)
 }
 
 func (s *Service) LatestFloat(ctx context.Context) (*Float, error) { return s.repo.LatestFloat(ctx) }
 
-// --- reward-to-LTV ---
-
 func (s *Service) RewardToLTV(ctx context.Context) (*RewardToLTV, error) {
 	return s.repo.RewardToLTV(ctx)
 }
-
-// --- helpers ---
 
 func (s *Service) audit(ctx context.Context, eventType, userID, rewardID string, extra map[string]any, idemKey string) {
 	if s.events == nil {
 		return
 	}
 	payload := map[string]any{}
-	for k, v := range extra {
-		payload[k] = v
-	}
+	maps.Copy(payload, extra)
 	if rewardID != "" {
 		payload["reward_id"] = rewardID
 	}
@@ -226,4 +225,166 @@ func (s *Service) audit(ctx context.Context, eventType, userID, rewardID string,
 		Payload:        payload,
 		IdempotencyKey: idemKey,
 	})
+}
+
+// Handler exposes admin finance/payout endpoints (no member surface — payouts are
+// admin-governed; members see their rewards via the RB0 ledger handler).
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Register wires finance routes onto the referral admin group.
+//   - admin: /api/referral/admin/finance/*  (RBAC referral.payout.* / referral.finance.view)
+func Register(admin *gin.RouterGroup, svc *Service, rbac services.RBACService) {
+	h := NewHandler(svc)
+	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
+
+	ag := admin.Group("/finance")
+	// payout queue + approvals
+	ag.GET("/payouts", guard("referral.payout.view"), h.ListPayouts)
+	ag.POST("/payouts", guard("referral.payout.manage"), h.QueuePayout)
+	ag.POST("/payouts/:id/approve", guard("referral.payout.manage"), h.ApprovePayout)
+	ag.POST("/payouts/:id/reject", guard("referral.payout.manage"), h.RejectPayout)
+	// reconciliation
+	ag.GET("/reconciliation", guard("referral.finance.view"), h.ListReconciliations)
+	ag.POST("/reconciliation", guard("referral.finance.view"), h.Reconcile)
+	// budgets & burn
+	ag.GET("/budgets", guard("referral.finance.view"), h.ListBudgets)
+	ag.PUT("/budgets", guard("referral.payout.manage"), h.UpsertBudget)
+	// float
+	ag.GET("/float", guard("referral.finance.view"), h.LatestFloat)
+	ag.POST("/float", guard("referral.payout.manage"), h.SnapshotFloat)
+	ag.GET("/reward-to-ltv", guard("referral.finance.view"), h.RewardToLTV)
+}
+
+func uid(c *gin.Context) string {
+	if u, ok := middleware.GetAuthenticatedUser(c); ok {
+		return u.ID
+	}
+	return ginutil.UserID(c)
+}
+
+func (h *Handler) ListPayouts(c *gin.Context) {
+	list, err := h.svc.ListPayouts(c.Request.Context(), c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"payouts": list})
+}
+
+func (h *Handler) QueuePayout(c *gin.Context) {
+	var in PayoutRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
+		return
+	}
+	if in.IdempotencyKey == "" {
+		in.IdempotencyKey = ginutil.IdempotencyKey(c)
+	}
+	p, err := h.svc.QueuePayout(c.Request.Context(), in, uid(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"payout": p})
+}
+
+func (h *Handler) ApprovePayout(c *gin.Context) {
+	p, err := h.svc.ApprovePayout(c.Request.Context(), c.Param("id"), uid(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"payout": p})
+}
+
+func (h *Handler) RejectPayout(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if err := h.svc.RejectPayout(c.Request.Context(), c.Param("id"), uid(c), body.Reason); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) ListReconciliations(c *gin.Context) {
+	list, err := h.svc.ListReconciliations(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"reconciliations": list})
+}
+
+func (h *Handler) Reconcile(c *gin.Context) {
+	rc, err := h.svc.Reconcile(c.Request.Context(), c.Query("since"), c.Query("until"), uid(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"reconciliation": rc})
+}
+
+func (h *Handler) ListBudgets(c *gin.Context) {
+	list, err := h.svc.ListBudgets(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"budgets": list})
+}
+
+func (h *Handler) UpsertBudget(c *gin.Context) {
+	var in BudgetInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
+		return
+	}
+	b, err := h.svc.UpsertBudget(c.Request.Context(), in)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"budget": b})
+}
+
+func (h *Handler) LatestFloat(c *gin.Context) {
+	f, err := h.svc.LatestFloat(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"float": f})
+}
+
+func (h *Handler) SnapshotFloat(c *gin.Context) {
+	var body struct {
+		FundedKobo int64  `json:"funded_kobo"`
+		Note       string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
+		return
+	}
+	f, err := h.svc.SnapshotFloat(c.Request.Context(), body.FundedKobo, body.Note)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"float": f})
+}
+
+func (h *Handler) RewardToLTV(c *gin.Context) {
+	r, err := h.svc.RewardToLTV(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"reward_to_ltv": r})
 }

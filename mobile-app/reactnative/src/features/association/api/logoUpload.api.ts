@@ -1,21 +1,17 @@
-// ── Association — Organisation logo upload (presigned R2) ─────────────────────
-//
 // Two steps, because the binary never travels through our API:
-//
 //   1. Ask the backend for a short-lived presigned PUT URL. It chooses the
 //      object key — the client cannot pick where the file lands.
 //   2. PUT the image straight to R2 with the exact Content-Type the backend
 //      bound into the signature.
-//
 // The caller then submits the returned objectKey as the draft's logoUri. The
 // backend stores it in logo_url and signs it back into a viewable URL on every
 // read, because the bucket is not public.
-//
 // Before this existed the wizard stored the image picker's local file:// URI, so
 // an uploaded logo rendered on the founder's own phone and nowhere else.
 
 import { api } from '@/api/client';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
+import { LogoUploadError, parseStorageErrorCode } from './logoUploadError';
 
 // This write has a real live endpoint (verified against
 // backend/internal/association/routes.go and a full green run of
@@ -78,7 +74,10 @@ export async function presignLogoUpload(fileName: string, contentType: string): 
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status;
     if (status === 503) throw new LogoUploadsUnavailableError();
-    throw err;
+    // Anything else is a failure of this step specifically (400 bad type, 401
+    // session, 5xx, or no reply at all) — say so, rather than letting it read
+    // as the same generic upload failure as a storage rejection.
+    throw new LogoUploadError('presign', { status, cause: err });
   }
 }
 
@@ -97,17 +96,33 @@ export async function uploadLogo(localUri: string, fileName: string): Promise<st
   const presigned = await presignLogoUpload(fileName, contentType);
 
   // React Native's fetch can PUT a blob read from the local file URI.
-  const fileRes = await fetch(localUri);
-  const blob = await fileRes.blob();
+  let blob: Blob;
+  try {
+    const fileRes = await fetch(localUri);
+    blob = await fileRes.blob();
+  } catch (cause) {
+    throw new LogoUploadError('read-file', { cause });
+  }
+  // A zero-byte blob uploads "successfully" and then renders nothing.
+  if (!blob.size) throw new LogoUploadError('read-file', {});
 
-  const put = await fetch(presigned.uploadUrl, {
-    method: 'PUT',
-    // The signature covers this header — a different value fails with 403.
-    headers: { 'Content-Type': presigned.contentType },
-    body: blob,
-  });
+  let put: Response;
+  try {
+    put = await fetch(presigned.uploadUrl, {
+      method: 'PUT',
+      // The signature covers this header — a different value fails with 403.
+      headers: { 'Content-Type': presigned.contentType },
+      body: blob,
+    });
+  } catch (cause) {
+    // fetch only rejects when no HTTP response arrived at all (DNS, TLS,
+    // connection reset, timeout).
+    throw new LogoUploadError('upload', { cause });
+  }
   if (!put.ok) {
-    throw new Error(`Logo upload failed (${put.status})`);
+    // R2 explains itself in an XML body (<Code>NoSuchBucket</Code>, …).
+    const body = await put.text().catch(() => '');
+    throw new LogoUploadError('upload', { status: put.status, code: parseStorageErrorCode(body) });
   }
   return presigned.objectKey;
 }

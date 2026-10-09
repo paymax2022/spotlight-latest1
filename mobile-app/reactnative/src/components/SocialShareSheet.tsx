@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, Platform, Share, Linking } from 'react-native';
 import { X, Copy, MessageCircle, Send, Link2, Share2, Check } from 'lucide-react-native';
 import { Facebook } from '@/components/icons/socialBrandIcons';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow3 } from '@/constants/tokens';
 
 interface Props {
   visible: boolean;

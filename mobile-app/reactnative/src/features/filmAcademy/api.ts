@@ -1,10 +1,7 @@
-// ── Film Academy — data layer ────────────────────────────────────────────────
 // The app and the web app are separate INTERFACES that share an API. These call
 // the same /api/academy/* endpoints the web console uses; the screens are native.
-//
 // Base URL is the shared axios client (EXPO_PUBLIC_API_BASE_URL → frontend-web),
 // which is also what proxies every other module's calls.
-//
 // NOTE ON MONEY: academy_batches stores training_fee_ngn in NAIRA, not kobo.
 // It predates the kobo convention used across finance. Do not multiply by 100.
 

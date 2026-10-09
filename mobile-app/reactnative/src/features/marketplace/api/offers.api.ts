@@ -1,5 +1,3 @@
-// ── Marketplace — Transact OFFERS + Deal Room API (mock/live dispatch) ───────
-//
 // Offers are first-class NON-BINDING price proposals (POST /offers, /offers/:id/
 // {accept,counter,decline}) — accepting one just agrees a number for the meetup.
 // The Chat inbox + Deal Room now run on a LIVE messaging backend (mounted under
@@ -18,7 +16,6 @@ import type { CreateOfferInput, Offer } from '../types';
 
 export type { DealThread, MockMessage } from './offers.mock';
 
-// ── Threads / messages (live when !MKT_USE_MOCK; mock is the offline fallback) ─
 export async function listThreads(): Promise<M.DealThread[]> {
   if (MKT_USE_MOCK) return M.mockListThreads();
   return arr(await mktGet<M.DealThread[]>('/threads'));
@@ -56,7 +53,6 @@ export async function sendMessage(threadId: string, text: string): Promise<M.Moc
   return mktPost<M.MockMessage>('/threads/' + threadId + '/messages', { body: text });
 }
 
-// ── Offers (first-class) ─────────────────────────────────────────────────────
 export async function listOffers(listingId: string): Promise<Offer[]> {
   if (MKT_USE_MOCK) return M.mockListOffers(listingId);
   // Live: GET /offers?listing_id — participant-scoped negotiation history.

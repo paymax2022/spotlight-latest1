@@ -10,7 +10,7 @@
  * that fails at midnight.
  */
 import { describe, it, expect } from 'vitest';
-import { summariseCompliance } from '@/src/server/services/academy/compliance';
+import { summariseCompliance } from '@/src/server/services/academy';
 
 const NOW = new Date('2026-06-15T12:00:00Z');
 const day = (n: number) => new Date(NOW.getTime() + n * 86400000).toISOString().slice(0, 10);

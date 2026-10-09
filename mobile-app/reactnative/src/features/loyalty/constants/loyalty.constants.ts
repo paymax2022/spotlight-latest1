@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Flip to false once the live /api/v1/loyalty endpoints are reachable
 // (or set EXPO_PUBLIC_LOYALTY_USE_MOCK=false). Mock-first convention.
@@ -8,13 +8,12 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LOYALTY_USE_MOCK, tr
 // Loyalty REST namespace. Served directly by the Go backend (Gin) under the
 // authenticated finance member group — NOT the frontend-web /api/v1 proxy.
 // Confirmed against backend/internal/app/top5_p2_routes.go (RegisterLoyalty
-// mounts finance.Group("/loyalty") + a sibling points.Handler on the bare
 // finance group) + backend/internal/loyalty/handler.go Register.
 export const API_BASE = '/api/finance/loyalty';
-// Points balance/catalog/redeem live one level up, directly on /api/finance
-// (see backend/internal/points/handler.go Register(member) — member there is
-// the bare finance group, not finance.Group("/loyalty")).
-export const POINTS_API_BASE = '/api/finance';
+// Points balance/history/catalog/redeem are registered by RegisterLoyalty on the
+// same finance.Group("/loyalty") member group (backend/internal/app/top5_routes.go
+// pointsHandler.Register(member)), so they sit under /api/finance/loyalty/points/*.
+export const POINTS_API_BASE = '/api/finance/loyalty';
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
 // Gold-anchored — rewards/elite accent per DESIGN-Mobile.md.
@@ -33,7 +32,6 @@ export const LoyaltyColors = {
   border:     Colors.outlineVariant,
 } as const;
 
-// ── NL-4 — Points are NOT cash. Surfaced verbatim wherever points appear. ─────
 export const POINTS_NOT_CASH_DISCLOSURE =
   'Points are not money. They are a promotional reward and can never be withdrawn ' +
   'as cash. Redeem them for airtime, bill credits, discounts, and partner perks only.';

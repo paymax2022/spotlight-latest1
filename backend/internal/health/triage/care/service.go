@@ -2,7 +2,9 @@ package care
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,8 +12,6 @@ import (
 	triage "spotlight/backend/internal/health/triage"
 )
 
-// ─── Injected ports (small, nil-safe) ────────────────────────────────────────
-//
 // Every external dependency is a narrow interface so the care loop is decoupled
 // from the concrete finance/maps/notifications/care modules (no tight coupling)
 // and runs in dev with nil-safe stubs.
@@ -46,8 +46,6 @@ type FollowUp interface {
 	Schedule(ctx context.Context, userID, referralID string, at time.Time) error
 }
 
-// ─── Service ─────────────────────────────────────────────────────────────────
-
 // CareService is the care-routing + escalation engine. It owns the CareReferral
 // and Escalation state machines (guarded via the parent `triage` package) and
 // orchestrates the injected ports. All ports are nil-safe.
@@ -67,7 +65,6 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 }
 
 // Refer turns a disposition level into a CareReferral and routes it.
-//
 //   - route = triage.RouteForLevel(level) (emergency | telemed | self_care).
 //     pharmacy/lab are booked through CareBooker as the "telemed"-class paid path —
 //     the route stored on the referral is the engine route; the booker decides the
@@ -80,10 +77,10 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 //   - SELF_CARE: routed, no payment, no booking.
 func (s *CareService) Refer(ctx context.Context, userID, sessionID string, level int) (*ReferResult, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("care: unauthenticated")
+		return nil, errors.New("care: unauthenticated")
 	}
 	if sessionID == "" {
-		return nil, fmt.Errorf("care: session id required")
+		return nil, errors.New("care: session id required")
 	}
 	route := triage.RouteForLevel(level)
 
@@ -128,6 +125,8 @@ func (s *CareService) routeEmergency(ctx context.Context, ref *CareReferral, lev
 	}
 	if _, err := s.Notify(ctx, esc.ID); err == nil {
 		esc.State = triage.EscNotified // reflect to caller
+	} else {
+		log.Printf("[care] emergency escalation %s notify failed (left raised): %v", esc.ID, err)
 	}
 	// SC-8 payload (best-effort nearest ER; coords unknown here so 0,0 — the emergency
 	// screen calls NearestEmergency with the device location for the precise facility).
@@ -167,17 +166,17 @@ func (s *CareService) routePaid(ctx context.Context, ref *CareReferral) (*ReferR
 // paid/fulfilled referral is a no-op that returns the current row.
 func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemKey string) (*CareReferral, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("care: unauthenticated")
+		return nil, errors.New("care: unauthenticated")
 	}
 	if idemKey == "" {
-		return nil, fmt.Errorf("care: idempotency key required")
+		return nil, errors.New("care: idempotency key required")
 	}
 	ref, err := s.repo.GetReferral(ctx, referralID)
 	if err != nil {
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	// Idempotent re-apply: already settled → return as-is (no second charge).
 	if ref.State == triage.RefPaid || ref.State == triage.RefFulfilled ||
@@ -192,7 +191,7 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		return nil, fmt.Errorf("care: referral must be routed before payment, is %s", ref.State)
 	}
 	if ref.AmountMinor <= 0 {
-		return nil, fmt.Errorf("care: referral has no positive amount to charge")
+		return nil, errors.New("care: referral has no positive amount to charge")
 	}
 
 	// Money: ledger-backed, idempotent on idemKey (charges exactly once on replay).
@@ -230,7 +229,7 @@ func (s *CareService) MarkFulfilled(ctx context.Context, userID, referralID stri
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	if ref.State == triage.RefFulfilled || ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -250,7 +249,7 @@ func (s *CareService) FollowUp(ctx context.Context, userID, referralID string, a
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	if ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -275,7 +274,7 @@ func (s *CareService) Close(ctx context.Context, userID, referralID string) (*Ca
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	if ref.State == triage.RefClosed {
 		return ref, nil
@@ -292,12 +291,10 @@ func (s *CareService) ListReferrals(ctx context.Context, userID string) ([]CareR
 	return s.repo.ListReferralsByUser(ctx, userID)
 }
 
-// ─── Escalation state machine (SC-5 human-in-loop) ───────────────────────────
-
 // Raise opens a new escalation case in `raised` (SC-5). Always auditable.
 func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason string) (*Escalation, error) {
 	if sessionID == "" || userID == "" {
-		return nil, fmt.Errorf("care: session id and user id required")
+		return nil, errors.New("care: session id and user id required")
 	}
 	e := &Escalation{
 		ID:        uuid.New().String(),
@@ -314,7 +311,8 @@ func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason strin
 }
 
 // Notify delivers the hand-off (patient + clinician) and advances raised →
-// notified. SC-5: a high-risk case is never a silent flag.
+// notified. SC-5: a high-risk case is never a silent flag — a delivery failure
+// returns the error and leaves the case raised, so a retry is a clean re-call.
 func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalation, error) {
 	e, err := s.repo.GetEscalation(ctx, escalationID)
 	if err != nil {
@@ -328,10 +326,22 @@ func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalat
 	}
 	if s.notify != nil {
 		data := map[string]any{"escalation_id": e.ID, "session_id": e.SessionID, "reason": e.Reason}
+		var notifyErrs []error
 		// Patient hand-off.
-		_ = s.notify.Notify(ctx, e.UserID, "triage.escalation.patient", data)
+		if err := s.notify.Notify(ctx, e.UserID, "triage.escalation.patient", data); err != nil {
+			log.Printf("[care] escalation hand-off failed escalation=%s user=%s template=%s err=%v", e.ID, e.UserID, "triage.escalation.patient", err)
+			notifyErrs = append(notifyErrs, err)
+		}
 		// Clinician hand-off (broadcast template — the on-call clinician pool).
-		_ = s.notify.Notify(ctx, "", "triage.escalation.clinician", data)
+		if err := s.notify.Notify(ctx, "", "triage.escalation.clinician", data); err != nil {
+			log.Printf("[care] escalation hand-off failed escalation=%s template=%s err=%v", e.ID, "triage.escalation.clinician", err)
+			notifyErrs = append(notifyErrs, err)
+		}
+		// SC-5: a failed delivery stays `raised` — marking it notified would be
+		// the silent flag this state exists to prevent. Retry = call Notify again.
+		if err := errors.Join(notifyErrs...); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.UpdateEscalationState(ctx, e.ID, triage.EscRaised, triage.EscNotified, nil, nil); err != nil {
 		return nil, err
@@ -343,7 +353,7 @@ func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalat
 // Acknowledge records a clinician picking up the case (notified → acknowledged).
 func (s *CareService) Acknowledge(ctx context.Context, escalationID, clinicianID string) (*Escalation, error) {
 	if clinicianID == "" {
-		return nil, fmt.Errorf("care: clinician id required")
+		return nil, errors.New("care: clinician id required")
 	}
 	e, err := s.repo.GetEscalation(ctx, escalationID)
 	if err != nil {
@@ -394,8 +404,6 @@ func (s *CareService) ListEscalations(ctx context.Context, state string) ([]Esca
 func (s *CareService) NearestEmergency(ctx context.Context, lat, lng float64) (*EmergencyInfo, error) {
 	return s.emergencyInfo(ctx, lat, lng), nil
 }
-
-// ─── internals ───────────────────────────────────────────────────────────────
 
 // transitionReferral validates the edge against the parent SM then performs the
 // guarded compare-and-set in the repo (defence in depth: SM + WHERE state=$from).

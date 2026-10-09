@@ -1,21 +1,15 @@
 // Learner: my assignments, and my submission + grade for each.
-//
 // Paginated, and parts-aware.
-//
-// PAGINATION: the screen used to render every assignment a learner had, in one
 // response. A cohort's brief list grows all term, so the payload and the render
-// grew with it; `page`/`pageSize` bound both. The parameters are optional and
 // default to the first page, so an older client keeps working — it simply sees
 // the first page instead of everything.
-//
-// PARTS: an assignment may be broken into parts, each scheduled in a programme
 // week and submitted separately (migration 20270116000000). An assignment with
 // NO parts is unchanged: one whole-assignment submission, as before. Both
 // shapes ship in the same payload so the screen renders them uniformly.
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { resolveLearner } from '@/src/server/services/academy/learner';
+import { resolveLearner } from '@/src/server/services/academy';
 
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
@@ -65,7 +59,6 @@ export async function GET(request: Request) {
     // stable id tiebreaker. Without the tiebreaker two assignments sharing a week
     // and due_date could swap places between pages, so one would be shown twice
     // and another never — the classic unstable-pagination hole.
-    //
     // NULLS FIRST on week_number is deliberate: an unscheduled brief (every
     // assignment that predates the timeline) must stay visible at the top rather
     // than being buried after the scheduled ones.

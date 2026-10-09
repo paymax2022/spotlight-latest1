@@ -1,11 +1,15 @@
 package restaurant
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // ownerErrStatus maps a store-management service error to an HTTP status: a
@@ -18,15 +22,11 @@ func ownerErrStatus(err error) int {
 	return http.StatusForbidden
 }
 
-// ── Reads ─────────────────────────────────────────────────────────────────────
-
 // ListRestaurants → GET /restaurant (discovery list of open restaurants).
-//
 // Paged: ?limit (default 20, max 50) & ?offset, with ?q and ?cuisine applied in
 // SQL before the page is cut. It used to return every open row — 2,016 of them —
 // and let the client filter in memory; see discovery_page.go for why both moved
 // server-side together.
-//
 // The body still carries `restaurants`, so a client that only reads that key
 // keeps working (it simply receives the first page).
 func (h *Handler) ListRestaurants(c *gin.Context) {
@@ -48,9 +48,9 @@ func (h *Handler) ListRestaurants(c *gin.Context) {
 		MinPriceKobo: queryInt64Ptr(c, "min_price"),
 		MaxPriceKobo: queryInt64Ptr(c, "max_price"),
 		// callerUserID marks which rows THIS caller liked (see attachLikedFlags).
-	}, c.GetString("user_id"))
+	}, ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, page)
@@ -102,7 +102,7 @@ func queryInt64Ptr(c *gin.Context, key string) *int64 {
 func (h *Handler) GetRestaurant(c *gin.Context) {
 	detail, err := h.svc.GetRestaurantDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, detail)
@@ -111,9 +111,13 @@ func (h *Handler) GetRestaurant(c *gin.Context) {
 // LikeRestaurant → POST /restaurant/:id/like. Idempotent (see
 // Service.LikeRestaurant) — liking twice is a 200, not a 409.
 func (h *Handler) LikeRestaurant(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.LikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if errors.Is(err, ErrRestaurantNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"liked": true})
@@ -122,9 +126,9 @@ func (h *Handler) LikeRestaurant(c *gin.Context) {
 // UnlikeRestaurant → DELETE /restaurant/:id/like. Idempotent — unliking
 // something never liked is a 200, not a 404.
 func (h *Handler) UnlikeRestaurant(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.UnlikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"liked": false})
@@ -132,10 +136,10 @@ func (h *Handler) UnlikeRestaurant(c *gin.Context) {
 
 // GetOrder → GET /restaurant/orders/:orderId (participant-scoped).
 func (h *Handler) GetOrder(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	o, err := h.svc.GetOrder(c.Request.Context(), c.Param("orderId"), userID)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, o)
@@ -143,31 +147,35 @@ func (h *Handler) GetOrder(c *gin.Context) {
 
 // ListOrders → GET /restaurant/orders?role=customer|restaurant|rider.
 func (h *Handler) ListOrders(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	role := c.DefaultQuery("role", "customer")
 	orders, err := h.svc.ListOrders(c.Request.Context(), userID, role)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Only an unrecognised ?role= is a client error; a query/store failure
+		// is 500 — folding it into 400 reported an outage as the caller's fault.
+		if errors.Is(err, ErrInvalidOrderRole) {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"orders": orders})
 }
 
-// ── Menu management (owner only) ──────────────────────────────────────────────
-
 // CreateCategory → POST /restaurant/:id/menu/categories.
 func (h *Handler) CreateCategory(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var body struct {
 		Name string `json:"name" binding:"required,min=1,max=200"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cat, err := h.svc.CreateCategory(c.Request.Context(), c.Param("id"), userID, body.Name)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, cat)
@@ -175,15 +183,15 @@ func (h *Handler) CreateCategory(c *gin.Context) {
 
 // CreateItem → POST /restaurant/:id/menu/items.
 func (h *Handler) CreateItem(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	it, err := h.svc.CreateItem(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, it)
@@ -191,28 +199,26 @@ func (h *Handler) CreateItem(c *gin.Context) {
 
 // UpdateItem → PATCH /restaurant/:id/menu/items/:itemId (price/availability).
 func (h *Handler) UpdateItem(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req UpdateItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	it, err := h.svc.UpdateItem(c.Request.Context(), c.Param("id"), userID, c.Param("itemId"), req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, it)
 }
 
-// ── Store management (owner only) ─────────────────────────────────────────────
-
 // Earnings → GET /restaurant/earnings (the caller's food-delivery earnings).
 func (h *Handler) Earnings(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	e, err := h.svc.GetMerchantEarnings(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": e})
@@ -220,39 +226,37 @@ func (h *Handler) Earnings(c *gin.Context) {
 
 // ListStaff → GET /restaurant/:id/staff
 func (h *Handler) ListStaff(c *gin.Context) {
-	list, err := h.svc.ListStaff(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	list, err := h.svc.ListStaff(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"staff": list})
 }
 
 // LookupUser → GET /restaurant/lookup/user?query={email_or_phone}
-//
 // Search for a user by email or phone number. Returns user data (id, email, phone, name)
 // so the restaurant admin can confirm before sending an invite.
 func (h *Handler) LookupUser(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("query"))
 	if query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "query parameter required"})
 		return
 	}
 	if len(query) < 3 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search query must be at least 3 characters"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "search query must be at least 3 characters"})
 		return
 	}
 
 	user, err := h.svc.LookupUser(c.Request.Context(), query)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "user not found"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": user})
 }
 
 // InviteStaff → POST /restaurant/:id/staff {user_id, role}
-//
 // The response carries the invite token ONCE. It is not recoverable afterwards —
 // only its hash is stored — so the client must hand it to the invitee there and
 // then.
@@ -262,13 +266,13 @@ func (h *Handler) InviteStaff(c *gin.Context) {
 		Role   string `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	inv, err := h.svc.InviteStaff(c.Request.Context(), c.Param("id"), c.GetString("user_id"),
+	inv, err := h.svc.InviteStaff(c.Request.Context(), c.Param("id"), ginutil.UserID(c),
 		body.UserID, StaffRole(body.Role))
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"invite": inv})
@@ -280,19 +284,18 @@ func (h *Handler) SetStaffStatus(c *gin.Context) {
 		Status string `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.SetStaffStatus(c.Request.Context(), c.Param("id"), c.GetString("user_id"),
+	if err := h.svc.SetStaffStatus(c.Request.Context(), c.Param("id"), ginutil.UserID(c),
 		c.Param("userId"), StaffStatus(body.Status)); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // AcceptStaffInvite → POST /restaurant/staff/accept {token}
-//
 // Not scoped to a restaurant: the token identifies the outlet, and the invitee is
 // by definition not yet staff there, so no outlet-level guard could pass.
 func (h *Handler) AcceptStaffInvite(c *gin.Context) {
@@ -300,25 +303,24 @@ func (h *Handler) AcceptStaffInvite(c *gin.Context) {
 		Token string `json:"token" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.AcceptStaffInvite(c.Request.Context(), body.Token, c.GetString("user_id")); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	if err := h.svc.AcceptStaffInvite(c.Request.Context(), body.Token, ginutil.UserID(c)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // PayoutReadiness → GET /restaurant/payout-readiness
-//
 // The capability↔KYB bridge, per outlet: can this shop be paid, why not, and how
 // much has already settled behind the gate. Scoped by ownership server-side.
 func (h *Handler) PayoutReadiness(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	list, err := h.svc.PayoutReadinessForOwner(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"outlets": list})
@@ -326,10 +328,10 @@ func (h *Handler) PayoutReadiness(c *gin.Context) {
 
 // MyRestaurants → GET /restaurant/mine (the caller's own stores).
 func (h *Handler) MyRestaurants(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	list, err := h.svc.ListMyRestaurants(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": list})
@@ -337,15 +339,15 @@ func (h *Handler) MyRestaurants(c *gin.Context) {
 
 // UpdateRestaurant → PATCH /restaurant/:id (edit store profile).
 func (h *Handler) UpdateRestaurant(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req UpdateRestaurantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.UpdateRestaurant(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -353,17 +355,17 @@ func (h *Handler) UpdateRestaurant(c *gin.Context) {
 
 // SetAvailability → PATCH /restaurant/:id/availability (merchant open/close).
 func (h *Handler) SetAvailability(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var body struct {
 		IsOpen *bool `json:"is_open" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.IsOpen == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "is_open is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "is_open is required"})
 		return
 	}
 	r, err := h.svc.SetAvailability(c.Request.Context(), c.Param("id"), userID, *body.IsOpen)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -371,9 +373,9 @@ func (h *Handler) SetAvailability(c *gin.Context) {
 
 // DeleteItem → DELETE /restaurant/:id/menu/items/:itemId.
 func (h *Handler) DeleteItem(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteItem(c.Request.Context(), c.Param("id"), userID, c.Param("itemId")); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
@@ -381,28 +383,26 @@ func (h *Handler) DeleteItem(c *gin.Context) {
 
 // DeleteCategory → DELETE /restaurant/:id/menu/categories/:categoryId.
 func (h *Handler) DeleteCategory(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteCategory(c.Request.Context(), c.Param("id"), userID, c.Param("categoryId")); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
-// ── Rider / delivery lifecycle ────────────────────────────────────────────────
-
 // AssignRider → POST /restaurant/orders/:orderId/assign (owner offers a rider).
 func (h *Handler) AssignRider(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	var body struct {
 		RiderID string `json:"rider_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AssignRider(c.Request.Context(), c.Param("orderId"), actorID, body.RiderID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -410,9 +410,9 @@ func (h *Handler) AssignRider(c *gin.Context) {
 
 // AcceptDelivery → POST /restaurant/orders/:orderId/accept (rider accepts).
 func (h *Handler) AcceptDelivery(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	if err := h.svc.AcceptDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -422,9 +422,9 @@ func (h *Handler) AcceptDelivery(c *gin.Context) {
 // declines; if no other offer is claimed, the order is auto re-dispatched to
 // fresh nearby riders — DP-002).
 func (h *Handler) DeclineDelivery(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	if err := h.svc.DeclineDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -433,16 +433,16 @@ func (h *Handler) DeclineDelivery(c *gin.Context) {
 // ConfirmPickup → POST /restaurant/orders/:orderId/pickup {code} (assigned
 // rider picks up; the restaurant's pickup code proves they collected the food).
 func (h *Handler) ConfirmPickup(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	var body struct {
 		Code string `json:"code" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ConfirmPickup(c.Request.Context(), c.Param("orderId"), riderID, body.Code); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -452,16 +452,16 @@ func (h *Handler) ConfirmPickup(c *gin.Context) {
 // off at the destination; the customer's delivery code proves the handoff and
 // settles the order).
 func (h *Handler) ConfirmHandoff(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	var body struct {
 		Code string `json:"code" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ConfirmHandoff(c.Request.Context(), c.Param("orderId"), riderID, body.Code); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -470,18 +470,18 @@ func (h *Handler) ConfirmHandoff(c *gin.Context) {
 // Redispatch → POST /restaurant/orders/:orderId/dispatch (owner re-runs rider
 // sourcing for a ready order that hasn't been claimed yet).
 func (h *Handler) Redispatch(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	_, owner, _, err := h.svc.OrderParties(c.Request.Context(), c.Param("orderId"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	if actorID != owner {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only the restaurant may re-dispatch"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "only the restaurant may re-dispatch"})
 		return
 	}
 	if err := h.svc.DispatchOrder(c.Request.Context(), c.Param("orderId")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -489,17 +489,17 @@ func (h *Handler) Redispatch(c *gin.Context) {
 
 // PostLocation → POST /restaurant/orders/:orderId/location (rider posts {lat,lng}).
 func (h *Handler) PostLocation(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	var body struct {
 		Lat float64 `json:"lat" binding:"required"`
 		Lng float64 `json:"lng" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PostLocation(c.Request.Context(), c.Param("orderId"), riderID, body.Lat, body.Lng); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"ok": true})
@@ -507,10 +507,10 @@ func (h *Handler) PostLocation(c *gin.Context) {
 
 // RiderOffers → GET /restaurant/rider/offers.
 func (h *Handler) RiderOffers(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	offers, err := h.svc.RiderOffers(c.Request.Context(), riderID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"offers": offers})
@@ -518,23 +518,21 @@ func (h *Handler) RiderOffers(c *gin.Context) {
 
 // RiderActive → GET /restaurant/rider/active.
 func (h *Handler) RiderActive(c *gin.Context) {
-	riderID := c.GetString("user_id")
+	riderID := ginutil.UserID(c)
 	active, err := h.svc.RiderActive(c.Request.Context(), riderID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deliveries": active})
 }
 
-// ── Chat ──────────────────────────────────────────────────────────────────────
-
 // ListMessages → GET /restaurant/orders/:orderId/messages.
 func (h *Handler) ListMessages(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	msgs, err := h.svc.ListMessages(c.Request.Context(), c.Param("orderId"), userID)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": msgs})
@@ -542,39 +540,35 @@ func (h *Handler) ListMessages(c *gin.Context) {
 
 // SendMessage → POST /restaurant/orders/:orderId/messages.
 func (h *Handler) SendMessage(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req SendMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	m, err := h.svc.SendMessage(c.Request.Context(), c.Param("orderId"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, m)
 }
 
-// ── Ratings ───────────────────────────────────────────────────────────────────
-
 // RateOrder → POST /restaurant/orders/:orderId/rate.
 func (h *Handler) RateOrder(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateOrder(c.Request.Context(), c.Param("orderId"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, r)
 }
-
-// ── Realtime ──────────────────────────────────────────────────────────────────
 
 // ServeOrderWS → GET /restaurant/orders/:orderId/ws. Upgrades to a WebSocket on
 // the authenticated user's channel. The user must be a participant of the order;
@@ -582,9 +576,7 @@ func (h *Handler) RateOrder(c *gin.Context) {
 // events for orders the user participates in (delivery is per-user, so no
 // per-order subscription is needed).
 // ServeUserWS → GET /restaurant/ws — the caller's own realtime stream.
-//
 // See ADR-049 for the full decision record.
-//
 // WHY THIS EXISTS
 // The hub is keyed by USER id: Realtime.publish resolves an order's participants
 // and calls hub.SendToUser(uid, …). ServeOrderWS's :orderId is therefore only an
@@ -592,13 +584,12 @@ func (h *Handler) RateOrder(c *gin.Context) {
 // to you, for any order. That left the merchant queue unable to hear about a NEW
 // order, because subscribing required an order id the merchant did not yet have;
 // it polled every 6s instead.
-//
 // This endpoint drops the order gate and keeps the identity. It cannot widen
 // what anyone sees: SendToUser only ever delivers frames already destined for
 // this user, so the socket carries exactly the caller's own events — strictly
 // narrower than what an order-scoped socket already hands them.
 func (h *Handler) ServeUserWS(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		// Same fallback as ServeOrderWS: WS clients cannot set Authorization
 		// across the proxy hop, so accept the short-lived HMAC ticket — here one
@@ -608,18 +599,18 @@ func (h *Handler) ServeUserWS(c *gin.Context) {
 		}
 	}
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
 		return
 	}
 	if h.hub == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "realtime not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "realtime not configured"})
 		return
 	}
 	_ = h.hub.ServeHTTP(c.Writer, c.Request, uid)
 }
 
 func (h *Handler) ServeOrderWS(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		// No Bearer (WS clients can't set Authorization across the proxy): fall back
 		// to the short-lived HMAC ticket minted by frontend-web for THIS order.
@@ -628,20 +619,20 @@ func (h *Handler) ServeOrderWS(c *gin.Context) {
 		}
 	}
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
 		return
 	}
 	if h.hub == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "realtime not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "realtime not configured"})
 		return
 	}
 	ok, _, err := h.svc.isParticipant(c.Request.Context(), c.Param("orderId"), uid)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{"error": "not a participant of this order"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "not a participant of this order"})
 		return
 	}
 	_ = h.hub.ServeHTTP(c.Writer, c.Request, uid)

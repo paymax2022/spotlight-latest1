@@ -206,8 +206,6 @@ func (r *Repository) GetApplicationMeta(ctx context.Context, applicationID strin
 	return &m, nil
 }
 
-// ---- helpers ----
-
 func normalizeName(s string) string {
 	toks := strings.Fields(strings.ToLower(strings.TrimSpace(s)))
 	sort.Strings(toks)
@@ -232,7 +230,7 @@ func mapToJSON(m map[string]string) []byte {
 			b.WriteByte(',')
 		}
 		first = false
-		b.WriteString(fmt.Sprintf("%q:%q", k, m[k]))
+		fmt.Fprintf(&b, "%q:%q", k, m[k])
 	}
 	b.WriteByte('}')
 	return []byte(b.String())

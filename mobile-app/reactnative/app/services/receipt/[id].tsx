@@ -8,12 +8,12 @@ import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, XCircle, Clock, ArrowLeft, Share2 } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { formatNaira } from '@/utils/money';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getReceipt } from '@/api/transactions.api';
 import { HomeMenuButton } from '@/components/HomeMenu';
 

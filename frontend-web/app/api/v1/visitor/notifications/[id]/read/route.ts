@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
-import { handleApiError } from '@/src/lib/api/responses';
+import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// POST /api/v1/visitor/notifications/{id}/read — mark a single notification as read.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid notification ID', 400);
     const supabase = createAdminClient();
 
     const { error } = await supabase
@@ -17,7 +19,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .eq('user_id', user.id);
     if (error) throw error;
 
-    return NextResponse.json(null, { status: 204 });
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return handleApiError(error, 'Failed to mark notification as read');
   }

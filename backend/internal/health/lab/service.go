@@ -2,16 +2,17 @@ package healthlab
 
 import (
 	"context"
-	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/cryptox"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -106,7 +107,6 @@ func NewService(db *pgxpool.Pool, escrow EscrowHolder, dispatch Dispatcher, prov
 // lab never imports the commission package at compile time (mirrors the
 // transport/doctor seams) — the adapter, which lives in app-wiring, discards the
 // returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. The lab module's own
 // money movements (the escrow HELD→RELEASE of the patient payment to the lab) are
 // unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
@@ -139,13 +139,11 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 	}
 }
 
-// ─── Catalog (HL-1: lab defines tests; HL-2: only a verified lab lists) ──────
-
 // UpsertTest writes a catalog test. HL-2: only the verified lab owner may list
 // tests for that lab. Prep instructions + TAT are surfaced to the patient.
 func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("lab: unauthenticated")
+		return nil, errors.New("lab: unauthenticated")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedLabOwner(ctx, ownerID, t.LabProviderID)
@@ -153,17 +151,17 @@ func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: not a verified lab owner (HL-2)")
+			return nil, errors.New("lab: not a verified lab owner (HL-2)")
 		}
 	}
 	if strings.TrimSpace(t.Name) == "" {
-		return nil, fmt.Errorf("lab: test name required")
+		return nil, errors.New("lab: test name required")
 	}
 	if t.PriceKobo <= 0 {
-		return nil, fmt.Errorf("lab: price must be positive kobo")
+		return nil, errors.New("lab: price must be positive kobo")
 	}
 	if t.TATHours < 0 {
-		return nil, fmt.Errorf("lab: tat_hours must be non-negative")
+		return nil, errors.New("lab: tat_hours must be non-negative")
 	}
 	if t.ID == "" {
 		t.ID = uuid.New().String()
@@ -296,8 +294,6 @@ func labFilter(id string) string {
 	return " AND lab_provider_id = $1"
 }
 
-// ─── LabOrder lifecycle ──────────────────────────────────────────────────────
-
 // CreateOrderInput is the validated order-creation payload.
 type CreateOrderInput struct {
 	LabProviderID    string
@@ -313,16 +309,16 @@ type CreateOrderInput struct {
 // idempotency_key).
 func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOrderInput) (*Order, error) {
 	if patientID == "" {
-		return nil, fmt.Errorf("lab: unauthenticated")
+		return nil, errors.New("lab: unauthenticated")
 	}
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("lab: idempotency key required (HL-9)")
+		return nil, errors.New("lab: idempotency key required (HL-9)")
 	}
 	if len(in.TestIDs) == 0 {
-		return nil, fmt.Errorf("lab: at least one test required")
+		return nil, errors.New("lab: at least one test required")
 	}
 	if in.CollectionMethod != CollectHome && in.CollectionMethod != CollectWalkIn {
-		return nil, fmt.Errorf("lab: collection_method must be HOME or WALK_IN")
+		return nil, errors.New("lab: collection_method must be HOME or WALK_IN")
 	}
 	// Replay: return the existing order for this idempotency key (no double-hold).
 	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
@@ -335,7 +331,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: supplier is not an approved MLSCN lab (HL-2)")
+			return nil, errors.New("lab: supplier is not an approved MLSCN lab (HL-2)")
 		}
 	}
 
@@ -348,13 +344,13 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		var active bool
 		const tq = `SELECT name, price_kobo, active FROM lab_tests WHERE id=$1 AND lab_provider_id=$2`
 		if err := s.db.QueryRow(ctx, tq, testID, in.LabProviderID).Scan(&name, &price, &active); err != nil {
-			if err == pgx.ErrNoRows {
-				return nil, fmt.Errorf("lab: test not found in this lab catalog")
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("lab: test not found in this lab catalog")
 			}
 			return nil, err
 		}
 		if !active {
-			return nil, fmt.Errorf("lab: test is not active")
+			return nil, errors.New("lab: test is not active")
 		}
 		prices = append(prices, price)
 		lines = append(lines, OrderLine{
@@ -367,7 +363,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		return nil, err
 	}
 	if total <= 0 {
-		return nil, fmt.Errorf("lab: order total must be positive")
+		return nil, errors.New("lab: order total must be positive")
 	}
 
 	orderID := uuid.New().String()
@@ -385,7 +381,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `
 		INSERT INTO lab_orders
@@ -466,7 +462,7 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified phlebotomist may collect (HL-2)")
+			return nil, errors.New("lab: only a verified phlebotomist may collect (HL-2)")
 		}
 	}
 	// One sample per order (HL-6: the order's specimen is a single tracked entity).
@@ -481,7 +477,7 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insSample = `
 		INSERT INTO lab_samples (id, order_id, state, collection_method, custodian_id, barcode_ref, collected_by)
@@ -538,14 +534,13 @@ func (s *Service) Handover(ctx context.Context, actorID, sampleID, toCustodianID
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified phlebotomist may hand over custody (HL-2)")
+			return nil, errors.New("lab: only a verified phlebotomist may hand over custody (HL-2)")
 		}
 	}
 	to := SampleHandedOver
 	target := sm.State
 	switch target {
 	case SampleCollected, SampleInCustody:
-		// ok
 	default:
 		return nil, fmt.Errorf("lab: sample not in a handover-able state, is %s", sm.State)
 	}
@@ -592,7 +587,7 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedB
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified lab scientist may accession (HL-2)")
+			return nil, errors.New("lab: only a verified lab scientist may accession (HL-2)")
 		}
 	}
 	// Sample↔patient integrity (EC-001/LB-005): if the accessioning scientist
@@ -615,7 +610,7 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedB
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Re-read sample under lock to defend against a concurrent breach.
 	locked, err := lockSample(ctx, tx, sampleID)
@@ -658,8 +653,6 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedB
 	return locked, nil
 }
 
-// ─── Result entry / validation / sign-off & release ─────────────────────────
-
 // EnterResultInput is one validated result line entered by the scientist.
 type EnterResultInput struct {
 	TestID   string
@@ -684,7 +677,7 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 		return nil, fmt.Errorf("lab: order must be PROCESSING to enter results, is %s", o.State)
 	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("lab: at least one result required")
+		return nil, errors.New("lab: at least one result required")
 	}
 	// HL-2: only a verified scientist of this lab may enter/validate results.
 	if s.prov != nil {
@@ -693,13 +686,13 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified lab scientist may enter results (HL-2)")
+			return nil, errors.New("lab: only a verified lab scientist may enter results (HL-2)")
 		}
 	}
 	// HL-6: no result without an unbroken, accessioned chain of custody.
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
-		return nil, fmt.Errorf("lab: no sample for order — cannot enter results (HL-6)")
+		return nil, errors.New("lab: no sample for order — cannot enter results (HL-6)")
 	}
 	if sm.State != SampleAccessioned {
 		return nil, fmt.Errorf("lab: sample not accessioned (state %s) — no result without an unbroken chain (HL-6)", sm.State)
@@ -717,15 +710,15 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, r := range results {
 		if r.Status != ResultNormal && r.Status != ResultAbnormal && r.Status != ResultCritical {
-			return nil, fmt.Errorf("lab: result status must be NORMAL, ABNORMAL or CRITICAL")
+			return nil, errors.New("lab: result status must be NORMAL, ABNORMAL or CRITICAL")
 		}
 		var name string
 		if err := tx.QueryRow(ctx, `SELECT test_name FROM lab_order_lines WHERE order_id=$1 AND test_id=$2`, orderID, r.TestID).Scan(&name); err != nil {
-			if err == pgx.ErrNoRows {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("lab: result test %s not part of this order", r.TestID)
 			}
 			return nil, err
@@ -769,12 +762,10 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 
 // Release is the scientist sign-off (HL-7) that publishes the result to the
 // patient's records vault (HL-8) and releases the held payment to the lab (HL-9).
-//
 // HL-7: if any validated result is critical/abnormal the order MUST pass through
 // ESCALATED first — Release escalates (notify patient + ordering clinician via the
 // Notifier, never a silent flag), records the escalation, then proceeds to
 // RELEASED. A normal result goes RESULT_READY → RELEASED directly.
-//
 // HL-8: on RELEASED the authoritative result is written into the records vault as
 // a LAB_RESULT record (consent-gated + access-logged + signed-URL on read there);
 // the vault record id is pinned onto the order.
@@ -793,7 +784,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified lab scientist may release results (HL-2/HL-7)")
+			return nil, errors.New("lab: only a verified lab scientist may release results (HL-2/HL-7)")
 		}
 	}
 
@@ -802,7 +793,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 		return nil, err
 	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("lab: no results to release")
+		return nil, errors.New("lab: no results to release")
 	}
 
 	// HL-7: critical/abnormal value → human escalation BEFORE release.
@@ -844,7 +835,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: lab not payout-eligible — KYC tier required (HL-10)")
+			return nil, errors.New("lab: lab not payout-eligible — KYC tier required (HL-10)")
 		}
 	}
 
@@ -905,7 +896,7 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	if !isPreCollection(o.State) {
 		return nil, fmt.Errorf("lab: order can only be cancelled before it enters the lab pipeline, is %s", o.State)
@@ -937,14 +928,13 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 // forged id). hasCritical is read straight from the order's own state — an
 // order in StateEscalated IS the "critical result awaiting escalation" signal,
 // no separate join to lab_results needed.
-//
 // patientID is surfaced as-is, not a resolved name — this package has no
 // cross-schema user-lookup today (name resolution for other lists in this app
 // happens client-side against user_profiles); resolving a display name here is
-// a follow-up, not attempted in this pass.
+// a follow-up.
 func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID string) ([]ProviderOrderSummary, error) {
 	if providerID == "" {
-		return nil, fmt.Errorf("lab: lab_provider_id required")
+		return nil, errors.New("lab: lab_provider_id required")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedLabOwner(ctx, ownerID, providerID)
@@ -952,7 +942,7 @@ func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID st
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: not a verified owner of this lab (HL-2)")
+			return nil, errors.New("lab: not a verified owner of this lab (HL-2)")
 		}
 	}
 	const q = `
@@ -996,7 +986,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
 	return o, nil
@@ -1012,7 +1002,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	return s.loadResults(ctx, orderID)
 }
@@ -1026,7 +1016,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
@@ -1035,8 +1025,6 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 	return s.loadCustody(ctx, sm.ID)
 }
 
-// ─── internals ──────────────────────────────────────────────────────────────
-
 // transition is a guarded compare-and-set of the order state with an optional
 // side effect, all in one tx, plus an immutable audit entry (HL-12).
 func (s *Service) transition(ctx context.Context, actorID, orderID string, to OrderState, side func(pgx.Tx, *Order) error, action string) (*Order, error) {
@@ -1044,7 +1032,7 @@ func (s *Service) transition(ctx context.Context, actorID, orderID string, to Or
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	o, err := lockOrder(ctx, tx, orderID)
 	if err != nil {
@@ -1100,7 +1088,7 @@ func (s *Service) transitionSample(ctx context.Context, actorID, sampleID string
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	sm, err := lockSample(ctx, tx, sampleID)
 	if err != nil {
@@ -1154,8 +1142,8 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	           FROM lab_orders WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: order not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: order not found")
 		}
 		return nil, err
 	}
@@ -1172,8 +1160,8 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	           FROM lab_orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: order not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: order not found")
 		}
 		return nil, err
 	}
@@ -1220,8 +1208,8 @@ func lockSample(ctx context.Context, tx pgx.Tx, sampleID string) (*Sample, error
 	           FROM lab_samples WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, sampleID).Scan(&sm.ID, &sm.OrderID, &state, &method,
 		&sm.CustodianID, &sm.BarcodeRef, &sm.CollectedBy, &sm.CollectedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: sample not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: sample not found")
 		}
 		return nil, err
 	}
@@ -1237,8 +1225,8 @@ func (s *Service) loadSample(ctx context.Context, sampleID string) (*Sample, err
 	           FROM lab_samples WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, sampleID).Scan(&sm.ID, &sm.OrderID, &state, &method,
 		&sm.CustodianID, &sm.BarcodeRef, &sm.CollectedBy, &sm.CollectedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: sample not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: sample not found")
 		}
 		return nil, err
 	}
@@ -1250,7 +1238,7 @@ func (s *Service) loadSample(ctx context.Context, sampleID string) (*Sample, err
 func (s *Service) sampleByOrder(ctx context.Context, orderID string) (*Sample, error) {
 	var id string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM lab_samples WHERE order_id=$1 LIMIT 1`, orderID).Scan(&id); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -1312,7 +1300,7 @@ func (s *Service) loadCustody(ctx context.Context, sampleID string) ([]CustodyEv
 func (s *Service) labOwner(ctx context.Context, providerID string) (string, error) {
 	var owner string
 	if err := s.db.QueryRow(ctx, `SELECT owner_user_id FROM health_providers WHERE id=$1`, providerID).Scan(&owner); err != nil {
-		return "", fmt.Errorf("lab: provider not found")
+		return "", errors.New("lab: provider not found")
 	}
 	return owner, nil
 }
@@ -1339,12 +1327,183 @@ func generateBarcode() string {
 	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	b := make([]byte, 10)
 	for i := range b {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
-		if err != nil {
-			b[i] = alphabet[0]
-			continue
-		}
-		b[i] = alphabet[n.Int64()]
+		b[i] = alphabet[cryptox.RandUint(uint64(len(alphabet)))]
 	}
 	return "LAB-" + string(b)
+}
+
+// LR-006 — versioned lab-result amendment.
+// A result released to the patient/clinician and later found to be wrong is not
+// edited in place: it is re-issued as a NEW version. The prior row is retained
+// unchanged and marked superseded; a fresh row at version+1 carries the correction.
+// This mirrors the never-destructive clinical-content amendment pattern in
+// health/triage/governance and keeps the full audit chain intact (HL-12).
+
+var (
+	// ErrNotAmendable — the order's result has not been released yet, so there is
+	// nothing published to "amend": pre-release corrections go through result entry.
+	ErrNotAmendable = errors.New("lab: only a released result can be amended (correct pre-release results via result entry)")
+	// ErrResultNotFound — no current (non-superseded) result exists for the test.
+	ErrResultNotFound = errors.New("lab: no current result for that test to amend")
+	// ErrNoAmendmentReason — an amendment must state why the prior result was wrong.
+	ErrNoAmendmentReason = errors.New("lab: an amendment reason is required")
+)
+
+// canAmendResult reports whether an order is in a state where a published result
+// may be re-issued as a versioned correction (LR-006). Amendment applies only AFTER
+// the result was released — RELEASED, or the post-release terminal CLOSED. Before
+// release the result is still a working entry and is corrected in place via result
+// entry, not versioned.
+func canAmendResult(state OrderState) bool {
+	return state == StateReleased || state == StateClosed
+}
+
+// AmendResultInput is a corrected value for a single already-released test result.
+type AmendResultInput struct {
+	TestID   string
+	Value    string
+	Unit     string
+	RefRange string
+	Status   ResultStatus
+	Reason   string // why the prior result was wrong (audit/clinical governance)
+}
+
+// AmendResult re-issues a corrected version of an already-released lab result
+// (LR-006). It is NON-DESTRUCTIVE: the prior version row is retained unchanged and
+// marked superseded; a NEW row is inserted at version+1 carrying the correction.
+// The fail-safe interpretation backstop is re-run on the corrected value (a wrong
+// unit is rejected; a mis-entered status is UPGRADED, never downgraded — the same
+// guard as result entry). If the corrected result is critical/abnormal the patient
+// + ordering clinician are re-notified (HL-7, never a silent change) and the vault
+// copy is refreshed (HL-8). Only a verified scientist of the lab may amend.
+// The authoritative version bump (insert new + supersede prior) is one atomic tx
+// with the current row locked FOR UPDATE, so concurrent amendments serialize into a
+// linear version chain. The notification + vault refresh are downstream copies and
+// are best-effort (recorded to audit on failure), exactly as on release.
+func (s *Service) AmendResult(ctx context.Context, scientistID, orderID string, in AmendResultInput) (*Result, error) {
+	if strings.TrimSpace(in.Reason) == "" {
+		return nil, ErrNoAmendmentReason
+	}
+	if in.Status != ResultNormal && in.Status != ResultAbnormal && in.Status != ResultCritical {
+		return nil, errors.New("lab: result status must be NORMAL, ABNORMAL or CRITICAL")
+	}
+	o, err := s.load(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if !canAmendResult(o.State) {
+		return nil, ErrNotAmendable
+	}
+	// HL-2: only a verified scientist of this lab may re-validate/amend a result.
+	if s.prov != nil {
+		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
+		if perr != nil {
+			return nil, perr
+		}
+		if !ok {
+			return nil, errors.New("lab: only a verified lab scientist may amend results (HL-2)")
+		}
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("lab: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the current (non-superseded) version of the test's result so two
+	// concurrent amendments serialize and the version chain stays linear.
+	var priorID, testName string
+	var priorVersion int
+	const sel = `SELECT id, test_name, version FROM lab_results
+	             WHERE order_id=$1 AND test_id=$2 AND superseded_by IS NULL
+	             FOR UPDATE`
+	if err := tx.QueryRow(ctx, sel, orderID, in.TestID).Scan(&priorID, &testName, &priorVersion); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrResultNotFound
+		}
+		return nil, err
+	}
+
+	// Fail-safe interpretation backstop on the corrected value (LR-002/003/008): a
+	// wrong unit is rejected, a mis-entered status is UPGRADED. Never downgrades.
+	effStatus, unitMismatch := deriveEffectiveStatus(in.Status, testName, in.Value, in.Unit, in.RefRange)
+	if unitMismatch {
+		return nil, fmt.Errorf("lab: amended unit %q for %s disagrees with the reference-range/expected unit (possible transposition) — rejected (EC-002)", in.Unit, testName)
+	}
+
+	newID := uuid.New().String()
+	// The corrected version re-publishes the result, so it is itself released
+	// immediately (released_by = the amending scientist) — the latest version the
+	// patient/vault sees is always a released one.
+	const ins = `
+		INSERT INTO lab_results
+		  (id, order_id, test_id, test_name, value, unit, ref_range, status,
+		   validated_by, version, amended_by, amended_at, amendment_reason,
+		   released_by, released_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9,now(),$11,$9,now())`
+	if _, err := tx.Exec(ctx, ins, newID, orderID, in.TestID, testName,
+		in.Value, in.Unit, in.RefRange, string(effStatus),
+		scientistID, priorVersion+1, in.Reason); err != nil {
+		return nil, fmt.Errorf("lab: insert amended result: %w", err)
+	}
+	// Retain the prior version immutably; point it at the version that replaced it.
+	if _, err := tx.Exec(ctx, `UPDATE lab_results SET superseded_by=$2 WHERE id=$1`, priorID, newID); err != nil {
+		return nil, fmt.Errorf("lab: supersede prior result: %w", err)
+	}
+	if needsEscalation(effStatus) {
+		if _, err := tx.Exec(ctx, `UPDATE lab_results SET escalated_at=now() WHERE id=$1`, newID); err != nil {
+			return nil, fmt.Errorf("lab: mark amended escalation: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("lab: commit amendment: %w", err)
+	}
+
+	// Provenance (HL-12): who corrected what, from which version, and why.
+	s.audited(scientistID, o.PatientID, "health.lab.result.amend", orderID,
+		map[string]any{"test": testName, "prior_version": priorVersion, "prior_result_id": priorID},
+		map[string]any{"version": priorVersion + 1, "result_id": newID, "status": string(effStatus), "reason": in.Reason})
+
+	// HL-7: a corrected critical/abnormal result must re-notify the patient + ordering
+	// clinician — never a silent change. Best-effort; the amendment + audit are the
+	// durable record.
+	if needsEscalation(effStatus) && s.notify != nil {
+		if nerr := s.notify.NotifyCriticalResult(ctx, o.PatientID, orderID, "CRITICAL"); nerr != nil {
+			s.audited(scientistID, o.PatientID, "health.lab.result.amend.notify_failed", orderID, nil,
+				map[string]any{"error": nerr.Error()})
+		}
+	}
+
+	// HL-8: refresh the patient's vault with the corrected result set as a NEW
+	// versioned record (the prior vault copy is retained). Best-effort — lab_results
+	// is the authoritative store; a vault hiccup is recorded, not fatal to the fix.
+	if s.vault != nil {
+		latest, lerr := s.loadResults(ctx, orderID)
+		if lerr != nil {
+			s.audited(scientistID, o.PatientID, "health.lab.result.amend.vault_failed", orderID, nil,
+				map[string]any{"error": lerr.Error()})
+		} else {
+			title := fmt.Sprintf("Laboratory result (amended v%d)", priorVersion+1)
+			if rid, verr := s.vault.Create(ctx, o.PatientID, scientistID, "PATIENT", "LAB_RESULT", title, summariseResults(latest), nil); verr != nil {
+				s.audited(scientistID, o.PatientID, "health.lab.result.amend.vault_failed", orderID, nil,
+					map[string]any{"error": verr.Error()})
+			} else {
+				_, _ = s.db.Exec(ctx, `UPDATE lab_orders SET result_record_id=$2 WHERE id=$1`, orderID, rid)
+			}
+		}
+	}
+
+	return &Result{
+		ID:          newID,
+		OrderID:     orderID,
+		TestID:      in.TestID,
+		TestName:    testName,
+		Value:       in.Value,
+		Unit:        in.Unit,
+		RefRange:    in.RefRange,
+		Status:      effStatus,
+		ValidatedBy: scientistID,
+		Version:     priorVersion + 1,
+	}, nil
 }

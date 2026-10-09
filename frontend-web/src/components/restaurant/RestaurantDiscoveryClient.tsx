@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { listRestaurants, RestaurantApiError } from '@/src/lib/restaurant/api';
-import { formatNaira } from '@/src/lib/restaurant/format';
+import { listRestaurants, RestaurantApiError, formatNaira } from '@/src/lib/restaurant';
 import type { Restaurant } from '@/src/types/restaurant';
 
 const PAGE_SIZE = 20;

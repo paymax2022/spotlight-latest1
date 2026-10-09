@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Owner / landlord types (V2) ──────────────────────────
 // The create-side of the property graph + the Owner Financial Cockpit + Void
 // Optimization (the signature differentiator). Money is integer minor units.
 
@@ -32,8 +31,6 @@ export interface OwnerDashboard {
   voidCandidateCount: number;
 }
 
-// ── Property creation ─────────────────────────────────────────────────────────
-
 export interface CreatePropertyDraft {
   name: string;
   type: PropertyType;
@@ -53,8 +50,6 @@ export interface CreateUnitDraft {
   furnishing: Furnishing;
 }
 
-// ── Offering mode config ─────────────────────────────────────────────────────
-
 export interface OfferingModeConfig {
   mode: TransactionMode;
   enabled: boolean;
@@ -70,8 +65,6 @@ export interface UnitOfferings {
   status: UnitStatus;
   modes: OfferingModeConfig[];
 }
-
-// ── Void optimization ─────────────────────────────────────────────────────────
 
 export interface VoidCandidate {
   unitId: string;

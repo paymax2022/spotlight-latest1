@@ -3,15 +3,26 @@ package supplierwebhooks
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"slices"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/stays/ari"
+	"spotlight/backend/internal/stays/reservation"
+)
+
+const (
+	keyError = "error"
 )
 
 // Sentinel errors.
@@ -50,9 +61,7 @@ func (s *Service) VerifySignature(body []byte, signature string) error {
 		return ErrBadSignature // fail-closed when no secret configured
 	}
 	sig := strings.TrimPrefix(strings.TrimSpace(signature), "sha256=")
-	mac := hmac.New(sha256.New, []byte(s.secret))
-	mac.Write(body)
-	want := hex.EncodeToString(mac.Sum(nil))
+	want := cryptox.HMACSHA256Hex(s.secret, string(body))
 	if !hmac.Equal([]byte(sig), []byte(want)) {
 		return ErrBadSignature
 	}
@@ -71,10 +80,10 @@ type Event struct {
 // external_event_id) returns ErrDuplicate and applies nothing (safe replay).
 func (s *Service) Ingest(ctx context.Context, ev Event) error {
 	if s.db == nil {
-		return fmt.Errorf("supplierwebhooks: nil pool")
+		return errors.New("supplierwebhooks: nil pool")
 	}
 	if ev.Source == "" || ev.ExternalEventID == "" || ev.EventType == "" {
-		return fmt.Errorf("supplierwebhooks: source, external_event_id, event_type required")
+		return errors.New("supplierwebhooks: source, external_event_id, event_type required")
 	}
 	// Idempotent claim — INSERT ... ON CONFLICT DO NOTHING returns 0 rows on replay.
 	ct, err := s.db.Exec(ctx, `
@@ -129,7 +138,7 @@ func (s *Service) applyRate(ctx context.Context, ev Event) error {
 	rp := str(ev.Payload, "rate_plan_id")
 	date := str(ev.Payload, "date")
 	if rp == "" || date == "" {
-		return fmt.Errorf("rate.updated: rate_plan_id + date required")
+		return errors.New("rate.updated: rate_plan_id + date required")
 	}
 	return s.ari.SetRateDay(ctx, ari.RateDay{
 		RatePlanID: rp,
@@ -146,7 +155,7 @@ func (s *Service) applyAvailability(ctx context.Context, ev Event) error {
 	rt := str(ev.Payload, "room_type_id")
 	date := str(ev.Payload, "date")
 	if rt == "" || date == "" {
-		return fmt.Errorf("availability.updated: room_type_id + date required")
+		return errors.New("availability.updated: room_type_id + date required")
 	}
 	return s.ari.SetAvailabilityDay(ctx, ari.AvailabilityDay{
 		RoomTypeID: rt,
@@ -163,7 +172,7 @@ func (s *Service) applyRestriction(ctx context.Context, ev Event) error {
 	from := str(ev.Payload, "date_from")
 	to := str(ev.Payload, "date_to")
 	if rp == "" || from == "" || to == "" {
-		return fmt.Errorf("restriction.updated: rate_plan_id + date_from + date_to required")
+		return errors.New("restriction.updated: rate_plan_id + date_from + date_to required")
 	}
 	e := ari.BulkEdit{DateFrom: from, DateTo: to}
 	if v, ok := ev.Payload["min_los"]; ok {
@@ -193,7 +202,7 @@ func (s *Service) applyStopSell(ctx context.Context, ev Event) error {
 	from := str(ev.Payload, "date_from")
 	to := str(ev.Payload, "date_to")
 	if rt == "" || from == "" || to == "" {
-		return fmt.Errorf("stop_sell.toggled: room_type_id + date_from + date_to required")
+		return errors.New("stop_sell.toggled: room_type_id + date_from + date_to required")
 	}
 	stop := boolVal(ev.Payload, "stop_sell")
 	e := ari.BulkEdit{DateFrom: from, DateTo: to, StopSell: &stop}
@@ -201,29 +210,106 @@ func (s *Service) applyStopSell(ctx context.Context, ev Event) error {
 	return err
 }
 
-// applyReservation handles reservation.* sync events (e.g. supplier-side cancel).
-// Payload: {reservation_id, state}. State changes are applied directly (the supplier
-// is authoritative for its own reservation lifecycle on Rail B inbound).
+// allowedInboundStates is the set of lifecycle targets a supplier may drive
+// inbound. CANCELLED_BY_GUEST is deliberately absent — a supplier cannot speak
+// for the guest.
+var allowedInboundStates = map[string]bool{
+	string(reservation.StateCancelledByHotel): true,
+	string(reservation.StateConfirmed):        true,
+	string(reservation.StateCompleted):        true,
+	string(reservation.StateNoShow):           true,
+}
+
+// applyReservation handles reservation.* sync events. The write is FSM-guarded:
+// the update carries an `AND state = <current>` predicate derived from
+// reservation.InboundSources, so an event can only move a row along a legal
+// edge. A stale/duplicate event on a dead row is a consumed no-op; an illegal
+// edge off a live row fails the event so ops sees it. A hotel-side cancel
+// drives the shared refund machinery before the terminal flip.
 func (s *Service) applyReservation(ctx context.Context, ev Event) error {
 	rid := str(ev.Payload, "reservation_id")
 	state := str(ev.Payload, "state")
 	if rid == "" || state == "" {
-		return fmt.Errorf("reservation.*: reservation_id + state required")
+		return errors.New("reservation.*: reservation_id + state required")
 	}
-	// Only allow transitions into safe inbound states (supplier-driven).
-	switch state {
-	case "CANCELLED_BY_HOTEL", "CONFIRMED", "COMPLETED", "NO_SHOW":
-	default:
+	if !allowedInboundStates[state] {
 		return fmt.Errorf("reservation.*: unsupported inbound state %q", state)
 	}
-	_, err := s.db.Exec(ctx, `
+	target := reservation.State(state)
+	sources := reservation.InboundSources(target)
+
+	var cur string
+	if err := s.db.QueryRow(ctx,
+		`SELECT state FROM public.stays_reservation WHERE id = $1`, rid).Scan(&cur); err != nil {
+		return fmt.Errorf("reservation.*: reservation %s lookup: %w", rid, err)
+	}
+	if !slices.Contains(sources, cur) {
+		// Already-target or terminal source: stale/duplicate event — consume it.
+		if cur == state || reservation.State(cur).IsTerminal() {
+			return nil
+		}
+		// Illegal transition on a live row: protocol violation — fail the event.
+		return fmt.Errorf("reservation.*: illegal transition %s → %s", cur, state)
+	}
+	if target == reservation.StateCancelledByHotel {
+		return s.applyHotelCancel(ctx, rid, str(ev.Payload, "reason"))
+	}
+	// Non-cancel flips take the same reservation advisory lock the refund
+	// sagas hold — otherwise a flip can commit between a saga's leg posts and
+	// its terminal update, leaving a payable-looking row with posted refund
+	// legs. State is re-read under the lock.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("reservation.*: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, "stays:reservation:"+rid); err != nil {
+		return fmt.Errorf("reservation.*: lock %s: %w", rid, err)
+	}
+	if err := tx.QueryRow(ctx,
+		`SELECT state FROM public.stays_reservation WHERE id = $1`, rid).Scan(&cur); err != nil {
+		return fmt.Errorf("reservation.*: reservation %s lookup: %w", rid, err)
+	}
+	if !slices.Contains(sources, cur) {
+		// The row moved while we waited on the lock — re-apply the same rules:
+		// already-target or terminal ⇒ consume; illegal on a live row ⇒ fail.
+		if cur == state || reservation.State(cur).IsTerminal() {
+			return nil
+		}
+		return fmt.Errorf("reservation.*: illegal transition %s → %s", cur, state)
+	}
+	ct, err := tx.Exec(ctx, `
 		UPDATE public.stays_reservation
 		SET state = $2, version = version + 1, updated_at = now()
-		WHERE id = $1`, rid, state)
+		WHERE id = $1 AND state = $3`, rid, state, cur)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		// The row moved between lock-read and write — consume the event.
+		return nil
+	}
+	return tx.Commit(ctx)
+}
+
+// applyHotelCancel runs a supplier-reported hotel cancel through the shared
+// refund machinery (reservation.RefundOps) under the 'stays:refund:<id>' /
+// 'stays:hotelcancel:<id>:refund' families, so a raced extranet or guest cancel
+// converges rather than double-paying. A refund failure leaves the row
+// non-terminal so the event can be re-driven.
+func (s *Service) applyHotelCancel(ctx context.Context, reservationID, reason string) error {
+	_, err := s.refundOps().CancelByHotel(ctx, reservationID, reason)
 	return err
 }
 
-// --- payload helpers ---
+// refundOps builds the shared cancel-refund machinery over this service's pool
+// (built here so the app wiring keeps its constructor signature).
+func (s *Service) refundOps() *reservation.RefundOps {
+	return reservation.NewRefundOps(
+		reservation.NewRepository(s.db),
+		ledger.NewService(ledger.NewRepository(s.db), nil))
+}
 
 func orMap(m map[string]any) map[string]any {
 	if m == nil {
@@ -279,4 +365,51 @@ func toBool(v any) bool {
 		return b
 	}
 	return false
+}
+
+// Handler exposes the Rail-B supplier webhook endpoint. The raw body is read for
+// HMAC verification BEFORE JSON parsing, then the event is ingested idempotently.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs the webhooks handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Register wires the webhook route onto the webhooks group. The route is unauthen-
+// ticated (no member JWT) and verified by HMAC signature instead.
+//
+//	POST /internal/webhooks/stays-supplier   (header: X-Stays-Signature)
+func (h *Handler) Register(g *gin.RouterGroup) {
+	g.POST("/stays-supplier", h.Receive)
+}
+
+// Receive verifies the signature, parses the event, and ingests it idempotently.
+func (h *Handler) Receive(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "cannot read body"})
+		return
+	}
+	// Signature verification (fail-closed: no secret configured → reject).
+	sig := c.GetHeader("X-Stays-Signature")
+	if verr := h.svc.VerifySignature(body, sig); verr != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "invalid signature"})
+		return
+	}
+	var ev Event
+	if err := json.Unmarshal(body, &ev); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid json"})
+		return
+	}
+	if err := h.svc.Ingest(c.Request.Context(), ev); err != nil {
+		if errors.Is(err, ErrDuplicate) {
+			// Idempotent replay — acknowledge so the supplier stops retrying.
+			c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "duplicate"}})
+			return
+		}
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "applied"}})
 }

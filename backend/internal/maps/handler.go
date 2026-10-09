@@ -7,7 +7,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
+	platformRedis "spotlight/backend/internal/platform/redis"
 )
 
 // Handler exposes MapService over HTTP. The client calls THESE endpoints, never
@@ -68,24 +71,17 @@ func badLatLng(c *gin.Context, reason string) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": reason})
 }
 
-func status(err error) int {
-	switch {
-	case errors.Is(err, ErrEmptyQuery):
-		return http.StatusBadRequest
-	case errors.Is(err, ErrNoProvider):
-		return http.StatusServiceUnavailable
-	case errors.Is(err, ErrLicenseCoherence):
-		return http.StatusConflict
-	default:
-		return http.StatusInternalServerError
-	}
-}
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusBadRequest, ErrEmptyQuery),
+	httperr.R(http.StatusServiceUnavailable, ErrNoProvider),
+	httperr.R(http.StatusConflict, ErrLicenseCoherence),
+)
 
 // GET /basemap?surface=checkout
 func (h *Handler) GetBasemap(c *gin.Context) {
 	cfg, err := h.svc.GetBasemapConfig(c.Request.Context(), c.Query("surface"))
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, cfg)
@@ -113,7 +109,7 @@ func (h *Handler) Autocomplete(c *gin.Context) {
 	}
 	out, err := h.svc.AutocompleteAddress(c.Request.Context(), in.Query, in.SessionToken, in.Surface, in.Near)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"suggestions": out})
@@ -136,7 +132,7 @@ func (h *Handler) Geocode(c *gin.Context) {
 		if respondNeedsPin(c, err) {
 			return
 		}
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -164,7 +160,7 @@ func (h *Handler) Reverse(c *gin.Context) {
 		if respondNeedsPin(c, err) {
 			return
 		}
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -190,7 +186,7 @@ func (h *Handler) Places(c *gin.Context) {
 	}
 	out, err := h.svc.SearchExternalPlaces(c.Request.Context(), in.Query, in.Near)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"places": out})
@@ -219,7 +215,7 @@ func (h *Handler) Route(c *gin.Context) {
 	}
 	res, err := h.svc.GetRoute(c.Request.Context(), in.Origin, in.Dest, RouteOptions{Profile: in.Profile})
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -255,7 +251,7 @@ func (h *Handler) Matrix(c *gin.Context) {
 	}
 	res, err := h.svc.GetDistanceMatrix(c.Request.Context(), in.Origins, in.Dests)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -284,7 +280,7 @@ func (h *Handler) Match(c *gin.Context) {
 	}
 	res, err := h.svc.MatchToRoad(c.Request.Context(), in.Trace)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -314,7 +310,7 @@ func (h *Handler) Nearby(c *gin.Context) {
 	}
 	out, err := h.svc.FindNearbyOwn(c.Request.Context(), in.EntityType, in.Point, in.RadiusM, in.Limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"results": out})
@@ -342,7 +338,7 @@ func (h *Handler) InZone(c *gin.Context) {
 	}
 	inside, err := h.svc.IsInZone(c.Request.Context(), in.Point, in.ZoneID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"in_zone": inside})
@@ -376,7 +372,7 @@ func (h *Handler) UpsertLocation(c *gin.Context) {
 	}
 	// Idempotency: a repeated Idempotency-Key within the window is a no-op
 	// (the upsert is naturally idempotent; this also short-circuits retries).
-	if !h.svc.IdempotentFirst(c.Request.Context(), c.GetHeader("Idempotency-Key")) {
+	if !h.svc.IdempotentFirst(c.Request.Context(), ginutil.IdempotencyKey(c)) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "deduplicated": true})
 		return
 	}
@@ -388,25 +384,24 @@ func (h *Handler) UpsertLocation(c *gin.Context) {
 		OwnEntity{EntityID: in.EntityID, Lat: in.Lat, Lng: in.Lng},
 		in.EntityType, plus)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "plus_code": plus})
 }
 
 // adminRoleSlugs are the roles permitted to read provider cost/usage telemetry.
-// Kept in sync with the RBAC role slugs used elsewhere (see rbac personas tests).
-var adminRoleSlugs = map[string]bool{"admin": true, "super_admin": true}
+// Seeded role slugs — the RBAC migration and middleware use the hyphenated
+// spellings; underscore variants matched no seeded role.
+var adminRoleSlugs = map[string]bool{"admin": true, "super-admin": true, "system-admin": true}
 
 // requireAdmin gates cost/usage telemetry to admins. It reads the authenticated
 // user that middleware.RequireAuthContext places in the gin context (key
 // "authUser") and checks its role slugs. The maps proxy is always mounted behind
 // RequireAuthContext (finance_routes.go mapsAuth()), so the context is populated.
-//
 // FAIL-CLOSED: if no authenticated user is present (context missing) OR the user
 // carries no admin role, the request is rejected 403 — provider cost/usage must
 // never leak to a non-admin caller. Returns true when the handler may proceed.
-//
 // NOTE: this is an in-handler defence-in-depth guard. The route-registration owner
 // (finance_routes.go / transport) SHOULD additionally wrap GET /metrics and
 // GET /usage with middleware.RequirePermission(rbac, "maps:metrics:read") so the
@@ -448,8 +443,19 @@ func (h *Handler) Usage(c *gin.Context) {
 	}
 	rows, err := h.svc.UsageSnapshot(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"month": currentMonth(), "usage": rows})
+}
+
+// PerUserRateLimit protects the cost surface: every maps call can hit a paid
+// provider, so we cap per-user requests/minute. Implementation lives in
+// middleware.PerUserRateLimit (Redis-backed fixed window, in-memory fallback);
+// this wrapper keeps the existing call sites and default.
+func PerUserRateLimit(redis *platformRedis.Client, perMinute int) gin.HandlerFunc {
+	if perMinute <= 0 {
+		perMinute = 120
+	}
+	return middleware.PerUserRateLimit(redis, "maps", perMinute)
 }

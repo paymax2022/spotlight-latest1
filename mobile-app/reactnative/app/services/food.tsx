@@ -13,11 +13,11 @@ import { goBack } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1, shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
 import { useRestaurantSearch } from '@/features/food/hooks';
 import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useMyStores } from '@/features/restaurantmerchant/hooks';
@@ -27,8 +27,6 @@ import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import StateView from '@/components/StateView';
 
-// ── Landing-screen config ───────────────────────────────────────────────────
-//
 // This screen is the module's only nav entry (src/constants/modules.ts). It used
 // to render a hard-coded RESTAURANTS array whose ids ('1','2',…) matched nothing
 // real, and every card pushed a bare '/food' — so the tapped restaurant was
@@ -47,8 +45,6 @@ const CUISINE_FILTERS = [
 type Cuisine = typeof CUISINE_FILTERS[number]['key'];
 
 // Browse tiles. Each one opens the real (data-backed) Food module rather than
-// filtering the mock list below — `href` is what makes them tappable; without it
-// they were inert decoration. Nearby/Popular/Offers map to ?view= handled in
 // app/food/index.tsx. There is no scheduled-ordering feature yet, so that slot
 // is My Orders until pre-ordering ships.
 const CATEGORIES = [
@@ -60,8 +56,6 @@ const CATEGORIES = [
 
 // The restaurant list is fetched live and PAGED via useRestaurantSearch() in the component
 // below. The former hard-coded RESTAURANTS array lived here.
-
-// ── Sub-components ──────────────────────────────────────────────────────────
 
 function DynamicIcon({ name, size = 22, color }: { name: string; size?: number; color: string }) {
   const IC = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Utensils;
@@ -232,8 +226,6 @@ function MerchantEntryCard() {
   );
 }
 
-// ── Main screen ─────────────────────────────────────────────────────────────
-
 export default function FoodScreen() {
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch]   = useState('');
@@ -249,9 +241,7 @@ export default function FoodScreen() {
   // is what made this screen cost ~48k DOM nodes to render. Filtering only the
   // rows already downloaded was never an option: a search would then match
   // whichever page happened to have loaded.
-  //
   // Still name/description/cuisine, not dishes. Dish-level search exists in
-  // backend/internal/restaurant/search.go but is not yet routed; when it is,
   // this call is the place it lands.
   const {
     items: filtered,

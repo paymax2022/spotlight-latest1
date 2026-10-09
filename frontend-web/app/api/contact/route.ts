@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOptionalEnv } from '@/lib/config/env';
-import { sendTransactionalEmail } from '@/lib/email/transactional';
+import { getOptionalEnv } from '@/lib/config';
+import { sendTransactionalEmail } from '@/lib/email';
 
 type ContactPayload = {
   fullName?: string;
@@ -29,7 +29,8 @@ function safe(value: string) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as ContactPayload;
+    const body = (await request.json().catch(() => null)) as ContactPayload;
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const fullName = body.fullName?.trim() || '';
     const email = body.email?.trim() || '';
     const requestType = body.requestType?.trim() || '';

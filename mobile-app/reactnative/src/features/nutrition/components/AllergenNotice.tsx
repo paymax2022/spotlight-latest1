@@ -1,13 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { AllergenDeclaration } from '../types';
 
-// ─── Allergen chip ────────────────────────────────────────────────────────────
 type Tone = 'contains' | 'maybe' | 'free';
 
 function Chip({ label, tone }: { label: string; tone: Tone }) {

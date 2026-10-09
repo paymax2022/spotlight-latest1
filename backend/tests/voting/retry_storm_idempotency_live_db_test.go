@@ -1,7 +1,6 @@
 package voting_test
 
 // UAT Batch 3 — TS-11 NF-005 (Idempotency under retry storm).
-//
 // Goes further than the existing coverage this batch checked first:
 //   - backend/tests/voting/connect_tally_live_db_test.go proves the tally
 //     PROJECTION follows vote_credit_status, not concurrency of the credit call.
@@ -14,14 +13,12 @@ package voting_test
 //     voters/transactions don't race each other and one voter can't exceed
 //     their cap — not that the SAME logical request replayed many times
 //     collapses to exactly one effect.
-//
 // This file fires N concurrent copies of the SAME logical request — same
 // transaction id + payment reference for the bridge's paid-vote credit RPC,
 // same Idempotency-Key for Go Connect's PaidVote — the retry-storm shape (a
 // client retrying a slow request, a webhook firing alongside a redirect,
 // a proxy replaying a request it never got a response for) and confirms
 // exactly one effect lands: one credited vote, one wallet debit, never more.
-//
 // HONESTY NOTE: same caveat as NF-001 — 100-150 concurrent goroutines against
 // local Postgres is real concurrency, not a production-scale retry storm
 // (thousands of clients, real network jitter, a real load balancer).
@@ -72,17 +69,15 @@ func TestNF005_CreditPaidVoteTransaction_TSBridge_RetryStorm(t *testing.T) {
 		t.Fatalf("seed vote_transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
 	})
 
 	const attempts = 120
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	wins, replays, errs := 0, 0, 0
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			var alreadyCredited, refMismatch bool
 			var voteID *string
 			err := pool.QueryRow(ctx, `
@@ -107,7 +102,7 @@ func TestNF005_CreditPaidVoteTransaction_TSBridge_RetryStorm(t *testing.T) {
 			} else if voteID != nil {
 				wins++
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -139,8 +134,6 @@ func TestNF005_CreditPaidVoteTransaction_TSBridge_RetryStorm(t *testing.T) {
 		t.Fatalf("vote_totals.paid_votes=%d after %d replayed requests, want 5 (credited exactly once) — the retry storm inflated the tally", paidVotes, attempts)
 	}
 }
-
-// ── Go Connect engine: PaidVote end-to-end retry storm ─────────────────────
 
 // noopAuditor discards audit writes — this test isolates the idempotency
 // guarantee under test (the wallet debit + immutable vote insert), not the
@@ -233,10 +226,8 @@ func TestNF005_PaidVote_GoConnect_RetryStorm(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	successes, dupErrors, otherErrors := 0, 0, 0
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			_, err := svc.PaidVote(ctx, contest, voter, idemKey, connectvoting.PaidVoteRequest{
 				OptionRef: contestant,
 				Quantity:  1,
@@ -256,7 +247,7 @@ func TestNF005_PaidVote_GoConnect_RetryStorm(t *testing.T) {
 				// INSERT, not the ledger's.
 				otherErrors++
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

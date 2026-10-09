@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
 import { createClient } from '@/src/lib/supabase/client';
-import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
+import { loadPaystackClient } from '@/src/lib/payments';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(n);
@@ -64,7 +64,7 @@ function KnownRow({ label, value }: { label: string; value: string }) {
 
 const SCHEDULES: Record<string, string> = { weekdays: 'Mon–Fri', weekends: 'Sat–Sun', accelerated: 'Intensive' };
 
-export default function AcademyApplyPage({ embedded = false }: { embedded?: boolean }) {
+function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -88,6 +88,9 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState('');
   const [applicant, setApplicant] = useState<Applicant | null>(null);
+  // A reference whose charge already succeeded but whose submit failed — kept
+  // so a resubmit reuses the paid charge instead of opening a fresh one.
+  const [paidFeeReference, setPaidFeeReference] = useState('');
 
   const [form, setForm] = useState({
     batch_id: prefillBatch,
@@ -175,7 +178,6 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
   const atLimit = form.areas_of_interest.length >= maxInterestAreas;
 
   // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. Shown so
-  // the applicant knows the commitment; NOT collected here. The server recomputes
   // this same total from the same admin-managed rows when the application is
   // submitted, so this is a display convenience and cannot be used to pay less.
   const tuitionTotal = availableAreas
@@ -261,12 +263,38 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     }
 
     try {
+      // Mint the reference SERVER-SIDE first: the initiate endpoint writes a
+      // pending intent keyed by it, freezing the application-fee quote and
+      // giving the webhook/reconcile sweep a record to fulfil if this browser
+      // never submits the form (AUD-FE-003 residual). Passing our reference to
+      // Paystack is what makes the charge discoverable — a Paystack-minted
+      // reference would orphan the payment again.
+      const initRes = await fetch('/api/academy/application-fee/initiate', {
+        method: 'POST',
+        headers: await authHeaders(true),
+        body: JSON.stringify({
+          email: form.email,
+          full_name: form.full_name,
+          batch_id: form.batch_id,
+        }),
+      });
+      const initJson = await initRes.json().catch(() => ({}));
+      if (!initRes.ok) {
+        throw new Error(initJson?.error || 'Could not start the registration fee payment.');
+      }
+      const feeReference = String(initJson.reference ?? '');
+      const amountKobo = Number(initJson.amountKobo ?? 0);
+      if (!feeReference || !(amountKobo > 0)) {
+        throw new Error('Could not start the registration fee payment.');
+      }
+
       const PaystackPop = await loadPaystackClient();
       const handler = new PaystackPop();
       handler.newTransaction({
         key: publicKey,
         email: form.email,
-        amount: Math.round(settings.application_fee * 100),
+        amount: amountKobo,
+        reference: feeReference,
         currency: 'NGN',
         metadata: {
           custom_fields: [
@@ -275,6 +303,7 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
           ],
         },
         onSuccess: (transaction) => {
+          setPaidFeeReference(transaction.reference);
           void submitApplication(transaction.reference);
         },
         onCancel: () => {
@@ -305,6 +334,12 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     setSubmitting(true);
 
     if (registrationFeeRequired) {
+      // A paid-but-unsubmitted charge is reused, never re-taken: the same
+      // reference files the retry (the intent is still 'paid' for it).
+      if (paidFeeReference) {
+        await submitApplication(paidFeeReference);
+        return;
+      }
       await payRegistrationFeeAndSubmit();
       return;
     }
@@ -678,5 +713,16 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     <main style={{ minHeight: '80vh', background: 'linear-gradient(160deg,#0d0d1a 0%,#14102b 60%,#0d0d1a 100%)', padding: '40px 16px' }}>
       {content}
     </main>
+  );
+}
+
+// useSearchParams requires a Suspense boundary or the route falls out of
+// prerendering and is SSR'd on every request. `embedded` passes through —
+// app/apply/[slug] mounts this component directly.
+export default function AcademyApplyPage({ embedded = false }: { embedded?: boolean }) {
+  return (
+    <Suspense fallback={null}>
+      <AcademyApplyPageInner embedded={embedded} />
+    </Suspense>
   );
 }

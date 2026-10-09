@@ -1,10 +1,8 @@
-// ── Insurance (live) — the in-flight purchase draft ─────────────────────────
 // A purchase spans four screens (form → review → result), and route params are
 // the wrong place to carry a filled-in application: they are strings, they end
 // up in logs and deep links, and this draft holds PII (NIN, date of birth, a
 // photo URL). So the draft lives in memory for the length of the attempt and is
 // referenced by an opaque id.
-//
 // The single most important thing here is the IDEMPOTENCY KEY. It is minted
 // ONCE, when the draft is created, and every retry of that same purchase reuses
 // it verbatim. Regenerating a key on retry is exactly how a person gets charged

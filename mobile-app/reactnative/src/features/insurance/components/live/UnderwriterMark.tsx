@@ -1,18 +1,15 @@
-// ── Insurance (live) — who actually carries the risk ────────────────────────
 // Paymax does not underwrite. Ten real insurers do (AIICO, Sovereign Trust,
 // Coronation, Sanlam, SanlamAllianz, Leadway, Bastion Health, Goxi, Tangerine,
 // MyCoverGenius), and a person is entitled to know whose paper their cover is on
 // before they pay — so this mark appears on every card, quote and policy.
-//
-// `meta.logo` exists for 38 of 68 products; the rest fall back to the insurer's
 // initials rather than a broken image.
 
 import React, { useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 
 export function initialsFor(name: string): string {

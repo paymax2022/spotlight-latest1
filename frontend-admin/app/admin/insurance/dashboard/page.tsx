@@ -30,6 +30,7 @@ import {
   fmtDate,
 } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
+import ProviderPoliciesPanel from './ProviderPoliciesPanel';
 
 /**
  * Insurance overview.
@@ -175,6 +176,8 @@ export default function InsuranceDashboardPage() {
         )}
       </Card>
 
+      <ProviderPoliciesPanel />
+
       <Card title="Book" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>{kpi?.generated_at ? `as of ${fmtDate(kpi.generated_at)}` : null}</span>}>
         <LiveState loading={kpiLoading} failure={kpiFail} empty={false} onRetry={loadKpi}>
           {kpi && (
@@ -191,7 +194,7 @@ export default function InsuranceDashboardPage() {
                     lineHeight: 1.5,
                   }}
                 >
-                  <strong>No policies have been sold yet.</strong> Every figure below is a real zero
+                  <strong>No policies have been sold through Paymax yet.</strong> Policies bought directly at the provider are listed separately above. Every figure below is a real zero
                   returned by the API, not a placeholder. Ratios that are undefined on an empty book
                   (loss ratio, average premium) are shown as <NotReported /> rather than 0%, because a
                   0% loss ratio on zero premium would read as a perfectly performing book.

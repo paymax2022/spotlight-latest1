@@ -4,20 +4,17 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import type { AuthUser } from '@/features/auth/rbac';
 import { isRouteAllowed } from '@/features/auth/routeGuard';
-import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminSession';
+import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminAuth';
 import { AdminShell } from '@/components/layouts/AdminShell';
 import { PublicAdminShell } from '@/components/layouts/PublicAdminShell';
 
 // Public admin routes render WITHOUT a session. They live under app/admin/ so
-// they inherit this guard; without this exemption the guard swallows the login
 // form (returns null when no token) and no one can ever sign in.
-//
 // Was also exempting /admin/competitions/participants (updates registration
 // status) and /admin/voting/contestant/* (casts admin votes) — both mutate
 // data, neither belongs here, and the sidebar itself gates the Participants
 // link behind contest.create/contest.update, contradicting the guard treating
 // it as public. Removed while fixing the unauthenticated-/admin-access report:
-// middleware.ts is the real gate now (ADMIN_MIDDLEWARE_ENFORCE=1, see
 // docs/adr/ADR-047), and its own public list only ever exempted login +
 // unauthorized — these two were never actually reachable without a session
 // once that's on, only inconsistent to leave listed here.
@@ -47,7 +44,7 @@ export function AdminRouteGuard({ children }: { children: React.ReactNode }) {
     // service layer reads BEFORE rendering the page. Supabase access tokens live
     // one hour and nothing else rewrites that key, so without this the guard
     // waved operators into a console whose every request 401'd — see
-    // features/auth/adminSession. Expiry is now a redirect to login, not a wall
+    // features/auth/adminAuth. Expiry is now a redirect to login, not a wall
     // of per-page fetch errors.
     (async () => {
       try {

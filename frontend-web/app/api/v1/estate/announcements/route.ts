@@ -6,7 +6,7 @@ import { getResidentContext, resolveNames } from '@/src/server/estate/resident';
 
 const COLS = 'id, estate_id, title, body, kind, created_by, created_at';
 
-// GET /api/v1/estate/announcements — with per-user read state.
+// With per-user read state.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list announcements'); }
 }
 
-// POST /api/v1/estate/announcements — estate admin posts a notice.
+// Estate admin posts a notice.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -36,7 +36,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can post announcements', 403);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const title = String(body?.title ?? '').trim();
     const text = String(body?.body ?? '').trim();
     if (!title || !text) throw new ApiError('Title and message are required', 400);

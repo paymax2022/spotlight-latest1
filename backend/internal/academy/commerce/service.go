@@ -8,6 +8,8 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -15,7 +17,6 @@ import (
 // Service is the Spotlight Academy commerce domain. It owns the GUARDED purchase
 // state machine (cart→checkout→paid|bnpl_active→entitled→refunded), local
 // entitlement state, access-card redemption and the deterministic offline sync.
-//
 // Money NEVER moves here directly: value movement is delegated to the injected
 // PaymentRail / BNPLRail (paymax-rails.md §1 — adapter, not SDK leak). This module
 // only flips LOCAL entitlement state once the rail confirms, and every guarded
@@ -60,8 +61,6 @@ func requestHash(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// ── Catalog reads ──────────────────────────────────────────────────────────────
-
 func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
 	return s.repo.ListPlans(ctx)
 }
@@ -87,8 +86,6 @@ func (s *Service) GetBundle(ctx context.Context, id string) (*ExamBundle, error)
 func (s *Service) BundleManifest(ctx context.Context, id string) (*BundleManifest, error) {
 	return s.repo.GetContentBundleManifest(ctx, id)
 }
-
-// ── Order creation (cart → checkout) ────────────────────────────────────────────
 
 // CreateOrder opens an order in checkout with the price LOCKED from the catalog
 // (never client-supplied). kind ∈ {plan, bundle}; the referenced item must be active.
@@ -130,8 +127,6 @@ func (s *Service) CreateOrder(ctx context.Context, userID string, req CreateOrde
 	_ = s.audit(ctx, s.repo.db, userID, "order.checkout", "academy_order", ord.ID, OrderCart, OrderCheckout, "", ord)
 	return ord, nil
 }
-
-// ── PayNow (checkout → paid → entitled) ─────────────────────────────────────────
 
 // PayNow charges the rail then flips the order paid→entitled and grants the LOCAL
 // entitlement (source=order) atomically. Idempotent on idemKey: a replay returns
@@ -197,8 +192,6 @@ func (s *Service) PayNow(ctx context.Context, userID, orderID, idemKey string) (
 	return s.repo.GetOrder(ctx, userID, orderID)
 }
 
-// ── StartBNPL (checkout → bnpl_active → entitled) ───────────────────────────────
-
 // StartBNPL opens a BNPL plan on the rail (rail OWNS eligibility + schedule), flips
 // the order bnpl_active→entitled and grants the entitlement (source=bnpl). Idempotent.
 func (s *Service) StartBNPL(ctx context.Context, userID, orderID, idemKey string) (*Order, error) {
@@ -258,8 +251,6 @@ func (s *Service) StartBNPL(ctx context.Context, userID, orderID, idemKey string
 	return s.repo.GetOrder(ctx, userID, orderID)
 }
 
-// ── Refund (entitled → refunded; admin) ─────────────────────────────────────────
-
 // Refund reverses an entitled order: it revokes the LOCAL entitlement, flips the
 // order entitled→refunded and writes a compensating audit record. Money reversal is
 // the rail's concern (a refund posting is initiated out-of-band / by the rail); this
@@ -311,8 +302,6 @@ func (s *Service) Refund(ctx context.Context, adminID, orderID, idemKey string) 
 	}
 	return s.repo.GetOrderAny(ctx, orderID)
 }
-
-// ── Subscribe (plan via pay-now path → academy_subscriptions) ───────────────────
 
 // SubscribeResult bundles the order + subscription created via the pay-now path.
 type SubscribeResult struct {
@@ -392,8 +381,6 @@ func (s *Service) subscribeReplay(ctx context.Context, userID string, prior *ide
 	return res, nil
 }
 
-// ── Access cards ────────────────────────────────────────────────────────────────
-
 // GenerateBatch (admin) mints `Count` access cards in `issued`. Each card stores a
 // SALTED PIN HASH (plaintext PIN returned ONCE per card for printing, never stored).
 func (s *Service) GenerateBatch(ctx context.Context, adminID string, req GenerateCardsRequest) ([]GeneratedCard, error) {
@@ -411,7 +398,7 @@ func (s *Service) GenerateBatch(ctx context.Context, adminID string, req Generat
 		return nil, ErrInvalidAmount
 	}
 	out := make([]GeneratedCard, 0, req.Count)
-	for i := 0; i < req.Count; i++ {
+	for range req.Count {
 		pin, err := randomPIN(req.PinDigits)
 		if err != nil {
 			return nil, err
@@ -556,8 +543,6 @@ func (s *Service) replayActivation(ctx context.Context, prior *idemRecord, userI
 		State: "active", Source: "access_card", GrantedAt: time.Now()}, nil
 }
 
-// ── Gating ──────────────────────────────────────────────────────────────────────
-
 // HasAccess is the exported entitlement-gating check used by exam/content modules.
 // kind ∈ {plan, bundle, arena}; refID is the catalog/arena id. Returns true iff an
 // active entitlement exists for (userID, kind, refID).
@@ -567,8 +552,6 @@ func (s *Service) HasAccess(ctx context.Context, userID, kind, refID string) (bo
 	}
 	return s.repo.HasActiveEntitlement(ctx, userID, kind, refID)
 }
-
-// ── Offline sync (deterministic + idempotent) ───────────────────────────────────
 
 // Sync reconciles a batch of queued offline client events. It is DETERMINISTIC and
 // REPLAY-SAFE: each event is upserted on (user_id, client_event_id); a replayed batch
@@ -621,8 +604,6 @@ func classifySync(kind string) string {
 	}
 }
 
-// ── internal helpers ────────────────────────────────────────────────────────────
-
 // setOrderState performs a GUARDED order transition inside a tx. It re-checks the
 // current state under FOR UPDATE so concurrent callers cannot double-transition, and
 // rejects illegal transitions with ErrIllegalTransition.
@@ -647,7 +628,7 @@ func setOrderState(ctx context.Context, tx pgx.Tx, orderID, from, to string, pay
 	                 bnpl_ref = COALESCE($4, bnpl_ref),
 	                 idempotency_key = COALESCE(idempotency_key, $5)
 	             WHERE id = $1 AND state = $6`
-	tag, err := tx.Exec(ctx, upd, orderID, to, paymentRef, bnplRef, nullStr(idemKey), from)
+	tag, err := tx.Exec(ctx, upd, orderID, to, paymentRef, bnplRef, dbutil.NullStr(idemKey), from)
 	if err != nil {
 		return err
 	}

@@ -41,8 +41,7 @@ func TestPinAttemptErrorCarriesRemaining(t *testing.T) {
 // A lockout is NOT an attempt error: there is nothing left to count, and telling
 // the customer "0 attempts remaining" alongside a lock reads as a second failure.
 func TestLockoutIsNotAnAttemptError(t *testing.T) {
-	var attempt *PinAttemptError
-	if errors.As(ErrPinLocked, &attempt) {
+	if _, ok := errors.AsType[*PinAttemptError](ErrPinLocked); ok {
 		t.Fatal("ErrPinLocked must not carry an attempt count")
 	}
 	if got := ErrorCode(ErrPinLocked); got != "pin_locked" {

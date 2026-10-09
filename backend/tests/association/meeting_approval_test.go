@@ -1,14 +1,10 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Member-proposed meetings, approved by an organisation admin.
-//
 // WHY THIS EXISTS
-// ---------------
 // Only an admin could schedule a meeting: the create route is gated on
 // requireOrgAdmin and the member-facing routes were read/RSVP/check-in only.
 // A member now proposes, and an admin decides.
-//
 // The properties that matter are about VISIBILITY and AUTHORITY, not CRUD:
 //   • an admin's own proposal is scheduled, not queued — otherwise the owner
 //     would be asking themselves for permission
@@ -16,13 +12,12 @@ package association_test
 //     is the entire point of approval
 //   • but visible to its proposer, or they cannot see what they submitted
 //   • only an admin may decide, and only once
-//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +30,8 @@ import (
 	"spotlight/backend/internal/testsupport"
 )
 
-func ptrString(s string) *string { return &s }
+//go:fix inline
+func ptrString(s string) *string { return new(s) }
 
 // meetingDraft builds a valid proposal starting in the future.
 func meetingDraft(title string) association.MeetingRequest {
@@ -43,7 +39,7 @@ func meetingDraft(title string) association.MeetingRequest {
 		Title:    title,
 		Mode:     "PHYSICAL",
 		StartsAt: time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339),
-		Location: ptrString("Community Hall"),
+		Location: new("Community Hall"),
 	}
 }
 
@@ -62,12 +58,7 @@ func meetingTitles(t *testing.T, ctx context.Context, svc *association.Service, 
 }
 
 func containsTitle(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, want)
 }
 
 // orgWithAdminAndMember publishes an organisation and returns the founder (an
@@ -91,7 +82,7 @@ func orgWithAdminAndMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	// it names what this helper created, and reads as intent rather than relying
 	// on the generic unwind to have covered it.
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_meetings WHERE organisation_id=$1`, orgID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_meetings WHERE organisation_id=$1`, orgID)
 		deleteOrganisation(ctx, pool, orgID)
 	})
 	return orgID, adminID, memberID
@@ -234,7 +225,7 @@ func TestDecideMeeting_OnlyAdminsAndOnlyOnce(t *testing.T) {
 		t.Fatalf("seed outsider: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, outsider)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsider) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, outsider) })
 	if _, err := svc.DecideMeeting(ctx, outsider, id, association.MeetingApprovalDecision{Approve: true}); err == nil {
 		t.Fatal("an outsider must not be able to decide a meeting")
 	}

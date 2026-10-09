@@ -2,7 +2,11 @@ package feesscholarship
 
 import (
 	"context"
+	"errors"
 	"strings"
+
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/strutil"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -55,8 +59,6 @@ func NewServiceWithDeps(store Store, ledger LedgerPoster, invoice InvoicePayer) 
 // (ledger idempotency_key, invoice payment idempotency_key) and the award idempotency_key — a
 // replay with the same key posts no second money move and inserts no second award.
 
-// ── CreatePledge (state=pledged) ────────────────────────────────────────────────
-
 // CreatePledge records a sponsor's Sponsor-a-Student pledge for a target student.
 func (s *Service) CreatePledge(ctx context.Context, actorID string, req CreatePledgeRequest) (*Pledge, error) {
 	if actorID == "" {
@@ -85,8 +87,6 @@ func (s *Service) CreatePledge(ctx context.Context, actorID string, req CreatePl
 		map[string]any{"sponsorIdentityId": sponsor, "targetStudentId": req.TargetStudentID, "amountMinor": req.AmountMinor})
 	return p, nil
 }
-
-// ── FundPledge (pledged → funded; money via ledger, idempotent) ─────────────────
 
 // FundPledge moves the pledged amount into the scholarship fund via the injected LedgerPoster
 // (idempotent) and transitions the pledge pledged → funded, recording the ledger reference.
@@ -124,8 +124,6 @@ func (s *Service) FundPledge(ctx context.Context, actorID, pledgeID, idemKey str
 		map[string]any{"amountMinor": p.AmountMinor, "ledgerRef": ledgerRef, "idempotencyKey": idemKey})
 	return s.store.GetPledge(ctx, pledgeID)
 }
-
-// ── ApplyAward (funded → applied; via invoice.RecordPayment, idempotent) ────────
 
 // ApplyResult bundles the award with the resulting invoice payment reference.
 type ApplyResult struct {
@@ -176,11 +174,14 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 	var awardReplayed bool
 	if err := s.store.WithTx(ctx, func(tx Tx) error {
 		a, inserted, aerr := tx.AppendAward(ctx, Award{
-			PledgeID:         req.PledgeID,
-			InvoiceID:        req.InvoiceID,
-			StudentID:        firstNonEmpty(req.StudentID, p.TargetStudentID),
+			PledgeID:  req.PledgeID,
+			InvoiceID: req.InvoiceID,
+			StudentID: strutil.FirstNonEmpty(req.StudentID, p.TargetStudentID),
+			// user_id is an auth.users FK — store the guardian-of-record, not the
+			// academy_students id (23503 otherwise). Actor is a guaranteed auth user.
+			UserID:           strutil.FirstNonEmpty(req.GuardianUserID, actorID),
 			AmountMinor:      req.AmountMinor,
-			InvoicePaymentID: ptrOrNil(paymentID),
+			InvoicePaymentID: ptr.OrNil(paymentID),
 			IdempotencyKey:   idemKey,
 		})
 		if aerr != nil {
@@ -196,7 +197,7 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 			return berr
 		}
 		// pledged/funded → applied (guarded; applied→applied is a no-op-safe self-loop).
-		if _, serr := tx.SetPledgeState(ctx, req.PledgeID, p.State, PledgeApplied, nil); serr != nil && serr != ErrIllegalTransition {
+		if _, serr := tx.SetPledgeState(ctx, req.PledgeID, p.State, PledgeApplied, nil); serr != nil && !errors.Is(serr, ErrIllegalTransition) {
 			return serr
 		}
 		return tx.WriteAudit(ctx, actorID, "award_applied", req.PledgeID, string(p.State), string(PledgeApplied),
@@ -210,29 +211,10 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 	return &ApplyResult{Award: award, InvoicePaymentID: paymentID, Replayed: replayed || awardReplayed}, nil
 }
 
-// ── reads ─────────────────────────────────────────────────────────────────────
-
 func (s *Service) GetPledge(ctx context.Context, id string) (*Pledge, error) {
 	return s.store.GetPledge(ctx, id)
 }
 
 func (s *Service) ListAwards(ctx context.Context, pledgeID string) ([]Award, error) {
 	return s.store.ListAwardsByPledge(ctx, pledgeID)
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }

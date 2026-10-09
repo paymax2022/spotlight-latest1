@@ -7,9 +7,9 @@ import {
   Bell, Camera, Mic, MapPin, ShieldQuestion,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { PermissionPrimer, StateView } from '@/features/doctor/components';
@@ -19,7 +19,6 @@ import { PERMISSION_LABELS, PERMISSION_ORDER } from '@/features/doctor/constants
 import type { AppPermissionKind, PermissionState } from '@/types/doctor.onboarding';
 import { confirmAsync } from '@/lib/confirm';
 
-// ── Section A · Entries 13–16 — One permission primer screen ─────────────────
 // Parameterised by AppPermissionKind. Shows the rationale (PERMISSION_LABELS),
 // then triggers a permission request and records the outcome via
 // useRecordPermissionDecision. expo-av (microphone) / expo-location are NOT in

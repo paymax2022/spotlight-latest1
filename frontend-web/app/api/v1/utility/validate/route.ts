@@ -14,12 +14,16 @@ export async function POST(request: Request) {
   if (unavailable) return unavailable;
 
   try {
-    // Validation is a read-only lookup — auth required, but NOT a KYC tier
-    // (the pay / paystack-initiate routes still enforce Tier 1).
+    // Validation is a read-only lookup — auth required, but NOT a KYC tier.
+    // The pay / paystack-initiate routes are auth-only too (see _utils.ts):
+    // there is no separate Tier-1 gate anywhere in this module — the wallet
+    // debit path itself enforces tier/daily limits fail-closed, so a Tier-0
+    // member's purchase is refused by debitWallet, not by a route check.
     const user = await requireUtilityReader(request);
     const limited = utilityRateLimit(request, 'validate', user.id, 40, 60_000);
     if (limited) return limited;
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const category = parseUtilityCategory(String(body.category || ''));
     if (!category) return errorResponse('category is required.', 400);
 

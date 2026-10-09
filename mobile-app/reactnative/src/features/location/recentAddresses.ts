@@ -1,4 +1,3 @@
-// ── Recent delivery addresses ────────────────────────────────────────────────
 // Persists the last few CONFIRMED addresses so the user can re-pick a place in
 // one tap instead of re-typing it every order. Stored via the app's existing
 // secureStorage wrapper (expo-secure-store on device, localStorage on web) — no

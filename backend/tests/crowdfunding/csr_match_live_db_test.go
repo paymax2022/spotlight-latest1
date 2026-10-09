@@ -1,18 +1,14 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regressions for the CSR (corporate matching) sub-module — flagged
 // in the QA plan as "beyond AUTHZ-005" (Batch 3 only live-tested the
 // approve-match ownership gate; the reserve-budget setup path and the
 // PENDING_APPROVAL→ACTIVE integration flow were still marked TODO in the test
 // matrix). Crowdfunding UAT queue position 5, Batch 5.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_CSR -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -55,9 +51,9 @@ func TestLiveDB_CSR_SetupMatch_RequiresIdempotencyKey(t *testing.T) {
 		t.Fatalf("seed campaign: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
 	})
 
 	_, err := svc.SetupMatch(ctx, sponsorID, csr.MatchSetupInput{
@@ -118,9 +114,9 @@ func TestLiveDB_CSR_SetupMatch_CapExceedingBudgetIsRefused(t *testing.T) {
 		t.Fatalf("seed csr profile: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
 	})
 
 	_, err := svc.SetupMatch(ctx, sponsorID, csr.MatchSetupInput{
@@ -184,9 +180,9 @@ func TestLiveDB_CSR_SetupThenApprove_FullIntegrationFlow(t *testing.T) {
 		t.Fatalf("seed csr profile: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
 	})
 
 	idemKey := "cf-uat-csr-flow-key-" + campaignID

@@ -1,9 +1,7 @@
 package edtechfees_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the EdTech School-Fees FEESVAULT money path
 // (SF-5 segregation + derived saved_minor + one-tap apply-to-invoice).
-//
 // feesvault.NewService(pool, ledgerAdapter, invoiceAdapter) drives:
 //   - Contribute: guardian wallet → SEGREGATED edtech_fees_vault standing account
 //     (ledger.Service.Debit), then an append-only academy_pot_contributions row.
@@ -12,7 +10,6 @@ package edtechfees_test
 //   - ApplyToInvoice: records an invoice payment (SF-2) + posts ONE balanced
 //     ledger transfer out of the segregated vault account into settlement, keyed
 //     idempotently so a replay double-transfers nothing.
-//
 // The ledger + invoice ports are wired here with the SAME thin adapters
 // production uses (backend/internal/app/academy_routes.go: feesVaultLedger /
 // feesVaultInvoice over the real *ledger.Service). The only enrichment: the
@@ -20,17 +17,16 @@ package edtechfees_test
 // feesinvoice.Service) so this test can assert the invoice-side record, exactly
 // as the SF-2 discipline requires. This file skips on TEST_DATABASE_URL unset
 // (shared gate in invoice_live_db_test.go).
-//
 // ── Bring-up note ──────────────────────────────────────────────────────────
 // Apply the fees + edupay + ledger migrations (supabase db reset), then:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/edtechfees/... -run LiveDB_Vault -v
 // The AccountEdtechFeesVault standing account is auto-created on first
 // GetOrCreateStandingAccount — no seed row needed (finance/ledger/model.go).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -62,7 +58,6 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// ── vault ledger port: mirrors feesVaultLedger in academy_routes.go ──────────
 type vaultLedgerAdapter struct{ ledger *ledger.Service }
 
 func (a vaultLedgerAdapter) SegregatedAccountID(ctx context.Context, accountType string) (string, error) {
@@ -87,7 +82,6 @@ func (a vaultLedgerAdapter) TransferVaultToInvoice(ctx context.Context, vaultAcc
 	})
 }
 
-// ── vault invoice port: mirrors feesVaultInvoice, but ALSO records the real
 // invoice payment (SF-2) so the test can assert the invoice-side record. Returns
 // the settlement standing account the vault transfer must credit. ──────────────
 type vaultInvoiceAdapter struct {
@@ -112,14 +106,12 @@ func (a vaultInvoiceAdapter) RecordPayment(ctx context.Context, invoiceID, guard
 func cleanupVault(t *testing.T, pool *pgxpool.Pool, vaultID string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_pot_contributions WHERE pot_id=$1`, vaultID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_savings_pots WHERE id=$1`, vaultID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_pot_contributions WHERE pot_id=$1`, vaultID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_savings_pots WHERE id=$1`, vaultID)
 	})
 }
 
-// ---------------------------------------------------------------------------
 // Contribute (idempotent, SF-5 segregated) → reach target → ApplyToInvoice.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice proves:
 //
@@ -155,7 +147,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		vaultInvoiceAdapter{ledger: led, inv: invSvc, actor: actorID},
 	)
 
-	// ── Create the vault (active, saved_minor=0, target=100000) ─────────────
 	v, err := vaultSvc.CreateVault(ctx, guardianID, feesvault.CreateVaultRequest{
 		GoalName: "Term 1 Fees", TargetMinor: target,
 	})
@@ -176,7 +167,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		t.Fatalf("GetBalance before contribute: %v", err)
 	}
 
-	// ── Contribute the full target (idempotent on contribKey) ───────────────
 	contribKey := newIdemKey(t, "vault-contrib")
 	afterContrib, err := vaultSvc.Contribute(ctx, guardianID, v.ID, target, contribKey)
 	if err != nil {
@@ -203,7 +193,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		t.Errorf("guardian wallet fell by %d, want %d", walletBefore-walletAfter, target)
 	}
 
-	// ── Idempotent Contribute replay: no second contribution, no new money ──
 	replayed, err := vaultSvc.Contribute(ctx, guardianID, v.ID, target, contribKey)
 	if err != nil {
 		t.Fatalf("Contribute (replay): %v", err)
@@ -218,7 +207,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		t.Errorf("segregated account received %d for the contribution key after replay, want still %d (no double debit)", got, target)
 	}
 
-	// ── Issue an invoice to apply the vault against ─────────────────────────
 	inv, err := invSvc.Issue(ctx, actorID, feesinvoice.IssueInvoiceRequest{
 		StudentID: studentID, FeeScheduleID: feeScheduleID, TotalAmountMinor: target,
 	})
@@ -232,7 +220,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		t.Fatalf("resolve settlement account: %v", err)
 	}
 
-	// ── ApplyToInvoice: one balanced transfer vault → settlement + payment ──
 	applyKey := newIdemKey(t, "vault-apply")
 	applied, err := vaultSvc.ApplyToInvoice(ctx, guardianID, v.ID, inv.ID, applyKey)
 	if err != nil {
@@ -258,7 +245,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		t.Errorf("recorded invoice payment SUM = %d, want %d", got, target)
 	}
 
-	// ── Replay ApplyToInvoice: no double transfer (terminal-state guard) ────
 	// Captured per idempotency key rather than as account balances: a replay must
 	// post nothing MORE UNDER THIS KEY, which is what "no double transfer" means.
 	// Asserting the shared account's balance is unchanged would instead fail
@@ -299,15 +285,13 @@ func TestLiveDB_Vault_Contribute_RequiresIdempotencyKey(t *testing.T) {
 	}
 	cleanupVault(t, pool, v.ID)
 
-	if _, err := vaultSvc.Contribute(ctx, guardianID, v.ID, 10_000, ""); err != feesvault.ErrIdempotencyRequired {
+	if _, err := vaultSvc.Contribute(ctx, guardianID, v.ID, 10_000, ""); !errors.Is(err, feesvault.ErrIdempotencyRequired) {
 		t.Fatalf("keyless Contribute: err = %v, want ErrIdempotencyRequired", err)
 	}
 	if n := countContributions(t, ctx, pool, v.ID); n != 0 {
 		t.Errorf("keyless Contribute must append no contribution, found %d", n)
 	}
 }
-
-// ── DB helpers ─────────────────────────────────────────────────────────────
 
 func countContributions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, vaultID string) int {
 	t.Helper()
@@ -325,7 +309,6 @@ func countContributions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, v
 // baseKey:credit — matched here by prefix.
 // netPostedForKey returns the SIGNED amount posted to one account by the balanced
 // pair carrying baseKey.
-//
 // Prefer this over a before/after balance delta on any standing account. Standing
 // accounts are singletons keyed by type (finance/ledger/service.go), so settlement
 // and the segregated vault account are shared by the entire database — and
@@ -335,7 +318,6 @@ func countContributions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, v
 // "settlement account rose by -4900000 on apply, want 100000": the transfer under
 // test was correct, and roughly ₦49,000 of unrelated traffic landed between the
 // two reads.
-//
 // Scoping to this transfer's own idempotency key is exact and cannot be perturbed
 // by concurrent work.
 func netPostedForKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID, baseKey string) int64 {

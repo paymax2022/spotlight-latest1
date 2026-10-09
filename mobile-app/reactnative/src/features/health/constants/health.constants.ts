@@ -1,9 +1,8 @@
-// ── Paymax Health — Shared constants & design-token map (Phase 0) ────────────
 // Built on the base design tokens (DESIGN-Mobile.md). Never hardcode hex in screens —
 // resolve everything through HealthColors. Money in kobo → display via formatNaira.
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   RecordKind,
   ConsentStatus,
@@ -15,14 +14,12 @@ import type {
   RedFlagResult,
 } from '../types';
 
-// Flip to false (or set EXPO_PUBLIC_HEALTH_USE_MOCK=false) once the live
 // /api/finance/health endpoints are reachable. Mock-first, mirroring the connect/
 // crowdfunding conventions.
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_HEALTH_USE_MOCK, true);
 
 // Health REST namespace — Go backend mounts the shared health platform + lab/
 // pharmacy/vet verticals directly on the finance member group:
-//   RegisterHealth(finance, ...)        -> /api/finance/health/*
 //   RegisterHealthLab(finance, ...)     -> /api/finance/health/lab/*
 //   RegisterHealthPharmacy(finance,...) -> /api/finance/health/pharmacy/*
 //   RegisterHealthVet(finance, ...)     -> /api/finance/health/vet/*
@@ -139,7 +136,6 @@ export const INTAKE_FIELD_TYPES: IntakeFieldType[] = [
   'attachment',
 ];
 
-// ── Pre-Consult intake status presentation (mirrors ConsultStatusBadge) ───────
 export const INTAKE_STATUS_META: Record<
   IntakeStatus | 'NOT_STARTED',
   { label: string; fg: string; bg: string }

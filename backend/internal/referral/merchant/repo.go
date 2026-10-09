@@ -2,11 +2,14 @@ package merchant
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
 )
 
 // Repository is the parameterized data layer for merchant tables.
@@ -44,7 +47,7 @@ func (r *Repository) CreateMerchant(ctx context.Context, in CreateMerchantInput)
 		VALUES ($1,$2,$3,'active',$4)
 		RETURNING ` + merchantCols
 	return scanMerchant(r.db.QueryRow(ctx, q,
-		nullable(in.OwnerUserID), in.Name, in.Slug, nullable(in.FundingWalletUserID)))
+		dbutil.NullStr(in.OwnerUserID), in.Name, in.Slug, dbutil.NullStr(in.FundingWalletUserID)))
 }
 
 // GetMerchant returns one merchant.
@@ -102,7 +105,7 @@ func (r *Repository) CreateMC(ctx context.Context, in CreateMCInput) (*MerchantC
 		INSERT INTO referral_merchant_campaigns (merchant_id, campaign_id, name, status)
 		VALUES ($1,$2,$3,'draft')
 		RETURNING ` + mcCols
-	return scanMC(r.db.QueryRow(ctx, q, in.MerchantID, nullable(in.CampaignID), in.Name))
+	return scanMC(r.db.QueryRow(ctx, q, in.MerchantID, dbutil.NullStr(in.CampaignID), in.Name))
 }
 
 // GetMC returns one merchant campaign.
@@ -155,12 +158,9 @@ func (r *Repository) AddSettlement(ctx context.Context, mcID string, amountKobo 
 
 // InsertPartnerKey stores a hashed, scoped partner key.
 func (r *Repository) InsertPartnerKey(ctx context.Context, merchantID, prefix, hash string, scopes []string) (string, error) {
-	raw, err := json.Marshal(scopes)
+	raw, err := jsonx.MarshalArray(scopes)
 	if err != nil {
 		return "", fmt.Errorf("merchant: marshal scopes: %w", err)
-	}
-	if len(raw) == 0 || string(raw) == "null" {
-		raw = []byte("[]")
 	}
 	const q = `
 		INSERT INTO referral_partner_keys (merchant_id, key_prefix, key_hash, scopes, status)
@@ -192,7 +192,7 @@ func (r *Repository) ListPartnerKeys(ctx context.Context, merchantID string) ([]
 		if err := rows.Scan(&k.ID, &k.MerchantID, &k.KeyPrefix, &raw, &k.Status, &k.LastUsedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(raw, &k.Scopes)
+		k.Scopes = jsonx.UnmarshalOr(raw, k.Scopes)
 		out = append(out, k)
 	}
 	return out, rows.Err()
@@ -206,7 +206,7 @@ func (r *Repository) RevokePartnerKey(ctx context.Context, id string) error {
 		return fmt.Errorf("merchant: revoke partner key: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("merchant: key not found or already revoked")
+		return errors.New("merchant: key not found or already revoked")
 	}
 	return nil
 }
@@ -219,18 +219,11 @@ func (r *Repository) LookupActiveKeyByPrefix(ctx context.Context, prefix string)
 		WHERE key_prefix = $1 AND status = 'active'`
 	var raw []byte
 	if e := r.db.QueryRow(ctx, q, prefix).Scan(&merchantID, &hash, &raw); e != nil {
-		if e == pgx.ErrNoRows {
+		if errors.Is(e, pgx.ErrNoRows) {
 			return "", "", nil, nil
 		}
 		return "", "", nil, fmt.Errorf("merchant: lookup key: %w", e)
 	}
-	_ = json.Unmarshal(raw, &scopes)
+	scopes = jsonx.UnmarshalOr(raw, scopes)
 	return merchantID, hash, scopes, nil
-}
-
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

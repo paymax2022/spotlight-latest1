@@ -6,6 +6,10 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -70,8 +74,6 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// ── Institutions ──────────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertInstitution(ctx context.Context, name, typ, adminUserID string, whiteLabel json.RawMessage, vaRef string) (*Institution, error) {
 	id := uuid.New().String()
 	now := time.Now()
@@ -80,7 +82,7 @@ func (r *Repository) InsertInstitution(ctx context.Context, name, typ, adminUser
 	}
 	const q = `INSERT INTO academy_institutions (id, name, type, admin_user_id, white_label, virtual_account_ref, status, created_at)
 	           VALUES ($1,$2,$3,$4,$5,$6,'active',$7)`
-	if _, err := r.db.Exec(ctx, q, id, name, typ, nullStr(adminUserID), toJSON(whiteLabel), nullStr(vaRef), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, name, typ, dbutil.NullStr(adminUserID), toJSON(whiteLabel), dbutil.NullStr(vaRef), now); err != nil {
 		return nil, err
 	}
 	return r.GetInstitution(ctx, id)
@@ -131,11 +133,9 @@ func scanInstitution(row pgx.Row) (*Institution, error) {
 	if err != nil {
 		return nil, err
 	}
-	i.WhiteLabel = rawOrEmptyObject(white)
+	i.WhiteLabel = jsonx.RawOrEmptyObject(white)
 	return &i, nil
 }
-
-// ── Licences ──────────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertLicence(ctx context.Context, institutionID, tier string, seats int, priceMinor int64, startsAt, expiresAt *time.Time) (*Licence, error) {
 	id := uuid.New().String()
@@ -262,18 +262,16 @@ func (r *Repository) SetLicenceState(ctx context.Context, licenceID string, from
 	return out, nil
 }
 
-// ── Class groups ────────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertClassGroup(ctx context.Context, institutionID, name, classCode, teacherUserID string) (*ClassGroup, error) {
 	id := uuid.New().String()
 	now := time.Now()
 	const q = `INSERT INTO academy_class_groups (id, institution_id, name, class_code, teacher_user_id, created_at)
 	           VALUES ($1,$2,$3,$4,$5,$6)`
-	if _, err := r.db.Exec(ctx, q, id, institutionID, name, nullStr(classCode), nullStr(teacherUserID), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, institutionID, name, dbutil.NullStr(classCode), dbutil.NullStr(teacherUserID), now); err != nil {
 		return nil, err
 	}
 	return &ClassGroup{ID: id, InstitutionID: institutionID, Name: name,
-		ClassCode: ptrOrNil(classCode), TeacherUserID: ptrOrNil(teacherUserID), CreatedAt: now}, nil
+		ClassCode: ptr.OrNil(classCode), TeacherUserID: ptr.OrNil(teacherUserID), CreatedAt: now}, nil
 }
 
 func (r *Repository) ListClassGroups(ctx context.Context, institutionID string) ([]ClassGroup, error) {
@@ -316,8 +314,6 @@ func (r *Repository) ListAllClassGroups(ctx context.Context) ([]ClassGroup, erro
 	return out, rows.Err()
 }
 
-// ── Enrolment (atomic, seat-capped, idempotent) ───────────────────────────────────
-
 // EnrollSeated enrols one learner with seat accounting in a SINGLE transaction:
 //  1. Lock the institution's active licence FOR UPDATE (serialises seat counting).
 //  2. If the learner is already enrolled (UNIQUE institution_id, learner_user_id)
@@ -340,7 +336,7 @@ func (r *Repository) EnrollSeated(ctx context.Context, institutionID, classGroup
 
 		// Already enrolled? Idempotent replay — no new seat. (Counts both active and
 		// invited; a removed learner re-enrolling re-activates and re-seats below.)
-		const existing = `SELECT state FROM academy_enrollments
+		const existing = `SELECT state FROM academy_edu_enrollments
 		                  WHERE institution_id = $1 AND learner_user_id = $2 FOR UPDATE`
 		var st string
 		switch e := tx.QueryRow(ctx, existing, institutionID, learnerUserID).Scan(&st); {
@@ -353,11 +349,11 @@ func (r *Repository) EnrollSeated(ctx context.Context, institutionID, classGroup
 			if used >= seats {
 				return ErrSeatLimitExceeded
 			}
-			const reactivate = `UPDATE academy_enrollments
+			const reactivate = `UPDATE academy_edu_enrollments
 			    SET state = 'active', class_group_id = COALESCE($3, class_group_id),
 			        idempotency_key = COALESCE(idempotency_key, $4)
 			    WHERE institution_id = $1 AND learner_user_id = $2`
-			if _, e2 := tx.Exec(ctx, reactivate, institutionID, learnerUserID, nullStr(classGroupID), nullStr(idemKey)); e2 != nil {
+			if _, e2 := tx.Exec(ctx, reactivate, institutionID, learnerUserID, dbutil.NullStr(classGroupID), dbutil.NullStr(idemKey)); e2 != nil {
 				return e2
 			}
 		case errors.Is(e, pgx.ErrNoRows):
@@ -366,10 +362,10 @@ func (r *Repository) EnrollSeated(ctx context.Context, institutionID, classGroup
 				return ErrSeatLimitExceeded
 			}
 			id := uuid.New().String()
-			const ins = `INSERT INTO academy_enrollments
+			const ins = `INSERT INTO academy_edu_enrollments
 			    (id, institution_id, class_group_id, learner_user_id, state, idempotency_key, created_at)
 			    VALUES ($1,$2,$3,$4,'active',$5, now())`
-			if _, e2 := tx.Exec(ctx, ins, id, institutionID, nullStr(classGroupID), learnerUserID, nullStr(idemKey)); e2 != nil {
+			if _, e2 := tx.Exec(ctx, ins, id, institutionID, dbutil.NullStr(classGroupID), learnerUserID, dbutil.NullStr(idemKey)); e2 != nil {
 				return e2
 			}
 		default:
@@ -404,7 +400,7 @@ func (r *Repository) RemoveEnrollment(ctx context.Context, institutionID, learne
 			}
 			return e
 		}
-		const upd = `UPDATE academy_enrollments SET state = 'removed'
+		const upd = `UPDATE academy_edu_enrollments SET state = 'removed'
 		             WHERE institution_id = $1 AND learner_user_id = $2 AND state = 'active'`
 		tag, e := tx.Exec(ctx, upd, institutionID, learnerUserID)
 		if e != nil {
@@ -425,7 +421,7 @@ func (r *Repository) RemoveEnrollment(ctx context.Context, institutionID, learne
 }
 
 func (r *Repository) CountEnrollmentsByState(ctx context.Context, institutionID string) (map[string]int, error) {
-	const q = `SELECT state, COUNT(*) FROM academy_enrollments WHERE institution_id = $1 GROUP BY state`
+	const q = `SELECT state, COUNT(*) FROM academy_edu_enrollments WHERE institution_id = $1 GROUP BY state`
 	rows, err := r.db.Query(ctx, q, institutionID)
 	if err != nil {
 		return nil, err
@@ -446,7 +442,7 @@ func (r *Repository) CountEnrollmentsByState(ctx context.Context, institutionID 
 // CountAllEnrollmentsByState returns enrolment counts by state ACROSS all institutions
 // (admin oversight read — mirrors CountEnrollmentsByState without the institution filter).
 func (r *Repository) CountAllEnrollmentsByState(ctx context.Context) (map[string]int, error) {
-	const q = `SELECT state, COUNT(*) FROM academy_enrollments GROUP BY state`
+	const q = `SELECT state, COUNT(*) FROM academy_edu_enrollments GROUP BY state`
 	rows, err := r.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -477,8 +473,6 @@ func (r *Repository) OverviewTotals(ctx context.Context) (institutions, licences
 	err = r.db.QueryRow(ctx, q).Scan(&institutions, &licences, &activeLicences, &seatsTotal, &seatsUsed)
 	return institutions, licences, activeLicences, seatsTotal, seatsUsed, err
 }
-
-// ── Billing ─────────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertBilling(ctx context.Context, institutionID, period string, amountMinor int64) (*Billing, error) {
 	id := uuid.New().String()
@@ -533,7 +527,7 @@ func (r *Repository) ListAllBilling(ctx context.Context) ([]Billing, error) {
 func (r *Repository) SetBillingPaid(ctx context.Context, billingID, paymentRef string) (*Billing, error) {
 	const upd = `UPDATE academy_institution_billing SET state = 'paid', payment_ref = $2
 	             WHERE id = $1 AND state = 'open'`
-	tag, err := r.db.Exec(ctx, upd, billingID, nullStr(paymentRef))
+	tag, err := r.db.Exec(ctx, upd, billingID, dbutil.NullStr(paymentRef))
 	if err != nil {
 		return nil, err
 	}
@@ -543,52 +537,23 @@ func (r *Repository) SetBillingPaid(ctx context.Context, billingID, paymentRef s
 	return r.GetBilling(ctx, billingID)
 }
 
-// ── Audit (public.audit_logs, module 'academy.schools') ───────────────────────────
-
 func (r *Repository) WriteAudit(ctx context.Context, actorID, action, resourceType, resourceID string, detail any) error {
 	const ins = `INSERT INTO public.audit_logs (actor_user_id, action, module, resource_type, resource_id, new_values)
 	             VALUES ($1,$2,'academy.schools',$3,$4,$5)`
-	_, err := r.db.Exec(ctx, ins, nullUUID(actorID), action, nullStr(resourceType), nullStr(resourceID), toJSON(detail))
+	_, err := r.db.Exec(ctx, ins, dbutil.NullUUID(actorID), action, dbutil.NullStr(resourceType), dbutil.NullStr(resourceID), toJSON(detail))
 	return err
 }
-
-// ── tx helper ─────────────────────────────────────────────────────────────────────
 
 func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// ── small helpers ─────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-// nullUUID is for uuid columns where empty string must become NULL.
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }
 
 func toJSON(v any) []byte {

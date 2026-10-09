@@ -3,17 +3,32 @@ import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Home, KeyRound, BedDouble, Check, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Home, KeyRound, BedDouble, Check, ShieldCheck, Building, HardHat, Briefcase } from 'lucide-react-native';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import type { PropertyRole } from '@/features/property/types';
+import { useRegisterRole } from '@/features/property/roles/hooks';
+import type { ProfessionalRole } from '@/features/property/roles/requirements';
+import { alertAsync } from '@/lib/confirm';
 
-// M-ONB-02/04 — role picker. Explains entitlements per role; adding a role that
+interface ProOption {
+  role:  ProfessionalRole;
+  label: string;
+  blurb: string;
+  icon:  React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+}
+
+const PRO_ROLES: ProOption[] = [
+  { role: 'estate_manager', label: 'Estate Manager', icon: Building, blurb: 'Run estates on behalf of owners and associations.' },
+  { role: 'developer', label: 'Property Developer', icon: HardHat, blurb: 'Market developments and new-build projects.' },
+  { role: 'agent', label: 'Property Agent / Marketer', icon: Briefcase, blurb: 'List and market properties as a licensed agent.' },
+];
+
 // raises the user's exposure (landlord/host) triggers step-up KYC (M-ONB-05),
 // which routes to the existing identity-verification flow at /kyc.
 interface RoleOption {
@@ -46,6 +61,17 @@ const ROLES: RoleOption[] = [
 export default function PropertyRoles() {
   const [selected, setSelected] = useState<PropertyRole | null>(null);
   const chosen = ROLES.find((r) => r.role === selected);
+  const registerRole = useRegisterRole();
+
+  const onRegisterPro = async (opt: ProOption) => {
+    if (registerRole.isPending) return;
+    try {
+      await registerRole.mutateAsync({ role: opt.role, displayName: opt.label });
+      router.push(`/property/role-profile?role=${opt.role}` as never);
+    } catch {
+      await alertAsync({ title: 'Could not start registration', message: 'Please try again in a moment.' });
+    }
+  };
 
   const onContinue = () => {
     if (!chosen) return;
@@ -98,6 +124,29 @@ export default function PropertyRoles() {
                   <Text style={styles.kycNoteText}>Requires step-up identity verification (KYC).</Text>
                 </View>
               ) : null}
+            </Pressable>
+          );
+        })}
+
+        <SectionHeader title="Register as a professional" style={styles.section} />
+        {PRO_ROLES.map((r) => {
+          const Icon = r.icon;
+          return (
+            <Pressable
+              key={r.role}
+              onPress={() => onRegisterPro(r)}
+              disabled={registerRole.isPending}
+              accessibilityRole="button"
+              accessibilityLabel={`Register as ${r.label}`}
+              style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+            >
+              <View style={styles.cardHead}>
+                <View style={styles.icon}><Icon size={22} color={Colors.teal} strokeWidth={1.8} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>{r.label}</Text>
+                  <Text style={styles.cardBlurb}>{r.blurb}</Text>
+                </View>
+              </View>
             </Pressable>
           );
         })}

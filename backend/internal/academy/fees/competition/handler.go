@@ -1,10 +1,12 @@
 package feescompetition
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
@@ -13,7 +15,6 @@ import (
 // (create/transition/register/record-score) are gated per-route by an injected
 // RBAC guard; the public leaderboard GET is member-readable but ALWAYS runs
 // through the SF-7 Serializer before responding.
-//
 // Wiring note (integration task): RegisterAcademyFeesCompetition is intentionally
 // NOT defined here — this package exposes NewHandler + Handler.Register so the
 // academy_routes integration owner composes the concrete gamification service,
@@ -33,20 +34,20 @@ func NewHandler(svc *Service, serializer *Serializer) *Handler {
 
 // httpStatusFor maps typed domain errors to HTTP codes + stable snake_case codes.
 func httpStatusFor(err error) (int, string) {
-	switch err {
-	case feesstatemachine.ErrIllegalTransition:
+	switch {
+	case errors.Is(err, feesstatemachine.ErrIllegalTransition):
 		return http.StatusConflict, "illegal_transition"
-	case feesstatemachine.ErrTerminal:
+	case errors.Is(err, feesstatemachine.ErrTerminal):
 		return http.StatusConflict, "terminal_state"
-	case ErrScoringLocked:
+	case errors.Is(err, ErrScoringLocked):
 		return http.StatusConflict, "scoring_locked"
-	case ErrRegistrationClosed:
+	case errors.Is(err, ErrRegistrationClosed):
 		return http.StatusConflict, "registration_closed"
-	case ErrScopeInvalid:
+	case errors.Is(err, ErrScopeInvalid):
 		return http.StatusBadRequest, "scope_invalid"
-	case ErrUnknownEvent:
+	case errors.Is(err, ErrUnknownEvent):
 		return http.StatusBadRequest, "unknown_event"
-	case ErrConsentRequired:
+	case errors.Is(err, ErrConsentRequired):
 		return http.StatusForbidden, "consent_required"
 	default:
 		return http.StatusInternalServerError, "internal_error"
@@ -62,7 +63,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 func (h *Handler) CreateCompetition(c *gin.Context) {
 	var in CreateCompetitionRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Create(c.Request.Context(), in)
@@ -77,7 +78,7 @@ func (h *Handler) CreateCompetition(c *gin.Context) {
 func (h *Handler) TransitionCompetition(c *gin.Context) {
 	var in TransitionCompetitionRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Transition(c.Request.Context(), c.Param("id"), in.Event)
@@ -92,7 +93,7 @@ func (h *Handler) TransitionCompetition(c *gin.Context) {
 func (h *Handler) RegisterSchool(c *gin.Context) {
 	var in RegisterSchoolRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Register(c.Request.Context(), c.Param("id"), in.SchoolID)
@@ -108,7 +109,7 @@ func (h *Handler) RegisterSchool(c *gin.Context) {
 func (h *Handler) RecordScore(c *gin.Context) {
 	var in RecordScoreRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RecordScore(c.Request.Context(), c.Param("id"), in); err != nil {
@@ -150,7 +151,6 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 //	member:
 //	  GET  /competitions/:id/leaderboard        (SF-7 serialized)
 //	admin (per-route RBAC):
-//	  POST /competitions                        (academy.fees.competition.manage)
 //	  POST /competitions/:id/transition         (academy.fees.competition.manage)
 //	  POST /competitions/:id/register           (academy.fees.competition.register)
 //	  POST /competitions/:id/scores             (academy.fees.competition.score)

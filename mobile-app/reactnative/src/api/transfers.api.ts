@@ -6,14 +6,12 @@
  *   POST /api/v1/transfers/paymax
  */
 import { api } from '@/api/client';
-import { generateIdempotencyKey } from '@/utils/idempotency';
+import { withIntentKey } from '@/utils/intentKey';
 import type { TransferRecipient, WalletTransfer } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
 
-// ---------------------------------------------------------------------------
 // Fee schedule — mirrors backend calculateTransferFee() (Block 10)
-// ---------------------------------------------------------------------------
 
 /** Returns fee in kobo for a given transfer amount in kobo. */
 export function calculateTransferFee(amountKobo: number): number {
@@ -22,9 +20,7 @@ export function calculateTransferFee(amountKobo: number): number {
   return 2_500;                               // > ₦50,000: ₦25
 }
 
-// ---------------------------------------------------------------------------
 // Recipient resolution
-// ---------------------------------------------------------------------------
 
 /**
  * Look up a Paymax user by phone, email, or username.
@@ -44,9 +40,7 @@ export async function resolvePaymaxRecipient(identifier: string): Promise<Transf
   };
 }
 
-// ---------------------------------------------------------------------------
 // Transfer initiation
-// ---------------------------------------------------------------------------
 
 export interface InitiateTransferPayload {
   recipientIdentifier: string;
@@ -59,17 +53,19 @@ export interface InitiateTransferPayload {
 export async function initiateWalletTransfer(
   payload: InitiateTransferPayload,
 ): Promise<WalletTransfer> {
-  const idempotencyKey = generateIdempotencyKey();
-  const response = await api.post(
+  // Keyed on the intent, not the attempt: a retry after a timeout must reach
+  // the server as the same transfer, not a second one.
+  const { pin, ...intent } = payload;
+  const response = await withIntentKey('transfer:paymax', intent, (idempotencyKey) => api.post(
     '/api/v1/transfers/paymax',
     {
       recipient_identifier: payload.recipientIdentifier,
       amount_kobo:          payload.amountKobo,
       narration:            payload.narration?.slice(0, 100),
-      pin:                  payload.pin,
+      pin,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },
-  );
+  ));
   const data = (response.data?.data ?? response.data) as ApiRecord;
   const transfer = (data?.transfer ?? data) as ApiRecord;
   return {

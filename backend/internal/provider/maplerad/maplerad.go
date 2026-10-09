@@ -3,18 +3,18 @@ package maplerad
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"math"
 	"net/http"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/internal/provider"
 	"strings"
 	"time"
-
-	"spotlight/backend/internal/provider"
 )
 
 const baseURL = "https://sandbox.api.maplerad.com/v1" // switch to prod URL via env
@@ -24,7 +24,6 @@ const baseURL = "https://sandbox.api.maplerad.com/v1" // switch to prod URL via 
 // transfers, institutions, counterparty), VirtualAccountProvider (collections VA
 // issuing), IdentityProvider (customer create/get), WalletProvider (provision +
 // reconciliation balance), and BillsProvider — plus the FX helpers (Phase 2 seam).
-//
 // This is the ONLY place Maplerad HTTP/SDK code may live; no Maplerad DTO leaks out.
 type Client struct {
 	secretKey     string
@@ -34,7 +33,6 @@ type Client struct {
 }
 
 // New creates a Maplerad client. Set prod=true for the live environment.
-//
 // Backward-compatible signature. The webhook secret is set separately via
 // WithWebhookSecret so existing callers (FX path) keep working; provider-level
 // VerifyWebhookSignature requires the webhook secret to be set.
@@ -61,8 +59,6 @@ func (c *Client) WithBaseURL(url string) *Client {
 
 // WithWebhookSecret sets the vault-stored webhook secret used by
 // VerifyWebhookSignature (HMAC-SHA256). Returns the receiver for chaining:
-//
-//	maplerad.New(secretKey, prod).WithWebhookSecret(webhookSecret)
 func (c *Client) WithWebhookSecret(secret string) *Client {
 	c.webhookSecret = secret
 	return c
@@ -74,8 +70,6 @@ func (c *Client) Name() string { return "maplerad" }
 // READ paths degrade to deterministic mock data so the corridor stays usable
 // offline; MONEY paths still surface real errors (never silently mock a move).
 func (c *Client) live() bool { return c.secretKey != "" }
-
-// --- FX operations ---
 
 // FXQuoteRequest parameters.
 type FXQuoteRequest struct {
@@ -132,7 +126,6 @@ func targetMinor(amountMinor int64, e fxRateEntry) int64 {
 }
 
 // GetFXQuote retrieves an indicative FX rate from Maplerad for one corridor.
-//
 // NOTE: /fx/rates is a rate *board*, not a quote service — it returns no quote id,
 // fee or expiry, so those stay zero-valued here rather than being invented. The
 // orchestration layer prices spread/fees itself and treats Rate as the provider's
@@ -169,7 +162,6 @@ func (c *Client) GetFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteRe
 }
 
 // CreateFXQuote books a firm, single-use quote (POST /fx/quote).
-//
 // This — not the /fx/rates board — is what an exchange runs against: it returns a
 // `reference` that ConvertFX consumes. The reference is SINGLE USE: once exchanged
 // (or expired) Maplerad answers "could not find quote", so never replay one, and
@@ -195,7 +187,7 @@ func (c *Client) CreateFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuot
 		return nil, fmt.Errorf("maplerad: create fx quote: %s", resp.Message)
 	}
 	if resp.Data.Reference == "" {
-		return nil, fmt.Errorf("maplerad: create fx quote: provider returned no quote reference")
+		return nil, errors.New("maplerad: create fx quote: provider returned no quote reference")
 	}
 	return &FXQuoteResponse{
 		QuoteID:           resp.Data.Reference,
@@ -206,7 +198,6 @@ func (c *Client) CreateFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuot
 }
 
 // ConvertFXRequest identifies the quote to exchange.
-//
 // Maplerad's exchange endpoint takes ONLY the quote reference: currencies and
 // amounts are fixed by the quote, and there is no client-reference or
 // idempotency-key field — so replay protection must live on our side. The one
@@ -235,7 +226,7 @@ func (c *Client) ConvertFX(ctx context.Context, req ConvertFXRequest) (*ConvertF
 		// Fail here rather than let the provider reject an empty reference: an
 		// empty quote id means the caller quoted off the rate board, which issues
 		// none. Book one with CreateFXQuote first.
-		return nil, fmt.Errorf("maplerad: convert fx: quote reference is required")
+		return nil, errors.New("maplerad: convert fx: quote reference is required")
 	}
 	body := map[string]any{"quote_reference": req.QuoteID}
 	var resp struct {
@@ -261,8 +252,6 @@ func (c *Client) ConvertFX(ctx context.Context, req ConvertFXRequest) (*ConvertF
 		Status:            "settled",
 	}, nil
 }
-
-// --- PaymentProvider implementation (reuses for FX payouts) ---
 
 func (c *Client) InitializePayment(ctx context.Context, req provider.InitializePaymentRequest) (*provider.InitializePaymentResponse, error) {
 	body := map[string]any{
@@ -353,18 +342,13 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 // VerifyWebhookSignature validates Maplerad's HMAC-SHA256 signature over the raw
 // body, hex-encoded, using the vault-stored webhook secret, with a constant-time
 // compare. (Scheme mirrors orchestration/adapters/maplerad_live.go.) Rejects when
-// the secret or signature is missing — never the old `return true` stub.
+// the secret or signature is missing — fail closed.
 func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 	if c.webhookSecret == "" || signature == "" {
 		return false
 	}
-	mac := hmac.New(sha256.New, []byte(c.webhookSecret))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
+	return cryptox.ConstantTimeEqual(cryptox.HMACSHA256Hex(c.webhookSecret, string(payload)), signature)
 }
-
-// --- VirtualAccountProvider ---
 
 func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.ProvisionVARequest) (*provider.VirtualAccount, error) {
 	body := map[string]any{
@@ -403,7 +387,6 @@ func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.Provi
 // provider customer id. The mapper passes through whatever the API returns for
 // account_name / bank_name without assuming they equal the customer's name
 // (Maplerad caveat: VA names may be random and bank_name may be "maplerad").
-//
 // READ path: with no secret key it degrades to a deterministic mock so dev/CI
 // runs offline.
 func (c *Client) GetVirtualAccount(ctx context.Context, customerID string) (*provider.VirtualAccount, error) {
@@ -434,9 +417,7 @@ func (c *Client) GetVirtualAccount(ctx context.Context, customerID string) (*pro
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // IdentityProvider — POST/GET /customers. BVN/NIN are PII: NEVER logged.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CreateCustomer maps a KYC-verified Paymax user to a Maplerad customer
 // (POST /customers). This is a MONEY/identity path: it surfaces real errors and
@@ -516,9 +497,7 @@ func (c *Client) GetCustomer(ctx context.Context, customerID string) (*provider.
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // WalletProvider — provider custody wallet. Balance is reconciliation-only.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ProvisionWallet creates a provider custody wallet for a customer (POST /wallets).
 // MONEY path: surfaces real errors; never mock-succeeds.
@@ -579,9 +558,7 @@ func (c *Client) GetProviderBalance(ctx context.Context, walletID string) (*prov
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // BillsProvider — async-authoritative. Sync return is PENDING; webhook finalizes.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // PurchaseBill submits a bill purchase keyed by the client reference (POST /bills).
 // MONEY path: surfaces real errors; never mock-succeeds. The result is PENDING on
@@ -665,10 +642,8 @@ func (c *Client) GetBill(ctx context.Context, ref string) (*provider.Bill, error
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // DisbursementProvider — Institutions, Counterparty, Transfer. Lets Maplerad join
 // the disbursement registry alongside Paystack/Monnify.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ListBanks returns Maplerad's supported NGN institutions (GET /institutions).
 // READ path (cache-friendly): degrades to the deterministic fallback bank list
@@ -842,9 +817,7 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 	return ev, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Mock seam helpers (READ-path determinism, offline dev/CI).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // fallbackBanks mirrors the disbursement deterministic bank list (payment_banks
 // seed) so READ ListBanks stays non-empty without network. Kept local to avoid an
@@ -910,8 +883,6 @@ func billStatus(normalized string) string {
 	}
 }
 
-// --- HTTP helpers ---
-
 func (c *Client) post(ctx context.Context, path string, body, dst any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -940,7 +911,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("maplerad: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("maplerad: read response: %w", err)
@@ -951,7 +922,6 @@ func (c *Client) do(req *http.Request, dst any) error {
 	return json.Unmarshal(b, dst)
 }
 
-// --- Compile-time interface assertions ---
 // The Maplerad Client satisfies the full NGN v1 gateway surface. If any signature
 // drifts from a port, the build breaks here (not at a call site).
 var (
@@ -962,3 +932,181 @@ var (
 	_ provider.VirtualAccountProvider = (*Client)(nil)
 	_ provider.PaymentProvider        = (*Client)(nil)
 )
+
+// cards.go — CardIssuer implementation (card LIFECYCLE only: issue / reveal /
+// freeze / terminate). Card FUNDING is NOT here: it stays on the internal
+// double-entry ledger (orchestration/cards_store.go FundCard). Any provider-side
+// settlement of card spend is treasury-level reconciliation and out of scope.
+// This is the ONLY place Maplerad issuing HTTP/DTO code may live. All endpoints
+// are marked TODO(maplerad-issuing) pending verification against the live docs.
+// Offline degradation: when !c.live() (no secret key) each method synthesizes a
+// DETERMINISTIC result from an fnv hash of the customer/card id — mirroring how the
+// reads degrade to mockVirtualAccount — so dev/CI runs offline. The synthesized PAN
+// is masked and is clearly NOT a real PCI PAN.
+
+// IssueCard provisions a virtual card at Maplerad. Card lifecycle path: with a
+// live key it surfaces real errors; with no key it degrades to a deterministic
+// synthesized card so the corridor stays usable offline.
+func (c *Client) IssueCard(ctx context.Context, req provider.IssueCardRequest) (*provider.IssuedCard, error) {
+	if !c.live() {
+		return synthIssuedCard(req.Customer, req.Brand), nil
+	}
+	brand := req.Brand
+	if brand == "" {
+		brand = "VISA"
+	}
+	body := map[string]any{
+		"customer_id":  req.Customer,
+		"currency":     req.Currency,
+		"type":         "VIRTUAL",
+		"brand":        brand,
+		"auto_approve": true,
+		"amount":       0, // funding stays on the internal ledger; not a provider load
+	}
+	var resp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			ID       string `json:"id"`
+			Last4    string `json:"last4"`
+			Brand    string `json:"brand"`
+			ExpMonth int    `json:"expiry_month"`
+			ExpYear  int    `json:"expiry_year"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	// TODO(maplerad-issuing): verify against live docs — path "/issuing" and the
+	// data field names (id, last4, brand, expiry_month, expiry_year).
+	if err := c.post(ctx, "/issuing", body, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("maplerad: issue card: %s", resp.Message)
+	}
+	out := &provider.IssuedCard{
+		ProviderCardID: resp.Data.ID,
+		Last4:          resp.Data.Last4,
+		Brand:          resp.Data.Brand,
+		ExpMonth:       resp.Data.ExpMonth,
+		ExpYear:        resp.Data.ExpYear,
+	}
+	if out.Brand == "" {
+		out.Brand = brand
+	}
+	return out, nil
+}
+
+// RevealCard fetches the sensitive PAN/CVV/expiry for a provider card id. Card
+// lifecycle READ path: degrades to a deterministic masked synth offline.
+func (c *Client) RevealCard(ctx context.Context, providerCardID string) (*provider.CardSecrets, error) {
+	if !c.live() {
+		return synthCardSecrets(providerCardID), nil
+	}
+	var resp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			PAN      string `json:"card_number"`
+			CVV      string `json:"cvv"`
+			ExpMonth int    `json:"expiry_month"`
+			ExpYear  int    `json:"expiry_year"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	// TODO(maplerad-issuing): verify against live docs — path "/issuing/{id}" (or the
+	// documented card-secrets/decrypt endpoint) and the data field names
+	// (card_number, cvv, expiry_month, expiry_year).
+	if err := c.get(ctx, "/issuing/"+providerCardID, &resp); err != nil {
+		return synthCardSecrets(providerCardID), nil
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("maplerad: reveal card: %s", resp.Message)
+	}
+	return &provider.CardSecrets{
+		PAN:    resp.Data.PAN,
+		CVV:    resp.Data.CVV,
+		Expiry: fmt.Sprintf("%02d/%02d", resp.Data.ExpMonth, resp.Data.ExpYear),
+	}, nil
+}
+
+// SetCardFrozen freezes (true) or unfreezes (false) a provider card. Card
+// lifecycle path: no-op success offline; real errors when live.
+func (c *Client) SetCardFrozen(ctx context.Context, providerCardID string, frozen bool) error {
+	if !c.live() {
+		return nil
+	}
+	action := "unfreeze"
+	if frozen {
+		action = "freeze"
+	}
+	var resp struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
+	}
+	// TODO(maplerad-issuing): verify against live docs — paths "/issuing/{id}/freeze"
+	// and "/issuing/{id}/unfreeze".
+	if err := c.post(ctx, "/issuing/"+providerCardID+"/"+action, map[string]any{}, &resp); err != nil {
+		return err
+	}
+	if !resp.Status {
+		return fmt.Errorf("maplerad: set card frozen (%s): %s", action, resp.Message)
+	}
+	return nil
+}
+
+// TerminateCard permanently deactivates a provider card. Card lifecycle path:
+// no-op success offline; real errors when live.
+func (c *Client) TerminateCard(ctx context.Context, providerCardID string) error {
+	if !c.live() {
+		return nil
+	}
+	var resp struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
+	}
+	// TODO(maplerad-issuing): verify against live docs — path "/issuing/{id}/terminate".
+	if err := c.post(ctx, "/issuing/"+providerCardID+"/terminate", map[string]any{}, &resp); err != nil {
+		return err
+	}
+	if !resp.Status {
+		return fmt.Errorf("maplerad: terminate card: %s", resp.Message)
+	}
+	return nil
+}
+
+// Offline synth helpers (deterministic, masked — never a real PCI PAN).
+
+// synthHash produces a deterministic 64-bit fnv hash of the given seed.
+func synthHash(seed string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(seed))
+	return h.Sum64()
+}
+
+// synthIssuedCard yields a deterministic offline issued card. The provider card id
+// and metadata are derived from the customer id so repeated calls are stable.
+func synthIssuedCard(customer, brand string) *provider.IssuedCard {
+	if brand == "" {
+		brand = "VISA"
+	}
+	n := synthHash(customer)
+	return &provider.IssuedCard{
+		ProviderCardID: fmt.Sprintf("mock_card_%08d", n%100_000_000),
+		Last4:          fmt.Sprintf("%04d", n%10000),
+		Brand:          brand,
+		ExpMonth:       int(n%12) + 1,
+		ExpYear:        30 + int(n%6), // 30..35 (two-digit year)
+	}
+}
+
+// synthCardSecrets yields a deterministic, MASKED offline reveal. This is clearly
+// TEST DATA — not a real PCI PAN and must never be treated as one.
+func synthCardSecrets(providerCardID string) *provider.CardSecrets {
+	n := synthHash(providerCardID)
+	last4 := fmt.Sprintf("%04d", n%10000)
+	return &provider.CardSecrets{
+		PAN:    "•••• •••• •••• " + last4,
+		CVV:    "•••",
+		Expiry: fmt.Sprintf("%02d/%02d", int(n%12)+1, 30+int(n%6)),
+	}
+}
+
+var _ provider.CardIssuer = (*Client)(nil)

@@ -1,15 +1,12 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import type { UtilityBillerRow, UtilityCategory } from '@/src/server/utility/types';
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Central Commission module — read-side helper (REFERENCE integration: utility).
-//
 // Source of truth: public.commission_config, keyed by
 // (service_category, service, service_subtype). This helper resolves the active
 // rate row for a resolved (service, subtype), falling back service→'' then null.
 // It is READ-ONLY and best-effort: every path is guarded so a lookup failure can
 // never break a money path (callers keep their existing behavior on null).
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const UTILITY_COMMISSION_CATEGORY = 'Utility_Bills';
 
@@ -124,7 +121,6 @@ function coerceRow(row: Record<string, unknown>): CommissionConfigRow {
   };
 }
 
-// Read the active commission_config row for (service, subtype). Tries the exact
 // subtype first, then the service-level ('') row, then null. Best-effort: any DB
 // error resolves to null (caller keeps legacy behavior — never throws).
 export async function getCommissionConfig(

@@ -1,4 +1,3 @@
-// ── Direct Referral Rewards — API layer ──────────────────────────────────────
 // Mock-first (USE_MOCK, default ON). Live path hits `${API_BASE}/...` via the
 // shared axios client, which the frontend-web catch-all proxy forwards to the
 // Go engine at /v1/referrals/*. Responses are snake_case and unwrapped from the
@@ -25,7 +24,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// State-changing calls carry an Idempotency-Key (CLAUDE.md iron rule; the proxy
 // forwards it verbatim). attribute is idempotent per user; link is safe to retry.
 function idempotencyKey(): string {
   return `ref-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -34,11 +32,9 @@ function idempotencyKey(): string {
 const daysAgo  = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
-// ── Mock fixtures (field names match the real backend shape exactly) ─────────
 const MOCK_CODE = 'AMARA-2K6';
 const MOCK_LINK = `https://spotlight.ng/j/${MOCK_CODE}`;
 
-// Active count of 47 → Growth is the *next* tier at 50; sits mid-Starter with
 // the ₦20,000 milestone 3 away — matches the PRD's "47 of 50" example so the
 // hub/next-milestone copy renders the intended emotional beat.
 const MOCK_ACTIVE_COUNT = 47;
@@ -86,7 +82,6 @@ function mockMilestones(): MilestonesResponse {
   };
 }
 
-// ── Code / link ──────────────────────────────────────────────────────────────
 export async function getOrCreateLink(): Promise<ReferralLink> {
   if (USE_MOCK) {
     await delay(200);
@@ -95,7 +90,6 @@ export async function getOrCreateLink(): Promise<ReferralLink> {
   return unwrap(await api.post(`${API_BASE}/link`, {}, { headers: { 'Idempotency-Key': idempotencyKey() } }));
 }
 
-// Called once at signup (referred user side). Idempotent per user; the engine
 // 400s on self-referral / unknown code. Silent — no reward is shown here.
 export async function attribute(code: string): Promise<AttributionResult> {
   const trimmed = code.trim();
@@ -106,7 +100,6 @@ export async function attribute(code: string): Promise<AttributionResult> {
   return unwrap(await api.post(`${API_BASE}/attribute`, { code: trimmed }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
 }
 
-// ── Referrer reads (all scoped server-side to the caller — /me/*) ────────────
 export async function getDashboard(): Promise<ReferralDashboard> {
   if (USE_MOCK) { await delay(); return mockDashboard(); }
   return unwrap(await api.get(`${API_BASE}/me/dashboard`));
@@ -144,6 +137,5 @@ function pageQuery(params?: PageParams): Record<string, number> {
   return q;
 }
 
-// Re-export tier metadata so screens can render the full table without a second
 // import path (the engine is config-driven; these are the v1 launch defaults).
 export { TIER_TABLE, MILESTONE_TABLE };

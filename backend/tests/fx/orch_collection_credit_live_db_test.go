@@ -1,9 +1,7 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for INBOUND FX COLLECTIONS (deposits into a provisioned virtual
 // account / IBAN) — the last link of the Maplerad/Eversend collections rail.
-//
 // Everything ahead of this link already existed: the live provider adapters, the
 // credential-gated wiring, Service.CreateCollection provisioning a virtual
 // account into orch_collections, the mobile Receive screen, and a signed
@@ -11,17 +9,14 @@ package fx_test
 // mapped transfer/conversion STATUS, so a real deposit was signature-checked,
 // acknowledged 200, and silently dropped. That is why orch_balances stayed empty
 // on a live database even though the rail was provisioned.
-//
 // What these tests pin:
 //   • a matched deposit credits the wallet through the SAME pot selector as
 //     every other FX money path (NGN → main ledger, USD → orch_balances);
 //   • a redelivered webhook credits exactly once;
 //   • an unmatched reference credits NOTHING (no orphan credit — QA WH-INT-003);
 //   • a currency that disagrees with the virtual account is refused, not guessed.
-//
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run OrchCollection -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -58,7 +53,7 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 		ID: "va_" + uuid.NewString(), CustomerID: customer, Currency: currency,
 		Type: "virtual_account", Provider: "maplerad", Status: "active",
 		ProviderRef: providerRef,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"account_name": "Paymax Customer", "account_number": providerRef, "bank_name": "maplerad",
 		},
 		CreatedAt: time.Now(),
@@ -67,7 +62,7 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 		t.Fatalf("seed virtual account: %v", err)
 	}
 	t.Cleanup(func() {
-		c := context.Background()
+		c := t.Context()
 		_, _ = pool.Exec(c, `DELETE FROM orch_collection_events WHERE virtual_account_id=$1`, va.ID)
 		_, _ = pool.Exec(c, `DELETE FROM orch_collections WHERE id=$1`, va.ID)
 	})
@@ -114,11 +109,9 @@ func itoa(v int64) string {
 	return string(b)
 }
 
-// ── 1. A USD deposit credits the FX pot ─────────────────────────────────────
-
 func TestLiveDB_OrchCollection_CreditsTheUSDWallet(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -138,11 +131,9 @@ func TestLiveDB_OrchCollection_CreditsTheUSDWallet(t *testing.T) {
 	}
 }
 
-// ── 2. An NGN deposit lands in the MAIN wallet, not a private pot ────────────
-
 func TestLiveDB_OrchCollection_NGNCreditsTheMainWallet(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -162,11 +153,9 @@ func TestLiveDB_OrchCollection_NGNCreditsTheMainWallet(t *testing.T) {
 	}
 }
 
-// ── 3. Redelivery credits exactly once ──────────────────────────────────────
-
 func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -175,7 +164,7 @@ func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 
 	svc := collectionOnlyService(t, store)
 	body := mapleradCollection("evt_replay_"+uuid.NewString(), providerRef, "USD", 500_00)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := svc.HandleProviderEvent(ctx, "maplerad", body); err != nil {
 			t.Fatalf("delivery %d: %v", i+1, err)
 		}
@@ -189,11 +178,9 @@ func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 	}
 }
 
-// ── 4. Unmatched reference must not conjure a credit ────────────────────────
-
 func TestLiveDB_OrchCollection_UnmatchedReferenceCreditsNothing(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -214,11 +201,9 @@ func TestLiveDB_OrchCollection_UnmatchedReferenceCreditsNothing(t *testing.T) {
 	}
 }
 
-// ── 5. A currency that disagrees with the account is refused, not guessed ────
-
 func TestLiveDB_OrchCollection_CurrencyMismatchIsRefused(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -242,11 +227,9 @@ func TestLiveDB_OrchCollection_CurrencyMismatchIsRefused(t *testing.T) {
 	}
 }
 
-// ── 6. The deposit shows up on the customer's collections feed ──────────────
-
 func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -277,8 +260,6 @@ func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 	}
 }
 
-// ── 7. The deposit reaches Recent Activity with BOTH money legs populated ────
-//
 // Regression: the transactions feed used to emit one row per orch_collections
 // row — i.e. per virtual ACCOUNT, which is not a transaction — with
 // `destination.currency` left as "". The mobile TransactionRow formats that leg
@@ -287,7 +268,7 @@ func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 // collection account. The feed must carry real deposits, fully populated.
 func TestLiveDB_OrchCollection_FeedRowIsAFullyFormedDeposit(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)

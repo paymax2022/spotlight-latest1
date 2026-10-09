@@ -1,28 +1,27 @@
-// ── Association — Meeting authoring form (create + edit) ──────────────────────
 
 import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { alertAsync, confirmAsync } from '@/lib/confirm';
-import AdminFormScreen from '../AdminFormScreen';
-import { CONTENT_CAPABILITY } from '../../utils/authoringAccess';
+import { AdminFormScreen } from '../index';
+import { CONTENT_CAPABILITY } from '../../utils';
 import {
   FormCard, ChoiceRow, ToggleRow, NotifyToggle, StringListEditor, DateTimeField, FormNotice,
 } from '../AdminFormControls';
 import {
   useCreateMeeting, useUpdateMeeting, useDeleteMeeting, usePublishMinutes,
 } from '../../hooks/useAuthoring';
-import { str, bool, strList, oneOf } from '../../utils/metaFields';
+import { str, bool, strList, oneOf } from '../../utils';
 import {
   MEETING_MODE_OPTIONS, MEETING_STATE_OPTIONS, type MeetingInput, type AdminContentRow,
 } from '../../types/authoring.types';
-import type { MeetingMode, MeetingState } from '../../types/engagement.types';
+import type { MeetingMode, MeetingState } from '../../types';
 
 const MODES = MEETING_MODE_OPTIONS.map((o) => o.value);
 const STATES = MEETING_STATE_OPTIONS.map((o) => o.value);

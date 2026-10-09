@@ -1,4 +1,3 @@
-// ── Invest — mock data (used when EXPO_PUBLIC_INVEST_USE_MOCK !== 'false') ─────
 import type {
   StockWithQuote, Profile, Eligibility, Agreement, SuitabilityQuestion,
   PortfolioView, WalletView, Watchlist, Order, MarketStatus, PublicOffer,

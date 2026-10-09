@@ -7,11 +7,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1, shadow2, shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1, shadow2, shadow3 } from '@/constants/tokens';
 import {
   useRestaurantSearch,
   useFeaturedRestaurants,
@@ -127,9 +127,7 @@ function RestaurantCard({
         ) : null}
 
         {onToggleLike ? (
-          // No accessibilityRole="button" here: the OUTER card Pressable
           // already renders as a real HTML <button> on web (its own
-          // accessibilityRole="button"), and a <button> cannot nest another
           // <button> — that combination is what OpportunityCard.tsx's
           // heartBtn also avoids, for the same reason.
           <Pressable
@@ -326,7 +324,6 @@ export default function FoodDiscoveryScreen() {
     if (view === 'nearby' && !deviceCoords.coords && deviceCoords.available) {
       void deviceCoords.request();
     }
-    // deviceCoords itself is a fresh object every render; only `view` should
     // retrigger this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
@@ -339,13 +336,13 @@ export default function FoodDiscoveryScreen() {
   const priceRange = PRICE_FILTERS.find((f) => f.key === priceFilter) ?? PRICE_FILTERS[0];
 
   // Every filter is a SERVER param. `restaurants` below is the pages loaded so
-  // far; `total` is every match, which is what the counts must report — saying
   // "20 open" while 2,016 match would be worse than saying nothing.
   const {
     items: restaurants,
     total,
     isLoading,
     isError,
+    error,
     refetch,
     fetchNextPage,
     hasNextPage,
@@ -527,7 +524,19 @@ export default function FoodDiscoveryScreen() {
           {isLoading ? (
             <StateView kind="loading" message="Finding restaurants near you…" />
           ) : isError ? (
-            <StateView kind="error" title="Couldn't load restaurants" message="Check your connection and try again." actionLabel="Retry" onAction={() => refetch()} />
+            <StateView
+              kind="error"
+              title="Couldn't load restaurants"
+              message={
+                ((error as { status?: number; response?: { status?: number } } | null)?.response?.status ??
+                  (error as { status?: number } | null)?.status ??
+                  0) >= 500
+                  ? "Food & Delivery is temporarily unavailable on our side. Please try again in a moment."
+                  : 'Check your connection and try again.'
+              }
+              actionLabel="Retry"
+              onAction={() => refetch()}
+            />
           ) : restaurants.length === 0 ? (
             <StateView
               kind="empty"

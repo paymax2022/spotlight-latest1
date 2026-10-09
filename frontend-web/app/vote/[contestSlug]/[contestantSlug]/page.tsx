@@ -8,7 +8,7 @@ import VoteCountDisplay from '@/components/voting/VoteCountDisplay';
 import ShareToolkit from '@/components/voting/ShareToolkit';
 import CountdownTimer from '@/components/voting/CountdownTimer';
 import type { VotingSettings, VotePackage, LeaderboardEntry, ContestantShareLink } from '@/src/features/voting/types';
-import { FORMAT_NAIRA } from '@/src/features/voting/constants';
+import { FORMAT_NAIRA } from '@/src/features/voting/types';
 
 interface ContestantProfile {
   id: string;
@@ -103,14 +103,12 @@ export default function PublicVotingPage() {
   }, [load]);
 
   // SSE — real-time vote count updates.
-  //
   // D-008 fix: this used to point at /api/votes/stream, which streamed vote
   // counts/rank with no admin-configured visibility gating at all (a hidden
   // contest still leaked live numbers). That route is protected-legacy and
   // unfixable in place, so /api/v2/votes/stream is a new, gated replacement
   // (see that route for the visibility-redaction logic) — this is the only
   // real client of the old route, migrated here.
-  //
   // Also fixes a genuine pre-existing bug in this handler, found while
   // migrating it: it read `update.totalConfirmedVotes`/`update.rank`
   // directly off the parsed event, but the server has only ever sent

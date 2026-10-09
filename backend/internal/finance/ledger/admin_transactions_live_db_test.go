@@ -1,9 +1,7 @@
 package ledger_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the centralized admin "Transactions" console
 // (AdminListTransactions / GET /api/finance/admin/transactions).
-//
 // ledger_entries has no module/source column and no per-module transactions
 // table exists — this console is the only cross-module read of money
 // movement, built entirely on real rows. Every assertion here is scoped to a
@@ -12,7 +10,6 @@ package ledger_test
 // absolute table count and the suite is safe to re-run against the shared
 // local Supabase instance, which already carries thousands of unrelated
 // ledger_entries rows.
-//
 // Two database-enforced invariants constrain HOW the fixture writes:
 //   • ledger_entries is APPEND-ONLY (the immutability trigger rejects every
 //     DELETE/UPDATE), so nothing this suite writes can ever be cleaned up — the
@@ -23,7 +20,6 @@ package ledger_test
 //     (postContra). An unbalanced fixture row poisons
 //     TestLiveDB_LedgerGlobalConservation permanently, because nothing can
 //     remove it afterwards.
-//
 // What it proves:
 //  1. Join shape: a NULL-user (standing account) row is returned, not dropped,
 //     and carries account_type so the UI can label it "System: <type>".
@@ -36,18 +32,16 @@ package ledger_test
 //  7. RBAC: a caller lacking finance.admin.transactions.view is 403'd by
 //     middleware.RequirePermission; a caller holding it reaches the handler
 //     and gets a real 200 with real rows.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, so `go test ./...` without a
 // DB stays green.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/finance/ledger/... -run TestAdmin -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +51,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/domain"
@@ -69,6 +64,7 @@ import (
 // CheckPermission, the only method middleware.RequirePermission calls.
 type fakeAdminTxRBAC struct {
 	services.RBACService
+
 	allow bool
 }
 
@@ -161,9 +157,26 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	}
 
 	now := time.Now().UTC()
-	insert := func(accountID, entryType string, amountKobo int64, reference string, createdAt time.Time) string {
+	// Every fixture leg and its contra (or counterpart) leg MUST commit in the
+	// same transaction: TestLiveDB_LedgerGlobalConservation runs concurrently
+	// in another package and snapshots the WHOLE table, so a leg committed in
+	// its own autocommit leaves a window where the committed state is
+	// unbalanced — the residual it reports is whatever was mid-flight at that
+	// instant, and the row is permanent (ledger_entries is append-only).
+	withTx := func(fn func(tx pgx.Tx)) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin fixture seed tx: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		fn(tx)
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("commit fixture seed tx: %v", err)
+		}
+	}
+	insert := func(tx pgx.Tx, accountID, entryType string, amountKobo int64, reference string, createdAt time.Time) string {
 		var id string
-		err := pool.QueryRow(ctx, `
+		err := tx.QueryRow(ctx, `
 			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
 			VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
 			accountID, entryType, amountKobo, reference, "idem-"+uuid.NewString(), createdAt).Scan(&id)
@@ -175,9 +188,9 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	// insertWithMetadata is identical but sets metadata at INSERT time —
 	// ledger_entries is append-only (a real DB trigger rejects any later
 	// UPDATE), so metadata can only ever be seeded on the original insert.
-	insertWithMetadata := func(accountID, entryType string, amountKobo int64, reference string, createdAt time.Time, metadata string) string {
+	insertWithMetadata := func(tx pgx.Tx, accountID, entryType string, amountKobo int64, reference string, createdAt time.Time, metadata string) string {
 		var id string
-		err := pool.QueryRow(ctx, `
+		err := tx.QueryRow(ctx, `
 			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at, metadata)
 			VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
 			accountID, entryType, amountKobo, reference, "idem-"+uuid.NewString(), createdAt, metadata).Scan(&id)
@@ -196,31 +209,39 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	// name/email.
 	refA := fmt.Sprintf("fx:convert:%s-A", tag)
 	refB := fmt.Sprintf("arena:support:%s-B", tag)
-	refD := fmt.Sprintf("%sopaqueNoColon", tag)
+	refD := tag + "opaqueNoColon"
 	refE := uuid.NewString()
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
-	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
-	f.postContra(t, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
+	withTx(func(tx pgx.Tx) {
+		f.rowA = insert(tx, walletAcc.ID, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
+		f.postContra(t, tx, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
+	})
 	// rowB: 1 day ago, DEBIT 50000 kobo, "arena:support:..." — paired with rowC
 	// below, seeded with real metadata (proves the detail endpoint's JSON
 	// round-trip; ledger_entries is append-only, so this must be set at insert).
-	f.rowB = insertWithMetadata(walletAcc.ID, "DEBIT", 50000, refB, now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
 	// rowC: same reference as rowB (its ledger counterpart), posted to the STANDING
 	// commission account (user_id IS NULL) — proves standing-account rows are
 	// returned, not dropped, and are distinguishable via account_type. No contra
 	// here: B/C are already a balanced pair, which is exactly what the console is
 	// meant to show as one transaction with two legs.
-	f.rowC = insert(commAcc.ID, "CREDIT", 50000, refB, now.Add(-24*time.Hour+time.Second))
+	withTx(func(tx pgx.Tx) {
+		f.rowB = insertWithMetadata(tx, walletAcc.ID, "DEBIT", 50000, refB, now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
+		f.rowC = insert(tx, commAcc.ID, "CREDIT", 50000, refB, now.Add(-24*time.Hour+time.Second))
+	})
 	// rowD: 100 days ago, DEBIT 999999 kobo, NO colon in the reference at all —
 	// proves the SPLIT_PART fallback for non-colon references (whole string).
-	f.rowD = insert(walletAcc.ID, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
-	f.postContra(t, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
+	withTx(func(tx pgx.Tx) {
+		f.rowD = insert(tx, walletAcc.ID, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
+		f.postContra(t, tx, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
+	})
 	// rowE: now, CREDIT 1234 kobo, reference is an unrelated random UUID (no tag,
 	// no colon) — isolates the "search matches by joined user field" assertion,
 	// since this row can ONLY be found via the user's name/email, not the tag.
-	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, refE, now)
-	f.postContra(t, "CREDIT", 1234, refE, now)
+	withTx(func(tx pgx.Tx) {
+		f.rowE = insert(tx, walletAcc.ID, "CREDIT", 1234, refE, now)
+		f.postContra(t, tx, "CREDIT", 1234, refE, now)
+	})
 
 	// No cleanup: it cannot work, and attempting it would only hide a real
 	// failure behind a discarded error. DELETE on ledger_entries is rejected by
@@ -232,11 +253,27 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	return f
 }
 
+// withTx runs fn inside one transaction on the fixture pool. A fixture leg and
+// its contra must commit together, or the concurrent whole-table conservation
+// snapshot in tests/ledger can observe a committed-but-unbalanced window.
+func (f *adminTxFixture) withTx(t *testing.T, fn func(tx pgx.Tx)) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin fixture tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	fn(tx)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit fixture tx: %v", err)
+	}
+}
+
 // postContra writes the offsetting leg for a synthetic single-sided fixture row,
 // keeping this suite inside ADR-040's global conservation invariant
 // (SUM(signed amount_kobo) == 0 over the whole table, asserted by the live-DB
 // conservation tests in backend/tests/ledger).
-//
 // It is invisible to every assertion in this file by construction:
 //   - a STANDING account (user_id IS NULL) can never match the search-by-user
 //     assertions (AdminListTransactions searches le.reference plus the joined
@@ -250,7 +287,7 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 //
 // metadata records what it offsets: the row is permanent, and a human looking at
 // this table later deserves the pointer.
-func (f *adminTxFixture) postContra(t *testing.T, originalType string, amountKobo int64, forReference string, createdAt time.Time) string {
+func (f *adminTxFixture) postContra(t *testing.T, tx pgx.Tx, originalType string, amountKobo int64, forReference string, createdAt time.Time) string {
 	t.Helper()
 	offsetType := "DEBIT"
 	if originalType == "DEBIT" {
@@ -264,7 +301,7 @@ func (f *adminTxFixture) postContra(t *testing.T, originalType string, amountKob
 		t.Fatalf("marshal contra metadata: %v", err)
 	}
 	var id string
-	if err := f.pool.QueryRow(context.Background(), `
+	if err := tx.QueryRow(context.Background(), `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at, metadata)
 		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
 		f.contraAcct, offsetType, amountKobo, "admtxcontra-"+uuid.NewString(),
@@ -477,7 +514,7 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 
 	t.Run("denied without the permission", func(t *testing.T) {
 		r := buildRouter(false)
-		req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusForbidden {
@@ -487,7 +524,7 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 
 	t.Run("allowed with the permission returns real rows", func(t *testing.T) {
 		r := buildRouter(true)
-		req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -602,21 +639,26 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 	sharedRef := "admtx-shared-ref-" + f.tag
 	const extraRows = 25 // > adminRelatedEntriesLimit (20), so the cap actually bites
 	var ids []string
-	for i := 0; i < extraRows; i++ {
-		var id string
-		if err := f.pool.QueryRow(ctx, `
-			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-			f.walletAcct, "CREDIT", 1, sharedRef, "idem-"+uuid.NewString(), time.Now().UTC()).Scan(&id); err != nil {
-			t.Fatalf("insert shared-reference row %d: %v", i, err)
+	// The whole group AND its contra leg commit in one tx — per-row autocommits
+	// would leave committed-but-unbalanced windows that the concurrent
+	// conservation suite (tests/ledger) can snapshot mid-seed.
+	f.withTx(t, func(tx pgx.Tx) {
+		for i := range extraRows {
+			var id string
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
+				VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+				f.walletAcct, "CREDIT", 1, sharedRef, "idem-"+uuid.NewString(), time.Now().UTC()).Scan(&id); err != nil {
+				t.Fatalf("insert shared-reference row %d: %v", i, err)
+			}
+			ids = append(ids, id)
 		}
-		ids = append(ids, id)
-	}
-	// One contra leg offsets the group. It must carry its OWN reference, not
-	// sharedRef: sharing it would make RelatedEntriesTotal 25 instead of 24 (the
-	// cap assertion below). And it must not carry the tag, or Search=<tag> would
-	// see a 5th row.
-	f.postContra(t, "CREDIT", int64(extraRows), sharedRef, time.Now().UTC())
+		// One contra leg offsets the group. It must carry its OWN reference, not
+		// sharedRef: sharing it would make RelatedEntriesTotal 25 instead of 24 (the
+		// cap assertion below). And it must not carry the tag, or Search=<tag> would
+		// see a 5th row.
+		f.postContra(t, tx, "CREDIT", int64(extraRows), sharedRef, time.Now().UTC())
+	})
 
 	detail, err := f.svc.AdminGetTransaction(ctx, ids[0])
 	if err != nil {
@@ -641,7 +683,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 	f := setupAdminTxFixture(t)
 	ctx := context.Background()
 
-	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); err != ledger.ErrTransactionNotFound {
+	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); !errors.Is(err, ledger.ErrTransactionNotFound) {
 		t.Fatalf("expected ErrTransactionNotFound for an unknown id, got %v", err)
 	}
 
@@ -656,7 +698,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 		middleware.RequirePermission(&fakeAdminTxRBAC{allow: true}, "finance.admin.transactions.view"),
 		h.GetTransaction)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -665,7 +707,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 
 	// And the happy path through the real HTTP handler, to prove the route
 	// wiring + JSON envelope (not just the service method).
-	req2 := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusOK {

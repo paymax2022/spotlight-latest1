@@ -1,20 +1,32 @@
 import { api } from '@/api/client';
 import { createSupabaseClient } from '@/lib/supabase';
-import { mapWalletFromApi, mapWalletFromSupabase } from '@/api/mappers/wallet.mapper';
-import { Wallet } from '@/types/wallet';
+import { mapWalletFromApi, mapWalletFromSupabase, resolveFallbackBalanceKobo } from '@/api/mappers/wallet.mapper';
+import type { Wallet } from '@/types/wallet';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 
 const ZERO_WALLET: Wallet = { balance: 0, currency: 'NGN', ledgerBalance: 0, pendingBalance: 0 };
+
+// Spendable naira planes — mirrors SPENDABLE_WALLET_TYPES in
+// frontend-web/src/server/wallet/account-type.ts (ADR-045): the unified
+// 'user_wallet' pot plus the pre-consolidation 'wallet' pot the balance read
+// still sums, so residue the sweep migration missed stays visible.
+const SPENDABLE_WALLET_TYPES = ['user_wallet', 'wallet'];
+
+type SpendableRow = Record<string, unknown>;
 
 /**
  * Fetch the wallet balance.
  *
  * Primary path  → Next.js API /api/v1/wallet/balance (authoritative, KYC-gated).
- * Fallback path → Supabase wallet_balance view queried directly.
+ * Fallback path → Supabase, mirroring the server's getBalance(): the spendable
+ * wallet_balance rows summed, then the legacy mobile_fintech_accounts plane.
  *
- * The fallback ensures the balance is always visible even when the Next.js
- * server is offline, the wallet feature flag is off, or the user's KYC tier
- * is below the API gate. The view is already scoped by user_id RLS.
+ * The fallback keeps the REAL balance visible when the Next.js server is
+ * offline, the wallet feature flag is off, or the user's KYC tier is below
+ * the API gate (the views/tables are already scoped by user_id RLS). When no
+ * source can produce a figure it flags `balanceUnavailable` — a fabricated
+ * ₦0.00 would mask money the user actually has, which is worse than showing
+ * nothing.
  */
 export async function getWallet(): Promise<Wallet> {
   try {
@@ -25,25 +37,68 @@ export async function getWallet(): Promise<Wallet> {
     }
     return mapWalletFromApi(data);
   } catch {
-    return getWalletFromSupabase();
+    const fallback = await getWalletFromSupabase();
+    return fallback ?? { ...ZERO_WALLET, balanceUnavailable: true };
   }
 }
 
-async function getWalletFromSupabase(): Promise<Wallet> {
+async function getWalletFromSupabase(): Promise<Wallet | null> {
   try {
     const supabase = createSupabaseClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return ZERO_WALLET;
+    if (!user) return null;
 
-    const { data } = await supabase
+    // wallet_balance is one row PER ledger_accounts row — a user can hold
+    // several (user_wallet, escrow, virtual_account, group_wallet, …). The
+    // old unfiltered maybeSingle() errored on >1 row and produced ₦0.00,
+    // masking real balances; even a single row could be a non-spendable
+    // account. Filter to the spendable naira planes and SUM them, exactly
+    // like the server's getBalance() (frontend-web/src/server/wallet/service.ts).
+    const { data: rows, error } = await supabase
       .from('wallet_balance')
-      .select('available_kobo, currency')
+      .select('account_id, account_type, available_kobo')
       .eq('user_id', user.id)
-      .maybeSingle();
+      .eq('currency', 'NGN')
+      .in('account_type', SPENDABLE_WALLET_TYPES);
 
-    return data ? mapWalletFromSupabase(data) : ZERO_WALLET;
+    if (error) return null;
+    const spendableRows = (rows ?? []) as SpendableRow[];
+
+    // The legacy plane only matters when the ledger nets to zero — same rule
+    // as the server — and only when the unified account has never had an
+    // entry (otherwise the zero is real: the money arrived and was spent).
+    let unifiedHasEntries = false;
+    let legacyBalanceNaira: number | null = null;
+    let legacyCurrency: string | null = null;
+
+    const spendableTotal = spendableRows.reduce((s, r) => s + Number(r.available_kobo ?? 0), 0);
+    if (spendableTotal === 0) {
+      const unifiedId = spendableRows.find((r) => r.account_type === 'user_wallet')?.account_id;
+      if (unifiedId != null) {
+        const { count } = await supabase
+          .from('ledger_entries')
+          .select('id', { count: 'exact', head: true })
+          .eq('account_id', String(unifiedId));
+        unifiedHasEntries = (count ?? 0) > 0;
+      }
+      if (!unifiedHasEntries) {
+        // available_balance is NAIRA (major units) — resolveFallbackBalanceKobo
+        // converts. RLS (mobile_fintech_accounts_user_select) scopes this to
+        // the caller's own row.
+        const { data: legacy } = await supabase
+          .from('mobile_fintech_accounts')
+          .select('available_balance, currency')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        legacyBalanceNaira = Number(legacy?.available_balance ?? 0);
+        legacyCurrency = typeof legacy?.currency === 'string' ? legacy.currency : null;
+      }
+    }
+
+    const kobo = resolveFallbackBalanceKobo({ spendableRows, unifiedHasEntries, legacyBalanceNaira });
+    return mapWalletFromSupabase({ available_kobo: kobo, currency: legacyCurrency ?? 'NGN' });
   } catch {
-    return ZERO_WALLET;
+    return null;
   }
 }
 
@@ -56,8 +111,6 @@ export interface TransactionListParams {
 
 // Delegates to the transactions API so there is a single source of truth.
 export { getTransactions as getWalletTransactions } from '@/api/transactions.api';
-
-// ─── Wallet funding (server-side Paystack operations) ─────────────────────────
 
 export async function initiateFunding(payload: {
   /**
@@ -100,8 +153,6 @@ export async function initiateFunding(payload: {
 // NOTE: manual funding verification was removed — there is no backend route for it.
 // Wallet top-ups are confirmed asynchronously by the Paystack webhook
 // (frontend-web/app/api/webhooks/paystack/route.ts), which credits the ledger.
-
-// ─── Bank transfer (dedicated virtual account) ─────────────────────────────────
 
 export interface VirtualAccount {
   accountNumber: string;

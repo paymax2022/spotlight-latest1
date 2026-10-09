@@ -1,15 +1,12 @@
 package aicare
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression guard for a real IDOR bug: Resolve accepted an actorID
 // parameter but never used it in its UPDATE's WHERE clause, so any
 // authenticated user could resolve (close) ANY other user's support session
 // by ID — no ownership check at all, unlike SendMessage/Escalate/GetHistory,
 // which all scope by user_id. Fixed by adding "AND user_id=$2" and failing
 // closed (RowsAffected==0 -> error) instead of silently no-op succeeding.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -7,10 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ChevronLeft, Check, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -64,7 +64,6 @@ export default function PreConsultIntakeWizard() {
   const hydrated = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Consent gate (M2): redirect to consent if not yet accepted ──────────────
   useEffect(() => {
     if (!bundleQ.data) return;
     if (acceptedVersion !== consentVersion) {
@@ -75,7 +74,6 @@ export default function PreConsultIntakeWizard() {
     }
   }, [bundleQ.data, acceptedVersion, consentVersion, appointmentId, prebookingMode, doctorId]);
 
-  // ── Hydrate local-first (offline draft) then reconcile with server draft ────
   useEffect(() => {
     if (hydrated.current || !intake) return;
     let cancelled = false;
@@ -127,7 +125,6 @@ export default function PreConsultIntakeWizard() {
     });
   };
 
-  // ── Attachments (M12): pick → presign → (mock) PUT → store reference ────────
   const onPickAttachment = async (field: IntakeFieldT) => {
     const picked = await pickFileForField(field.accept);
     if (!picked) return;
@@ -174,7 +171,6 @@ export default function PreConsultIntakeWizard() {
     );
   }
 
-  // ── M13 Red-flag interstitial ───────────────────────────────────────────────
   if (phase === 'redflag' && redFlag) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -190,7 +186,6 @@ export default function PreConsultIntakeWizard() {
     );
   }
 
-  // ── M15 Submission confirmation ─────────────────────────────────────────────
   if (phase === 'done') {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -211,7 +206,6 @@ export default function PreConsultIntakeWizard() {
     );
   }
 
-  // ── M14 Review & submit ─────────────────────────────────────────────────────
   if (phase === 'review') {
     return (
       <ReviewScreen
@@ -225,7 +219,6 @@ export default function PreConsultIntakeWizard() {
     );
   }
 
-  // ── M4–M12 wizard ───────────────────────────────────────────────────────────
   if (!step) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -350,7 +343,6 @@ export default function PreConsultIntakeWizard() {
   );
 }
 
-// ── M14 Review & submit (full summary) ────────────────────────────────────────
 function ReviewScreen({
   schema, values, attachments, submitting, onBack, onSubmit,
 }: {

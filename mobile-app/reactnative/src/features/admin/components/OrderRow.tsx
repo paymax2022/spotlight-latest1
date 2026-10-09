@@ -1,11 +1,10 @@
-// ── Paymax · Admin — OrderRow ────────────────────────────────────────────────
 // One order: ref + user, side/symbol, amount, status pill, provider ref + time.
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StatusPill from './StatusPill';
 import { ORDER_STATUS_STYLE, formatMoneyObj, relativeTime } from '../constants/admin.constants';
 import type { AdminOrder } from '../types/admin.types';

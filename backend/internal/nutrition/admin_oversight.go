@@ -2,13 +2,10 @@ package nutrition
 
 // Admin oversight surface — the thin read + resolve layer that makes the admin
 // console (frontend-admin/app/admin/nutrition/{consults,payouts}) live.
-//
 // WHAT IS REAL vs A PLACEHOLDER (read this before extending):
-//
 //   - The nutrition domain is a Resolution Engine. It has NO nutritionist,
 //     NO consult, and NO payout/money entities (grep the package: none exist,
 //     and there is no ledger here — see model.go's package doc).
-//
 //   - "Consults" (the /consults admin queue) are therefore mapped onto the ONE
 //     real review/resolution entity this module has: dish nutrition profiles that
 //     need a human to look at them — i.e. AI_ESTIMATE/LOW-confidence and STALE
@@ -19,14 +16,12 @@ package nutrition
 //     they are filled with honest, derived-or-constant placeholders and flagged as
 //     such in the JSON (see AdminConsult.Placeholder). The load-bearing fields
 //     (id, status, topic, summary, timestamps, resolutionNote) ARE real.
-//
 //   - "Resolve" (POST /consults/:id/resolve {resolution, note}) is a REAL human
 //     resolve/close over that profile: resolution "resolve" force-re-resolves the
 //     dish against the current composition tables (reusing Service.Resolve, the
 //     existing engine); "accept" leaves the value as-is; "close" records the human
 //     decision. Every action writes an immutable audit row (action
 //     NUTRITION_ADMIN_RESOLVE) via the existing repo.Audit.
-//
 //   - "Payouts" (the /payouts admin queue) has NO real backing entity at all —
 //     there is no nutritionist settlement, no fee schedule, no money movement in
 //     this module, and per the brief we MUST NOT fabricate a money system. The
@@ -43,11 +38,9 @@ import (
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Response shapes — field names mirror the admin frontend's TS types
 // (frontend-admin/src/types/nutritionAdmin.ts) so the console flips from mock to
 // live with no field remap.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AdminConsult is one admin review-queue row. It maps a dish nutrition profile
 // (the real review entity) onto the console's NutritionistConsult shape. The
@@ -89,20 +82,15 @@ type AdminPayoutList struct {
 	Note        string `json:"note"`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Review lifecycle mapping (profile → console consult status).
-//
 // The console's ConsultStatus vocab is PENDING_REVIEW | UNDER_REVIEW | RESOLVED |
 // CLOSED | ESCALATED. We map the REAL profile state onto it:
-//
 //	AI_ESTIMATE + LOW confidence  → PENDING_REVIEW (free estimate, no grounding — needs a look)
 //	STALE                         → PENDING_REVIEW (invalidated — needs re-resolve)
 //	AI_ESTIMATE + MEDIUM (library)→ UNDER_REVIEW  (grounded estimate, lower urgency)
 //	RESTAURANT_CONFIRMED / EXACT  → excluded (already trusted — not in the queue)
-//
 // A subsequent human resolve/close stamps the console status onto the audit trail
 // (the profile's own honesty machine is separate and untouched by CLOSE/ACCEPT).
-// ─────────────────────────────────────────────────────────────────────────────
 
 const (
 	consultStatusPending   = "PENDING_REVIEW"
@@ -168,9 +156,7 @@ func consultSummaryForProfile(p Profile) string {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Service — thin admin read + resolve methods over the existing repo/engine.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AdminListConsults returns the admin review queue: dish nutrition profiles that
 // need a human look (LOW/free AI estimates + STALE), mapped onto the console's

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/academy/assessment"
@@ -14,7 +15,6 @@ import (
 	"spotlight/backend/internal/academy/credentials"
 	"spotlight/backend/internal/academy/curriculum"
 	"spotlight/backend/internal/academy/edupay"
-	"spotlight/backend/internal/academy/tuition"
 	"spotlight/backend/internal/academy/exam"
 	feesadminapi "spotlight/backend/internal/academy/fees/adminapi"
 	feescompetition "spotlight/backend/internal/academy/fees/competition"
@@ -28,6 +28,7 @@ import (
 	feesscholarship "spotlight/backend/internal/academy/fees/scholarship"
 	feesschool "spotlight/backend/internal/academy/fees/school"
 	feessession "spotlight/backend/internal/academy/fees/session"
+	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 	feesstudent "spotlight/backend/internal/academy/fees/student"
 	feestrustscore "spotlight/backend/internal/academy/fees/trustscore"
 	feesvault "spotlight/backend/internal/academy/fees/vault"
@@ -43,9 +44,11 @@ import (
 	"spotlight/backend/internal/academy/rewards"
 	"spotlight/backend/internal/academy/schools"
 	"spotlight/backend/internal/academy/trade"
+	"spotlight/backend/internal/academy/tuition"
 	"spotlight/backend/internal/academy/tutor"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations/rtc"
 	"spotlight/backend/internal/middleware"
 	providerInterfaces "spotlight/backend/internal/provider"
@@ -102,7 +105,6 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // wallet ledger funds reward credits (no shadow ledger); RBAC academy.* gates
 // staff actions; the payments/BNPL rails are injected into commerce (stubs in
 // dev). Sub-packages own their guarded state machines + idempotent money paths.
-//
 // Member base (authenticated finance group):
 //   - identity/curriculum/commerce embed "/academy" in their own subpaths → base = finance.
 //   - gamification/rewards/assessment/exam use bare subpaths → base = finance/academy.
@@ -110,7 +112,12 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler) {
+//
+// adminAuthMW must be the same RequireAuthContext middleware the finance group
+// uses (mapsAuth()): adminGroupTop5 applies it before requireUserID, which only
+// reads the user_id it populates — without it every academy admin route 401s
+// even with a valid token (E2E-SOC-034).
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, adminAuthMW gin.HandlerFunc, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler, internalAcademyAPIEnabled bool, serviceToken string) {
 	if pool == nil {
 		return
 	}
@@ -142,17 +149,17 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	var payRail commerce.PaymentRail   // commerce one-off charge → wallet ledger
 	var collectRail edupay.CollectRail // edupay collection → wallet ledger
 	if ledgerSvc != nil {
-		lr := academyLedgerRail{ledger: ledgerSvc}
+		lr := academyLedgerRail{ledger: ledgerSvc, tiers: tiers.NewService(pool)}
 		payRail, collectRail = lr, lr
 	}
 	var liveRooms academylive.LiveRoomProvider // live RTC token → integrations/rtc
 	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderVideoSDK) {
 		liveRooms = academyLiveRail{issuer: rtcIssuer}
 	}
-	memberFin := finance                                 // → /api/finance/academy/...
-	memberAcad := finance.Group("/academy")              // → /api/finance/academy/...
-	adminRoot := adminGroupTop5(r, "/api")               // identity/curriculum/commerce admin
-	adminAcad := adminGroupTop5(r, "/api/academy/admin") // bare-prefix admin packages
+	memberFin := finance                                              // → /api/finance/academy/...
+	memberAcad := finance.Group("/academy")                           // → /api/finance/academy/...
+	adminRoot := adminGroupTop5(r, "/api", adminAuthMW)               // identity/curriculum/commerce admin
+	adminAcad := adminGroupTop5(r, "/api/academy/admin", adminAuthMW) // bare-prefix admin packages
 
 	identity.RegisterAcademyIdentity(memberFin, adminRoot, pool, rbac)
 	curriculum.RegisterAcademyCurriculum(memberFin, adminRoot, pool, rbac)
@@ -278,6 +285,16 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		tuitionGroup.POST("/validate", tuitionHandler.ValidatePayment)
 		tuitionGroup.GET("/status/:application_id", tuitionHandler.GetTuitionStatus)
 
+		// Internal, service-authenticated confirm — lets the Next.js Paystack
+		// webhook/recover fulfilment arm settle an instalment when the payer's
+		// client never reaches the member route (AUD-FE-003 residual). Never a
+		// user JWT: RequireServiceToken fails closed (503) when the token is unset.
+		if internalAcademyAPIEnabled {
+			internalTuition := r.Group("/internal/finance/academy/tuition")
+			internalTuition.Use(middleware.RequireServiceToken(serviceToken))
+			internalTuition.POST("/confirm", tuitionHandler.ConfirmPaymentInternal)
+		}
+
 		// Admin routes: waive an installment, force-complete a plan, or create a plan
 		// ahead of first payment. Every mutation is RBAC-gated on academy.tuition.admin.
 		tuitionAdminGuard := middleware.RequirePermission(rbac, "academy.tuition.admin")
@@ -297,8 +314,6 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	}
 }
 
-// ── EdTech Fees composition root ─────────────────────────────────────────────────
-//
 // registerAcademyFees constructs + registers every fees/* handler. Packages that
 // take (member, admin, pool, rbac) self-gate their admin routes; packages that take
 // an assembled *Service (vault/payment/scholarship/trustscore/competition) get their
@@ -315,7 +330,6 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	// ── Group A: self-contained (member, admin, pool, rbac) — self-gate admin routes ──
 	feesschool.RegisterFeesSchool(member, admin, pool, rbac)        // /schools, admin verify (academy.fees.school.verify)
 	feessession.RegisterFeesSession(member, admin, pool, rbac)      // /schools/:schoolId/sessions|classes
 	feesschedule.RegisterFeesFeeSchedule(member, admin, pool, rbac) // /fee-schedules (SF-1 immutability)
@@ -323,7 +337,16 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	feesinvoice.RegisterFeesInvoice(member, admin, pool, rbac)      // /invoices (SF-2 derived balance)
 	feespromotion.RegisterFeesPromotion(member, admin, pool, rbac)  // /promotions (SF-3 two-approval)
 	feesroles.RegisterFeesRoles(admin, pool, rbac)                  // /schools/:schoolId/staff (RequireScopedPermission academy.fees.roles.assign)
-	feeshardship.RegisterFeesHardship(member, admin, pool, rbac)    // /invoices hardship review queue (SF-9, no money)
+
+	// Hardship (SF-9): inject the real ports so the review queue is actionable —
+	// the InvoiceFreezer drives overdue→frozen through the guarded invoice state
+	// machine, and the ReviewerAuthorizer checks academy.fees.hardship.review at
+	// global or the invoice's school scope, fail-closed.
+	{
+		invSvc := feesinvoice.NewService(pool)
+		hardshipSvc := feeshardship.NewService(pool, feesHardshipFreezer{inv: invSvc}, feesHardshipAuthz{rbac: rbac, pool: pool})
+		feeshardship.RegisterFeesHardship(member, admin, hardshipSvc, rbac)
+	}
 
 	// Flat admin oversight surface for the school-admin console (SC-29…SC-40): read-heavy
 	// list/aggregate views ACROSS schools at /api/academy/admin/fees/* (distinct from the
@@ -338,14 +361,12 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	exportAdmin := admin.Group("", guard("academy.fees.export.run"))
 	feesexport.RegisterFeesExport(exportAdmin, pool, rbac)
 
-	// ── Group B: assembled Service packages (money / gamification / identity) ──
-
 	// Vault (SF-5): guardian wallet → segregated FeesVault standing account
 	// (AccountEdtechFeesVault). Money via finance/ledger only. Wire only when the
 	// ledger is available (a nil ledger would silently drop money legs — fail-closed
 	// by simply not registering the vault money surface).
 	if ledgerSvc != nil {
-		vaultSvc := feesvault.NewService(pool, feesVaultLedger{ledger: ledgerSvc}, feesVaultInvoice{ledger: ledgerSvc})
+		vaultSvc := feesvault.NewService(pool, feesVaultLedger{ledger: ledgerSvc, tiers: tiers.NewService(pool)}, feesVaultInvoice{ledger: ledgerSvc})
 		feesvault.RegisterFeesVault(member, vaultSvc)
 	}
 
@@ -353,7 +374,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	// payment application. Reuses finance/ledger + fees/invoice.Service.
 	if ledgerSvc != nil {
 		invSvc := feesinvoice.NewService(pool)
-		schSvc := feesscholarship.NewService(pool, feesScholarshipLedger{ledger: ledgerSvc}, feesScholarshipInvoice{inv: invSvc})
+		schSvc := feesscholarship.NewService(pool, feesScholarshipLedger{ledger: ledgerSvc, tiers: tiers.NewService(pool)}, feesScholarshipInvoice{inv: invSvc})
 		feesscholarship.RegisterFeesScholarship(member, schSvc, rbac)
 		// Admin gate for scholarship mutations (the package reserves RBAC to the caller).
 		// Member routes above are guardian/sponsor self-service; the admin oversight
@@ -388,7 +409,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 		invSvc := feesinvoice.NewService(pool)
 		paySvc := feespayment.NewService(
 			paymentProvider, // provider.PaymentProvider satisfies feespayment.Gateway as-is
-			feesPaymentLedger{ledger: ledgerSvc},
+			feesPaymentLedger{ledger: ledgerSvc, tiers: tiers.NewService(pool)},
 			feesPaymentInvoice{pool: pool, inv: invSvc},
 			feespayment.NewIntentStore(pool),
 		)
@@ -403,7 +424,6 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 
 }
 
-// ── Fees payment (T3.x) money/invoice adapters ────────────────────────────────────
 // Thin shims over the EXISTING Paymax rails: finance/ledger for the real double-entry
 // money move (guardian wallet → school settlement), fees/invoice.Service for the
 // idempotent invoice-side record (SF-2: record a payment, never write a balance), and
@@ -425,9 +445,17 @@ func (c feesPaymentConfirmer) OnChargeSuccess(ctx context.Context, reference, ga
 	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
 }
 
-type feesPaymentLedger struct{ ledger *ledger.Service }
+type feesPaymentLedger struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a feesPaymentLedger) MoveGuardianToSchool(ctx context.Context, guardianUserID, schoolID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, guardianUserID, amountMinor); err != nil {
+		return "", err
+	}
 	settlement, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return "", err
@@ -507,12 +535,14 @@ func (a feesPaymentInvoice) HasAnyPayment(ctx context.Context, invoiceID string)
 	return exists, nil
 }
 
-// ── Inline money/gamification/identity adapters for the fees Group-B services ─────
 // Each adapter is a thin shim over an EXISTING Paymax rail — no new money logic, no
 // shadow ledger. All monetary amounts are integers in minor units (kobo).
 
 // feesVaultLedger adapts finance/ledger.Service to fees/vault.LedgerService (SF-5).
-type feesVaultLedger struct{ ledger *ledger.Service }
+type feesVaultLedger struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a feesVaultLedger) SegregatedAccountID(ctx context.Context, accountType string) (string, error) {
 	acct, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountType(accountType))
@@ -523,6 +553,11 @@ func (a feesVaultLedger) SegregatedAccountID(ctx context.Context, accountType st
 }
 
 func (a feesVaultLedger) DebitToVault(ctx context.Context, userID, reference, idempotencyKey, vaultAccountID string, amountKobo int64) error {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, userID, amountKobo); err != nil {
+		return err
+	}
 	// Debit the guardian wallet, crediting the segregated vault standing account.
 	// TOCTOU-safe + fail-closed on insufficient funds (ledger.Service.Debit).
 	return a.ledger.Debit(ctx, userID, reference, idempotencyKey, vaultAccountID, amountKobo)
@@ -543,7 +578,6 @@ func (a feesVaultLedger) TransferVaultToInvoice(ctx context.Context, vaultAccoun
 // there is a single global AccountSettlement standing account (no per-school standing
 // account), so the settlement leg lands there; per-school attribution is carried by
 // the reference + the invoice→fee-schedule→school chain.
-//
 // NOTE: the vault→invoice application records ONLY the settlement account id here; the
 // invoice-side payment append (fees/invoice.Service.RecordPayment) is performed by the
 // vault service using the returned account. If the fees team later exposes a first-class
@@ -560,9 +594,17 @@ func (a feesVaultInvoice) RecordPayment(ctx context.Context, invoiceID, guardian
 
 // feesScholarshipLedger adapts to fees/scholarship.LedgerPoster: post the sponsor
 // funding leg (sponsor wallet → settlement) idempotently, returning the ledger ref.
-type feesScholarshipLedger struct{ ledger *ledger.Service }
+type feesScholarshipLedger struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a feesScholarshipLedger) PostFunding(ctx context.Context, sponsorIdentityID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, sponsorIdentityID, amountMinor); err != nil {
+		return "", err
+	}
 	settlement, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return "", err
@@ -586,6 +628,63 @@ func (a feesScholarshipInvoice) RecordPayment(ctx context.Context, actorID, invo
 		return "", res != nil && res.Replayed, nil
 	}
 	return res.Payment.ID, res.Replayed, nil
+}
+
+// feesHardshipFreezer adapts fees/invoice.Service to feeshardship.InvoiceFreezer
+// — Freeze runs through the invoice's guarded state machine, never a raw write.
+type feesHardshipFreezer struct{ inv *feesinvoice.Service }
+
+func (a feesHardshipFreezer) CurrentStatus(ctx context.Context, invoiceID string) (feesstatemachine.InvoiceState, error) {
+	inv, err := a.inv.GetInvoice(ctx, invoiceID)
+	if err != nil {
+		return "", err
+	}
+	return inv.Status, nil
+}
+
+func (a feesHardshipFreezer) Freeze(ctx context.Context, actorID, invoiceID string) (feesstatemachine.InvoiceState, error) {
+	inv, err := a.inv.Freeze(ctx, actorID, invoiceID)
+	if err != nil {
+		return "", err
+	}
+	return inv.Status, nil
+}
+
+// feesHardshipAuthz adapts the RBAC service to feeshardship.ReviewerAuthorizer:
+// a reviewer may act with academy.fees.hardship.review at global scope or at the
+// invoice's school scope (invoice → student → school spine). Fail-closed.
+type feesHardshipAuthz struct {
+	rbac services.RBACService
+	pool *pgxpool.Pool
+}
+
+func (a feesHardshipAuthz) CanReview(ctx context.Context, reviewerID, invoiceID string) (bool, error) {
+	if a.rbac == nil {
+		return false, nil
+	}
+	ok, err := a.rbac.CheckPermission(reviewerID, "academy.fees.hardship.review", "global", "")
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+	var schoolID string
+	if a.pool == nil {
+		return false, nil
+	}
+	if err := a.pool.QueryRow(ctx,
+		`SELECT s.school_id
+		   FROM public.academy_invoices i
+		   JOIN public.academy_students s ON s.id = i.student_id
+		  WHERE i.id = $1`, invoiceID).Scan(&schoolID); err != nil {
+		return false, nil // school scope unresolvable ⇒ deny (fail-closed)
+	}
+	allowed, err := a.rbac.CheckPermission(reviewerID, "academy.fees.hardship.review", "school", schoolID)
+	if err != nil {
+		return false, err
+	}
+	return allowed, nil
 }
 
 // feesGamificationLadder adapts academy/gamification.Service to
@@ -689,6 +788,11 @@ func (m feesTrustMetrics) TrustInputs(ctx context.Context, schoolID string) (fee
 	if m.pool == nil {
 		return in, nil
 	}
+	// schoolID feeds uuid-typed columns — an unparseable param would leak 22P02
+	// as a 500, so answer the input sentinel.
+	if _, err := uuid.Parse(schoolID); err != nil {
+		return in, feestrustscore.ErrMissingSchool
+	}
 	const q = `
 	SELECT
 	  (SELECT COALESCE(SUM(i.total_amount_minor),0)
@@ -728,6 +832,10 @@ type feesTrustOverrides struct{ pool *pgxpool.Pool }
 func (o feesTrustOverrides) SaveOverride(ctx context.Context, schoolID, actorID string, score float64, reason string) error {
 	if o.pool == nil {
 		return nil
+	}
+	// Same 22P02 guard as TrustInputs — school_id is uuid-typed.
+	if _, err := uuid.Parse(schoolID); err != nil {
+		return feestrustscore.ErrMissingSchool
 	}
 	_, err := o.pool.Exec(ctx,
 		`INSERT INTO academy_fees_trust_overrides (school_id, actor_id, score, reason) VALUES ($1,$2,$3,$4)`,

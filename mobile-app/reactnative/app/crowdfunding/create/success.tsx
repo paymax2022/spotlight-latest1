@@ -3,10 +3,10 @@ import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CircleCheck, FileClock, XCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaign } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import type { CampaignStatus } from '@/features/crowdfunding/types/crowdfunding.types';
@@ -19,7 +19,6 @@ const REVIEW_POLL_MS = 15_000;
 export default function CreateSuccessScreen() {
   const { status: initialStatus, id } = useLocalSearchParams<{ status?: string; id?: string }>();
 
-  // The URL param is what we knew at submit time; `liveStatus` is the real,
   // current status once we've fetched it. Admin can approve/reject while the
   // creator is still sitting on this screen, so it has to be able to change
   // out from under the initial param rather than being fixed at mount.

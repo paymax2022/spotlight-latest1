@@ -1,25 +1,20 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Estate module's meeting FSM (meetings.go — transitionMeeting,
 // CancelMeeting, RescheduleMeeting) and the election concurrent-vote path
 // (service.go — CastVote). Closes docs/qa/modules/estate.md ESTATE-FSM-009..013
 // and ESTATE-CONC-002 — the last two remaining P0/P1 cases in the Estate UAT
 // plan; everything else (money-path, authz, admin console, resident mobile
 // journey) was live-tested and fixed in prior batches this session.
-//
 // Follows the exact conventions of service_dues_live_db_test.go /
 // vendor_payout_live_db_test.go: TEST_DATABASE_URL-gated pgxpool via
 // t.Cleanup, real seed data (estate + estate_admin + resident rows), package
 // `estate` (not `estate_test`) so unexported helpers are reachable if needed.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB_Meeting -v
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB_Vote -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -31,8 +26,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func estateMeetingsTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -67,20 +60,18 @@ func seedMeeting(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID
 		id, estateID, status, adminID); err != nil {
 		t.Fatalf("seed meeting: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_meetings WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM estate_meetings WHERE id=$1`, id) })
 	return id
 }
 
 func meetingStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, meetingID string) string {
 	t.Helper()
 	var s string
-	if err := pool.QueryRow(ctx, `SELECT status FROM estate_meetings WHERE id=$1`, meetingID).Scan(&s); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM estate_meetings WHERE id=$1`, meetingID).Scan(&s); err != nil {
 		t.Fatalf("meeting status: %v", err)
 	}
 	return s
 }
-
-// ── ESTATE-FSM-009 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_StartMeeting_ScheduledToLive(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -102,8 +93,6 @@ func TestLiveDB_Meeting_StartMeeting_ScheduledToLive(t *testing.T) {
 	}
 }
 
-// ── ESTATE-FSM-010 ───────────────────────────────────────────────────────────
-
 func TestLiveDB_Meeting_EndMeeting_LiveToEnded(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
 	ctx := context.Background()
@@ -123,8 +112,6 @@ func TestLiveDB_Meeting_EndMeeting_LiveToEnded(t *testing.T) {
 		t.Errorf("MEETING_END audit rows = %d, want 1", n)
 	}
 }
-
-// ── ESTATE-FSM-011 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -149,8 +136,6 @@ func TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive(t *testing.T) {
 		})
 	}
 }
-
-// ── ESTATE-FSM-012 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -183,8 +168,6 @@ func TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled(t *testing.T) {
 		})
 	}
 }
-
-// ── ESTATE-FSM-013 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_TerminalStates_RejectAllTransitions(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -243,8 +226,6 @@ func TestLiveDB_Meeting_TerminalStates_RejectAllTransitions(t *testing.T) {
 	}
 }
 
-// ── ESTATE-CONC-002 ──────────────────────────────────────────────────────────
-
 // seedOpenElection creates an election directly at status='open' with two
 // candidates and no eligibility rules row (loadEligibilityRules' fast path:
 // no rules configured -> everyone eligible), so CheckVoterEligibility never
@@ -258,16 +239,16 @@ func seedOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, est
 		electionID, estateID, adminID); err != nil {
 		t.Fatalf("seed election: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM elections WHERE id=$1`, electionID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM elections WHERE id=$1`, electionID) })
 
 	candidateID = uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO election_candidates (id, election_id, name) VALUES ($1,$2,'Candidate A')`,
 		candidateID, electionID); err != nil {
 		t.Fatalf("seed candidate A: %v", err)
 	}
 	otherCandidateID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO election_candidates (id, election_id, name) VALUES ($1,$2,'Candidate B')`,
 		otherCandidateID, electionID); err != nil {
 		t.Fatalf("seed candidate B: %v", err)
@@ -278,7 +259,7 @@ func seedOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, est
 func voteCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, electionID, voterID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM election_votes WHERE election_id=$1 AND voter_id=$2`, electionID, voterID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM election_votes WHERE election_id=$1 AND voter_id=$2`, electionID, voterID).Scan(&n); err != nil {
 		t.Fatalf("vote count: %v", err)
 	}
 	return n
@@ -311,7 +292,7 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	errs := make([]error, n)
 	votes := make([]*Vote, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			votes[i], errs[i] = svc.CastVote(ctx, estateID, electionID, voter, CastVoteRequest{CandidateID: candidateID})
@@ -320,7 +301,7 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	wg.Wait()
 
 	var successes, failures int
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successes++
 		} else {
@@ -343,7 +324,7 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	}
 
 	var successVote *Vote
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successVote = votes[i]
 		}

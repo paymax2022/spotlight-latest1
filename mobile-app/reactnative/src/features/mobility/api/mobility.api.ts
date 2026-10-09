@@ -1,11 +1,6 @@
-// ── Paymax Mobility — API wrapper ────────────────────────────────────────────
 // Typed data layer the screens code against. Mirrors fx.api.ts: mock-flagged.
-// Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false once the Go endpoints under
 // /api/finance/transport land.
-//
 // IRON RULES honoured here:
-//  • all money is integer kobo;
-//  • every money mutation (request/accept-counter/rate) carries an Idempotency-Key;
 //  • fare floors/ceilings/commission come from the SERVER — never computed here.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -56,7 +51,6 @@ import {
   mockUpdateRideSettings,
 } from './mobility.mock';
 
-// ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
 const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
@@ -82,7 +76,6 @@ type TripEnvelope = {
   fareOffer?: Trip['fareOffer'];
 };
 // Live trips carry flat pickupAddress/destAddress strings (no coordinates in
-// the payload); screens type against full Place objects. Synthesize a Place
 // from the flat address when the nested one is absent so Trip.pickup/dest are
 // ALWAYS present — the type stays strict and no screen needs a guard.
 function ensurePlaces(trip: Partial<Trip>): Trip {
@@ -105,7 +98,6 @@ function flattenTrip(raw: TripEnvelope | Trip | null | undefined): Trip {
   });
 }
 
-// ─── Home ─────────────────────────────────────────────────────────────────────
 export async function getHome(): Promise<MobilityHome> {
   if (USE_MOCK) {
     await delay();
@@ -137,7 +129,6 @@ export async function getHome(): Promise<MobilityHome> {
   };
 }
 
-// ─── Pricing config ─────────────────────────────────────────────────────────────
 export async function getPricingConfig(
   serviceType: ServiceType,
   zone?: string,
@@ -151,7 +142,6 @@ export async function getPricingConfig(
   );
 }
 
-// ─── Estimate ─────────────────────────────────────────────────────────────────
 export async function estimateRide(req: RideEstimateRequest): Promise<RideEstimate> {
   if (USE_MOCK) {
     await delay(420);
@@ -166,7 +156,6 @@ export async function estimateRide(req: RideEstimateRequest): Promise<RideEstima
   );
 }
 
-// ─── Request a ride (money mutation → escrow → Idempotency-Key) ────────────────
 export async function requestRide(req: RideRequest): Promise<Trip> {
   if (USE_MOCK) {
     await delay(900);
@@ -218,7 +207,6 @@ export async function requestRide(req: RideRequest): Promise<Trip> {
   );
 }
 
-// ─── Paystack-funded checkout (no wallet, no KYC-tier gate) ────────────────
 // backend/internal/transport/paystackcheckout — a genuinely separate,
 // server-initiated Paystack rail (same pattern as food/api.ts's
 // initiateFoodOrderPaystack), NOT the wallet-top-up-then-spend trick
@@ -276,7 +264,6 @@ export async function getRidePaystackStatus(reference: string): Promise<Paystack
   );
 }
 
-// ─── Fare negotiation ───────────────────────────────────────────────────────────
 /** Rider makes (or updates) an offer. Server validates the range → 422 if out of bounds. */
 export async function makeOffer(tripId: string, offerKobo: Kobo): Promise<FareOffer> {
   if (USE_MOCK) {
@@ -318,13 +305,11 @@ export async function acceptCounter(tripId: string, idempotencyKey: string): Pro
     }
     return trip!;
   }
-  // Backend returns the FareOffer; discard it and re-read the trip so callers
   // get the updated Trip (phase advances to driver_assigned on the server).
   await api.post(`${BASE}/mobility/rides/${tripId}/accept-counter`, {}, idemHeader(idempotencyKey));
   return getTrip(tripId);
 }
 
-// ─── Trip read ────────────────────────────────────────────────────────────────
 export async function getTrip(tripId: string): Promise<Trip> {
   if (USE_MOCK) {
     await delay(260);
@@ -422,7 +407,6 @@ export async function deleteTrustedContact(id: string): Promise<void> {
   await api.delete(`${BASE}/mobility/trusted-contacts/${id}`);
 }
 
-// ─── Rating (money mutation when tipping → Idempotency-Key) ────────────────────
 export async function rateTrip(tripId: string, draft: RateDraft, idempotencyKey: string): Promise<Rating> {
   if (USE_MOCK) {
     await delay(600);
@@ -447,7 +431,6 @@ export async function rateTrip(tripId: string, draft: RateDraft, idempotencyKey:
   );
 }
 
-// ─── History ──────────────────────────────────────────────────────────────────
 export async function getHistory(): Promise<Trip[]> {
   if (USE_MOCK) {
     await delay();
@@ -459,9 +442,7 @@ export async function getHistory(): Promise<Trip[]> {
   return (body?.trips ?? []).map((t) => flattenTrip(t as Trip));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // DRIVER endpoints
-// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function getDriverMe(): Promise<DriverProfile> {
   if (USE_MOCK) {
@@ -482,7 +463,6 @@ export async function getDriverMe(): Promise<DriverProfile> {
 }
 
 // The backend profile omits fields the screens read unconditionally
-// (commission, online, vehicle, serviceCategories); default them so a sparse
 // payload cannot crash the driver home screen.
 function normalizeDriverProfile(raw: Partial<DriverProfile> & Record<string, any>): DriverProfile {
   const vehicles = Array.isArray(raw.vehicles) ? raw.vehicles : [];
@@ -526,7 +506,6 @@ export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Prom
   );
 }
 
-// ─── Driver document upload → R2 presign ───────────────────────────────────────
 // Mirrors the health-intake attachment flow (features/health/api.ts): request a
 // presigned R2 PUT URL from the backend, then the caller PUTs the file binary to
 // it and submits the resulting object key via uploadDriverDocument(). No storage
@@ -534,9 +513,6 @@ export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Prom
 // R2, whichever bucket R2_BUCKET names) the rest of the app uses. The bucket is
 // deliberately not written down here: it is environment config, and the last
 // name hardcoded in prose outlived the bucket itself.
-//
-// Request body is snake_case; the response is camelCase (matches the rest of the
-// mobility contract). In mock mode we return a mock:// URL so the client PUT is a
 // no-op and the flow still exercises end-to-end.
 export interface DriverDocPresign {
   /** Presigned PUT URL the client uploads the raw bytes to. */
@@ -565,6 +541,21 @@ export async function presignDriverDocument(input: {
 }
 
 /**
+ * The backend only presigns jpeg/png/webp/pdf, and binds the Content-Type into
+ * the signature. The picker can hand back `image/jpg` or the generic
+ * `application/octet-stream`, which the backend 400s — so map to the canonical
+ * type (falling back to the file extension) before presigning and PUTting.
+ */
+export function normalizeDocMimeType(mimeType: string | undefined, fileName: string): string {
+  const m = (mimeType ?? '').toLowerCase().trim();
+  if (m === 'image/jpg' || m === 'image/pjpeg') return 'image/jpeg';
+  if (m && m !== 'application/octet-stream') return m;
+  const ext = fileName.toLowerCase().split('.').pop() ?? '';
+  const byExt: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', pdf: 'application/pdf' };
+  return byExt[ext] ?? m;
+}
+
+/**
  * Full driver-document upload: presign → PUT the picked file to R2 → submit the
  * resulting object key via uploadDriverDocument(). Returns the updated profile.
  * `file` is a PickedUpload from the shared registration filePicker (image or
@@ -576,10 +567,11 @@ export async function uploadDriverDocumentFile(input: {
   expiryDate?: string;
 }): Promise<DriverProfile> {
   const { docType, file, expiryDate } = input;
+  const mimeType = normalizeDocMimeType(file.mimeType, file.name);
   const { uploadUrl, fileUrl } = await presignDriverDocument({
     docType,
     fileName: file.name,
-    mimeType: file.mimeType,
+    mimeType,
   });
   // Live: PUT the binary to the presigned R2 URL. Mock URLs are skipped.
   if (!uploadUrl.startsWith('mock://')) {
@@ -587,7 +579,7 @@ export async function uploadDriverDocumentFile(input: {
     const res = await fetch(uploadUrl, {
       method: 'PUT',
       body: blob,
-      headers: { 'Content-Type': file.mimeType },
+      headers: { 'Content-Type': mimeType },
     });
     if (!res.ok) throw new Error(`R2 upload failed (${res.status})`);
   }
@@ -734,7 +726,6 @@ export async function driverSos(loc: LatLng, tripId?: string): Promise<SafetyInc
   return unwrap<SafetyIncident>(await api.post(`${BASE}/driver/sos`, { trip_id: tripId, lat: loc.lat, lng: loc.lng }));
 }
 
-// ─── Mock trip auto-advance (drives the rider-side state machine on poll) ──────
 // Advances the singleton active trip through phases over time so the rider
 // screens can demo searching → assigned → arriving → in-progress without a driver.
 function advanceMockTrip(trip: Trip): Trip {
@@ -782,7 +773,6 @@ export function clearMockActiveTrip(): void {
   if (USE_MOCK) mockStore.activeTrip = null;
 }
 
-// ─── Trip chat ────────────────────────────────────────────────────────────────
 // Registered under both /mobility (rider) and /driver (driver) on the backend,
 // pointing at the same handler — object-level authz is the real gate, not the
 // URL prefix. `role` here only selects which prefix this app's own client uses,
@@ -817,7 +807,6 @@ export async function sendTripMessage(tripId: string, role: TripChatRole, body: 
   return mapTripMessage(res.data?.message);
 }
 
-// ─── Rider ride-preference settings ────────────────────────────────────────────
 // GET/PUT /mobility/profile. The backend lazily creates a default row on first
 // GET, so this is always safe to call. PUT is a partial update (COALESCE on the
 // server): an omitted field keeps its current value.

@@ -1,4 +1,3 @@
-// ── Doctor module — Section B (Profile & Verification) constants ─────────────
 // Static option lists for the 31-screen profile builder & verification flow.
 // Pure data only — no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel). REUSES
@@ -10,8 +9,6 @@ import type {
   ProfileBuilderStep,
   GenderOption,
 } from '@/types/doctor.profile';
-
-// ─── Languages spoken (screen 8) ─────────────────────────────────────────────
 
 export const LANGUAGE_OPTIONS: string[] = [
   'English',
@@ -27,7 +24,6 @@ export const LANGUAGE_OPTIONS: string[] = [
   'Arabic',
 ];
 
-// ─── Years of experience (screen 7) ──────────────────────────────────────────
 // Discrete buckets plus a helper to clamp a free-typed number.
 
 export const EXPERIENCE_OPTIONS: { value: number; label: string }[] = [
@@ -48,11 +44,7 @@ export function clampYearsExperience(value: number): number {
   return Math.min(Math.floor(value), MAX_YEARS_EXPERIENCE);
 }
 
-// ─── Honorific / title options (screens 1, 2) ────────────────────────────────
-
 export const TITLE_OPTIONS: string[] = ['Dr.', 'Prof.', 'Mr.', 'Mrs.', 'Ms.', 'Mx.'];
-
-// ─── Gender options (screen 2) ───────────────────────────────────────────────
 
 export const GENDER_OPTIONS: { value: GenderOption; label: string }[] = [
   { value: 'male',              label: 'Male' },
@@ -60,8 +52,6 @@ export const GENDER_OPTIONS: { value: GenderOption; label: string }[] = [
   { value: 'other',             label: 'Other' },
   { value: 'prefer_not_to_say', label: 'Prefer not to say' },
 ];
-
-// ─── Degree / qualification options (screen 15) ──────────────────────────────
 
 export const DEGREE_OPTIONS: string[] = [
   'MBBS',
@@ -79,16 +69,12 @@ export const DEGREE_OPTIONS: string[] = [
   'Other',
 ];
 
-// ─── Government ID types (screen 11) ─────────────────────────────────────────
-
 export const ID_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'nin',         label: 'National ID (NIN)' },
   { value: 'drivers',     label: "Driver's Licence" },
   { value: 'passport',    label: 'International Passport' },
   { value: 'voters_card', label: "Voter's Card" },
 ];
-
-// ─── Professional associations (screen 13) ───────────────────────────────────
 
 export const ASSOCIATION_OPTIONS: string[] = [
   'Nigerian Medical Association (NMA)',
@@ -100,9 +86,7 @@ export const ASSOCIATION_OPTIONS: string[] = [
   'Other',
 ];
 
-// ─── Profile builder step metadata (screen 1 hub) ────────────────────────────
 // Drives the setup hub checklist order + labels. Screen 19 (availability) is
-// handled by the existing useAvailability flow; it is included so the hub can
 // surface it, but the wizard routes to the existing availability screen.
 
 export const PROFILE_BUILDER_STEPS: { step: ProfileBuilderStep; label: string; screen: number }[] = [
@@ -128,9 +112,7 @@ export const PROFILE_BUILDER_STEPS: { step: ProfileBuilderStep; label: string; s
   { step: 'tax_info',        label: 'Tax / VAT information',        screen: 21 },
 ];
 
-// ─── Document slot labels (screens 10–13) ────────────────────────────────────
 // Section B doc-type labels. Phase 1 VERIFICATION_DOC_TYPES (from the barrel)
-// remains the canonical list of *required* verification docs; this maps the
 // extended ProfileDocType union (incl. certificate / association_membership).
 
 export const PROFILE_DOC_TYPE_LABELS: Record<ProfileDocType, string> = {
@@ -144,9 +126,6 @@ export const PROFILE_DOC_TYPE_LABELS: Record<ProfileDocType, string> = {
   association_membership: 'Association Membership',
 };
 
-// ─── Verification rejection reasons (screens 27, 28) ─────────────────────────
-
-// PRIVACY: these labels are shown to the doctor on the verification-failed
 // screen. Keep them coarse and doctor-actionable — never reference the MDCN
 // register or expose matched-field detail.
 export const REJECTION_REASONS: { code: string; label: string }[] = [
@@ -158,8 +137,6 @@ export const REJECTION_REASONS: { code: string; label: string }[] = [
   { code: 'suspected_fraud',   label: 'Document could not be authenticated' },
   { code: 'other',             label: 'Other' },
 ];
-
-// ─── Bank list (screen 20) — sample of Nigerian banks + CBN codes ────────────
 
 export const BANK_LIST: { name: string; code: string }[] = [
   { name: 'Access Bank',          code: '044' },
@@ -184,8 +161,6 @@ export const BANK_LIST: { name: string; code: string }[] = [
   { name: 'Zenith Bank',          code: '057' },
 ];
 
-// ─── Nigerian states (screens 2, 14) ─────────────────────────────────────────
-
 export const NIGERIAN_STATES: string[] = [
   'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue',
   'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu',
@@ -194,11 +169,8 @@ export const NIGERIAN_STATES: string[] = [
   'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara',
 ];
 
-// ─── Free follow-up policy windows (screen 18) ───────────────────────────────
-
 export const FREE_FOLLOW_UP_WINDOW_OPTIONS: number[] = [3, 5, 7, 14, 30]; // days
 
-// ─── Consult-fee presets (screen 17) — kobo ──────────────────────────────────
 // Suggested price points so the pricing screen can offer quick chips. All kobo.
 
 export const CONSULT_FEE_PRESETS_KOBO: number[] = [200000, 300000, 350000, 500000, 750000, 1000000];

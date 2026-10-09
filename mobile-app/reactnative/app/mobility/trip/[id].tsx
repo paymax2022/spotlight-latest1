@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Alert, Modal, TextInput 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Phone, X, Clock3, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -48,7 +48,6 @@ export default function TripScreen() {
   const [cancelling, setCancelling] = useState(false);
 
   const t = trip.data;
-  // Live driver position + status over the trip WebSocket; polling above remains
   // the fallback when realtime is unavailable (or in mock mode).
   const realtime = useTripRealtime(id, { phase: t?.phase });
 

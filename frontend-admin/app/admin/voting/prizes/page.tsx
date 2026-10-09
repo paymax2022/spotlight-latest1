@@ -1,12 +1,10 @@
 'use client';
 
 // Contest prizes — admin UI to configure what each finishing position wins.
-//
 // WHY THIS EXISTS
 // Organizers had no way to configure per-position prizes for a contest, and
 // the results publish flow (see /admin/voting/results) assigns prizes to
 // ranks by position, so it has nothing to assign without this screen.
-//
 // Mirrors the /admin/voting/templates page's contest-picker + list + CRUD
 // pattern (same recent precedent) rather than adding a section to
 // RegistrationContestManager-equivalent builders: this repo's contest

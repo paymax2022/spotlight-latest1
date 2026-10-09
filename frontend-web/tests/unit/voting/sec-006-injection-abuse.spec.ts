@@ -31,6 +31,8 @@ vi.mock('@/src/lib/feature-flags', () => ({ featureFlags: { wallet: () => true }
 vi.mock('@/src/lib/auth/request', () => ({ requireRequestUser: vi.fn() }));
 vi.mock('@/src/server/wallet/service', () => ({ debitWallet: vi.fn(), reverseWalletDebit: vi.fn() }));
 vi.mock('@/src/server/voting/totals.service', () => ({ incrementVoteTotals: vi.fn(), getVoteTotals: vi.fn(), getLeaderboard: vi.fn() }));
+// E2E-X-026: the leaderboard route now reads the bridge-owned service.
+vi.mock('@/src/server/voting-bridge/leaderboard.service', () => ({ getLeaderboard: vi.fn() }));
 vi.mock('@/src/server/voting/audit.service', () => ({ appendAuditLog: vi.fn() }));
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission: vi.fn() }));
 vi.mock('@/src/server/voting/visibility.service', () => ({ getEffectiveVisibility: vi.fn() }));
@@ -44,7 +46,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getVotingSettings } from '@/src/server/voting/free-vote.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 
 const LONG_STRING = 'A'.repeat(200_000);
 const SQLI_PAYLOAD = "'; DROP TABLE votes; --";
@@ -107,9 +109,7 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
       })),
       { params: Promise.resolve({ contestId: 'contest-1' }) },
     );
-    // Supabase client parameterizes `.eq()`/`.insert()` values — a string payload
     // is never concatenated into SQL. The route should process it as an opaque
-    // string and return normally (202 — proposed) rather than erroring or
     // executing anything.
     expect(res).toBeInstanceOf(Response);
     expect(res.status).toBe(202);
@@ -132,7 +132,7 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
       { params: Promise.resolve({ contestId: LONG_STRING }) },
     );
     expect(res).toBeInstanceOf(Response);
-    expect(res.status).toBe(200); // handled gracefully — Number(long garbage) clamps via Math.min(500, NaN→...)
+    expect(res.status).toBe(400);
   });
 
   it('a NoSQL-operator-shaped object where a string is expected is treated as an opaque value, not executed', async () => {

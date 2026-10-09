@@ -1,4 +1,3 @@
-// ── Estate Meetings — Type Contract (Block 30) ───────────────────────────────
 export type MeetingMode = 'physical' | 'virtual' | 'hybrid';
 export type MeetingStatus = 'scheduled' | 'live' | 'ended' | 'cancelled';
 export type RsvpResponse = 'yes' | 'no' | 'maybe';

@@ -2,7 +2,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { saveAcademyBatch, deleteAcademyBatch } from '@/src/server/services/academy/service';
 import { createAdminClient } from '@/lib/supabase/server';
-import { replaceBatchAreas, getBatchAreaSlugs } from '@/src/server/services/academy/batchAreas';
+import { replaceBatchAreas, getBatchAreaSlugs } from '@/src/server/services/academy';
 import type { AcademyBatchMutationInput } from '@/src/lib/validation/academy';
 
 function getBatchFeeFields(body: Record<string, unknown>) {
@@ -42,12 +42,12 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
-    const body = (await request.json()) as AcademyBatchMutationInput & Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as AcademyBatchMutationInput & Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const supabase = createAdminClient();
     const batch = await saveAcademyBatch(supabase as any, body, params.id);
     const extra = getBatchFeeFields(body);
 
-    // Persist the area selection BEFORE either return: this handler has two
     // exits, and doing it in only one meant an edit that changed no fee field
     // silently discarded the areas.
     await replaceBatchAreas(supabase, params.id, body.interest_area_slugs);

@@ -1,11 +1,14 @@
 package top5events
 
 import (
+	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/credential"
 )
 
@@ -108,7 +111,7 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 	}
 	var e Event
 	if err := c.ShouldBindJSON(&e); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateEvent(c.Request.Context(), u, e)
@@ -117,6 +120,16 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 
 func (h *Handler) GetEvent(c *gin.Context) {
 	out, err := h.svc.GetEvent(c.Request.Context(), c.Param("id"))
+	// E2E-SEC-060: ListEvents already restricts anonymous/non-organiser callers
+	// to publiclyVisibleStates — the by-id read must honour the same gate or
+	// DRAFT/SUSPENDED events stay readable to anyone holding (or guessing) the
+	// id. 404, not 403, so existence isn't leaked either.
+	if err == nil && out != nil && !slices.Contains(publiclyVisibleStates, string(out.State)) {
+		if uid := c.GetString("user_id"); uid == "" || uid != out.OrganiserID {
+			respond(c, nil, ErrNotFound)
+			return
+		}
+	}
 	respond(c, out, err)
 }
 
@@ -143,7 +156,7 @@ func (h *Handler) ListEvents(c *gin.Context) {
 	}
 	out, err := h.svc.ListEvents(c.Request.Context(), userID, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "events": out})
@@ -159,7 +172,7 @@ func (h *Handler) ListMyOrganiserEvents(c *gin.Context) {
 	}
 	out, err := h.svc.ListMyOrganiserEvents(c.Request.Context(), u)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "events": out})
@@ -212,7 +225,7 @@ func (h *Handler) AddTier(c *gin.Context) {
 	}
 	var t TicketTier
 	if err := c.ShouldBindJSON(&t); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AddTier(c.Request.Context(), u, c.Param("id"), t)
@@ -226,7 +239,7 @@ func (h *Handler) AddPromo(c *gin.Context) {
 	}
 	var p PromoCode
 	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AddPromo(c.Request.Context(), u, c.Param("id"), p)
@@ -240,7 +253,7 @@ func (h *Handler) AddVendor(c *gin.Context) {
 	}
 	var v Vendor
 	if err := c.ShouldBindJSON(&v); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AddVendor(c.Request.Context(), u, c.Param("id"), v)
@@ -266,7 +279,7 @@ func (h *Handler) Purchase(c *gin.Context) {
 	}
 	var req purchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Purchase(c.Request.Context(), u, c.Param("id"), req.TierID, req.Promo, key)
@@ -284,7 +297,7 @@ func (h *Handler) GiftTicket(c *gin.Context) {
 	}
 	var req giftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.GiftTicket(c.Request.Context(), u, c.Param("ticketId"), req.Recipient)
@@ -298,7 +311,7 @@ func (h *Handler) MyTickets(c *gin.Context) {
 	}
 	out, err := h.svc.MyTickets(c.Request.Context(), u)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "tickets": out})
@@ -327,7 +340,7 @@ func (h *Handler) Scan(c *gin.Context) {
 	}
 	var req scanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.ScanTicket(c.Request.Context(), u, req.Token, req.Gate)
@@ -352,7 +365,7 @@ func (h *Handler) AddSteward(c *gin.Context) {
 	}
 	var req stewardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	err := h.svc.AddSteward(c.Request.Context(), u, c.Param("id"), req.UserID)
@@ -426,7 +439,7 @@ func (h *Handler) TopUp(c *gin.Context) {
 	}
 	var req topUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	src := TopUpSource(req.Source)
@@ -481,7 +494,7 @@ func (h *Handler) TapCharge(c *gin.Context) {
 	}
 	var req tapChargeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.TapCharge(c.Request.Context(), caller, c.Param("vendorId"), req.WalletID, req.AmountKobo, key)
@@ -537,10 +550,10 @@ func (h *Handler) SettleVendor(c *gin.Context) {
 	net, err := h.svc.SettleVendor(c.Request.Context(), c.Param("id"), c.Param("vendorId"), key)
 	if err != nil {
 		status := http.StatusBadRequest
-		if err == ErrKYCRequired {
+		if errors.Is(err, ErrKYCRequired) {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "net_kobo": net})
@@ -551,17 +564,17 @@ func (h *Handler) SettleVendor(c *gin.Context) {
 func respond(c *gin.Context, data any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err {
-		case ErrForbidden:
+		switch {
+		case errors.Is(err, ErrForbidden):
 			status = http.StatusForbidden
-		case ErrNotFound:
+		case errors.Is(err, ErrNotFound):
 			status = http.StatusNotFound
-		case ErrSoldOut, ErrInsufficientFloat:
+		case errors.Is(err, ErrSoldOut), errors.Is(err, ErrInsufficientFloat):
 			status = http.StatusConflict
-		case ErrKYCRequired:
+		case errors.Is(err, ErrKYCRequired):
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
@@ -570,13 +583,13 @@ func respond(c *gin.Context, data any, err error) {
 func respondOK(c *gin.Context, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err {
-		case ErrForbidden:
+		switch {
+		case errors.Is(err, ErrForbidden):
 			status = http.StatusForbidden
-		case ErrNotFound:
+		case errors.Is(err, ErrNotFound):
 			status = http.StatusNotFound
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

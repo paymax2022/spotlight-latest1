@@ -19,7 +19,6 @@ const pricing = {
 };
 
 // NOTE: the adapter now has a local sandbox simulator — when
-// VTPASS_ENVIRONMENT=sandbox, validateCustomer/purchase/queryTransactionStatus
 // short-circuit (no fetch). The HTTP-contract tests below therefore run in
 // 'live' mode against a fake base URL; sandbox behaviour has its own tests.
 function setVtpassEnv() {
@@ -254,7 +253,6 @@ describe('VTPass utility adapter', () => {
   // documented EKEDC (electricity) meter-number simulation table — a phone
   // number never matches any of those meter constants, so every non-electricity
   // sandbox purchase fell through to the "meter not recognised" branch.
-  // VTPass's sandbox has no such test matrix for airtime/data/education/cable_tv;
   // it just processes them.
   it.each(['airtime', 'data', 'education', 'cable_tv', 'internet'] as const)(
     'simulates a successful %s purchase locally in sandbox mode (no meter-number matrix applies)',
@@ -323,7 +321,6 @@ describe('VTPass utility adapter', () => {
   });
 
   // Regression for a real incident (2026-09-18): cable_tv (and internet)
-  // billers have requires_validation=true, so payUtility calls
   // validateCustomer for them — unlike airtime/data/education, which skip it
   // entirely (see the category check at the top of validateCustomer). In
   // sandbox mode that fell into the SAME electricity-only meter-matrix check

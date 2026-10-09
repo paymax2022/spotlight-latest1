@@ -2,9 +2,13 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"spotlight/backend/internal/insurance/gateway"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -54,11 +58,14 @@ func (r *Repository) Create(ctx context.Context, p *Policy) (*Policy, error) {
 }
 
 // Get returns a policy by id (no ownership filter; callers enforce object-level
-// authZ in the service).
+// authZ in the service). A missing id returns ErrNotFound.
 func (r *Repository) Get(ctx context.Context, id string) (*Policy, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+policyCols+` FROM public.insurance_policy WHERE id = $1`, id)
 	p, err := scanPolicy(row)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	return p, nil
@@ -77,7 +84,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, limit, offse
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Policy
+	out := []Policy{}
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
@@ -113,7 +120,7 @@ func (r *Repository) SearchAdmin(ctx context.Context, state, productCode string,
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Policy
+	out := []Policy{}
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
@@ -160,8 +167,6 @@ func (r *Repository) SetBound(ctx context.Context, id string, providerPolicyRef,
 	return nil
 }
 
-// --- premium transactions ---
-
 // PremiumTx is the insurance-domain record of a premium money move. It references
 // the ledger entry (wallet_ledger_ref) and carries the idempotency key (UNIQUE).
 type PremiumTx struct {
@@ -187,8 +192,6 @@ func (r *Repository) InsertPremiumTx(ctx context.Context, tx PremiumTx) error {
 	return err
 }
 
-// --- beneficiaries ---
-
 // AddBeneficiary inserts a beneficiary on a policy.
 func (r *Repository) AddBeneficiary(ctx context.Context, b *Beneficiary) (*Beneficiary, error) {
 	row := r.db.QueryRow(ctx, `
@@ -212,7 +215,7 @@ func (r *Repository) ListBeneficiaries(ctx context.Context, policyID string) ([]
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Beneficiary
+	out := []Beneficiary{}
 	for rows.Next() {
 		var b Beneficiary
 		if err := rows.Scan(&b.ID, &b.PolicyID, &b.FullName, &b.Relationship, &b.SharePercent, &b.Phone); err != nil {
@@ -225,5 +228,68 @@ func (r *Repository) ListBeneficiaries(ctx context.Context, policyID string) ([]
 
 // Sentinel errors.
 var (
-	ErrConflict = fmt.Errorf("policy: version conflict (concurrent transition)")
+	ErrConflict = errors.New("policy: version conflict (concurrent transition)")
+	// ErrNotFound is returned by row lookups that hit no record. Normalising
+	// pgx.ErrNoRows into a domain sentinel is what lets the handler return 404
+	// instead of leaking a raw driver error as a 500.
+	ErrNotFound = errors.New("policy: not found")
 )
+
+// insertQuote persists an ephemeral, TTL-bounded quote and returns its id. The
+// provider quote ref + disclosure are stored so a later bind reuses them.
+// inputs are the product-specific answers collected at quote time. They MUST be
+// persisted: aggregators like MyCover have no generic bind endpoint and validate
+// the full per-product field set at purchase, so a bind that forwards no inputs
+// is rejected outright. Storing them on the quote also lets the saga replay a
+// bind without re-prompting the member.
+func (r *Repository) insertQuote(ctx context.Context, userID, productCode, provider string, q gateway.Quote, inputs map[string]any, expiresAt time.Time) (string, error) {
+	terms, _ := json.Marshal(q.Terms)
+	if inputs == nil {
+		inputs = map[string]any{}
+	}
+	inputsJSON, err := json.Marshal(inputs)
+	if err != nil {
+		return "", err
+	}
+	var id string
+	err = r.db.QueryRow(ctx, `
+		INSERT INTO public.insurance_quote
+			(user_id, product_code, provider, underwriter, provider_quote_ref,
+			 premium_kobo, sum_insured_kobo, currency, commission_kobo, terms, inputs, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		RETURNING id`,
+		userID, productCode, provider, q.Underwriter, q.ProviderQuoteRef,
+		q.PremiumKobo, q.SumInsuredKobo, q.Currency, q.CommissionKobo, terms, inputsJSON, expiresAt,
+	).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// getQuote loads a quote and returns it plus its owner id. Expired quotes are
+// still returned (the caller decides), but bind rejects them via the TTL check.
+func (r *Repository) getQuote(ctx context.Context, quoteID string) (*QuoteResult, string, error) {
+	var (
+		qr      QuoteResult
+		ownerID string
+		terms   []byte
+		inputs  []byte
+	)
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, product_code, provider, underwriter, provider_quote_ref,
+		       premium_kobo, sum_insured_kobo, currency, commission_kobo, terms, inputs, expires_at
+		FROM public.insurance_quote WHERE id = $1`, quoteID).Scan(
+		&qr.QuoteID, &ownerID, &qr.ProductCode, &qr.Provider, &qr.Underwriter, &qr.ProviderQuoteRef,
+		&qr.PremiumKobo, &qr.SumInsuredKobo, &qr.Currency, &qr.CommissionKobo, &terms, &inputs, &qr.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrNotFound
+		}
+		return nil, "", err
+	}
+	_ = json.Unmarshal(terms, &qr.Terms)
+	_ = json.Unmarshal(inputs, &qr.Inputs)
+	return &qr, ownerID, nil
+}

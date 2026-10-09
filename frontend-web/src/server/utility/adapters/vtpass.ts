@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type {
   UtilityProviderAdapter,
   UtilityPurchaseRequest,
@@ -47,10 +48,8 @@ interface VtpassResponse {
   [key: string]: unknown;
 }
 
-// ── Sandbox simulation (inline with VTPass docs) ────────────────────────────
 // VTPass publishes fixed sandbox meter numbers that deterministically simulate
 // outcomes (https://vtpass.com/documentation/eko-electricity-ekedc-payment-api/).
-// When VTPASS_ENVIRONMENT=sandbox we honour these locally so meter validation +
 // purchase work for testing WITHOUT live credentials or a network round-trip.
 // Live mode is unchanged (always calls the real VTPass API).
 const SANDBOX_METERS = {
@@ -64,10 +63,11 @@ const SANDBOX_NO_RESPONSE_METER = '400000000000';
 const SANDBOX_TIMEOUT_METER = '300000000000';
 
 function isSandboxEnv(): boolean {
-  return process.env.VTPASS_ENVIRONMENT === 'sandbox';
+  // Case-insensitive — VTPASS_ENVIRONMENT=SANDBOX must not silently become
+  // live (it did: sandbox keys were fired at the live endpoint → HTTP 401).
+  return (process.env.VTPASS_ENVIRONMENT ?? '').trim().toLowerCase() === 'sandbox';
 }
 
-// Doc-accurate merchant-verify response for the two valid sandbox meters; null
 // for any other meter (which VTPass sandbox treats as a failed validation).
 function sandboxVerify(billersCode: string): VtpassResponse | null {
   if (billersCode === SANDBOX_METERS.PREPAID || billersCode === SANDBOX_METERS.POSTPAID) {
@@ -95,7 +95,6 @@ function sandboxPurchase(request: UtilityPurchaseRequest, requestId: string): Ut
 
   // The meter-number simulation table below is documented by VTPass ONLY for
   // electricity (EKEDC) — see the link above. Airtime/data/cable_tv/internet/
-  // education have no such matrix in VTPass's sandbox; it simply processes
   // them. Applying the electricity table to a phone number or smart-card
   // customerReference meant those categories never matched any meter constant
   // and always fell through to the final "meter not recognised" branch —
@@ -135,7 +134,7 @@ function sandboxPurchase(request: UtilityPurchaseRequest, requestId: string): Ut
 }
 
 function readCredentials(): VtpassCredentials {
-  const environment = (process.env.VTPASS_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'live') satisfies VtpassEnvironment;
+  const environment = (isSandboxEnv() ? 'sandbox' : 'live') satisfies VtpassEnvironment;
   const apiKey = process.env.VTPASS_API_KEY;
   const publicKey = process.env.VTPASS_PUBLIC_KEY;
   const secretKey = process.env.VTPASS_SECRET_KEY;
@@ -179,7 +178,16 @@ function lagosRequestPrefix(date = new Date()) {
 }
 
 export function vtpassRequestId(idempotencyKey: string, date = new Date()) {
-  const suffix = idempotencyKey.replace(/[^a-zA-Z0-9]/g, '').slice(-20) || Math.random().toString(36).slice(2);
+  // VTPass dedupes on request_id, so the suffix MUST carry entropy from the
+  // whole attempt key. The previous scheme took the literal last-20
+  // alphanumeric chars of "<key>:provider:<uuid>:attempt:<n>" — i.e. only the
+  // provider-uuid tail + attempt number — so every DIFFERENT transaction
+  // against the same provider in the same minute produced the same
+  // request_id: transaction B could be answered with transaction A's result
+  // (or rejected as a duplicate after we already debited).
+  const suffix = idempotencyKey
+    ? createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 20).toUpperCase()
+    : Math.random().toString(36).slice(2);
   return `${lagosRequestPrefix(date)}${suffix}`;
 }
 
@@ -189,10 +197,14 @@ function endpoint(path: string, credentials = readCredentials()) {
 
 async function vtpassFetch(path: string, method: VtpassHttpMethod, body?: Record<string, unknown>): Promise<VtpassResponse> {
   const credentials = readCredentials();
+  // A hanging VTPass request previously held the purchase open indefinitely —
+  // bound it so the caller sees an AbortError (which the service layer maps to
+  // an AMBIGUOUS/pending outcome, never a failover).
   const response = await fetch(endpoint(path, credentials), {
     method,
     headers: authHeaders(method, credentials),
     body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    signal: AbortSignal.timeout(15_000),
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -236,15 +248,28 @@ function normalizeProviderStatus(payload: VtpassResponse): UtilityPurchaseResult
 
   if (code === '000' && ['delivered', 'successful', 'success'].includes(transactionStatus)) return 'successful';
   if (code === '000' && !transactionStatus && description.includes('successful')) return 'successful';
+  // A synthesized HTTP 4xx envelope (vtpassFetch on non-2xx) means VTPass
+  // rejected the request outright — no vend was attempted, so a definitive
+  // failure is safe. 5xx is ambiguous: the vend may still complete → pending.
+  const httpStatus = Number(payload.code);
+  if (Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus < 500) return 'failed';
   if (
-    transactionStatus.includes('pending')
-    || transactionStatus.includes('processing')
-    || description.includes('pending')
-    || description.includes('processing')
-    || description.includes('timeout')
-  ) return 'pending';
+    transactionStatus.includes('fail')
+    || transactionStatus.includes('cancel')
+    || transactionStatus.includes('reverse')
+    || description.includes('fail')
+    || description.includes('insufficient')
+    || description.includes('invalid')
+    || description.includes('does not exist')
+    || description.includes('not exist')
+    || description.includes('error')
+  ) return 'failed';
 
-  return 'failed';
+  // Anything else — 'initiated', 'pending', 'processing', a 5xx, or an
+  // unrecognised verdict — is ambiguous, NOT a proven refusal. Failing here
+  // would auto-reverse the debit and fail over to the next provider while
+  // the vend may still complete (double-deliver / debit+deliver).
+  return 'pending';
 }
 
 function tokenFrom(payload: VtpassResponse) {
@@ -348,7 +373,6 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
       return { valid: true, raw: { skipped: true, reason: 'VTPass does not require merchant verification for this category.' } };
     }
 
-    // Sandbox: validate against VTPass's documented test meter numbers locally so
     // testing works without live credentials. This matrix is documented ONLY for
     // electricity (EKEDC) — cable_tv and internet also have requires_validation
     // but VTPass's sandbox has no equivalent test-number matrix for them, so
@@ -396,7 +420,19 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
   async purchase(request: UtilityPurchaseRequest) {
     const requestId = vtpassRequestId(request.idempotencyKey);
 
-    // Sandbox: simulate the documented EKEDC purchase outcomes by meter number so
+    // VTPass bills whole naira only — asNaira() would otherwise round a
+    // sub-naira amount UP to a full-naira vend while we collected less.
+    // This is a deterministic validation failure, not a provider refusal: the
+    // request is never sent, so 'failed' is safe (no vend can complete).
+    if (request.pricing.amountKobo <= 0 || request.pricing.amountKobo % 100 !== 0) {
+      return {
+        status: 'failed' as const,
+        providerReference: requestId,
+        message: 'Amount must be in whole naira.',
+        raw: { validation: 'whole_naira_required' },
+      };
+    }
+
     // end-to-end testing (debit → token) works without live credentials.
     if (isSandboxEnv()) {
       return sandboxPurchase(request, requestId);
@@ -423,7 +459,10 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
       }
       return { status: 'degraded' as const, message: payload.response_description || 'Unable to confirm VTPass balance.' };
     } catch (error) {
-      return { status: 'down' as const, message: error instanceof Error ? error.message : 'VTPass health check failed.' };
+      // The adapter threw — the message can carry fetch/network internals and
+      // this result is returned verbatim in the admin health-check response.
+      console.error('[utility/vtpass] health check request failed:', error);
+      return { status: 'down' as const, message: 'VTPass health check request failed.' };
     }
   },
 };

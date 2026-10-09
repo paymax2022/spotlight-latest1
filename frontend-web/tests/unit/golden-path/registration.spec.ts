@@ -15,8 +15,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest } from './_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -45,8 +43,6 @@ vi.mock('@/src/server/user/profile', () => ({
   getOrCreateUserProfile: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { POST as createPost, GET as listGet } from '../../../app/api/registration/applications/route';
 import { POST as submitPost } from '../../../app/api/registration/applications/[id]/submit/route';
 import { requireUser } from '@/src/lib/auth/server';
@@ -57,8 +53,6 @@ import {
   listRegistrationApplications,
 } from '@/src/server/registration/supabase-store';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_USER = { id: 'user-001', email: 'applicant@example.com', role: 'public_user' };
 
@@ -94,8 +88,6 @@ function makeDraft(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
-// ── Tests: create draft ───────────────────────────────────────────────────────
 
 describe('POST /api/registration/applications', () => {
   beforeEach(() => {
@@ -205,8 +197,6 @@ describe('POST /api/registration/applications', () => {
   });
 });
 
-// ── Tests: GET list ───────────────────────────────────────────────────────────
-
 describe('GET /api/registration/applications', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -229,8 +219,6 @@ describe('GET /api/registration/applications', () => {
     expect(body.applications[0].userId).toBe(TEST_USER.id);
   });
 });
-
-// ── Tests: submit draft ───────────────────────────────────────────────────────
 
 describe('POST /api/registration/applications/[id]/submit', () => {
   beforeEach(() => {

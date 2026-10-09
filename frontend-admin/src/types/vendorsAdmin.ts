@@ -1,5 +1,4 @@
 // Vendor oversight admin types (estate / marketplace vendor portal oversight).
-//
 // Backend surface: the Go estate module (backend/internal/estate/vendor.go +
 // admin.go) exposes vendor + vendor-job endpoints, but they are ESTATE-OBJECT-
 // SCOPED, not a global admin-RBAC surface:
@@ -12,7 +11,6 @@
 // There is NO cross-estate admin vendor route group and no vendor DISPUTE surface.
 // This console is therefore a cross-estate oversight aggregate: the directory +
 // approval queue map onto the per-estate vendor + verify endpoints (called with an
-// estate id per row); payouts/disputes are read-only until a dedicated admin
 // aggregate exists. Mock by default.
 
 // Vendor lifecycle status (mirrors estate_vendors.status: pending|verified|suspended).
@@ -61,7 +59,6 @@ export interface VendorApplication {
 }
 
 // A vendor job / payout line (read-only oversight of the estate vendor payout
-// lifecycle: available→accepted→…→completed→paid).
 export type VendorJobStatus =
   | 'available'
   | 'accepted'

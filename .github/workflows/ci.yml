@@ -30,23 +30,26 @@ on:
   # Docs-only PUSHES are skipped to conserve private-repository Actions minutes.
   #
   # `pull_request` deliberately has NO paths-ignore. This workflow's jobs are
-  # required status checks on develop (.github/required-checks.txt), and GitHub
-  # reports a path-SKIPPED required check as perpetually "Expected — waiting for
-  # status", not as passed. With a paths-ignore here, a docs-only PR would never
-  # start this workflow and could never merge. Docs-only PRs are cheap now: the
-  # router skips every module lane, leaving only the core gates.
+  # required status checks on develop AND main (.github/required-checks.txt),
+  # and GitHub reports a path-SKIPPED required check as perpetually "Expected —
+  # waiting for status", not as passed. With a paths-ignore here, a docs-only
+  # PR would never start this workflow and could never merge. Docs-only PRs are
+  # cheap now: the router skips every module lane, leaving only the core gates.
+  #
+  # `main` IS included: AUD-TEST-003 — merges land on main (it's the default
+  # branch) and AUD-BE-001 shipped a compile break because no required check
+  # ran on main-bound PRs. The deploy lanes below still only fire via
+  # workflow_dispatch, so a main push here is CI-only.
   push:
-    branches: [develop, staging, prod]
+    branches: [develop, staging, prod, main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
-    branches: [develop, staging, prod]
-  # Manual dispatch also doubles as the only way to run this pipeline's CI
-  # gates against `main` — push/pull_request above deliberately don't include
-  # it (Railway has no Production branch mapping to `main`, so it never needed
-  # its own push trigger), which meant `main`'s last real CI result could go
-  # stale indefinitely with nothing to refresh it. Both deploy inputs are
+    branches: [develop, staging, prod, main]
+  # Manual dispatch still works for re-running this pipeline against any
+  # branch, but `main` is covered by push/pull_request above (AUD-TEST-003).
+  # Both deploy inputs are
   # optional: leave them blank to run CI only (against whichever branch you
   # pick in the dispatch UI/API `ref`), or fill both in to also deploy — the
   # deploy jobs below still gate strictly on confirm_deploy being the exact
@@ -281,9 +284,9 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25.x"
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       # A full-schema drop needs a lock per object and the ~400-migration schema
       # blows the default 64. ALTER SYSTEM needs a restart to take effect.
@@ -428,9 +431,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version-file: 'backend/go.mod'
       # Pinned version, built from source — no curl|bash installer.
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
@@ -499,7 +502,7 @@ jobs:
             path: frontend-admin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install Railway CLI
@@ -578,13 +581,23 @@ jobs:
         include:
           - service: backend
             path: backend
+            root_flag: --path-as-root
+          # The staging frontend services carry a Railway `rootDirectory` of
+          # their own folder, so they must be uploaded from the repo root —
+          # but with NO positional path argument at all: `railway up .` dies
+          # client-side with "prefix not found" during indexing (CLI bug with
+          # an explicit `.` when rootDirectory is set), and
+          # `frontend-web --path-as-root` makes Railway look for `frontend-*/`
+          # inside an archive that already IS that folder.
           - service: frontend-web
-            path: frontend-web
+            path: ''
+            root_flag: ''
           - service: frontend-admin
-            path: frontend-admin
+            path: ''
+            root_flag: ''
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install Railway CLI
@@ -603,7 +616,7 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
         run: |
-          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
+          railway up ${{ matrix.path }} ${{ matrix.root_flag }} --no-gitignore \
             --service ${{ matrix.service }} \
             --environment staging \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
@@ -714,7 +727,7 @@ jobs:
             path: frontend-admin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install Railway CLI

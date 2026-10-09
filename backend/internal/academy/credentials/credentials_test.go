@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -10,8 +11,6 @@ import (
 // matter for the golden rules: Apply idempotency (double = one route) and revoke
 // updating the public verification registry. The Service is driven through a small
 // in-memory fake store + fake RoleUpgrader.
-
-// ── Credential SM: allowed + illegal transitions ────────────────────────────────
 
 func TestCanCred_Allowed(t *testing.T) {
 	if !canCred(CredPending, CredIssued) {
@@ -39,13 +38,12 @@ func TestCanCred_Illegal(t *testing.T) {
 	}
 }
 
-// ── Eligibility rules (pure) ─────────────────────────────────────────────────────
-
-func sp(s string) *string { return &s }
+//go:fix inline
+func sp(s string) *string { return new(s) }
 
 func TestEligible_Rules(t *testing.T) {
-	solar := []Credential{{State: CredIssued, Kind: KindTrade, TradeTrack: sp("solar")}}
-	pendingOnly := []Credential{{State: CredPending, Kind: KindTrade, TradeTrack: sp("solar")}}
+	solar := []Credential{{State: CredIssued, Kind: KindTrade, TradeTrack: new("solar")}}
+	pendingOnly := []Credential{{State: CredPending, Kind: KindTrade, TradeTrack: new("solar")}}
 
 	// Matching trade track, default min 1.
 	if !eligible(EligibilityRules{TradeTrack: "solar"}, solar) {
@@ -68,7 +66,7 @@ func TestEligible_Rules(t *testing.T) {
 		t.Error("one credential must not satisfy min_credentials: 2")
 	}
 	two := append([]Credential{}, solar...)
-	two = append(two, Credential{State: CredIssued, Kind: KindTrade, TradeTrack: sp("solar")})
+	two = append(two, Credential{State: CredIssued, Kind: KindTrade, TradeTrack: new("solar")})
 	if !eligible(EligibilityRules{TradeTrack: "solar", MinCredentials: 2}, two) {
 		t.Error("two matching credentials should satisfy min_credentials: 2")
 	}
@@ -77,8 +75,6 @@ func TestEligible_Rules(t *testing.T) {
 		t.Error("trade credential must not satisfy {kind: academic}")
 	}
 }
-
-// ── Fake store + upgrader ────────────────────────────────────────────────────────
 
 type fakeStore struct {
 	issued    []Credential
@@ -219,15 +215,13 @@ func newTestService(store credentialStore, up RoleUpgrader) *Service {
 	return &Service{repo: store, upgrader: up, secret: []byte("test-secret")}
 }
 
-// ── Apply idempotency: double call = one route ───────────────────────────────────
-
 func TestApply_Idempotent(t *testing.T) {
 	f := newFakeStore()
 	f.opps["opp-1"] = &EarningOpportunity{
 		ID: "opp-1", Code: "driver", Role: "driver", Status: "active",
 		EligibilityRules: EligibilityRules{TradeTrack: "solar"},
 	}
-	f.issued = []Credential{{ID: "c1", State: CredIssued, Kind: KindTrade, TradeTrack: sp("solar")}}
+	f.issued = []Credential{{ID: "c1", State: CredIssued, Kind: KindTrade, TradeTrack: new("solar")}}
 	up := &fakeUpgrader{}
 	s := newTestService(f, up)
 	ctx := context.Background()
@@ -273,15 +267,13 @@ func TestApply_NotEligible(t *testing.T) {
 	}
 	// No issued credentials → not eligible, fail closed.
 	s := newTestService(f, &fakeUpgrader{})
-	if _, err := s.Apply(context.Background(), "user-1", "opp-1", "k"); err != ErrNotEligible {
+	if _, err := s.Apply(context.Background(), "user-1", "opp-1", "k"); !errors.Is(err, ErrNotEligible) {
 		t.Errorf("expected ErrNotEligible, got %v", err)
 	}
 	if f.insertCnt != 0 {
 		t.Error("ineligible apply must not insert an application")
 	}
 }
-
-// ── Revoke updates the public registry ───────────────────────────────────────────
 
 func TestRevoke_UpdatesRegistry(t *testing.T) {
 	f := newFakeStore()
@@ -314,7 +306,7 @@ func TestRevoke_IllegalRejected(t *testing.T) {
 	f.issued = append(f.issued, Credential{ID: "cred-x", State: CredPending, VerificationID: "vx"})
 	f.verif["vx"] = &PublicVerification{VerificationID: "vx", Status: VerifValid}
 	s := newTestService(f, &fakeUpgrader{})
-	if _, err := s.Revoke(context.Background(), "admin-1", "cred-x", "reason"); err != ErrIllegalTransition {
+	if _, err := s.Revoke(context.Background(), "admin-1", "cred-x", "reason"); !errors.Is(err, ErrIllegalTransition) {
 		t.Errorf("revoking a pending credential must be illegal, got %v", err)
 	}
 }

@@ -1,4 +1,3 @@
-// ── FX Exchange — Data hooks ─────────────────────────────────────────────────
 // React Query hooks mirroring useCrowdfunding.ts so screens stay declarative and
 // share caching / loading / error contracts.
 
@@ -19,8 +18,6 @@ import type {
 import { newIdempotencyKey } from '../utils/fxFormatters';
 
 const KEY = 'fx';
-
-// ─── Balances & rates ──────────────────────────────────────────────────────────
 
 export function useBalances() {
   return useQuery({ queryKey: [KEY, 'balances'], queryFn: fx.getBalances, staleTime: 20_000 });
@@ -46,8 +43,6 @@ export function useRateHistory(from: CurrencyCode, to: CurrencyCode, range: Rate
   });
 }
 
-// ─── Quotes ─────────────────────────────────────────────────────────────────────
-
 export function useCreateQuote() {
   return useMutation({ mutationFn: (req: QuoteRequest) => fx.createQuote(req) });
 }
@@ -55,8 +50,6 @@ export function useCreateQuote() {
 export function useLockQuote() {
   return useMutation({ mutationFn: ({ quoteId, req }: { quoteId: string; req: QuoteRequest }) => fx.lockQuote(quoteId, req) });
 }
-
-// ─── Conversions & transfers (money mutations → Idempotency-Key) ──────────────
 
 export function useExecuteConversion() {
   const qc = useQueryClient();
@@ -90,8 +83,6 @@ export function useTransfer(reference?: string) {
     enabled: Boolean(reference),
   });
 }
-
-// ─── Beneficiaries ────────────────────────────────────────────────────────────
 
 export function useBeneficiaries() {
   return useQuery({ queryKey: [KEY, 'beneficiaries'], queryFn: fx.getBeneficiaries, staleTime: 30_000 });
@@ -133,8 +124,6 @@ export function useDeleteBeneficiary() {
   });
 }
 
-// ─── Collections ──────────────────────────────────────────────────────────────
-
 export function useVirtualAccounts() {
   return useQuery({ queryKey: [KEY, 'virtual-accounts'], queryFn: fx.getVirtualAccounts, staleTime: 30_000 });
 }
@@ -151,8 +140,6 @@ export function useCreateVirtualAccount() {
 export function useCollections() {
   return useQuery({ queryKey: [KEY, 'collections'], queryFn: fx.getCollections, staleTime: 20_000 });
 }
-
-// ─── Transactions ─────────────────────────────────────────────────────────────
 
 export function useTransactions(filter?: TransactionFilter) {
   return useQuery({
@@ -173,8 +160,6 @@ export function useTransaction(id?: string) {
     enabled: Boolean(id),
   });
 }
-
-// ─── Rate alerts ────────────────────────────────────────────────────────────────
 
 export function useRateAlerts() {
   return useQuery({ queryKey: [KEY, 'rate-alerts'], queryFn: fx.getRateAlerts, staleTime: 30_000 });

@@ -130,6 +130,7 @@ jobs:
             FEATURE_REFERRALS_ENABLED=true \
             FEATURE_REFERRAL_REWARDS_ENABLED=true \
             FEATURE_INSURANCE_ENABLED=true \
+            FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED=true \
             FEATURE_SOCIAL_PAY_ENABLED=true \
             FEATURE_LOYALTY_ENABLED=true \
             FEATURE_RESTAURANT_ENABLED=true \
@@ -152,8 +153,11 @@ jobs:
             FEATURE_AICARE_ENABLED=true \
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
+            FEATURE_CONTESTANT_SOCIAL_ENABLED=true \
             FEATURE_CONNECT_ENABLED=true \
             FEATURE_MARKETPLACE_ENABLED=true \
+            FEATURE_PROPERTY_ROLES_ENABLED=true \
+            FEATURE_ONBOARDING_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -192,7 +196,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONNECT","MARKETPLACE",
+              "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES","ONBOARDING",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
@@ -448,8 +452,10 @@ jobs:
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           unset KEY
           # The proxy needs to know where Go is. Private network, same address the
-          # frontend-web proxy uses and which is proven to work.
-          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080/api/v1 \
+          # frontend-web proxy uses and which is proven to work. Backend ROOT —
+          # no /api/v1 suffix: the admin-proxy route forwards the caller's full
+          # path, so a /api/v1 base 404s everything not mounted under it.
+          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080 \
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           echo "  key written to backend and frontend-admin (value never printed)"
 

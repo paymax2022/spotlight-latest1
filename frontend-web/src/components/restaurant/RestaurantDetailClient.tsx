@@ -3,9 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getRestaurant, toggleLike } from '@/src/lib/restaurant/api';
-import { cartItemCount, cartTotalKobo, fetchServerCart, loadLocalCart, saveLocalCart, syncCartToServer } from '@/src/lib/restaurant/cart';
-import { formatNaira } from '@/src/lib/restaurant/format';
+import { getRestaurant, toggleLike, cartItemCount, cartTotalKobo, fetchServerCart, loadLocalCart, saveLocalCart, syncCartToServer, formatNaira } from '@/src/lib/restaurant';
 import type { Cart, MenuItem, RestaurantDetail } from '@/src/types/restaurant';
 
 export default function RestaurantDetailClient({ restaurantId }: { restaurantId: string }) {

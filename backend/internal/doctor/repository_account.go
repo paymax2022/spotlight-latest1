@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"errors"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,8 +16,6 @@ import (
 // in depth on top of RLS). Mutations on tables that carry a UNIQUE idempotency_key
 // use ON CONFLICT (idempotency_key) DO NOTHING + replay, exactly like the MVP
 // (see Repository.InsertPrescription / InsertLabOrder).
-
-// ── Onboarding: legal consents ───────────────────────────────────────────────
 
 func (r *Repository) ListConsents(ctx context.Context, userID string) ([]LegalConsent, error) {
 	const q = `
@@ -44,7 +44,7 @@ func (r *Repository) UpsertConsent(ctx context.Context, userID string, req Accep
 	if version == "" {
 		version = "v1"
 	}
-	accepted := boolOrDefault(req.Accepted, true)
+	accepted := ptr.Deref(req.Accepted, true)
 	var acceptedAt *time.Time
 	if accepted {
 		now := time.Now()
@@ -67,8 +67,6 @@ func (r *Repository) UpsertConsent(ctx context.Context, userID string, req Accep
 		&c.ConsentKind, &c.Version, &c.Accepted, &c.AcceptedAt, &c.CreatedAt)
 	return c, err
 }
-
-// ── Onboarding: app permissions ──────────────────────────────────────────────
 
 func (r *Repository) ListPermissions(ctx context.Context, userID string) ([]AppPermission, error) {
 	const q = `
@@ -112,8 +110,6 @@ func (r *Repository) UpsertPermission(ctx context.Context, userID string, req Re
 	return p, err
 }
 
-// ── Onboarding: merchant upgrade ─────────────────────────────────────────────
-
 func (r *Repository) GetMerchantUpgrade(ctx context.Context, userID string) (*MerchantUpgrade, error) {
 	const q = `
 		SELECT id, user_id, state, requested_at, completed_at, detail, created_at, updated_at
@@ -129,7 +125,6 @@ func (r *Repository) GetMerchantUpgrade(ctx context.Context, userID string) (*Me
 
 // GetSelectedProviderType returns the provider type chosen at the provider-type
 // step, or nil when the user has not chosen one.
-//
 // Reads profile_draft, NOT the provider_type column. The column is the PUBLISHED
 // value and defaults to 'doctor', so reading it would report a confident "doctor"
 // for a user who has chosen nothing — and would silently preselect the wrong card
@@ -153,7 +148,7 @@ func (r *Repository) InsertMerchantUpgrade(ctx context.Context, userID, idemKey 
 		INSERT INTO doctor_merchant_upgrades (id, user_id, state, requested_at, detail, idempotency_key)
 		VALUES ($1,$2,'requested',$3,$4,$5)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, now, jsonOrEmptyObject(detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, now, jsonx.RawOrEmptyObject(detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -189,8 +184,6 @@ func (r *Repository) getMerchantUpgradeByIdem(ctx context.Context, userID, idemK
 	return m, err
 }
 
-// ── Profile builder: draft / publish (doctor_profiles JSONB columns) ──────────
-
 // GetProfileDraft returns the profile_draft + completed_steps JSONB.
 func (r *Repository) GetProfileDraft(ctx context.Context, userID string) (*Profile, error) {
 	return r.GetProfile(ctx, userID)
@@ -199,7 +192,6 @@ func (r *Repository) GetProfileDraft(ctx context.Context, userID string) (*Profi
 // SaveProfileDraft patch-merges the supplied JSON into profile_draft (jsonb || jsonb),
 // creating the profile row on first write. Idempotent: an empty/replayed patch is a
 // no-op merge.
-//
 // UPSERT, not UPDATE. Nothing in this backend ever INSERTs into doctor_profiles —
 // there are ten UPDATEs, one SELECT and no INSERT, and no migration seeds a row —
 // so an UPDATE here matched nothing for every real user and returned ErrNotFound.
@@ -213,7 +205,7 @@ func (r *Repository) SaveProfileDraft(ctx context.Context, userID string, patch 
 		ON CONFLICT (user_id) DO UPDATE
 		SET profile_draft = doctor_profiles.profile_draft || EXCLUDED.profile_draft,
 		    updated_at    = now()`
-	if _, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch)); err != nil {
+	if _, err := r.db.Exec(ctx, q, userID, jsonx.RawOrEmptyObject(patch)); err != nil {
 		return nil, err
 	}
 	return r.GetProfile(ctx, userID)
@@ -258,8 +250,6 @@ func (r *Repository) ListVerificationDocuments(ctx context.Context, userID strin
 	}
 	return out, rows.Err()
 }
-
-// ── Notifications: groups + preferences ──────────────────────────────────────
 
 // ListNotificationGroups groups the doctor's notifications by group_key.
 func (r *Repository) ListNotificationGroups(ctx context.Context, userID string) ([]NotificationGroup, error) {
@@ -329,7 +319,7 @@ func (r *Repository) ListNotificationPreferences(ctx context.Context, userID str
 
 // UpsertNotificationPreference toggles a channel/category preference. UNIQUE(user_id, channel, category).
 func (r *Repository) UpsertNotificationPreference(ctx context.Context, userID string, req UpdateNotificationPreferenceRequest) (*NotificationPreference, error) {
-	enabled := boolOrDefault(req.Enabled, true)
+	enabled := ptr.Deref(req.Enabled, true)
 	const q = `
 		INSERT INTO doctor_notification_preferences (user_id, channel, category, enabled, updated_at)
 		VALUES ($1,$2,$3,$4, now())
@@ -356,8 +346,6 @@ func (r *Repository) MarkAllNotificationsRead(ctx context.Context, userID string
 	}
 	return tag.RowsAffected(), nil
 }
-
-// ── Support: tickets ─────────────────────────────────────────────────────────
 
 func (r *Repository) ListSupportTickets(ctx context.Context, userID string) ([]SupportTicket, error) {
 	const q = `
@@ -424,8 +412,6 @@ func (r *Repository) getSupportTicketByIdem(ctx context.Context, userID, idemKey
 	return t, err
 }
 
-// ── Support: disputes ────────────────────────────────────────────────────────
-
 func (r *Repository) ListSupportDisputes(ctx context.Context, userID string) ([]SupportDispute, error) {
 	const q = `
 		SELECT id, user_id, status, subject, evidence, detail, created_at, updated_at
@@ -467,7 +453,7 @@ func (r *Repository) InsertSupportDispute(ctx context.Context, userID, idemKey s
 		INSERT INTO doctor_support_disputes (id, user_id, status, subject, detail, idempotency_key)
 		VALUES ($1,$2,'open',$3,$4,$5)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, req.Subject, jsonOrEmptyObject(req.Detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, req.Subject, jsonx.RawOrEmptyObject(req.Detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +482,7 @@ func (r *Repository) AppendDisputeEvidence(ctx context.Context, userID, disputeI
 		UPDATE doctor_support_disputes
 		SET evidence = evidence || $3::jsonb, updated_at = now()
 		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, disputeID, userID, jsonOrEmptyArray(evidence))
+	tag, err := r.db.Exec(ctx, q, disputeID, userID, jsonx.RawOrEmptyArray(evidence))
 	if err != nil {
 		return nil, err
 	}
@@ -505,8 +491,6 @@ func (r *Repository) AppendDisputeEvidence(ctx context.Context, userID, disputeI
 	}
 	return r.GetSupportDispute(ctx, userID, disputeID)
 }
-
-// ── Support: messages (threads) ──────────────────────────────────────────────
 
 func (r *Repository) ListSupportMessages(ctx context.Context, userID, threadID string) ([]SupportMessage, error) {
 	const q = `
@@ -630,7 +614,7 @@ func (r *Repository) CompleteTraining(ctx context.Context, userID, moduleID, ide
 		VALUES ($1,$2,$3,'completed', now(), $4,$5, now())
 		ON CONFLICT (user_id, module_id) DO UPDATE SET
 			status = 'completed', completed_at = now(), updated_at = now()`
-	if _, err := r.db.Exec(ctx, q, id, userID, moduleID, jsonOrEmptyObject(detail), idemKey); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, moduleID, jsonx.RawOrEmptyObject(detail), idemKey); err != nil {
 		return nil, err
 	}
 	const sel = `
@@ -674,7 +658,7 @@ func (r *Repository) InsertSafetyIssue(ctx context.Context, userID, idemKey stri
 		INSERT INTO doctor_safety_issues (id, user_id, severity, status, subject, detail, idempotency_key)
 		VALUES ($1,$2,$3,'open',$4,$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, severity, req.Subject, jsonOrEmptyObject(req.Detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, severity, req.Subject, jsonx.RawOrEmptyObject(req.Detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +725,7 @@ func (r *Repository) UpdatePrivacySettings(ctx context.Context, userID string, p
 		UPDATE doctor_data_privacy_settings
 		SET settings = settings || $2::jsonb, updated_at = now()
 		WHERE user_id = $1`
-	if _, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch)); err != nil {
+	if _, err := r.db.Exec(ctx, q, userID, jsonx.RawOrEmptyObject(patch)); err != nil {
 		return nil, err
 	}
 	return r.scanPrivacy(ctx, userID)
@@ -784,8 +768,6 @@ func (r *Repository) RevokeDevice(ctx context.Context, userID, deviceID string) 
 	}
 	return nil
 }
-
-// ── Reputation / reviews ─────────────────────────────────────────────────────
 
 // GetLatestQualityScore returns the most recent quality score row (ranking + recs).
 func (r *Repository) GetLatestQualityScore(ctx context.Context, userID string) (*QualityScore, error) {
@@ -851,7 +833,7 @@ func (r *Repository) InsertReviewDispute(ctx context.Context, userID, reviewID, 
 		INSERT INTO doctor_review_disputes (id, user_id, review_id, kind, status, reason, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,'open',$5,$6,$7)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, reviewID, kind, req.Reason, jsonOrEmptyObject(req.Detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, reviewID, kind, req.Reason, jsonx.RawOrEmptyObject(req.Detail), idemKey)
 	if err != nil {
 		return nil, err
 	}

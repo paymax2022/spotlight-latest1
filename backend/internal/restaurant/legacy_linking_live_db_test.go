@@ -1,23 +1,18 @@
 package restaurant
 
 // LIVE-DB tests for legacy owner linking (foodhub §5.4).
-//
 // Every restaurant on the platform predates the merchant-onboarding engine:
 // 1651 restaurants, 1539 distinct owners, and ZERO merchant profiles. The
 // consequence is not cosmetic — capabilities are read from onb_merchant_profile,
 // so today every one of those owners:
-//
 //   • has no capability card in the merchant hub, and
 //   • resolves to "you don't manage a restaurant yet" at /merchant/restaurant,
-//
 // while their tooling works perfectly if they happen to know the direct URL.
 // Linking creates the profile that makes them visible to the hub, WITHOUT
 // requiring 1539 people to re-apply for a business they already run.
-//
 // A legacy profile is distinguishable by application_id IS NULL — it was never
 // applied for. That is deliberate: an operator asking "who was reviewed?" must
 // not get an answer polluted by people who were grandfathered in.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -42,21 +37,21 @@ func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 	// depends on what other tests leave behind measures the suite, not the code.
 	owner := uuid.New().String()
 	shop := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, owner)
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Legacy Kitchen','1 St',TRUE)`,
 		shop, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
 	})
 
 	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
@@ -65,7 +60,7 @@ func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 
 	var profileID, route string
 	var appID *string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT id, COALESCE(workspace_route,''), application_id FROM onb_merchant_profile
 		  WHERE user_id=$1 AND merchant_type_id='mt-restaurant' AND status='ACTIVE'`, owner).
 		Scan(&profileID, &route, &appID); err != nil {
@@ -81,7 +76,7 @@ func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 	}
 
 	var linked *string
-	if err := pool.QueryRow(ctx, `SELECT owner_profile_id::text FROM restaurants WHERE id=$1`, shop).Scan(&linked); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT owner_profile_id::text FROM restaurants WHERE id=$1`, shop).Scan(&linked); err != nil {
 		t.Fatalf("read restaurant: %v", err)
 	}
 	if linked == nil || *linked != profileID {
@@ -89,7 +84,7 @@ func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 	}
 
 	var hasRole bool
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id=ur.role_id
 		               WHERE ur.user_id=$1 AND ro.slug='restaurant_merchant' AND ur.is_active)`, owner).Scan(&hasRole); err != nil {
 		t.Fatalf("check role: %v", err)
@@ -107,21 +102,21 @@ func TestLiveDB_LinkingIsIdempotent(t *testing.T) {
 
 	owner := uuid.New().String()
 	shop := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, owner)
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Idem Legacy','1 St',TRUE)`,
 		shop, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
 	})
 
 	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
@@ -133,7 +128,7 @@ func TestLiveDB_LinkingIsIdempotent(t *testing.T) {
 	// Re-running a backfill is normal — after an import, or a retried deploy. It
 	// must not duplicate a merchant's identity.
 	var profiles int
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT count(*) FROM onb_merchant_profile WHERE user_id=$1 AND merchant_type_id='mt-restaurant'`, owner).
 		Scan(&profiles); err != nil {
 		t.Fatalf("count profiles: %v", err)
@@ -151,7 +146,7 @@ func TestLiveDB_LegacyProfilesCarryAWorkingWorkspaceRoute(t *testing.T) {
 	// The capability card links to workspace_route. A profile with the wrong one
 	// (or none) is a card that goes nowhere — the exact defect fixed in 686a045b.
 	var wrong int
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT count(*) FROM onb_merchant_profile
 		WHERE merchant_type_id = 'mt-restaurant'
 		  AND COALESCE(workspace_route,'') <> '/merchant/restaurant'`).Scan(&wrong); err != nil {
@@ -170,7 +165,7 @@ func TestLiveDB_LegacyOwnersHoldTheMerchantRole(t *testing.T) {
 	// A profile without the RBAC role is a half grant: the hub shows the business
 	// while permissioned routes refuse it.
 	var missingRole int
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT count(*)
 		FROM onb_merchant_profile p
 		WHERE p.merchant_type_id = 'mt-restaurant' AND p.status='ACTIVE'
@@ -195,10 +190,8 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	// Deterministic by construction, for exactly the reason the first test in this
 	// file spells out. The previous version asserted the GLOBAL condition "some
 	// legacy profile exists somewhere":
-	//
 	//	SELECT count(*) FROM onb_merchant_profile
 	//	 WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL   -- > 0
-	//
 	// which CANNOT hold on a fresh database. Grandfathering comes from
 	// 20261213000000_foodhub_legacy_owner_linking.sql, which backfills
 	// INSERT … SELECT FROM public.restaurants; nothing seeds that table, so a
@@ -206,50 +199,47 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	// assertion was measuring whether the environment happened to carry history,
 	// not whether the code keeps grandfathered owners distinguishable — and it
 	// failed the integration-verify lane on main for precisely that reason.
-	//
 	// So seed BOTH kinds and assert the distinction itself.
 
-	// ── 1. Grandfathered: a restaurant predating onboarding, linked by the same
 	//       service call the migration's backfill mirrors. No application exists.
 	legacyOwner := uuid.New().String()
 	shop := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		legacyOwner, legacyOwner+"@seed.test"); err != nil {
 		t.Fatalf("seed legacy user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, legacyOwner)
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Grandfathered Kitchen','1 St',TRUE)`,
 		shop, legacyOwner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, legacyOwner)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, legacyOwner)
 	})
 	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
 		t.Fatalf("LinkLegacyOwners: %v", err)
 	}
 
-	// ── 2. Reviewed: applied, was approved, and carries the application that
 	//       records the review.
 	reviewedOwner := uuid.New().String()
 	appID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		reviewedOwner, reviewedOwner+"@seed.test"); err != nil {
 		t.Fatalf("seed reviewed user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, reviewedOwner)
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO onb_application (id, user_id, merchant_type_id, status, decided_at)
 		 VALUES ($1,$2,'mt-restaurant','APPROVED',now())`, appID, reviewedOwner); err != nil {
 		t.Fatalf("seed application: %v", err)
 	}
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO onb_merchant_profile
 		   (user_id, module_id, merchant_type_id, application_id, role_granted, status, workspace_route, activated_at)
 		 VALUES ($1,'mod-food','mt-restaurant',$2,'restaurant_merchant','ACTIVE','/merchant/restaurant',now())
@@ -258,16 +248,15 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, reviewedOwner)
-		pool.Exec(bg, `DELETE FROM onb_application WHERE id=$1`, appID)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, reviewedOwner)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_application WHERE id=$1`, appID)
 	})
 
-	// ── The distinction itself: application_id IS NULL is what separates
 	//       "grandfathered in" from "we vetted this one". If grandfathering ever
 	//       invented an application, the operator question "who did we actually
 	//       review?" becomes unanswerable — and it answers wrong silently.
 	var legacyAppID *string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT application_id FROM onb_merchant_profile
 		  WHERE user_id=$1 AND merchant_type_id='mt-restaurant'`, legacyOwner).Scan(&legacyAppID); err != nil {
 		t.Fatalf("the grandfathered owner was not linked: %v", err)
@@ -277,7 +266,7 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	}
 
 	var reviewedAppID *string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT application_id FROM onb_merchant_profile
 		  WHERE user_id=$1 AND merchant_type_id='mt-restaurant'`, reviewedOwner).Scan(&reviewedAppID); err != nil {
 		t.Fatalf("the reviewed owner has no profile: %v", err)
@@ -288,7 +277,7 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 
 	// And the query an operator would actually run must separate the two.
 	var isLegacy bool
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
 		   WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL AND user_id=$1)`,
 		legacyOwner).Scan(&isLegacy); err != nil {
@@ -298,7 +287,7 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 		t.Error(`the "never reviewed" query did not return the grandfathered owner`)
 	}
 	var reviewedLooksLegacy bool
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
 		   WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL AND user_id=$1)`,
 		reviewedOwner).Scan(&reviewedLooksLegacy); err != nil {
@@ -318,7 +307,7 @@ func TestLiveDB_RestaurantsPointAtTheirOwnersProfile(t *testing.T) {
 	// set, it must agree with owner_id — a restaurant pointing at someone else's
 	// profile would attribute the shop to the wrong merchant.
 	var mismatched int
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT count(*)
 		FROM restaurants r
 		JOIN onb_merchant_profile p ON p.id = r.owner_profile_id
@@ -340,26 +329,25 @@ func TestLiveDB_UnclaimedRestaurantsAreDetectable(t *testing.T) {
 	// database forbids it. The reachable shape is an owner with no active merchant
 	// profile, which is what every restaurant looked like before the linking
 	// migration and what a newly imported shop would look like again.
-	//
 	// Asserting the current zero would pass even if the query were nonsense, so
 	// this creates the state and checks it surfaces.
 	orphanOwner := uuid.New().String()
 	orphanShop := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		orphanOwner, orphanOwner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, orphanOwner)
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Unclaimed Kitchen','1 St',FALSE)`,
 		orphanShop, orphanOwner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, orphanShop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, orphanShop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, orphanShop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, orphanShop)
 	})
 
 	svc := NewService(pool, nil)
@@ -383,14 +371,14 @@ func TestLiveDB_UnclaimedRestaurantsAreDetectable(t *testing.T) {
 
 	// And once the owner is linked, the shop must leave the queue — otherwise the
 	// queue never drains and admins learn to ignore it.
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO onb_merchant_profile (user_id, module_id, merchant_type_id, role_granted, status, workspace_route, activated_at)
 		VALUES ($1,'mod-food','mt-restaurant','restaurant_merchant','ACTIVE','/merchant/restaurant',now())
 		ON CONFLICT (user_id, merchant_type_id) DO NOTHING`, orphanOwner); err != nil {
 		t.Fatalf("link owner: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM onb_merchant_profile WHERE user_id=$1`, orphanOwner)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM onb_merchant_profile WHERE user_id=$1`, orphanOwner)
 	})
 
 	after, err := svc.UnclaimedRestaurants(ctx)

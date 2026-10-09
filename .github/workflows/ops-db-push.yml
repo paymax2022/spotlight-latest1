@@ -1,0 +1,148 @@
+name: Ops DB Push (manual)
+
+# Manual operator workflow for the jobs db-migrate.yml cannot do:
+#   * run `supabase db push` while the remote is DRIFTED — db-migrate's push
+#     path assumes a reconciled remote; a drifted history makes push fail, and
+#     only `supabase migration repair` can heal the history table;
+#   * inspect / link / repair prod or staging on demand without a merge.
+#
+# db-migrate.yml stays the ongoing automation (push on merge once
+# DB_MIGRATE_ENABLED=true). This workflow is the human override: the default
+# mode is read-only `migration list`, and every mutating mode needs a typed
+# confirm phrase so a stray "Run workflow" click cannot touch a database.
+#
+# Repair note: prod's schema_migrations was hand-reconciled after the 66-
+# migration drift (docs/devops/cloud-migration-reconciliation-runbook.md), and
+# at least one version (`stem_contests`) is recorded-applied while its DDL
+# never ran — `db push` fails on it until the version is either marked
+# `applied` via repair (history row only) or `reverted` then re-applied.
+# Pass repair_versions + repair_status to fix entries like that.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which Supabase project to act on'
+        type: choice
+        options: [staging, production]
+        default: staging
+      mode:
+        description: >-
+          list = show pending migrations only (safe default);
+          push = supabase db push --linked (requires confirm=PUSH);
+          repair = supabase migration repair (requires confirm=REPAIR and repair_versions)
+        type: choice
+        options: [list, push, repair]
+        default: list
+      confirm:
+        description: 'Type PUSH to allow db push, or REPAIR to allow migration repair. Ignored in list mode.'
+        type: string
+        default: ''
+      repair_versions:
+        description: 'Space- or comma-separated migration versions (e.g. "20260904000000 20270203000000"). repair mode only.'
+        type: string
+        default: ''
+      repair_status:
+        description: 'History status to record for repair_versions'
+        type: choice
+        options: [applied, reverted]
+        default: applied
+
+permissions:
+  contents: read
+
+concurrency:
+  # One DB operation per target at a time; never cancel mid-apply/repair.
+  group: ops-db-push-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    name: supabase ${{ inputs.mode }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    # Pull the GitHub environment matching the input so environment-scoped
+    # secrets and any required reviewers apply.
+    environment: ${{ inputs.environment }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      PROD_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      STG_PROJECT_ID: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
+      STG_DB_PASSWORD: ${{ secrets.SUPABASE_STAGING_DB_PASSWORD }}
+      MODE: ${{ inputs.mode }}
+      CONFIRM: ${{ inputs.confirm }}
+      REPAIR_VERSIONS: ${{ inputs.repair_versions }}
+      REPAIR_STATUS: ${{ inputs.repair_status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # PINNED — same pin as db-migrate.yml and maps-ci.yml, deliberately: the
+      # CLI that touches the production database must be the version a reviewed
+      # commit chose, not whatever setup-cli would resolve that morning. Bump
+      # all three together.
+      - uses: supabase/setup-cli@v3
+        with:
+          version: 2.114.0
+
+      - name: Resolve target project and verify secrets
+        run: |
+          : "${SUPABASE_ACCESS_TOKEN:?missing secret SUPABASE_ACCESS_TOKEN}"
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            : "${PROD_PROJECT_ID:?missing secret SUPABASE_PROJECT_ID}"
+            : "${PROD_DB_PASSWORD:?missing secret SUPABASE_DB_PASSWORD}"
+            echo "SUPABASE_PROJECT_ID=$PROD_PROJECT_ID" >> "$GITHUB_ENV"
+            echo "SUPABASE_DB_PASSWORD=$PROD_DB_PASSWORD" >> "$GITHUB_ENV"
+          else
+            : "${STG_PROJECT_ID:?missing secret SUPABASE_STAGING_PROJECT_ID}"
+            : "${STG_DB_PASSWORD:?missing secret SUPABASE_STAGING_DB_PASSWORD}"
+            # A copy-pasted secret is the realistic way "staging" ends up
+            # pointed at production — fail loudly rather than push to prod.
+            if [ -n "$PROD_PROJECT_ID" ] && [ "$STG_PROJECT_ID" = "$PROD_PROJECT_ID" ]; then
+              echo "::error::SUPABASE_STAGING_PROJECT_ID equals the production project ref — refusing to act."
+              exit 1
+            fi
+            echo "SUPABASE_PROJECT_ID=$STG_PROJECT_ID" >> "$GITHUB_ENV"
+            echo "SUPABASE_DB_PASSWORD=$STG_DB_PASSWORD" >> "$GITHUB_ENV"
+          fi
+
+      - name: Enforce confirm phrase for mutating modes
+        run: |
+          case "$MODE" in
+            list) ;;
+            push)
+              if [ "$CONFIRM" != "PUSH" ]; then
+                echo "::error::mode=push requires confirm=PUSH (got: '${CONFIRM}')."
+                exit 1
+              fi ;;
+            repair)
+              if [ "$CONFIRM" != "REPAIR" ]; then
+                echo "::error::mode=repair requires confirm=REPAIR (got: '${CONFIRM}')."
+                exit 1
+              fi
+              if [ -z "${REPAIR_VERSIONS//[ ,]/}" ]; then
+                echo "::error::mode=repair requires repair_versions."
+                exit 1
+              fi ;;
+          esac
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Migration list (before)
+        run: supabase migration list --linked || true
+
+      - name: Apply migrations (db push)
+        if: ${{ inputs.mode == 'push' }}
+        run: supabase db push --linked --include-all
+
+      - name: Repair migration history
+        if: ${{ inputs.mode == 'repair' }}
+        run: |
+          for v in ${REPAIR_VERSIONS//,/ }; do
+            echo "== repair $v -> $REPAIR_STATUS =="
+            supabase migration repair "$v" --status "$REPAIR_STATUS" --linked
+          done
+
+      - name: Migration list (after)
+        if: ${{ inputs.mode != 'list' }}
+        run: supabase migration list --linked || true

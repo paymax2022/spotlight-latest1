@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOptionalEnv } from '@/lib/config/env';
-import { sendTransactionalEmail } from '@/lib/email/transactional';
+import { getOptionalEnv } from '@/lib/config';
+import { sendTransactionalEmail } from '@/lib/email';
 
 type SponsorMeetingPayload = {
   organization?: string;
@@ -120,7 +120,8 @@ function makeIcs(input: {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as SponsorMeetingPayload;
+    const body = (await request.json().catch(() => null)) as SponsorMeetingPayload;
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const organization = body.organization?.trim() || '';
     const contactName = body.contactName?.trim() || '';
     const jobTitle = body.jobTitle?.trim() || '';

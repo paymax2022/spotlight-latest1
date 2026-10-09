@@ -3,17 +3,17 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { FileSpreadsheet, Download, CheckCircle2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useImportPreview } from '@/features/association/hooks/useAdmin';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
-import { pickSpreadsheet } from '@/features/association/utils/docPicker';
-import type { PickedFile } from '@/features/association/utils/docPicker';
+import { useImportPreview } from '@/features/association/hooks';
+import { useAdminAccess } from '@/features/association/hooks';
+import { pickSpreadsheet } from '@/features/association/utils';
+import type { PickedFile } from '@/features/association/utils';
 
 const STEPS = ['Download the template', 'Fill in member rows', 'Upload the file', 'Review & confirm'];
 

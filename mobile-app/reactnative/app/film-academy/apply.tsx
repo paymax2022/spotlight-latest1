@@ -1,9 +1,7 @@
-// ── Film Academy — application form (native) ─────────────────────────────────
 // Posts to /api/academy/apply, the same endpoint the web form uses. Required by
 // the server: full_name, email, phone, batch_id, at least one area of interest,
 // and motivation. Those are validated here too so a user is not sent a 400 for
 // something the form could have told them immediately.
-//
 // IDENTITY IS NOT RE-ASKED. Name, email and phone come from the signed-in
 // account (the overview payload's `applicant`, with the auth store as an
 // immediate fallback) and are shown read-only. Only a field the account genuinely
@@ -21,10 +19,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeAccountName } from '@/features/account/name';
@@ -62,7 +60,6 @@ export default function FilmAcademyApplyScreen() {
   const payReady = Boolean(PAYSTACK_PUBLIC_KEY);
 
   // What the platform already knows. The server payload wins (it reads the
-  // canonical user_profiles row); the auth store fills in before that lands so
   // the card is never briefly blank on a warm cache.
   const account = useAuthStore((s) => s.user);
   const accountName = normalizeAccountName(account?.fullName, account?.email);
@@ -83,7 +80,6 @@ export default function FilmAcademyApplyScreen() {
   const [busy, setBusy]             = React.useState(false);
   const [error, setError]           = React.useState<string | null>(null);
 
-  // Declared AFTER `areas`: this reads it, and a const is in its temporal dead
   // zone until its declaration runs — computing the total above the useState
   // threw "Cannot access 'areas' before initialization" on every render.
   // The SERVER recomputes this total from the same admin-managed rows when the
@@ -156,7 +152,6 @@ export default function FilmAcademyApplyScreen() {
     setError(null);
     // Mirror the server's required fields rather than discovering them via a 400.
     if (!batchId)            return setError('No cohort selected.');
-    // The email is the account's own; if there is none, the session is not one
     // that can apply — say so rather than showing an input we would ignore.
     if (!applicantEmail)     return setError('Please sign in to apply.');
     if (!applicantName)      return setError('Enter your full name.');

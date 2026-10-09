@@ -1,6 +1,5 @@
 package ledger_test
 
-// ---------------------------------------------------------------------------
 // PostReversalPair (backend/internal/finance/ledger/repository.go) is the ONLY
 // correction primitive callers like marketplace CancelBoost/RejectBoost use to
 // auto-refund. PostJournal translates a Postgres unique-violation (23505) on
@@ -11,14 +10,13 @@ package ledger_test
 // reversal (double-click, client retry, at-least-once webhook) hits the
 // unique index and returns a generic wrapped error instead of ErrDuplicate,
 // UNLESS Redis is up and its lock happens to catch the replay first.
-//
 // Found by a peer session's ledger audit (new-6f), confirmed by reading
 // repository.go directly: PostJournal checks isUniqueViolation on both
 // inserts; PostReversalPair checks neither.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -69,7 +67,7 @@ func TestLiveDB_PostReversal_DuplicateIsErrDuplicate_NoRedis(t *testing.T) {
 	if replayErr == nil {
 		t.Fatal("a replayed reversal posted a SECOND time — the unique index did not stop it")
 	}
-	if replayErr != ledger.ErrDuplicate {
+	if !errors.Is(replayErr, ledger.ErrDuplicate) {
 		t.Fatalf("replayed reversal returned %v, want ledger.ErrDuplicate — callers (e.g. marketplace CancelBoost/RejectBoost) that tolerate ErrDuplicate as a no-op will instead surface this as a hard failure whenever Redis is unavailable", replayErr)
 	}
 

@@ -1,17 +1,15 @@
-// ── Sell — Smart Composer live validation (screen 11) ────────────────────────
 // Real-time, client-side validation surfaced inline (never on-submit-only):
 //   • word-count progress toward the category minimum,
 //   • photo-count checklist toward the category minimum,
 //   • banned-pattern check (contact-info / off-platform / scam language),
 //   • duplicate-photo warning.
-// This is the deliberate fix versus async-only moderation: the seller sees the
 // problem before they move on. The server re-validates as the authoritative gate.
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { AlertTriangle, CheckCircle2, Circle } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 
 export interface ComposerValidationState {

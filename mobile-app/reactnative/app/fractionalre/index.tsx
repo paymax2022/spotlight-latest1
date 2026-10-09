@@ -5,16 +5,16 @@ import { router } from 'expo-router';
 import {
   Wallet, ArrowRight, ChevronRight, ShieldAlert, Calendar, Compass, PieChart, Store, GraduationCap, UserCog,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useInvestorProfile, usePortfolio, useOfferings } from '@/features/fractionalre/hooks';
 import { formatNaira, formatNairaCompact, relativeDate } from '@/features/fractionalre/utils';
-import OpportunityCard from '@/features/fractionalre/components/OpportunityCard';
-import RiskRibbon from '@/features/fractionalre/components/RiskRibbon';
+import { OpportunityCard } from '@/features/fractionalre/components';
+import { RiskRibbon } from '@/features/fractionalre/components';
 
 export default function FractionalReHome() {
   const profile = useInvestorProfile();

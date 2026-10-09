@@ -7,9 +7,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler exposes the progression surface over Gin.
 //   - member: build/read learning paths, advance steps, adaptive practice, recommendations.
@@ -21,10 +31,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated learner (mirrors the assessment package).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -34,15 +43,15 @@ func uid(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNotMastered):
-		c.JSON(http.StatusConflict, gin.H{"error": "not_mastered", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "not_mastered", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrNoObjectives):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -61,26 +70,22 @@ func RegisterAcademyProgression(member, admin *gin.RouterGroup, pool *pgxpool.Po
 	svc := NewService(pool)
 	h := NewHandler(svc)
 
-	// ── Member (learner) ──
 	member.GET("/progression/paths/:subjectId", h.GetPath)
 	member.POST("/progression/paths", h.BuildPath)
 	member.POST("/progression/steps/:objectiveId/advance", h.AdvanceStep)
 	member.POST("/progression/practice/adaptive", h.AdaptivePractice)
 	member.GET("/progression/recommendations", h.GetRecommendations)
 
-	// ── Admin (adaptive config) ──
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	ac := admin.Group("/progression")
 	ac.GET("/adaptive-config", guard("academy.assessment"), h.AdminGetAdaptiveConfig)
 	ac.PUT("/adaptive-config", guard("academy.curriculum"), h.AdminUpsertAdaptiveConfig)
 }
 
-// ── Member handlers ─────────────────────────────────────────────────────────────
-
 func (h *Handler) GetPath(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetPath(c.Request.Context(), u, c.Param("subjectId"))
@@ -92,14 +97,14 @@ func (h *Handler) GetPath(c *gin.Context) {
 }
 
 func (h *Handler) BuildPath(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req BuildPathRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.BuildPath(c.Request.Context(), u, u, req.SubjectID, req.ClassID)
@@ -111,9 +116,9 @@ func (h *Handler) BuildPath(c *gin.Context) {
 }
 
 func (h *Handler) AdvanceStep(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.AdvanceStep(c.Request.Context(), u, u, c.Param("objectiveId"))
@@ -125,14 +130,14 @@ func (h *Handler) AdvanceStep(c *gin.Context) {
 }
 
 func (h *Handler) AdaptivePractice(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req AdaptivePracticeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AdaptivePractice(c.Request.Context(), u, req.SubjectID, req.ObjectiveIDs, req.Limit)
@@ -144,9 +149,9 @@ func (h *Handler) AdaptivePractice(c *gin.Context) {
 }
 
 func (h *Handler) GetRecommendations(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.Recommendations(c.Request.Context(), u)
@@ -156,8 +161,6 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
-
-// ── Admin handlers ──────────────────────────────────────────────────────────────
 
 func (h *Handler) AdminGetAdaptiveConfig(c *gin.Context) {
 	if key := c.Query("key"); key != "" {
@@ -180,10 +183,10 @@ func (h *Handler) AdminGetAdaptiveConfig(c *gin.Context) {
 func (h *Handler) AdminUpsertAdaptiveConfig(c *gin.Context) {
 	var req UpsertAdaptiveConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.UpsertAdaptiveConfig(c.Request.Context(), uid(c), req.Key, req.Value)
+	out, err := h.svc.UpsertAdaptiveConfig(c.Request.Context(), ginutil.UserID(c, authUserID), req.Key, req.Value)
 	if err != nil {
 		h.fail(c, err)
 		return

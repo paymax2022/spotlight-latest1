@@ -1,7 +1,7 @@
 // Estate Vendors / Artisans (Block 37) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 export type VendorStatus = 'pending' | 'verified' | 'suspended';
 export type JobStatus = 'available' | 'accepted' | 'rejected' | 'en_route' | 'in_progress' | 'completed' | 'paid';
@@ -78,7 +78,6 @@ let jobs: VendorJob[] = [
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // jobFromApi maps a job payload to the client shape. The resident-scoped
-// handlers return camelCase (mapJob), but tolerate snake_case too so the mapper
 // is robust to either source.
 function jobFromApi(r: any): VendorJob {
   return {
@@ -115,7 +114,6 @@ export async function updateJobStatus(id: string, status: JobStatus): Promise<Ve
   return jobFromApi(data);
 }
 
-// ── Block 42 vendor self-service ──────────────────────────────────────────────
 export interface OnboardVendorInput { businessName: string; category?: string; phone?: string; specialties?: string[]; }
 
 export async function onboardVendor(input: OnboardVendorInput): Promise<Vendor> {

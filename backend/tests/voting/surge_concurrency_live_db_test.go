@@ -1,7 +1,6 @@
 package voting_test
 
 // UAT Batch 3 — TS-11 NF-001 (Voting surge at poll close).
-//
 // D-010, D-002/D-003 and PV-005 each closed a specific race in one of the
 // three voting rails (Go Connect's ClaimFreeVote, the TS bridge's
 // claim_free_vote RPC, and the TS bridge's credit_paid_vote_transaction RPC)
@@ -10,7 +9,6 @@ package voting_test
 // hold at a scale closer to a real poll-close surge, across all three rails,
 // including many DIFFERENT voters hitting the SAME contest/contestant at
 // once (the actual "viral contest" shape), not just one voter retrying?
-//
 // HONESTY NOTE (see docs/qa/voting-contest-test-plan.md NF-001 status): this
 // is 100-200 concurrent goroutines against a local Supabase Postgres on one
 // laptop. It is real evidence that the locking design (row locks / advisory
@@ -60,8 +58,6 @@ func manyVoters(t *testing.T, ctx context.Context, pool *pgxpool.Pool, n int) []
 	}
 	return out
 }
-
-// ── Go Connect engine (ClaimFreeVote) ───────────────────────────────────────
 
 // TestNF001_ClaimFreeVote_GoConnect_HighScaleSameVoter is the D-010 test at
 // ~9x the scale (180 vs 20 concurrent attempts), same voter hammering the
@@ -155,8 +151,6 @@ func TestNF001_ClaimFreeVote_GoConnect_ManyDistinctVoters(t *testing.T) {
 	}
 }
 
-// ── TS bridge engine (claim_free_vote / credit_paid_vote_transaction RPCs) ──
-//
 // These call the SAME Postgres functions the bridge's Supabase RPC calls
 // invoke, directly via SQL — the pattern this package already uses (see
 // fixtures_test.go's "WHY THIS PACKAGE EXISTS") because integration-verify's
@@ -212,10 +206,8 @@ func TestNF001_ClaimFreeVote_TSBridge_HighScaleSameVoter(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	granted := 0
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			r, err := callClaimFreeVote(ctx, pool, contestID, contestantID, voter, cap)
 			if err != nil {
 				t.Errorf("claim_free_vote: unexpected error: %v", err)
@@ -224,7 +216,7 @@ func TestNF001_ClaimFreeVote_TSBridge_HighScaleSameVoter(t *testing.T) {
 			mu.Lock()
 			granted += r.granted
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 

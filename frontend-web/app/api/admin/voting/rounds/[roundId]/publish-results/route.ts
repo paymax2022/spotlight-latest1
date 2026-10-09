@@ -10,7 +10,6 @@ type RouteContext = { params: Promise<{ roundId: string }> };
 // the action — the actual compute/publish/lock runs from
 // sensitive-actions.service.ts#executeResultsPublish, invoked by a second
 // approver via POST /api/admin/voting/approvals/[approvalId]/approve.
-//
 // The already-published guard (409) still happens HERE, before proposing —
 // no point proposing to publish a round that's already locked. It is also
 // re-checked at execute-time (inside executeResultsPublish and, atomically,
@@ -30,7 +29,10 @@ export async function POST(request: Request, ctx: RouteContext) {
       .eq('id', roundId)
       .maybeSingle();
 
-    if (roundError) return errorResponse(`Failed to load round: ${roundError.message}`, 500);
+    if (roundError) {
+      console.error('[admin/voting/publish-results] round lookup:', roundError.message);
+      return errorResponse('Failed to load round', 500);
+    }
     if (!round) return errorResponse('Voting round not found', 404);
 
     if ((round as any).status === 'results_published') {

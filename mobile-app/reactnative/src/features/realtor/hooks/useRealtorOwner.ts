@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Owner hooks (V2) ─────────────────────────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as owner from '../api/realtorOwner.api';
 import type { CreatePropertyDraft, CreateUnitDraft, OfferingModeConfig } from '../types/realtor.owner.types';

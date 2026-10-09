@@ -1,19 +1,12 @@
 // Paymax Connect — Networking PROFILE API (PRD §6.3 PR-07..11, §6.5 RC-02/03).
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/networking/...`.
-//
 // Contract (camelCase, {data:...}):
-//   Experience:  GET/POST /networking/experience ; PUT/DELETE /networking/experience/:id
-//   Education:   GET/POST /networking/education   ; PUT/DELETE /networking/education/:id
-//   About:       GET /networking/about ; PUT /networking/about
-//   Strength:    GET /networking/strength → { band, missing[] }   (PN-1: NO raw number)
 //   Recs inbox:  GET /networking/recommendations/inbox            (subject's pending)
 //                POST /networking/recommendations/:id/accept      (subject only)
 //                POST /networking/recommendations/:id/decline     (subject only)
 //   Public recs: GET /networking/users/:userId/recommendations    (accepted-only, PN-4)
-//
 // The mock derives Profile Strength from the SAME mutable profile state that the
 // experience/education/about editors write to — so the strength meter updates as
-// you fill sections in, fully walkable offline. The band is computed internally;
 // only the band label + the missing checklist leave this module (PN-1).
 
 import { api } from '@/api/client';
@@ -37,7 +30,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── Mutable mock profile state ───────────────────────────────────────────────
 const MOCK_EXPERIENCE: Experience[] = [
   {
     id: 'x1',
@@ -81,7 +73,6 @@ let MOCK_ABOUT: About = {
     'Product-minded engineer focused on payments and professional networking. I care about shipping trustworthy, verified experiences.',
 };
 
-// ── Experience CRUD ──────────────────────────────────────────────────────────
 export async function getExperience(): Promise<Experience[]> {
   if (USE_MOCK) {
     await delay();
@@ -125,7 +116,6 @@ export async function deleteExperience(id: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-// ── Education CRUD ───────────────────────────────────────────────────────────
 export async function getEducation(): Promise<Education[]> {
   if (USE_MOCK) {
     await delay();
@@ -169,7 +159,6 @@ export async function deleteEducation(id: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-// ── About ────────────────────────────────────────────────────────────────────
 export async function getAbout(): Promise<About> {
   if (USE_MOCK) {
     await delay(180);
@@ -189,7 +178,6 @@ export async function updateAbout(input: AboutInput): Promise<About> {
   return unwrap<About>(res);
 }
 
-// ── Profile Strength (PR-11) — PN-1: band + missing checklist ONLY ───────────
 // The completion signal is computed internally and mapped to a qualitative band.
 // The raw count/score never leaves this function.
 function computeStrength(): ProfileStrength {
@@ -228,7 +216,6 @@ export async function getStrength(): Promise<ProfileStrength> {
   return unwrap<ProfileStrength>(res);
 }
 
-// ── Recommendations (RC-02 inbox / accept·decline, RC-03 public) ─────────────
 const MOCK_RECOMMENDATIONS: Recommendation[] = [
   {
     id: 'r1',

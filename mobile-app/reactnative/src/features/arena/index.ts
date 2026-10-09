@@ -1,4 +1,3 @@
-// ── Arena (Driver Contest) — public module surface ───────────────────────────
 export * from './types';
 export * as arenaApi from './api';
 export * from './hooks';

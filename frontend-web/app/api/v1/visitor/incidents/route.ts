@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 import { mapIncident } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/incidents — list incidents for the estate.
+// List incidents for the estate.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -26,7 +26,6 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/visitor/incidents — create an incident report.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -34,7 +33,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const kind: string = String(body?.kind ?? 'incident');
     const severity: string = String(body?.severity ?? 'low');
     const title: string = String(body?.title ?? '').trim();

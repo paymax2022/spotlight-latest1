@@ -32,8 +32,6 @@
  */
 import { webProxyBase } from '@/config/env';
 
-// ─── Types (mirror the Supabase rows the routes select) ─────────────────────
-
 export type AcademyBatch = {
   id: string;
   batch_name: string;
@@ -132,14 +130,9 @@ export type AcademyInterestArea = {
   sort_order: number | null;
 };
 
-// ─── Transport ──────────────────────────────────────────────────────────────
-
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 /**
@@ -174,8 +167,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 const B = '/api/admin/academy';
 
-// ─── Batches (mobile: the cohort list on /film-academy and /film-academy/apply)
-
 export async function listBatches(): Promise<AcademyBatch[]> {
   return (await call<{ batches?: AcademyBatch[] }>(`${B}/batches`)).batches ?? [];
 }
@@ -202,8 +193,6 @@ export async function deleteBatch(id: string): Promise<void> {
   await call(`${B}/batches/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-// ─── Applications (mobile: /film-academy/status) ────────────────────────────
-
 export async function listApplications(filter?: { batchId?: string; status?: string }): Promise<AcademyApplication[]> {
   const qs = new URLSearchParams();
   if (filter?.batchId) qs.set('batchId', filter.batchId);
@@ -227,8 +216,6 @@ export async function decideApplication(
   await call(`${B}/applications/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
-// ─── Tuition plans (mobile: /film-academy/tuition) ──────────────────────────
-
 export async function listInstallmentPlans(filter?: { batchId?: string; applicationId?: string }): Promise<AcademyInstallmentPlan[]> {
   const qs = new URLSearchParams();
   if (filter?.batchId) qs.set('batchId', filter.batchId);
@@ -240,8 +227,6 @@ export async function listInstallmentPlans(filter?: { batchId?: string; applicat
 export async function remindInstallmentPlan(planId: string): Promise<void> {
   await call(`${B}/installments/${encodeURIComponent(planId)}/remind`, { method: 'POST', body: '{}' });
 }
-
-// ─── Curriculum (mobile: /film-academy/learn + lesson/[id]) ─────────────────
 
 export async function getCurriculum(): Promise<AcademyCurriculum> {
   const r = await call<Partial<AcademyCurriculum>>(`${B}/curriculum`);
@@ -261,8 +246,6 @@ export async function seedCurriculum(batchId: string): Promise<unknown> {
   return call(`${B}/curriculum/seed`, { method: 'POST', body: JSON.stringify({ batchId }) });
 }
 
-// ─── Submissions (mobile: /film-academy/assignments) ────────────────────────
-
 export async function listSubmissions(status?: string): Promise<AcademySubmission[]> {
   const suffix = status ? `?status=${encodeURIComponent(status)}` : '';
   return (await call<{ submissions?: AcademySubmission[] }>(`${B}/submissions${suffix}`)).submissions ?? [];
@@ -275,9 +258,7 @@ export async function gradeSubmission(input: {
   await call(`${B}/submissions`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
-// ─── Assignment parts: the week 1-4 timeline ────────────────────────────────
 // A part is one week's deliverable inside a larger brief. Defining parts turns a
-// single-shot assignment into a staged one; an assignment with no parts keeps
 // its original whole-submission behaviour on the phone.
 
 export type AcademyAssignmentPart = {
@@ -334,8 +315,6 @@ export async function gradeAssignmentPart(input: {
   await call(`${B}/assignment-parts`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
-// ─── Progress ───────────────────────────────────────────────────────────────
-
 export type ProgressPart = {
   partId: string; partNumber: number; weekNumber: number; title: string;
   dueDate: string | null; submitted: boolean; graded: boolean;
@@ -387,8 +366,6 @@ export async function getAssignmentProgress(batchId: string): Promise<Assignment
     totals: r.totals ?? { learners: 0, expected: 0, submitted: 0, graded: 0, overdue: 0, completionPct: 0 },
   };
 }
-
-// ─── Settings & interest areas (mobile: the apply form) ─────────────────────
 
 export async function getSettings(): Promise<AcademySettings> {
   return (await call<{ settings: AcademySettings }>(`${B}/settings`)).settings;

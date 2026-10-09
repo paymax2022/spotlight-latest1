@@ -5,34 +5,25 @@ package app
 // console (GET /api/finance/admin/transactions/:id) can show REAL per-module
 // detail — Service, Category, Service bought, Payment method, Status,
 // Provider — instead of only the generic ledger_entries fields.
-//
 // Each resolver is scoped to exactly one module's reference-naming
 // convention and checks that pattern (cheaply, no query) before running any
 // SQL — so trying all of them in sequence on every reference is cheap for the
 // ~3 modules per request that don't match.
-//
 // Read-only. None of these resolvers write anything.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 )
 
-func strPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// ── Marketplace — listing boost purchases ───────────────────────────────────
-//
 // The marketplace's sole live revenue posting after ADR-023 retired escrow
 // settlement is the boost charge (mkt_orders/regular P2P escrow posts NO
 // ledger_entries rows today — see service_boost.go comment — so it has NO
@@ -60,7 +51,7 @@ func (r *MarketplaceBoostResolver) Resolve(ctx context.Context, reference string
 		WHERE ledger_charge_ref = $1
 		LIMIT 1`, reference).Scan(&tier, &durationDays, &status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("marketplace boost resolver: %w", err)
@@ -78,8 +69,6 @@ func (r *MarketplaceBoostResolver) Resolve(ctx context.Context, reference string
 	}, true, nil
 }
 
-// ── Insurance — premium debits ───────────────────────────────────────────────
-//
 // BindFromQuote posts the premium debit with Reference: "insurance:premium:" + policy.ID.
 // Joined via insurance_premium_transaction.wallet_ledger_ref = reference (more
 // robust than string-splitting the reference), then to insurance_policy and
@@ -106,7 +95,7 @@ func (r *InsurancePremiumResolver) Resolve(ctx context.Context, reference string
 		WHERE ipt.wallet_ledger_ref = $1
 		LIMIT 1`, reference).Scan(&productCode, &provider, &underwriter, &state, &displayName)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("insurance premium resolver: %w", err)
@@ -126,14 +115,12 @@ func (r *InsurancePremiumResolver) Resolve(ctx context.Context, reference string
 		Category:      &category,
 		ServiceBought: serviceBought,
 		PaymentMethod: "wallet", // no payment_method column on insurance tables — wallet-only
-		Status:        state,   // real lifecycle state, not the generic ledger Posted/Reversed
-		Provider:      strPtr(providerStr),
+		Status:        state,    // real lifecycle state, not the generic ledger Posted/Reversed
+		Provider:      ptr.OrNil(providerStr),
 		Merchant:      nil, // no merchant concept — Provider/Underwriter cover this module
 	}, true, nil
 }
 
-// ── FX — currency conversions ────────────────────────────────────────────────
-//
 // fx.Service.Convert posts with reference := "fx:" + uuid.New().String() and
 // stores that SAME reference on the fx_conversions row. Excludes
 // "fx:reversal:" references, which are a different posting shape.
@@ -156,7 +143,7 @@ func (r *FXConversionResolver) Resolve(ctx context.Context, reference string) (*
 		WHERE reference = $1
 		LIMIT 1`, reference).Scan(&sourceCurrency, &targetCurrency, &status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("fx conversion resolver: %w", err)
@@ -174,8 +161,6 @@ func (r *FXConversionResolver) Resolve(ctx context.Context, reference string) (*
 	}, true, nil
 }
 
-// ── Utility Bills — airtime/data/electricity/cable/internet/education ───────
-//
 // utilitybills service posts the debit with reference := receipt, where
 // receipt is utility_transactions.receipt_number (format
 // "UTL-YYYYMMDD-XXXXXXXX"). This is the ONE module of the four with a real
@@ -204,7 +189,7 @@ func (r *UtilityBillResolver) Resolve(ctx context.Context, reference string) (*l
 		WHERE ut.receipt_number = $1
 		LIMIT 1`, reference).Scan(&category, &customerReference, &customerName, &paymentSource, &status, &billerName, &providerName)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("utility bill resolver: %w", err)

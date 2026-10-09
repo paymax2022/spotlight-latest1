@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInAdmin } from '@/features/auth/adminAuth';
-import { syncAdminSession } from '@/features/auth/adminSession';
+import { syncAdminSession } from '@/features/auth/adminAuth';
 import { AdminSignupPanel } from '@/features/auth/AdminSignupPanel';
 
 export default function AdminLoginPage() {
@@ -15,12 +15,10 @@ export default function AdminLoginPage() {
   const [panelOpen, setPanelOpen] = useState(false);
 
   // Drop a dead session's leftovers on arrival.
-  //
   // middleware.ts (ADR-047) is the real gate and redirects here server-side, so
   // AdminRouteGuard's effect — the only thing that clears expired keys — never
   // runs on that path. The identity therefore outlived the session in
   // localStorage, and roughly two dozen screens read it straight from there.
-  //
   // syncAdminSession() is the safe way to do this: it clears the token and the
   // user record ONLY when Supabase has no recoverable session. Wiping them
   // unconditionally would sign out anyone who merely visited /admin/login with

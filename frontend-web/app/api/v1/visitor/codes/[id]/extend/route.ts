@@ -4,15 +4,19 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/{id}/extend — extend an active code's validity.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Extend an active code's validity.
 // Body: { validityEnd }. Code value/QR are unchanged.
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid access code ID', 400);
     const supabase = createAdminClient();
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const validityEnd = body?.validityEnd;
     if (!validityEnd) throw new ApiError('validityEnd is required', 400);
 

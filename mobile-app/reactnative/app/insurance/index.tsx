@@ -1,7 +1,5 @@
-// ── Protection — hub ─────────────────────────────────────────────────────────
 // Everything here is live MyCover data. There is no fixture fallback: if the
 // catalog cannot be fetched, the screen says so instead of inventing plans.
-//
 // The "no cover yet" state is the PRIMARY state, not an edge case — nobody has
 // bought anything yet, so it is the first thing every user sees. It gets the
 // same design effort as the populated version.
@@ -19,10 +17,10 @@ import {
   ShieldCheck,
 } from 'lucide-react-native';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   CategoryTile,
   InsuranceErrorState,

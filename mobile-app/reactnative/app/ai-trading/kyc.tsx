@@ -1,6 +1,4 @@
-// ── AI Trading — Module KYC (Trading Access Verification) — §16A #5/#7 ─────────
 // A SEPARATE, mandatory verification for trading, independent of the app's Tier
-// 0-3. Submitting routes the case to an admin reviewer; access is granted only on
 // approval (or an admin bypass). This screen shows the state and lets the user
 // start / resubmit.
 import React from 'react';
@@ -9,10 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldCheck, Clock, XCircle, CheckCircle2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useKyc, useSubmitKyc } from '@/features/aitrading/hooks';
 import type { TradingKycStatus } from '@/features/aitrading/api';

@@ -43,7 +43,10 @@ export async function listInvoices(userId: string) {
     .eq('estate_id', ctx.estateId)
     .eq('resident_id', userId)
     .order('due_date', { ascending: true });
-  if (error) throw new ApiError(`Failed to list invoices: ${error.message}`, 500);
+  if (error) {
+    console.error('[estate/dues] failed to list invoices:', error);
+    throw new ApiError('Failed to list invoices', 500);
+  }
   // Surface overdue state without mutating the row (read-time projection).
   const now = Date.now();
   return (rows ?? []).map((r: any) => {
@@ -67,13 +70,15 @@ export async function payInvoice(input: PayInvoiceInput) {
   const ctx = await getResidentContext(supabase, userId);
   if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-  // Load + authorize the invoice.
   const { data: invoice, error: invErr } = await supabase
     .from('estate_dues_invoices')
     .select(INVOICE_COLS)
     .eq('id', invoiceId)
     .maybeSingle();
-  if (invErr) throw new ApiError(`Failed to load invoice: ${invErr.message}`, 500);
+  if (invErr) {
+    console.error('[estate/dues] failed to load invoice:', invErr);
+    throw new ApiError('Failed to load invoice', 500);
+  }
   if (!invoice || (invoice as any).estate_id !== ctx.estateId || (invoice as any).resident_id !== userId) {
     throw new ApiError('Invoice not found', 404);
   }
@@ -123,7 +128,6 @@ export async function payInvoice(input: PayInvoiceInput) {
       await ensureInvoicePaid(supabase, invoiceId);
       return { alreadyProcessed: true, payment: mapPayment(prior), invoice: { ...mapInvoice(invoice), status: 'paid' } };
     }
-    // else: debit committed but payment-record write was lost previously — fall
     // through and (re)create it idempotently below to reconcile.
   }
 
@@ -132,7 +136,6 @@ export async function payInvoice(input: PayInvoiceInput) {
   // onConflict shorthand only accepts a bare column list and cannot express
   // that predicate, so Postgres can't infer the target and rejects the
   // upsert outright on every call, not just real conflicts (found live via
-  // UAT: the wallet was genuinely debited but this insert failed 100% of the
   // time, leaving residents charged with no receipt and the invoice still
   // pending — same bug class fixed in the Go PayDues path, applied here to
   // the separate Next.js implementation mobile actually calls). Fixed by
@@ -162,12 +165,14 @@ export async function payInvoice(input: PayInvoiceInput) {
         .eq('reference', idempotencyKey)
         .maybeSingle();
       if (refetchErr || !existing) {
-        throw new ApiError(`Wallet debited but payment record failed and could not be reconciled: ${refetchErr?.message ?? payErr.message}`, 500);
+        console.error('[estate/dues] payment insert failed and refetch could not reconcile:', refetchErr ?? payErr);
+        throw new ApiError('Wallet debited but payment record failed and could not be reconciled.', 500);
       }
       payment = existing;
     } else {
       // Ledger already posted; surface a clear error so the payment can be reconciled.
-      throw new ApiError(`Wallet debited but payment record failed: ${payErr.message}`, 500);
+      console.error('[estate/dues] payment insert failed after wallet debit:', payErr);
+      throw new ApiError('Wallet debited but payment record failed.', 500);
     }
   } else {
     payment = inserted;
@@ -186,6 +191,7 @@ export async function payInvoice(input: PayInvoiceInput) {
 async function ensureInvoicePaid(supabase: ReturnType<typeof createAdminClient>, invoiceId: string) {
   const { error } = await supabase.from('estate_dues_invoices').update({ status: 'paid' }).eq('id', invoiceId);
   if (error) {
-    throw new ApiError(`Payment recorded but invoice status update failed (reconcile invoice ${invoiceId}): ${error.message}`, 500);
+    console.error('[estate/dues] invoice status update failed after payment recorded:', error);
+    throw new ApiError(`Payment recorded but invoice status update failed (reconcile invoice ${invoiceId}).`, 500);
   }
 }

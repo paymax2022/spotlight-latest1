@@ -1,10 +1,7 @@
-// ── Film Academy — my application ────────────────────────────────────────────
 // A NATIVE screen showing the signed-in applicant their own application: where
 // it stands, what happened so far, and what they must do next.
-//
 // The "what next" list is NOT derived here. The server returns it, so the app
 // and the web console can never disagree about whether tuition is payable.
-//
 // Money note: every academy amount is in NAIRA, not kobo — these tables predate
 // the kobo convention used across finance. Do not multiply by 100.
 
@@ -15,10 +12,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, CircleCheck, Clock, CircleAlert, FileText } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getApplicationStatus, FILM_ACADEMY_STATUS_KEY } from '@/features/filmAcademy/api';
 import type { FilmAcademyAction, FilmAcademyTimelineEntry } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';

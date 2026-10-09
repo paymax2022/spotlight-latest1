@@ -1,4 +1,3 @@
-// ── Doctor — HMO / Insurance hooks (Batch 4, Section O) ──────────────────────
 // Query keys under ['doctor', …]. Mutations auto-generate the idempotencyKey and
 // invalidate the relevant lists. REUSE: HMO claim hooks (useHmoClaims /
 // useSubmitClaim / useDisputeClaim) live in `usePatientReview`/Phase 2 — these
@@ -28,8 +27,6 @@ import type {
   SendHmoSupportMessageInput,
   AcknowledgeFraudWarningInput,
 } from '@/types/doctor.batch4';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useHmoPlanCoverage(patientId: string) {
   return useQuery({
@@ -86,8 +83,6 @@ export function useHmoFraudWarnings() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useRequestPreAuth() {
   const qc = useQueryClient();

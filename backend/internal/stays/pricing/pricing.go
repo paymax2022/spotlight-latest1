@@ -8,11 +8,9 @@ import (
 
 // The pricing engine turns a normalised supplier offer into a Paymax DISPLAY price.
 // It sits ABOVE the adapters and is config-driven (PRD §10):
-//
 //   - Rail A (bedbank): display = net rate + Paymax MARKUP (rule-based) + taxes.
 //   - Rail B (direct):  display = hotel SELL rate + taxes; Paymax COMMISSION is
 //     deducted at settlement, NOT added on top.
-//
 // FX integrity is load-bearing: every rate carries its Currency; conversion happens
 // only through a controlled Converter and is recorded on the breakdown — never
 // silent. A missing FX rate is an ERROR, not a guess.
@@ -20,10 +18,10 @@ import (
 // MarkupRule is one config-driven markup/commission rule. The first matching rule
 // (by supplier/destination/star/tier) wins; an empty selector matches anything.
 type MarkupRule struct {
-	SupplierCode string // "" = any
-	City         string // "" = any
-	StarRating   int    // 0 = any
-	LoyaltyTier  string // "" = any
+	SupplierCode string
+	City         string
+	StarRating   int
+	LoyaltyTier  string
 	// MarkupBps is the Rail-A markup in basis points (e.g. 1200 = 12%) applied to
 	// the net rate. CommissionBps is the Rail-B commission in bps deducted at
 	// settlement (informational on the breakdown; not added to the guest price).
@@ -127,10 +125,7 @@ func (e *Engine) Price(o gateway.PropertyOffer, loyaltyTier string, promoBps int
 	}
 
 	// Guest-facing gross (Rail A includes markup; Rail B does not include commission).
-	gross := o.NetRateKobo + b.MarkupKobo + o.TaxKobo - b.DiscountKobo
-	if gross < 0 {
-		gross = 0
-	}
+	gross := max(o.NetRateKobo+b.MarkupKobo+o.TaxKobo-b.DiscountKobo, 0)
 
 	// Controlled FX — only when the source currency differs from display. NEVER
 	// silent: a missing converter/rate is an error.

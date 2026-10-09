@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/cryptox"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -106,13 +107,11 @@ func (r *Repository) CountFreeVotes(ctx context.Context, contestID, voterID stri
 // claims for the SAME (contest, voter) pair before either can read the count
 // — the second claim can only see the first's insert once it commits, so the
 // count it reads is never stale.
-//
 // An advisory lock, not a `SELECT ... FOR UPDATE` on an existing row: unlike
 // the per-contestant daily-cap row the universal TS engine's claim_free_vote
 // locks (voter_contestant_daily_limits, upserted first so a row always exists
 // to lock), there is no per-(contest,voter) tracking row here to lock ahead of
 // a voter's first vote — connect_votes is an append-only log with no such row.
-//
 // Returns (vote, true, nil) on success, (nil, false, nil) when the cap is
 // already reached (not an error — the caller maps this to ErrFreeVoteUsed).
 func (r *Repository) ClaimFreeVote(ctx context.Context, v *Vote, allowance int) (*Vote, bool, error) {
@@ -280,19 +279,27 @@ type RosterEntry struct {
 	PaidVotes    int64  `json:"paid_votes"`
 	TotalVotes   int64  `json:"total_votes"`
 	Rank         int    `json:"rank"`
+	LikeCount    int64  `json:"like_count"`
+	ShareCount   int64  `json:"share_count"`
+	LikedByMe    bool   `json:"liked_by_me"`
 }
 
 // ListRoster returns the active contestants for a contest ordered by total
 // votes, highest first. Only contestants promoted from an approved registration
 // (or otherwise linked to this contest) appear.
-//
 // includeInactive surfaces evicted/rejected contestants too, which the admin
 // views need; the member-facing list passes false.
-func (r *Repository) ListRoster(ctx context.Context, contestID string, includeInactive bool) ([]RosterEntry, error) {
+// viewerID sets LikedByMe per row (pass "" when the caller has no need for
+// it, e.g. the internal roster-membership check in checkRosterTarget — an
+// empty user_id never matches a real contestant_likes row, so it degrades
+// to false rather than erroring).
+func (r *Repository) ListRoster(ctx context.Context, contestID string, includeInactive bool, viewerID string) ([]RosterEntry, error) {
 	const q = `
 		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
 		       c.photo_url, c.media_url, c.status::text, c.is_active,
-		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0)
+		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
+		       COALESCE(cl.like_count, 0), COALESCE(cs.share_count, 0),
+		       EXISTS (SELECT 1 FROM contestant_likes WHERE contestant_id = c.id AND user_id::text = $3)
 		FROM contestants c
 		LEFT JOIN (
 			SELECT option_ref,
@@ -302,11 +309,17 @@ func (r *Repository) ListRoster(ctx context.Context, contestID string, includeIn
 			WHERE contest_id = $1
 			GROUP BY option_ref
 		) v ON v.option_ref = c.id::text
+		LEFT JOIN (
+			SELECT contestant_id, COUNT(*) AS like_count FROM contestant_likes GROUP BY contestant_id
+		) cl ON cl.contestant_id = c.id
+		LEFT JOIN (
+			SELECT contestant_id, COUNT(*) AS share_count FROM contestant_shares GROUP BY contestant_id
+		) cs ON cs.contestant_id = c.id
 		WHERE c.connect_contest_id = $1
 		  AND ($2 OR c.is_active = true)
 		ORDER BY (COALESCE(v.free_votes, 0) + COALESCE(v.paid_votes, 0)) DESC, c.name ASC`
 
-	rows, err := r.db.Query(ctx, q, contestID, includeInactive)
+	rows, err := r.db.Query(ctx, q, contestID, includeInactive, viewerID)
 	if err != nil {
 		return nil, fmt.Errorf("voting: list roster: %w", err)
 	}
@@ -317,7 +330,8 @@ func (r *Repository) ListRoster(ctx context.Context, contestID string, includeIn
 		var e RosterEntry
 		if err := rows.Scan(&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State,
 			&e.Bio, &e.PhotoURL, &e.MediaURL,
-			&e.Status, &e.IsActive, &e.FreeVotes, &e.PaidVotes); err != nil {
+			&e.Status, &e.IsActive, &e.FreeVotes, &e.PaidVotes,
+			&e.LikeCount, &e.ShareCount, &e.LikedByMe); err != nil {
 			return nil, fmt.Errorf("voting: scan roster entry: %w", err)
 		}
 		e.TotalVotes = e.FreeVotes + e.PaidVotes
@@ -347,14 +361,17 @@ func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string
 // GetRosterEntry returns one contestant by id, with its live tally. Keyed on the
 // contestant id alone (a UUID primary key), so the caller does not need to know
 // which contest it belongs to.
-//
 // Returns (nil, nil) when no such contestant exists.
-func (r *Repository) GetRosterEntry(ctx context.Context, contestantID string) (*RosterEntry, error) {
+// viewerID sets LikedByMe (pass "" if the caller has no viewer, e.g. an
+// unauthenticated resolve path — it degrades to false, never errors).
+func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID string) (*RosterEntry, error) {
 	const q = `
 		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
 		       c.photo_url, c.media_url, c.status::text, c.is_active,
 		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
-		       COALESCE(c.connect_contest_id::text, '')
+		       COALESCE(c.connect_contest_id::text, ''),
+		       COALESCE(cl.like_count, 0), COALESCE(cs.share_count, 0),
+		       EXISTS (SELECT 1 FROM contestant_likes WHERE contestant_id = c.id AND user_id::text = $2)
 		FROM contestants c
 		LEFT JOIN (
 			SELECT option_ref,
@@ -363,14 +380,21 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID string) (*
 			FROM connect_votes
 			GROUP BY option_ref
 		) v ON v.option_ref = c.id::text
+		LEFT JOIN (
+			SELECT contestant_id, COUNT(*) AS like_count FROM contestant_likes GROUP BY contestant_id
+		) cl ON cl.contestant_id = c.id
+		LEFT JOIN (
+			SELECT contestant_id, COUNT(*) AS share_count FROM contestant_shares GROUP BY contestant_id
+		) cs ON cs.contestant_id = c.id
 		WHERE c.id::text = $1`
 
 	var e RosterEntry
 	var contestID string
-	err := r.db.QueryRow(ctx, q, contestantID).Scan(
+	err := r.db.QueryRow(ctx, q, contestantID, viewerID).Scan(
 		&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State, &e.Bio,
 		&e.PhotoURL, &e.MediaURL, &e.Status, &e.IsActive,
-		&e.FreeVotes, &e.PaidVotes, &contestID)
+		&e.FreeVotes, &e.PaidVotes, &contestID,
+		&e.LikeCount, &e.ShareCount, &e.LikedByMe)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -398,8 +422,6 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID string) (*
 	return &e, nil
 }
 
-// ─── My votes / contestant supporters ────────────────────────────────────────
-
 // MyVote is one vote the caller cast, resolved to the contest and contestant it
 // was for. connect_votes stores option_ref as the contestant id, so the name and
 // photo come from a join rather than being duplicated onto the immutable log.
@@ -417,7 +439,6 @@ type MyVote struct {
 }
 
 // MyVotes returns the caller's own votes, newest first.
-//
 // Scoped on voter_id and nothing else: this is the one read where a user is
 // entitled to the identities involved, because every row is their own action.
 // The (contest_id, voter_id, created_at DESC) index does not cover a voter-only
@@ -494,16 +515,13 @@ func (r *Repository) ContestantOwner(ctx context.Context, contestantID string) (
 }
 
 // Supporters lists who voted for one contestant, newest first.
-//
 // ANONYMITY IS RESOLVED HERE, NOT IN THE CLIENT. When the contest sets
 // allow_anonymous_free_vote, a FREE vote was cast under a promise of anonymity
 // and its voter must never be named — so the name is dropped at the query and
 // the row comes back flagged instead. Returning the id and letting the client
 // decide would ship the identity to a device and rely on it to look away.
-//
 // Paid votes are always attributed: they are a transaction with a receipt, and
 // the anonymity setting covers free voting only.
-//
 // IF PAID SUPPORTERS ARE MISSING, LOOK IN bridge_outbox BEFORE SUSPECTING THIS
 // QUERY. Paid votes reach connect_votes through
 // trg_connect_tally_follows_credit on vote_transactions, and that trigger
@@ -549,7 +567,6 @@ func (r *Repository) Supporters(ctx context.Context, contestantID, contestID str
 }
 
 // MyVote returns one of the caller's own votes, or pgx.ErrNoRows.
-//
 // Scoped on voter_id as well as id: a vote id is a bare uuid, and a receipt is
 // the voter's own record. Someone else's vote answers the same as a vote that
 // does not exist, so the endpoint never confirms an id it will not serve.
@@ -585,12 +602,10 @@ type Notification struct {
 }
 
 // Notifications derives the caller's voting activity feed.
-//
 // THERE IS NO NOTIFICATIONS STORE. Nothing in this module has ever written a
 // voting notification anywhere, so this feed is COMPUTED from the two things the
 // database actually records: the caller's votes, and the deadline of contests
 // they voted in.
-//
 // The client's VotingNotification union names seven kinds. Two are derivable and
 // are produced here. The other five are not, and it is worth being exact about
 // why, because "not implemented" and "impossible from this data" are different
@@ -609,7 +624,6 @@ type Notification struct {
 //
 // Emitting those five needs an events table written at the moment each happens,
 // which is a different change from this one.
-//
 // `read` is always true. Read state is per-user, per-notification durable state,
 // and a derived feed has nowhere to keep it — returning false would give every
 // row a permanent unread dot that no amount of reading could clear.
@@ -674,4 +688,69 @@ func (r *Repository) Notifications(ctx context.Context, userID string) ([]Notifi
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// LikeContestant records userID's like of contestantID. Idempotent: a second
+// like from the same user is a no-op (ON CONFLICT DO NOTHING against the
+// (user_id, contestant_id) unique index), never an error — the client cannot
+// distinguish "already liked" from "just liked" and does not need to.
+func (r *Repository) LikeContestant(ctx context.Context, contestantID, userID string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO contestant_likes (contestant_id, user_id)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id, contestant_id) DO NOTHING`, contestantID, userID)
+	if err != nil {
+		return fmt.Errorf("voting: like contestant: %w", err)
+	}
+	return nil
+}
+
+// UnlikeContestant removes userID's like, if any. Idempotent for the same
+// reason as LikeContestant.
+func (r *Repository) UnlikeContestant(ctx context.Context, contestantID, userID string) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM contestant_likes WHERE contestant_id = $1 AND user_id = $2`,
+		contestantID, userID)
+	if err != nil {
+		return fmt.Errorf("voting: unlike contestant: %w", err)
+	}
+	return nil
+}
+
+// newShareToken returns a 32-hex-character token from 16 bytes of
+// crypto/rand — the same shape as internal/restaurant/staff_invite.go's
+// invite tokens. It is not a secret (it identifies a public share link, not
+// a credential), so unlike an invite token it is stored in the clear, not
+// hashed. 128 bits of entropy makes a collision with an existing row
+// astronomically unlikely, so unlike a human-typed referral code (27^5
+// space, requires a retry-on-conflict loop) this generates once and inserts.
+// CreateShare records a share action and returns its token, the piece of
+// the record the caller needs to build the shareable link. sharerID is the
+// authenticated user who tapped "share" — kept for later attribution, not
+// read by anything yet.
+func (r *Repository) CreateShare(ctx context.Context, contestantID, sharerID string) (string, error) {
+	token := cryptox.Token()
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO contestant_shares (contestant_id, sharer_user_id, share_token)
+		VALUES ($1, $2, $3)`, contestantID, sharerID, token)
+	if err != nil {
+		return "", fmt.Errorf("voting: create share: %w", err)
+	}
+	return token, nil
+}
+
+// ResolveShareToken returns the contestant a share token points to, or
+// ("", nil) if the token does not exist. This backs the PUBLIC, unauthenticated
+// landing-page resolve — a stranger who has never signed in follows the link
+// before they have any session, so this must not require auth.
+func (r *Repository) ResolveShareToken(ctx context.Context, token string) (contestantID string, err error) {
+	err = r.db.QueryRow(ctx, `
+		SELECT contestant_id FROM contestant_shares WHERE share_token = $1`, token).Scan(&contestantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("voting: resolve share token: %w", err)
+	}
+	return contestantID, nil
 }

@@ -28,10 +28,8 @@ describe('Feature Flag (Gradual Rollout)', () => {
 
   describe('isBridgeEnabled', () => {
     it('should default to disabled for gradual rollout', () => {
-      // Reset clears cached value, falls back to env var
       resetBridge();
 
-      // Save original env
       const originalEnv = process.env.VOTES_BRIDGE_ENABLED;
       delete process.env.VOTES_BRIDGE_ENABLED;
 
@@ -85,7 +83,6 @@ describe('Feature Flag (Gradual Rollout)', () => {
       expect(isBridgeEnabled()).toBe(true);
 
       resetBridge();
-      // Should fall back to env var (which is false by default in tests)
       expect(isBridgeEnabled()).toBe(false);
     });
   });
@@ -115,7 +112,6 @@ describe('Feature Flag (Gradual Rollout)', () => {
       const user1Enabled = isBridgeEnabledForUser('user-123');
       const user2Enabled = isBridgeEnabledForUser('user-456');
 
-      // Both should return true when global is enabled
       expect(user1Enabled).toBe(true);
       expect(user2Enabled).toBe(true);
     });
@@ -171,8 +167,6 @@ describe('Feature Flag (Gradual Rollout)', () => {
 
       for (const userId of canaryUsers) {
         // When feature flag integration is added:
-        // const enabled = isBridgeEnabledForUser(userId);
-        // expect(enabled).toBe(true); // In canary cohort
 
         // For now, all enabled
         expect(isBridgeEnabledForUser(userId)).toBe(true);
@@ -184,7 +178,6 @@ describe('Feature Flag (Gradual Rollout)', () => {
     it('should prefer environment variable over cached value', () => {
       const originalEnv = process.env.VOTES_BRIDGE_ENABLED;
 
-      // Set env to true
       process.env.VOTES_BRIDGE_ENABLED = 'true';
       resetBridge();
       expect(isBridgeEnabled()).toBe(true);
@@ -266,8 +259,6 @@ describe('Feature Flag (Gradual Rollout)', () => {
       enableBridge();
 
       // In production with LaunchDarkly:
-      // launchDarklyClient.variation('votes-bridge-enabled', userId, false)
-      // Would return true only for users in 10% cohort
 
       // TODO: Implement per-user rollout when feature flag service is integrated
     });

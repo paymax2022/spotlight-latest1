@@ -1,18 +1,18 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
-)
 
-// ── fakes ────────────────────────────────────────────────────────────────────
+	"github.com/gin-gonic/gin"
+)
 
 type fakeSessionService struct {
 	listed     []domain.Session
@@ -26,7 +26,7 @@ func (f *fakeSessionService) IssueSession(string, services.IssuedTokens, service
 func (f *fakeSessionService) RotateRefresh(string, services.IssuedTokens, services.LoginContext) (*domain.Session, error) {
 	return &domain.Session{}, nil
 }
-func (f *fakeSessionService) ValidateAccess(string) (*domain.Session, error) {
+func (f *fakeSessionService) ValidateAccess(context.Context, string) (*services.Session, error) {
 	return &domain.Session{}, nil
 }
 func (f *fakeSessionService) ListMySessions(string) ([]domain.Session, error) { return f.listed, nil }
@@ -74,7 +74,7 @@ func TestSessionEndpointsDenyByDefaultWhenFlagOff(t *testing.T) {
 		{http.MethodPost, "/admin/users/u9/force-logout"},
 	} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s %s: expected 503 when flag off, got %d", tc.method, tc.path, w.Code)
@@ -86,17 +86,45 @@ func TestSessionEndpointsDenyByDefaultWhenFlagOff(t *testing.T) {
 func TestListMySessionsWhenFlagOn(t *testing.T) {
 	r, _ := setupSessionRouter(true)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sessions", nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
 	}
 }
 
+// An unauthenticated probe must get 401 BEFORE the flag is consulted —
+// answering feature_disabled first leaked session_hardening's state to anyone
+// (E2E N3). Deliberately mounts the handlers with no auth middleware so the
+// ordering inside the handler is what is under test.
+func TestSessionsRequireAuthBeforeTheFlagCheck(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewSessionHandler(&fakeSessionService{}, noopAudit{}, config.Config{FeatureSessionHardeningEnabled: false})
+	r := gin.New()
+	r.GET("/sessions", h.ListMySessions)
+	r.DELETE("/sessions/:id", h.RevokeMySession)
+	r.POST("/sessions/revoke-all", h.RevokeMyAllSessions)
+	r.POST("/admin/users/:id/force-logout", h.AdminForceLogout)
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/sessions"},
+		{http.MethodDelete, "/sessions/abc"},
+		{http.MethodPost, "/sessions/revoke-all"},
+		{http.MethodPost, "/admin/users/u9/force-logout"},
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401 before the flag check, got %d (%s)", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestAdminForceLogoutWhenFlagOn(t *testing.T) {
 	r, _ := setupSessionRouter(true)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/admin/users/u9/force-logout", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/users/u9/force-logout", nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())

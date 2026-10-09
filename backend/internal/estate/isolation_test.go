@@ -2,20 +2,19 @@ package estate_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"spotlight/backend/internal/estate"
 )
 
 // Block 47: estate-scoped access hardening.
-//
 // Every estate read/write path takes (estateID, userID) and resolves the
 // caller's membership/role via estate_residents scoped to that estate before
 // acting; detail/mutation paths additionally compare the loaded row's estate_id
 // to the caller's estate (404/403 otherwise). These tests prove the guards run
 // *before* any data access — a Service with a nil DB would panic on query if the
 // guard were missing, so a clean error return is evidence the guard fired first.
-//
 // NOTE: a full live-DB cross-estate penetration test (real authenticated token
 // vs another estate's rows under PostgREST RLS) remains environment-blocked and
 // is tracked in docs/estate/SECURITY-RLS-INDEX-AUDIT.md (Block 47d).
@@ -28,13 +27,13 @@ func TestMoneyPathGuardsPrecedeDataAccess(t *testing.T) {
 
 	// No ledger + no idempotency key: must fail on the idempotency guard first.
 	svcNoLedger := estate.NewService(nil, nil)
-	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv"}); err != estate.ErrIdempotencyRequired {
+	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv"}); !errors.Is(err, estate.ErrIdempotencyRequired) {
 		t.Fatalf("expected ErrIdempotencyRequired before any DB/ledger access, got %v", err)
 	}
 
 	// Idempotency key present but ledger unwired: must fail on the ledger guard,
 	// still before any estate data is read.
-	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv", IdempotencyKey: "k1"}); err != estate.ErrLedgerUnavailable {
+	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv", IdempotencyKey: "k1"}); !errors.Is(err, estate.ErrLedgerUnavailable) {
 		t.Fatalf("expected ErrLedgerUnavailable before any DB access, got %v", err)
 	}
 }

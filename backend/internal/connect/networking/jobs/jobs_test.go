@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// ── FSM guards (deny-by-default; illegal transitions rejected) ──────────────
-
 func TestJobApplicationFSM(t *testing.T) {
 	legal := map[AppState][]AppState{
 		AppDraft:       {AppSubmitted, AppWithdrawn},
@@ -113,17 +111,15 @@ func assertFSM[S ~string](t *testing.T, name string, all []S, legal map[S][]S, f
 	}
 }
 
-// ── PN-2: single-level referral is structurally guaranteed ──────────────────
-
 func TestPN2_NoSecondLevelBountyRepresentable(t *testing.T) {
-	rt := reflect.TypeOf(ReferralBounty{})
-	for i := 0; i < rt.NumField(); i++ {
-		name := strings.ToLower(rt.Field(i).Name)
+	rt := reflect.TypeFor[ReferralBounty]()
+	for field := range rt.Fields() {
+		name := strings.ToLower(field.Name)
 		// No field may reference a parent bounty / referrer chain / upline — a
 		// referral-of-referral must be impossible to represent (PN-2).
 		for _, banned := range []string{"parent", "chain", "upline", "referredby", "sourcebounty", "level"} {
 			if strings.Contains(name, banned) {
-				t.Fatalf("PN-2 violation: ReferralBounty must not have a %q-like field, found %q", banned, rt.Field(i).Name)
+				t.Fatalf("PN-2 violation: ReferralBounty must not have a %q-like field, found %q", banned, field.Name)
 			}
 		}
 	}
@@ -133,8 +129,6 @@ func TestPN2_NoSecondLevelBountyRepresentable(t *testing.T) {
 		t.Fatal("ReferralBounty must tie to a single job application")
 	}
 }
-
-// ── Test doubles for the money/loyalty ports ────────────────────────────────
 
 type fakeWallet struct {
 	calls  int
@@ -180,13 +174,47 @@ func (f *fakeAudit) WriteAudit(context.Context, string, string, string, string, 
 	return nil
 }
 
+// dupLedger reports every Credit as a duplicate-key rejection — the shape the
+// real ledger returns when a key is already claimed (Redis lock, foreign claim,
+// or a durably-posted journal).
+type dupLedger struct{ calls int }
+
+func (f *dupLedger) Credit(context.Context, string, string, string, string, int64) error {
+	f.calls++
+	return errors.New("ledger: duplicate idempotency key")
+}
+
+// fakeConfirmer stands in for the durable ledger replay check: it reports the
+// journal posted only when the probed key equals onlyKey (empty ⇒ whatever
+// creditPosted/debitPosted say).
+type fakeConfirmer struct {
+	debitPosted  bool
+	creditPosted bool
+	onlyKey      string
+	calls        int
+}
+
+func (f *fakeConfirmer) ConfirmDebit(_ context.Context, _, _, idemKey string, _ int64) (bool, error) {
+	f.calls++
+	if f.onlyKey != "" && idemKey != f.onlyKey {
+		return false, nil
+	}
+	return f.debitPosted, nil
+}
+
+func (f *fakeConfirmer) ConfirmCredit(_ context.Context, _, _, idemKey string, _ int64) (bool, error) {
+	f.calls++
+	if f.onlyKey != "" && idemKey != f.onlyKey {
+		return false, nil
+	}
+	return f.creditPosted, nil
+}
+
 // newTestService builds a service whose DB-backed seams are overridden, so money/state
 // logic runs without a live database.
 func newTestService(w WalletDebiter, l LedgerCrediter, loy LoyaltyAwarder) *Service {
 	return NewService(&Repository{}, w, l, fakeAccounts{}, loy, &fakeAudit{})
 }
-
-// ── PN-6: unverified company page blocked from paid posting ─────────────────
 
 func TestPN6_UnverifiedCompanyBlockedFromPaidPosting(t *testing.T) {
 	w := &fakeWallet{}
@@ -215,8 +243,6 @@ func TestPN6_UnverifiedCompanyBlockedFromPaidPosting(t *testing.T) {
 		t.Fatalf("wallet must not be debited without idem key, got %d", w.calls)
 	}
 }
-
-// ── PN-10: bounty payout is a ledger write, idempotent by bounty id ─────────
 
 func TestPN10_BountyPayoutLedgerWriteAndIdempotent(t *testing.T) {
 	w := &fakeWallet{}
@@ -250,8 +276,8 @@ func TestPN10_BountyPayoutLedgerWriteAndIdempotent(t *testing.T) {
 	if len(l.calls) != 1 {
 		t.Fatalf("expected exactly 1 ledger credit, got %d", len(l.calls))
 	}
-	if l.calls[0].idemKey != bountyID {
-		t.Errorf("PN-10: ledger idempotency key must be the bounty id, got %q", l.calls[0].idemKey)
+	if l.calls[0].idemKey != "connect:jobs:bounty:"+bountyID {
+		t.Errorf("PN-10: ledger idempotency key must be the namespaced bounty id, got %q", l.calls[0].idemKey)
 	}
 	if l.calls[0].userID != "referrer1" || l.calls[0].amount != 250000 {
 		t.Errorf("credit must pay the referrer the bounty amount, got %+v", l.calls[0])
@@ -278,7 +304,74 @@ func TestPN10_BountyPayoutLedgerWriteAndIdempotent(t *testing.T) {
 	}
 }
 
-// ── Referral creation rejects non-positive amounts (integer kobo) ───────────
+// bountyService builds a service pinned to a single payable bounty; the
+// markBountyPaid seam records whether the PAID stamp was ever applied.
+func bountyService(l LedgerCrediter, c *fakeConfirmer, marked *bool) *Service {
+	s := newTestService(&fakeWallet{}, l, &fakeLoyalty{})
+	if c != nil {
+		s.SetLedgerConfirmer(c) // avoid storing a typed-nil interface
+	}
+	s.getBountyFn = func(context.Context, string) (*ReferralBounty, error) {
+		return &ReferralBounty{
+			ID: "bounty-1", ReferrerUserID: "referrer1", JobApplicationID: "app1",
+			AmountKobo: 250000, State: string(BountyPayable),
+		}, nil
+	}
+	s.markBountyPaid = func(context.Context, string, string) (bool, error) {
+		*marked = true
+		return true, nil
+	}
+	return s
+}
+
+func TestPN10_BountyDuplicateWithoutDurableProof_FailsClosed(t *testing.T) {
+	// The ledger reports the bounty key as claimed but NO durable journal under
+	// it is ours (Redis-lock residue or a foreign claim): the bounty must NOT be
+	// stamped paid — money was never provably moved.
+	marked := false
+	conf := &fakeConfirmer{creditPosted: false}
+	s := bountyService(&dupLedger{}, conf, &marked)
+
+	_, err := s.PayReferralBounty(context.Background(), "actor1", "bounty-1")
+	if err == nil {
+		t.Fatal("an unconfirmed duplicate must fail closed, not stamp paid")
+	}
+	if conf.calls == 0 {
+		t.Fatal("a duplicate must be confirmed against the ledger of record")
+	}
+	if marked {
+		t.Fatal("bounty marked PAID on phantom money")
+	}
+}
+
+func TestPN10_BountyDuplicateConfirmed_Converges(t *testing.T) {
+	// Crash-after-commit replay: the bounty journal is durably posted under the
+	// namespaced key — the payout converges and stamps paid exactly once.
+	marked := false
+	conf := &fakeConfirmer{creditPosted: true, onlyKey: "connect:jobs:bounty:bounty-1"}
+	s := bountyService(&dupLedger{}, conf, &marked)
+
+	if _, err := s.PayReferralBounty(context.Background(), "actor1", "bounty-1"); err != nil {
+		t.Fatalf("a durably-confirmed duplicate must converge, got %v", err)
+	}
+	if !marked {
+		t.Fatal("confirmed bounty must be stamped PAID")
+	}
+}
+
+func TestPN10_BountyDuplicate_NoConfirmer_FailsClosed(t *testing.T) {
+	// With no durable confirmer wired a duplicate can never be proven — the
+	// payout must refuse rather than fulfil on a bare ErrDuplicate.
+	marked := false
+	s := bountyService(&dupLedger{}, nil, &marked)
+
+	if _, err := s.PayReferralBounty(context.Background(), "actor1", "bounty-1"); err == nil {
+		t.Fatal("duplicate with no confirmer must fail closed")
+	}
+	if marked {
+		t.Fatal("bounty marked PAID without durable confirmation")
+	}
+}
 
 func TestCreateReferralRejectsNonPositive(t *testing.T) {
 	s := newTestService(&fakeWallet{}, &fakeLedger{}, &fakeLoyalty{})
@@ -286,8 +379,6 @@ func TestCreateReferralRejectsNonPositive(t *testing.T) {
 		t.Fatalf("expected ErrInvalidAmount for zero bounty, got %v", err)
 	}
 }
-
-// ── PN-10 guard: paying a bounty not yet hire-confirmed is illegal ──────────
 
 func TestPayBountyIllegalBeforeHireConfirmed(t *testing.T) {
 	l := &fakeLedger{}

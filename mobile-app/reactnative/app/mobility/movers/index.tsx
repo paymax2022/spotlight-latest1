@@ -3,14 +3,15 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Modal } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MapPin, Minus, Plus, Check, Pencil, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
-import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
+import type { SelectedAddress } from '@/components/AddressAutocompleteInput';
+import AddressField from '@/features/mobility/components/AddressField';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useRequestQuote } from '@/features/mobility/hooks/useModes';
@@ -46,12 +47,12 @@ export default function MoversHomeScreen() {
   const toggleItem = (item: string) =>
     setInventory((inv) => (inv.includes(item) ? inv.filter((i) => i !== item) : [...inv, item]));
 
-  const onPickupConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setPickup({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng });
+  const onPickupConfirmed = useCallback((addr: SelectedAddress) => {
+    setPickup({ address: addr.label, lat: addr.lat, lng: addr.lng });
     setEditingPickup(false);
   }, []);
-  const onDropoffConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setDropoff({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng });
+  const onDropoffConfirmed = useCallback((addr: SelectedAddress) => {
+    setDropoff({ address: addr.label, lat: addr.lat, lng: addr.lng });
     setEditingDropoff(false);
   }, []);
 
@@ -133,7 +134,7 @@ export default function MoversHomeScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry surface="delivery" initialCenter={{ lat: pickup.lat, lng: pickup.lng }} initialQuery={pickup.address} onConfirmed={onPickupConfirmed} />
+            <AddressField initial={pickup.address} near={{ lat: pickup.lat, lng: pickup.lng }} placeholder="Enter pickup address" onSelect={onPickupConfirmed} currentLocation />
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -147,7 +148,7 @@ export default function MoversHomeScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry surface="delivery" initialCenter={{ lat: dropoff.lat, lng: dropoff.lng }} initialQuery={dropoff.address} onConfirmed={onDropoffConfirmed} />
+            <AddressField initial={dropoff.address} near={{ lat: dropoff.lat, lng: dropoff.lng }} placeholder="Enter drop-off address" onSelect={onDropoffConfirmed} />
           </ScrollView>
         </SafeAreaView>
       </Modal>

@@ -1,6 +1,5 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression for CF-008: the mobile "Message contributors" screen
 // (app/crowdfunding/creator/performance/[id].tsx, a real navigable button,
 // not behind any feature flag) called POST /campaigns/:id/broadcast, which
@@ -8,13 +7,10 @@ package crowdfunding_test
 // This pins the new engage.Service.BroadcastToContributors end to end: it
 // notifies every distinct backer who hasn't opted out, is creator-scoped,
 // and validates the same fields the mobile client itself validates.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Broadcast -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -78,10 +74,10 @@ func TestLiveDB_Broadcast_NotifiesOptedInBackersOnly(t *testing.T) {
 	seedContribution(refundedBacker, "refunded") // must never be notified
 
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_notifications WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_notification_prefs WHERE user_id = $1`, backerOut)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_notifications WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_notification_prefs WHERE user_id = $1`, backerOut)
 	})
 
 	// Non-owner is refused before anything is sent.
@@ -154,7 +150,9 @@ func TestLiveDB_Broadcast_RejectsShortFieldsAndNoChannel(t *testing.T) {
 		campaignID, creatorID); err != nil {
 		t.Fatalf("seed campaign: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+	})
 
 	cases := []struct {
 		name  string

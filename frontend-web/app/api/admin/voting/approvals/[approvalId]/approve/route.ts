@@ -4,7 +4,6 @@ import { approveApproval } from '@/src/server/voting/contest-approvals.service';
 
 // UAT Batch 8 (SEC-005/G-MC): the checker side of dual control for the three
 // Contest sensitive actions (vote_reversal, vote_adjustment, results_publish).
-//
 // approveApproval() verifies the checker's identity + the self-approval
 // guard, then EXECUTES the underlying action in this same request. If
 // execution throws, the approval row is left 'pending_approval' (never
@@ -19,7 +18,7 @@ export async function POST(
 
     let checkerNote: string | undefined;
     try {
-      const body = (await request.json()) as { note?: string };
+      const body = (await request.json().catch(() => null)) as { note?: string } | null;
       checkerNote = body?.note;
     } catch {
       // No body / empty body is fine — checkerNote is optional on approve.
