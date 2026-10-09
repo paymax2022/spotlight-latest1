@@ -45,6 +45,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"strings"
@@ -382,5 +383,6 @@ func (p *paystackRail) fireChargeSuccess(tx *paystackTx) {
 func (p *paystackRail) handleCheckoutPage(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimPrefix(r.URL.Path, "/paystack/checkout/")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	ref = html.EscapeString(ref)
 	fmt.Fprintf(w, "<html><body><h1>Fake Paystack checkout</h1><p>ref=%s</p><p>POST /paystack/simulate {\"reference\":%q,\"outcome\":\"success\"} to pay.</p></body></html>", ref, ref)
 }
