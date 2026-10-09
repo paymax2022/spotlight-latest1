@@ -198,6 +198,27 @@ func (s *Service) legPosted(ctx context.Context, userID, reference string, entry
 	return ok, nil
 }
 
+// walletEntryAmount returns the amount of the ledger entry carrying exactly
+// this idempotency_key AND reference on userID's user_wallet — the precise
+// per-leg probe used where a (reference, amount) check could false-positive on
+// a same-amount sibling operation (every share of a bill posts under the same
+// "split:<bill>" reference; see PayShare's heal path).
+func (s *Service) walletEntryAmount(ctx context.Context, userID, entryKey, reference string) (int64, bool, error) {
+	var amt int64
+	err := s.db.QueryRow(ctx, `SELECT e.amount_kobo FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = 'user_wallet'
+		  AND e.idempotency_key = $2 AND e.reference = $3`,
+		userID, entryKey, reference).Scan(&amt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("social: wallet entry probe: %w", err)
+	}
+	return amt, true, nil
+}
+
 // PayRequest fulfils a request. Object-level authZ: ONLY the named payer may pay,
 // and only a PENDING request. The transfer is idempotent on the request id.
 func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) error {
@@ -483,18 +504,29 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 		//                             a concurrent caller beat us to it);
 		//   no legs at all          → stale claim — revert to PENDING and pay
 		//                             through the normal path below.
-		settled, err := s.legPosted(ctx, bill.OrganiserID, ref, ledger.EntryCredit, sh.AmountKobo)
+		// The probes key on the deterministic PER-SHARE ledger keys
+		// ("split:<shareID>:cr:credit" / "split:<shareID>:dr:debit"), never on
+		// (reference, amount): every share of a bill posts under the same
+		// "split:<bill>" reference, so an equal-amount SIBLING share's legs
+		// would otherwise satisfy the check and phantom-settle this share.
+		creditedAmt, credited, err := s.walletEntryAmount(ctx, bill.OrganiserID, key+":cr:credit", ref)
 		if err != nil {
 			return err
 		}
-		if settled {
-			return nil
+		if credited {
+			if creditedAmt == sh.AmountKobo {
+				return nil
+			}
+			return fmt.Errorf("social: share %s credit leg amount %d != share amount %d — refusing to converge on a mismatched leg", shareID, creditedAmt, sh.AmountKobo)
 		}
-		debited, err := s.legPosted(ctx, payerID, ref, ledger.EntryDebit, sh.AmountKobo)
+		debitedAmt, debited, err := s.walletEntryAmount(ctx, payerID, key+":dr:debit", ref)
 		if err != nil {
 			return err
 		}
 		if debited {
+			if debitedAmt != sh.AmountKobo {
+				return fmt.Errorf("social: share %s debit leg amount %d != share amount %d — refusing to converge on a mismatched leg", shareID, debitedAmt, sh.AmountKobo)
+			}
 			escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 			if err != nil {
 				return err
@@ -502,6 +534,9 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("social: pay share credit: %w", err)
 			}
+			// A heal credit is a money mutation — it must audit (iron rule).
+			s.log(payerID, bill.OrganiserID, "social.split.pay.heal", "split_share", shareID,
+				nil, map[string]any{"amount_kobo": sh.AmountKobo, "state": "PAID"})
 			return nil
 		}
 		if _, err := s.db.Exec(ctx,

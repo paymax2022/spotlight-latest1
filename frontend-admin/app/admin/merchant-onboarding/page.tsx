@@ -65,6 +65,12 @@ export default function MerchantOnboardingQueuePage() {
         title="Merchant Onboarding"
         subtitle="Review queue for merchant onboarding applications across modules."
       />
+      <p style={{ fontSize: 13, color: colors.muted, margin: '0 0 12px' }}>
+        Restaurant KYB submissions are not listed here — restaurants are reviewed in their own queue.{' '}
+        <Link href="/admin/restaurant/onboarding" style={{ color: colors.primary, fontWeight: 600 }}>
+          Open Restaurant Onboarding →
+        </Link>
+      </p>
       {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginBottom: 10 }}>

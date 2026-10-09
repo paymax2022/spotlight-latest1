@@ -12,6 +12,7 @@ import {
   type StandingAccountType,
 } from './journal';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { paystackApiBase } from '@/src/server/payments/paystack-base';
 import { WALLET_ACCOUNT_TYPE, SPENDABLE_WALLET_TYPES } from './account-type';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
@@ -620,7 +621,7 @@ async function initializePaystackPayment(input: {
   };
   if (input.callbackUrl) body.callback_url = input.callbackUrl;
 
-  const res = await fetch('https://api.paystack.co/transaction/initialize', {
+  const res = await fetch(`${paystackApiBase()}/transaction/initialize`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,

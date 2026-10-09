@@ -690,6 +690,9 @@ func (s *Service) ExtendOffering(ctx context.Context, actorID, id string, extraD
 	if err != nil {
 		return nil, err
 	}
+	if o.Status != OfferingOpen {
+		return nil, fmt.Errorf("%w: offering is %s", ErrInvalidTransition, o.Status)
+	}
 	if extraDays <= 0 || o.ExtensionDays+extraDays > MaxExtensionDays {
 		return nil, fmt.Errorf("fractionalre: extension exceeds the %d-day cap", MaxExtensionDays)
 	}
@@ -973,6 +976,7 @@ func Register(r *gin.Engine, d Deps) *Service {
 		// Rounds.
 		admin.GET("/rounds", rp(PermSupport), ah.ListRounds)
 		admin.GET("/rounds/:id", rp(PermSupport), ah.GetRound)
+		admin.POST("/rounds/:id/open", rp(PermAssetManage), ah.OpenRound)
 		admin.POST("/rounds/:id/extend", rp(PermAssetManage), ah.ExtendRound)
 		admin.POST("/rounds/:id/close", rp(PermFinance), ah.CloseRound)
 		admin.POST("/rounds/:id/refund", rp(PermFinance), ah.RefundRound)

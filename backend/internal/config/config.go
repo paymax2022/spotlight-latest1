@@ -78,6 +78,12 @@ type Config struct {
 	// Paystack credentials.
 	PaystackSecretKey  string
 	PaystackWebhookKey string
+	// PaystackBaseURL overrides the Paystack API base URL (default
+	// https://api.paystack.co). Local/dev only: set it to the Paystack fake
+	// (tools/fakes, e.g. http://localhost:9100) so the full
+	// initialize/verify/refund surface runs without real keys. Never set this
+	// in production — it reroutes every Paystack call the process makes.
+	PaystackBaseURL string
 
 	// Crypto real provider (retail crypto price feed + on-chain withdrawal broadcast).
 	// CryptoProvider selects the implementation: "mock" (default, deterministic, no
@@ -96,6 +102,10 @@ type Config struct {
 	MapleradPublicKey     string
 	MapleradProd          bool
 	MapleradWebhookSecret string
+	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
+	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
+	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
+	MapleradBaseURL string
 	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
@@ -781,6 +791,7 @@ func Load() Config {
 		SchedulerPollIntervalSeconds: getEnvInt("SCHEDULER_POLL_INTERVAL_SECONDS", 5),
 		PaystackSecretKey:            getEnv("PAYSTACK_SECRET_KEY", ""),
 		PaystackWebhookKey:           getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+		PaystackBaseURL:              getEnv("PAYSTACK_BASE_URL", ""),
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
 		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
@@ -792,6 +803,7 @@ func Load() Config {
 		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
 		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
 		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
 		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
@@ -1215,10 +1227,16 @@ func (c Config) Validate() error {
 		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
 			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
 		}
+		if c.MapleradBaseURL != "" {
+			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
+		}
 		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
 			if isPlaceholder(c.PaystackSecretKey) {
 				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
 			}
+		}
+		if c.PaystackBaseURL != "" {
+			strict = append(strict, "PAYSTACK_BASE_URL must not be set outside development — it reroutes every Paystack call away from api.paystack.co")
 		}
 		if c.FeatureAcademyEnabled {
 			switch strings.ToLower(strings.TrimSpace(c.RailsMode)) {
