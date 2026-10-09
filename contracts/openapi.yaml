@@ -7971,7 +7971,11 @@ paths:
 
   /fx/wallets/{currency}:
     get:
-      summary: Get or create a foreign currency wallet
+      summary: Get a foreign currency wallet (pure read — never writes)
+      description: >-
+        Read-only. The wallet row is materialised lazily by the first conversion
+        into that currency; until then the endpoint returns a zero-balance view
+        (balance_minor: 0, no id) rather than creating a row.
       operationId: getFXWallet
       tags: [FX]
       security: [{ bearerAuth: [] }]
@@ -7986,6 +7990,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CurrencyWallet' }
+        '400': { description: Invalid currency code }
 
   # ── Groups ────────────────────────────────────────────────────────────────────
   /groups:
@@ -13427,6 +13432,17 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: OK }
+  /api/finance/fractionalre/admin/rounds/{id}/open:
+    post:
+      operationId: freAdminOpenRound
+      summary: Open a draft round for subscription (RBAC fractionalre.asset_manage)
+      tags: [FractionalREAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Opened }
+        '409': { description: Round is not in draft }
   /api/finance/fractionalre/admin/rounds/{id}/extend:
     post:
       operationId: freAdminExtendRound

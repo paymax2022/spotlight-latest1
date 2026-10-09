@@ -84,7 +84,7 @@ export function useRecordConsent() {
 export function useBindPolicy() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { quoteId: string; idempotencyKey: string }) => bindPolicy(args),
+    mutationFn: (args: { quoteId: string; nin: string; idempotencyKey: string }) => bindPolicy(args),
     onSuccess: (res) => {
       if (res.ok) {
         qc.invalidateQueries({ queryKey: [KEY, 'policies'] });

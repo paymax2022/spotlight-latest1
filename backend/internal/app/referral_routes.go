@@ -3,6 +3,10 @@ package app
 import (
 	"context"
 	"log"
+	"strconv"
+
+	"github.com/google/uuid"
+
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
@@ -182,6 +186,11 @@ func RegisterReferralRewards(
 	// constraint still enforces at-most-once postings).
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	svc := referrals.NewRewardService(pool, ledgerSvc)
+	// Audit sink: the engine's emit() no-ops on a nil sink, which used to leave
+	// every reward credit/reversal with NO audit event at all. Route it onto the
+	// append-only referral_engine_events stream — the same sink RegisterReferral
+	// uses for the withdraw path (rewardSvc.SetAuditSink above).
+	svc.WithAudit(rewardEngineAuditSink{ev: referralevents.NewService(pool)})
 	h := referrals.NewRewardHandler(svc, internalSecret)
 
 	user := r.Group("/v1/referrals")
@@ -236,6 +245,46 @@ func RegisterReferralRewards(
 
 	log.Println("[referral-rewards] engine routes registered — /v1/referrals + /v1/admin/referrals + /internal/referrals; nightly recalc ticker started")
 	return svc
+}
+
+// rewardEngineAuditSink adapts the rewards engine's RewardAuditSink.Emit seam
+// onto the append-only referral_engine_events stream. The typed user/referrer
+// columns are lifted out of the payload when present; the idempotency key uses
+// the event's natural unique field where one exists (reward_id, transaction_id,
+// flag_id, the attributed user) so a replay dedupes — and a fresh uuid otherwise,
+// because an audit row recorded twice is better than one silently dropped.
+type rewardEngineAuditSink struct{ ev *referralevents.Service }
+
+func (s rewardEngineAuditSink) Emit(ctx context.Context, event string, fields map[string]any) error {
+	return s.ev.Record(ctx, referralevents.Input{
+		EventType:      event,
+		UserID:         auditField(fields, "referred_user_id"),
+		ReferrerID:     auditField(fields, "referrer_id"),
+		Payload:        fields,
+		IdempotencyKey: auditEventKey(event, fields),
+	})
+}
+
+func auditField(fields map[string]any, key string) string {
+	if v, ok := fields[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func auditEventKey(event string, fields map[string]any) string {
+	for _, k := range []string{"reward_id", "transaction_id", "flag_id", "referred_user_id", "version"} {
+		if v := auditField(fields, k); v != "" {
+			return "rewards:" + event + ":" + v
+		}
+		if f, ok := fields[k].(float64); ok {
+			return "rewards:" + event + ":" + strconv.FormatFloat(f, 'f', -1, 64)
+		}
+		if i, ok := fields[k].(int); ok {
+			return "rewards:" + event + ":" + strconv.Itoa(i)
+		}
+	}
+	return "rewards:" + event + ":" + uuid.NewString()
 }
 
 // startReferralRecalcScheduler runs RecalculateTiers on a fixed interval until ctx

@@ -243,13 +243,23 @@ export async function purchasePolicy(args: {
   quoteRef: string;
   productCode: string;
   inputs: Record<string, unknown>;
+  /**
+   * The policyholder's National Identity Number. The Go purchase gate
+   * (FEATURE_INSURANCE_NIN_REQUIRED, default ON) verifies it via Dojah before
+   * the policy or any ledger leg exists — send the NIN the application form
+   * already collected (field type 'nin'), '' only when the schema never asked.
+   */
+  nin: string;
   idempotencyKey: string;
 }): Promise<Policy> {
   return call(async () => {
     const { data } = await api.post(
       `${INSURANCE_API_BASE}/policies`,
       {
-        quote_ref: args.quoteRef,
+        // Go binds on quote_id — the earlier quote_ref key never reached the
+        // backend's required field and failed every live bind at the door.
+        quote_id: args.quoteRef,
+        nin: args.nin,
         product_code: args.productCode,
         inputs: args.inputs,
       },

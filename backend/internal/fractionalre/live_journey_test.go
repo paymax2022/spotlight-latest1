@@ -173,7 +173,7 @@ func TestLiveDB_FractionalRESubscribeDividendJourney(t *testing.T) {
 	if sub.Status != SubEscrowed || sub.AmountKobo != 5_000_000 {
 		t.Fatalf("subscription must be escrowed at 5_000_000, got %+v", sub)
 	}
-	n, sum := countLegs(t, ctx, pool, subKey+":%")
+	n, sum := countLegs(t, ctx, pool, scopedIdemKey(investor, subKey)+":%")
 	if n != 2 || sum != 10_000_000 { // balanced pair: 2 rows × 5_000_000
 		t.Fatalf("escrow must post one balanced pair of 5_000_000, got %d rows summing %d", n, sum)
 	}
@@ -185,7 +185,7 @@ func TestLiveDB_FractionalRESubscribeDividendJourney(t *testing.T) {
 	if sub2.ID != sub.ID {
 		t.Fatalf("replay must return the same subscription, got %s vs %s", sub2.ID, sub.ID)
 	}
-	if n2, _ := countLegs(t, ctx, pool, subKey+":%"); n2 != 2 {
+	if n2, _ := countLegs(t, ctx, pool, scopedIdemKey(investor, subKey)+":%"); n2 != 2 {
 		t.Fatalf("replay must not post a second escrow pair, got %d rows", n2)
 	}
 
@@ -231,7 +231,8 @@ func TestLiveDB_FractionalRESubscribeDividendJourney(t *testing.T) {
 		t.Fatalf("distribution must be fully paid, got %s", paid.Status)
 	}
 	// Sole holder receives the whole net pool: escrow DEBIT → investor wallet.
-	dn, dsum := countLegs(t, ctx, pool, distKey+":%")
+	// The per-line ledger key derives from the scoped run key.
+	dn, dsum := countLegs(t, ctx, pool, scopedIdemKey(maker, distKey)+":%")
 	if dn != 2 || dsum != 2_000_000 { // balanced pair: 2 rows × 1_000_000
 		t.Fatalf("distribution must credit one balanced pair of 1_000_000, got %d rows summing %d", dn, dsum)
 	}
@@ -263,7 +264,7 @@ func TestLiveDB_FractionalRESubscribeRefusalsZeroLegs(t *testing.T) {
 	if _, err := svc.Subscribe(ctx, u0, key0, off.ID, SubscribeRequest{Units: 10}); !errors.Is(err, ErrKYCRequired) {
 		t.Fatalf("tier-0 subscribe must be refused with ErrKYCRequired, got %v", err)
 	}
-	if n, _ := countLegs(t, ctx, pool, key0+":%"); n != 0 {
+	if n, _ := countLegs(t, ctx, pool, scopedIdemKey(u0, key0)+":%"); n != 0 {
 		t.Fatalf("refused subscribe must post zero ledger legs, got %d", n)
 	}
 
@@ -282,7 +283,7 @@ func TestLiveDB_FractionalRESubscribeRefusalsZeroLegs(t *testing.T) {
 	if _, err := svc.Subscribe(ctx, ur, keyr, off.ID, SubscribeRequest{Units: 10}); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("zero-income retail subscribe must be refused with ErrLimitExceeded, got %v", err)
 	}
-	if n, _ := countLegs(t, ctx, pool, keyr+":%"); n != 0 {
+	if n, _ := countLegs(t, ctx, pool, scopedIdemKey(ur, keyr)+":%"); n != 0 {
 		t.Fatalf("cap-refused subscribe must post zero ledger legs, got %d", n)
 	}
 }

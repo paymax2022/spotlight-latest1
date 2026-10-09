@@ -92,10 +92,10 @@ export default function OnboardingReviewPage() {
     }
   }
 
-  // "Awaiting review" = actually submitted work: in_review rows plus pending
-  // rows that carry a KYB submission. Never-submitted stores (kyb_status null)
-  // are not awaiting anything (E2E-PROV-020).
-  const pending = apps.filter((a) => a.status === 'in_review' || (a.status === 'pending' && a.kyb_status != null)).length;
+  // "Awaiting review" = the admin can act now: submitted or under review. A draft
+  // is not submitted and needs_more_info waits on the merchant. The dashboard's
+  // restaurant-kyb queue counts the same two statuses, so the numbers agree.
+  const pending = apps.filter((a) => a.kyb_status === 'submitted' || a.kyb_status === 'under_review').length;
   const approved = apps.filter((a) => a.status === 'approved').length;
   const rejected = apps.filter((a) => a.status === 'rejected').length;
 

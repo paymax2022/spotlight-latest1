@@ -406,6 +406,19 @@ var (
 	ErrBeneficiaryLimit   = errors.New("fractionalre: maximum of 10 beneficiaries per investor")
 	ErrBeneficiaryInput   = errors.New("fractionalre: invalid beneficiary input")
 	ErrValidation         = errors.New("fractionalre: invalid input")
+	// ErrIdempotencyConflict means the caller's Idempotency-Key already produced
+	// a row for a DIFFERENT request payload (or sits on a settlement created for
+	// one) — replaying it must not alias that earlier operation.
+	ErrIdempotencyConflict = errors.New("fractionalre: Idempotency-Key already used for a different request")
+	// ErrOfferingSoldOut means units_sold + requested units would exceed the
+	// offering's share_count — a round can never issue more units than exist.
+	ErrOfferingSoldOut = errors.New("fractionalre: offering has insufficient units remaining")
+	// ErrNoCapTable means a distribution was scheduled for an asset whose cap
+	// table is empty — a lifecycle precondition failure, not a server fault.
+	ErrNoCapTable = errors.New("fractionalre: no cap-table holders to distribute to")
+	// ErrAmountOverflow means an integer-kobo multiplication would wrap —
+	// fail-closed before any ticket/cap check can be bypassed by a wrapped sum.
+	ErrAmountOverflow = errors.New("fractionalre: amount computation overflow")
 )
 
 // LimitOverrideReasonCodes is the closed vocabulary for compliance cap

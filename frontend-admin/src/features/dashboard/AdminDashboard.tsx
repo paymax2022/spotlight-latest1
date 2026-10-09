@@ -232,20 +232,28 @@ export function AdminDashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 12, marginTop: 14 }}>
             {needsAttention.map((m) => {
               const tint = m.attention.severity === 'critical' ? C.red : C.orange;
-              return (
-                <Link
-                  key={m.key}
-                  href={m.attention.href}
-                  style={{ textDecoration: 'none', color: 'inherit', display: 'block', border: `1px solid ${rgba(tint, 0.35)}`,
-                    background: rgba(tint, 0.06), borderRadius: 10, padding: '12px 14px' }}
-                >
+              const boxStyle: CSSProperties = { textDecoration: 'none', color: 'inherit', display: 'block',
+                border: `1px solid ${rgba(tint, 0.35)}`, background: rgba(tint, 0.06), borderRadius: 10, padding: '12px 14px' };
+              const body = (
+                <>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <span style={{ fontSize: 13, fontWeight: 700 }}>{m.label}</span>
                     <span style={{ fontSize: 22, fontWeight: 800, color: tint }}>{fmt(m.attention.value)}</span>
                   </div>
                   <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{m.attention.label}</div>
-                  <div style={{ fontSize: 12, color: tint, fontWeight: 600, marginTop: 8 }}>Open queue →</div>
-                </Link>
+                  {m.attention.href ? (
+                    <div style={{ fontSize: 12, color: tint, fontWeight: 600, marginTop: 8 }}>Open queue →</div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>{m.attention.note ?? 'No review screen yet'}</div>
+                  )}
+                </>
+              );
+              // An item with no working screen is shown, not linked: a link to a page
+              // that cannot act (or to the legacy bridge) is worse than none.
+              return m.attention.href ? (
+                <Link key={m.key} href={m.attention.href} style={boxStyle}>{body}</Link>
+              ) : (
+                <div key={m.key} style={boxStyle}>{body}</div>
               );
             })}
           </div>
@@ -268,19 +276,22 @@ export function AdminDashboard() {
                 <div style={{ fontSize: 12, color: C.muted }}>{m.volume.label}</div>
 
                 {m.attention.label ? (
-                  <Link
-                    href={m.attention.href}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                      marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' }}
-                  >
-                    <span style={{ fontSize: 12, color: C.muted }}>{m.attention.label}</span>
-                    <span style={{ fontSize: 13, fontWeight: 800,
-                      color: (m.attention.value ?? 0) > 0
-                        ? (m.attention.severity === 'critical' ? C.red : C.orange)
-                        : C.muted }}>
-                      {loaded ? fmt(m.attention.value) : '—'}
-                    </span>
-                  </Link>
+                  (() => {
+                    const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                      marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' };
+                    const row = (
+                      <>
+                        <span style={{ fontSize: 12, color: C.muted }}>{m.attention.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 800,
+                          color: (m.attention.value ?? 0) > 0
+                            ? (m.attention.severity === 'critical' ? C.red : C.orange)
+                            : C.muted }}>
+                          {loaded ? fmt(m.attention.value) : '—'}
+                        </span>
+                      </>
+                    );
+                    return m.attention.href ? <Link href={m.attention.href} style={rowStyle}>{row}</Link> : <div style={rowStyle}>{row}</div>;
+                  })()
                 ) : null}
               </div>
             ))}

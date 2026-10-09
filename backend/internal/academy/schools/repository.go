@@ -336,7 +336,7 @@ func (r *Repository) EnrollSeated(ctx context.Context, institutionID, classGroup
 
 		// Already enrolled? Idempotent replay — no new seat. (Counts both active and
 		// invited; a removed learner re-enrolling re-activates and re-seats below.)
-		const existing = `SELECT state FROM academy_enrollments
+		const existing = `SELECT state FROM academy_edu_enrollments
 		                  WHERE institution_id = $1 AND learner_user_id = $2 FOR UPDATE`
 		var st string
 		switch e := tx.QueryRow(ctx, existing, institutionID, learnerUserID).Scan(&st); {
@@ -349,7 +349,7 @@ func (r *Repository) EnrollSeated(ctx context.Context, institutionID, classGroup
 			if used >= seats {
 				return ErrSeatLimitExceeded
 			}
-			const reactivate = `UPDATE academy_enrollments
+			const reactivate = `UPDATE academy_edu_enrollments
 			    SET state = 'active', class_group_id = COALESCE($3, class_group_id),
 			        idempotency_key = COALESCE(idempotency_key, $4)
 			    WHERE institution_id = $1 AND learner_user_id = $2`
@@ -362,7 +362,7 @@ func (r *Repository) EnrollSeated(ctx context.Context, institutionID, classGroup
 				return ErrSeatLimitExceeded
 			}
 			id := uuid.New().String()
-			const ins = `INSERT INTO academy_enrollments
+			const ins = `INSERT INTO academy_edu_enrollments
 			    (id, institution_id, class_group_id, learner_user_id, state, idempotency_key, created_at)
 			    VALUES ($1,$2,$3,$4,'active',$5, now())`
 			if _, e2 := tx.Exec(ctx, ins, id, institutionID, dbutil.NullStr(classGroupID), learnerUserID, dbutil.NullStr(idemKey)); e2 != nil {
@@ -400,7 +400,7 @@ func (r *Repository) RemoveEnrollment(ctx context.Context, institutionID, learne
 			}
 			return e
 		}
-		const upd = `UPDATE academy_enrollments SET state = 'removed'
+		const upd = `UPDATE academy_edu_enrollments SET state = 'removed'
 		             WHERE institution_id = $1 AND learner_user_id = $2 AND state = 'active'`
 		tag, e := tx.Exec(ctx, upd, institutionID, learnerUserID)
 		if e != nil {
@@ -421,7 +421,7 @@ func (r *Repository) RemoveEnrollment(ctx context.Context, institutionID, learne
 }
 
 func (r *Repository) CountEnrollmentsByState(ctx context.Context, institutionID string) (map[string]int, error) {
-	const q = `SELECT state, COUNT(*) FROM academy_enrollments WHERE institution_id = $1 GROUP BY state`
+	const q = `SELECT state, COUNT(*) FROM academy_edu_enrollments WHERE institution_id = $1 GROUP BY state`
 	rows, err := r.db.Query(ctx, q, institutionID)
 	if err != nil {
 		return nil, err
@@ -442,7 +442,7 @@ func (r *Repository) CountEnrollmentsByState(ctx context.Context, institutionID 
 // CountAllEnrollmentsByState returns enrolment counts by state ACROSS all institutions
 // (admin oversight read — mirrors CountEnrollmentsByState without the institution filter).
 func (r *Repository) CountAllEnrollmentsByState(ctx context.Context) (map[string]int, error) {
-	const q = `SELECT state, COUNT(*) FROM academy_enrollments GROUP BY state`
+	const q = `SELECT state, COUNT(*) FROM academy_edu_enrollments GROUP BY state`
 	rows, err := r.db.Query(ctx, q)
 	if err != nil {
 		return nil, err

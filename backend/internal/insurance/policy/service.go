@@ -12,6 +12,7 @@ import (
 	"spotlight/backend/internal/insurance/catalog"
 	"spotlight/backend/internal/insurance/consent"
 	"spotlight/backend/internal/insurance/gateway"
+	"spotlight/backend/internal/provider"
 	"strings"
 	"time"
 )
@@ -52,6 +53,14 @@ type Service struct {
 	// (nil-safe): when nil the ledger posting still happens (that is the
 	// money-safe part), only the workbench row is skipped.
 	commission CommissionRecorder
+	// ninVerifier is the identity-proofing port (Dojah /api/v1/kyc/nin) the
+	// member purchase path runs BEFORE the policy row or any ledger leg
+	// exists. The domain names the provider-agnostic port, never the adapter.
+	ninVerifier provider.IdNumberPort
+	// ninRequired turns the purchase NIN gate on (FEATURE_INSURANCE_NIN_REQUIRED
+	// — default ON in config). When on, every member bind carries a NIN that
+	// must verify; when off the gate is skipped entirely.
+	ninRequired bool
 }
 
 // CommissionRecorder records the domain-level commission entry for a bound
@@ -87,6 +96,16 @@ type Deps struct {
 	// Commission records the domain-level commission-entry row the admin
 	// reconciliation workbench reads (confirm/reverse/list). Optional (nil-safe).
 	Commission CommissionRecorder
+	// NINVerifier is the identity-proofing port the member purchase path runs
+	// before any money moves — the Dojah adapter satisfies it via
+	// VerifyIDNumber(IDType:"nin"). When NINRequired is on and this is nil (or
+	// cannot answer) the gate fails CLOSED, never silently skipped.
+	NINVerifier provider.IdNumberPort
+	// NINRequired gates member purchases on a verified NIN. In-process surfaces
+	// that do not collect a NIN (embedded/event-triggered binds, transport GIT
+	// cover) call BindFromQuote, which is exempt; the member HTTP path calls
+	// BindFromQuoteWithNIN.
+	NINRequired bool
 }
 
 // NewService constructs the policy service.
@@ -108,6 +127,9 @@ func NewService(d Deps) *Service {
 		float:      d.Float,
 		binds:      d.Binds,
 		commission: d.Commission,
+
+		ninVerifier: d.NINVerifier,
+		ninRequired: d.NINRequired,
 	}
 }
 
@@ -116,6 +138,13 @@ var (
 	ErrForbidden       = errors.New("policy: caller does not own this policy")
 	ErrConsentRequired = consent.ErrConsentRequired
 	ErrBadState        = errors.New("policy: illegal state transition")
+
+	// Purchase NIN gate (member path only). Messages are safe for the client —
+	// they name the rule, never the submitted NIN.
+	ErrNINRequired    = errors.New("policy: a valid NIN is required to purchase cover")
+	ErrNINInvalid     = errors.New("policy: nin must be an 11-digit number")
+	ErrNINRejected    = errors.New("policy: nin could not be verified")
+	ErrNINUnavailable = errors.New("policy: identity verification is temporarily unavailable")
 )
 
 // QuoteResult is the cached quote returned to the client. The underwriter +
@@ -214,6 +243,96 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 }
 
 // BindFromQuote runs the premium-debit→bind SAGA with MANDATORY auto-reverse.
+// It is the entry point for surfaces that do NOT collect a NIN (the transport
+// Goods-in-Transit seam, any future embedded trigger reusing the member saga).
+// The member HTTP purchase path goes through BindFromQuoteWithNIN, which gates
+// on a Dojah-verified NIN first — the exemption is deliberate and explicit,
+// not an oversight: those flows have no NIN in their request surface.
+func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (*Policy, error) {
+	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey)
+}
+
+// BindFromQuoteWithNIN is the member-facing purchase path
+// (POST /policies {quote_id, nin}). When NINRequired is on, the submitted NIN
+// must verify against the identity provider (Dojah /api/v1/kyc/nin) BEFORE the
+// quote is even read — a refused purchase leaves no policy row and moves no
+// money. The gate fails CLOSED: a provider that cannot answer is a refusal,
+// never a pass. The NIN itself is sent to the provider only — never logged,
+// never persisted here (the KYC flow owns the nin_hash record already).
+func (s *Service) BindFromQuoteWithNIN(ctx context.Context, userID, quoteID, nin, idempotencyKey string) (*Policy, error) {
+	if err := s.verifyNIN(ctx, userID, nin); err != nil {
+		return nil, err
+	}
+	return s.bindFromQuote(ctx, userID, quoteID, idempotencyKey)
+}
+
+// verifyNIN is the purchase NIN gate. Fail-closed at every step:
+//   - flag off                    → skipped (explicit per-env opt-out)
+//   - missing / not 11 digits     → ErrNINRequired / ErrNINInvalid (400)
+//   - no verifier wired           → ErrNINUnavailable (503)
+//   - provider error              → ErrNINUnavailable (503) — the adapter error
+//     can embed the request URL, which carries the NIN in its query string, so
+//     it is deliberately NOT wrapped or logged verbatim here
+//   - non-terminal verdict (PENDING — e.g. unconfigured sandbox creds)
+//     → ErrNINUnavailable (503): no answer, not "bad NIN"
+//   - terminal FAILED / REVIEW    → ErrNINRejected (400): the provider answered
+//   - PASSED + Match              → proceed
+func (s *Service) verifyNIN(ctx context.Context, userID, nin string) error {
+	if !s.ninRequired {
+		return nil
+	}
+	nin = strings.TrimSpace(nin)
+	if nin == "" {
+		return ErrNINRequired
+	}
+	if !isNINShape(nin) {
+		return ErrNINInvalid
+	}
+	if s.ninVerifier == nil {
+		log.Printf("[insurance] NIN gate: no identity provider wired — refusing bind (fail-closed)")
+		s.auditSafe(ctx, userID, "insurance.nin_gate_unavailable", map[string]any{"cause": "no_verifier"})
+		return ErrNINUnavailable
+	}
+	res, err := s.ninVerifier.VerifyIDNumber(ctx, provider.KycVerifyRequest{
+		ClientRef: "insurance-bind:" + userID,
+		UserID:    userID,
+		Type:      provider.KycIDNumber,
+		IDType:    "nin",
+		IDNumber:  nin,
+	})
+	if err != nil {
+		log.Printf("[insurance] NIN gate: provider call failed — refusing bind (fail-closed)")
+		s.auditSafe(ctx, userID, "insurance.nin_gate_unavailable", map[string]any{"cause": "provider_error"})
+		return ErrNINUnavailable
+	}
+	if res.Status == provider.KycPassed && res.Match {
+		s.auditSafe(ctx, userID, "insurance.nin_verified", nil)
+		return nil
+	}
+	if !res.Terminal {
+		s.auditSafe(ctx, userID, "insurance.nin_gate_unavailable", map[string]any{"cause": "no_verdict"})
+		return ErrNINUnavailable
+	}
+	s.auditSafe(ctx, userID, "insurance.nin_rejected", nil)
+	return ErrNINRejected
+}
+
+// isNINShape mirrors the 11-ASCII-digit rule the KYC tier-1 submission uses for
+// BVN/NIN — a length-only check would let any 11 characters through to the
+// provider call.
+func isNINShape(s string) bool {
+	if len(s) != 11 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// bindFromQuote runs the premium-debit→bind SAGA with MANDATORY auto-reverse.
 //  1. Create policy QUOTED → PENDING_PAYMENT.
 //  2. NDPA consent gate (provider data-share happens at bind).
 //  3. Idempotent wallet.Debit(premium) → credits AccountProviderClearing
@@ -230,7 +349,7 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 // idempotencyKey is the caller-supplied Idempotency-Key (REQUIRED on bind); the
 // same key is reused for the wallet debit and forwarded to the provider so the
 // whole saga is replay-safe.
-func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (*Policy, error) {
+func (s *Service) bindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (*Policy, error) {
 	if idempotencyKey == "" {
 		return nil, errors.New("policy: Idempotency-Key required for bind")
 	}

@@ -273,6 +273,57 @@ func TestOnEarningRecorded_ReplayOfTheSameEarningNeverDoubleCredits(t *testing.T
 	}
 }
 
+// A legacy referrer — attribution already points at them via
+// finance_referral_codes, but they never opened their link page so no
+// referral_links row exists — must still be paid: the hook lazily mints the
+// link, claims a cap slot, credits the wallet, and writes the audit event.
+// Without the mint this purchase silently paid the house while the tiered
+// engine (OnPurchaseSettled) would have paid the referrer from the same
+// attribution row.
+func TestOnEarningRecorded_LegacyReferrerWithoutLinkStillEarns(t *testing.T) {
+	pool := mustLivePool(t)
+	ctx := context.Background()
+	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
+
+	referrer := seedUser(t, pool)
+	referred := seedUser(t, pool)
+	seedAttribution(t, pool, referred, referrer, false) // no seedReferralLink on purpose
+	cleanupRewards(t, pool, referrer)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_engine_events WHERE referrer_id = $1`, referrer)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrer)
+	})
+
+	before, _ := ledgerSvc.GetBalance(ctx, referrer)
+	svc := commissionsplit.NewService(pool, ledgerSvc, true)
+	svc.OnEarningRecorded(ctx, earningFor(referred, "utility", 100_000))
+	after, _ := ledgerSvc.GetBalance(ctx, referrer)
+
+	if got, want := after-before, int64(20_000); got != want {
+		t.Fatalf("referrer balance delta = %d, want %d — a referrer with no referral_links row must still be paid", got, want)
+	}
+
+	var rewardCount int
+	if err := pool.QueryRow(ctx, `SELECT reward_count FROM public.referral_links WHERE referrer_id = $1`, referrer).Scan(&rewardCount); err != nil {
+		t.Fatalf("lazy-minted referral_links row must exist: %v", err)
+	}
+	if rewardCount != 1 {
+		t.Fatalf("reward_count = %d, want 1 (the minted code's first claimed slot)", rewardCount)
+	}
+
+	var auditCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM public.referral_engine_events
+		WHERE event_type = 'commission_split_reward_credited' AND referrer_id = $1`,
+		referrer,
+	).Scan(&auditCount); err != nil {
+		t.Fatalf("count audit events: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("commission_split_reward_credited events = %d, want 1 — a money mutation must emit an audit event", auditCount)
+	}
+}
+
 func TestOnEarningRecorded_DisabledFlagIsANoOp(t *testing.T) {
 	pool := mustLivePool(t)
 	ctx := context.Background()

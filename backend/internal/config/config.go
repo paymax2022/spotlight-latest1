@@ -78,6 +78,12 @@ type Config struct {
 	// Paystack credentials.
 	PaystackSecretKey  string
 	PaystackWebhookKey string
+	// PaystackBaseURL overrides the Paystack API base URL (default
+	// https://api.paystack.co). Local/dev only: set it to the Paystack fake
+	// (tools/fakes, e.g. http://localhost:9100) so the full
+	// initialize/verify/refund surface runs without real keys. Never set this
+	// in production — it reroutes every Paystack call the process makes.
+	PaystackBaseURL string
 
 	// Crypto real provider (retail crypto price feed + on-chain withdrawal broadcast).
 	// CryptoProvider selects the implementation: "mock" (default, deterministic, no
@@ -96,6 +102,10 @@ type Config struct {
 	MapleradPublicKey     string
 	MapleradProd          bool
 	MapleradWebhookSecret string
+	// MapleradBaseURL overrides the provider API root (regional endpoint, or a
+	// provider fake for e2e). Empty ⇒ the sandbox/prod default selected by
+	// MAPLERAD_PROD. WithBaseURL ignores "", so wiring it unconditionally is safe.
+	MapleradBaseURL string
 	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
@@ -457,6 +467,16 @@ type Config struct {
 	// and money-free; default OFF so it ships dark and is switched on per environment.
 	FeatureInsuranceProviderImportEnabled bool
 
+	// FeatureInsuranceNINRequired gates the member policy-purchase path
+	// (POST /api/finance/insurance/policies) on a Dojah-verified NIN. DEFAULT
+	// TRUE — it is a compliance rail, not a feature toggle: a bind without a
+	// verified identity must be an explicit per-environment opt-out, not the
+	// forgotten default (same precedent as FeatureTierLimitsEnabled /
+	// TRANSFER_FAILOVER_ENABLED). When on and Dojah cannot answer
+	// (unconfigured creds, outage, non-verdict) the purchase fails CLOSED
+	// before the policy row or any ledger leg exists.
+	FeatureInsuranceNINRequired bool
+
 	// Hotel Booking / Stays module (Property Suite). Dual-rail supply-gateway
 	// (bedbank + direct extranet). DEFAULT OFF. Gates /api/finance/stays,
 	// /api/stays/{admin,extranet} and /internal/webhooks/stays-supplier
@@ -771,6 +791,7 @@ func Load() Config {
 		SchedulerPollIntervalSeconds: getEnvInt("SCHEDULER_POLL_INTERVAL_SECONDS", 5),
 		PaystackSecretKey:            getEnv("PAYSTACK_SECRET_KEY", ""),
 		PaystackWebhookKey:           getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+		PaystackBaseURL:              getEnv("PAYSTACK_BASE_URL", ""),
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
 		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
@@ -782,6 +803,7 @@ func Load() Config {
 		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
 		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
 		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		MapleradBaseURL:            getEnv("MAPLERAD_BASE_URL", ""),
 		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
 		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
@@ -923,34 +945,38 @@ func Load() Config {
 		FeatureSpotlightwealthEnabled:                getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
 		FeatureInsuranceEnabled:                      getEnvBool("FEATURE_INSURANCE_ENABLED", false),
 		FeatureInsuranceProviderImportEnabled:        getEnvBool("FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED", false),
-		FeatureStaysEnabled:                          getEnvBool("FEATURE_STAYS_ENABLED", false),
-		FeaturePlacementEnabled:                      getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
-		FeatureMarketplaceEnabled:                    getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
-		ElasticsearchURL:                             getEnv("ELASTICSEARCH_URL", ""),
-		RunWorkersInProcess:                          getEnvBool("RUN_WORKERS_INPROCESS", false),
-		FeatureSocialPayEnabled:                      getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
-		FeatureP2PMarketEnabled:                      getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
-		FeatureSavingsEnabled:                        getEnvBool("FEATURE_SAVINGS_ENABLED", false),
-		FeatureTradingEnabled:                        getEnvBool("FEATURE_TRADING_ENABLED", false),
-		FeatureAITradingEnabled:                      getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
-		TradingFeeBps:                                getEnvInt("TRADING_FEE_BPS", 2000),
-		TradingHurdleBps:                             getEnvInt("TRADING_HURDLE_BPS", 0),
-		SavingsEarlyBreakPenaltyBps:                  getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
-		FeatureCreatorsEnabled:                       getEnvBool("FEATURE_CREATORS_ENABLED", false),
-		FeatureLoyaltyEnabled:                        getEnvBool("FEATURE_LOYALTY_ENABLED", false),
-		FeatureCommissionEnabled:                     getEnvBool("FEATURE_COMMISSION_ENABLED", false),
-		FeatureHealthEnabled:                         getEnvBool("FEATURE_HEALTH_ENABLED", false),
-		FeatureHealthPharmacyEnabled:                 getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
-		FeatureHealthLabEnabled:                      getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
-		FeatureHealthVetEnabled:                      getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
-		FeatureHealthIntakeEnabled:                   getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
-		FeatureHealthTriageEnabled:                   getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
-		FeatureHealthTriageWhatsAppEnabled:           getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
-		TriageEngine:                                 getEnv("TRIAGE_ENGINE", "mock"),
-		InfermedicaAppID:                             getEnv("INFERMEDICA_APP_ID", ""),
-		InfermedicaAppKey:                            getEnv("INFERMEDICA_APP_KEY", ""),
-		InfermedicaBaseURL:                           getEnv("INFERMEDICA_BASE_URL", ""),
-		TriageWhatsAppSecret:                         getEnv("TRIAGE_WHATSAPP_SECRET", ""),
+		// Compliance rail — DEFAULT TRUE like FeatureTierLimitsEnabled above.
+		// Set FEATURE_INSURANCE_NIN_REQUIRED=false only for explicit per-env
+		// opt-out (e.g. a dev box with no Dojah credentials).
+		FeatureInsuranceNINRequired:        getEnvBool("FEATURE_INSURANCE_NIN_REQUIRED", true),
+		FeatureStaysEnabled:                getEnvBool("FEATURE_STAYS_ENABLED", false),
+		FeaturePlacementEnabled:            getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
+		FeatureMarketplaceEnabled:          getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
+		ElasticsearchURL:                   getEnv("ELASTICSEARCH_URL", ""),
+		RunWorkersInProcess:                getEnvBool("RUN_WORKERS_INPROCESS", false),
+		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
+		FeatureP2PMarketEnabled:            getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
+		FeatureSavingsEnabled:              getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:              getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:            getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                      getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                   getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:        getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
+		FeatureCreatorsEnabled:             getEnvBool("FEATURE_CREATORS_ENABLED", false),
+		FeatureLoyaltyEnabled:              getEnvBool("FEATURE_LOYALTY_ENABLED", false),
+		FeatureCommissionEnabled:           getEnvBool("FEATURE_COMMISSION_ENABLED", false),
+		FeatureHealthEnabled:               getEnvBool("FEATURE_HEALTH_ENABLED", false),
+		FeatureHealthPharmacyEnabled:       getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
+		FeatureHealthLabEnabled:            getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
+		FeatureHealthVetEnabled:            getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureHealthIntakeEnabled:         getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
+		FeatureHealthTriageEnabled:         getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
+		FeatureHealthTriageWhatsAppEnabled: getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
+		TriageEngine:                       getEnv("TRIAGE_ENGINE", "mock"),
+		InfermedicaAppID:                   getEnv("INFERMEDICA_APP_ID", ""),
+		InfermedicaAppKey:                  getEnv("INFERMEDICA_APP_KEY", ""),
+		InfermedicaBaseURL:                 getEnv("INFERMEDICA_BASE_URL", ""),
+		TriageWhatsAppSecret:               getEnv("TRIAGE_WHATSAPP_SECRET", ""),
 
 		MapsConfigPath:            getEnv("MAPS_CONFIG_PATH", ""),
 		MapsDefaultSurface:        getEnv("MAPS_DEFAULT_SURFACE", "default"),
@@ -1201,10 +1227,16 @@ func (c Config) Validate() error {
 		if c.FeatureTransportEnabled && !c.FeatureMapsEnabled {
 			strict = append(strict, "FEATURE_TRANSPORT_ENABLED=true requires FEATURE_MAPS_ENABLED=true (no MapService means MockMaps)")
 		}
+		if c.MapleradBaseURL != "" {
+			strict = append(strict, "MAPLERAD_BASE_URL must not be set outside development — it reroutes every Maplerad call away from the real provider")
+		}
 		if c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled {
 			if isPlaceholder(c.PaystackSecretKey) {
 				strict = append(strict, "PAYSTACK_SECRET_KEY is required when Wallet or Bank transfers is enabled")
 			}
+		}
+		if c.PaystackBaseURL != "" {
+			strict = append(strict, "PAYSTACK_BASE_URL must not be set outside development — it reroutes every Paystack call away from api.paystack.co")
 		}
 		if c.FeatureAcademyEnabled {
 			switch strings.ToLower(strings.TrimSpace(c.RailsMode)) {

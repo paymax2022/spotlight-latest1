@@ -39,6 +39,18 @@ var ErrNoMembership = errors.New("association: no membership")
 // user's typo looked like a server fault.
 var ErrInvalidInput = errors.New("association: invalid input")
 
+// ErrIdempotencyKeyConflict marks an Idempotency-Key already held by a
+// DIFFERENT journal — the 409 contract finance/transfers and crowdfunding use
+// for cross-request key reuse. Replaying the SAME journal converges; this is
+// only returned when the key's recorded legs cannot be this operation's.
+var ErrIdempotencyKeyConflict = errors.New("association: idempotency key already used by a different journal")
+
+// ErrPaymentAlreadyDecided marks a decision attempted on an offline payment
+// whose state is already terminal for that decision — approving a FAILED or
+// REVERSED payment, or rejecting one already SUCCESS (whose settlement legs
+// have posted; undoing that is a reversal, not a status flip).
+var ErrPaymentAlreadyDecided = errors.New("association: payment already decided")
+
 // walletDebitLimiter is the minimal seam the dues money path depends on for
 // the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
 // production; unit tests inject a fake via WithTiers. Modeled as a local

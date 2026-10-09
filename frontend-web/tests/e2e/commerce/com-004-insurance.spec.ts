@@ -5,7 +5,9 @@
  * Provider posture locally: MyCover/Octamile adapters are constructed with
  * EMPTY keys, so every provider-bound call fails closed:
  *   - POST /quotes            → provider GetQuote error (external-dep marker)
- *   - POST /policies (bind)   → premium-debit→bind saga never reaches a provider
+ *   - POST /policies (bind)   → NIN gate first (FEATURE_INSURANCE_NIN_REQUIRED
+ *     defaults ON): no nin → 400; a nin Dojah cannot check → 503 with no
+ *     DOJAH_* creds locally — either way the debit→bind saga never starts
  *   - FNOL provider hand-off  → claim stays DRAFT (202 warning or 201)
  * The DB-side state machine + decisioning + payout money leg are exercised
  * for real by advancing the claim to FNOL_SUBMITTED via a fixture stamp
@@ -87,6 +89,27 @@ test.describe('CMS-004 insurance: catalog → policy → claim → payout', () =
       data: { file_name: 'id.pdf', content_type: 'application/pdf', purpose: 'kyc' },
     });
     expect([200, 201, 400, 503]).toContain(upload.status);
+
+    // ── Purchase NIN gate (w10): POST /policies requires a Dojah-verified nin ─
+    // The gate runs BEFORE the saga, so these refuse without touching money:
+    //   - flag ON (default) + no nin       → 400 nin_required
+    //   - flag ON + nin, Dojah unconfigured → 503 nin_verification_unavailable
+    //     (non-verdict → fail-closed, not "bad NIN")
+    //   - flag explicitly off               → gate skipped → 404 unknown quote
+    const noNin = await goFetch(request, '/api/finance/insurance/policies', {
+      method: 'POST',
+      token,
+      headers: { 'Idempotency-Key': idemKey('nin-gate') },
+      data: { quote_id: crypto.randomUUID() },
+    });
+    expect([400, 404]).toContain(noNin.status);
+    const withNin = await goFetch(request, '/api/finance/insurance/policies', {
+      method: 'POST',
+      token,
+      headers: { 'Idempotency-Key': idemKey('nin-gate') },
+      data: { quote_id: crypto.randomUUID(), nin: '12345678901' },
+    });
+    expect([400, 404, 503]).toContain(withNin.status);
 
     // ── Seeded ACTIVE policy (bind needs a live provider rail — external-dep) ─
     const policyId = seedActivePolicy(user.userId, PRODUCT);

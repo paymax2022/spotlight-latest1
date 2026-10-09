@@ -522,11 +522,14 @@ func (r *Repository) InsertPayoutRequested(ctx context.Context, actor, tutorID, 
 	var out *Payout
 	inserted := false
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		// uq_academy_tutor_payout_idem is a partial unique index, so the arbiter
+		// must repeat the index predicate — a bare ON CONFLICT (idempotency_key)
+		// matches no index and raises 42P10.
 		const ins = `
 			INSERT INTO public.academy_tutor_payouts
 				(id, tutor_id, amount_minor, state, idempotency_key, created_at)
 			VALUES ($1,$2,$3,'requested',$4, now())
-			ON CONFLICT (idempotency_key) DO NOTHING`
+			ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 		tag, err := tx.Exec(ctx, ins, id, tutorID, amountMinor, dbutil.NullStr(idemKey))
 		if err != nil {
 			return err
