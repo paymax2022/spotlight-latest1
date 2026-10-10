@@ -225,6 +225,17 @@ func (h *Handler) Book(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "appointment": a})
 }
 
+// failApptMutation maps the uniform denial sentinel to 404 — a foreign actor
+// and a missing appointment must return the same response — and keeps every
+// other service error at the historical 409.
+func failApptMutation(c *gin.Context, err error) {
+	if errors.Is(err, ErrAppointmentNotFound) {
+		ginutil.FailOK(c, http.StatusNotFound, ErrAppointmentNotFound.Error())
+		return
+	}
+	ginutil.FailOK(c, http.StatusConflict, err.Error())
+}
+
 // Accept — POST /appointments/:id/accept  (verified vet, HL-2)
 func (h *Handler) Accept(c *gin.Context) {
 	id := ginutil.UserID(c)
@@ -234,7 +245,7 @@ func (h *Handler) Accept(c *gin.Context) {
 	}
 	a, err := h.svc.Accept(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failApptMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -249,7 +260,7 @@ func (h *Handler) Confirm(c *gin.Context) {
 	}
 	a, err := h.svc.Confirm(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failApptMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -268,7 +279,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	a, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failApptMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -302,7 +313,7 @@ func (h *Handler) StartConsult(c *gin.Context) {
 	}
 	a, err := h.svc.StartConsult(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failApptMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -364,7 +375,7 @@ func (h *Handler) CompleteConsult(c *gin.Context) {
 	}
 	res, err := h.svc.CompleteConsult(c.Request.Context(), id, c.Param("id"), in)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failApptMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": res})
@@ -446,7 +457,11 @@ func (h *Handler) ListMyAppointments(c *gin.Context) {
 func (h *Handler) Get(c *gin.Context) {
 	a, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		if errors.Is(err, ErrAppointmentNotFound) {
+			ginutil.FailOK(c, http.StatusNotFound, ErrAppointmentNotFound.Error())
+			return
+		}
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})

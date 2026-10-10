@@ -485,14 +485,50 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		return nil, fmt.Errorf("vet: book slot: %w", err)
 	}
 
+	// failBooking compensates a booking that failed after sched.Request minted
+	// the appointment: a REQUESTED row squats the provider's slot
+	// (blockingStates) and is invisible to load()'s payment-row JOIN, so the
+	// orphan must be cancelled back out. When a hold was already placed it is
+	// refunded — gated on the hold being this payer's AND UNBOUND: escrow.Hold
+	// dedups on the bare idempotency key, so escrowID can name a hold this
+	// attempt did not create — a foreign replay's hold, or the SAME payer's
+	// live hold under a concurrent same-key booking (the loser's insert dies
+	// on UNIQUE(idempotency_key) only AFTER the winner commits). Refunding a
+	// bound hold would unwind a live booking's payment out from under it.
+	var escrowID string
+	failBooking := func(err error) (*Appointment, error) {
+		if _, cerr := s.sched.Transition(ctx, ownerID, appt.ID, healthscheduling.StateCancelled); cerr != nil {
+			err = fmt.Errorf("%w (orphaned appointment %s also failed to cancel: %v)", err, appt.ID, cerr)
+		}
+		if escrowID == "" {
+			return nil, err
+		}
+		var unbound bool
+		if perr := s.db.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2
+				  AND NOT EXISTS (SELECT 1 FROM vet_appointment_payments p WHERE p.escrow_id = h.id))`,
+			escrowID, ownerID).Scan(&unbound); perr != nil {
+			return nil, fmt.Errorf("%w (could not verify hold ownership for refund: %v)", err, perr)
+		}
+		if !unbound {
+			return nil, fmt.Errorf("%w (refund skipped: hold is not this payer's or is bound to a committed booking)", err)
+		}
+		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
+			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
+		}
+		return nil, err
+	}
+
 	// HL-9: HELD on booking. The escrow debit posts the balanced ledger leg and
 	// fails closed on insufficient funds before the payment row is written.
 	ref := "vet:" + appt.ID
 	hold, err := s.escrow.Hold(ctx, ownerID, ref, "health.vet", in.IdempotencyKey, total)
 	if err != nil {
-		return nil, fmt.Errorf("vet: hold payment (HL-9): %w", err)
+		return failBooking(fmt.Errorf("vet: hold payment (HL-9): %w", err))
 	}
-	escrowID := hold.HoldID()
+	escrowID = hold.HoldID()
 
 	const insPay = `
 		INSERT INTO vet_appointment_payments
@@ -501,7 +537,7 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10)`
 	if _, err := s.db.Exec(ctx, insPay, uuid.New().String(), appt.ID, ownerID, in.ProviderID,
 		in.PetID, in.ServiceID, string(in.VisitType), total, escrowID, in.IdempotencyKey); err != nil {
-		return nil, fmt.Errorf("vet: insert appointment payment: %w", err)
+		return failBooking(fmt.Errorf("vet: insert appointment payment: %w", err))
 	}
 
 	serviceID := in.ServiceID
@@ -530,7 +566,7 @@ func (s *Service) Accept(ctx context.Context, actorID, apptID string) (*Appointm
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may accept (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateAccepted); err != nil {
@@ -553,16 +589,23 @@ func (s *Service) Confirm(ctx context.Context, actorID, apptID string) (*Appoint
 	// APPROVED and suspended before confirming must not be able to advance
 	// the appointment toward a money release. Both Confirm and CompleteConsult
 	// re-check VCN status for this reason.
-	if s.prov != nil {
-		vetOwner, operr := s.providerOwner(ctx, a.ProviderID)
-		if operr == nil && actorID == vetOwner {
-			ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
-			if perr != nil {
-				return nil, perr
-			}
-			if !ok {
-				return nil, errors.New("vet: only the verified vet may confirm (HL-2)")
-			}
+	// The party check runs FIRST so a foreign actor gets the same uniform
+	// not-found denial as a missing appointment (no existence oracle).
+	owner := a.OwnerID
+	vetOwner, operr := s.providerOwner(ctx, a.ProviderID)
+	if operr != nil {
+		return nil, operr
+	}
+	if actorID != owner && actorID != vetOwner {
+		return nil, ErrAppointmentNotFound
+	}
+	if s.prov != nil && actorID == vetOwner {
+		ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
+		if perr != nil {
+			return nil, perr
+		}
+		if !ok {
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateConfirmed); err != nil {
@@ -582,8 +625,10 @@ func (s *Service) Cancel(ctx context.Context, actorID, apptID, reason string) (*
 	}
 	owner := a.OwnerID
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
+	// Uniform denial: a foreign appointment is indistinguishable from a
+	// missing one.
 	if actorID != owner && actorID != vetOwner {
-		return nil, errors.New("vet: forbidden")
+		return nil, ErrAppointmentNotFound
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateCancelled); err != nil {
 		return nil, err
@@ -621,7 +666,7 @@ func (s *Service) Dispatch(ctx context.Context, actorID, apptID string) (*Appoin
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may dispatch (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if a.VisitType != VisitHome {
@@ -657,7 +702,7 @@ func (s *Service) StartConsult(ctx context.Context, actorID, apptID string) (*Ap
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may start the consult (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if s.consult == nil {
@@ -733,15 +778,15 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 	if err != nil {
 		return nil, err
 	}
-	if a.ConsultID == nil {
-		return nil, errors.New("vet: no consult started for this appointment")
-	}
+	// HL-2 actor gate BEFORE the consult-state probe: a foreign actor must not
+	// learn another owner's appointment details (e.g. whether a consult was
+	// started) from the error it gets back.
 	vetOwner, err := s.providerOwner(ctx, a.ProviderID)
 	if err != nil {
 		return nil, err
 	}
 	if vetOwnerID != vetOwner {
-		return nil, errors.New("vet: only the verified vet may complete the consult (HL-2)")
+		return nil, ErrAppointmentNotFound
 	}
 	// HL-2: ownership alone is not the same as current VCN approval — a vet
 	// accepted while APPROVED and suspended before completing must not be
@@ -752,8 +797,11 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may complete the consult (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
+	}
+	if a.ConsultID == nil {
+		return nil, errors.New("vet: no consult started for this appointment")
 	}
 
 	res := &CompleteResult{}
@@ -934,7 +982,7 @@ func (s *Service) Get(ctx context.Context, requesterID, apptID string, isAdmin b
 	}
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if !isAdmin && requesterID != a.OwnerID && requesterID != vetOwner {
-		return nil, errors.New("vet: forbidden")
+		return nil, ErrAppointmentNotFound
 	}
 	return a, nil
 }

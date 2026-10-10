@@ -136,10 +136,8 @@ func TestLiveDB_Schedule_ActorGate(t *testing.T) {
 
 	// Foreign actor on a CREATED WALK_IN order: denied, no transition.
 	orderID := seedLabOrder(t, ctx, pool, patientID, labID, "CREATED", "WALK_IN")
-	if _, err := svc.Schedule(ctx, foreignID, orderID, false); err == nil {
-		t.Fatal("foreign Schedule must be refused")
-	} else if !strings.Contains(err.Error(), "only the lab may schedule") {
-		t.Fatalf("foreign Schedule denial = %v, want the role refusal", err)
+	if _, err := svc.Schedule(ctx, foreignID, orderID, false); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("foreign Schedule denial = %v, want ErrOrderNotFound (no existence oracle)", err)
 	}
 	if got := labOrderState(t, ctx, pool, orderID); got != "CREATED" {
 		t.Fatalf("state = %s after refused Schedule, want CREATED", got)
@@ -154,10 +152,8 @@ func TestLiveDB_Schedule_ActorGate(t *testing.T) {
 	// State oracle: the same foreign actor on a RELEASED order must get the
 	// SAME role refusal, not a state-distinguishing error.
 	releasedID := seedLabOrder(t, ctx, pool, patientID, labID, "RELEASED", "WALK_IN")
-	if _, err := svc.Schedule(ctx, foreignID, releasedID, false); err == nil {
-		t.Fatal("foreign Schedule on RELEASED order must be refused")
-	} else if !strings.Contains(err.Error(), "only the lab may schedule") {
-		t.Fatalf("foreign Schedule on RELEASED order = %v, want the same role refusal (no state leak)", err)
+	if _, err := svc.Schedule(ctx, foreignID, releasedID, false); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("foreign Schedule on RELEASED order = %v, want ErrOrderNotFound (no state leak)", err)
 	}
 
 	// Owner schedules the WALK_IN order — no dispatch for walk-in.
@@ -205,13 +201,11 @@ func TestLiveDB_Collect_StaffGate(t *testing.T) {
 
 	orderID := seedLabOrder(t, ctx, pool, patientID, labID, "SCHEDULED", "WALK_IN")
 
-	// Foreign actor and even the patient are refused — with the ROLE error,
-	// never a state answer.
+	// Foreign actor and even the patient are refused — with the uniform
+	// not-found sentinel, never a state or role answer.
 	for _, actor := range []string{foreignID, patientID} {
-		if _, err := svc.Collect(ctx, actor, orderID, "attempt"); err == nil {
-			t.Fatalf("Collect by %s must be refused", actor)
-		} else if !strings.Contains(err.Error(), "only verified lab staff may collect") {
-			t.Fatalf("Collect denial for %s = %v, want the role refusal", actor, err)
+		if _, err := svc.Collect(ctx, actor, orderID, "attempt"); !errors.Is(err, ErrOrderNotFound) {
+			t.Fatalf("Collect denial for %s = %v, want ErrOrderNotFound", actor, err)
 		}
 	}
 	if got := labOrderState(t, ctx, pool, orderID); got != "SCHEDULED" {
@@ -247,26 +241,31 @@ func TestLiveDB_Collect_StaffGate(t *testing.T) {
 		t.Fatalf("custody events = %d, want exactly the collection origin event", custody)
 	}
 
-	// A verified scientist may also collect a WALK_IN sample.
+	// Interim affiliation gate: a standalone scientist capability does NOT
+	// collect on this lab's WALK_IN order — the capability names no employing
+	// lab, so it cannot prove the scientist works here.
 	order2 := seedLabOrder(t, ctx, pool, patientID, labID, "SCHEDULED", "WALK_IN")
-	if _, err := svc.Collect(ctx, sciID, order2, "bench intake"); err != nil {
-		t.Fatalf("scientist Collect on WALK_IN must succeed: %v", err)
+	if _, err := svc.Collect(ctx, sciID, order2, "bench intake"); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("capability-stranger Collect on WALK_IN = %v, want ErrOrderNotFound", err)
 	}
 
-	// HOME stays phlebotomist/owner-only: the scientist credential alone does
-	// not collect at the doorstep.
+	// HOME likewise: a standalone phlebotomist credential does not collect at
+	// the doorstep of another lab's order.
 	homeID := seedLabOrder(t, ctx, pool, patientID, labID, "SCHEDULED", "HOME")
-	if _, err := svc.Collect(ctx, sciID, homeID, "field"); err == nil {
-		t.Fatal("scientist Collect on HOME order must be refused")
+	if _, err := svc.Collect(ctx, sciID, homeID, "field"); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("scientist Collect on HOME order = %v, want ErrOrderNotFound", err)
 	}
-	if _, err := svc.Collect(ctx, phleboID, homeID, "field"); err != nil {
-		t.Fatalf("phlebotomist Collect on HOME order must succeed: %v", err)
+	if _, err := svc.Collect(ctx, phleboID, homeID, "field"); !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("capability-stranger Collect on HOME order = %v, want ErrOrderNotFound", err)
+	}
+	if _, err := svc.Collect(ctx, ownerID, homeID, "field"); err != nil {
+		t.Fatalf("owner Collect on HOME order must succeed: %v", err)
 	}
 }
 
-// The role gate now precedes the state check on the scientist write paths too:
-// a foreign actor on a non-PROCESSING order gets the role refusal, not a state
-// answer it could use to map the order's lifecycle.
+// The role gate now precedes the state check on the staff write paths too:
+// a foreign actor on a non-PROCESSING order gets the not-found refusal, not a
+// state answer it could use to map the order's lifecycle.
 func TestLiveDB_ResultWrites_RoleBeforeState(t *testing.T) {
 	pool := labAuthzPool(t)
 	ctx := context.Background()
@@ -276,20 +275,24 @@ func TestLiveDB_ResultWrites_RoleBeforeState(t *testing.T) {
 
 	orderID := seedLabOrder(t, ctx, pool, patientID, labID, "CREATED", "WALK_IN")
 
-	_, err := svc.EnterResults(ctx, foreignID, orderID, "", []EnterResultInput{{TestID: uuid.New().String(), Value: "1", Status: ResultNormal}})
-	if err == nil {
-		t.Fatal("foreign EnterResults must be refused")
-	}
-	if strings.Contains(err.Error(), "PROCESSING") {
-		t.Fatalf("foreign EnterResults leaked order state in error: %v", err)
-	}
+	// A capability-holding stranger (scientist of another lab) is refused
+	// identically — the interim gate resolves staff to the owner only.
+	for _, actor := range []string{foreignID, sciID} {
+		_, err := svc.EnterResults(ctx, actor, orderID, "", []EnterResultInput{{TestID: uuid.New().String(), Value: "1", Status: ResultNormal}})
+		if !errors.Is(err, ErrOrderNotFound) {
+			t.Fatalf("foreign EnterResults by %s = %v, want ErrOrderNotFound", actor, err)
+		}
+		if strings.Contains(err.Error(), "PROCESSING") {
+			t.Fatalf("foreign EnterResults leaked order state in error: %v", err)
+		}
 
-	_, err = svc.Release(ctx, foreignID, orderID)
-	if err == nil {
-		t.Fatal("foreign Release must be refused")
-	}
-	if strings.Contains(err.Error(), "not ready for release") {
-		t.Fatalf("foreign Release leaked order state in error: %v", err)
+		_, err = svc.Release(ctx, actor, orderID)
+		if !errors.Is(err, ErrOrderNotFound) {
+			t.Fatalf("foreign Release by %s = %v, want ErrOrderNotFound", actor, err)
+		}
+		if strings.Contains(err.Error(), "not ready for release") {
+			t.Fatalf("foreign Release leaked order state in error: %v", err)
+		}
 	}
 }
 
@@ -339,5 +342,70 @@ func TestLiveDB_CreateOrder_IdemReplayOwnerScoped(t *testing.T) {
 	}
 	if foreignOrders != 0 {
 		t.Fatalf("foreign replay wrote %d order rows, want 0", foreignOrders)
+	}
+}
+
+// FlagBreach is a custody-disrupting staff action: it flips a sample to
+// BREACHED → RECOLLECT_REQUIRED and invalidates any pending result work,
+// while the patient's payment stays HELD. A foreign actor — including a
+// standalone capability holder — must be refused with the uniform not-found
+// sentinel BEFORE any sample/order state is read into the error path; the
+// lab's staff (owner under the interim affiliation gate) proceed normally.
+func TestLiveDB_FlagBreach_StaffGate(t *testing.T) {
+	pool := labAuthzPool(t)
+	ctx := context.Background()
+	patientID, ownerID, sciID, phleboID, foreignID, labID := seedLabAuthzFixture(t, ctx, pool)
+	prov := authzFakeProv{ownerID: ownerID, providerID: labID, scientistID: sciID, phleboID: phleboID}
+	svc := NewService(pool, nil, nil, prov, nil, nil, nil, nil)
+
+	orderID := seedLabOrder(t, ctx, pool, patientID, labID, "SAMPLE_COLLECTED", "WALK_IN")
+	sampleID := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO lab_samples (id, order_id, state, collection_method, barcode_ref, collected_by)
+		 VALUES ($1,$2,'COLLECTED','WALK_IN',$3,$4)`,
+		sampleID, orderID, "BC-BREACH-"+sampleID[:8], ownerID); err != nil {
+		t.Fatalf("seed sample: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, sampleID)
+		_, _ = pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, sampleID)
+	})
+
+	// Foreign actors — stranger, the patient, and a capability-holding
+	// stranger under the interim gate — are refused with the sentinel; the
+	// sample state and custody log must not move.
+	for name, actor := range map[string]string{
+		"stranger": foreignID, "patient": patientID, "capability_stranger": sciID,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := svc.FlagBreach(ctx, actor, sampleID, "injected breach attempt"); !errors.Is(err, ErrOrderNotFound) {
+				t.Fatalf("FlagBreach by %s = %v, want ErrOrderNotFound", name, err)
+			}
+		})
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM lab_samples WHERE id=$1`, sampleID).Scan(&state); err != nil {
+		t.Fatalf("read sample state: %v", err)
+	}
+	if state != string(SampleCollected) {
+		t.Fatalf("sample state = %s after refused FlagBreach, want unchanged COLLECTED", state)
+	}
+	var custody int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM lab_custody_events WHERE sample_id=$1`, sampleID).Scan(&custody); err != nil {
+		t.Fatalf("count custody events: %v", err)
+	}
+	if custody != 0 {
+		t.Fatalf("refused FlagBreach wrote %d custody events, want 0", custody)
+	}
+
+	// The lab owner (staff under the interim gate) flags the breach — the
+	// chain breaks and recollection is required before any accession.
+	out, err := svc.FlagBreach(ctx, ownerID, sampleID, "seal broken in transit")
+	if err != nil {
+		t.Fatalf("owner FlagBreach must succeed: %v", err)
+	}
+	if out.State != SampleRecollectRequired {
+		t.Fatalf("sample state = %s, want RECOLLECT_REQUIRED", out.State)
 	}
 }

@@ -209,21 +209,20 @@ func (a *labProviderGateAdapter) VerifiedLabOwner(ctx context.Context, userID, p
 	}
 	return ok, nil
 }
+
+// IsVerifiedScientist / IsVerifiedPhlebotomist answer "is userID verified staff
+// OF providerID". INTERIM (HL-2): the single-identity capability model has no
+// staff↔lab affiliation — a lab_scientist/phlebotomist health_providers row is
+// owned by the credential-holder and names no employing lab, so a bare
+// capability check authorized ANY approved scientist/phlebotomist on ANY lab's
+// orders (custody, results, escrow release). Until a staff-affiliation model
+// lands, provider-scoped staff checks resolve to the lab's verified owner —
+// the only provider-scoped answer the schema can support. Fail closed.
 func (a *labProviderGateAdapter) IsVerifiedScientist(ctx context.Context, userID, providerID string) (bool, error) {
-	return a.hasCapability(ctx, userID, "lab_scientist")
+	return a.VerifiedLabOwner(ctx, userID, providerID)
 }
 func (a *labProviderGateAdapter) IsVerifiedPhlebotomist(ctx context.Context, userID, providerID string) (bool, error) {
-	return a.hasCapability(ctx, userID, "phlebotomist")
-}
-func (a *labProviderGateAdapter) hasCapability(ctx context.Context, userID, providerType string) (bool, error) {
-	var ok bool
-	const q = `SELECT EXISTS (
-		SELECT 1 FROM health_providers
-		WHERE owner_user_id=$1 AND domain='LAB' AND provider_type=$2 AND status='APPROVED')`
-	if err := a.db.QueryRow(ctx, q, userID, providerType).Scan(&ok); err != nil {
-		return false, err
-	}
-	return ok, nil
+	return a.VerifiedLabOwner(ctx, userID, providerID)
 }
 
 // labPayoutGateAdapter enforces HL-10: the lab owner must hold a KYC tier >= 1

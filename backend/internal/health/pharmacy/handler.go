@@ -315,7 +315,11 @@ func (h *Handler) Cancel(c *gin.Context) {
 func (h *Handler) Get(c *gin.Context) {
 	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		if errors.Is(err, ErrOrderNotFound) {
+			ginutil.FailOK(c, http.StatusNotFound, ErrOrderNotFound.Error())
+			return
+		}
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})

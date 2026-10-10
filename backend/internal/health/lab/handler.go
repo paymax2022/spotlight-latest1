@@ -249,7 +249,7 @@ func (h *Handler) Handover(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	sample, err := h.svc.Handover(c.Request.Context(), id, c.Param("id"), req.ToCustodianID, req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sample": sample})
@@ -268,7 +268,7 @@ func (h *Handler) FlagBreach(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	sample, err := h.svc.FlagBreach(c.Request.Context(), id, c.Param("id"), req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sample": sample})
@@ -288,7 +288,7 @@ func (h *Handler) Accession(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	sample, err := h.svc.Accession(c.Request.Context(), id, c.Param("id"), req.ScannedBarcode, req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sample": sample})
@@ -357,17 +357,28 @@ func (h *Handler) Cancel(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	o, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
+}
+
+// failOrderRead maps the not-found/unauthorized sentinel to a uniform 404 —
+// a foreign order is indistinguishable from a missing one — and reports any
+// other failure as a real server error (a pool error is not a 403).
+func failOrderRead(c *gin.Context, err error) {
+	if errors.Is(err, ErrOrderNotFound) {
+		ginutil.FailOK(c, http.StatusNotFound, ErrOrderNotFound.Error())
+		return
+	}
+	ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 }
 
 // Get — GET /orders/:id  (object-level authZ: patient / lab / admin)
 func (h *Handler) Get(c *gin.Context) {
 	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		failOrderRead(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -377,7 +388,7 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) Results(c *gin.Context) {
 	rows, err := h.svc.Results(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		failOrderRead(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "results": rows})
@@ -387,7 +398,7 @@ func (h *Handler) Results(c *gin.Context) {
 func (h *Handler) Custody(c *gin.Context) {
 	rows, err := h.svc.CustodyTrail(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		failOrderRead(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "custody": rows})

@@ -110,9 +110,9 @@ func seedVetAuthzFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	return providerID, vetOwnerID, ownerID, foreignID, foreignPetID, serviceID, apptID, idemKey
 }
 
-// A foreign actor probing a TELE appointment must get the HL-2 role refusal —
-// not the "dispatch only applies to HOME visits" answer that would confirm the
-// appointment exists and reveal its visit type.
+// A foreign actor probing a TELE appointment must get the uniform not-found
+// refusal — not the "dispatch only applies to HOME visits" answer that would
+// confirm the appointment exists and reveal its visit type.
 func TestLiveDB_Dispatch_RoleBeforeVisitCheck(t *testing.T) {
 	pool := vetAuthzPool(t)
 	ctx := t.Context()
@@ -123,14 +123,8 @@ func TestLiveDB_Dispatch_RoleBeforeVisitCheck(t *testing.T) {
 	svc := NewService(pool, nil, disp, gate, nil, nil, nil, nil, nil, nil, nil)
 
 	_, err := svc.Dispatch(ctx, foreignID, apptID)
-	if err == nil {
-		t.Fatal("foreign Dispatch must be refused")
-	}
-	if !strings.Contains(err.Error(), "only the verified vet may dispatch") {
-		t.Fatalf("foreign Dispatch = %v, want the HL-2 refusal (not a visit-type leak)", err)
-	}
-	if strings.Contains(err.Error(), "HOME") {
-		t.Fatalf("foreign Dispatch leaked the appointment's visit type: %v", err)
+	if !errors.Is(err, ErrAppointmentNotFound) {
+		t.Fatalf("foreign Dispatch = %v, want ErrAppointmentNotFound (no existence/visit-type leak)", err)
 	}
 	if len(disp.calls) != 0 {
 		t.Fatalf("refused Dispatch must not book transport: %v", disp.calls)

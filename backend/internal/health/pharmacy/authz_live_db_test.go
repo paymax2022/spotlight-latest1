@@ -148,7 +148,7 @@ func TestLiveDB_Complete_ActorGate(t *testing.T) {
 
 	escrowID := uuid.New().String()
 	orderID := seedOrder(t, ctx, pool, patientID, pharmacyID, "IN_DELIVERY", "DELIVERY",
-		map[string]any{"delivery_ref": "ref-1", "escrow_id": escrowID})
+		map[string]any{"delivery_ref": "ref-1", "escrow_id": escrowID, "pickup_code": "123456"})
 
 	// Foreign actor: uniform denial, nothing else happens.
 	if _, err := svc.Complete(ctx, foreignID, orderID, "123456"); !errors.Is(err, ErrOrderNotFound) {
@@ -166,6 +166,18 @@ func TestLiveDB_Complete_ActorGate(t *testing.T) {
 	}
 	if proofs != 0 {
 		t.Fatalf("refused Complete must not record a proof, got %d", proofs)
+	}
+
+	// Even an order party cannot complete delivery with a wrong confirmation
+	// code — the OTP is checked against the code minted at dispatch.
+	if _, err := svc.Complete(ctx, ownerID, orderID, "000000"); err == nil {
+		t.Fatal("Complete with a wrong delivery code must be refused")
+	}
+	if got := orderState(t, ctx, pool, orderID); got != "IN_DELIVERY" {
+		t.Fatalf("state = %s after wrong-code Complete, want IN_DELIVERY", got)
+	}
+	if len(esc.released) != 0 {
+		t.Fatalf("wrong-code Complete released escrow: %v", esc.released)
 	}
 
 	// The pharmacy owner completes delivery on the courier's confirmation —

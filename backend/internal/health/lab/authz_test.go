@@ -3,8 +3,12 @@ package healthlab
 // DB-free coverage for the lab collector/owner authorization helpers wired
 // into Schedule (lab owner or admin) and Collect (verified lab staff, gated
 // BEFORE the order-state check so a foreign actor cannot learn the state).
-// A fake ProviderGate answers per-role so the exercise never touches a
-// database; the nil-gate owner fallback is covered by the live-DB tests.
+// INTERIM: there is no staff↔lab affiliation model, so "verified lab staff"
+// resolves to the lab's owner only — a standalone scientist/phlebotomist
+// capability is self-owned and proves nothing about which lab the holder
+// works for. A fake ProviderGate answers per-role so the exercise never
+// touches a database; the nil-gate owner fallback is covered by the live-DB
+// tests.
 
 import (
 	"context"
@@ -40,8 +44,9 @@ func authzTestSvc() *Service {
 		nil, nil, nil, nil)
 }
 
-// WALK_IN intake is lab-staff work: the owner, a verified scientist, or a
-// verified phlebotomist of THIS lab may collect — nobody else.
+// WALK_IN intake is lab-staff work: under the interim affiliation gate only
+// the lab owner may collect — a scientist/phlebotomist capability names no
+// employing lab and cannot be trusted as "staff of THIS lab".
 func TestMayCollectSample_WalkIn(t *testing.T) {
 	svc := authzTestSvc()
 	ctx := context.Background()
@@ -53,8 +58,8 @@ func TestMayCollectSample_WalkIn(t *testing.T) {
 		want    bool
 	}{
 		{"lab owner", "owner-1", true},
-		{"verified scientist", "sci-1", true},
-		{"verified phlebotomist", "phleb-1", true},
+		{"standalone scientist capability is NOT staff here", "sci-1", false},
+		{"standalone phlebotomist capability is NOT staff here", "phleb-1", false},
 		{"the patient may NOT collect", "patient-1", false},
 		{"foreign actor", "stranger-9", false},
 		{"empty actor", "", false},
@@ -71,8 +76,9 @@ func TestMayCollectSample_WalkIn(t *testing.T) {
 	}
 }
 
-// A HOME collection is field work: verified phlebotomist or the lab owner.
-// A scientist's credential alone does not collect at the doorstep.
+// A HOME collection is field work: the lab owner only, under the interim
+// gate — a standalone phlebotomist credential does not collect at the
+// doorstep of another lab's order.
 func TestMayCollectSample_Home(t *testing.T) {
 	svc := authzTestSvc()
 	ctx := context.Background()
@@ -84,8 +90,8 @@ func TestMayCollectSample_Home(t *testing.T) {
 		want    bool
 	}{
 		{"lab owner", "owner-1", true},
-		{"verified phlebotomist", "phleb-1", true},
-		{"scientist alone is not a field collector", "sci-1", false},
+		{"standalone phlebotomist capability is NOT staff here", "phleb-1", false},
+		{"standalone scientist capability is NOT staff here", "sci-1", false},
 		{"foreign actor", "stranger-9", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

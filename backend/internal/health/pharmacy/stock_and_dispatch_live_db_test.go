@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -236,3 +237,114 @@ func TestLiveDB_CreateOrder_UntrackedProductStockUnlimited(t *testing.T) {
 // transport.NewService(pool, settlement.NewService(pool, ledgerSvc))) is not
 // unit-tested here: BookParcel's real signature pulls in a maps-routing
 // provider and pricing config that would make a package-local test fragile.
+
+// TestLiveDB_CreateOrder_ConcurrentSameKeyNeverRefundsWinner locks the
+// failAfterHold bound-hold guard. When N concurrent CreateOrder calls share
+// one patient + idempotency key, escrow.Hold dedups every racer onto the SAME
+// hold while UNIQUE(pharmacy_orders.idempotency_key) lets exactly one order
+// win — the loser's insert dies on the unique key only AFTER the winner's tx
+// commits, and at that instant the deduped hold is already BOUND to the
+// committed order. Before the guard, the loser's refund path only checked
+// payer ownership, so it refunded the winner's live hold and left a committed
+// order pointing at refunded money. The probe must check the committed order
+// binding, not just the payer.
+func TestLiveDB_CreateOrder_ConcurrentSameKeyNeverRefundsWinner(t *testing.T) {
+	pool := stockDispatchPool(t)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+	// Untracked stock: the race must bottleneck on the idempotency unique key,
+	// not on the stock compare-and-swap.
+	patientID, pharmacyID, productID := seedStockFixture(t, ctx, pool, 0)
+	fundWallet(t, ctx, led, patientID, 5_000_000)
+
+	escrowAdapter := newTestEscrowAdapter(pool, led)
+	svc := healthpharmacy.NewService(pool, escrowAdapter, nil, nil, nil, testProviderGate{pharmacyID: pharmacyID}, nil, nil)
+
+	key := "idem-race-" + uuid.New().String()
+	in := healthpharmacy.CreateOrderInput{
+		PharmacyProviderID: pharmacyID,
+		FulfilmentMethod:   "PICKUP",
+		IdempotencyKey:     key,
+		Lines:              []healthpharmacy.OrderLineInput{{ProductID: productID, Quantity: 1}},
+	}
+
+	const racers = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	orders := make([]*healthpharmacy.Order, racers)
+	errs := make([]error, racers)
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			orders[i], errs[i] = svc.CreateOrder(ctx, patientID, in)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// Every racer either won/observed the single order or was refused — none
+	// may have produced a second order row.
+	var winners int
+	for i, err := range errs {
+		if err == nil {
+			winners++
+			if orders[i] == nil {
+				t.Fatalf("racer %d returned nil order with nil error", i)
+			}
+		}
+	}
+	if winners == 0 {
+		t.Fatalf("no racer succeeded — at least one must win, errs=%v", errs)
+	}
+
+	var orderCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM pharmacy_orders WHERE idempotency_key=$1`, key).Scan(&orderCount); err != nil {
+		t.Fatalf("count orders: %v", err)
+	}
+	if orderCount != 1 {
+		t.Fatalf("concurrent same-key creates committed %d orders, want exactly 1", orderCount)
+	}
+
+	// Exactly one escrow hold exists for the key and it must still be HELD —
+	// a REFUNDED state here is the bug: a loser refunded the winner's bound
+	// hold and left the committed order pointing at money already returned.
+	var holdCount int
+	var holdState string
+	var holdEscrowID string
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) OVER (), state, id FROM escrow_holds WHERE idempotency_key=$1 LIMIT 1`,
+		key).Scan(&holdCount, &holdState, &holdEscrowID); err != nil {
+		t.Fatalf("read escrow hold: %v", err)
+	}
+	if holdCount != 1 {
+		t.Fatalf("expected exactly 1 escrow hold for the shared key, got %d", holdCount)
+	}
+	if holdState != "HELD" {
+		t.Fatalf("winning escrow hold state = %q, want HELD — a racer refunded the bound hold", holdState)
+	}
+
+	// The committed order's escrow_id must point at that HELD hold.
+	var boundEscrow string
+	if err := pool.QueryRow(ctx,
+		`SELECT escrow_id FROM pharmacy_orders WHERE idempotency_key=$1`, key).Scan(&boundEscrow); err != nil {
+		t.Fatalf("read order escrow binding: %v", err)
+	}
+	if boundEscrow != holdEscrowID {
+		t.Fatalf("committed order binds escrow %s, want the held hold %s", boundEscrow, holdEscrowID)
+	}
+
+	// Money invariant: the patient's balance dropped by exactly ONE hold —
+	// no phantom refund leg, no double debit.
+	var balance int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN le.type='CREDIT' THEN le.amount_kobo ELSE -le.amount_kobo END), 0)
+		FROM ledger_entries le JOIN ledger_accounts la ON la.id = le.account_id
+		WHERE la.user_id = $1`, patientID).Scan(&balance); err != nil {
+		t.Fatalf("read wallet balance: %v", err)
+	}
+	if want := int64(5_000_000 - 100_000); balance != want {
+		t.Fatalf("patient wallet balance = %d, want %d (exactly one hold, never refunded)", balance, want)
+	}
+}

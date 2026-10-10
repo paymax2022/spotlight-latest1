@@ -553,21 +553,27 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// Best-effort: if the refund itself fails, that failure is folded into
 	// the returned error so it surfaces rather than being silently dropped.
 	//
-	// The refund is gated on the hold actually belonging to THIS payer:
-	// escrow.Hold dedups on the bare idempotency key, so under a foreign-key
-	// replay race (or a dedup onto a stranger's hold) escrowID can name a hold
-	// this caller did not create — refunding it would unwind someone else's
-	// live order. Fail closed: never refund a hold whose payer is not the
-	// ordering patient.
+	// The refund is gated on the hold being this payer's AND UNBOUND:
+	// escrow.Hold dedups on the bare idempotency key, so escrowID can name a
+	// hold this attempt did not create — a foreign replay's hold, or the SAME
+	// payer's live hold under a concurrent same-key create (the loser's insert
+	// dies on UNIQUE(idempotency_key) only AFTER the winner commits, so the
+	// bound-hold probe below must check the committed pharmacy_orders row, not
+	// just the payer). Refunding a bound hold would unwind a live order's
+	// payment out from under it. Fail closed: never refund a hold that is not
+	// this payer's or is already bound to a committed order.
 	failAfterHold := func(err error) (*Order, error) {
-		var ours bool
+		var unbound bool
 		if perr := s.db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM escrow_holds WHERE id=$1 AND payer_id=$2)`,
-			escrowID, patientID).Scan(&ours); perr != nil {
-			return nil, fmt.Errorf("%w (could not verify hold payer for refund: %v)", err, perr)
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2
+				  AND NOT EXISTS (SELECT 1 FROM pharmacy_orders o WHERE o.escrow_id = h.id))`,
+			escrowID, patientID).Scan(&unbound); perr != nil {
+			return nil, fmt.Errorf("%w (could not verify hold ownership for refund: %v)", err, perr)
 		}
-		if !ours {
-			return nil, fmt.Errorf("%w (refund skipped: hold payer is not this patient)", err)
+		if !unbound {
+			return nil, fmt.Errorf("%w (refund skipped: hold is not this patient's or is bound to a committed order)", err)
 		}
 		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
 			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
@@ -834,7 +840,7 @@ func (s *Service) Dispense(ctx context.Context, pharmacistID, orderID string) (*
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.New("pharmacy: only the verified pharmacy may dispense (HL-2)")
+			return nil, ErrOrderNotFound
 		}
 	}
 	// DP-002/DP-003: the dispensed Rx-required lines must match the verified
@@ -891,7 +897,7 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.New("pharmacy: only the verified pharmacy may dispatch (HL-2)")
+			return nil, ErrOrderNotFound
 		}
 	}
 	if o.State != StateDispensed {
@@ -926,7 +932,11 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 		_ = s.rx.Fulfill(ctx, pharmacistID, *o.PrescriptionID)
 	}
 	out.DeliveryRef = deliveryRef
-	out.PickupCode = &pickupCode
+	// The pickup credential is the patient's counter/delivery-confirmation proof —
+	// never echo it back to the pharmacy side. The owner is a legitimate Complete
+	// party, so returning it here would hand the payee a self-release credential;
+	// the patient reads it via Get.
+	out.PickupCode = nil
 	return out, nil
 }
 
@@ -972,9 +982,16 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 		}
 		// For MVP, proof is passed via pickupCode (reuse that field as proof OTP).
 		// In a real flow, the driver app captures OTP/photo/signature and passes a structured proof.
-		// For now, validate that pickupCode is a 6-digit OTP.
 		if pickupCode == "" {
 			return nil, fmt.Errorf("pharmacy: proof-of-delivery required before delivery completion (DP-006) — %w", ErrProofRequired)
+		}
+		// The delivery-confirmation code IS the minted pickup_code: a bare
+		// 6-digit-format check would accept ANY OTP-shaped value, so completing a
+		// delivery requires presenting the patient's actual code — the same
+		// credential semantics as the PICKUP branch above. No proof row is
+		// recorded for a mismatched code.
+		if o.PickupCode == nil || *o.PickupCode != pickupCode {
+			return nil, errors.New("pharmacy: delivery confirmation code mismatch")
 		}
 		proof := DeliveryProof{
 			OrderID:    orderID,
@@ -1046,7 +1063,15 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 	// Terminal CLOSED once funds released.
 	closed, err := s.transition(ctx, actorID, orderID, StateClosed, nil, "health.pharmacy.order.close")
 	if err != nil {
+		if actorID != o.PatientID {
+			out.PickupCode = nil
+		}
 		return out, nil // released; closing is best-effort and idempotent on retry
+	}
+	// The pickup/delivery-confirmation credential is patient-facing — the owner
+	// is a legitimate completing party but must not be echoed the code.
+	if actorID != o.PatientID {
+		closed.PickupCode = nil
 	}
 	return closed, nil
 }
@@ -1059,8 +1084,9 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 	if err != nil {
 		return nil, err
 	}
+	// Uniform denial: a foreign order is indistinguishable from a missing one.
 	if o.PatientID != patientID {
-		return nil, errors.New("pharmacy: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	if !isPreDispense(o.State) {
 		return nil, fmt.Errorf("pharmacy: order can only be cancelled before dispense, is %s", o.State)
@@ -1093,8 +1119,9 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 		return nil, err
 	}
 	owner, _ := s.pharmacyOwner(ctx, o.PharmacyProviderID)
+	// Uniform denial: a foreign order is indistinguishable from a missing one.
 	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
-		return nil, errors.New("pharmacy: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	lines, _ := s.loadLines(ctx, orderID)
 	o.Lines = lines
@@ -1277,7 +1304,7 @@ func (s *Service) SubmitReview(ctx context.Context, patientID, orderID string, r
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, errors.New("pharmacy: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	if !isReviewable(o.State) {
 		return nil, fmt.Errorf("pharmacy: order must be completed before it can be reviewed, is %s", o.State)

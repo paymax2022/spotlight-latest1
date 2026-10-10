@@ -93,8 +93,9 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 	// Test 1: Verify order transitions to IN_DELIVERY (prerequisite for proof requirement)
 	t.Run("order_in_delivery_state", func(t *testing.T) {
 		// For MVP testing, directly update the order to IN_DELIVERY with a delivery ref
+		// and the confirmation code the courier would have collected at handoff
 		// (In real flow, this is done by Dispatch() which requires the Dispatcher seam)
-		seed(`UPDATE public.pharmacy_orders SET state='IN_DELIVERY', delivery_ref='delivery_ref_123' WHERE id=$1`, orderID)
+		seed(`UPDATE public.pharmacy_orders SET state='IN_DELIVERY', delivery_ref='delivery_ref_123', pickup_code='123456' WHERE id=$1`, orderID)
 
 		// Verify order is now IN_DELIVERY
 		var state string
@@ -137,8 +138,21 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 
 	// Test 2: Complete with valid OTP proof (DP-006)
 	t.Run("complete_with_valid_proof", func(t *testing.T) {
-		// The patient completes the delivery with a valid 6-digit OTP proof
-		// (Using pickupCode field for MVP proof OTP)
+		// A well-formed but WRONG code must not release delivery escrow — the
+		// presented OTP is now compared to the confirmation code the order
+		// actually carries (any-six-digits was a forged-proof hole).
+		if _, err := svc.Complete(ctx, patientID, orderID, "999999"); err == nil {
+			t.Fatal("Complete with a wrong delivery code must be refused")
+		}
+		var st string
+		if err := pool.QueryRow(ctx, `SELECT state FROM public.pharmacy_orders WHERE id=$1`, orderID).Scan(&st); err != nil {
+			t.Fatalf("query order state: %v", err)
+		}
+		if st != "IN_DELIVERY" {
+			t.Fatalf("order state = %s after wrong-code Complete, want unchanged IN_DELIVERY", st)
+		}
+
+		// The patient completes the delivery with the real confirmation code.
 		order, err := svc.Complete(ctx, patientID, orderID, "123456")
 		if err != nil {
 			t.Fatalf("complete with valid proof should succeed: %v", err)

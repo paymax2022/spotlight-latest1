@@ -5,14 +5,17 @@
  * /api/health/lab/admin/*):
  *
  *   lab owner KYB (type=lab) → catalog upsert → patient order (WALK_IN, escrow
- *   HELD, idempotent) → owner schedule → collect (sample + chain of custody
- *   opens) → verified lab_scientist accessions (barcode-verified) → enters
- *   validated results → releases (vault record + escrow RELEASE → CLOSED).
+ *   HELD, idempotent) → owner schedule → owner collect (sample + chain of
+ *   custody opens) → owner accessions (barcode-verified) → enters validated
+ *   results → releases (vault record + escrow RELEASE → CLOSED).
  *   Plus: custody read, results read, provider orders, cancel→refund, admin.
  *
- * HL-2 gates: accession/results/release require a DIFFERENT actor holding an
- * APPROVED domain=LAB provider_type=lab_scientist capability — the scientist
- * is onboarded through the same real KYB journey as a second user.
+ * HL-2 gates — INTERIM: there is no staff↔lab affiliation model (a
+ * lab_scientist/phlebotomist health_providers row is a self-owned capability
+ * naming no employing lab), so provider-scoped staff ops resolve to the lab
+ * owner only. Users holding standalone lab_scientist/phlebotomist
+ * capabilities are DENIED on this lab's orders — asserted below. Restore
+ * separate staff actors when the affiliation model lands.
  * HL-10: lab owner KYC tier ≥1 before payout release (fixture setKycTier).
  */
 
@@ -49,7 +52,8 @@ test.describe('HLT-003 lab order lifecycle', () => {
       displayName: `E2E Lab ${tag}`,
     });
 
-    // Scientist + phlebotomist: different users holding the HL-2 capabilities.
+    // Capability holders who own NO staff relationship to this lab: under the
+    // interim owner-only gate their tokens must be refused on every staff op.
     const scientist = await provisionVerifiedUser(request, `hlt003-sci-${tag}`);
     const sciToken = await goTrueToken(request, scientist.email, scientist.password);
     await onboardProvider(request, sciToken, {
@@ -169,40 +173,66 @@ test.describe('HLT-003 lab order lifecycle', () => {
     });
     expect(custody0.status).toBe(200);
 
-    // Custody handover (HL-6): COLLECTED → HANDED_OVER, initiated by a verified
-    // phlebotomist — a scientist token must be refused before this works.
+    // Custody handover (HL-6): COLLECTED → HANDED_OVER. Capability-holding
+    // strangers (scientist/phlebotomist of OTHER labs — there is no
+    // affiliation to scope them to this one) must be refused with the uniform
+    // not-found denial; only the lab owner can hand over under the interim.
     const deniedHandover = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/handover`, {
       method: 'POST',
       token: sciToken,
       data: { to_custodian_id: scientist.userId, note: 'e2e denied' },
     });
-    expect([403, 409]).toContain(deniedHandover.status);
-    const handover = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/handover`, {
+    expect([404]).toContain(deniedHandover.status);
+    const deniedHandover2 = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/handover`, {
       method: 'POST',
       token: phlebToken,
-      data: { to_custodian_id: scientist.userId, note: 'e2e bench handover' },
+      data: { to_custodian_id: phleb.userId, note: 'e2e denied' },
+    });
+    expect([404]).toContain(deniedHandover2.status);
+    const handover = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/handover`, {
+      method: 'POST',
+      token: ownerToken,
+      data: { to_custodian_id: owner.userId, note: 'e2e bench handover' },
     });
     expect([200, 201]).toContain(handover.status);
 
-    // Scientist accessions — barcode must match (EC-001); a wrong scan refuses.
-    const badScan = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/accession`, {
+    // Accession (EC-001 barcode gate): foreign staff are refused (404 — no
+    // sample-existence oracle); the owner's wrong scan refuses on the barcode
+    // mismatch; the owner's correct scan accessions.
+    const deniedAccession = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/accession`, {
       method: 'POST',
       token: sciToken,
+      data: { note: 'e2e denied', scanned_barcode: barcode },
+    });
+    expect([404]).toContain(deniedAccession.status);
+    const badScan = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/accession`, {
+      method: 'POST',
+      token: ownerToken,
       data: { note: 'e2e', scanned_barcode: 'WRONG-BARCODE' },
     });
     expect([400, 409, 422]).toContain(badScan.status);
     const accessioned = await goFetch(request, `/api/finance/health/lab/samples/${sampleId}/accession`, {
       method: 'POST',
-      token: sciToken,
+      token: ownerToken,
       data: { note: 'accession e2e', scanned_barcode: barcode },
     });
     expect(accessioned.status).toBe(200);
     expect(accessioned.body.sample.state).toBe('ACCESSIONED');
 
-    // Scientist enters validated results (barcode re-verified, LR-001).
-    const results = await goFetch(request, `/api/finance/health/lab/orders/${orderId}/results`, {
+    // Owner enters validated results (barcode re-verified, LR-001). A
+    // capability-holding stranger is refused (404 — no order-existence oracle).
+    const deniedResults = await goFetch(request, `/api/finance/health/lab/orders/${orderId}/results`, {
       method: 'POST',
       token: sciToken,
+      data: {
+        scanned_barcode: barcode,
+        results: [{ test_id: testId, value: '9.9', unit: 'x10^9/L', ref_range: '4.0-11.0', status: 'NORMAL' }],
+      },
+    });
+    expect([404]).toContain(deniedResults.status);
+    const results = await goFetch(request, `/api/finance/health/lab/orders/${orderId}/results`, {
+      method: 'POST',
+      token: ownerToken,
       data: {
         scanned_barcode: barcode,
         results: [{ test_id: testId, value: '6.2', unit: 'x10^9/L', ref_range: '4.0-11.0', status: 'NORMAL' }],
@@ -210,10 +240,16 @@ test.describe('HLT-003 lab order lifecycle', () => {
     });
     expect(results.status).toBe(200);
 
-    // Scientist signs off → vault record + escrow release (HL-7/8/9/10).
-    const released = await goFetch(request, `/api/finance/health/lab/orders/${orderId}/release`, {
+    // Owner signs off → vault record + escrow release (HL-7/8/9/10). A
+    // capability-holding stranger must not reach the money leg.
+    const deniedRelease = await goFetch(request, `/api/finance/health/lab/orders/${orderId}/release`, {
       method: 'POST',
       token: sciToken,
+    });
+    expect([404]).toContain(deniedRelease.status);
+    const released = await goFetch(request, `/api/finance/health/lab/orders/${orderId}/release`, {
+      method: 'POST',
+      token: ownerToken,
     });
     expect(released.status).toBe(200);
     expect(['RELEASED', 'CLOSED']).toContain(released.body.order.state);

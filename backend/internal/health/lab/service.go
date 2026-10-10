@@ -387,9 +387,37 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	escrowID := hold.HoldID()
 
+	// failAfterHold refunds the just-placed hold before returning an error —
+	// without a compensating refund a failure here would strand the patient's
+	// money in escrow with no order row to ever resolve it. The refund is gated
+	// on the hold being this payer's AND UNBOUND: escrow.Hold dedups on the
+	// bare idempotency key, so escrowID can name a hold this attempt did not
+	// create — a foreign replay's hold, or the SAME payer's live hold under a
+	// concurrent same-key create (the loser's insert dies on
+	// UNIQUE(idempotency_key) only AFTER the winner commits). Refunding a bound
+	// hold would unwind a live order's payment out from under it.
+	failAfterHold := func(err error) (*Order, error) {
+		var unbound bool
+		if perr := s.db.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2
+				  AND NOT EXISTS (SELECT 1 FROM lab_orders o WHERE o.escrow_id = h.id))`,
+			escrowID, patientID).Scan(&unbound); perr != nil {
+			return nil, fmt.Errorf("%w (could not verify hold ownership for refund: %v)", err, perr)
+		}
+		if !unbound {
+			return nil, fmt.Errorf("%w (refund skipped: hold is not this patient's or is bound to a committed order)", err)
+		}
+		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
+			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
+		}
+		return nil, err
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("lab: begin: %w", err)
+		return failAfterHold(fmt.Errorf("lab: begin: %w", err))
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -399,7 +427,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
 	if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.LabProviderID,
 		string(StateCreated), string(in.CollectionMethod), total, escrowID, in.IdempotencyKey); err != nil {
-		return nil, fmt.Errorf("lab: insert order: %w", err)
+		return failAfterHold(fmt.Errorf("lab: insert order: %w", err))
 	}
 	const insLine = `
 		INSERT INTO lab_order_lines (id, order_id, test_id, test_name, unit_price_kobo)
@@ -407,11 +435,11 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	for i := range lines {
 		lines[i].OrderID = orderID
 		if _, err := tx.Exec(ctx, insLine, lines[i].ID, orderID, lines[i].TestID, lines[i].TestName, lines[i].UnitPriceKobo); err != nil {
-			return nil, fmt.Errorf("lab: insert line: %w", err)
+			return failAfterHold(fmt.Errorf("lab: insert line: %w", err))
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("lab: commit order: %w", err)
+		return failAfterHold(fmt.Errorf("lab: commit order: %w", err))
 	}
 
 	o := &Order{
@@ -443,29 +471,26 @@ func (s *Service) isLabOwner(ctx context.Context, actorID, providerID string) (b
 	return actorID == owner, nil
 }
 
+// isLabStaff reports whether actorID may act as staff on this lab's orders.
+// INTERIM (HL-2): the single-identity capability model has no staff↔lab
+// affiliation — a lab_scientist/phlebotomist row in health_providers is owned
+// by the credential-holder and names no employing lab, so a bare capability
+// check would authorize ANY approved scientist/phlebotomist on ANY lab's
+// orders: custody, results, and the escrow release on Release. Until a
+// staff-affiliation model lands, "staff of this lab" resolves to the lab's
+// verified owner — the only provider-scoped answer the schema can support.
+// Fail-closed when the provider gate is unwired (owner-row fallback via
+// isLabOwner).
+func (s *Service) isLabStaff(ctx context.Context, actorID, providerID string) (bool, error) {
+	return s.isLabOwner(ctx, actorID, providerID)
+}
+
 // mayCollectSample reports whether actorID may collect this order's sample.
-// A HOME collection requires the lab's verified phlebotomist (field
-// collection, HL-2) or the lab owner; WALK_IN intake may be done by any
-// verified staffer of this lab — owner, scientist, or phlebotomist. Called
-// BEFORE the order-state check so a foreign actor cannot learn the state from
-// the refusal.
+// Collection is a staff action on this lab's order (owner under the interim
+// affiliation gate — see isLabStaff). Called BEFORE the order-state check so a
+// foreign actor cannot learn the state from the refusal.
 func (s *Service) mayCollectSample(ctx context.Context, actorID string, o *Order) (bool, error) {
-	ok, err := s.isLabOwner(ctx, actorID, o.LabProviderID)
-	if err != nil || ok {
-		return ok, err
-	}
-	if s.prov == nil {
-		return false, nil // unwired gate: owner-only fallback already answered
-	}
-	if ok, perr := s.prov.IsVerifiedPhlebotomist(ctx, actorID, o.LabProviderID); perr != nil {
-		return false, perr
-	} else if ok {
-		return true, nil
-	}
-	if o.CollectionMethod == CollectWalkIn {
-		return s.prov.IsVerifiedScientist(ctx, actorID, o.LabProviderID)
-	}
-	return false, nil
+	return s.isLabStaff(ctx, actorID, o.LabProviderID)
 }
 
 // Schedule moves CREATED → SCHEDULED. For a HOME collection it dispatches a
@@ -485,7 +510,7 @@ func (s *Service) Schedule(ctx context.Context, actorID, orderID string, isAdmin
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.New("lab: only the lab may schedule collection (HL-2)")
+			return nil, ErrOrderNotFound
 		}
 	}
 	var deliveryRef *string
@@ -525,7 +550,7 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 	if ok, err := s.mayCollectSample(ctx, collectorID, o); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, errors.New("lab: only verified lab staff may collect (HL-2)")
+		return nil, ErrOrderNotFound
 	}
 	if o.State != StateScheduled {
 		return nil, fmt.Errorf("lab: order must be SCHEDULED before collection, is %s", o.State)
@@ -581,26 +606,18 @@ func (s *Service) Handover(ctx context.Context, actorID, sampleID, toCustodianID
 	if err != nil {
 		return nil, err
 	}
-	// HL-2/HL-6: unlike every other custody-mutating action in this file
-	// (Collect, Accession), Handover had NO actor gate at all — any
-	// authenticated caller, including the order's own patient, could
-	// reassign chain-of-custody with an arbitrary to_custodian_id. Found
-	// live via UAT. A verified phlebotomist of this lab initiates the
-	// handover (phlebotomist → courier → lab, per this file's own doc
-	// comment on Handover below), mirroring Collect/Accession's identical
-	// IsVerifiedPhlebotomist/IsVerifiedScientist gate pattern.
+	// HL-2/HL-6 actor gate: only verified staff of THIS lab (owner under the
+	// interim affiliation gate — see isLabStaff) may reassign custody. A foreign
+	// actor must not learn the sample exists — the refusal is the same
+	// regardless of the sample's state.
 	o, err := s.load(ctx, sm.OrderID)
 	if err != nil {
 		return nil, err
 	}
-	if s.prov != nil {
-		ok, perr := s.prov.IsVerifiedPhlebotomist(ctx, actorID, o.LabProviderID)
-		if perr != nil {
-			return nil, perr
-		}
-		if !ok {
-			return nil, errors.New("lab: only a verified phlebotomist may hand over custody (HL-2)")
-		}
+	if ok, gerr := s.isLabStaff(ctx, actorID, o.LabProviderID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return nil, ErrOrderNotFound
 	}
 	to := SampleHandedOver
 	target := sm.State
@@ -623,8 +640,27 @@ func (s *Service) Handover(ctx context.Context, actorID, sampleID, toCustodianID
 // FlagBreach records a detected chain-of-custody break (HL-6). The sample → BREACHED
 // then immediately → RECOLLECT_REQUIRED. No result may be produced for a breached
 // sample; a fresh collection is required. The breach + recollect are immutable
-// custody events.
+// custody events. Only verified staff of the sample's lab may flag a breach —
+// a foreign actor could otherwise kill the chain of custody and park the
+// patient's funds HELD (a post-collection order can no longer be cancelled).
+// The actor gate runs BEFORE any state answer so a foreign actor cannot tell
+// the sample exists; denials are the uniform ErrOrderNotFound.
 func (s *Service) FlagBreach(ctx context.Context, actorID, sampleID, reason string) (*Sample, error) {
+	sm, err := s.loadSample(ctx, sampleID)
+	if err != nil {
+		return nil, err
+	}
+	o, err := s.load(ctx, sm.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	// HL-2 actor gate first — same staff set as every other custody-mutating
+	// action (owner / phlebotomist / scientist).
+	if ok, err := s.isLabStaff(ctx, actorID, o.LabProviderID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, ErrOrderNotFound
+	}
 	if _, err := s.transitionSample(ctx, actorID, sampleID, SampleBreached, nil, reason, "health.lab.sample.breach"); err != nil {
 		return nil, err
 	}
@@ -645,15 +681,13 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedB
 	if err != nil {
 		return nil, err
 	}
-	// HL-2: only a verified scientist of this lab may accession.
-	if s.prov != nil {
-		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
-		if perr != nil {
-			return nil, perr
-		}
-		if !ok {
-			return nil, errors.New("lab: only a verified lab scientist may accession (HL-2)")
-		}
+	// HL-2: only verified staff of this lab may accession (owner under the
+	// interim affiliation gate — see isLabStaff). Uniform not-found denial —
+	// a foreign actor must not learn the sample exists.
+	if ok, gerr := s.isLabStaff(ctx, scientistID, o.LabProviderID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return nil, ErrOrderNotFound
 	}
 	// Sample↔patient integrity (EC-001/LB-005): if the accessioning scientist
 	// scanned the tube, the barcode MUST match the one minted at collection — a
@@ -739,15 +773,13 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 		return nil, err
 	}
 	// HL-2 actor gate BEFORE the state check: a foreign actor must not learn
-	// another patient's order state from the error it gets back.
-	if s.prov != nil {
-		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
-		if perr != nil {
-			return nil, perr
-		}
-		if !ok {
-			return nil, errors.New("lab: only a verified lab scientist may enter results (HL-2)")
-		}
+	// another patient's order state from the error it gets back. Verified staff
+	// of this lab only (owner under the interim affiliation gate — isLabStaff);
+	// uniform not-found denial.
+	if ok, gerr := s.isLabStaff(ctx, scientistID, o.LabProviderID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return nil, ErrOrderNotFound
 	}
 	if o.State != StateProcessing {
 		return nil, fmt.Errorf("lab: order must be PROCESSING to enter results, is %s", o.State)
@@ -841,15 +873,13 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 		return nil, err
 	}
 	// HL-2 actor gate BEFORE the state check: a foreign actor must not learn
-	// another patient's order state from the error it gets back.
-	if s.prov != nil {
-		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
-		if perr != nil {
-			return nil, perr
-		}
-		if !ok {
-			return nil, errors.New("lab: only a verified lab scientist may release results (HL-2/HL-7)")
-		}
+	// another patient's order state from the error it gets back. Verified staff
+	// of this lab only (owner under the interim affiliation gate — isLabStaff);
+	// uniform not-found denial.
+	if ok, gerr := s.isLabStaff(ctx, scientistID, o.LabProviderID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return nil, ErrOrderNotFound
 	}
 	if !canReleaseFrom(o.State) {
 		return nil, fmt.Errorf("lab: order not ready for release, is %s", o.State)
@@ -962,8 +992,9 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 	if err != nil {
 		return nil, err
 	}
+	// Uniform denial: a foreign order is indistinguishable from a missing one.
 	if o.PatientID != patientID {
-		return nil, errors.New("lab: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	if !isPreCollection(o.State) {
 		return nil, fmt.Errorf("lab: order can only be cancelled before it enters the lab pipeline, is %s", o.State)
@@ -1053,7 +1084,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, errors.New("lab: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
 	return o, nil
@@ -1069,7 +1100,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, errors.New("lab: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	return s.loadResults(ctx, orderID)
 }
@@ -1083,7 +1114,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, errors.New("lab: forbidden")
+		return nil, ErrOrderNotFound
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
@@ -1484,18 +1515,16 @@ func (s *Service) AmendResult(ctx context.Context, scientistID, orderID string, 
 	if err != nil {
 		return nil, err
 	}
+	// HL-2 actor gate BEFORE the state probe: verified staff of this lab only
+	// (owner under the interim affiliation gate — isLabStaff). Uniform not-found
+	// denial — a foreign actor must not learn the order's state or existence.
+	if ok, gerr := s.isLabStaff(ctx, scientistID, o.LabProviderID); gerr != nil {
+		return nil, gerr
+	} else if !ok {
+		return nil, ErrOrderNotFound
+	}
 	if !canAmendResult(o.State) {
 		return nil, ErrNotAmendable
-	}
-	// HL-2: only a verified scientist of this lab may re-validate/amend a result.
-	if s.prov != nil {
-		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
-		if perr != nil {
-			return nil, perr
-		}
-		if !ok {
-			return nil, errors.New("lab: only a verified lab scientist may amend results (HL-2)")
-		}
 	}
 
 	tx, err := s.db.Begin(ctx)
