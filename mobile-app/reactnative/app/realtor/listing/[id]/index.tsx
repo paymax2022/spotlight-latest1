@@ -27,6 +27,7 @@ import { priceLabelFull, formatNaira, bedBathLabel, timeAgo } from '@/features/r
 import { PROPERTY_TYPE_LABEL, FURNISHING_LABEL, MODE_LABEL } from '@/features/realtor/constants/realtor.constants';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { alertAsync } from '@/lib/confirm';
+import ScreenHeader from '@/components/ScreenHeader';
 
 export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -63,14 +64,14 @@ export default function ListingDetailScreen() {
 
   if (listing.isLoading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/realtor" />
         <StateView kind="loading" message="Loading property…" />
       </SafeAreaView>
     );
   }
   if (listing.isError || !listing.data) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/realtor" />
         <FloatingBack />
         <StateView kind="error" icon="Home" title="Listing unavailable" message="This property may have been removed or is no longer available." actionLabel="Back to search" onAction={() => router.replace('/realtor/search')} />
       </SafeAreaView>

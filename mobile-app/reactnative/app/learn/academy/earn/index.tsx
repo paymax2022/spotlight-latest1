@@ -25,7 +25,7 @@ const ELIG: Record<EligibilityState, { label: string; color: string; bg: string 
 /** S6 — Earning opportunities feed: Paymax roles unlocked by your credentials. */
 export default function EarningFeedScreen() {
   const opps = useOpportunities();
-  if (opps.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Finding opportunities…" /></SafeAreaView>;
+  if (opps.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Trade & Earn" /><StateView kind="loading" message="Finding opportunities…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

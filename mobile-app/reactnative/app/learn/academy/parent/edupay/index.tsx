@@ -26,7 +26,7 @@ export default function EduPayHub() {
   const pots = usePots();
   const link = useLinkSchool();
 
-  if (schools.isLoading || fees.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading EduPay…" /></SafeAreaView>;
+  if (schools.isLoading || fees.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="EduPay" /><StateView kind="loading" message="Loading EduPay…" /></SafeAreaView>;
 
   const linkedFees = fees.data?.filter((f) => f.linked) ?? [];
   const totalSaved = pots.data?.reduce((s, p) => s + p.savedKobo, 0) ?? 0;

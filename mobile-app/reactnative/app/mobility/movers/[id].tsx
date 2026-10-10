@@ -48,7 +48,7 @@ export default function MoverJobScreen() {
   const j = job.data;
 
   if (job.isLoading) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" showBack={false} /><StateView kind="loading" message="Loading your move…" /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" /><ScreenHeader title="Your move" showBack={false} /><StateView kind="loading" message="Loading your move…" /></SafeAreaView>;
   }
   if (job.isError || !j) {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" /><MobilityEdgeState kind={errKind(job.error)} actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>;

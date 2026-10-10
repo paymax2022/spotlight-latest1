@@ -30,7 +30,7 @@ export default function TowingTrackScreen() {
 
   if (job.isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Roadside help" showBack={false} /><StateView kind="loading" message="Loading…" /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Roadside help" /><ScreenHeader title="Roadside help" showBack={false} /><StateView kind="loading" message="Loading…" /></SafeAreaView>
     );
   }
   if (job.isError || !j) {

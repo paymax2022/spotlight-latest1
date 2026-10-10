@@ -21,7 +21,7 @@ export default function ScholarshipsScreen() {
   const scholarships = useScholarships();
   const apply = useApplyScholarship();
 
-  if (scholarships.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading scholarships…" /></SafeAreaView>;
+  if (scholarships.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Scholarships & sponsors" /><StateView kind="loading" message="Loading scholarships…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

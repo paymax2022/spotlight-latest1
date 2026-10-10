@@ -32,8 +32,8 @@ export default function LiveRoomScreen() {
 
   React.useEffect(() => { if (id) join.mutate(id); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
-  if (session.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Joining room…" /></SafeAreaView>;
-  if (session.isError || !session.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Unavailable" message="This session could not be joined." /></SafeAreaView>;
+  if (session.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="loading" message="Joining room…" /></SafeAreaView>;
+  if (session.isError || !session.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="error" title="Unavailable" message="This session could not be joined." /></SafeAreaView>;
 
   const s = session.data;
   const send = () => {

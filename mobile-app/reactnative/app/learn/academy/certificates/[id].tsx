@@ -22,8 +22,8 @@ export default function CredentialDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const cred = useCredential(id);
 
-  if (cred.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading credential…" /></SafeAreaView>;
-  if (cred.isError || !cred.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Not found" message="This credential is unavailable." /></SafeAreaView>;
+  if (cred.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Credential" /><StateView kind="loading" message="Loading credential…" /></SafeAreaView>;
+  if (cred.isError || !cred.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Credential" /><StateView kind="error" title="Not found" message="This credential is unavailable." /></SafeAreaView>;
 
   const c = cred.data;
   const onShare = () => {

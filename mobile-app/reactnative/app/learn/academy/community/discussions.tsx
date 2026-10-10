@@ -30,7 +30,7 @@ export default function DiscussionsScreen() {
   const [title, setTitle] = React.useState('');
   const [body, setBody] = React.useState('');
 
-  if (discussions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading discussions…" /></SafeAreaView>;
+  if (discussions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Discussion & Q&A" /><StateView kind="loading" message="Loading discussions…" /></SafeAreaView>;
 
   const onPost = () => {
     if (!title.trim()) return;

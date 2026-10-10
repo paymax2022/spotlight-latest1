@@ -17,7 +17,7 @@ const COLOR_KEY = (k: string) => (Colors as unknown as Record<string, string>)[k
 /** T3 — Class roster: manage students grouped by cohort. */
 export default function TutorRoster() {
   const cohorts = useCohorts();
-  if (cohorts.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading roster…" /></SafeAreaView>;
+  if (cohorts.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Class roster" /><StateView kind="loading" message="Loading roster…" /></SafeAreaView>;
 
   const empty = !cohorts.data?.length;
 

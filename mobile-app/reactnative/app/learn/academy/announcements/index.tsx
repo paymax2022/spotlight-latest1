@@ -16,7 +16,7 @@ import { formatDate } from '@/features/academy/constants';
 /** C7 — Announcements: program & sponsor messages. */
 export default function AnnouncementsScreen() {
   const ann = useAnnouncements();
-  if (ann.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading announcements…" /></SafeAreaView>;
+  if (ann.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Announcements" /><StateView kind="loading" message="Loading announcements…" /></SafeAreaView>;
 
   const sorted = [...(ann.data ?? [])].sort((a, b) => Number(b.pinned) - Number(a.pinned));
 

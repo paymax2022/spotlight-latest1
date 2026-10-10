@@ -51,7 +51,7 @@ export default function InteractiveLesson() {
     if (PROMPTS.every((p) => picks[p.id] === p.answer)) track('lesson_completed', { lesson: id, kind: 'interactive' });
   };
 
-  if (lesson.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading activity…" /></SafeAreaView>;
+  if (lesson.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Interactive lesson" /><StateView kind="loading" message="Loading activity…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -25,7 +25,7 @@ const META: Record<string, { Icon: typeof FileText; color: string; bg: string; h
 export default function ParentNotifications() {
   const notifications = useParentNotifications();
 
-  if (notifications.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading notifications…" /></SafeAreaView>;
+  if (notifications.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Notifications" /><StateView kind="loading" message="Loading notifications…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

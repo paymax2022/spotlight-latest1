@@ -26,7 +26,7 @@ export default function ArenaHome() {
   const isUtme = arena.data?.slug === 'utme';
   const combos = useUtmeCombinations(course);
 
-  if (arena.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading arena…" /></SafeAreaView>;
+  if (arena.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Arena" /><StateView kind="loading" message="Loading arena…" /></SafeAreaView>;
   if (!arena.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Arena" /><StateView kind="error" title="Arena not found" /></SafeAreaView>;
 
   const meta = EXAM_META[arena.data.slug];

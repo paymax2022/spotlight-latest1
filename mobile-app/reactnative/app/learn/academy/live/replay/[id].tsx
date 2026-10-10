@@ -29,8 +29,8 @@ export default function ReplayPlayerScreen() {
     return () => clearInterval(t);
   }, [playing]);
 
-  if (session.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading replay…" /></SafeAreaView>;
-  if (session.isError || !session.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Unavailable" message="This replay could not be loaded." /></SafeAreaView>;
+  if (session.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="loading" message="Loading replay…" /></SafeAreaView>;
+  if (session.isError || !session.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="error" title="Unavailable" message="This replay could not be loaded." /></SafeAreaView>;
 
   const s = session.data;
   const totalSec = s.durationMin * 60;

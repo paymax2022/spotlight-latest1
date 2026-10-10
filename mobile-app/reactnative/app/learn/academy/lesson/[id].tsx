@@ -63,8 +63,8 @@ export default function LessonPlayer() {
 
   const transcript = useMemo(() => lesson.data?.transcript ?? '', [lesson.data]);
 
-  if (lesson.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading lesson…" /></SafeAreaView>;
-  if (!lesson.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Lesson not found" /></SafeAreaView>;
+  if (lesson.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Lesson" /><StateView kind="loading" message="Loading lesson…" /></SafeAreaView>;
+  if (!lesson.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Lesson" /><StateView kind="error" title="Lesson not found" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

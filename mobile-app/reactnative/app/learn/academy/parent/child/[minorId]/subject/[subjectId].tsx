@@ -20,7 +20,7 @@ export default function ChildSubjectDetailScreen() {
   const { minorId, subjectId } = useLocalSearchParams<{ minorId: string; subjectId: string }>();
   const detail = useChildSubject(minorId, subjectId);
 
-  if (detail.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading subject…" /></SafeAreaView>;
+  if (detail.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Subject" /><StateView kind="loading" message="Loading subject…" /></SafeAreaView>;
   if (!detail.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Subject" /><StateView kind="error" title="Not found" /></SafeAreaView>;
 
   const d = detail.data;

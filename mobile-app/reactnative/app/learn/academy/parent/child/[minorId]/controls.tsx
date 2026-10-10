@@ -35,7 +35,7 @@ export default function UsageControlsScreen() {
 
   useEffect(() => { if (controls.data && !draft) setDraft(controls.data); }, [controls.data, draft]);
 
-  if (controls.isLoading || !draft) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading controls…" /></SafeAreaView>;
+  if (controls.isLoading || !draft) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Controls" /><StateView kind="loading" message="Loading controls…" /></SafeAreaView>;
   if (controls.isError) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Controls" /><StateView kind="error" title="No active link" message={controls.error instanceof Error ? controls.error.message : ''} /></SafeAreaView>;
 
   const set = (patch: Partial<UsageControls>) => setDraft((d) => (d ? { ...d, ...patch } : d));

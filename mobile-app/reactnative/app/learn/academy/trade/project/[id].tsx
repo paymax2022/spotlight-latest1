@@ -23,8 +23,8 @@ export default function TradeProjectScreen() {
   const submit = useSubmitProject();
   const [attachments, setAttachments] = React.useState<Attach[]>([]);
 
-  if (project.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading project…" /></SafeAreaView>;
-  if (project.isError || !project.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Not found" message="This project is unavailable." /></SafeAreaView>;
+  if (project.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Project submission" /><StateView kind="loading" message="Loading project…" /></SafeAreaView>;
+  if (project.isError || !project.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Project submission" /><StateView kind="error" title="Not found" message="This project is unavailable." /></SafeAreaView>;
 
   const p = project.data;
   const graded = p.status === 'graded' || p.status === 'submitted';

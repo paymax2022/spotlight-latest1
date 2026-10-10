@@ -19,7 +19,7 @@ export default function BookmarksScreen() {
   const bookmarks = useBookmarks();
   const remove = useRemoveBookmark();
 
-  if (bookmarks.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading bookmarks…" /></SafeAreaView>;
+  if (bookmarks.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Bookmarks" /><StateView kind="loading" message="Loading bookmarks…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
