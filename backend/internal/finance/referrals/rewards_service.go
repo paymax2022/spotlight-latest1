@@ -502,6 +502,22 @@ func (s *RewardService) GetDashboard(ctx context.Context, referrerID string) (*D
 		}
 	}
 
+	// Same "activated" rule as ListReferrals: a CREDITED reward from that person
+	// inside the active window.
+	const cq = `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE EXISTS (
+		         SELECT 1 FROM referral_rewards r
+		          WHERE r.referred_user_id = a.referred_user_id
+		            AND r.referrer_id = a.referrer_id
+		            AND r.status = 'CREDITED'
+		            AND r.created_at >= now() - make_interval(days => $2)))
+		  FROM referral_attributions a
+		 WHERE a.referrer_id = $1`
+	if err := s.db.QueryRow(ctx, cq, referrerID, ActiveWindowDays).Scan(&d.InvitedCount, &d.ActivatedCount); err != nil {
+		return nil, fmt.Errorf("referrals: dashboard counts: %w", err)
+	}
+
 	const eq = `
 		SELECT
 		  COALESCE(SUM(reward_kobo) FILTER (WHERE status='CREDITED'),0),
@@ -1284,10 +1300,15 @@ func ComputeReward(marginKobo int64, rate float64) int64 {
 
 // Dashboard is the response for GET /v1/referrals/me/dashboard.
 type Dashboard struct {
-	Code                string         `json:"code"`
-	CurrentTier         string         `json:"current_tier"`
-	CurrentRate         float64        `json:"current_rate"`
-	ActiveReferralCount int            `json:"active_referral_count"`
+	Code                string  `json:"code"`
+	CurrentTier         string  `json:"current_tier"`
+	CurrentRate         float64 `json:"current_rate"`
+	ActiveReferralCount int     `json:"active_referral_count"`
+	// InvitedCount and ActivatedCount are LIVE, unlike ActiveReferralCount (the
+	// tier input, only refreshed by the nightly recalc): someone who just joined
+	// with the code, or just made their first rewarded purchase, shows immediately.
+	InvitedCount        int            `json:"invited_count"`
+	ActivatedCount      int            `json:"activated_count"`
 	ThisMonthEarnedKobo int64          `json:"this_month_earned_kobo"`
 	LifetimeEarnedKobo  int64          `json:"lifetime_earned_kobo"`
 	NextMilestone       *NextMilestone `json:"next_milestone,omitempty"`

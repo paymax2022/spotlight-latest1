@@ -16,7 +16,6 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
 import { getErrorMessage } from '@/utils/errorMapper';
-import { attribute as attributeReferral } from '@/features/referral/rewards/api';
 
 const schema = z.object({
   fullName: z.string().min(2, 'Enter your full name'),
@@ -42,13 +41,11 @@ export default function SignupScreen() {
   const onSubmit = async (values: Form) => {
     setApiError('');
     try {
-      const { referralCode, ...creds } = values;
-      const result = await register(creds);
-      // Attribute the referral code silently (PRD §5.2): fire-and-forget, never
-      // blocks or fails the signup, no reward shown to the referred user. The
-      // engine is idempotent per user and 400s on self/unknown codes — swallowed.
-      const code = referralCode?.trim();
-      if (code) { attributeReferral(code).catch(() => { /* attribution is invisible */ }); }
+      // The referral code travels WITH registration: Go attributes it server-side
+      // before any session exists. A separate client call after register() cannot
+      // work on the OTP path (no session yet, so the authenticated attribute request
+      // 401s) and its error was swallowed, so referred users were never recorded.
+      const result = await register({ ...values, referralCode: values.referralCode?.trim() || undefined });
       if (result.needsOtp) {
         router.push({ pathname: '/(auth)/verify-otp', params: { email: result.email } });
       }

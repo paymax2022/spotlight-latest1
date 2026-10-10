@@ -4222,7 +4222,9 @@ components:
       required: [tier, active_referral_count, this_month_earnings_kobo, lifetime_earnings_kobo]
       properties:
         tier:                     { $ref: '#/components/schemas/ReferralTierStatus' }
-        active_referral_count:    { type: integer }
+        active_referral_count:    { type: integer, description: 'Tier input; refreshed by the nightly recalc, so it lags' }
+        invited_count:            { type: integer, description: 'Live: people who joined with this referrer''s code' }
+        activated_count:          { type: integer, description: 'Live: of those, how many have a CREDITED reward in the last 30 days' }
         this_month_earnings_kobo: { type: integer, format: int64 }
         lifetime_earnings_kobo:   { type: integer, format: int64 }
         next_milestone:           { $ref: '#/components/schemas/ReferralMilestoneRow' }

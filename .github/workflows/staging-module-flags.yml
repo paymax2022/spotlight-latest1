@@ -102,6 +102,11 @@ jobs:
       - name: Set APP_ENV and the module flags
         run: |
           set -euo pipefail
+          # Referral commission split (20% of Spotlight's commission to the payer's
+          # referrer): needs BOTH FEATURE_COMMISSION_ENABLED (records commission on
+          # every purchase) and FEATURE_REFERRAL_COMMISSION_SPLIT_ENABLED (arms the
+          # hook). Both default false in config.go and neither was set here, so on
+          # staging a referred user's purchase credited the referrer nothing.
           # FEATURE_CONNECT_ENABLED is the umbrella gate for the whole Connect
           # surface (internal/app/connect_routes.go) — every /api/v1/connect/*
           # and /api/connect/admin/* route, including the base "list contests"
@@ -129,6 +134,8 @@ jobs:
             FEATURE_KYC_ENABLED=true \
             FEATURE_REFERRALS_ENABLED=true \
             FEATURE_REFERRAL_REWARDS_ENABLED=true \
+            FEATURE_COMMISSION_ENABLED=true \
+            FEATURE_REFERRAL_COMMISSION_SPLIT_ENABLED=true \
             FEATURE_INSURANCE_ENABLED=true \
             FEATURE_INSURANCE_PROVIDER_IMPORT_ENABLED=true \
             FEATURE_SOCIAL_PAY_ENABLED=true \
@@ -193,7 +200,8 @@ jobs:
           node -e '
             const want = [
               "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS","REFERRAL_REWARDS",
-              "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
+              "COMMISSION","REFERRAL_COMMISSION_SPLIT",
+              "INSURANCE","INSURANCE_PROVIDER_IMPORT","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",

@@ -1,6 +1,7 @@
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`.
 // Money is ALWAYS integer kobo. Earnings tie to friends' verified activity (§7).
 
+import { homeCounts } from './counts';
 import { api } from '@/api/client';
 import { USE_MOCK, REFERRAL_API_BASE } from '../constants/referral.constants';
 import type { EarnStateKey } from '../constants/referral.constants';
@@ -27,6 +28,8 @@ interface EngineDashboard {
   current_tier: string;
   current_rate: number;
   active_referral_count: number;
+  invited_count?: number;
+  activated_count?: number;
   this_month_earned_kobo: number;
   lifetime_earned_kobo: number;
   next_milestone?: { threshold: number; bonus_kobo: number; remaining: number };
@@ -118,9 +121,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
   };
   return {
     snapshot,
-    invitesSent: null, // TODO(referral phase3): needs invite-tracking backend (R3)
-    signups: null, // TODO(referral phase3): needs invite-tracking backend (R3)
-    activated: d.active_referral_count,
+    ...homeCounts(d),
     rank: null, // TODO(referral phase3): needs leaderboard rank source (R2)
     rankTotal: null, // TODO(referral phase3): needs leaderboard total (R2)
     rankTier: d.current_tier,
