@@ -163,6 +163,7 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/BuyOrderRequest' } } }
       responses:
         '201': { description: Order accepted/filled (receipt) }
+        '400': { description: Missing Idempotency-Key, or malformed/invalid order body }
         '403': { description: Not eligible / KYC / suitability / terms / PIN }
         '409': { description: Market closed }
         '422': { description: Insufficient cash or order failed (receipt included) }
@@ -175,6 +176,7 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/SellOrderRequest' } } }
       responses:
         '201': { description: Order accepted/filled (receipt) }
+        '400': { description: Missing Idempotency-Key, or malformed/invalid order body }
         '422': { description: Insufficient shares or order failed }
   /stocks/orders:
     get: { summary: List my orders, responses: { '200': { description: OK } } }
@@ -198,12 +200,12 @@ paths:
     post:
       summary: Fund invest wallet from main Paymax wallet (double-entry both sides)
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: OK }, '422': { description: Insufficient funds } }
+      responses: { '200': { description: OK }, '400': { description: Missing Idempotency-Key, or malformed body }, '422': { description: Insufficient funds } }
   /invest/wallet/withdraw:
     post:
       summary: Withdraw invest cash back to main wallet
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '200': { description: OK }, '422': { description: Insufficient cash } }
+      responses: { '200': { description: OK }, '400': { description: Missing Idempotency-Key, or malformed body }, '422': { description: Insufficient cash } }
   /invest/wallet/transactions:
     get: { summary: Invest wallet ledger entries, responses: { '200': { description: OK } } }
 
@@ -238,7 +240,7 @@ paths:
     post:
       summary: Apply/subscribe to an offer (debits invest cash, idempotent)
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '201': { description: Created } }
+      responses: { '201': { description: Created }, '400': { description: Missing Idempotency-Key, or malformed body } }
 
   # ── Rights issues ────────────────────────────────────────────────────────────
   /invest/rights-issues:
@@ -251,4 +253,4 @@ paths:
     post:
       summary: Accept rights entitlement (debits invest cash, idempotent)
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      responses: { '201': { description: Created } }
+      responses: { '201': { description: Created }, '400': { description: Missing Idempotency-Key, or malformed body } }
