@@ -257,16 +257,27 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 	if cy == nil {
 		return errors.New("savings: no pending cycle")
 	}
+	// The deterministic leg key is computed BEFORE the gate so the committed-key
+	// probe can use it (F-3): a retry whose debit already committed must reach
+	// DebitGated's in-tx replay check, not be refused by a pooled read that
+	// re-counts its own posted legs.
+	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
+	legPosted, perr := s.led.Posted(ctx, legKey)
+	if perr != nil {
+		return fmt.Errorf("savings: prepay replay probe: %w", perr)
+	}
 	// Tier guard (fail-closed, E2E-FIN-041): a prepay debits the member's wallet —
-	// the same EnforceWalletDebitLimit the transfer rail runs.
-	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
-		return err
+	// the same EnforceWalletDebitLimit the transfer rail runs. SKIPPED when the
+	// journal is durable — the in-tx guard inside DebitGated stays the authority.
+	if !legPosted {
+		if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+			return err
+		}
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
 	}
-	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
 	if derr := s.led.DebitGated(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: circle contribute: %w", derr)
 	}

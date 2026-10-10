@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -562,10 +563,20 @@ func (a feesVaultLedger) SegregatedAccountID(ctx context.Context, accountType st
 }
 
 func (a feesVaultLedger) DebitToVault(ctx context.Context, userID, reference, idempotencyKey, vaultAccountID string, amountKobo int64) error {
+	// Committed-key probe BEFORE the pooled advisory gate (F-3): a retried vault
+	// deposit whose journal already committed replays inside DebitGated; a
+	// pooled read re-counting those legs would refuse it at-cap.
+	posted, perr := a.ledger.Posted(ctx, idempotencyKey)
+	if perr != nil {
+		return fmt.Errorf("academy: vault debit replay probe: %w", perr)
+	}
 	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
-	// transfer rail applies — a refused attempt posts zero ledger legs.
-	if err := enforceAdapterDebitLimit(ctx, a.tiers, userID, amountKobo); err != nil {
-		return err
+	// transfer rail applies — a refused attempt posts zero ledger legs. SKIPPED
+	// on a durable replay; DebitGated's in-tx verification stays the authority.
+	if !posted {
+		if err := enforceAdapterDebitLimit(ctx, a.tiers, userID, amountKobo); err != nil {
+			return err
+		}
 	}
 	// Debit the guardian wallet, crediting the segregated vault standing account.
 	// TOCTOU-safe + fail-closed on insufficient funds (ledger.Service.Debit).

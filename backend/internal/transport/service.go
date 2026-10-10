@@ -263,11 +263,23 @@ func (s *Service) RequestTrip(ctx context.Context, riderID string, req RequestTr
 	if req.FareKobo < BaseFareKobo {
 		return nil, fmt.Errorf("transport: fare must be at least ₦1,500 (%d kobo)", BaseFareKobo)
 	}
+	// Committed-key probe BEFORE the pooled advisory gate (F-3): the escrow
+	// legs live under "<key>:escrow", so a retry whose hold already committed
+	// must reach EscrowWithGuard's in-tx replay verification — a pooled read
+	// re-counting those legs would refuse the healing retry at-cap.
+	escrowPosted, perr := s.settlement.Ledger().Posted(ctx, req.IdempotencyKey+":escrow")
+	if perr != nil {
+		return nil, fmt.Errorf("transport: escrow replay probe: %w", perr)
+	}
 	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow. This legacy
 	// path is no longer routed (its HTTP route was removed) but is gated for
 	// defense-in-depth so any internal caller cannot bypass the tier limit.
-	if err := s.enforceTierLimit(ctx, riderID, req.FareKobo); err != nil {
-		return nil, err
+	// SKIPPED when this key's hold is durable — the in-tx checkout guard stays
+	// the authority.
+	if !escrowPosted {
+		if err := s.enforceTierLimit(ctx, riderID, req.FareKobo); err != nil {
+			return nil, err
+		}
 	}
 	tripID := uuid.New().String()
 	ref := "trip:" + tripID

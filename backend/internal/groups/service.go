@@ -226,9 +226,6 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	if s.tiers == nil {
 		return nil, ErrTierGateUnwired
 	}
-	if err := s.tiers.EnforceCheckoutDebitLimit(ctx, memberID, plan.AmountKobo); err != nil {
-		return nil, fmt.Errorf("groups: pay dues tier gate: %w", err)
-	}
 
 	ref := "dues:" + groupID + ":" + req.PlanID
 	// The ledger journal key is namespaced ("groups:dues:"): a caller key can
@@ -237,6 +234,20 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	// so a raw caller key used on, say, a transfer with the same amount would
 	// silently no-op the debit while the 'paid' row below recorded success.
 	key := "groups:dues:" + req.IdempotencyKey
+	// Committed-key probe BEFORE the pooled advisory gate (F-3): the member-scoped
+	// row lookup above can't see a debit that committed but lost its payment row
+	// (crash between the ledger post and the insert). When the journal is durable
+	// the pooled gate must not refuse the healing retry by re-counting its own
+	// legs — DebitWithGuard's in-tx replay check converges instead.
+	duesPosted, perr := s.ledger.Posted(ctx, key)
+	if perr != nil {
+		return nil, fmt.Errorf("groups: dues replay probe: %w", perr)
+	}
+	if !duesPosted {
+		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, memberID, plan.AmountKobo); err != nil {
+			return nil, fmt.Errorf("groups: pay dues tier gate: %w", err)
+		}
+	}
 	// DebitWithGuard re-runs the checkout allowance INSIDE the debit tx under
 	// the wallet advisory lock (F7) — the pooled gate above is advisory only.
 	if err := s.ledger.DebitWithGuard(ctx, memberID, ref, key, groupWalletID, plan.AmountKobo,

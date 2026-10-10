@@ -18,12 +18,17 @@ import (
 // It is the single place where all provider payouts are calculated and posted.
 type Service struct {
 	db     *pgxpool.Pool
-	ledger *ledger.Service
+	ledger *ledger.Service // read back via Ledger() for committed-key replay probes
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 	return &Service{db: db, ledger: ledger}
 }
+
+// Ledger returns the ledger service this settlement posts through — exposed so
+// callers can run committed-key replay probes (ledger.Service.Posted) before
+// advisory gates without re-wiring the same service instance.
+func (s *Service) Ledger() *ledger.Service { return s.ledger }
 
 // walletDebit is the ledger debit primitive shape Escrow posts through
 // (ledger.Service.Debit / DebitGated / DebitWithGuard all satisfy it).

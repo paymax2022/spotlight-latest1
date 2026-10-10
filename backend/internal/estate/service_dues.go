@@ -33,6 +33,10 @@ type LedgerPoster interface {
 	// money DR provider-clearing / CR settlement with NO wallet leg at all (see
 	// PayDuesPaystackFunded). The wallet-funded branch keeps using Debit.
 	PostJournal(ctx context.Context, j ledger.JournalEntry) error
+	// Posted reports whether the balanced pair for a base idempotency key is
+	// durably committed — the pooled-gate replay probe (F-3). Existence only;
+	// identity is re-verified inside the posting tx by DebitWithGuard.
+	Posted(ctx context.Context, baseIdempotencyKey string) (bool, error)
 }
 
 // TierEnforcer fail-closes a wallet debit against the payer's KYC tier limit.
@@ -258,12 +262,23 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 	// so there is no wallet debit for this gate to price against. A wallet-
 	// funded payment with the gate UNWIRED refuses outright — a nil tier gate
 	// is a deployment fault, not a license to debit ungated (F5).
+	// The committed-key probe runs BEFORE the pooled gate (F-3): a retry whose
+	// wallet debit already committed must reach DebitWithGuard's in-tx replay
+	// check — the invoice row lock below can't see a debit that lost its
+	// receipt (crash between the ledger post and the insert), and re-counting
+	// the posted legs would refuse the healing retry at-cap.
 	if !external {
 		if s.tiers == nil {
 			return nil, ErrTierGateUnwired
 		}
-		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, payerID, amount); err != nil {
-			return nil, fmt.Errorf("estate: dues payment blocked by tier limit: %w", err)
+		duesPosted, perr := s.ledger.Posted(ctx, req.IdempotencyKey)
+		if perr != nil {
+			return nil, fmt.Errorf("estate: dues replay probe: %w", perr)
+		}
+		if !duesPosted {
+			if err := s.tiers.EnforceCheckoutDebitLimit(ctx, payerID, amount); err != nil {
+				return nil, fmt.Errorf("estate: dues payment blocked by tier limit: %w", err)
+			}
 		}
 	}
 
