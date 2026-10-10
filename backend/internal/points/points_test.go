@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // fakeAuditor captures the single most recent LogAction call so tests can assert
@@ -234,6 +238,34 @@ func TestEntry_JSONRoundTrip(t *testing.T) {
 	}
 	if got.Points != 250 || got.UserID != "u-9" {
 		t.Errorf("round-trip mismatch: %+v", got)
+	}
+}
+
+// Redeem rejects a missing client idempotency key BEFORE any DB access — the
+// nil pool would panic if the guard ran after the first query. Iron rule: a
+// mutation without a key must fail closed, never self-mint one.
+func TestRedeem_RequiresIdempotencyKey(t *testing.T) {
+	s := NewService(nil, nil) // nil pool: any DB access would panic
+	if _, _, err := s.Redeem(context.Background(), "user-1", "SKU", ""); !errors.Is(err, ErrIdempotencyRequired) {
+		t.Fatalf("keyless redeem: err = %v, want ErrIdempotencyRequired", err)
+	}
+}
+
+// The handler writes 400 when the Idempotency-Key header is absent — the svc is
+// nil and must never be reached.
+func TestRedeemHandler_RequiresIdempotencyKeyHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", "user-1")
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/finance/loyalty/points/redeem",
+		strings.NewReader(`{"sku":"AIRTIME_500"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	NewHandler(nil).Redeem(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("headerless redeem: status = %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
 }
 

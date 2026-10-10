@@ -83,7 +83,7 @@ func TestLiveDB_Redeem_SucceedsAndDebits(t *testing.T) {
 	sku := seedCatalogItem(t, pool, 100)
 	seedEarn(t, pool, uid, 500)
 
-	red, item, err := svc.Redeem(ctx, uid, sku, "")
+	red, item, err := svc.Redeem(ctx, uid, sku, "redeem-"+uuid.NewString())
 	if err != nil {
 		t.Fatalf("redeem: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestLiveDB_Redeem_InsufficientPoints(t *testing.T) {
 	sku := seedCatalogItem(t, pool, 100)
 	seedEarn(t, pool, uid, 50)
 
-	if _, _, err := svc.Redeem(ctx, uid, sku, ""); !errors.Is(err, ErrInsufficientPoints) {
+	if _, _, err := svc.Redeem(ctx, uid, sku, "redeem-"+uuid.NewString()); !errors.Is(err, ErrInsufficientPoints) {
 		t.Fatalf("expected ErrInsufficientPoints, got %v", err)
 	}
 }
