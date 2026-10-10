@@ -11,12 +11,16 @@ package escrow
 // Production source of truth (service.go Hold / postHoldDebit /
 // verifyHoldDebitLeg):
 //   - fresh call : getByIdem miss -> ledger.Posted probe miss -> tier gate ->
-//     debit leg ("<idem>:hold") -> INSERT escrow_holds.
-//   - heal call  : getByIdem miss -> Posted hit -> identity check -> skip gate
-//     AND debit -> INSERT heals the row. (The pre-fix code re-ran the gate and
-//     re-debited: the Redis idem-lock answered ErrDuplicate inside its TTL and
-//     the gate re-counted the posted debit against the daily cap — the wedge
-//     this test guards.)
+//     debit leg ("<idem>:hold", ref "escrow:<module>:<reference>") -> INSERT
+//     escrow_holds.
+//   - heal call  : getByIdem miss -> Posted hit -> identity check (both legs +
+//     payer wallet + module segment) -> skip gate AND debit -> INSERT heals
+//     the row. (The pre-fix code re-ran the gate and re-debited: the Redis
+//     idem-lock answered ErrDuplicate inside its TTL and the gate re-counted
+//     the posted debit against the daily cap — the wedge this test guards.)
+//   - row replay : getByIdem hit -> module + payer identity check -> return
+//     row. Cross-module/cross-payer claims refuse (covered live in
+//     hold_recovery_live_db_test.go; this mirror models the payer leg only).
 
 import "testing"
 

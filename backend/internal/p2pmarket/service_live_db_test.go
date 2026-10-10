@@ -159,9 +159,10 @@ func TestLiveDB_Checkout_PinsSellerPayee(t *testing.T) {
 
 func (f *p2pFixture) mustHoldReferenced(t *testing.T, escrowID string) bool {
 	t.Helper()
-	owned, err := f.svc.holdReferenced(context.Background(), escrowID)
-	if err != nil {
-		t.Fatalf("holdReferenced: %v", err)
+	var owned bool
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM p2p_orders WHERE escrow_id=$1)`, escrowID).Scan(&owned); err != nil {
+		t.Fatalf("hold referenced probe: %v", err)
 	}
 	return owned
 }

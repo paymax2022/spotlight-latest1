@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 )
 
@@ -119,6 +120,8 @@ func (h *Handler) Checkout(c *gin.Context) {
 		switch {
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
 			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		case errors.Is(err, ErrIdemConflict), errors.Is(err, ledger.ErrDuplicate):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		case errors.Is(err, escrow.ErrTierGateUnwired), errors.Is(err, escrow.ErrReconPending):
 			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		default:

@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
@@ -556,6 +557,14 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// fails closed on insufficient funds before any order row is written.
 	hold, err := s.escrow.Hold(ctx, patientID, ref, "health.pharmacy", in.IdempotencyKey, total)
 	if err != nil {
+		// Adoption refuses a key durably claimed by a different claim
+		// (payer/module/reference/amount mismatch) with ledger.ErrDuplicate —
+		// to the caller that is the same "key reused with different params"
+		// signal as ErrIdemConflict, so fold it rather than leaking the rail's
+		// error vocabulary across the module boundary.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil, ErrIdemConflict
+		}
 		return nil, fmt.Errorf("pharmacy: hold payment: %w", err)
 	}
 	escrowID := hold.HoldID()
