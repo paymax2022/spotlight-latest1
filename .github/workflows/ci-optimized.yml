@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 1  # Shallow clone to save time
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'  # Cache node_modules
@@ -41,7 +41,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
