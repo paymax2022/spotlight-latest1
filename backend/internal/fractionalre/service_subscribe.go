@@ -110,9 +110,20 @@ func (s *Service) Subscribe(ctx context.Context, userID, idempotencyKey, offerin
 		return nil, err
 	}
 
-	// 5. Tier wallet-debit limit (reused finance primitive, fail-closed).
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
-		return nil, err
+	// 5. Tier wallet-debit limit (reused finance primitive, fail-closed). The
+	//    pooled read is SKIPPED when this key's escrow legs already committed
+	//    (F2): the domain-row replay above only covers a COMPLETE subscription
+	//    — a retry that committed the escrow but died before the row insert
+	//    must reach EscrowGated's in-tx replay verification, not refuse at-cap
+	//    with the money already parked.
+	escrowPosted, err := s.ledger.Posted(ctx, key+":escrow")
+	if err != nil {
+		return nil, fmt.Errorf("fractionalre: escrow replay probe: %w", err)
+	}
+	if !escrowPosted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// 6. Escrow: debit investor wallet → escrow standing account (balanced

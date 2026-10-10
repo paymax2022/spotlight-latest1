@@ -239,9 +239,18 @@ func (s *AjoService) RunCycle(ctx context.Context, circleID, idemKey string) err
 		// EnforceWalletDebitLimit the transfer rail runs. A refusal is treated
 		// exactly like a failed debit: the member marks DEFAULTED (auditable,
 		// NL-12) and no leg posts — deterministic zero-leak without Paymax float.
-		if terr := enforceDebitLimit(s.tiers, ctx, m.UserID, c.ContributionKobo); terr != nil {
-			s.markDefault(ctx, circleID, m.UserID)
-			continue
+		// SKIPPED when this leg already committed (F2): DebitGated's replay
+		// path below counts it as collected via ErrDuplicate — refusing at-cap
+		// here would mis-mark a PAID member DEFAULTED.
+		posted, perr := s.led.Posted(ctx, legKey)
+		if perr != nil {
+			return perr
+		}
+		if !posted {
+			if terr := enforceDebitLimit(s.tiers, ctx, m.UserID, c.ContributionKobo); terr != nil {
+				s.markDefault(ctx, circleID, m.UserID)
+				continue
+			}
 		}
 		// NL-1: peer funds only — Debit fails closed on insufficient balance; the
 		// shortfall is NOT covered by Paymax. A failing member is marked DEFAULTED.
@@ -319,17 +328,23 @@ func (s *AjoService) MakeGood(ctx context.Context, circleID, userID string, cycl
 	if err != nil {
 		return err
 	}
+	key := fmt.Sprintf("%s:ajo:%s:c%d:makegood:%s", idemKey, circleID, cycleNumber, userID)
 	// Tier guard (fail-closed, E2E-FIN-041): the make-good is a member-funded
 	// wallet debit — the same EnforceWalletDebitLimit the transfer rail runs.
 	// Placed before the escrow lookup so an unwired gate still fails closed.
-	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
-		return err
+	// SKIPPED when this key's leg already committed (F2): DebitGated below
+	// tolerates the replay via ErrDuplicate.
+	if posted, perr := s.led.Posted(ctx, key); perr != nil {
+		return perr
+	} else if !posted {
+		if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+			return err
+		}
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
 	}
-	key := fmt.Sprintf("%s:ajo:%s:c%d:makegood:%s", idemKey, circleID, cycleNumber, userID)
 	if derr := s.led.DebitGated(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: makegood debit: %w", derr)
 	}

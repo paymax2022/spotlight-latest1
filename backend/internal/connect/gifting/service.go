@@ -28,6 +28,12 @@ const (
 // route wiring.
 type WalletTransfer interface {
 	Transfer(ctx context.Context, fromUserID, toUserID, reference, idempotencyKey string, amountKobo int64) error
+	// Posted reports whether the ledger journal under idempotencyKey already
+	// committed. Callers use it to skip the pooled advisory tier gate on a
+	// replay (F2): a committed debit must reach Transfer's in-tx replay
+	// verification even when today's usage is over the cap, or the retry
+	// wedges forever with the money already moved.
+	Posted(ctx context.Context, idempotencyKey string) (bool, error)
 }
 
 // TierGuard enforces the sender's KYC tier daily-debit limit, fail-closed, BEFORE
@@ -136,11 +142,6 @@ func (s *Service) Send(ctx context.Context, senderID, idemKey string, req SendGi
 		return nil, ErrInvalidAmount
 	}
 
-	// Tier limit, fail-closed, BEFORE any money moves.
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, senderID, amountKobo); err != nil {
-		return nil, err
-	}
-
 	ref := "connect:gift:" + senderID + "->" + req.RecipientID
 	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
 	// enters the global ledger keyspace: a raw key is unique per journal, so
@@ -149,6 +150,21 @@ func (s *Service) Send(ctx context.Context, senderID, idemKey string, req SendGi
 	// closed, not be absorbed as a no-op that leaves a gift row with no money
 	// behind it. The derived key keeps a genuine retry a no-op.
 	ledgerKey := "connect:gift:" + senderID + ":" + idemKey
+
+	// Tier limit, fail-closed, BEFORE any money moves — UNLESS this key's
+	// journal already committed (F2): a replay whose debit legs already posted
+	// must reach Transfer's in-tx replay verification, not die on a pooled
+	// advisory read that can refuse at-cap after the money moved.
+	posted, err := s.transfer.Posted(ctx, ledgerKey)
+	if err != nil {
+		return nil, err
+	}
+	if !posted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, senderID, amountKobo); err != nil {
+			return nil, err
+		}
+	}
+
 	// Money mutation — single balanced double-entry, idempotent, ledger-only.
 	if err := s.transfer.Transfer(ctx, senderID, req.RecipientID, ref, ledgerKey, amountKobo); err != nil {
 		return nil, err // ErrInsufficientFunds / ErrDuplicate bubble up

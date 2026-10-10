@@ -200,9 +200,17 @@ func (s *Service) BuyFraction(ctx context.Context, buyerID, idempotencyKey, list
 	if err := s.enforceLimit(ctx, buyerID, amountKobo); err != nil {
 		return nil, err
 	}
-	// 4. Tier wallet-debit limit (fail-closed).
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, buyerID, amountKobo); err != nil {
-		return nil, err
+	// 4. Tier wallet-debit limit (fail-closed). Same committed-replay skip as
+	//    Subscribe (F2): a retry that committed the escrow legs but died before
+	//    the trade row must reach EscrowGated's in-tx replay verification.
+	escrowPosted, err := s.ledger.Posted(ctx, key+":escrow")
+	if err != nil {
+		return nil, fmt.Errorf("fractionalre: secondary escrow replay probe: %w", err)
+	}
+	if !escrowPosted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, buyerID, amountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// 5. Escrow buyer funds under the SCOPED key.

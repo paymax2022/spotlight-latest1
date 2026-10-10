@@ -60,10 +60,20 @@ func (s *Service) Credit(ctx context.Context, userID, reference, idempotencyKey 
 // an advisory pre-check only — DebitGated re-evaluates the daily cap INSIDE the
 // ledger tx under the wallet advisory lock, which is the authoritative half
 // (F7): two concurrent debits can both pass the pooled read, never the
-// serialised in-tx one.
+// serialised in-tx one. The pooled check is SKIPPED when this key's journal
+// already committed (F2): a replay of money that already moved must reach the
+// in-tx replay verification even when today's usage is over the cap — refusing
+// at the pooled gate would tell the caller the charge never happened and
+// invite a fresh-key retry that double-debits.
 func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
-		return err
+	posted, err := s.ledger.Posted(ctx, idempotencyKey)
+	if err != nil {
+		return fmt.Errorf("wallet: replay probe: %w", err)
+	}
+	if !posted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
+			return err
+		}
 	}
 	return s.ledger.DebitGated(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
 }

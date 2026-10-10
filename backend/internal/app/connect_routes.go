@@ -1074,6 +1074,13 @@ func (t *connectWalletTransferAdapter) Transfer(ctx context.Context, fromUserID,
 	return t.ledger.DebitGated(ctx, fromUserID, reference, idempotencyKey, toAcc.ID, amountKobo)
 }
 
+// Posted reports whether the journal under idempotencyKey already committed —
+// the gifting service probes it to skip the pooled advisory tier gate on a
+// replay (F2).
+func (t *connectWalletTransferAdapter) Posted(ctx context.Context, idempotencyKey string) (bool, error) {
+	return t.ledger.Posted(ctx, idempotencyKey)
+}
+
 // connectTierGateAdapter adapts tiers.Service.GetUserTier (returns tiers.Tier) to
 // the payouts TierGate interface (returns int).
 type connectTierGateAdapter struct{ tiers *tiers.Service }

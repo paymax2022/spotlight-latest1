@@ -161,6 +161,11 @@ func (f *fakeLedger) DebitGated(ctx context.Context, a, b, c, d string, e int64)
 	return f.Debit(ctx, a, b, c, d, e)
 }
 
+// Posted satisfies LedgerPort — the fake tracks committed keys in idem.
+func (f *fakeLedger) Posted(_ context.Context, idem string) (bool, error) {
+	return f.idem[idem], nil
+}
+
 func (f *fakeLedger) StandingAccountID(context.Context, string) (string, error) {
 	return "acct-pot", nil
 }
@@ -238,6 +243,12 @@ func (f *realReplayLedger) Credit(_ context.Context, _, _, idem, _ string, _ int
 	f.credits++
 	return nil
 }
+
+// Posted satisfies LedgerPort — seen keys are the committed journals.
+func (f *realReplayLedger) Posted(_ context.Context, idem string) (bool, error) {
+	return f.seen[idem], nil
+}
+
 func (f *realReplayLedger) StandingAccountID(context.Context, string) (string, error) {
 	return "acct-pot", nil
 }

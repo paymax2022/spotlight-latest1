@@ -85,6 +85,10 @@ func (w *liveWalletTransfer) Transfer(ctx context.Context, fromUserID, toUserID,
 	return w.l.Debit(ctx, fromUserID, reference, idempotencyKey, toAcc.ID, amountKobo)
 }
 
+func (w *liveWalletTransfer) Posted(ctx context.Context, idempotencyKey string) (bool, error) {
+	return w.l.Posted(ctx, idempotencyKey)
+}
+
 type giftNoopAuditor struct{}
 
 func (giftNoopAuditor) WriteAudit(context.Context, string, string, string, string, map[string]any) error {

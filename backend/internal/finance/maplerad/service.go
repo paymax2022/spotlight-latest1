@@ -247,8 +247,19 @@ func (s *Service) InitiateTransfer(ctx context.Context, userID string, req Trans
 	if err := s.requireTier(ctx, userID, RequiredTransferTier); err != nil {
 		return nil, err
 	}
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, total); err != nil {
-		return nil, err
+	// The pooled cap is SKIPPED when the hold leg for this ref already
+	// committed (F2): a retry whose PlanHold journal posted must reach the
+	// InsertReference replay below (stored row) and PostJournalGated's in-tx
+	// verification — refusing at-cap here would wedge a transfer whose money
+	// already moved.
+	holdPosted, err := s.ledger.Posted(ctx, LegKey(req.Ref, LegHold))
+	if err != nil {
+		return nil, fmt.Errorf("maplerad: hold replay probe: %w", err)
+	}
+	if !holdPosted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, total); err != nil {
+			return nil, err
+		}
 	}
 	bal, err := s.ledger.GetBalance(ctx, userID)
 	if err != nil {

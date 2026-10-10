@@ -452,9 +452,18 @@ type feesPaymentLedger struct {
 
 func (a feesPaymentLedger) MoveGuardianToSchool(ctx context.Context, guardianUserID, schoolID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
 	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
-	// transfer rail applies — a refused attempt posts zero ledger legs.
-	if err := enforceAdapterDebitLimit(ctx, a.tiers, guardianUserID, amountMinor); err != nil {
+	// transfer rail applies — a refused attempt posts zero ledger legs. The
+	// pooled read is SKIPPED when this key's journal already committed (F2): a
+	// replay of money that already moved must reach DebitGated's in-tx replay
+	// verification, or an at-cap retry wedges with the charge already posted.
+	posted, err := a.ledger.Posted(ctx, idempotencyKey)
+	if err != nil {
 		return "", err
+	}
+	if !posted {
+		if err := enforceAdapterDebitLimit(ctx, a.tiers, guardianUserID, amountMinor); err != nil {
+			return "", err
+		}
 	}
 	settlement, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {

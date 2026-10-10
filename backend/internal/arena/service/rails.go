@@ -363,11 +363,18 @@ func (s *SupportService) Contribute(ctx context.Context, userID, idemKey, compet
 	// Daily-debit gate (fail-closed, E2E-FIN-046): support gifting is a wallet
 	// debit, so the same EnforceWalletDebitLimit the transfer rail applies runs
 	// BEFORE money moves — a refused attempt posts zero ledger legs and no
-	// support tag. A replay whose leg already posted hits the ledger's own
-	// ErrDuplicate below (isLedgerReplay → success), so refusal ordering does
-	// not double-charge.
-	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+	// support tag. A replay whose leg already posted SKIPS this pooled check
+	// (F2): refusing at-cap here would wedge a retry whose money already moved
+	// — DebitGated's in-tx replay verification (isLedgerReplay → success below)
+	// is the authority for committed keys.
+	posted, err := s.ledger.Posted(ctx, idemKey)
+	if err != nil {
 		return err
+	}
+	if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+			return err
+		}
 	}
 
 	// Resolve the pot standing account and DEBIT the backer's wallet into it.
@@ -420,9 +427,18 @@ func (s *SupportService) ContributeWithState(ctx context.Context, userID, idemKe
 		return ErrKYCTierTooLow
 	}
 	// Daily-debit gate (fail-closed, E2E-FIN-046): same guard as Contribute —
-	// the backer's wallet debit cannot run while the tier gate refuses.
-	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+	// the backer's wallet debit cannot run while the tier gate refuses. The
+	// committed-replay skip is identical too (F2): a key whose legs already
+	// posted converges through DebitGated's in-tx verification, not this pooled
+	// read.
+	posted, err := s.ledger.Posted(ctx, idemKey)
+	if err != nil {
 		return err
+	}
+	if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+			return err
+		}
 	}
 	potAcct, err := s.ledger.StandingAccountID(ctx, supportPotAccountType)
 	if err != nil {

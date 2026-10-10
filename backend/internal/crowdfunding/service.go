@@ -304,9 +304,17 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	// contributor's wallet into escrow, so the same EnforceWalletDebitLimit the
 	// transfer rail applies runs BEFORE money moves — a refused attempt posts
 	// zero ledger legs and no contribution row. Replays already returned the
-	// existing contribution above, so a completed key never reaches this gate.
-	if err := s.enforceDebitLimit(ctx, contributorID, req.AmountKobo); err != nil {
+	// existing contribution above; the ledger probe covers the remaining case
+	// (F2): a retry whose escrow legs committed but whose contribution row
+	// never inserted converges through EscrowGated's in-tx replay verification.
+	escrowPosted, err := s.ledger.Posted(ctx, req.IdempotencyKey+":escrow")
+	if err != nil {
 		return nil, err
+	}
+	if !escrowPosted {
+		if err := s.enforceDebitLimit(ctx, contributorID, req.AmountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	ref := "campaign:" + campaignID + ":contributor:" + contributorID

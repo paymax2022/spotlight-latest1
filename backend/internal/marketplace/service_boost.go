@@ -168,21 +168,28 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 		return nil, ErrForbidden
 	}
 
-	// Tier-limit gate, fail-closed, BEFORE any money moves (§6 FINDING fix: the
-	// boost charge used to call s.ledger.Debit directly with no tier-limit/KYC gate
-	// at all — unlike every sibling wallet-debit money path). A missing gate is a
-	// deployment misconfiguration, not a bypass: refuse rather than silently skip.
-	if s.tiers == nil {
-		return nil, ErrTierGateUnwired
-	}
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, sellerID, quote.PriceKobo); err != nil {
-		return nil, newErr(403, CodeTierLimitExceeded, "boost purchase blocked by tier limit: "+err.Error())
-	}
-
 	// Wallet-direct charge into the commission (ad-revenue) account. Fail-closed on
 	// insufficient balance, idempotent on the deterministic charge key. Extracted into
 	// postBoostCharge so the ledger effect has a DB-free unit test (service_boost_test.go).
 	chargeTier := BoostTier{Tier: boostChargeTierKey(quote), DurationDays: quote.DurationDays, PriceKobo: quote.PriceKobo, Weight: quote.Weight}
+
+	// Tier-limit gate, fail-closed, BEFORE any money moves (§6 FINDING fix: the
+	// boost charge used to call s.ledger.Debit directly with no tier-limit/KYC gate
+	// at all — unlike every sibling wallet-debit money path). A missing gate is a
+	// deployment misconfiguration, not a bypass: refuse rather than silently skip.
+	// SKIPPED when this deterministic charge key already committed (F2): a retry
+	// whose debit legs posted but whose boost row never recorded must reach
+	// DebitGated's in-tx replay (ErrDuplicate → safe), not refuse at-cap.
+	if s.tiers == nil {
+		return nil, ErrTierGateUnwired
+	}
+	if posted, perr := s.ledger.Posted(ctx, boostChargeKey(sellerID, in.ListingID, chargeTier.Tier)); perr != nil {
+		return nil, wrapInternal("boost replay probe", perr)
+	} else if !posted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, sellerID, quote.PriceKobo); err != nil {
+			return nil, newErr(403, CodeTierLimitExceeded, "boost purchase blocked by tier limit: "+err.Error())
+		}
+	}
 	chargeRef, err := s.postBoostCharge(ctx, sellerID, in.ListingID, chargeTier)
 	if err != nil {
 		return nil, err

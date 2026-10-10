@@ -209,6 +209,12 @@ type LedgerPort interface {
 	// INSIDE the posting tx under the wallet advisory lock — the F7-serialised
 	// half of DebitLimitPort's pooled EnforceWalletDebitLimit.
 	DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// Posted reports whether the ledger journal under baseIdempotencyKey
+	// already committed (the ":credit" leg exists). Callers use it to skip the
+	// pooled advisory cap check on a replay (F2): a committed debit must reach
+	// DebitGated's in-tx replay verification even when today's usage is over
+	// the cap, or the retry wedges forever with the money already moved.
+	Posted(ctx context.Context, baseIdempotencyKey string) (bool, error)
 	// StandingAccountID resolves (or creates) a standing account id by type name.
 	StandingAccountID(ctx context.Context, accountType string) (string, error)
 }

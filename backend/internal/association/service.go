@@ -233,9 +233,15 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	// the same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
 	// money moves — a refused attempt posts zero ledger legs and no payment row.
 	// Replays of a PAID invoice already returned the receipt above, so a
-	// completed payment never reaches this gate.
-	if err := s.enforceDebitLimit(ctx, userID, amount); err != nil {
+	// completed payment never reaches this gate. The ledger probe covers the
+	// remaining case (F2): a retry whose debit committed but whose receipt
+	// insert died converges through DebitGated's in-tx replay verification.
+	if posted, err := s.ledger.Posted(ctx, req.IdempotencyKey); err != nil {
 		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, amount); err != nil {
+			return nil, err
+		}
 	}
 
 	// Settlement standing account receives the credit (balanced double-entry).

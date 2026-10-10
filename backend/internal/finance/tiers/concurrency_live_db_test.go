@@ -37,6 +37,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/testsupport"
 )
 
@@ -274,5 +275,56 @@ func TestLiveDB_ConcurrentDebits_CheckoutGuardSerialisesToo(t *testing.T) {
 	posted := dailyDebitedTotal(t, ctx, pool, userID)
 	if posted != 2_000_000 {
 		t.Fatalf("Tier-0 checkout debits = %d, want exactly the ₦20,000 rolling allowance", posted)
+	}
+}
+
+// TestLiveDB_WalletDebit_ReplayThroughPooledGateAtCap proves the F2 fix at the
+// ACTUAL call site: wallet.Service.Debit runs a pooled advisory
+// EnforceWalletDebitLimit BEFORE ledger.DebitGated. Without the committed-key
+// probe, a replay of a debit that already posted would be refused at that
+// pooled read once today's usage is at the cap — wedging a retry whose money
+// already moved (and inviting a fresh-key double-charge). The probe must skip
+// the pooled gate for committed keys so the in-tx replay verification
+// converges.
+func TestLiveDB_WalletDebit_ReplayThroughPooledGateAtCap(t *testing.T) {
+	pool := tiersConcurrencyPool(t)
+	ctx := context.Background()
+	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
+	ledgerSvc.SetDebitGuard(tiers.NewService(pool).EnforceWalletDebitLimitTx)
+	walletSvc := wallet.NewService(ledgerSvc, tiers.NewService(pool))
+
+	userID := tiersConcurrencyUser(t, pool, 1) // Tier 1: ₦50,000/day strict cap
+
+	clearing, err := ledgerSvc.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		t.Fatalf("clearing account: %v", err)
+	}
+	fundKey := "test:fund:" + uuid.NewString()
+	if err := ledgerSvc.Credit(ctx, userID, fundKey, fundKey, clearing.ID, 50_000_000); err != nil {
+		t.Fatalf("fund wallet: %v", err)
+	}
+	escrowAcc, err := ledgerSvc.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		t.Fatalf("escrow account: %v", err)
+	}
+
+	// Spend right up to the cap through the wallet service itself.
+	key := "f2-wallet-" + uuid.NewString()
+	if err := walletSvc.Debit(ctx, userID, "f2:wallet", key, escrowAcc.ID, 5_000_000); err != nil {
+		t.Fatalf("initial wallet debit: %v", err)
+	}
+	// A fresh key must refuse at the pooled gate — cap consumed.
+	if err := walletSvc.Debit(ctx, userID, "f2:wallet", "f2-fresh-"+uuid.NewString(), escrowAcc.ID, 1_000_000); !errors.Is(err, tiers.ErrDailyLimitExceeded) {
+		t.Fatalf("fresh debit beyond the cap must fail on ErrDailyLimitExceeded, got %v", err)
+	}
+	// Replaying the COMMITTED key through wallet.Debit must converge — the
+	// pooled gate is skipped for a key whose journal already posted (F2).
+	if err := walletSvc.Debit(ctx, userID, "f2:wallet", key, escrowAcc.ID, 5_000_000); err != nil {
+		t.Fatalf("wallet.Debit replay of a committed debit must converge even at the cap, got %v", err)
+	}
+
+	posted := dailyDebitedTotal(t, ctx, pool, userID)
+	if posted != 5_000_000 {
+		t.Fatalf("daily debited = %d, want exactly 5_000_000 (the replay posted nothing)", posted)
 	}
 }

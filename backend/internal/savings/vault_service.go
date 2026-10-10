@@ -275,8 +275,15 @@ func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amo
 	// wallet — the same EnforceWalletDebitLimit the transfer rail runs. The
 	// scheduled auto-save path (autoSaveRunner → Deposit) rides through this
 	// check too, so a downgraded member's recurring saves also refuse.
-	if err := enforceDebitLimit(s.tiers, ctx, ownerID, amountKobo); err != nil {
+	// SKIPPED when this key's debit leg already committed (F2): a retry whose
+	// wallet debit posted must reach DebitGated's in-tx replay verification,
+	// not refuse at-cap after the money already moved.
+	if posted, err := s.led.Posted(ctx, idemKey+":wallet"); err != nil {
 		return 0, err
+	} else if !posted {
+		if err := enforceDebitLimit(s.tiers, ctx, ownerID, amountKobo); err != nil {
+			return 0, err
+		}
 	}
 	// Real money leaves the main wallet into the shared escrow/savings hold.
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)

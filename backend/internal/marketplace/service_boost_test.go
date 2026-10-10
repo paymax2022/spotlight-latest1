@@ -108,6 +108,11 @@ func (f *fakeBoostLedger) DebitGated(ctx context.Context, userID, reference, ide
 	return f.Debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
 }
 
+// Posted satisfies boostLedger — seen keys are the committed journals.
+func (f *fakeBoostLedger) Posted(_ context.Context, idempotencyKey string) (bool, error) {
+	return f.seen[idempotencyKey], nil
+}
+
 func (f *fakeBoostLedger) PostReversal(_ context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error {
 	if f.seen[idempotencyKey] {
 		return ledger.ErrDuplicate

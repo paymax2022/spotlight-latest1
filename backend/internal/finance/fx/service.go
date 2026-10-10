@@ -279,9 +279,16 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	reference := "fx:" + uuid.New().String()
 
 	// Tier gate on the TOTAL debit (source+fee) BEFORE money moves — a refusal
-	// posts zero ledger legs (E2E-FIN-046). Replays short-circuit above.
-	if err := s.enforceDebitLimit(ctx, userID, totalDebitKobo); err != nil {
+	// posts zero ledger legs (E2E-FIN-046). Completed replays short-circuit on
+	// the fx_conversions row above; the ledger probe covers the remaining case
+	// (F2): a retry whose debit committed but whose conversion row never
+	// inserted converges through DebitGated's in-tx replay verification.
+	if posted, err := s.ledger.Posted(ctx, req.IdempotencyKey+":debit"); err != nil {
 		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, totalDebitKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// idempotent on req.IdempotencyKey+":debit". ErrDuplicate on a replay is success.

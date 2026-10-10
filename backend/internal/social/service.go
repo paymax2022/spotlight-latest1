@@ -111,24 +111,33 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 		return p, nil
 	}
 
+	// Journal keys are namespaced ("social:p2p:") so a caller key can never be
+	// absorbed by a journal posted under another rail's purpose — the same
+	// convention groups.dues uses (S2). Derived before the gate so the replay
+	// probe can check the exact debit key.
+	journalKey := "social:p2p:" + idemKey
+
 	// Tier guard (fail-closed, E2E-FIN-041): a cashtag send is a wallet debit, so
 	// it runs the same EnforceWalletDebitLimit the transfer rail applies — Tier 0
 	// and over-daily-cap senders are refused. Placed AFTER the replay short-
 	// circuit (same ordering rule as transfers.walletPreflight): once a send has
 	// completed, re-running the gate could only refuse a request whose money
 	// already moved — telling the caller it failed invites a fresh-key retry,
-	// which is a real second debit.
-	if err := s.enforceDebitLimit(ctx, senderID, amountKobo); err != nil {
+	// which is a real second debit. The ledger replay probe covers the OTHER
+	// half of that ordering (F2): a retry whose debit leg committed but whose
+	// payment row never inserted converges through DebitGated's in-tx
+	// verification, so the pooled gate is skipped for a committed key too.
+	if posted, err := s.led.Posted(ctx, journalKey+":dr"); err != nil {
 		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, senderID, amountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// Move money: debit sender -> escrow standing, credit escrow -> recipient.
 	// (Escrow account is used as the neutral transit bucket; net zero, no float
 	// retained, no yield — NL-2.)
-	// Journal keys are namespaced ("social:p2p:") so a caller key can never be
-	// absorbed by a journal posted under another rail's purpose — the same
-	// convention groups.dues uses (S2).
-	journalKey := "social:p2p:" + idemKey
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
