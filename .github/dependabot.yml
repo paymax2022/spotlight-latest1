@@ -41,6 +41,22 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # ESLint 10 is blocked by the eslint-config-next@16.3.x plugin chain:
+      # eslint-plugin-react@7.37.x (peers eslint <= ^9.7), eslint-plugin-import@2.32.x
+      # and eslint-plugin-jsx-a11y@6.10.x (both peer eslint <= ^9). eslint 10 also
+      # crashes at lint time on this config (scopeManager.addGlobals is not a
+      # function in addDeclaredGlobals). Revisit when eslint-config-next ships
+      # plugins that declare eslint 10 support.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 7 is the native (Go) port. `tsc --noEmit` itself passes, but the
+      # lint step hard-fails: typescript-eslint (bundled via eslint-config-next)
+      # throws "typescript-eslint does not support TS 7.0" at startup. Requires the
+      # side-by-side TS 6 API setup or typescript-eslint >= TS 7.1 support
+      # (typescript-eslint/typescript-eslint#10940) before this is feasible.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     commit-message: { prefix: "chore(deps)" }
     labels: [dependencies, frontend-web]
 
@@ -61,6 +77,24 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # Expo module versions are pinned to the Expo SDK line — the app is on
+      # expo ~54, so expo-*@57.x (SDK 57) cannot land without a coordinated
+      # SDK migration first. Patch/minor bumps inside the current SDK still flow.
+      - dependency-name: "expo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "expo-*"
+        update-types: ["version-update:semver-major"]
+      # react-native 0.x "minor" bumps are effectively breaking and must move with
+      # the Expo SDK — 0.81 -> 0.87 snuck into the npm-minor-patch group and broke
+      # whole-app tsc (removed StyleSheet.absoluteFillObject, changed ref types).
+      # Patch releases still flow.
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Same native-port caveat as /frontend-web: treat any TypeScript major as a
+      # deliberate migration, not a weekly bump.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     commit-message: { prefix: "chore(deps)" }
     labels: [dependencies, mobile]
 
