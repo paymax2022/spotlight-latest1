@@ -100,6 +100,7 @@ func (s *Service) SendMessage(ctx context.Context, userID, threadID, body string
 		return nil, err
 	}
 	s.pushMessage(ctx, userID, threadID, msg)
+	s.emitMessageNotification(ctx, userID, threadID)
 	return msg, nil
 }
 

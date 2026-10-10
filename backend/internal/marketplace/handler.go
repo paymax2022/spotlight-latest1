@@ -696,10 +696,11 @@ func (h *Handler) ToggleSavedSearch(c *gin.Context) {
 		return
 	}
 	var body struct {
-		AlertEnabled bool `json:"alert_enabled"`
+		AlertEnabled   bool   `json:"alert_enabled"`
+		AlertFrequency string `json:"alert_frequency"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	if err := h.svc.ToggleSavedSearchAlert(c.Request.Context(), uid, c.Param("id"), body.AlertEnabled); err != nil {
+	if err := h.svc.ToggleSavedSearchAlert(c.Request.Context(), uid, c.Param("id"), body.AlertEnabled, body.AlertFrequency); err != nil {
 		fail(c, err)
 		return
 	}

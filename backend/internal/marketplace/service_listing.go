@@ -232,6 +232,9 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 	if err != nil {
 		return nil, err
 	}
+	if in.PriceKobo != nil {
+		s.emitPriceDropNotifications(ctx, updated, l.PriceKobo, updated.PriceKobo)
+	}
 	// EDIT-AFTER-APPROVE RE-MODERATION (trust backbone, LM-002/MOD-010/EC-010): a content
 	// edit (title/description/attributes) to a LIVE listing must re-enter pending_review
 	// and be pulled from discovery until re-approved — otherwise a seller can bait-and-

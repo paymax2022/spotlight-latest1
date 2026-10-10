@@ -245,7 +245,59 @@ export async function listNotifications(): Promise<MktNotification[]> {
     await delay();
     return mockNotifications.map((n) => ({ ...n }));
   }
-  return mktGet<MktNotification[]>('/notifications');
+  return arr(await mktGet<ServerNotification[] | null>('/notifications')).map(normalizeNotification);
+}
+
+/** One row as the Go API sends it (deep-camelCased by the client). */
+interface ServerNotification {
+  id: string;
+  type: string;
+  title: string;
+  body?: string | null;
+  data?: Record<string, unknown> | null;
+  relatedId?: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+// The server's mkt_notification_type enum is finer-grained than the inbox's
+// icon/type set; fold it down rather than dropping rows the UI can't name.
+const SERVER_TYPE_TO_CLIENT: Record<string, MktNotificationType> = {
+  new_offer: 'new_offer',
+  offer_accepted: 'new_offer',
+  offer_declined: 'new_offer',
+  offer_countered: 'new_offer',
+  price_dropped: 'price_drop',
+  listing_ending_soon: 'listing_status',
+  low_stock: 'listing_status',
+  boost_expiring: 'boost_expiry',
+  boost_ended: 'boost_expiry',
+  message_new: 'new_message',
+  deal_marked_met: 'listing_status',
+  review_requested: 'review',
+  support_reply: 'listing_status',
+};
+
+// related_id is "the entity this is about": a chat/deal thread for message
+// events, the listing for everything else. data.* wins when present.
+const THREAD_TYPES = new Set(['message_new', 'deal_marked_met']);
+
+function normalizeNotification(n: ServerNotification): MktNotification {
+  const d = (n.data ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+  const threadFallback = THREAD_TYPES.has(n.type) ? n.relatedId ?? null : null;
+  const listingFallback = !THREAD_TYPES.has(n.type) && n.type !== 'review_requested' ? n.relatedId ?? null : null;
+  return {
+    id: n.id,
+    type: SERVER_TYPE_TO_CLIENT[n.type] ?? 'listing_status',
+    title: n.title,
+    body: n.body ?? '',
+    read: n.isRead,
+    createdAt: n.createdAt,
+    listingId: str(d.listingId) ?? listingFallback,
+    threadId: str(d.threadId) ?? threadFallback,
+    sellerId: str(d.sellerId),
+  };
 }
 
 export async function markNotificationRead(id: string): Promise<{ ok: boolean }> {
@@ -254,7 +306,7 @@ export async function markNotificationRead(id: string): Promise<{ ok: boolean }>
     mockNotifications = mockNotifications.map((n) => (n.id === id ? { ...n, read: true } : n));
     return { ok: true };
   }
-  return mktPost<{ ok: boolean }>(`/notifications/${id}/read`);
+  return mktPatch<{ ok: boolean }>(`/notifications/${id}`);
 }
 
 export async function markAllNotificationsRead(): Promise<{ ok: boolean }> {
@@ -263,7 +315,7 @@ export async function markAllNotificationsRead(): Promise<{ ok: boolean }> {
     mockNotifications = mockNotifications.map((n) => ({ ...n, read: true }));
     return { ok: true };
   }
-  return mktPost<{ ok: boolean }>('/notifications/read-all');
+  return mktPatch<{ ok: boolean }>('/notifications/mark-all-read');
 }
 
 export interface FollowedSeller {

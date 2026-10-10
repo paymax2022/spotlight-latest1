@@ -50,6 +50,7 @@ const SECTIONS: Section[] = [
   {
     title: 'Activity',
     rows: [
+      { key: 'inbox', label: 'Notifications', sub: 'Offers, messages and price drops', icon: Bell, route: '/marketplace/notifications' },
       { key: 'saved', label: 'Saved items', sub: 'Your wishlist', icon: Heart, route: '/marketplace/saved-items' },
       { key: 'following', label: 'Following', sub: 'Sellers you follow', icon: Store, route: '/marketplace/account/following' },
       { key: 'searches', label: 'Saved searches', sub: 'Alerts when new listings match', icon: BellRing, route: '/marketplace/saved-searches' },

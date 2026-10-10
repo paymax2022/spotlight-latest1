@@ -33,6 +33,8 @@ export default function SavedItems() {
 
       {saved.isLoading && !saved.data ? (
         <StateView kind="loading" message="Loading your wishlist…" />
+      ) : saved.isError && !saved.data ? (
+        <StateView kind="error" title="Couldn't load your saved items" actionLabel="Retry" onAction={() => saved.refetch()} />
       ) : items.length === 0 ? (
         <StateView
           kind="empty"

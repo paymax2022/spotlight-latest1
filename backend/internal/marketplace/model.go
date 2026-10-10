@@ -317,7 +317,9 @@ type SavedSearch struct {
 	Query        *string        `json:"query,omitempty"`
 	Filters      map[string]any `json:"filters"`
 	AlertEnabled bool           `json:"alert_enabled"`
-	CreatedAt    time.Time      `json:"created_at"`
+	// AlertFrequency is 'instant' | 'daily' | 'off'; empty means 'instant'.
+	AlertFrequency string    `json:"alert_frequency"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Category mirrors mkt_categories (subset consumed by the API).
