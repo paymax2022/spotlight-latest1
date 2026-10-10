@@ -26,7 +26,7 @@ jobs:
             python3 -c "import yaml,sys; yaml.safe_load(open('$f')); print('OK  ', '$f')"
           done
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
 
