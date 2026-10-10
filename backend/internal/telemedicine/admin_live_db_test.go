@@ -19,7 +19,9 @@ import (
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/testsupport"
 )
 
 func adminPool(t *testing.T) *pgxpool.Pool {
@@ -63,7 +65,7 @@ func TestLiveDB_AdminDashboard_ExactKoboRevenue(t *testing.T) {
 	pool := adminPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool)).
 		WithPlatformFeeBp(telemedicine.PlatformFeeBp) // ADR-044 fee ON for this test
 
 	before, err := svc.GetAdminDashboard(ctx)
@@ -122,7 +124,7 @@ func TestLiveDB_AdminListDoctors_RealVerificationStatus(t *testing.T) {
 	pool := adminPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led))
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool))
 
 	// seedApprovedDoctor sets is_available=TRUE with status='approved'. Also seed
 	// an UNAVAILABLE doctor to prove the admin roster is NOT availability-filtered.
@@ -193,7 +195,7 @@ func TestLiveDB_AdminListAppointments_NotScopedToOneCaller(t *testing.T) {
 	pool := adminPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led))
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool))
 
 	doctorID, _, patientA := seedApprovedDoctor(t, ctx, pool, led, 120_000)
 	// A second, independent patient — never the doctor's own caller identity —
@@ -210,6 +212,7 @@ func TestLiveDB_AdminListAppointments_NotScopedToOneCaller(t *testing.T) {
 	if err := led.Credit(ctx, patientB, "admin-appt-seed", "admin-appt-fund-"+patientB, revAcc.ID, 10_000_000); err != nil {
 		t.Fatalf("fund patientB: %v", err)
 	}
+	testsupport.SetKycTier(t, ctx, pool, patientB, testsupport.KycTierUnlimited)
 	t.Cleanup(func() {
 		bg := context.Background()
 		_, _ = pool.Exec(bg, `DELETE FROM auth.users WHERE id=$1::uuid`, patientB)
@@ -267,7 +270,7 @@ func TestLiveDB_VerifyDoctor_ApproveAndReject_WriteAuditRow(t *testing.T) {
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	auditRepo := doctor.NewRepository(pool)
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithAudit(auditRepo)
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool)).WithAudit(auditRepo)
 
 	reviewerID := seedAdminReviewer(t, ctx, pool)
 
@@ -365,7 +368,7 @@ func TestLiveDB_MemberRoutes_UnaffectedByAdminConsole(t *testing.T) {
 	pool := adminPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led))
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool))
 
 	doctorID, _, patientID := seedApprovedDoctor(t, ctx, pool, led, 90_000)
 

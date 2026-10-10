@@ -21,6 +21,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	finsettlement "spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/stays/consent"
 	"spotlight/backend/internal/stays/gateway"
 	"spotlight/backend/internal/stays/pricing"
@@ -112,6 +113,7 @@ func (f *fakeSupply) SyncARI(ctx context.Context, ev gateway.ARIEvent) error { r
 type sagaFixture struct {
 	pool      *pgxpool.Pool
 	svc       *reservation.Service
+	deps      reservation.Deps
 	ledgerSvc *ledger.Service
 	settleSvc *stayssettlement.Service
 	guest     string
@@ -152,15 +154,17 @@ func newSagaFixture(t *testing.T, ctx context.Context, prebooks []gateway.Preboo
 		DisplayCurrency:       "NGN",
 	}, nil)
 
-	f.svc = reservation.NewService(reservation.Deps{
+	f.deps = reservation.Deps{
 		Repo:                reservation.NewRepository(pool),
 		Router:              router,
 		Pricing:             eng,
 		Consent:             consent.NewService(pool),
 		Settlement:          finSettle,
 		Ledger:              f.ledgerSvc,
+		Tiers:               tiers.NewService(pool),
 		DirectCommissionBps: 1500,
-	})
+	}
+	f.svc = reservation.NewService(f.deps)
 
 	// NDPA consent + funded wallet for the escrow debits.
 	if _, err := consent.NewService(pool).Grant(ctx, f.guest, consent.DefaultScope); err != nil {
@@ -1108,5 +1112,103 @@ func TestLiveDB_Cancel_RecordsSingleCancellationRow(t *testing.T) {
 	}
 	if cnt != 1 {
 		t.Fatalf("cancellation rows after retry = %d, want 1 — check-then-insert dedup failed", cnt)
+	}
+}
+
+// F1 (audit): Book's escrow hold used to run settlement.Escrow — an UNGATED
+// wallet debit. It now goes through settlement.EscrowWithGuard +
+// EnforceCheckoutDebitLimitTx: the consumer-purchase daily-cap variant
+// evaluated INSIDE the escrow tx under the wallet advisory lock. This pins:
+//   - a Tier-0 guest is refused when the checkout allowance is OFF (the
+//     fixture's default tiers svc — fail closed, no wallet debit);
+//   - a Tier-1 guest whose daily cap is already consumed is refused with
+//     tiers.ErrDailyLimitExceeded before the supplier booking attempt;
+//   - an unwired tier gate fails closed on reservation.ErrTierGateUnwired.
+func TestLiveDB_Book_CheckoutGateRefusesTier0AndOverCap(t *testing.T) {
+	ctx := context.Background()
+	const netRate = int64(1_000_000) // ₦10,000
+	const tax = int64(100_000)
+	const gross = netRate + tax
+
+	f := newSagaFixture(t, ctx,
+		[]gateway.PrebookResult{{
+			BookToken:          "tok-tg",
+			NetRateKobo:        netRate,
+			TaxKobo:            tax,
+			Currency:           "NGN",
+			CancellationPolicy: map[string]any{"refundable": true},
+		}},
+		gateway.Reservation{SupplierRef: "FAKE-" + uuid.NewString()[:12], Status: gateway.ResStatusConfirmed},
+		gateway.Cancellation{Status: "cancelled", RefundKobo: gross})
+
+	prebook := func(svc *reservation.Service) *reservation.Reservation {
+		t.Helper()
+		pre, err := svc.Prebook(ctx, f.guest, reservation.PrebookInput{
+			Rail:         gateway.RailDirect,
+			SupplierCode: "self",
+			PropertyID:   f.propID,
+			RoomTypeID:   uuid.NewString(),
+			RatePlanID:   uuid.NewString(),
+			CheckIn:      time.Now().Add(72 * time.Hour),
+			CheckOut:     time.Now().Add(120 * time.Hour),
+			Rooms:        1,
+			Currency:     "NGN",
+		})
+		if err != nil {
+			t.Fatalf("Prebook: %v", err)
+		}
+		return pre.Reservation
+	}
+	gi := gateway.GuestInfo{FirstName: "T", LastName: "G"}
+
+	// (a) Tier-0 guest + checkout allowance OFF → the gated hold refuses.
+	testsupport.SetKycTier(t, ctx, f.pool, f.guest, 0)
+	res := prebook(f.svc)
+	_, err := f.svc.Book(ctx, f.guest, res.ID, "tok-tg", "tg-t0-"+uuid.NewString(), gi)
+	if err == nil {
+		t.Fatal("Tier-0 book with the checkout allowance off must refuse")
+	}
+	if !errors.Is(err, reservation.ErrInsufficient) {
+		t.Fatalf("Tier-0 refusal must wrap ErrInsufficient, got %v", err)
+	}
+	if !errors.Is(err, tiers.ErrWalletDisabled) && !errors.Is(err, tiers.ErrCheckoutAllowanceExceeded) {
+		t.Fatalf("Tier-0 refusal must carry a tier sentinel, got %v", err)
+	}
+	if got, want := walletBalance(t, ctx, f.pool, f.guest), int64(3_000_000); got != want {
+		t.Fatalf("Tier-0 refusal moved money: wallet = %d, want %d", got, want)
+	}
+
+	// (b) Unwired tier gate fails CLOSED — never a plain ungated escrow.
+	depsUnwired := f.deps
+	depsUnwired.Tiers = nil
+	svcUnwired := reservation.NewService(depsUnwired)
+	res = prebook(svcUnwired)
+	if _, err := svcUnwired.Book(ctx, f.guest, res.ID, "tok-tg", "tg-unwired-"+uuid.NewString(), gi); !errors.Is(err, reservation.ErrTierGateUnwired) {
+		t.Fatalf("unwired gate must fail closed on ErrTierGateUnwired, got %v", err)
+	}
+
+	// (c) Tier-1 guest whose ₦50,000/day cap is already consumed — the hold
+	// refuses with ErrDailyLimitExceeded before any supplier call.
+	testsupport.SetKycTier(t, ctx, f.pool, f.guest, 1)
+	clearing, err := f.ledgerSvc.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		t.Fatalf("clearing account: %v", err)
+	}
+	if err := f.ledgerSvc.Credit(ctx, f.guest, "seed:wallet:topup:"+uuid.NewString(),
+		"seed-topup-"+uuid.NewString(), clearing.ID, 10_000_000); err != nil {
+		t.Fatalf("top up wallet: %v", err)
+	}
+	tiersSvc := tiers.NewService(f.pool)
+	if err := f.ledgerSvc.DebitWithGuard(ctx, f.guest, "cap-consume", "cap-consume-"+uuid.NewString(),
+		clearing.ID, 5_000_000, tiersSvc.EnforceWalletDebitLimitTx); err != nil {
+		t.Fatalf("consume daily cap: %v", err)
+	}
+	res = prebook(f.svc)
+	_, err = f.svc.Book(ctx, f.guest, res.ID, "tok-tg", "tg-cap-"+uuid.NewString(), gi)
+	if !errors.Is(err, tiers.ErrDailyLimitExceeded) {
+		t.Fatalf("over-cap book must fail on ErrDailyLimitExceeded, got %v", err)
+	}
+	if !errors.Is(err, reservation.ErrInsufficient) {
+		t.Fatalf("over-cap refusal must wrap ErrInsufficient, got %v", err)
 	}
 }

@@ -145,7 +145,7 @@ func (s *Service) Fund(ctx context.Context, mcID string, amountKobo int64, idemp
 		return nil, err
 	}
 	ref := "referral:merchant:fund:" + mcID
-	if err := s.finance.Debit(ctx, m.FundingWalletUserID, ref, idempotencyKey, escrow.ID, amountKobo); err != nil {
+	if err := s.finance.DebitGated(ctx, m.FundingWalletUserID, ref, idempotencyKey, escrow.ID, amountKobo); err != nil {
 		if errors.Is(err, financeledger.ErrDuplicate) {
 			// Already processed under this key — return current state idempotently.
 			return s.repo.GetMC(ctx, mcID)

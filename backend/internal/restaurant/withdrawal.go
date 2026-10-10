@@ -232,6 +232,15 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		return existing, nil
 	}
 
+	// Daily-cap re-check INSIDE the tx, under the wallet lock (F7): the pooled
+	// EnforceWalletDebitLimit above is advisory only — two concurrent
+	// withdrawals could each pass it and both post. Under the lock this read is
+	// serialised against every other gated debit on this wallet. Replays
+	// converge on the idem row above before reaching this gate.
+	if err := s.tiers.EnforceWalletDebitLimitTx(ctx, tx, ownerID, in.AmountKobo); err != nil {
+		return nil, err
+	}
+
 	// Balance sufficiency (fail-closed). The projection reflects committed entries;
 	// under the advisory lock a concurrent reserve of this wallet is blocked until
 	// our commit, so this read cannot be raced into an overdraw.

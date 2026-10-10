@@ -158,6 +158,7 @@ jobs:
             FEATURE_MARKETPLACE_ENABLED=true \
             FEATURE_PROPERTY_ROLES_ENABLED=true \
             FEATURE_ONBOARDING_ENABLED=true \
+            FEATURE_PLACEMENT_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -196,7 +197,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES","ONBOARDING",
+              "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE","PROPERTY_ROLES","ONBOARDING","PLACEMENT",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {

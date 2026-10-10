@@ -16,6 +16,7 @@ package healthlab
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -39,30 +40,31 @@ func handoverPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// fakeHandoverGate is a minimal ProviderGate test double: it reports the
-// configured phlebotomist as verified for the configured lab and denies
-// everyone else, so the test can prove BOTH the allow and deny paths without
-// seeding real health_provider capability rows.
+// fakeHandoverGate is a minimal ProviderGate test double: under the interim
+// staff-affiliation gate (isLabStaff — a lab_scientist/phlebotomist capability
+// row is self-owned and names no employing lab) the ONLY actor that passes
+// the staff check is the lab's verified owner. The seeded phlebotomist user
+// is therefore a capability-holding stranger whose denial is asserted below.
 type fakeHandoverGate struct {
-	labID, verifiedPhlebotomistID string
+	labID, ownerID string
 }
 
 func (g fakeHandoverGate) IsApprovedLab(ctx context.Context, providerID string) (bool, error) {
 	return providerID == g.labID, nil
 }
 func (g fakeHandoverGate) VerifiedLabOwner(ctx context.Context, userID, providerID string) (bool, error) {
-	return false, nil
+	return providerID == g.labID && userID == g.ownerID, nil
 }
 func (g fakeHandoverGate) IsVerifiedScientist(ctx context.Context, userID, providerID string) (bool, error) {
 	return false, nil
 }
 func (g fakeHandoverGate) IsVerifiedPhlebotomist(ctx context.Context, userID, providerID string) (bool, error) {
-	return providerID == g.labID && userID == g.verifiedPhlebotomistID, nil
+	return false, nil
 }
 
-func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (labID, orderID, sampleID, phleboID, strangerID, patientID string) {
+func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (labID, ownerID, orderID, sampleID, phleboID, strangerID, patientID string) {
 	t.Helper()
-	ownerID := uuid.New().String()
+	ownerID = uuid.New().String()
 	patientID = uuid.New().String()
 	phleboID = uuid.New().String()
 	strangerID = uuid.New().String()
@@ -99,22 +101,22 @@ func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
 		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
 	})
-	return labID, orderID, sampleID, phleboID, strangerID, patientID
+	return labID, ownerID, orderID, sampleID, phleboID, strangerID, patientID
 }
 
 // TestLiveDB_Handover_CollectedToHandedOverSucceeds locks the transition-map
-// fix: a COLLECTED sample must be able to reach HANDED_OVER via a verified
-// phlebotomist of the owning lab.
+// fix: a COLLECTED sample must be able to reach HANDED_OVER — under the
+// interim staff-affiliation gate via the lab's verified owner (see isLabStaff).
 func TestLiveDB_Handover_CollectedToHandedOverSucceeds(t *testing.T) {
 	pool := handoverPool(t)
 	ctx := t.Context()
-	labID, _, sampleID, phleboID, _, _ := seedHandoverFixture(t, ctx, pool) //nolint:dogsled // tuple: subset needed
+	labID, ownerID, _, sampleID, _, _, _ := seedHandoverFixture(t, ctx, pool) //nolint:dogsled // tuple: subset needed
 
-	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, verifiedPhlebotomistID: phleboID}, nil, nil, nil, nil)
+	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, ownerID: ownerID}, nil, nil, nil, nil)
 
-	out, err := svc.Handover(ctx, phleboID, sampleID, "", "courier pickup")
+	out, err := svc.Handover(ctx, ownerID, sampleID, "", "courier pickup")
 	if err != nil {
-		t.Fatalf("Handover(COLLECTED -> HANDED_OVER) by a verified phlebotomist must succeed: %v", err)
+		t.Fatalf("Handover(COLLECTED -> HANDED_OVER) by the verified lab owner must succeed: %v", err)
 	}
 	if out.State != SampleHandedOver {
 		t.Fatalf("sample state = %s, want %s", out.State, SampleHandedOver)
@@ -129,21 +131,23 @@ func TestLiveDB_Handover_CollectedToHandedOverSucceeds(t *testing.T) {
 	}
 }
 
-// TestLiveDB_Handover_RejectsCallerWithoutPhlebotomistCredential locks the
-// authz fix: a caller who is not a verified phlebotomist of the sample's
-// owning lab — including the order's own patient, or an unrelated stranger —
-// must be refused, never allowed to reassign custody.
-func TestLiveDB_Handover_RejectsCallerWithoutPhlebotomistCredential(t *testing.T) {
+// TestLiveDB_Handover_RejectsCallerWithoutLabStaffGate locks the authz fix:
+// a caller who is not verified staff of the sample's owning lab — including
+// the order's own patient, an unrelated stranger, or a standalone
+// phlebotomist capability holder (who owns no affiliation to THIS lab under
+// the interim gate) — must be refused with the uniform not-found sentinel,
+// never allowed to reassign custody.
+func TestLiveDB_Handover_RejectsCallerWithoutLabStaffGate(t *testing.T) {
 	pool := handoverPool(t)
 	ctx := t.Context()
-	labID, _, sampleID, phleboID, strangerID, patientID := seedHandoverFixture(t, ctx, pool)
+	labID, ownerID, _, sampleID, phleboID, strangerID, patientID := seedHandoverFixture(t, ctx, pool)
 
-	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, verifiedPhlebotomistID: phleboID}, nil, nil, nil, nil)
+	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, ownerID: ownerID}, nil, nil, nil, nil)
 
-	for name, actor := range map[string]string{"stranger": strangerID, "patient": patientID} {
+	for name, actor := range map[string]string{"stranger": strangerID, "patient": patientID, "foreign_phlebotomist": phleboID} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := svc.Handover(ctx, actor, sampleID, "", "unauthorized attempt"); err == nil {
-				t.Fatalf("Handover by %s (not a verified phlebotomist) must be refused, got nil error", name)
+			if _, err := svc.Handover(ctx, actor, sampleID, "", "unauthorized attempt"); !errors.Is(err, ErrOrderNotFound) {
+				t.Fatalf("Handover by %s must be refused with ErrOrderNotFound, got %v", name, err)
 			}
 		})
 	}

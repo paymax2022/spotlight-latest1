@@ -125,6 +125,36 @@ func TestLiveDB_LoyaltyRedeem_SucceedsAndReplaysIdempotently(t *testing.T) {
 	}
 }
 
+// Same key + different sku is a 409 conflict — never silently return the
+// original redemption (which would debit once but fulfil the wrong item).
+// The single original debit must stand.
+func TestLiveDB_LoyaltyRedeem_SameKeyDifferentSKU_Conflict(t *testing.T) {
+	pool := liveLoyaltyPool(t)
+	pts := points.NewService(pool, nil)
+	svc := NewService(pool, pts, nil)
+	ctx := context.Background()
+	uid := seedLoyaltyUser(t, pool)
+	skuA := seedReward(t, pool, 100)
+	skuB := seedReward(t, pool, 200)
+	seedLoyaltyEarn(t, pool, uid, 500)
+
+	key := "loyalty-" + uuid.NewString()
+	if _, err := svc.Redeem(ctx, uid, skuA, key); err != nil {
+		t.Fatalf("first redeem: %v", err)
+	}
+	if _, err := svc.Redeem(ctx, uid, skuB, key); !errors.Is(err, points.ErrIdempotencyConflict) {
+		t.Fatalf("different-sku replay: err = %v, want points.ErrIdempotencyConflict", err)
+	}
+	var debits int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM points_ledger WHERE user_id=$1 AND type='REDEEM'`, uid).Scan(&debits); err != nil {
+		t.Fatalf("count debits: %v", err)
+	}
+	if debits != 1 {
+		t.Fatalf("conflict must leave exactly 1 debit, got %d", debits)
+	}
+}
+
 // Headerless calls are rejected fail-closed (iron rule): the client key is
 // required so a replay can never double-debit or double-fulfil.
 func TestLiveDB_LoyaltyRedeem_NoKey_Rejected(t *testing.T) {

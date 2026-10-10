@@ -171,6 +171,17 @@ func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Red
 		if perr != nil {
 			return nil, nil, perr
 		}
+		// Same key + different params is a CONFLICT, not a replay: silently
+		// returning the sku-A original to a sku-B request would debit once but
+		// fulfil the wrong item. Compare what is stored (sku determines cost).
+		if prior.SKU != sku {
+			return nil, nil, ErrIdempotencyConflict
+		}
+		// No audit event on replay — see ErrIdempotencyConflict / the replay
+		// note in the loyalty layer: the audit writer appends unconditionally
+		// (no dedupe), so one row per replayed request would inflate audit_logs
+		// under a retry storm. The original mutation's event + the stored
+		// idempotency_key already cover the trail.
 		return prior, item, nil
 	case !errors.Is(err, pgx.ErrNoRows):
 		return nil, nil, fmt.Errorf("points: redeem replay check: %w", err)
@@ -381,6 +392,11 @@ var (
 	// handler's RequireIdempotencyKey gate (iron rule: every mutation carries a
 	// client Idempotency-Key). Loyalty-layer callers surface the same sentinel.
 	ErrIdempotencyRequired = errors.New("points: Idempotency-Key required")
+	// ErrIdempotencyConflict marks a same-key replay carrying DIFFERENT request
+	// parameters than the stored mutation — mapped to 409 at the handlers rather
+	// than silently returning the original. Loyalty-layer callers surface the
+	// same sentinel (points, rewards and perk redemptions share the contract).
+	ErrIdempotencyConflict = errors.New("points: Idempotency-Key replayed with different parameters")
 )
 
 // Handler exposes read-only points endpoints to members. Earn is never a public
@@ -470,6 +486,8 @@ func (h *Handler) Redeem(c *gin.Context) {
 			c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err)})
 		case errors.Is(err, ErrCashRedemptionForbidden):
 			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+		case errors.Is(err, ErrIdempotencyConflict):
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		}

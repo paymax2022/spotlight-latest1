@@ -242,7 +242,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "order": o})
 }
 
-// Schedule — POST /orders/:id/schedule  (phlebotomist dispatch for HOME)
+// Schedule — POST /orders/:id/schedule  (lab owner/admin; phlebotomist dispatch for HOME)
 func (h *Handler) Schedule(c *gin.Context) {
 	id := ginutil.UserID(c)
 	if id == "" {
@@ -253,7 +253,7 @@ func (h *Handler) Schedule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	o, err := h.svc.Schedule(c.Request.Context(), id, orderID)
+	o, err := h.svc.Schedule(c.Request.Context(), id, orderID, h.isAdmin(c))
 	if err != nil {
 		failOrder(c, http.StatusConflict, err)
 		return

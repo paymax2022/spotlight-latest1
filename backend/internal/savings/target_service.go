@@ -155,14 +155,22 @@ func (s *TargetService) Contribute(ctx context.Context, targetID, userID string,
 	}
 	// Tier guard (fail-closed, E2E-FIN-041): a target contribution debits the
 	// member's wallet — the same EnforceWalletDebitLimit the transfer rail runs.
-	if err := enforceDebitLimit(s.tiers, ctx, userID, amountKobo); err != nil {
+	// SKIPPED when this key's debit leg already committed (F2): a retry whose
+	// wallet debit posted but whose ledger row never appended must reach
+	// DebitGated's in-tx replay verification, not refuse at-cap after the
+	// money already moved.
+	if posted, err := s.led.Posted(ctx, idemKey+":wallet"); err != nil {
 		return 0, err
+	} else if !posted {
+		if err := enforceDebitLimit(s.tiers, ctx, userID, amountKobo); err != nil {
+			return 0, err
+		}
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.led.Debit(ctx, userID, "target:contrib:"+targetID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, userID, "target:contrib:"+targetID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("savings: contribute debit: %w", err)
 	}
 	const ins = `INSERT INTO group_target_ledger (id, target_id, user_id, direction, amount_kobo, idempotency_key)

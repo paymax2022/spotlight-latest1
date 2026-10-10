@@ -29,6 +29,10 @@ type Auditor interface {
 // Tier-0 checkout allowance (ADR-043) does NOT apply here.
 type walletDebitLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceWalletDebitLimitTx is the SAME check evaluated inside the debiting
+	// transaction under the wallet advisory lock — the authoritative half of
+	// the gate (F7). Satisfies ledger.DebitGuard.
+	EnforceWalletDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
@@ -173,9 +177,16 @@ func (s *Service) hold(ctx context.Context, payerID, payeeID, reference, moduleT
 		// Tier gate (fail-closed, E2E-FIN-046): a hold is a wallet debit, so the
 		// same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
 		// money moves — a refused attempt posts zero ledger legs and no hold
-		// row. Fresh attempts only: replays of a completed key already returned
-		// the existing hold above, and replays of a debit-only crash take the
-		// heal branch.
+		// row. This pooled call is the ADVISORY half only (fast early refusal);
+		// postHoldDebit re-runs the same check inside the debit tx under the
+		// wallet advisory lock via ledger.DebitWithGuard — the authoritative
+		// half that closes F7 (two concurrent holds can both pass the pooled
+		// read; the serialised in-tx read admits only one). Fresh attempts
+		// only: replays of a completed key already returned the existing hold
+		// above, and replays of a debit-only crash take the heal branch — the
+		// in-tx guard is skipped on a verified committed replay by the
+		// ledger's replay-first ordering, so a retry is never refused by
+		// re-counting its own posted legs.
 		if err := s.enforceDebitLimit(ctx, payerID, amountKobo); err != nil {
 			return nil, err
 		}
@@ -253,7 +264,17 @@ func (s *Service) maybePinPayee(ctx context.Context, h *Hold, payerID, payeeID s
 // posted matching leg is a no-op success; a foreign claim under the key fails
 // closed via verifyHoldDebitLeg (mirrors ensureResolutionCredit).
 func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey, escrowAccID string, amountKobo int64) error {
-	err := s.led.Debit(ctx, payerID, "escrow:"+reference, holdKey, escrowAccID, amountKobo)
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	// DebitWithGuard carries the tier check INTO the posting tx: the daily-cap
+	// sum is evaluated under pg_advisory_xact_lock("wallet:"+payerID) — the same
+	// lock every gated wallet debit takes — immediately before the legs insert,
+	// so concurrent holds on one wallet cannot collectively overshoot the cap
+	// (F7). The guard runs after the repo's replay verification, so a committed
+	// prior journal under holdKey converges without re-gating.
+	err := s.led.DebitWithGuard(ctx, payerID, "escrow:"+reference, holdKey, escrowAccID, amountKobo,
+		s.tiers.EnforceWalletDebitLimitTx)
 	if err == nil {
 		return nil
 	}
@@ -315,13 +336,35 @@ func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, refe
 // A DISPUTED hold refuses: contested funds may only leave through Arbitrate, so
 // a direct release/refund can never bypass dispute bookkeeping (F6d).
 func (s *Service) Release(ctx context.Context, escrowID, payeeID string) error {
-	return s.resolve(ctx, escrowID, StateReleased, payeeID, "escrow.release", false)
+	return s.resolve(ctx, escrowID, StateReleased, payeeID, "escrow.release", false, nil)
 }
 
 // Refund returns the held amount to the original payer (HELD → REFUNDED).
 // A DISPUTED hold refuses: contested funds may only leave through Arbitrate.
 func (s *Service) Refund(ctx context.Context, escrowID string) error {
-	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false)
+	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false, nil)
+}
+
+// ErrHoldBound is what a RefundIf guard returns when the hold has already been
+// adopted by a domain order/payment row — i.e., a concurrent create won the
+// race and this request was only ever the loser. Refunding a bound hold would
+// reverse a live order's payment out from under it, so compensation callers
+// must skip the refund and treat the outcome as winner-exists idempotency
+// conflict (their ErrIdemConflict), never as success.
+var ErrHoldBound = errors.New("escrow: hold already bound to a domain order")
+
+// RefundIf is Refund plus an in-transaction guard: `guard` runs inside the
+// resolution transaction AFTER the escrow_holds row is locked FOR UPDATE and
+// AFTER the HELD→REFUNDED transition passes the FSM check, but BEFORE the hold
+// row is updated. A guarded refund therefore serializes against the domain
+// side's binding transaction (which takes the same FOR UPDATE lock before
+// inserting its order/payment row): a guard that re-probes bound-ness inside
+// this lock sees the winner's committed row and can veto with ErrHoldBound —
+// closing the pool-side EXISTS-probe + bare-Refund TOCTOU where a loser could
+// refund a hold the winner had just bound. A non-nil guard error aborts the
+// resolution (no state change, no ledger credit) and is returned verbatim.
+func (s *Service) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false, guard)
 }
 
 // resolveArbitrated is the arbitration-only lane of resolve: Arbitrate calls it
@@ -333,7 +376,7 @@ func (s *Service) resolveArbitrated(ctx context.Context, escrowID string, to Sta
 	if to == StateRefunded {
 		action = "escrow.refund"
 	}
-	return s.resolve(ctx, escrowID, to, payeeID, action, true)
+	return s.resolve(ctx, escrowID, to, payeeID, action, true, nil)
 }
 
 // resolve performs the guarded transition + the matching ledger credit. The row
@@ -350,7 +393,7 @@ func (s *Service) resolveArbitrated(ctx context.Context, escrowID string, to Sta
 // RELEASED/REFUNDED state, and never a double-pay: the per-leg key dedups a
 // racing poster, and a committed terminal state means the OPPOSITE leg can no
 // longer be attempted — the FSM rejects it before any money moves).
-func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string, viaArbitration bool) error {
+func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string, viaArbitration bool, guard func(context.Context, pgx.Tx) error) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("escrow: begin: %w", err)
@@ -398,6 +441,17 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 		// only be resolved through Arbitrate, which closes the dispute with the
 		// recorded decision + arbiter.
 		return fmt.Errorf("%w: hold %s", ErrDisputeRequired, escrowID)
+	}
+
+	// RefundIf guard: runs under the FOR UPDATE lock, after the transition is
+	// proven legal, before the state write — so a domain-binding transaction
+	// holding (or queueing for) the same row lock is fully ordered against this
+	// check. A veto aborts the tx via the deferred Rollback: no state flip, no
+	// credit.
+	if guard != nil {
+		if err := guard(ctx, tx); err != nil {
+			return err
+		}
 	}
 
 	// COALESCE keeps a payee pinned at hold time on the REFUND path — refunding

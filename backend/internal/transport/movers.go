@@ -425,7 +425,7 @@ func (s *Service) acceptMoverBid(ctx context.Context, jobID, userID, bidID, idem
 	if external {
 		sett, err = s.settlement.EscrowExternal(ctx, userID, ref, idempotencyKey, "transport", amount)
 	} else {
-		sett, err = s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", amount)
+		sett, err = s.escrowCheckout(ctx, userID, ref, idempotencyKey, amount)
 	}
 	if err != nil {
 		return "", fmt.Errorf("transport: escrow mover bid: %w", err)

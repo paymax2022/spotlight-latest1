@@ -10,6 +10,7 @@ package businessregistry_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -157,5 +158,93 @@ func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	// Now the merchant-upgrade gate must accept the registered CAC identity.
 	if !svc.HasVerifiedBusiness(ctx, user) {
 		t.Fatal("HasVerifiedBusiness=false after registered — the gate must accept a registered business")
+	}
+}
+
+// F3 regression: the fee posts as TWO independent debit transactions (CAC
+// pass-through + platform processing fee). A refusal on leg 2 while leg 1 is
+// committed must UNWIND leg 1 — the caller can never be charged a partial
+// fee. The test forces leg-2 refusal with a platform fee that fits under the
+// affordability check but blows the caller's daily cap (Tier-1 ₦50,000/day)
+// on the in-tx guard — the exact stranded-leg window the audit flagged.
+// Deps.Tiers is deliberately nil so the advisory TOTAL gate is bypassed and
+// leg 2 is the first refusal point; each leg's in-tx guard stays the
+// authority either way.
+func TestLiveDB_CACFee_PlatformLegRefusal_UnwindsCacLeg(t *testing.T) {
+	pool := liveDB(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+	tierSvc := tiers.NewService(pool)
+	wal := wallet.NewService(led, tierSvc)
+	repo := business.NewRepository(pool)
+	svc := business.NewService(business.Deps{
+		Repo:   repo,
+		Ledger: led,
+		Wallet: wal,
+		// Tiers nil → no advisory total gate; the leg-2 in-tx guard refuses.
+		Provider:             cac.New(cac.Config{AllowSandbox: true}),
+		PlatformFeeKobo:      4_000_000, // ₦40,000 — leg1 fits under the cap, leg2 blows it
+		FeeKobo:              1_500_000, // ₦15,000
+		AllowSandboxVerified: true,
+	})
+
+	user := seedUser(t, ctx, pool)
+	// Tier-1: ₦50,000/day strict cap — leg1 (₦15,000) fits, leg2 (₦40,000)
+	// would push the day to ₦55,000 → the in-tx guard refuses.
+	_, _ = pool.Exec(ctx, `UPDATE public.users SET kyc_tier=1 WHERE id=$1`, user)
+	_, _ = pool.Exec(ctx, `UPDATE public.user_profiles SET kyc_tier=1 WHERE id=$1`, user)
+	const funded int64 = 6_000_000 // covers the ₦55,000 affordability pre-check
+	if err := wal.Credit(ctx, user, "cac-unwind-fund", "fund-"+user, funded); err != nil {
+		t.Fatalf("fund wallet: %v", err)
+	}
+
+	prof, err := svc.StartRegisterNew(ctx, user, business.RegisterNewRequest{
+		EntityType: business.EntityBusinessName, ProposedName: "Unwind Test " + uuid.New().String()[:8], LineOfBusiness: "Trade",
+	})
+	if err != nil {
+		t.Fatalf("StartRegisterNew: %v", err)
+	}
+	bizID := prof.ID
+	if _, err := svc.CheckName(ctx, user, business.NameCheckRequest{BusinessID: bizID, ProposedName: prof.ProposedName}); err != nil {
+		t.Fatalf("CheckName: %v", err)
+	}
+	if _, err := svc.ReserveName(ctx, user, user+"@seed.test", "", bizID); err != nil {
+		t.Fatalf("ReserveName: %v", err)
+	}
+
+	idem := "cacunwind-" + uuid.New().String()
+	if _, err := svc.PayRegistrationFee(ctx, user, bizID, idem); err == nil {
+		t.Fatal("leg-2 platform fee must refuse over the daily cap")
+	} else if !errors.Is(err, tiers.ErrDailyLimitExceeded) {
+		t.Fatalf("leg-2 refusal must surface ErrDailyLimitExceeded, got %v", err)
+	}
+
+	// Leg 1 was committed then REVERSED — the caller's wallet is whole again,
+	// never charged half a fee pair.
+	if got := balance(t, ctx, wal, user); got != funded {
+		t.Fatalf("wallet after unwind = %d, want %d (leg 1 reversed)", got, funded)
+	}
+
+	// The reversal pair is durable under the deterministic unwind key.
+	var revLegs int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM ledger_entries
+		WHERE idempotency_key IN ($1, $2)`,
+		idem+":cac:rev:rev_debit", idem+":cac:rev:rev_credit").Scan(&revLegs); err != nil {
+		t.Fatalf("count reversal legs: %v", err)
+	}
+	if revLegs != 2 {
+		t.Fatalf("unwind reversal legs = %d, want balanced pair (2)", revLegs)
+	}
+
+	// The fee was NOT marked paid — the charge converged on "nothing paid".
+	got, err := repo.GetProfile(ctx, bizID)
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if got.FeeLedgerRef != "" {
+		t.Fatalf("fee marked paid (ref %q) after a refused platform leg", got.FeeLedgerRef)
 	}
 }

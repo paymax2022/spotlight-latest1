@@ -694,3 +694,95 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/RosterEntry' }
         '404': { description: Share link not found }
+
+  # ── Support / help tickets (connect/voting member surface) ──────────────
+  # Mounted at /api/v1/connect/support/tickets*. Every :id handler gates the
+  # ticket id through ticketNotFoundIfBadUUID BEFORE the query, so a malformed
+  # id answers 404 TICKET_NOT_FOUND (this module's convention — not 400).
+  # Owner-scoped: a foreign or absent ticket id is the same 404.
+  /v1/connect/support/tickets:
+    post:
+      summary: Create a support ticket (member)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, subject, description]
+              properties:
+                category: { type: string, description: "Must be a supported voting_ticket_category value" }
+                subject: { type: string }
+                description: { type: string }
+                priority: { type: string, enum: [low, normal, high, urgent] }
+                contest_id: { type: string, format: uuid, description: Optional; must be a uuid when present }
+                source: { type: string, description: "'web' | 'mobile' | 'marketplace'" }
+      responses:
+        '201': { description: Ticket created (status=open) }
+        '400': { description: "VALIDATION_ERROR — missing required field, unsupported category/priority, or non-uuid contest_id" }
+        '401': { description: Not authenticated }
+    get:
+      summary: List the caller's support tickets
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: "{ tickets, limit, offset }" }
+        '401': { description: Not authenticated }
+  /v1/connect/support/tickets/{id}:
+    get:
+      summary: Ticket detail (owner-scoped)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Ticket }
+        '401': { description: Not authenticated }
+        '404': { description: "TICKET_NOT_FOUND — malformed uuid, absent, or not the caller's ticket" }
+    patch:
+      summary: Update a ticket (member; status restricted to waiting|closed — agent-only transitions are rejected)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [waiting, closed] }
+                priority: { type: string, enum: [low, normal, high, urgent] }
+                description: { type: string }
+      responses:
+        '200': { description: Ticket updated ('closed' sets resolved_at) }
+        '400': { description: "VALIDATION_ERROR — status outside waiting|closed, or unsupported priority" }
+        '401': { description: Not authenticated }
+        '404': { description: "TICKET_NOT_FOUND — malformed uuid, absent, or not the caller's ticket" }
+  /v1/connect/support/tickets/{id}/messages:
+    post:
+      summary: Add a message to the caller's ticket
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                attachments: { type: array, items: { type: string } }
+      responses:
+        '201': { description: Message appended }
+        '400': { description: VALIDATION_ERROR — message required }
+        '401': { description: Not authenticated }
+        '404': { description: "TICKET_NOT_FOUND — malformed uuid, absent, or not the caller's ticket" }
+    get:
+      summary: List the caller's ticket messages
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: "{ messages }" }
+        '401': { description: Not authenticated }
+        '404': { description: "TICKET_NOT_FOUND — malformed uuid, absent, or not the caller's ticket" }

@@ -91,6 +91,14 @@ type boostLedger interface {
 	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
 	GetOrCreateUserWallet(ctx context.Context, userID string) (*ledger.Account, error)
 	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// DebitGated is Debit with the strict KYC-tier daily-debit cap evaluated
+	// INSIDE the posting tx under the wallet advisory lock — the F7-serialised
+	// half of TierEnforcer's pooled EnforceWalletDebitLimit.
+	DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// Posted reports whether the journal under baseIdempotencyKey already
+	// committed — the pooled advisory cap is skipped for a committed key so a
+	// replay reaches the in-tx verification instead of refusing at-cap (F2).
+	Posted(ctx context.Context, baseIdempotencyKey string) (bool, error)
 	PostReversal(ctx context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error
 }
 

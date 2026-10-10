@@ -239,13 +239,22 @@ func (s *AjoService) RunCycle(ctx context.Context, circleID, idemKey string) err
 		// EnforceWalletDebitLimit the transfer rail runs. A refusal is treated
 		// exactly like a failed debit: the member marks DEFAULTED (auditable,
 		// NL-12) and no leg posts — deterministic zero-leak without Paymax float.
-		if terr := enforceDebitLimit(s.tiers, ctx, m.UserID, c.ContributionKobo); terr != nil {
-			s.markDefault(ctx, circleID, m.UserID)
-			continue
+		// SKIPPED when this leg already committed (F2): DebitGated's replay
+		// path below counts it as collected via ErrDuplicate — refusing at-cap
+		// here would mis-mark a PAID member DEFAULTED.
+		posted, perr := s.led.Posted(ctx, legKey)
+		if perr != nil {
+			return perr
+		}
+		if !posted {
+			if terr := enforceDebitLimit(s.tiers, ctx, m.UserID, c.ContributionKobo); terr != nil {
+				s.markDefault(ctx, circleID, m.UserID)
+				continue
+			}
 		}
 		// NL-1: peer funds only — Debit fails closed on insufficient balance; the
 		// shortfall is NOT covered by Paymax. A failing member is marked DEFAULTED.
-		derr := s.led.Debit(ctx, m.UserID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo)
+		derr := s.led.DebitGated(ctx, m.UserID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo)
 		if errors.Is(derr, ledger.ErrDuplicate) {
 			collected += c.ContributionKobo // already debited on a prior attempt
 			continue
@@ -319,18 +328,24 @@ func (s *AjoService) MakeGood(ctx context.Context, circleID, userID string, cycl
 	if err != nil {
 		return err
 	}
+	key := fmt.Sprintf("%s:ajo:%s:c%d:makegood:%s", idemKey, circleID, cycleNumber, userID)
 	// Tier guard (fail-closed, E2E-FIN-041): the make-good is a member-funded
 	// wallet debit — the same EnforceWalletDebitLimit the transfer rail runs.
 	// Placed before the escrow lookup so an unwired gate still fails closed.
-	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
-		return err
+	// SKIPPED when this key's leg already committed (F2): DebitGated below
+	// tolerates the replay via ErrDuplicate.
+	if posted, perr := s.led.Posted(ctx, key); perr != nil {
+		return perr
+	} else if !posted {
+		if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+			return err
+		}
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
 	}
-	key := fmt.Sprintf("%s:ajo:%s:c%d:makegood:%s", idemKey, circleID, cycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
+	if derr := s.led.DebitGated(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: makegood debit: %w", derr)
 	}
 	// Restore membership DEFAULTED→ACTIVE (guarded).
@@ -420,6 +435,96 @@ func (s *AjoService) IsMember(ctx context.Context, circleID, userID string) (boo
 	var n int
 	err := s.db.QueryRow(ctx, `SELECT count(*) FROM ajo_members WHERE circle_id=$1 AND user_id=$2`, circleID, userID).Scan(&n)
 	return n > 0, err
+}
+
+// circleMembers returns EVERY member row for a circle — all states, including
+// EXITED — ordered by rotation. activeMembers filters to ACTIVE+DEFAULTED for
+// the rotation engine; ops oversight needs the full roster (a defaulted or
+// exited member is exactly what an audit is looking for).
+func (s *AjoService) circleMembers(ctx context.Context, circleID string) ([]CircleMember, error) {
+	const q = `SELECT id, circle_id, user_id, rotation_order, state, missed_count, joined_at
+	           FROM ajo_members WHERE circle_id=$1 ORDER BY rotation_order ASC`
+	rows, err := s.db.Query(ctx, q, circleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CircleMember{}
+	for rows.Next() {
+		var m CircleMember
+		var st string
+		if err := rows.Scan(&m.ID, &m.CircleID, &m.UserID, &m.RotationOrder, &st, &m.MissedCount, &m.JoinedAt); err != nil {
+			return nil, err
+		}
+		m.State = MemberState(st)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// circleCycles returns every cycle row for a circle — the per-cycle
+// contribution/payout state (collected_kobo, payout_kobo, recipient, status)
+// ops needs to reconstruct where the ring's money went.
+func (s *AjoService) circleCycles(ctx context.Context, circleID string) ([]Cycle, error) {
+	const q = `SELECT id, circle_id, cycle_number, recipient_id, collected_kobo, payout_kobo, status, scheduled_for, paid_at
+	           FROM ajo_cycles WHERE circle_id=$1 ORDER BY cycle_number ASC`
+	rows, err := s.db.Query(ctx, q, circleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Cycle{}
+	for rows.Next() {
+		var cy Cycle
+		var st string
+		if err := rows.Scan(&cy.ID, &cy.CircleID, &cy.CycleNumber, &cy.RecipientID,
+			&cy.CollectedKobo, &cy.PayoutKobo, &st, &cy.ScheduledFor, &cy.PaidAt); err != nil {
+			return nil, err
+		}
+		cy.Status = CycleStatus(st)
+		out = append(out, cy)
+	}
+	return out, rows.Err()
+}
+
+// GetCircleOversight is the ADMIN read behind GET /api/savings/admin/circles/:id.
+// The route's RBAC guard (savings.admin.view) is the authZ, so the read is
+// deliberately NOT member-scoped — ops must be able to inspect a circle they
+// are not a member of: the circle itself, the FULL member roster (all states,
+// incl. EXITED) and the per-cycle contribution/payout state. The member read
+// would deny a non-member admin the same way it denies any outsider — the
+// residual this restores. NEVER mount this on a member route: the member
+// oracle stays closed. The access is audited.
+func (s *AjoService) GetCircleOversight(ctx context.Context, adminID, circleID string) (*Circle, []CircleMember, []Cycle, error) {
+	c, err := s.getCircle(ctx, circleID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	members, err := s.circleMembers(ctx, circleID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	cycles, err := s.circleCycles(ctx, circleID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	s.log(adminID, "savings.admin.circle.view", "ajo_circle", circleID, nil, nil)
+	return c, members, cycles, nil
+}
+
+// GetCircleMembersOversight is the ADMIN roster read behind
+// GET /api/savings/admin/circles/:id/members — the full member roster for a
+// circle the caller need not belong to. RBAC-gated at the route; audited.
+func (s *AjoService) GetCircleMembersOversight(ctx context.Context, adminID, circleID string) ([]CircleMember, error) {
+	if _, err := s.getCircle(ctx, circleID); err != nil {
+		return nil, err
+	}
+	members, err := s.circleMembers(ctx, circleID)
+	if err != nil {
+		return nil, err
+	}
+	s.log(adminID, "savings.admin.circle.members.view", "ajo_circle", circleID, nil, nil)
+	return members, nil
 }
 
 func (s *AjoService) log(actor, action, resType, resID string, oldV, newV map[string]any) {

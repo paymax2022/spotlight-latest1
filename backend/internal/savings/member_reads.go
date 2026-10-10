@@ -84,6 +84,10 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 		// charge levied while returning the member's OWN funds; gating it with
 		// EnforceWalletDebitLimit would strand a Tier-0 member's vault balance —
 		// they could neither deposit (gated) nor withdraw what they already hold.
+		// Deliberately plain Debit (not DebitGated): the early-withdrawal penalty
+		// is a system-initiated fee levied DURING a withdrawal the member is
+		// entitled to make — gating it on the daily cap could strand funds the
+		// withdrawal itself already moved.
 		revAcc, rerr := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 		if rerr != nil {
 			return 0, 0, rerr
@@ -253,18 +257,39 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 	if cy == nil {
 		return errors.New("savings: no pending cycle")
 	}
+	// The deterministic leg key is computed BEFORE the gate so the committed-key
+	// probe can use it (F-3): a retry whose debit already committed must reach
+	// DebitGated's in-tx replay check, not be refused by a pooled read that
+	// re-counts its own posted legs.
+	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
+	legPosted, perr := s.led.Posted(ctx, legKey)
+	if perr != nil {
+		return fmt.Errorf("savings: prepay replay probe: %w", perr)
+	}
 	// Tier guard (fail-closed, E2E-FIN-041): a prepay debits the member's wallet —
-	// the same EnforceWalletDebitLimit the transfer rail runs.
-	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
-		return err
+	// the same EnforceWalletDebitLimit the transfer rail runs. SKIPPED when the
+	// journal is durable — the in-tx guard inside DebitGated stays the authority.
+	if !legPosted {
+		if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+			return err
+		}
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
 	}
-	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
-		return fmt.Errorf("savings: circle contribute: %w", derr)
+	if derr := s.led.DebitGated(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil {
+		if !errors.Is(derr, ledger.ErrDuplicate) {
+			return fmt.Errorf("savings: circle contribute: %w", derr)
+		}
+		// R-3: a dup claim is never proof — a bare-lock or foreign claim under
+		// legKey can carry zero (or the wrong) legs. Tolerating it counted the
+		// contribution into collected_kobo and let the scheduled payout drain
+		// escrow for money never collected. Verify the durable legs are
+		// exactly this member's contribution (the verifyPayoutLegs standard).
+		if verr := s.verifyContribLeg(ctx, userID, legKey, circleID, escrowAcc.ID, c.ContributionKobo); verr != nil {
+			return verr
+		}
 	}
 	// Credit the collected pot for the current cycle so the scheduled payout picks
 	// it up; guarded so a replay is a no-op.
@@ -351,4 +376,40 @@ func (s *TargetService) GetTargetDetail(ctx context.Context, targetID string) (*
 // IsTargetMember exposes membership for handler-level object authZ.
 func (s *TargetService) IsTargetMember(ctx context.Context, targetID, userID string) (bool, error) {
 	return s.isMember(ctx, targetID, userID)
+}
+
+// verifyContribLeg proves a legKey duplicate claim is backed by THIS member's
+// contribution journal — the verifyPayoutLegs standard (R-3). A bare-lock dup
+// leaves zero legs (or a lone partial leg): counting the contribution anyway
+// would inflate ajo_cycles.collected_kobo and let the scheduled payout drain
+// escrow for money never collected. A no-legs claim answers ErrReconPending
+// (retryable — a later attempt posts or heals the journal); legs whose
+// identity differs answer an ErrDuplicate-wrapped permanent conflict.
+func (s *AjoService) verifyContribLeg(ctx context.Context, userID, legKey, circleID, escrowAccID string, amountKobo int64) error {
+	walletAcc, err := s.led.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("savings: resolve member wallet for contribution verification: %w", err)
+	}
+	wantRef := "ajo:contrib:" + circleID
+	dr, drFound, err := s.led.EntryByKey(ctx, legKey+":debit")
+	if err != nil {
+		return fmt.Errorf("savings: read contribution debit leg: %w", err)
+	}
+	cr, crFound, err := s.led.EntryByKey(ctx, legKey+":credit")
+	if err != nil {
+		return fmt.Errorf("savings: read contribution credit leg: %w", err)
+	}
+	if !drFound && !crFound {
+		return fmt.Errorf("%w: contribution for key %s", ErrReconPending, legKey)
+	}
+	ours := drFound && crFound &&
+		dr.AccountID == walletAcc.ID && dr.Type == ledger.EntryDebit &&
+		dr.Reference == wantRef && dr.AmountKobo == amountKobo &&
+		cr.AccountID == escrowAccID && cr.Type == ledger.EntryCredit &&
+		cr.Reference == wantRef && cr.AmountKobo == amountKobo
+	if !ours {
+		return fmt.Errorf("%w: key %s held by a different journal — refusing to count the contribution",
+			ledger.ErrDuplicate, legKey)
+	}
+	return nil
 }

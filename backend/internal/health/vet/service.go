@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/health/clinicalsafety"
 	healthconsult "spotlight/backend/internal/health/consult"
 	healthrecords "spotlight/backend/internal/health/records"
@@ -32,6 +33,10 @@ type EscrowHolder interface {
 	Hold(ctx context.Context, payerID, reference, moduleType, idemKey string, amountKobo int64) (HoldRef, error)
 	Release(ctx context.Context, escrowID, payeeID string) error
 	Refund(ctx context.Context, escrowID string) error
+	// RefundIf is Refund plus an in-transaction guard run under the hold's
+	// FOR UPDATE lock — compensation paths use it to re-prove the hold is
+	// still unbound before any money moves back (see failBooking).
+	RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error
 }
 
 // HoldRef is the minimal projection of an escrow hold the appointment needs.
@@ -157,6 +162,13 @@ var ErrPetMissingIdem = errors.New("vet: idempotency key required")
 // the same uniform-404 convention as social #602 / association #606 / aicare).
 // The handler maps it to 404.
 var ErrAppointmentNotFound = errors.New("vet: appointment not found")
+
+// ErrIdemConflict refuses an Idempotency-Key already bound to a booking owned
+// by a DIFFERENT owner. Replaying a foreign key must fail closed here, before
+// the scheduling engine creates an appointment and escrow.Hold runs — the hold
+// rail dedups on the bare key, and a replay must never resolve a stranger's
+// booking (escrow id, totals, state).
+var ErrIdemConflict = errors.New("vet: idempotency key already used")
 
 // petByIdem returns the caller's pet created under idemKey, or (nil, nil) when
 // no such pet exists. Scoped to ownerID — keys are client-chosen, so resolving
@@ -431,9 +443,20 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 	if !owns {
 		return nil, errors.New("vet: forbidden — not the pet owner")
 	}
-	// Replay: return the existing appointment for this idempotency key (no re-hold).
-	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
+	// Replay: return the existing appointment for this idempotency key — but
+	// only when it belongs to THIS owner. Keys are client-chosen: resolving one
+	// to whichever booking happens to hold it would hand a caller a stranger's
+	// appointment (escrow id, totals, state) by replaying their key.
+	if existing, err := s.getByIdem(ctx, ownerID, in.IdempotencyKey); err == nil && existing != nil {
 		return existing, nil
+	}
+	// Fail closed on a foreign key BEFORE the scheduling engine and the money
+	// leg run — otherwise a replay would mint an orphaned appointment and
+	// escrow.Hold would dedup onto the other owner's hold.
+	if taken, err := s.idemTakenByOther(ctx, ownerID, in.IdempotencyKey); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrIdemConflict
 	}
 	// HL-2: book only against a live, verified VCN vet.
 	if s.prov != nil {
@@ -471,23 +494,80 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		return nil, fmt.Errorf("vet: book slot: %w", err)
 	}
 
+	// failBooking compensates a booking that failed after sched.Request minted
+	// the appointment: a REQUESTED row squats the provider's slot
+	// (blockingStates) and is invisible to load()'s payment-row JOIN, so the
+	// orphan must be cancelled back out. When a hold was already placed it is
+	// refunded — gated on the hold being this payer's AND UNBOUND: escrow.Hold
+	// dedups on the bare idempotency key, so escrowID can name a hold this
+	// attempt did not create — a foreign replay's hold, or the SAME payer's
+	// live hold under a concurrent same-key booking (the loser's insert dies
+	// on UNIQUE(idempotency_key) only AFTER the winner commits). Refunding a
+	// bound hold would unwind a live booking's payment out from under it.
+	var escrowID string
+	failBooking := func(err error) (*Appointment, error) {
+		if _, cerr := s.sched.Transition(ctx, ownerID, appt.ID, healthscheduling.StateCancelled); cerr != nil {
+			err = fmt.Errorf("%w (orphaned appointment %s also failed to cancel: %v)", err, appt.ID, cerr)
+		}
+		if escrowID == "" {
+			return nil, err
+		}
+		// The bound-ness probe runs INSIDE RefundIf's resolution transaction
+		// under the same FOR UPDATE lock the payment-binding transaction below
+		// takes on escrow_holds — the pool-side EXISTS-probe + bare-Refund pair
+		// this replaces was a TOCTOU (a loser could refund between the probe
+		// and the winner's committed bind). ErrHoldBound ⇒ a winner exists ⇒
+		// the same uniform ErrIdemConflict the foreign-key check returns.
+		if rerr := s.escrow.RefundIf(ctx, escrowID, s.unboundHoldGuard(escrowID, ownerID)); rerr != nil {
+			if errors.Is(rerr, escrow.ErrHoldBound) {
+				return nil, ErrIdemConflict
+			}
+			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
+		}
+		return nil, err
+	}
+
 	// HL-9: HELD on booking. The escrow debit posts the balanced ledger leg and
 	// fails closed on insufficient funds before the payment row is written.
 	ref := "vet:" + appt.ID
 	hold, err := s.escrow.Hold(ctx, ownerID, ref, "health.vet", in.IdempotencyKey, total)
 	if err != nil {
-		return nil, fmt.Errorf("vet: hold payment (HL-9): %w", err)
+		return failBooking(fmt.Errorf("vet: hold payment (HL-9): %w", err))
 	}
-	escrowID := hold.HoldID()
+	escrowID = hold.HoldID()
 
-	const insPay = `
-		INSERT INTO vet_appointment_payments
-			(id, appointment_id, owner_id, provider_id, pet_id, service_id, visit_type,
-			 total_kobo, escrow_id, pay_state, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10)`
-	if _, err := s.db.Exec(ctx, insPay, uuid.New().String(), appt.ID, ownerID, in.ProviderID,
-		in.PetID, in.ServiceID, string(in.VisitType), total, escrowID, in.IdempotencyKey); err != nil {
-		return nil, fmt.Errorf("vet: insert appointment payment: %w", err)
+	// The payment row binds the hold — write it inside a transaction that first
+	// takes the escrow_holds FOR UPDATE lock and requires HELD (the binding half
+	// of the resolution race fix; identical mechanics to healthpharmacy's
+	// lockEscrowForBinding). The tx commits/rolls back BEFORE failBooking's
+	// RefundIf runs so this tx's own hold lock never deadlocks the refund's.
+	payErr := func() error {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("vet: begin payment binding: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		var holdState string
+		if err := tx.QueryRow(ctx,
+			`SELECT state FROM escrow_holds WHERE id=$1 FOR UPDATE`, escrowID).Scan(&holdState); err != nil {
+			return fmt.Errorf("vet: lock escrow hold for binding: %w", err)
+		}
+		if holdState != string(escrow.StateHeld) {
+			return fmt.Errorf("vet: escrow hold is %s, not HELD — refusing to bind a payment", holdState)
+		}
+		const insPay = `
+			INSERT INTO vet_appointment_payments
+				(id, appointment_id, owner_id, provider_id, pet_id, service_id, visit_type,
+				 total_kobo, escrow_id, pay_state, idempotency_key)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10)`
+		if _, err := tx.Exec(ctx, insPay, uuid.New().String(), appt.ID, ownerID, in.ProviderID,
+			in.PetID, in.ServiceID, string(in.VisitType), total, escrowID, in.IdempotencyKey); err != nil {
+			return fmt.Errorf("vet: insert appointment payment: %w", err)
+		}
+		return tx.Commit(ctx)
+	}()
+	if payErr != nil {
+		return failBooking(payErr)
 	}
 
 	serviceID := in.ServiceID
@@ -516,7 +596,7 @@ func (s *Service) Accept(ctx context.Context, actorID, apptID string) (*Appointm
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may accept (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateAccepted); err != nil {
@@ -539,16 +619,23 @@ func (s *Service) Confirm(ctx context.Context, actorID, apptID string) (*Appoint
 	// APPROVED and suspended before confirming must not be able to advance
 	// the appointment toward a money release. Both Confirm and CompleteConsult
 	// re-check VCN status for this reason.
-	if s.prov != nil {
-		vetOwner, operr := s.providerOwner(ctx, a.ProviderID)
-		if operr == nil && actorID == vetOwner {
-			ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
-			if perr != nil {
-				return nil, perr
-			}
-			if !ok {
-				return nil, errors.New("vet: only the verified vet may confirm (HL-2)")
-			}
+	// The party check runs FIRST so a foreign actor gets the same uniform
+	// not-found denial as a missing appointment (no existence oracle).
+	owner := a.OwnerID
+	vetOwner, operr := s.providerOwner(ctx, a.ProviderID)
+	if operr != nil {
+		return nil, operr
+	}
+	if actorID != owner && actorID != vetOwner {
+		return nil, ErrAppointmentNotFound
+	}
+	if s.prov != nil && actorID == vetOwner {
+		ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
+		if perr != nil {
+			return nil, perr
+		}
+		if !ok {
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateConfirmed); err != nil {
@@ -567,7 +654,13 @@ func (s *Service) Cancel(ctx context.Context, actorID, apptID, reason string) (*
 		return nil, err
 	}
 	owner := a.OwnerID
+	// Deliberately swallowed: a transient providerOwner failure leaves
+	// vetOwner="" which fails closed — only the owner (or a resolvable vet
+	// owner) cancels, so the appointment is never denied on a lookup blip for
+	// the owner nor authorized for a stranger.
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
+	// Uniform denial: a foreign appointment is indistinguishable from a
+	// missing one.
 	if actorID != owner && actorID != vetOwner {
 		// Uniform denial: a non-party's cancel on an existing appointment is
 		// indistinguishable from a missing one — no existence oracle.
@@ -601,17 +694,19 @@ func (s *Service) Dispatch(ctx context.Context, actorID, apptID string) (*Appoin
 	if err != nil {
 		return nil, err
 	}
-	if a.VisitType != VisitHome {
-		return nil, errors.New("vet: dispatch only applies to HOME visits")
-	}
+	// HL-2 actor gate BEFORE the visit-type probe: a foreign actor must not
+	// learn another owner's appointment details from the error it gets back.
 	if s.prov != nil {
 		ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
 		if perr != nil {
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may dispatch (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
+	}
+	if a.VisitType != VisitHome {
+		return nil, errors.New("vet: dispatch only applies to HOME visits")
 	}
 	if s.dispatch == nil {
 		return nil, errors.New("vet: dispatch rail unavailable")
@@ -643,7 +738,7 @@ func (s *Service) StartConsult(ctx context.Context, actorID, apptID string) (*Ap
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may start the consult (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
 	}
 	if s.consult == nil {
@@ -719,15 +814,15 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 	if err != nil {
 		return nil, err
 	}
-	if a.ConsultID == nil {
-		return nil, errors.New("vet: no consult started for this appointment")
-	}
+	// HL-2 actor gate BEFORE the consult-state probe: a foreign actor must not
+	// learn another owner's appointment details (e.g. whether a consult was
+	// started) from the error it gets back.
 	vetOwner, err := s.providerOwner(ctx, a.ProviderID)
 	if err != nil {
 		return nil, err
 	}
 	if vetOwnerID != vetOwner {
-		return nil, errors.New("vet: only the verified vet may complete the consult (HL-2)")
+		return nil, ErrAppointmentNotFound
 	}
 	// HL-2: ownership alone is not the same as current VCN approval — a vet
 	// accepted while APPROVED and suspended before completing must not be
@@ -738,8 +833,11 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 			return nil, perr
 		}
 		if !ok {
-			return nil, errors.New("vet: only the verified vet may complete the consult (HL-2)")
+			return nil, ErrAppointmentNotFound
 		}
+	}
+	if a.ConsultID == nil {
+		return nil, errors.New("vet: no consult started for this appointment")
 	}
 
 	res := &CompleteResult{}
@@ -918,6 +1016,8 @@ func (s *Service) Get(ctx context.Context, requesterID, apptID string, isAdmin b
 	if err != nil {
 		return nil, err
 	}
+	// Deliberately swallowed — vetOwner="" fails closed (denies a foreign
+	// reader rather than leaking the appointment on a lookup blip).
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if !isAdmin && requesterID != a.OwnerID && requesterID != vetOwner {
 		// Uniform denial: denied and missing appointments return the same
@@ -991,12 +1091,62 @@ func (s *Service) load(ctx context.Context, apptID string) (*Appointment, error)
 	return &a, nil
 }
 
-func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Appointment, error) {
+// getByIdem resolves the caller's replay: the appointment THIS owner booked
+// under idemKey, or (nil, nil) when no such booking exists for this owner.
+// Scoped to the caller, never the stored row — keys are client-chosen, so an
+// unscoped lookup would hand a stranger's appointment (escrow id, totals,
+// state) to whoever replays their key (same model as petByIdem above and
+// restaurant findOrderByIdempotencyKey).
+func (s *Service) getByIdem(ctx context.Context, ownerID, idemKey string) (*Appointment, error) {
 	var apptID string
-	if err := s.db.QueryRow(ctx, `SELECT appointment_id FROM vet_appointment_payments WHERE idempotency_key=$1`, idemKey).Scan(&apptID); err != nil {
+	err := s.db.QueryRow(ctx,
+		`SELECT appointment_id FROM vet_appointment_payments WHERE idempotency_key=$1 AND owner_id=$2`,
+		idemKey, ownerID).Scan(&apptID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return s.load(ctx, apptID)
+}
+
+// idemTakenByOther reports whether idemKey is already bound to a booking owned
+// by a DIFFERENT owner — i.e. this call is a replay of someone else's key.
+// Fail closed on lookup error: a transient pool failure must not be mistaken
+// for "key is free" and let a replay slip through to the money leg.
+func (s *Service) idemTakenByOther(ctx context.Context, ownerID, idemKey string) (bool, error) {
+	var taken bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM vet_appointment_payments WHERE idempotency_key=$1 AND owner_id<>$2)`,
+		idemKey, ownerID).Scan(&taken); err != nil {
+		return true, fmt.Errorf("vet: resolve idempotency key: %w", err)
+	}
+	return taken, nil
+}
+
+// unboundHoldGuard is the RESOLUTION half of the hold-bind / resolution-race
+// fix: the RefundIf guard, run under the refund tx's FOR UPDATE hold lock after
+// the FSM check — re-proves payer ownership AND that no committed
+// vet_appointment_payments row is bound, vetoing with escrow.ErrHoldBound
+// (folded into ErrIdemConflict by failBooking). Identical mechanics to
+// healthpharmacy.unboundHoldGuard.
+func (s *Service) unboundHoldGuard(escrowID, payerID string) func(context.Context, pgx.Tx) error {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		var free bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2
+				  AND NOT EXISTS (SELECT 1 FROM vet_appointment_payments p WHERE p.escrow_id = h.id))`,
+			escrowID, payerID).Scan(&free); err != nil {
+			return fmt.Errorf("vet: bound-hold guard: %w", err)
+		}
+		if !free {
+			return escrow.ErrHoldBound
+		}
+		return nil
+	}
 }
 
 func (s *Service) providerOwner(ctx context.Context, providerID string) (string, error) {

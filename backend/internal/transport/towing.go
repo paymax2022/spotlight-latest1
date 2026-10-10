@@ -386,7 +386,7 @@ func (s *Service) bookTowing(ctx context.Context, userID string, req TowingBookR
 	if external {
 		sett, err = s.settlement.EscrowExternal(ctx, userID, ref, idempotencyKey, "transport", fare)
 	} else {
-		sett, err = s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", fare)
+		sett, err = s.escrowCheckout(ctx, userID, ref, idempotencyKey, fare)
 	}
 	if err != nil {
 		return "", fmt.Errorf("transport: escrow towing fare: %w", err)

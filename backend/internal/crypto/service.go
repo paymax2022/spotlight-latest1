@@ -28,6 +28,19 @@ type walletDebitLimiter interface {
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("crypto: money path requires a tier gate (not wired)")
 
+// ErrLedgerReconPending is returned when a ledger leg key was claimed duplicate
+// but no durable legs back the claim (a bare Redis-lock replay). Retryable —
+// the caller must retry, never proceed as though the journal posted.
+var ErrLedgerReconPending = errors.New("crypto: ledger leg not durably posted — retry")
+
+// ErrSwapUnwound is returned when a swap's :sell credit was already reversed by
+// unwindSwapSell under this Idempotency-Key. The original :sell legs remain
+// durable (reversals never delete them), so the key can NEVER converge again:
+// the stale legs would re-verify and let a fresh :buy post with no proceeds to
+// offset — a double charge (R-1). The member must retry under a FRESH key;
+// this is a permanent refusal, not a transient one.
+var ErrSwapUnwound = errors.New("crypto: swap key unwound — retry with a fresh Idempotency-Key")
+
 // Service is the crypto money-path orchestrator. It REUSES the finance ledger:
 // a BUY debits the user's main wallet into the shared escrow standing account and
 // credits the user's crypto holding (asset-unit projection); a SELL reverses.
@@ -247,7 +260,7 @@ func (s *Service) Buy(ctx context.Context, userID, assetID string, cashKobo int6
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, userID, o.Reference, walletKey, escrow.ID, cashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := s.led.DebitGated(ctx, userID, o.Reference, walletKey, escrow.ID, cashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, err
 	}
 	// 2) Record the order + credit the holding projection atomically. ON CONFLICT

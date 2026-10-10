@@ -455,7 +455,7 @@ func (s *Service) Deposit(ctx context.Context, userID, idem string, amountKobo i
 		if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
 			return nil, err
 		}
-		if err := s.mainLedger.Debit(ctx, userID, "invest:deposit", mainKey, bridge.ID, amountKobo); err != nil {
+		if err := s.mainLedger.DebitGated(ctx, userID, "invest:deposit", mainKey, bridge.ID, amountKobo); err != nil {
 			if !errors.Is(err, ledger.ErrDuplicate) {
 				return nil, err // includes ErrInsufficientFunds
 			}

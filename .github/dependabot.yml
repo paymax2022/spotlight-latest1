@@ -95,6 +95,21 @@ updates:
       # deliberate migration, not a weekly bump.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # maplibre-react-native v11 is new-architecture-only and a full API rewrite
+      # aligned to MapLibre GL JS (MapView -> Map, ShapeSource -> GeoJSONSource,
+      # renamed Camera stop props, restructured event payloads — see the upstream
+      # v11 migration guide). The app's map screens consume the v10 namespace API
+      # via lazy require().default typed as any, so whole-app tsc stays green
+      # while the native runtime breaks. Land with a deliberate migration, not a
+      # weekly bump.
+      - dependency-name: "@maplibre/maplibre-react-native"
+        update-types: ["version-update:semver-major"]
+      # zod v4 removes the invalid_type_error / required_error params used across
+      # app/** (~11 files) — whole-app tsc fails on the bump (e.g.
+      # app/services/airtime.tsx, app/services/electricity.tsx). Migrate via
+      # zod/v3 compat or the unified `error` param first.
+      - dependency-name: "zod"
+        update-types: ["version-update:semver-major"]
     commit-message: { prefix: "chore(deps)" }
     labels: [dependencies, mobile]
 
