@@ -329,10 +329,12 @@ func TestLiveDB_Arbitrate_TerminalMismatchFailsClosed(t *testing.T) {
 		t.Fatalf("raise dispute: %v", err)
 	}
 
-	// Plant a REFUNDED terminal state (a prior arbitration ruled refund) with
-	// its credit posted — then a retry arriving with the OPPOSITE decision.
-	if err := f.svc.Refund(ctx, h.ID); err != nil {
-		t.Fatalf("refund: %v", err)
+	// Reach a REFUNDED terminal state the only way a DISPUTED hold can now get
+	// there (F6d: direct Refund on a disputed hold is blocked) — a real
+	// arbitration ruling REFUND, with its credit posted — then a retry
+	// arriving with the OPPOSITE decision.
+	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRefund, f.decoy); err != nil {
+		t.Fatalf("setup arbitration refund: %v", err)
 	}
 	if err := f.svc.Arbitrate(ctx, h.ID, DecisionRelease, f.decoy); err == nil {
 		t.Fatal("arbitrate RELEASE on a REFUNDED hold must fail closed")
