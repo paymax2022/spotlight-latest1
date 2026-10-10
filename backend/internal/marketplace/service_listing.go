@@ -626,6 +626,162 @@ func (s *Service) ApproveListing(ctx context.Context, adminID, id, reasonCode st
 	return l, nil
 }
 
+// categoryPath renders "Main › Sub" for a category (just its name for a root).
+func (s *Service) categoryPath(ctx context.Context, c *Category) string {
+	if c.ParentID == nil {
+		return c.Name
+	}
+	if p, err := s.repo.GetCategory(ctx, *c.ParentID); err == nil {
+		return p.Name + " › " + c.Name
+	}
+	return c.Name
+}
+
+// RecategorizeListing (admin) moves a listing that is awaiting review into the
+// category/sub-category it actually belongs in. Sellers pick their own category, and
+// a wrong pick buries the item from the buyers searching for it, so the reviewer fixes
+// it before approving rather than having to reject and make the seller start again.
+//
+// The move keeps the rules that are about the listing's identity: the target must
+// exist, be active and sit in the listing's market, and a Tokunbo/local-used condition
+// only survives inside the Vehicles tree. A move that would break one of them is
+// refused with a field error naming the problem.
+//
+// Attributes are different, and deliberately NOT a gate. A listing that is in the wrong
+// category almost always carries the wrong category's attributes (a TV filed under Cars
+// has no `brand` for Electronics), so refusing on them would block exactly the case this
+// exists for and leave rejection as the reviewer's only move. Instead reconcileAttrs
+// keeps what the new category accepts, drops what it would reject, and the audit row
+// records both the dropped keys and the required ones still missing; the seller is told
+// what to add and can (PUT /listings/:id). This is an admin correction, not a seller write,
+// so it is the one place a listing may sit in a category without every required attribute.
+//
+// Only pending_review listings can be moved: the status-conditioned write means a
+// listing approved or removed in the meantime comes back ErrConflict, never silently
+// re-filed. Re-filing a listing that is already live is a different act (it changes
+// what buyers are already seeing) and is deliberately not offered here. A pending
+// listing has no search document yet, so there is nothing to re-index — approval
+// builds it from the fresh row.
+func (s *Service) RecategorizeListing(ctx context.Context, adminID, id, categoryID, reasonCode string) (*Listing, error) {
+	if strings.TrimSpace(categoryID) == "" {
+		return nil, fieldErr(CodeValidation, "category_id is required", "category_id")
+	}
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.Status != ListingPendingReview {
+		return nil, newErr(http.StatusConflict, CodeConflict, "only listings awaiting review can be re-categorised")
+	}
+	if l.CategoryID == categoryID {
+		return l, nil // already there — nothing to change, nothing to audit
+	}
+
+	cat, cerr := s.repo.GetCategory(ctx, categoryID)
+	if cerr != nil {
+		return nil, fieldErr(CodeValidation, "unknown category_id", "category_id")
+	}
+	if !cat.IsActive {
+		return nil, fieldErr(CodeValidation, "category is not active", "category_id")
+	}
+	if cat.MarketID != l.MarketID {
+		return nil, fieldErr(CodeValidation, "category belongs to a different market", "category_id")
+	}
+	isVehicle := false
+	if vehicleOnlyConditions[l.Condition] {
+		var verr error
+		isVehicle, verr = s.repo.IsCategoryDescendantOfSlug(ctx, categoryID, "vehicles")
+		if verr != nil {
+			return nil, verr
+		}
+	}
+	if err := validateCondition(l.Condition, isVehicle); err != nil {
+		return nil, err
+	}
+
+	keptAttrs, droppedAttrs, missingRequired := reconcileAttrs(cat.AttributeSchema, l.Attrs)
+
+	var fromPath string
+	if old, oerr := s.repo.GetCategory(ctx, l.CategoryID); oerr == nil {
+		fromPath = s.categoryPath(ctx, old)
+	}
+	if err := s.repo.SetListingCategory(ctx, id, ListingPendingReview, categoryID, keptAttrs); err != nil {
+		return nil, err
+	}
+	fromID := l.CategoryID
+	l.CategoryID = categoryID
+	l.Attrs = keptAttrs
+	toPath := s.categoryPath(ctx, cat)
+
+	_ = s.writeAudit(ctx, AuditEntry{
+		AdminID: adminID, Action: "mkt.listing.recategorize", TargetType: "listing", TargetID: id,
+		ReasonCode:  strutil.Or(reasonCode, "recategorized"),
+		BeforeState: map[string]any{"category_id": fromID, "category_path": fromPath},
+		AfterState: map[string]any{
+			"category_id": categoryID, "category_path": toPath,
+			"dropped_attrs": droppedAttrs, "missing_required": missingRequired,
+		},
+	})
+	msg := "We moved your listing to " + toPath + " so buyers can find it."
+	if len(missingRequired) > 0 {
+		msg += " Please add its details: " + humanizeKeys(missingRequired) + "."
+	}
+	s.notifySafe(ctx, l.SellerID, "mkt.listing.recategorized", msg)
+	return l, nil
+}
+
+// reconcileAttrs carries a listing's attrs across to a new category's attribute_schema.
+// It returns the attrs the new schema accepts, the keys it dropped (undeclared where the
+// schema forbids extras, or a value of the wrong type/outside the allowed values — e.g.
+// brand=toyota has no place in Phones), and the required keys still absent afterwards.
+// Both lists are sorted, so the audit row is deterministic. An empty or unreadable
+// schema is unconstrained: everything is kept and nothing is missing. It never mutates
+// its input.
+func reconcileAttrs(schemaJSON json.RawMessage, attrs map[string]any) (kept map[string]any, dropped, missing []string) {
+	kept = make(map[string]any, len(attrs))
+	dropped, missing = []string{}, []string{}
+	var sc attrSchema
+	if len(schemaJSON) == 0 || json.Unmarshal(schemaJSON, &sc) != nil ||
+		(len(sc.Required) == 0 && len(sc.Properties) == 0) {
+		for k, v := range attrs {
+			kept[k] = v
+		}
+		return kept, dropped, missing
+	}
+	closed := sc.AdditionalProperties != nil && !*sc.AdditionalProperties
+	for k, v := range attrs {
+		if v == nil {
+			continue // a null is the same as absent for required-ness; do not carry it
+		}
+		prop, declared := sc.Properties[k]
+		switch {
+		case !declared && closed:
+			dropped = append(dropped, k)
+		case declared && checkProp(k, prop, v) != nil:
+			dropped = append(dropped, k)
+		default:
+			kept[k] = v
+		}
+	}
+	for _, k := range sc.Required {
+		if _, ok := kept[k]; !ok {
+			missing = append(missing, k)
+		}
+	}
+	slices.Sort(dropped)
+	slices.Sort(missing)
+	return kept, dropped, missing
+}
+
+// humanizeKeys renders attribute keys for a seller-facing sentence: "screen_size" → "screen size".
+func humanizeKeys(keys []string) string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = strings.ReplaceAll(k, "_", " ")
+	}
+	return strings.Join(out, ", ")
+}
+
 // RejectListing (admin) pending_review → removed_policy. reason_code MANDATORY
 // (§2.1); the seller is notified with the reason verbatim.
 func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode string) (*Listing, error) {

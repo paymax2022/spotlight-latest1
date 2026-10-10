@@ -1,6 +1,7 @@
 import { apiRoot } from '@/config/env';
 import type {
   MktListing,
+  MktModerationCategory,
   MktFlag,
   MktFlagActionRequest,
   MktAdminAuditLogEntry,
@@ -128,7 +129,10 @@ export async function getModerationListing(id: string): Promise<MktListing> {
   // cached queue result and falls back to the public listing GET if needed.
   const res = await fetch(`${apiRoot()}/v1/marketplace/listings/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Listing fetch failed'));
-  return res.json();
+  // The backend wraps single objects as { data: {...} }. Returning the wrapper made
+  // every field undefined and crashed the review page on `listing.status`.
+  const body = await res.json();
+  return (body && typeof body === 'object' && 'data' in body ? body.data : body) as MktListing;
 }
 
 export async function approveListing(id: string, reasonCode?: string): Promise<MktListing> {
@@ -158,6 +162,39 @@ export async function rejectListing(id: string, reasonCode: string): Promise<Mkt
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Reject failed'));
   return res.json();
+}
+
+// The active category tree for the reviewer's re-assign picker (flat, parents first).
+// Read-only and scoped to the moderation permission — a reviewer does not need
+// taxonomy-management rights to fix one listing's category.
+const FIXTURE_MODERATION_CATEGORIES: MktModerationCategory[] = [
+  { id: 'cat_vehicles', parent_id: null, slug: 'vehicles', name: 'Vehicles' },
+  { id: 'cat_cars', parent_id: 'cat_vehicles', slug: 'cars', name: 'Cars' },
+  { id: 'cat_electronics', parent_id: null, slug: 'electronics', name: 'Electronics' },
+  { id: 'cat_phones', parent_id: 'cat_electronics', slug: 'phones', name: 'Phones & Tablets' },
+];
+
+export async function listModerationCategories(): Promise<MktModerationCategory[]> {
+  if (USE_FIXTURES) return delay([...FIXTURE_MODERATION_CATEGORIES]);
+  const res = await fetch(`${marketplaceAdminBase()}/moderation/categories`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Categories fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+// Moves a listing awaiting review into the category/sub-category it belongs in. The
+// backend applies the same rules a seller faces (active category, same market, the
+// category's required attributes, Vehicles-only conditions) and refuses with a message
+// naming the problem; the seller is told where their listing went.
+export async function recategorizeListing(id: string, categoryId: string, reasonCode?: string): Promise<MktListing> {
+  if (USE_FIXTURES) throw new Error('Re-categorising needs the live backend — fixture mode never fakes a write.');
+  const res = await fetch(`${marketplaceAdminBase()}/listings/${encodeURIComponent(id)}/recategorize`, {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify(reasonCode ? { category_id: categoryId, reason_code: reasonCode } : { category_id: categoryId }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Re-categorise failed'));
+  const body = await res.json();
+  return (body && typeof body === 'object' && 'data' in body ? body.data : body) as MktListing;
 }
 
 export async function listFlags(status?: 'open' | 'actioned' | 'dismissed'): Promise<MktFlag[]> {

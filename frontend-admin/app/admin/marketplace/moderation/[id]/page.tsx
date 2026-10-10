@@ -3,11 +3,11 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getModerationListing, approveListing, rejectListing, formatKobo } from '@/services/marketplaceAdminService';
-import type { MktListing } from '@/types/marketplaceAdmin';
+import { getModerationListing, approveListing, rejectListing, listModerationCategories, recategorizeListing, formatKobo } from '@/services/marketplaceAdminService';
+import type { MktListing, MktModerationCategory } from '@/types/marketplaceAdmin';
 import {
   Kpi, StatusBadge, DisclosureNote, StateBlock, AuditNote, PermissionBanner,
-  label as lbl, fmtDate,
+  label as lbl, select as selectStyle, fmtDate,
   MARKETPLACE_PERMS, useMarketplacePermission,
 } from '../../_ui';
 import { Page, PageHeader, Card, Button, colors } from '@/components/ui/vuexy';
@@ -27,6 +27,11 @@ export default function ModerationDetailPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [reasonCode, setReasonCode] = useState('');
   const [activeMedia, setActiveMedia] = useState(0);
+  const [categories, setCategories] = useState<MktModerationCategory[]>([]);
+  const [catsError, setCatsError] = useState<string | null>(null);
+  const [mainId, setMainId] = useState('');
+  const [subId, setSubId] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -36,12 +41,57 @@ export default function ModerationDetailPage() {
   }, [id]);
   useEffect(() => { if (id) void load(); }, [id, load]);
 
+  useEffect(() => {
+    listModerationCategories()
+      .then(setCategories)
+      .catch((e) => setCatsError(String(e)));
+  }, []);
+
+  const mains = categories.filter((c) => !c.parent_id);
+  const subsOf = (parentId: string) => categories.filter((c) => c.parent_id === parentId);
+  const current = listing ? categories.find((c) => c.id === listing.category_id) : undefined;
+  const currentMain = current ? (current.parent_id ? categories.find((c) => c.id === current.parent_id) : current) : undefined;
+  const currentSub = current?.parent_id ? current : undefined;
+  const currentPath = current
+    ? [currentMain?.name, currentSub?.name].filter(Boolean).join(' › ')
+    : (listing?.category_name ?? listing?.category_id ?? '');
+
+  // Start the pickers on the listing's saved category whenever it (re)loads.
+  useEffect(() => {
+    if (!listing || categories.length === 0) return;
+    setMainId(currentMain?.id ?? '');
+    setSubId(currentSub?.id ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listing?.category_id, categories.length]);
+
+  // The category the pickers point at. A main that has sub-categories is not a valid
+  // final choice: buyers browse by sub-category, so the reviewer must pick one.
+  const mainSubs = mainId ? subsOf(mainId) : [];
+  const needsSub = mainSubs.length > 0 && !subId;
+  const targetId = subId || mainId;
+  const categoryChanged = !!listing && !!targetId && targetId !== listing.category_id;
+
   async function approve() {
     if (!listing) return;
     setBusy(true); setMsg(null); setError(null);
     try {
       await approveListing(listing.id, reasonCode.trim() || undefined);
       setMsg(`Listing approved → active. Audit entry recorded.`);
+      await load();
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+
+  async function saveCategory() {
+    if (!listing || !targetId) return;
+    setBusy(true); setMsg(null); setError(null);
+    try {
+      const updated = await recategorizeListing(listing.id, targetId);
+      const moved = categories.find((c) => c.id === updated.category_id);
+      const parent = moved?.parent_id ? categories.find((c) => c.id === moved.parent_id) : undefined;
+      const path = [parent?.name, moved?.name].filter(Boolean).join(' › ');
+      setConfirmed(false);
+      setMsg(`Listing moved to ${path || 'the selected category'}. The seller was told. Audit entry recorded — confirm the new category before approving.`);
       await load();
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
@@ -118,12 +168,63 @@ export default function ModerationDetailPage() {
               <p style={{ fontWeight: 700, fontSize: '1.05rem', marginBottom: '0.25rem' }}>{listing.title}</p>
               <p style={{ color: colors.muted, fontSize: '0.88rem', whiteSpace: 'pre-wrap' }}>{listing.description}</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.75rem', fontSize: '0.82rem', color: colors.muted }}>
-                <div>Category: <strong style={{ color: colors.text }}>{listing.category_name ?? listing.category_id}</strong></div>
+                <div>Category: <strong style={{ color: colors.text }}>{currentPath}</strong></div>
                 <div>Condition: <strong style={{ color: colors.text }}>{listing.condition}</strong></div>
                 <div>Location: <strong style={{ color: colors.text }}>{listing.state}{listing.lga ? `, ${listing.lga}` : ''}</strong></div>
                 <div>Submitted: <strong style={{ color: colors.text }}>{fmtDate(listing.created_at)}</strong></div>
                 <div>Views / Saves: <strong style={{ color: colors.text }}>{listing.view_count ?? 0} / {listing.save_count ?? 0}</strong></div>
                 <div>Status: <StatusBadge status={listing.status} /></div>
+              </div>
+            </Card>
+
+            <Card title="Category check" style={{ marginBottom: '1.25rem' }}>
+              <p style={{ color: colors.muted, fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                Sellers choose their own category. Check the item really belongs under{' '}
+                <strong style={{ color: colors.text }}>{currentPath || 'its current category'}</strong>; if not, move it to the right
+                category and sub-category before approving.
+              </p>
+              {catsError && <p style={{ color: colors.danger, fontSize: '0.82rem' }}>Couldn&apos;t load the category list: {catsError}</p>}
+              {!current && categories.length > 0 && (
+                <p style={{ color: colors.danger, fontSize: '0.82rem', marginBottom: '0.5rem' }}>
+                  This listing&apos;s category isn&apos;t in the active category list — please pick the right one.
+                </p>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={lbl()}>Category</label>
+                  <select
+                    style={selectStyle()}
+                    value={mainId}
+                    disabled={!isPending || categories.length === 0 || busy}
+                    onChange={(e) => { setMainId(e.target.value); setSubId(''); setConfirmed(false); }}
+                  >
+                    <option value="">— choose a category —</option>
+                    {mains.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl()}>Sub-category</label>
+                  <select
+                    style={selectStyle()}
+                    value={subId}
+                    disabled={!isPending || !mainId || mainSubs.length === 0 || busy}
+                    onChange={(e) => { setSubId(e.target.value); setConfirmed(false); }}
+                  >
+                    <option value="">{mainId && mainSubs.length === 0 ? '— none for this category —' : '— choose a sub-category —'}</option>
+                    {mainSubs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <Button
+                  variant="primary"
+                  disabled={!canApprove || !isPending || busy || !categoryChanged || needsSub}
+                  onClick={() => void saveCategory()}
+                >
+                  {busy ? '…' : 'Save category change'}
+                </Button>
+                {needsSub && <span style={{ color: colors.muted, fontSize: '0.75rem' }}>Pick a sub-category to save.</span>}
+                {categoryChanged && !needsSub && <span style={{ color: colors.muted, fontSize: '0.75rem' }}>Unsaved change — save it before approving.</span>}
               </div>
             </Card>
 
@@ -155,8 +256,18 @@ export default function ModerationDetailPage() {
                 disabled={!isPending}
                 style={{ width: '100%', minHeight: '4.5rem', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }}
               />
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  disabled={!isPending || busy}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                  style={{ marginTop: '0.2rem' }}
+                />
+                <span>I&apos;ve checked this item is in the right category and sub-category{currentPath ? <> (<strong>{currentPath}</strong>)</> : null}.</span>
+              </label>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-                <Button variant="primary" disabled={!canApprove || !isPending || busy} onClick={() => void approve()}>
+                <Button variant="primary" disabled={!canApprove || !isPending || busy || !confirmed || categoryChanged} onClick={() => void approve()}>
                   {busy ? '…' : 'Approve listing'}
                 </Button>
                 <Button
@@ -169,6 +280,8 @@ export default function ModerationDetailPage() {
                 <Button variant="outline" onClick={() => router.push('/admin/marketplace/moderation')}>Back to queue</Button>
               </div>
               {isPending && !reasonCode.trim() && <p style={{ color: colors.muted, fontSize: '0.75rem', marginTop: '0.4rem' }}>Reject is disabled until a reason_code is entered.</p>}
+              {isPending && !confirmed && <p style={{ color: colors.muted, fontSize: '0.75rem', marginTop: '0.4rem' }}>Approve is disabled until you confirm the category{categoryChanged ? ' and save your category change' : ''}.</p>}
+              {isPending && confirmed && categoryChanged && <p style={{ color: colors.muted, fontSize: '0.75rem', marginTop: '0.4rem' }}>Save the category change before approving.</p>}
             </Card>
           </>
         )}
