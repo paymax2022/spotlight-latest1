@@ -351,10 +351,26 @@ func (s *CareService) Close(ctx context.Context, userID, referralID string) (*Ca
 	if ref.State == triage.RefClosed {
 		return ref, nil
 	}
+	// A charged referral (payment_ref pinned) being closed must be refunded —
+	// closing while keeping the debit is a money leak. The CAS runs FIRST so a
+	// racing PayReferral can no longer win routed→paid after we commit; the
+	// reversal then reuses the same deterministic key as the CAS-loss path
+	// (triage.care:pay:<id>:rev), so the two paths can never double-reverse.
+	// A `routed` close posts no reversal — an in-flight racer's CAS-loss path
+	// re-reads `closed` and compensates its own charge.
+	charged := ref.PaymentRef != nil && ref.AmountMinor > 0 && s.pay != nil
 	if err := s.transitionReferral(ctx, ref, ref.State, triage.RefClosed, ReferralPatch{}); err != nil {
 		return nil, err
 	}
 	ref.State = triage.RefClosed
+	if charged {
+		if err := s.pay.Reverse(ctx, userID, "triage.care:"+ref.ID, "triage.care:pay:"+ref.ID+":rev", ref.AmountMinor); err != nil {
+			// The state is committed closed; a failed reversal leaves a
+			// recon-visible orphan (closed row + unrefunded journal), never a
+			// double-charge. Log for ops; no balance edit is ever made here.
+			log.Printf("[care] close-refund reversal for referral %s failed: %v", ref.ID, err)
+		}
+	}
 	return ref, nil
 }
 
