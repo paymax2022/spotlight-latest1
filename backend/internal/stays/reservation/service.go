@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/strutil"
@@ -32,6 +33,17 @@ type Auditor interface {
 	Audit(ctx context.Context, userID, action string, detail map[string]any)
 }
 
+// CheckoutLimiter is the in-tx tier gate the booking hold/modify-charge escrows
+// run — the consumer-purchase variant (ADR-043): identical to the strict cap
+// for Tier 1+, capped-but-permitted for Tier 0 when the allowance flag is on.
+// Satisfied by *tiers.Service; the Tx method satisfies ledger.DebitGuard.
+type CheckoutLimiter interface {
+	// EnforceCheckoutDebitLimitTx evaluates the checkout daily-debit cap INSIDE
+	// the debiting transaction under the wallet advisory lock — the
+	// authoritative half of the gate (F7).
+	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
+}
+
 // Service owns the booking state machine + the prebook→hold→book→charge→release
 // saga. It REUSES the finance settlement/ledger primitives (no new money
 // primitives): HOLD = settlement.Escrow → AccountEscrow; CHARGE = settle split
@@ -45,6 +57,7 @@ type Service struct {
 	consent    *consent.Service
 	settlement *settlement.Service
 	ledger     *ledger.Service
+	tiers      CheckoutLimiter
 	notify     Notifier
 	audit      Auditor
 
@@ -81,12 +94,17 @@ type CommissionRecorder interface {
 
 // Deps bundles the service dependencies.
 type Deps struct {
-	Repo                *Repository
-	Router              *gateway.Router
-	Pricing             *pricing.Engine
-	Consent             *consent.Service
-	Settlement          *settlement.Service
-	Ledger              *ledger.Service
+	Repo       *Repository
+	Router     *gateway.Router
+	Pricing    *pricing.Engine
+	Consent    *consent.Service
+	Settlement *settlement.Service
+	Ledger     *ledger.Service
+	// Tiers is the checkout daily-cap gate for the wallet-funded HOLD /
+	// modify-CHARGE escrows. A booking is a consumer purchase — the wallet
+	// debit must never run uncapped, so an unwired gate fails CLOSED
+	// (ErrTierGateUnwired).
+	Tiers               CheckoutLimiter
 	Notifier            Notifier
 	Auditor             Auditor
 	DirectCommissionBps int64
@@ -101,6 +119,7 @@ func NewService(d Deps) *Service {
 		consent:             d.Consent,
 		settlement:          d.Settlement,
 		ledger:              d.Ledger,
+		tiers:               d.Tiers,
 		notify:              d.Notifier,
 		audit:               d.Auditor,
 		directCommissionBps: d.DirectCommissionBps,
@@ -138,6 +157,10 @@ var (
 	ErrBadState        = errors.New("reservation: illegal state transition")
 	ErrPrebookFailed   = errors.New("reservation: prebook failed (price drift / sold out)")
 	ErrInsufficient    = errors.New("reservation: insufficient funds")
+	// ErrTierGateUnwired is returned by the wallet-money paths (Book hold,
+	// modify charge) when Deps.Tiers was not wired — a nil gate must fail
+	// CLOSED, never escrow ungated (mirrors escrow.ErrTierGateUnwired).
+	ErrTierGateUnwired = errors.New("reservation: money path requires a tier gate (not wired)")
 )
 
 // PrebookInput is the selected-offer input to Prebook.
@@ -330,8 +353,16 @@ func (s *Service) Book(ctx context.Context, userID, reservationID, bookToken, id
 
 	// (3) HOLD — escrow the gross (no charge). Pay-at-property holds a guarantee
 	// (deposit only); for brevity the full gross is held for prepay methods.
+	if s.tiers == nil {
+		return nil, ErrTierGateUnwired
+	}
+	// EscrowWithGuard runs the checkout daily cap INSIDE the debit tx under the
+	// wallet advisory lock (F7) — no pooled advisory pre-check: the settlement
+	// row + ledger replay verification converge a committed hold on retry even
+	// when today's usage would refuse (F2).
 	holdKey := idempotencyKey + ":hold"
-	sett, err := s.settlement.Escrow(ctx, userID, "stays:"+res.ID, holdKey, "stays", res.GrossAmountKobo)
+	sett, err := s.settlement.EscrowWithGuard(ctx, userID, "stays:"+res.ID, holdKey, "stays", res.GrossAmountKobo,
+		s.tiers.EnforceCheckoutDebitLimitTx)
 	if err != nil {
 		// Could not hold funds — PAYMENT_FAILED → VOID. Nothing booked, nothing to
 		// release.
@@ -712,8 +743,12 @@ func (s *Service) Modify(ctx context.Context, userID, reservationID, idempotency
 	switch {
 	case delta > 0:
 		// CHARGE the delta — HOLD then settle the split (same as Book's charge leg).
+		if s.tiers == nil {
+			return nil, ErrTierGateUnwired
+		}
 		chargeKey := fmt.Sprintf("stays:modify:charge:%s:%s:%d", res.ID, idempotencyKey, delta)
-		sett, escErr := s.settlement.Escrow(ctx, userID, "stays:modify:"+res.ID, chargeKey, "stays", delta)
+		sett, escErr := s.settlement.EscrowWithGuard(ctx, userID, "stays:modify:"+res.ID, chargeKey, "stays", delta,
+			s.tiers.EnforceCheckoutDebitLimitTx)
 		if escErr != nil {
 			// Fail-closed: no funds held → nothing mutated on the reservation.
 			s.auditSafe(ctx, userID, "stays.modify_charge_failed", map[string]any{

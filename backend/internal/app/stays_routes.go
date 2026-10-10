@@ -7,6 +7,7 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/services"
@@ -44,7 +45,7 @@ import (
 // BOOK_FAILED. Supply is own-inventory only: Spotlight owns all stays supply via
 // the Direct Rail-B adapter (adapters.NewDirect, on-platform inventory). The
 // third-party bedbank aggregator rail is retired and no longer wired.
-func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
+func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, tiersSvc *tiers.Service) {
 	if pool == nil {
 		log.Println("[stays] nil pool — skipping stays routes")
 		return
@@ -88,6 +89,7 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 		Consent:             consentSvc,
 		Settlement:          settlementSvc,
 		Ledger:              ledgerSvc,
+		Tiers:               tiersSvc,
 		DirectCommissionBps: 1500,
 		// Notifier / Auditor are optional (nil-safe); the orchestrator may inject
 		// the real notifications + audit sinks.

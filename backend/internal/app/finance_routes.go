@@ -554,7 +554,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		staysExtranet := r.Group("/api/stays/extranet")
 		staysExtranet.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysWebhooks := r.Group("/internal/webhooks")                                                // provider-signed, no user auth
-		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                       // supply-gateway/search/prebook→book saga/pricing
+		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg, tiersSvc)                             // supply-gateway/search/prebook→book saga/pricing
 		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac, cfg) // ari/extranet/settlement/reviews/webhooks
 	}
 
@@ -1970,6 +1970,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// console writes to (doctor_compliance_audit via doctor.Repository), so an
 		// approve/reject recorded from EITHER admin console lands in one trail.
 		telemedSvc := telemedicine.NewService(pool, settlementSvcT).
+			WithTiers(tiersSvc).
 			WithPlatformFeeBp(platformFeeBp).
 			WithAudit(doctor.NewRepository(pool))
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
@@ -2620,6 +2621,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Pool:     pool,
 			Ledger:   ledgerSvc,
 			Wallet:   walletSvc,
+			Tiers:    tiersSvc,
 			Provider: cacProvider,
 			Payment:  paymentProvider, // Paystack gateway for the fee (wallet-or-gateway choice)
 			RBAC:     rbac,
