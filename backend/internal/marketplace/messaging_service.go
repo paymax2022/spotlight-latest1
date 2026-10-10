@@ -100,6 +100,7 @@ func (s *Service) SendMessage(ctx context.Context, userID, threadID, body string
 		return nil, err
 	}
 	s.pushMessage(ctx, userID, threadID, msg)
+	s.emitMessageNotification(ctx, userID, threadID)
 	return msg, nil
 }
 
@@ -380,6 +381,12 @@ func (s *Service) RevealSellerContact(ctx context.Context, viewerID, listingID s
 			return nil, newErr(http.StatusNotFound, CodeSellerHasNoPhone, "you have not added a phone number to your profile")
 		}
 		return &c, nil
+	}
+
+	if blocked, berr := s.repo.IsBlockedEitherWay(ctx, viewerID, l.SellerID); berr != nil {
+		return nil, berr
+	} else if blocked {
+		return nil, ErrUserBlocked
 	}
 
 	since := time.Now().Add(-contactRevealWindow)

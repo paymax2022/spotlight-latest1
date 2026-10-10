@@ -16,9 +16,20 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';
-import { useCreateReport, useBlockUser } from '@/features/marketplace/api/account.hooks';
+import { useCreateReport, useBlockUser, useFollowedSellers } from '@/features/marketplace/api/account.hooks';
+import { useSavedItems } from '@/features/marketplace/hooks';
 import type { ReportTargetType } from '@/features/marketplace/api/account.api';
+import { presignListingMedia } from '@/features/marketplace/api/account.api';
 import { alertAsync } from '@/lib/confirm';
+
+// The presign endpoint only accepts png/jpeg/webp; derive from the picked file.
+function mimeFor(uri: string, declared?: string | null): string {
+  if (declared && /^image\/(png|jpeg|webp)$/i.test(declared)) return declared.toLowerCase();
+  const ext = uri.split('?')[0].split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
 
 const REASONS = [
   { key: 'prohibited_item', label: 'Prohibited or illegal item' },
@@ -32,14 +43,22 @@ const REASONS = [
 
 export default function ReportFlow() {
   const params = useLocalSearchParams<{ targetType?: string; targetId?: string; targetName?: string; sellerId?: string }>();
-  const targetType = (params.targetType as ReportTargetType) || 'listing';
-  const targetId = params.targetId ?? '';
-  const targetName = params.targetName ?? 'this item';
-  const blockableUserId = params.sellerId || (targetType === 'seller' ? targetId : undefined);
+  // Opened from the Account hub there is no target yet: the user picks one below.
+  // Without it the report could never be submitted (the API needs a target id).
+  const [picked, setPicked] = useState<{ type: ReportTargetType; id: string; name: string; sellerId?: string } | null>(null);
+  const targetType = picked?.type ?? ((params.targetType as ReportTargetType) || 'listing');
+  const targetId = picked?.id ?? params.targetId ?? '';
+  const targetName = picked?.name ?? params.targetName ?? 'this item';
+  const blockableUserId = picked ? (picked.type === 'seller' ? picked.id : picked.sellerId) : params.sellerId || (targetType === 'seller' ? targetId : undefined);
+  const needsTarget = targetId === '';
+  const followed = useFollowedSellers();
+  const savedItems = useSavedItems();
 
   const [reason, setReason] = useState<string>('');
   const [note, setNote] = useState('');
   const [evidenceUri, setEvidenceUri] = useState<string | null>(null);
+  const [evidenceMime, setEvidenceMime] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [alsoBlock, setAlsoBlock] = useState(false);
 
   const createReport = useCreateReport();
@@ -58,17 +77,38 @@ export default function ReportFlow() {
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
       : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
-    if (!result.canceled && result.assets?.[0]) setEvidenceUri(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      setEvidenceUri(result.assets[0].uri);
+      setEvidenceMime(result.assets[0].mimeType ?? null);
+    }
+  };
+
+  // The server needs a URL it can open; a file:// URI on this phone is useless to
+  // the safety team. Upload through the same presign flow listing photos use.
+  const uploadEvidence = async (uri: string): Promise<string> => {
+    const mime = mimeFor(uri, evidenceMime);
+    const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+    const presigned = await presignListingMedia(`report-evidence.${ext}`, mime);
+    const blob = await (await fetch(uri)).blob();
+    if (!blob.size) throw new Error('The photo could not be read.');
+    const put = await fetch(presigned.uploadUrl, { method: presigned.method || 'PUT', headers: { 'Content-Type': mime }, body: blob });
+    if (!put.ok) throw new Error('Could not upload the photo — try again, or submit without it.');
+    return presigned.fileUrl;
   };
 
   const submit = async () => {
     if (!canSubmit) return;
     try {
+      let evidenceUrl: string | undefined;
+      if (evidenceUri) {
+        setUploading(true);
+        try { evidenceUrl = await uploadEvidence(evidenceUri); } finally { setUploading(false); }
+      }
       await createReport.mutateAsync({
         targetType,
         targetId,
         reason: REASONS.find((r) => r.key === reason)?.label ?? reason,
-        evidenceUrl: evidenceUri ?? undefined,
+        evidenceUrl,
         note: note.trim() || undefined,
       });
       if (alsoBlock && blockableUserId) {
@@ -91,8 +131,28 @@ export default function ReportFlow() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Report a problem" subtitle={`Reporting ${targetName}`} />
+      <ScreenHeader title="Report a problem" subtitle={needsTarget ? 'Choose what to report' : `Reporting ${targetName}`} />
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        {needsTarget ? (
+          <>
+            <Text style={styles.sectionLabel}>What are you reporting?</Text>
+            {(followed.data ?? []).map((f) => (
+              <Pressable key={`s-${f.sellerId}`} style={styles.reason} onPress={() => setPicked({ type: 'seller', id: f.sellerId, name: f.sellerName })} accessibilityRole="button">
+                <Text style={styles.reasonLabel}>Seller · {f.sellerName}</Text>
+              </Pressable>
+            ))}
+            {(savedItems.data ?? []).map((s) => (
+              <Pressable key={`l-${s.listing.id}`} style={styles.reason} onPress={() => setPicked({ type: 'listing', id: s.listing.id, name: s.listing.title })} accessibilityRole="button">
+                <Text style={styles.reasonLabel} numberOfLines={1}>Listing · {s.listing.title}</Text>
+              </Pressable>
+            ))}
+            <Text style={styles.hint}>
+              Don’t see it here? Open the listing, seller or chat and tap the flag icon — that reports exactly what you’re looking at.
+            </Text>
+          </>
+        ) : picked ? (
+          <Pressable onPress={() => setPicked(null)} hitSlop={8}><Text style={styles.remove}>Change what I’m reporting</Text></Pressable>
+        ) : null}
         <Text style={styles.sectionLabel}>Why are you reporting this?</Text>
         <View style={styles.reasons}>
           {REASONS.map((r) => {
@@ -153,7 +213,7 @@ export default function ReportFlow() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="Submit report" onPress={submit} disabled={!canSubmit} loading={createReport.isPending} />
+        <PrimaryButton label="Submit report" onPress={submit} disabled={!canSubmit} loading={createReport.isPending || uploading} />
       </View>
     </SafeAreaView>
   );
@@ -170,6 +230,8 @@ const styles = StyleSheet.create({
   radioActive: { backgroundColor: MarketColors.brand, borderColor: MarketColors.brand },
   reasonLabel: { ...Typography.bodyMd, color: MarketColors.text, flex: 1 },
   reasonLabelActive: { color: MarketColors.text, fontWeight: '600' },
+  targetInput: { borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface, padding: Spacing.md, ...Typography.bodyMd, color: MarketColors.text },
+  targetHint: { ...Typography.labelSm, color: MarketColors.danger },
   note: { minHeight: 88, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface, padding: Spacing.md, ...Typography.bodyMd, color: MarketColors.text, textAlignVertical: 'top' },
   uploadRow: { flexDirection: 'row', gap: Spacing.sm },
   upload: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingVertical: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surfaceAlt },
@@ -177,6 +239,7 @@ const styles = StyleSheet.create({
   evidenceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface },
   evidenceThumb: { width: 40, height: 40, borderRadius: Radius.sm },
   evidenceOk: { ...Typography.labelLg, color: MarketColors.text, flex: 1 },
+  hint: { ...Typography.bodySm, color: MarketColors.muted, marginTop: Spacing.xs },
   remove: { ...Typography.labelLg, color: MarketColors.danger },
   blockToggle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.md, padding: Spacing.md, borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt },
   checkbox: { width: 22, height: 22, borderRadius: Radius.sm, borderWidth: 1.5, borderColor: MarketColors.muted, alignItems: 'center', justifyContent: 'center' },

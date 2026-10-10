@@ -2,12 +2,12 @@ package marketplace
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Notification represents a marketplace notification
@@ -34,7 +34,7 @@ func (s *Service) ListNotifications(ctx context.Context, userID string, limit, o
 	}
 
 	query := `
-		SELECT id, user_id, type, title, body, data, related_id, is_read, read_at, created_at
+		SELECT id, user_id, type::text, title, COALESCE(body, ''), data::text, COALESCE(related_id::text, ''), is_read, read_at, created_at
 		FROM mkt_notifications
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -80,7 +80,7 @@ func (s *Service) MarkNotificationRead(ctx context.Context, userID, notification
 		UPDATE mkt_notifications
 		SET is_read = true, read_at = $1
 		WHERE id = $2 AND user_id = $3
-		RETURNING id, user_id, type, title, body, data, related_id, is_read, read_at, created_at
+		RETURNING id, user_id, type::text, title, COALESCE(body, ''), data::text, COALESCE(related_id::text, ''), is_read, read_at, created_at
 	`
 
 	var n Notification
@@ -91,7 +91,7 @@ func (s *Service) MarkNotificationRead(ctx context.Context, userID, notification
 	)
 
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFoundCoded("notification")
 		}
 		return nil, err
@@ -159,8 +159,8 @@ func (s *Service) CreateNotification(ctx context.Context, userID, notificationTy
 
 	query := `
 		INSERT INTO mkt_notifications (id, user_id, type, title, body, data, related_id, is_read, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8)
-		RETURNING id, user_id, type, title, body, data, related_id, is_read, read_at, created_at
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7::text, '')::uuid, false, $8)
+		RETURNING id, user_id, type::text, title, COALESCE(body, ''), data::text, COALESCE(related_id::text, ''), is_read, read_at, created_at
 	`
 
 	var n Notification
@@ -191,7 +191,7 @@ func (s *Service) BroadcastNotification(ctx context.Context, userIDs []string, n
 
 	query := `
 		INSERT INTO mkt_notifications (id, user_id, type, title, body, data, related_id, is_read, created_at)
-		SELECT gen_random_uuid(), user_id, $3, $4, $5, $6, $7, false, now()
+		SELECT gen_random_uuid(), user_id, $2::mkt_notification_type, $3, $4, $5::jsonb, NULLIF($6::text, '')::uuid, false, now()
 		FROM (
 			SELECT DISTINCT unnest($1::uuid[]) as user_id
 		) t

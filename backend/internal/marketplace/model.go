@@ -151,8 +151,41 @@ type Listing struct {
 	// shape; nothing on the backend ever populated it, so the gallery always
 	// rendered its zero-photos placeholder even once ThumbURL started working
 	// for cards. Attached by Service.attachFullMedia from mkt_listing_media.
-	Media   []ListingMediaItem `json:"media,omitempty"`
-	Version int                `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+	Media []ListingMediaItem `json:"media,omitempty"`
+	// Seller is the public seller card for the LISTING DETAIL read only (GetListingDetail).
+	// The mobile detail screen renders its trust card — and the only route from a
+	// listing to the seller's profile — from this object; without it the card and the
+	// link are both silently dropped. Public data only: this route is unauthenticated.
+	Seller  *SellerSummary `json:"seller,omitempty"`
+	Version int            `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+}
+
+// SellerSummary is the compact public seller card embedded on a listing's detail.
+type SellerSummary struct {
+	ID                    string  `json:"id"`
+	Name                  string  `json:"name"`
+	AvatarURL             *string `json:"avatar_url,omitempty"`
+	TrustScore            float64 `json:"trust_score"`
+	VerifiedIDBadge       bool    `json:"verified_id_badge"`
+	VerifiedBusinessBadge bool    `json:"verified_business_badge"`
+	TenureLabel           string  `json:"tenure_label"`
+	ResponseTimeMinutes   *int    `json:"response_time_minutes"`
+	KYCTier               KYCTier `json:"kyc_tier"`
+}
+
+// SellerProfileView is GET /sellers/:id/profile: the existing trust fields (embedded,
+// so their JSON is unchanged for every current client) plus the identity the profile
+// screen renders. It was returning only the trust row, so the screen had no name.
+type SellerProfileView struct {
+	TrustProfile
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	AvatarURL           *string    `json:"avatar_url,omitempty"`
+	MemberSince         *time.Time `json:"member_since,omitempty"`
+	TenureLabel         string     `json:"tenure_label"`
+	ResponseTimeMinutes *int       `json:"response_time_minutes"`
+	FollowerCount       int        `json:"follower_count"`
+	ActiveListings      int        `json:"active_listings"`
 }
 
 // ListingMediaItem is one presigned photo on a listing's detail gallery.
@@ -317,7 +350,9 @@ type SavedSearch struct {
 	Query        *string        `json:"query,omitempty"`
 	Filters      map[string]any `json:"filters"`
 	AlertEnabled bool           `json:"alert_enabled"`
-	CreatedAt    time.Time      `json:"created_at"`
+	// AlertFrequency is 'instant' | 'daily' | 'off'; empty means 'instant'.
+	AlertFrequency string    `json:"alert_frequency"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Category mirrors mkt_categories (subset consumed by the API).
@@ -502,6 +537,9 @@ type Block struct {
 	UserID        string    `json:"user_id"`
 	BlockedUserID string    `json:"blocked_user_id"`
 	CreatedAt     time.Time `json:"created_at"`
+	// BlockedUserName is the blocked person's public display name (PublicDisplayName),
+	// joined on read so the Blocked users screen shows who it is instead of an id.
+	BlockedUserName string `json:"blocked_user_name,omitempty"`
 }
 
 // FollowedSeller is a follow row enriched with the followed seller's display
@@ -942,6 +980,8 @@ const (
 	CodeCannotBlockSelf      = "CANNOT_BLOCK_SELF"
 	CodeInvalidReportTarget  = "INVALID_REPORT_TARGET"
 	CodeCannotFollowSelf     = "CANNOT_FOLLOW_SELF"
+	CodeSellerNotFound       = "SELLER_NOT_FOUND"
+	CodeUserBlocked          = "USER_BLOCKED"
 )
 
 // Constructor helpers for the most common coded errors.
@@ -958,9 +998,13 @@ var (
 	ErrReviewExists         = newErr(http.StatusConflict, CodeReviewExists, "you have already reviewed this deal")
 	ErrCannotMessageSelf    = newErr(422, CodeCannotMessageSelf, "you cannot start a conversation with yourself")
 	ErrCannotFollowSelf     = newErr(422, CodeCannotFollowSelf, "you cannot follow yourself")
-	ErrReasonRequired       = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
-	ErrIdemMissing          = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
-	ErrConflict             = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
+	ErrSellerNotFound       = newErr(http.StatusNotFound, CodeSellerNotFound, "seller not found")
+	// ErrUserBlocked is deliberately direction-neutral: it must not tell a blocked
+	// person that they were blocked, only that this contact is unavailable.
+	ErrUserBlocked    = newErr(http.StatusForbidden, CodeUserBlocked, "this person is not available to contact")
+	ErrReasonRequired = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
+	ErrIdemMissing    = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
+	ErrConflict       = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
 	// ErrNotFound is a generic 404 for admin sub-resources (MKT-007 users/appeals)
 	// that don't warrant their own dedicated CodedError constant.
 	ErrNotFound = newErr(http.StatusNotFound, CodeNotFound, "not found")

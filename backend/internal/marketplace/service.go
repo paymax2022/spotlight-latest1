@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"regexp"
 	"spotlight/backend/internal/finance/ledger"
@@ -452,8 +453,57 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 }
 
 // SellerProfile returns a seller's trust card.
-func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustProfile, error) {
-	return s.repo.GetTrustProfile(ctx, sellerID)
+func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*SellerProfileView, error) {
+	if err := requireUUIDField(sellerID, "seller_id"); err != nil {
+		return nil, err
+	}
+	c, err := s.repo.GetSellerCard(ctx, sellerID)
+	if err != nil {
+		return nil, err
+	}
+	// An id with no profile is not a seller: 404 rather than a blank "Seller" page that
+	// the app would then offer to follow.
+	if !c.Exists {
+		return nil, ErrSellerNotFound
+	}
+	v := &SellerProfileView{
+		TrustProfile:        c.Trust,
+		ID:                  sellerID,
+		Name:                PublicDisplayName(c.FullName),
+		AvatarURL:           c.AvatarURL,
+		MemberSince:         c.MemberSince,
+		TenureLabel:         TenureLabel(time.Now(), derefTime(c.MemberSince)),
+		ResponseTimeMinutes: c.AvgResponseMin,
+		FollowerCount:       c.Followers,
+		ActiveListings:      c.ActiveListings,
+	}
+	return v, nil
+}
+
+func derefTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+// sellerSummary builds the public seller card shown on a listing.
+func (s *Service) sellerSummary(ctx context.Context, sellerID string) *SellerSummary {
+	c, err := s.repo.GetSellerCard(ctx, sellerID)
+	if err != nil || !c.Exists {
+		return nil
+	}
+	return &SellerSummary{
+		ID:                    sellerID,
+		Name:                  PublicDisplayName(c.FullName),
+		AvatarURL:             c.AvatarURL,
+		TrustScore:            c.Trust.TrustScore,
+		VerifiedIDBadge:       c.Trust.VerifiedIDBadge,
+		VerifiedBusinessBadge: c.Trust.VerifiedBusinessBadge,
+		TenureLabel:           TenureLabel(time.Now(), derefTime(c.MemberSince)),
+		ResponseTimeMinutes:   c.AvgResponseMin,
+		KYCTier:               c.Trust.KYCTier,
+	}
 }
 
 // SellerListings returns a seller's listings.
@@ -531,6 +581,11 @@ func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, of
 	if l.SellerID == buyerID {
 		return nil, newErr(422, CodeSelfPurchaseNotAllowed, "cannot make an offer on your own listing")
 	}
+	if blocked, berr := s.repo.IsBlockedEitherWay(ctx, buyerID, l.SellerID); berr != nil {
+		return nil, berr
+	} else if blocked {
+		return nil, ErrUserBlocked
+	}
 	if offerKobo <= 0 {
 		return nil, fieldErr(CodeValidation, "offer_price_kobo must be positive", "offer_price_kobo")
 	}
@@ -544,6 +599,9 @@ func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, of
 	if strings.TrimSpace(message) != "" {
 		_, _ = s.StartOrGetThread(ctx, buyerID, listingID, message)
 	}
+	s.emitNotification(ctx, l.SellerID, "new_offer", "New offer received",
+		fmt.Sprintf("A buyer offered %s for “%s”.", nairaFromKobo(offerKobo), l.Title),
+		map[string]any{"listing_id": listingID, "offer_id": o.ID}, listingID)
 	return o, nil
 }
 
@@ -580,7 +638,14 @@ func (s *Service) CounterOffer(ctx context.Context, sellerID, offerID string, co
 	}
 	_ = s.repo.SetOfferStatus(ctx, offerID, "countered")
 	parent := o.ID
-	return s.repo.InsertOffer(ctx, &Offer{ListingID: o.ListingID, BuyerID: o.BuyerID, OfferPriceKobo: counterKobo, ParentOfferID: &parent})
+	counter, err := s.repo.InsertOffer(ctx, &Offer{ListingID: o.ListingID, BuyerID: o.BuyerID, OfferPriceKobo: counterKobo, ParentOfferID: &parent})
+	if err != nil {
+		return nil, err
+	}
+	s.emitNotification(ctx, o.BuyerID, "offer_countered", "The seller countered your offer",
+		fmt.Sprintf("Counter-offer of %s on “%s”.", nairaFromKobo(counterKobo), l.Title),
+		map[string]any{"listing_id": o.ListingID, "offer_id": counter.ID}, o.ListingID)
+	return counter, nil
 }
 
 // ListOffersForListing returns the negotiation history for a listing, scoped to the
@@ -622,6 +687,16 @@ func (s *Service) transitionOffer(ctx context.Context, sellerID, offerID, status
 		return nil, err
 	}
 	o.Status = status
+	switch status {
+	case "accepted":
+		s.emitNotification(ctx, o.BuyerID, "offer_accepted", "Your offer was accepted",
+			fmt.Sprintf("The seller accepted your offer on “%s”.", l.Title),
+			map[string]any{"listing_id": o.ListingID, "offer_id": o.ID}, o.ListingID)
+	case "declined":
+		s.emitNotification(ctx, o.BuyerID, "offer_declined", "Your offer was declined",
+			fmt.Sprintf("The seller declined your offer on “%s”.", l.Title),
+			map[string]any{"listing_id": o.ListingID, "offer_id": o.ID}, o.ListingID)
+	}
 	return o, nil
 }
 
@@ -652,7 +727,7 @@ func (s *Service) DeleteSavedSearch(ctx context.Context, userID, id string) erro
 }
 
 // ToggleSavedSearchAlert flips a saved search's alert flag after an OLA check.
-func (s *Service) ToggleSavedSearchAlert(ctx context.Context, userID, id string, enabled bool) error {
+func (s *Service) ToggleSavedSearchAlert(ctx context.Context, userID, id string, enabled bool, freq string) error {
 	owner, err := s.repo.GetSavedSearchOwner(ctx, id)
 	if err != nil {
 		return err
@@ -660,7 +735,7 @@ func (s *Service) ToggleSavedSearchAlert(ctx context.Context, userID, id string,
 	if owner != userID {
 		return ErrForbidden
 	}
-	return s.repo.SetSavedSearchAlert(ctx, id, enabled)
+	return s.repo.SetSavedSearchAlert(ctx, id, enabled, freq)
 }
 
 // ActionFlag records an admin action on a moderation flag (audited).

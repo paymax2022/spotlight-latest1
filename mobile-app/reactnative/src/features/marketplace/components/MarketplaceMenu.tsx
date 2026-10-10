@@ -87,7 +87,7 @@ function MarketplaceDrawer({ visible, onClose }: { visible: boolean; onClose: ()
               <Section title="Activity">
                 <Row icon={Heart} label="Saved items" onPress={() => go('/marketplace/saved-items')} />
                 <Row icon={Bookmark} label="Saved searches" onPress={() => go('/marketplace/saved-searches')} />
-                <Row icon={Bell} label="Notifications" onPress={() => go('/marketplace/account/notifications')} />
+                <Row icon={Bell} label="Notifications" onPress={() => go('/marketplace/notifications')} />
               </Section>
 
               <Section title="Selling">

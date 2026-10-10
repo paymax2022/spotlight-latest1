@@ -3,6 +3,7 @@
 // suggests loosening the tightest filter rather than dead-ending.
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ScrollView } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -59,7 +60,14 @@ export default function MarketplaceResults() {
   const anyFacetOn = Object.values(facets).some(Boolean);
 
   const onSaveSearch = () => {
-    saveSearch.mutate({ query: raw.q, filters: params as Record<string, unknown> });
+    if (saveSearch.isPending || saveSearch.isSuccess) return;
+    saveSearch.mutate(
+      { query: raw.q, filters: params as Record<string, unknown> },
+      {
+        onSuccess: () => alertAsync({ title: 'Search saved', message: "We'll alert you when new matches are listed. Manage alerts under Saved searches." }),
+        onError: () => alertAsync({ title: "Couldn't save search", message: 'Check your connection and try again.' }),
+      },
+    );
   };
 
   const openMap = () => {

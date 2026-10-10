@@ -156,11 +156,12 @@ func (h *Handler) FollowSeller(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.FollowSeller(c.Request.Context(), uid, c.Param("id")); err != nil {
+	f, err := h.svc.FollowSeller(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
 		fail(c, err)
 		return
 	}
-	respond(c, http.StatusCreated, gin.H{"ok": true})
+	respond(c, http.StatusCreated, f)
 }
 
 // UnfollowSeller DELETE /sellers/:id/follow.

@@ -91,6 +91,13 @@ updates:
       # Patch releases still flow.
       - dependency-name: "react-native"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # react / react-dom must EXACTLY equal the renderer bundled inside
+      # react-native (0.81.x ships 19.1.4), not merely satisfy its `^19.1.4` peer
+      # range: with react 19.3.0 the app dies at startup ("Incompatible React
+      # versions"). That is what #634 shipped to main. Move these two with the
+      # react-native / Expo SDK migration, never as a rollup bump — not even patches.
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
       # Same native-port caveat as /frontend-web: treat any TypeScript major as a
       # deliberate migration, not a weekly bump.
       - dependency-name: "typescript"

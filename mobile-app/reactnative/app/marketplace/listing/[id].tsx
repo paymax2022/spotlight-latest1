@@ -23,8 +23,8 @@ import { useAuthStore } from '@/store/authStore';
 import { revealSellerContact } from '@/features/marketplace/api/sell.api';
 import { whatsappUrl, dialUrl } from '@/features/marketplace/contactLinks';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
-import { useListing } from '@/features/marketplace/hooks';
-import * as accountApi from '@/features/marketplace/api/account.api';
+import { useListing, useSavedItems, useSaveListing, useUnsaveListing } from '@/features/marketplace/hooks';
+import FollowButton from '@/features/marketplace/components/FollowButton';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import ScreenHeader from '@/components/ScreenHeader';
@@ -37,6 +37,9 @@ export default function ListingDetail() {
   // useWindowDimensions() reads live and re-renders on resize.
   const { width } = useWindowDimensions();
   const listing = useListing(id!);
+  const savedItems = useSavedItems();
+  const saveMutation = useSaveListing();
+  const unsaveMutation = useUnsaveListing();
   const [saved, setSaved] = useState(false);
   const [revealedPhone, setRevealedPhone] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
@@ -50,9 +53,19 @@ export default function ListingDetail() {
 
   // Reflect the server's saved state once the listing loads (hook stays above the
   // early returns so it runs unconditionally).
+  // GET /listings/:id is auth-optional and never returns saved_by_me, so the
+  // caller's wishlist (GET /saved-items) is the source of truth for the heart.
+  const inWishlist = savedItems.data?.some((it) => it.listing.id === id) ?? false;
   useEffect(() => {
-    if (listing.data) setSaved(Boolean(listing.data.savedByMe));
-  }, [listing.data?.id]);
+    if (listing.data) setSaved(Boolean(listing.data.savedByMe) || inWishlist);
+  }, [listing.data?.id, inWishlist]);
+
+  // The public listing read cannot know who is looking, so savedByMe is never true
+  // from the server. The signed-in saved list is the truth; once it loads, the heart
+  // follows it (and re-syncs after every save/unsave refetch).
+  useEffect(() => {
+    if (savedItems.data && id) setSaved(savedItems.data.some((s) => s.listing.id === id));
+  }, [savedItems.data, id]);
 
   if (listing.isLoading && !listing.data) {
     return (
@@ -143,9 +156,15 @@ export default function ListingDetail() {
     const next = !saved;
     setSaved(next);
     try {
-      if (next) await accountApi.saveListing(l.id);
-      else await accountApi.unsaveListing(l.id);
-    } catch {
+      // Hooks (not the raw API) so the Saved list and listing cache refresh.
+      if (next) await saveMutation.mutateAsync(l.id);
+      else await unsaveMutation.mutateAsync(l.id);
+    } catch (err) {
+      const code = (err as { response?: { data?: { error?: { code?: string } } } })
+        ?.response?.data?.error?.code;
+      // Already in the desired state server-side: that is success, not a failure.
+      if (next && code === 'ALREADY_SAVED') return;
+      if (!next && code === 'SAVED_ITEM_NOT_FOUND') return;
       setSaved(!next);
     }
   };
@@ -161,7 +180,7 @@ export default function ListingDetail() {
       <View style={styles.topBar}>
         <Pressable style={styles.roundBtn} onPress={() => goBack('/marketplace')} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
         <View style={styles.topBarRight}>
-          <Pressable style={styles.roundBtn} onPress={toggleSave} hitSlop={8} accessibilityLabel="Save listing">
+          <Pressable style={styles.roundBtn} onPress={toggleSave} hitSlop={8} accessibilityLabel={saved ? 'Remove from saved items' : 'Save listing'}>
             <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
           </Pressable>
           <Pressable style={styles.roundBtn} onPress={openReport} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
@@ -210,6 +229,9 @@ export default function ListingDetail() {
           {l.seller ? (
             <View style={styles.section}>
               <SellerTrustCard seller={l.seller} onPress={() => router.push(`/marketplace/seller/${l.sellerId}` as never)} />
+              <View style={{ marginTop: 8 }}>
+                <FollowButton sellerId={l.sellerId} sellerName={l.seller.name} compact />
+              </View>
             </View>
           ) : null}
 

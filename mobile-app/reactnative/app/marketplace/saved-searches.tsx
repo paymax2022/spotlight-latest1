@@ -42,6 +42,7 @@ export default function SavedSearches() {
     const p = new URLSearchParams();
     if (ss.query) p.set('q', ss.query);
     if (ss.filters?.categoryId) p.set('categoryId', String(ss.filters.categoryId));
+    if (ss.filters?.sort) p.set('sort', String(ss.filters.sort));
     router.push(`/marketplace/results?${p.toString()}` as never);
   };
 
@@ -59,6 +60,8 @@ export default function SavedSearches() {
 
       {searches.isLoading && !searches.data ? (
         <StateView kind="loading" message="Loading your alerts…" />
+      ) : searches.isError && !searches.data ? (
+        <StateView kind="error" title="Couldn't load your saved searches" actionLabel="Retry" onAction={() => searches.refetch()} />
       ) : items.length === 0 ? (
         <StateView
           kind="empty"

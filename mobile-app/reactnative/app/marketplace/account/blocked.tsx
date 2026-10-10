@@ -24,7 +24,7 @@ export default function BlockedUsers() {
     const name = b.blockedUserName ?? 'this user';
     const ok = await confirmAsync({
       title: 'Unblock user?',
-      message: `${name} will be able to contact you and see your listings again.`,
+      message: `${name} will be able to contact you again.`,
       confirmLabel: 'Unblock',
       destructive: true,
     });
@@ -42,7 +42,7 @@ export default function BlockedUsers() {
           kind="empty"
           icon="UserX"
           title="No one blocked"
-          message="When you block someone, they can’t message you or see your listings. You can unblock them here anytime."
+          message="When you block someone, they can’t message you, make offers or follow you, and you can’t contact them. You can unblock them here anytime."
         />
       ) : (
         <FlatList
