@@ -79,8 +79,12 @@ func TestLiveDB_ApplyLegs_PhantomDuplicate_RefusesPending(t *testing.T) {
 		t.Fatalf("plant partial leg: %v", err)
 	}
 	t.Cleanup(func() {
+		// ledger_entries is immutable (trigger) — DELETE is a no-op, so the
+		// phantom is neutralised by its balancing counterpart leg.
 		_, _ = pool.Exec(context.WithoutCancel(ctx),
-			`DELETE FROM ledger_entries WHERE idempotency_key=$1`, key+":debit")
+			`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+			 VALUES ($1,'CREDIT',1,'foreign:partial',$2)`,
+			escrowAcc.ID, key+":debit:recon")
 	})
 
 	err = svc.applyLegs(ctx, user, ref, PlanHold(ref, 500_000))
@@ -209,8 +213,12 @@ func TestLiveDB_ApplyLegs_ReversalPhantom_RefusesPending(t *testing.T) {
 		t.Fatalf("plant partial reversal leg: %v", err)
 	}
 	t.Cleanup(func() {
+		// ledger_entries is immutable (trigger) — DELETE is a no-op, so the
+		// phantom is neutralised by its balancing counterpart leg.
 		_, _ = pool.Exec(context.WithoutCancel(ctx),
-			`DELETE FROM ledger_entries WHERE idempotency_key=$1`, key+":rev_credit")
+			`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+			 VALUES ($1,'REVERSAL_DEBIT',1,'foreign:partial',$2)`,
+			suspAcc.ID, key+":rev_credit:recon")
 	})
 
 	err = svc.applyLegs(ctx, user, ref, PlanReverseHold(ref, 500_000))

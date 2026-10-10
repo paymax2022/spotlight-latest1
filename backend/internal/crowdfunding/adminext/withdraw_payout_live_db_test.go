@@ -118,8 +118,13 @@ func TestLiveDB_Withdrawal_PhantomDuplicate_StaysPending(t *testing.T) {
 		t.Fatalf("plant partial leg: %v", err)
 	}
 	t.Cleanup(func() {
+		// ledger_entries is immutable (trigger) — DELETE is a no-op, so the
+		// phantom must be neutralised by its balancing counterpart leg, else
+		// the global-conservation suite sees a single-sided -1 residual.
 		_, _ = pool.Exec(context.WithoutCancel(ctx),
-			`DELETE FROM ledger_entries WHERE idempotency_key=$1`, payoutIdem+":debit")
+			`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+			 VALUES ($1,'CREDIT',1,'foreign:partial',$2)`,
+			escrowAcc.ID, payoutIdem+":debit:recon")
 	})
 
 	_, err = svc.ApproveWithdrawal(ctx, withdrawalID, "admin-1", "approve-"+withdrawalID[:8])
