@@ -566,8 +566,13 @@ func (h *Handler) SettleVendor(c *gin.Context) {
 	}
 	net, err := h.svc.SettleVendor(c.Request.Context(), c.Param("id"), c.Param("vendorId"), key)
 	if err != nil {
+		// ErrNotFound is reachable: GetEvent inside the service returns the
+		// sentinel for a missing parent — it used to fall through to 400.
 		status := http.StatusBadRequest
-		if errors.Is(err, ErrKYCRequired) {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, ErrKYCRequired):
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
