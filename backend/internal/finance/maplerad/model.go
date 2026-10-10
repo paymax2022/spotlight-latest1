@@ -40,6 +40,10 @@ var (
 	ErrForbidden = errors.New("maplerad: not authorized for this resource")
 	// ErrIllegalTransition — a guarded state transition was rejected. 409.
 	ErrIllegalTransition = errors.New("maplerad: illegal state transition")
+	// ErrLedgerReconPending — a ledger leg key was claimed duplicate but no
+	// durable legs back the claim (bare Redis-lock replay). Retryable: the
+	// caller must retry, never proceed as though the journal posted. 503-class.
+	ErrLedgerReconPending = errors.New("maplerad: ledger leg not durably posted — retry")
 )
 
 // RequiredTransferTier is the minimum KYC tier to move money out via Maplerad.
