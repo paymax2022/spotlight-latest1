@@ -896,7 +896,9 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, errors.New("lab: forbidden")
+		// Uniform denial: a non-owner's cancel on an existing order is
+		// indistinguishable from a missing one — no existence oracle.
+		return nil, ErrOrderNotFound
 	}
 	if !isPreCollection(o.State) {
 		return nil, fmt.Errorf("lab: order can only be cancelled before it enters the lab pipeline, is %s", o.State)
@@ -986,7 +988,9 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, errors.New("lab: forbidden")
+		// Uniform denial (see Get's sibling folds): denied reads answer with
+		// the same "order not found" a missing id would — no existence oracle.
+		return nil, ErrOrderNotFound
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
 	return o, nil
@@ -1002,7 +1006,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, errors.New("lab: forbidden")
+		return nil, ErrOrderNotFound // uniform denial, see Get
 	}
 	return s.loadResults(ctx, orderID)
 }
@@ -1016,7 +1020,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, errors.New("lab: forbidden")
+		return nil, ErrOrderNotFound // uniform denial, see Get
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
@@ -1143,7 +1147,7 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("lab: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1161,7 +1165,7 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("lab: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1209,7 +1213,7 @@ func lockSample(ctx context.Context, tx pgx.Tx, sampleID string) (*Sample, error
 	if err := tx.QueryRow(ctx, q, sampleID).Scan(&sm.ID, &sm.OrderID, &state, &method,
 		&sm.CustodianID, &sm.BarcodeRef, &sm.CollectedBy, &sm.CollectedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("lab: sample not found")
+			return nil, ErrSampleNotFound
 		}
 		return nil, err
 	}
@@ -1226,7 +1230,7 @@ func (s *Service) loadSample(ctx context.Context, sampleID string) (*Sample, err
 	if err := s.db.QueryRow(ctx, q, sampleID).Scan(&sm.ID, &sm.OrderID, &state, &method,
 		&sm.CustodianID, &sm.BarcodeRef, &sm.CollectedBy, &sm.CollectedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("lab: sample not found")
+			return nil, ErrSampleNotFound
 		}
 		return nil, err
 	}
@@ -1347,6 +1351,15 @@ var (
 	ErrResultNotFound = errors.New("lab: no current result for that test to amend")
 	// ErrNoAmendmentReason — an amendment must state why the prior result was wrong.
 	ErrNoAmendmentReason = errors.New("lab: an amendment reason is required")
+	// ErrOrderNotFound is the uniform denial for order-scoped reads and
+	// transitions: a caller without access to an EXISTING order gets this, not
+	// a distinct "forbidden" — "exists but not yours" is indistinguishable
+	// from "does not exist" (no existence oracle; same fold as social #602 /
+	// association #606 / aicare / vet). The handler maps it to 404.
+	ErrOrderNotFound = errors.New("lab: order not found")
+	// ErrSampleNotFound — same shape for the sample-scoped custody routes:
+	// a missing sample id is a 404, distinct from transition refusals (409).
+	ErrSampleNotFound = errors.New("lab: sample not found")
 )
 
 // canAmendResult reports whether an order is in a state where a published result

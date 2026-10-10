@@ -150,6 +150,14 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // lookup with ” and silently receive a previous ”-keyed row.
 var ErrPetMissingIdem = errors.New("vet: idempotency key required")
 
+// ErrAppointmentNotFound is the uniform denial for appointment-scoped reads
+// and mutations: a caller who is neither the patient nor the owning vet on an
+// EXISTING appointment gets this, not a distinct "forbidden" — so "exists but
+// not yours" is indistinguishable from "does not exist" (no existence oracle;
+// the same uniform-404 convention as social #602 / association #606 / aicare).
+// The handler maps it to 404.
+var ErrAppointmentNotFound = errors.New("vet: appointment not found")
+
 // petByIdem returns the caller's pet created under idemKey, or (nil, nil) when
 // no such pet exists. Scoped to ownerID — keys are client-chosen, so resolving
 // one to another owner's row would let a caller read a stranger's pet by
@@ -561,7 +569,9 @@ func (s *Service) Cancel(ctx context.Context, actorID, apptID, reason string) (*
 	owner := a.OwnerID
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if actorID != owner && actorID != vetOwner {
-		return nil, errors.New("vet: forbidden")
+		// Uniform denial: a non-party's cancel on an existing appointment is
+		// indistinguishable from a missing one — no existence oracle.
+		return nil, ErrAppointmentNotFound
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateCancelled); err != nil {
 		return nil, err
@@ -910,7 +920,9 @@ func (s *Service) Get(ctx context.Context, requesterID, apptID string, isAdmin b
 	}
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if !isAdmin && requesterID != a.OwnerID && requesterID != vetOwner {
-		return nil, errors.New("vet: forbidden")
+		// Uniform denial: denied and missing appointments return the same
+		// "not found" — no existence oracle (same fold as Cancel's).
+		return nil, ErrAppointmentNotFound
 	}
 	return a, nil
 }
@@ -969,7 +981,7 @@ func (s *Service) load(ctx context.Context, apptID string) (*Appointment, error)
 		&a.SlotStart, &a.SlotEnd, &a.PetID, &a.ServiceID, &a.TotalKobo, &a.EscrowID, &a.ConsultID,
 		&a.DeliveryRef, &payState, &a.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("vet: appointment not found")
+			return nil, ErrAppointmentNotFound
 		}
 		return nil, err
 	}
