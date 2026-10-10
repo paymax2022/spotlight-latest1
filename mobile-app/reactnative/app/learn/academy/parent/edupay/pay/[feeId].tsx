@@ -35,7 +35,7 @@ export default function PayFees() {
 
   const matchingPot = pots.data?.find((p) => p.feeScheduleId === feeId && p.savedKobo >= (fee?.totalKobo ?? Infinity));
 
-  if (fees.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading fees…" /></SafeAreaView>;
+  if (fees.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Pay fees" /><StateView kind="loading" message="Loading fees…" /></SafeAreaView>;
   if (!fee) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Pay fees" /><StateView kind="error" title="Fee schedule not found" /></SafeAreaView>;
 
   const submit = () => {

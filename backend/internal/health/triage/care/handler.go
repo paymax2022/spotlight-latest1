@@ -1,6 +1,7 @@
 package care
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	triage "spotlight/backend/internal/health/triage"
@@ -12,6 +13,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,25 +27,52 @@ type Handler struct {
 // NewHandler builds the care HTTP handler.
 func NewHandler(svc *CareService) *Handler { return &Handler{svc: svc} }
 
+// uuidPathID gates the :id path parameter — session/referral/escalation ids are
+// uuid columns, so a malformed value would surface as a pg driver error instead
+// of a clean 400.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+		return false
+	}
+	return true
+}
+
+// careFail maps service errors: ErrNotFound (missing OR non-owner — folded in
+// the service) → 404; ErrIdempotencyRequired → 400; ErrIllegalTransition +
+// other state refusals → 409. FailOK sanitizes the message.
+func careFail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "not found")
+	case errors.Is(err, ErrIdempotencyRequired):
+		ginutil.FailOK(c, http.StatusBadRequest, "idempotency key required")
+	default:
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	}
+}
+
 // Refer — POST /health/triage/sessions/:id/refer
-// body: { level }. Routes the disposition; for emergency returns the SC-8 payload
-// and the raised escalation.
+// The disposition level is read from the session's stored disposition — a
+// client-supplied level is ignored (never trusted). For emergency returns the
+// SC-8 payload and the raised escalation.
 func (h *Handler) Refer(c *gin.Context) {
 	id := ginutil.UserID(c)
 	if id == "" {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	// Body is optional and ignored — the level comes from the session.
 	var req struct {
 		Level int `json:"level"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+	_ = c.ShouldBindJSON(&req)
+	if !uuidPathID(c) {
 		return
 	}
-	res, err := h.svc.Refer(c.Request.Context(), id, c.Param("id"), req.Level)
+	res, err := h.svc.Refer(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		careFail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "result": res})
@@ -56,6 +85,9 @@ func (h *Handler) PayReferral(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	var req struct {
 		IdempotencyKey string `json:"idempotency_key"`
 	}
@@ -66,7 +98,7 @@ func (h *Handler) PayReferral(c *gin.Context) {
 	}
 	ref, err := h.svc.PayReferral(c.Request.Context(), id, c.Param("id"), idem)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		careFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "referral": ref})
@@ -116,9 +148,12 @@ func (h *Handler) AdminAcknowledge(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	e, err := h.svc.Acknowledge(c.Request.Context(), c.Param("id"), id)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		careFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "escalation": e})
@@ -131,9 +166,12 @@ func (h *Handler) AdminResolve(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	e, err := h.svc.Resolve(c.Request.Context(), c.Param("id"), id)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		careFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "escalation": e})

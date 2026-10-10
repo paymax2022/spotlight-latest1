@@ -24,7 +24,9 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/testsupport"
 )
 
 func uatFixesPool(t *testing.T) *pgxpool.Pool {
@@ -78,6 +80,9 @@ func seedApprovedDoctor(t *testing.T, ctx context.Context, pool *pgxpool.Pool, l
 	if err := led.Credit(ctx, patientID, "uatfix-seed", "uatfix-fund-"+patientID, revAcc.ID, 10_000_000); err != nil {
 		t.Fatalf("fund patient: %v", err)
 	}
+	// The booking escrow runs the checkout daily-cap gate inside the debit tx
+	// (F7) — an untiered fixture patient fails closed.
+	testsupport.SetKycTier(t, ctx, pool, patientID, testsupport.KycTierUnlimited)
 
 	t.Cleanup(func() {
 		bg := context.Background()
@@ -97,7 +102,7 @@ func TestLiveDB_BookAppointment_IdempotentReplayReturnsOriginal(t *testing.T) {
 	pool := uatFixesPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led))
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool))
 
 	doctorID, _, patientID := seedApprovedDoctor(t, ctx, pool, led, 500_000)
 
@@ -146,7 +151,7 @@ func TestLiveDB_GetDoctorDashboard_OddFeeWeeklyRevenueNotZero(t *testing.T) {
 	pool := uatFixesPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led))
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool))
 
 	// 99_991 kobo is the exact odd amount the discovering agent used: 0.85×99991
 	// = 84,992.35, a non-integer that the old `fee_kobo * 0.85` SQL expression
@@ -191,7 +196,7 @@ func TestLiveDB_AddReview_DuplicateReturnsCleanDomainError(t *testing.T) {
 	pool := uatFixesPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := telemedicine.NewService(pool, settlement.NewService(pool, led))
+	svc := telemedicine.NewService(pool, settlement.NewService(pool, led)).WithTiers(tiers.NewService(pool))
 
 	doctorID, doctorUserID, patientID := seedApprovedDoctor(t, ctx, pool, led, 350_000)
 

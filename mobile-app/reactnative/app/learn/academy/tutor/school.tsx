@@ -25,7 +25,7 @@ const LICENCE_META: Record<LicenceStatus, { label: string; color: string; bg: st
 /** T8 (list) — School admin (lite): schools the user administers. */
 export default function TutorSchools() {
   const schools = useMySchools();
-  if (schools.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading schools…" /></SafeAreaView>;
+  if (schools.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="School admin" /><StateView kind="loading" message="Loading schools…" /></SafeAreaView>;
 
   if (!schools.data?.length) {
     return (

@@ -31,7 +31,8 @@ Social Pay is peer-to-peer money over cashtags: **direct send**, **money request
 | Pool balance | `GET /social/pools/:id/balance` | member | no (read) |
 | Contribute pool | `POST /social/pools/:id/contribute` `{amount_kobo}` + `Idempotency-Key` | member | **yes** |
 | Pay out pool | `POST /social/pools/:id/payout` + `Idempotency-Key` | member; **organiser only** | **yes** |
-| Admin view split | `GET /api/social/admin/splits/:id` | `RequirePermission("social.admin.view")` | no |
+| Admin view split | `GET /api/social/admin/splits/:id` | `RequirePermission("social.admin.view")` — NOT participant-scoped (oversight) | no |
+| Admin view pool | `GET /api/social/admin/pools/:id` | `RequirePermission("social.admin.view")` — NOT stake-scoped (oversight); returns pool + balance + contribution roster | no |
 
 ## 3. Test matrix by layer
 
@@ -64,12 +65,12 @@ Social Pay is peer-to-peer money over cashtags: **direct send**, **money request
 | `SOCIAL-SEC-003` | AML single-send cap | P0 | A funded | send `amount_kobo=20000001` | `> ₦200,000` | 429 `ErrAMLSingleLimit`; no money moved |
 | `SOCIAL-SEC-004` | AML rolling-24h count/amount cap | P0 | A near caps | send breaching count (50) or amount (₦500k/24h) | — | 429 `ErrAMLCountLimit` / `ErrAMLAmountLimit` |
 | `SOCIAL-SEC-005` | AML query error fails closed | P0 | AML query errors | attempt send | dependency error | Blocked (not allowed) — "fail-closed" (MONEY-INV-012) |
-| `SOCIAL-AUTHZ-001` | Only named payer can pay request | P0 | request addressed to B | C calls `POST /requests/:id/pay` | C != payer | 403 `ErrForbidden`; no money moved |
-| `SOCIAL-AUTHZ-002` | Only requester can cancel; only payer can decline | P1 | request PENDING | payer cancels / requester declines | wrong actor | 403 `ErrForbidden` |
-| `SOCIAL-AUTHZ-003` | Only share owner can pay share (IDOR) | P0 | share owned by B | C pays B's share | C != share.user_id | 403 `ErrForbidden` |
-| `SOCIAL-AUTHZ-004` | Only pool organiser can payout (IDOR) | P0 | pool owned by A | B calls payout | B != organiser | 403 `ErrForbidden`; no drain |
-| `SOCIAL-AUTHZ-005` | Non-participant cannot view split | P0 | split with A,B | C `GET /splits/:id` | C not a participant | 403 "not a participant" (`IsSplitParticipant`) |
-| `SOCIAL-AUTHZ-006` | Admin split view requires perm | P1 | caller lacking perm | `GET /api/social/admin/splits/:id` | no grant | 403 (see `../cross-cutting/rbac-and-permissions.md`) |
+| `SOCIAL-AUTHZ-001` | Only named payer can pay request | P0 | request addressed to B | C calls `POST /requests/:id/pay` | C not a party | 404 (uniform — non-party can't confirm the id exists); wrong-role party (requester) → 403; no money moved |
+| `SOCIAL-AUTHZ-002` | Only requester can cancel; only payer can decline | P1 | request PENDING | payer cancels / requester declines | wrong-role party | 403 `ErrForbidden`; non-party → 404 |
+| `SOCIAL-AUTHZ-003` | Only share owner can pay share (IDOR) | P0 | share owned by B | C pays B's share | C no stake in bill | 404 (uniform); participant non-owner → 403 `ErrForbidden` |
+| `SOCIAL-AUTHZ-004` | Only pool organiser can payout (IDOR) | P0 | pool owned by A | B calls payout | B no stake in pool | 404 (uniform); stakeholder non-organiser → 403 `ErrForbidden`; no drain |
+| `SOCIAL-AUTHZ-005` | Non-participant cannot view split | P0 | split with A,B | C `GET /splits/:id` | C not a participant | 404 — identical to a nonexistent id (`ErrNotFound`; `IsSplitParticipant` inside `GetSplit`) |
+| `SOCIAL-AUTHZ-006` | Admin split/pool view requires perm | P1 | caller lacking perm | `GET /api/social/admin/splits/:id` or `/pools/:id` | no grant | 403 (see `../cross-cutting/rbac-and-permissions.md`); WITH grant a non-participant admin still reads (dedicated oversight handlers, audited) |
 | `SOCIAL-SEC-006` | Flag-off inaccessible | P0 | `FEATURE_SOCIAL_PAY_ENABLED=off` | call any `/social/*` route | — | Route not mounted / 404 — never 500 (FLAG-SEC-001) |
 
 ## 5. State-machine transitions (only if the module has an FSM)

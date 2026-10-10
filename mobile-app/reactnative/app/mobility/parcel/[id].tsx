@@ -30,7 +30,7 @@ export default function ParcelTrackScreen() {
 
   if (parcel.isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your delivery" />
         <ScreenHeader title="Your delivery" showBack={false} />
         <StateView kind="loading" message="Loading delivery…" />
       </SafeAreaView>

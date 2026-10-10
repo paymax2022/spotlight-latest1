@@ -18,7 +18,7 @@ import type { StreakDay } from '@/features/academy/types';
 export default function DailyGoalScreen() {
   const goal = useDailyGoal();
 
-  if (goal.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading your goal…" /></SafeAreaView>;
+  if (goal.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Daily goal" /><StateView kind="loading" message="Loading your goal…" /></SafeAreaView>;
   if (!goal.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Daily goal" /><StateView kind="error" title="Couldn’t load goal" /></SafeAreaView>;
 
   const g = goal.data;

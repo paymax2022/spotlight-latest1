@@ -19,6 +19,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"spotlight/backend/internal/finance/tiers"
 )
 
@@ -32,6 +34,15 @@ type recordingDebitLimiter struct {
 }
 
 func (f *recordingDebitLimiter) EnforceWalletDebitLimit(_ context.Context, userID string, amountKobo int64) error {
+	f.calls++
+	f.gotUserID = userID
+	f.gotAmount = amountKobo
+	return f.err
+}
+
+// The in-tx half (F7): records like its pooled sibling — these tests pin the
+// gate seam, while the serialization property is exercised live-DB.
+func (f *recordingDebitLimiter) EnforceWalletDebitLimitTx(_ context.Context, _ pgx.Tx, userID string, amountKobo int64) error {
 	f.calls++
 	f.gotUserID = userID
 	f.gotAmount = amountKobo

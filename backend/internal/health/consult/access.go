@@ -35,8 +35,10 @@ func (s *Service) Notes(ctx context.Context, requesterID, consultID string, isAd
 	if err != nil {
 		return nil, err
 	}
+	// Non-participant (and non-admin) access folds to the same not-found a missing
+	// consult returns — "forbidden" would confirm the consult exists.
 	if !authorizeConsultAccess(requesterID, c.PatientID, providerOwner, isAdmin) {
-		return nil, errors.New("consult: forbidden")
+		return nil, ErrConsultNotFound
 	}
 	return s.loadNotes(ctx, consultID)
 }
@@ -113,7 +115,7 @@ func (s *Service) RecordRecordingConsent(ctx context.Context, actorID, consultID
 	case providerOwner:
 		role = "PROVIDER"
 	default:
-		return errors.New("consult: forbidden")
+		return ErrConsultNotFound // non-participant → uniform not-found
 	}
 	if c.State == StateCompleted {
 		return ErrConsultRecordingClosed
@@ -139,7 +141,10 @@ func (s *Service) EnableRecording(ctx context.Context, providerOwnerID, consultI
 		return nil, err
 	}
 	if providerOwnerID != providerOwner {
-		return nil, errors.New("consult: forbidden")
+		if providerOwnerID == c.PatientID {
+			return nil, errors.New("consult: only the clinician may enable recording")
+		}
+		return nil, ErrConsultNotFound
 	}
 	if c.State == StateCompleted {
 		return nil, ErrConsultRecordingClosed
@@ -169,7 +174,7 @@ func (s *Service) WithdrawRecordingConsent(ctx context.Context, actorID, consult
 		return err
 	}
 	if actorID != c.PatientID && actorID != providerOwner {
-		return errors.New("consult: forbidden")
+		return ErrConsultNotFound
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

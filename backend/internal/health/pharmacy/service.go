@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
@@ -25,6 +26,31 @@ import (
 // either the requested quantity exceeds what was ever in stock, or a
 // concurrent order already consumed the remainder.
 var ErrInsufficientStock = errors.New("pharmacy: insufficient stock for one or more items")
+
+// ErrOrderNotFound is the uniform denial for order-scoped reads and
+// transitions: a caller without access to an EXISTING order gets this, not a
+// distinct "forbidden" — "exists but not yours" is indistinguishable from
+// "does not exist" (no existence oracle; same fold as social #602 /
+// association #606 / aicare / vet / lab). The handler maps it to 404.
+var ErrOrderNotFound = errors.New("pharmacy: order not found")
+
+// ErrIdemConflict refuses an Idempotency-Key already bound to an order owned
+// by a DIFFERENT patient. Replaying a foreign key must fail closed here,
+// before escrow.Hold — the hold rail dedups on the bare key, so without this
+// check a replay would attach (and, on a downstream insert failure, refund)
+// the original payer's hold.
+var ErrIdemConflict = errors.New("pharmacy: idempotency key already used")
+
+// ErrFulfilmentLocked refuses order completion after maxFulfilmentCodeAttempts
+// failed pickup/delivery code comparisons — the credential is considered
+// burned and the order is left for support or a dispute to resolve.
+var ErrFulfilmentLocked = errors.New("pharmacy: completion locked after too many failed code attempts — contact support or open a dispute")
+
+// maxFulfilmentCodeAttempts caps wrong pickup/delivery code presentations per
+// order before pickup_locked is set (security R3): the completing pharmacy
+// owner is the escrow payee, so an uncapped 6-digit guess space was a
+// brute-force path to self-releasing the patient's hold.
+const maxFulfilmentCodeAttempts = 5
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
@@ -46,6 +72,10 @@ type EscrowHolder interface {
 	Hold(ctx context.Context, payerID, reference, moduleType, idemKey string, amountKobo int64) (HoldRef, error)
 	Release(ctx context.Context, escrowID, payeeID string) error
 	Refund(ctx context.Context, escrowID string) error
+	// RefundIf is Refund plus an in-transaction guard run under the hold's
+	// FOR UPDATE lock — compensation paths use it to re-prove the hold is
+	// still unbound before any money moves back (see failAfterHold).
+	RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error
 }
 
 // HoldRef is the minimal projection of an escrow hold the order needs.
@@ -483,9 +513,21 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return nil, errors.New("pharmacy: a delivery order requires delivery_address, delivery_lat, and delivery_lng")
 		}
 	}
-	// Replay: return the existing order for this idempotency key (no double-hold).
-	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
+	// Replay: return the existing order for this idempotency key — but only when
+	// it belongs to THIS patient. Keys are client-chosen: resolving one to
+	// whichever order happens to hold it would hand a caller a stranger's order
+	// (escrow id, totals, state) by replaying their key.
+	if existing, err := s.getByIdem(ctx, patientID, in.IdempotencyKey); err == nil && existing != nil {
 		return existing, nil
+	}
+	// Fail closed on a foreign key BEFORE the money leg: escrow.Hold dedups on
+	// the bare key and would return the other patient's hold, which
+	// failAfterHold below would then refund out from under their live order if
+	// this attempt failed after the hold.
+	if taken, err := s.idemTakenByOther(ctx, patientID, in.IdempotencyKey); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrIdemConflict
 	}
 	// HL-2: order only against a live, verified pharmacy supplier.
 	if s.prov != nil {
@@ -515,6 +557,14 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// fails closed on insufficient funds before any order row is written.
 	hold, err := s.escrow.Hold(ctx, patientID, ref, "health.pharmacy", in.IdempotencyKey, total)
 	if err != nil {
+		// Adoption refuses a key durably claimed by a different claim
+		// (payer/module/reference/amount mismatch) with ledger.ErrDuplicate —
+		// to the caller that is the same "key reused with different params"
+		// signal as ErrIdemConflict, so fold it rather than leaking the rail's
+		// error vocabulary across the module boundary.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil, ErrIdemConflict
+		}
 		return nil, fmt.Errorf("pharmacy: hold payment: %w", err)
 	}
 	escrowID := hold.HoldID()
@@ -527,88 +577,128 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// doesn't" shape this engagement has fixed repeatedly in other modules.
 	// Best-effort: if the refund itself fails, that failure is folded into
 	// the returned error so it surfaces rather than being silently dropped.
+	//
+	// The refund is gated on the hold being this payer's AND UNBOUND:
+	// escrow.Hold dedups on the bare idempotency key, so escrowID can name a
+	// hold this attempt did not create — a foreign replay's hold, or the SAME
+	// payer's live hold under a concurrent same-key create (the loser's insert
+	// dies on UNIQUE(idempotency_key) only AFTER the winner commits, so the
+	// bound-hold probe below must check the committed pharmacy_orders row, not
+	// just the payer). Refunding a bound hold would unwind a live order's
+	// payment out from under it. Fail closed: never refund a hold that is not
+	// this payer's or is already bound to a committed order.
+	// The bound-ness probe runs INSIDE RefundIf's resolution transaction under
+	// the same FOR UPDATE lock the binding transaction below takes on
+	// escrow_holds — the pool-side EXISTS-probe + bare-Refund pair this replaces
+	// was a TOCTOU: the probe could pass while the winner's binding was still
+	// uncommitted, and the unguarded refund would then slip in after the
+	// winner's insert committed, reversing a live order's payment. Now the
+	// loser's refund either waits for the winner's commit (guard sees the bound
+	// row → ErrHoldBound) or wins the lock first (binding then refuses the
+	// no-longer-HELD hold). ErrHoldBound ⇒ a winner exists ⇒ the same uniform
+	// ErrIdemConflict the foreign-key check returns.
 	failAfterHold := func(err error) (*Order, error) {
-		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
+		if rerr := s.escrow.RefundIf(ctx, escrowID, s.unboundHoldGuard(escrowID, patientID)); rerr != nil {
+			if errors.Is(rerr, escrow.ErrHoldBound) {
+				return nil, ErrIdemConflict
+			}
 			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
 		}
 		return nil, err
 	}
 
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return failAfterHold(fmt.Errorf("pharmacy: begin: %w", err))
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
 	var deliveryAddr *string
 	if in.FulfilmentMethod == FulfilDelivery {
 		deliveryAddr = &in.DeliveryAddress
 	}
-	const insOrder = `
-		INSERT INTO pharmacy_orders
-			(id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method, total_kobo, escrow_id, idempotency_key, search_event_id, delivery_address, delivery_lat, delivery_lng)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
-	if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.PharmacyProviderID, in.PrescriptionID,
-		string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID,
-		deliveryAddr, in.DeliveryLat, in.DeliveryLng); err != nil {
-		return failAfterHold(fmt.Errorf("pharmacy: insert order: %w", err))
-	}
-	const insLine = `
-		INSERT INTO pharmacy_order_lines
-			(id, order_id, product_id, product_name, rx_required, quantity, unit_price_kobo, line_total_kobo)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	for i := range lines {
-		lines[i].OrderID = orderID
-		if _, err := tx.Exec(ctx, insLine, lines[i].ID, orderID, lines[i].ProductID, lines[i].ProductName,
-			lines[i].RxRequired, lines[i].Quantity, lines[i].UnitPriceKobo, lines[i].LineTotalKobo); err != nil {
-			return failAfterHold(fmt.Errorf("pharmacy: insert line: %w", err))
-		}
-	}
-	// Decrement stock atomically for TRACKED products only — this closes an
-	// unlimited-oversell hole (two concurrent orders could both succeed
-	// against a single unit of stock).
-	// stock_qty=0 means "not inventory-tracked" (the DB default; owners are
-	// not required to set a count), NOT "zero available": treating 0 as a hard
-	// floor would block checkout on most of the catalog. Only products an
-	// owner opted into tracking (stock_qty > 0) are gated and decremented.
-	// WHERE stock_qty >= quantity makes this a compare-and-swap: if a
-	// concurrent order already consumed the remaining stock, RowsAffected is
-	// 0 and the order is refused — fail closed, never oversell a tracked item.
-	// When a tracked product's stock_qty reaches exactly 0, in_stock flips
-	// false (checked in the pricing loop before money moves) — without that
-	// second signal, a depleted tracked product's stock_qty==0 would be
-	// indistinguishable from an untracked product's default.
-	const decStock = `
-		UPDATE pharmacy_products
-		SET stock_qty = stock_qty - $2, in_stock = ((stock_qty - $2) > 0)
-		WHERE id = $1 AND stock_qty >= $2 AND stock_qty > 0`
-	for _, li := range in.Lines {
-		var currentStock int
-		if err := tx.QueryRow(ctx, `SELECT stock_qty FROM pharmacy_products WHERE id=$1`, li.ProductID).Scan(&currentStock); err != nil {
-			return failAfterHold(fmt.Errorf("pharmacy: read stock: %w", err))
-		}
-		if currentStock == 0 {
-			continue // untracked — unlimited, nothing to decrement
-		}
-		tag, err := tx.Exec(ctx, decStock, li.ProductID, li.Quantity)
-		if err != nil {
-			return failAfterHold(fmt.Errorf("pharmacy: decrement stock: %w", err))
-		}
-		if tag.RowsAffected() == 0 {
-			return failAfterHold(ErrInsufficientStock)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return failAfterHold(fmt.Errorf("pharmacy: commit order: %w", err))
-	}
 
-	o := &Order{
-		ID: orderID, PatientID: patientID, PharmacyProviderID: in.PharmacyProviderID,
-		PrescriptionID: in.PrescriptionID, State: initial, FulfilmentMethod: in.FulfilmentMethod,
-		TotalKobo: total, EscrowID: &escrowID, SearchEventID: in.SearchEventID,
-		IdempotencyKey: in.IdempotencyKey, Lines: lines,
-		DeliveryAddress: deliveryAddr, DeliveryLat: in.DeliveryLat, DeliveryLng: in.DeliveryLng,
-		CreatedAt: time.Now(),
+	// The tx body runs in a closure so the deferred Rollback has released the
+	// escrow_holds FOR UPDATE lock BEFORE failAfterHold's RefundIf tries to
+	// take it — calling the compensation while this tx still holds the lock
+	// would deadlock the loser against itself.
+	o, txErr := func() (*Order, error) {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("pharmacy: begin: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		// F1 binding half: serialize the domain-row binding against escrow
+		// resolution on the hold row's lock. A loser's RefundIf that already
+		// refunded an unbound hold makes this fail (state != HELD) instead of
+		// binding an order to a REFUNDED hold; a winner's lock makes the
+		// loser's guard see the committed pharmacy_orders row.
+		if err := s.lockEscrowForBinding(ctx, tx, escrowID); err != nil {
+			return nil, err
+		}
+		const insOrder = `
+			INSERT INTO pharmacy_orders
+				(id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method, total_kobo, escrow_id, idempotency_key, search_event_id, delivery_address, delivery_lat, delivery_lng)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
+		if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.PharmacyProviderID, in.PrescriptionID,
+			string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID,
+			deliveryAddr, in.DeliveryLat, in.DeliveryLng); err != nil {
+			return nil, fmt.Errorf("pharmacy: insert order: %w", err)
+		}
+		const insLine = `
+			INSERT INTO pharmacy_order_lines
+				(id, order_id, product_id, product_name, rx_required, quantity, unit_price_kobo, line_total_kobo)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
+		for i := range lines {
+			lines[i].OrderID = orderID
+			if _, err := tx.Exec(ctx, insLine, lines[i].ID, orderID, lines[i].ProductID, lines[i].ProductName,
+				lines[i].RxRequired, lines[i].Quantity, lines[i].UnitPriceKobo, lines[i].LineTotalKobo); err != nil {
+				return nil, fmt.Errorf("pharmacy: insert line: %w", err)
+			}
+		}
+		// Decrement stock atomically for TRACKED products only — this closes an
+		// unlimited-oversell hole (two concurrent orders could both succeed
+		// against a single unit of stock).
+		// stock_qty=0 means "not inventory-tracked" (the DB default; owners are
+		// not required to set a count), NOT "zero available": treating 0 as a hard
+		// floor would block checkout on most of the catalog. Only products an
+		// owner opted into tracking (stock_qty > 0) are gated and decremented.
+		// WHERE stock_qty >= quantity makes this a compare-and-swap: if a
+		// concurrent order already consumed the remaining stock, RowsAffected is
+		// 0 and the order is refused — fail closed, never oversell a tracked item.
+		// When a tracked product's stock_qty reaches exactly 0, in_stock flips
+		// false (checked in the pricing loop before money moves) — without that
+		// second signal, a depleted tracked product's stock_qty==0 would be
+		// indistinguishable from an untracked product's default.
+		const decStock = `
+			UPDATE pharmacy_products
+			SET stock_qty = stock_qty - $2, in_stock = ((stock_qty - $2) > 0)
+			WHERE id = $1 AND stock_qty >= $2 AND stock_qty > 0`
+		for _, li := range in.Lines {
+			var currentStock int
+			if err := tx.QueryRow(ctx, `SELECT stock_qty FROM pharmacy_products WHERE id=$1`, li.ProductID).Scan(&currentStock); err != nil {
+				return nil, fmt.Errorf("pharmacy: read stock: %w", err)
+			}
+			if currentStock == 0 {
+				continue // untracked — unlimited, nothing to decrement
+			}
+			tag, err := tx.Exec(ctx, decStock, li.ProductID, li.Quantity)
+			if err != nil {
+				return nil, fmt.Errorf("pharmacy: decrement stock: %w", err)
+			}
+			if tag.RowsAffected() == 0 {
+				return nil, ErrInsufficientStock
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("pharmacy: commit order: %w", err)
+		}
+		return &Order{
+			ID: orderID, PatientID: patientID, PharmacyProviderID: in.PharmacyProviderID,
+			PrescriptionID: in.PrescriptionID, State: initial, FulfilmentMethod: in.FulfilmentMethod,
+			TotalKobo: total, EscrowID: &escrowID, SearchEventID: in.SearchEventID,
+			IdempotencyKey: in.IdempotencyKey, Lines: lines,
+			DeliveryAddress: deliveryAddr, DeliveryLat: in.DeliveryLat, DeliveryLng: in.DeliveryLng,
+			CreatedAt: time.Now(),
+		}, nil
+	}()
+	if txErr != nil {
+		return failAfterHold(txErr)
 	}
 	s.audited(patientID, "", "health.pharmacy.order.create", orderID, nil,
 		map[string]any{"state": string(initial), "total_kobo": total, "escrow_id": escrowID, "rx_required": rxRequired})
@@ -708,12 +798,59 @@ func (s *Service) openReviewCase(ctx context.Context, actorID, orderID, provider
 	}
 }
 
+// authorizePharmacyActor requires the actor to be the verified owner of the
+// order's fulfilling pharmacy (HL-2): the provider-gate answer when the gate
+// is wired, the provider row's owner_user_id when it is not (fail-closed
+// fallback — never trust an unverified write path just because the gate is
+// unwired). Denials return ErrOrderNotFound so a foreign actor cannot tell
+// "not your pharmacy's order" apart from "no such order".
+func (s *Service) authorizePharmacyActor(ctx context.Context, actorID string, o *Order) error {
+	if actorID == "" {
+		return ErrOrderNotFound
+	}
+	if s.prov != nil {
+		ok, err := s.prov.VerifiedPharmacyOwner(ctx, actorID, o.PharmacyProviderID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrOrderNotFound
+		}
+		return nil
+	}
+	owner, err := s.pharmacyOwner(ctx, o.PharmacyProviderID)
+	if err != nil {
+		return err
+	}
+	if actorID != owner {
+		return ErrOrderNotFound
+	}
+	return nil
+}
+
+// authorizeOrderParty requires the actor to be a party to the order: the
+// patient who owns it, or the verified owner of the fulfilling pharmacy.
+// Denials are the same uniform ErrOrderNotFound.
+func (s *Service) authorizeOrderParty(ctx context.Context, actorID string, o *Order) error {
+	if actorID != "" && actorID == o.PatientID {
+		return nil
+	}
+	return s.authorizePharmacyActor(ctx, actorID, o)
+}
+
 // Confirm moves CREATED|RX_PENDING_VERIFICATION → CONFIRMED. For an Rx-required
 // order the pinned e-Rx MUST be VERIFIED first (HL-3) — the verification is the
 // P0 healthrx workflow and EnsureVerified is the gate.
+// Only the fulfilling pharmacy may confirm — it is the pharmacist's acceptance
+// of the order (for an Rx-pending order it is also the act that binds the
+// verified e-Rx, so a patient self-confirming would bypass HL-3 review). A
+// foreign actor gets ErrOrderNotFound, indistinguishable from a missing order.
 func (s *Service) Confirm(ctx context.Context, actorID, orderID string) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizePharmacyActor(ctx, actorID, o); err != nil {
 		return nil, err
 	}
 	if o.State == StateRxPending {
@@ -746,7 +883,7 @@ func (s *Service) Dispense(ctx context.Context, pharmacistID, orderID string) (*
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.New("pharmacy: only the verified pharmacy may dispense (HL-2)")
+			return nil, ErrOrderNotFound
 		}
 	}
 	// DP-002/DP-003: the dispensed Rx-required lines must match the verified
@@ -803,7 +940,7 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 			return nil, err
 		}
 		if !ok {
-			return nil, errors.New("pharmacy: only the verified pharmacy may dispatch (HL-2)")
+			return nil, ErrOrderNotFound
 		}
 	}
 	if o.State != StateDispensed {
@@ -838,7 +975,11 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 		_ = s.rx.Fulfill(ctx, pharmacistID, *o.PrescriptionID)
 	}
 	out.DeliveryRef = deliveryRef
-	out.PickupCode = &pickupCode
+	// The pickup credential is the patient's counter/delivery-confirmation proof —
+	// never echo it back to the pharmacy side. The owner is a legitimate Complete
+	// party, so returning it here would hand the payee a self-release credential;
+	// the patient reads it via Get.
+	out.PickupCode = nil
 	return out, nil
 }
 
@@ -846,9 +987,23 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 // RELEASES the held payment to the pharmacy payee (HL-9) and finally closes the
 // order. Release requires the pharmacy owner to be payout-eligible (HL-10 KYC).
 // The release is idempotent on the escrow hold (escrow tolerates re-resolve).
+//
+// Actor gate runs FIRST — before the state/proof checks and long before escrow
+// release: only the patient (presenting the pickup/proof code) or the verified
+// pharmacy owner may complete the order. A foreign actor gets ErrOrderNotFound,
+// indistinguishable from a missing order, so the endpoint is no longer an
+// "any authenticated user + a 6-digit OTP releases escrow" oracle.
+//
+// Re-entry (ledger F2): if a prior attempt committed DELIVERED/COLLECTED (or
+// even CLOSED) and then faulted in the escrow leg, the call re-enters from that
+// state — credential checks are skipped (they passed on the committed attempt)
+// and the idempotent escrow resolve re-runs until the hold is RELEASED.
 func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode string) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeOrderParty(ctx, actorID, o); err != nil {
 		return nil, err
 	}
 	var to OrderState
@@ -856,27 +1011,59 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 	case StateInDelivery:
 		to = StateDelivered
 	case StateReadyForPickup:
-		// pickup requires the one-time code presented at counter.
-		if o.PickupCode == nil || pickupCode == "" || *o.PickupCode != pickupCode {
+		// pickup requires the one-time code presented at counter — checked
+		// through verifyFulfilmentCode, which counts failed comparisons and
+		// locks completion after maxFulfilmentCodeAttempts misses (the minted
+		// code is 6 digits and a legitimate completing party is also the
+		// escrow payee, so an uncapped guess space was a self-release oracle).
+		if pickupCode == "" {
+			// Mirror the DELIVERY early-reject: an absent code is a plain
+			// mismatch, not a burned attempt (POSTing {} must not lock).
 			return nil, errors.New("pharmacy: pickup code mismatch")
 		}
+		if err := s.verifyFulfilmentCode(ctx, o.ID, pickupCode,
+			errors.New("pharmacy: pickup code mismatch")); err != nil {
+			return nil, err
+		}
 		to = StateCollected
+	case StateDelivered, StateCollected, StateClosed:
+		// Post-transition money-leg re-entry (ledger F2): a prior attempt
+		// committed DELIVERED/COLLECTED and then faulted in the escrow release
+		// leg — refusing here would wedge the order with the funds HELD
+		// forever. The state already equals the transition target, so the
+		// transition (and its credential checks, already passed once) is
+		// skipped below and the idempotent escrow resolve re-runs — the same
+		// self-heal scheduling.Transition gives vet.Cancel. CLOSED is the same
+		// replay: release is idempotent per its leg key and the close
+		// transition early-returns.
+		to = o.State
 	default:
 		return nil, fmt.Errorf("pharmacy: order not ready to complete, is %s", o.State)
 	}
 
 	// DP-006: for delivery orders, require proof-of-delivery before DELIVERED transition.
-	// Proof is captured by the courier/driver and validated before this call. If a
-	// ProofRecorder is wired, store the proof (actorID assumed to be the driver).
+	// Proof is captured by the courier/driver and validated before this call. The
+	// completing actor is an order party (patient or pharmacy owner, gated above);
+	// CapturedBy records which party attested delivery.
 	if o.State == StateInDelivery {
 		if o.DeliveryRef == nil || *o.DeliveryRef == "" {
 			return nil, errors.New("pharmacy: missing delivery reference (not dispatched)")
 		}
 		// For MVP, proof is passed via pickupCode (reuse that field as proof OTP).
 		// In a real flow, the driver app captures OTP/photo/signature and passes a structured proof.
-		// For now, validate that pickupCode is a 6-digit OTP.
 		if pickupCode == "" {
 			return nil, fmt.Errorf("pharmacy: proof-of-delivery required before delivery completion (DP-006) — %w", ErrProofRequired)
+		}
+		// The delivery-confirmation code IS the minted pickup_code: a bare
+		// 6-digit-format check would accept ANY OTP-shaped value, so completing a
+		// delivery requires presenting the patient's actual code — the same
+		// credential semantics as the PICKUP branch above. No proof row is
+		// recorded for a mismatched code.
+		// Same capped check as the PICKUP branch — the credential semantics are
+		// identical, so the attempt budget is shared across fulfilment methods.
+		if err := s.verifyFulfilmentCode(ctx, o.ID, pickupCode,
+			errors.New("pharmacy: delivery confirmation code mismatch")); err != nil {
+			return nil, err
 		}
 		proof := DeliveryProof{
 			OrderID:    orderID,
@@ -924,9 +1111,15 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 		}
 	}
 
-	out, err := s.transition(ctx, actorID, orderID, to, nil, "health.pharmacy.order.complete")
-	if err != nil {
-		return nil, err
+	// When the state already equals the target (money-leg re-entry) the guarded
+	// transition is skipped — its credential checks passed on the committed
+	// attempt — and execution drops straight to the idempotent escrow leg.
+	out := o
+	if o.State != to {
+		out, err = s.transition(ctx, actorID, orderID, to, nil, "health.pharmacy.order.complete")
+		if err != nil {
+			return nil, err
+		}
 	}
 	// HL-9: RELEASE the held amount to the pharmacy payee.
 	if o.EscrowID != nil {
@@ -948,9 +1141,49 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 	// Terminal CLOSED once funds released.
 	closed, err := s.transition(ctx, actorID, orderID, StateClosed, nil, "health.pharmacy.order.close")
 	if err != nil {
+		if actorID != o.PatientID {
+			out.PickupCode = nil
+		}
 		return out, nil // released; closing is best-effort and idempotent on retry
 	}
+	// The pickup/delivery-confirmation credential is patient-facing — the owner
+	// is a legitimate completing party but must not be echoed the code.
+	if actorID != o.PatientID {
+		closed.PickupCode = nil
+	}
 	return closed, nil
+}
+
+// verifyFulfilmentCode presents `presented` against the order's minted
+// pickup_code with a per-order attempt budget (security R3): the six-digit
+// code is all that stands between a legitimate completing party — the verified
+// pharmacy owner, who is also the escrow PAYEE — and self-releasing the
+// patient's hold, so unlimited cheap mismatches were an online brute force.
+// One atomic UPDATE does check+count under the order row's lock, so concurrent
+// guesses cannot double-spend attempts: a match leaves the counters untouched
+// and returns nil; a miss increments pickup_attempts and sets pickup_locked at
+// maxFulfilmentCodeAttempts, after which EVERY presentation — even the correct
+// code — is refused with ErrFulfilmentLocked (the credential is burned;
+// support or a dispute resolves the order from there). A NULL pickup_code
+// (never minted) always mismatches via IS DISTINCT FROM and burns attempts.
+func (s *Service) verifyFulfilmentCode(ctx context.Context, orderID, presented string, mismatch error) error {
+	var matched, locked bool
+	if err := s.db.QueryRow(ctx, `
+		UPDATE pharmacy_orders
+		SET pickup_attempts = CASE WHEN pickup_code IS NOT DISTINCT FROM $2 THEN pickup_attempts ELSE pickup_attempts + 1 END,
+		    pickup_locked   = pickup_locked OR (pickup_code IS DISTINCT FROM $2 AND pickup_attempts + 1 >= $3)
+		WHERE id = $1
+		RETURNING (pickup_code IS NOT DISTINCT FROM $2), pickup_locked`,
+		orderID, presented, maxFulfilmentCodeAttempts).Scan(&matched, &locked); err != nil {
+		return fmt.Errorf("pharmacy: record fulfilment-code attempt: %w", err)
+	}
+	if locked {
+		return ErrFulfilmentLocked
+	}
+	if !matched {
+		return mismatch
+	}
+	return nil
 }
 
 // Cancel moves a pre-DISPENSED order → CANCELLED → REFUNDED (HL-9). Only the
@@ -961,18 +1194,32 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 	if err != nil {
 		return nil, err
 	}
+	// Uniform denial: a foreign order is indistinguishable from a missing one.
 	if o.PatientID != patientID {
-		return nil, errors.New("pharmacy: forbidden")
+		// Uniform denial: a non-owner's cancel on an existing order is
+		// indistinguishable from a missing one — no existence oracle.
+		return nil, ErrOrderNotFound
 	}
-	if !isPreDispense(o.State) {
+	out := o
+	switch {
+	case isPreDispense(o.State):
+		out, err = s.transition(ctx, patientID, orderID, StateCancelled, func(tx pgx.Tx, cur *Order) error {
+			_, e := tx.Exec(ctx, `UPDATE pharmacy_orders SET cancel_reason=$2 WHERE id=$1`, orderID, reason)
+			return e
+		}, "health.pharmacy.order.cancel")
+		if err != nil {
+			return nil, err
+		}
+	case o.State == StateCancelled || o.State == StateRefunded:
+		// Post-transition money-leg re-entry (ledger F2): a prior cancel
+		// committed CANCELLED and then faulted in the escrow refund leg —
+		// isPreDispense alone would refuse every retry and strand the hold
+		// HELD forever. The cancel transition is skipped (the state is already
+		// the target; cancel_reason was written in the same committed tx) and
+		// the idempotent refund leg re-runs below. REFUNDED is the same replay:
+		// refund is idempotent and the terminal transition early-returns.
+	default:
 		return nil, fmt.Errorf("pharmacy: order can only be cancelled before dispense, is %s", o.State)
-	}
-	out, err := s.transition(ctx, patientID, orderID, StateCancelled, func(tx pgx.Tx, cur *Order) error {
-		_, e := tx.Exec(ctx, `UPDATE pharmacy_orders SET cancel_reason=$2 WHERE id=$1`, orderID, reason)
-		return e
-	}, "health.pharmacy.order.cancel")
-	if err != nil {
-		return nil, err
 	}
 	// HL-9: REFUND the held amount to the original payer.
 	if o.EscrowID != nil {
@@ -994,9 +1241,15 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	if err != nil {
 		return nil, err
 	}
+	// Deliberately swallowed: a transient owner-lookup failure leaves owner=""
+	// which fails closed — a foreign reader is still denied rather than
+	// leaking the order on a lookup blip.
 	owner, _ := s.pharmacyOwner(ctx, o.PharmacyProviderID)
+	// Uniform denial: a foreign order is indistinguishable from a missing one.
 	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
-		return nil, errors.New("pharmacy: forbidden")
+		// Uniform denial: denied and missing orders return the same "not
+		// found" — no existence oracle (same fold as Cancel/SubmitReview).
+		return nil, ErrOrderNotFound
 	}
 	lines, _ := s.loadLines(ctx, orderID)
 	o.Lines = lines
@@ -1179,7 +1432,7 @@ func (s *Service) SubmitReview(ctx context.Context, patientID, orderID string, r
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, errors.New("pharmacy: forbidden")
+		return nil, ErrOrderNotFound // uniform denial, see Get
 	}
 	if !isReviewable(o.State) {
 		return nil, fmt.Errorf("pharmacy: order must be completed before it can be reviewed, is %s", o.State)
@@ -1279,7 +1532,7 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("pharmacy: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1299,7 +1552,7 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt,
 		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("pharmacy: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1308,9 +1561,21 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	return &o, nil
 }
 
-func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Order, error) {
+// getByIdem resolves the caller's replay: the order THIS patient created under
+// idemKey, or (nil, nil) when no such order exists for this patient. Scoped to
+// the caller, never the stored row — keys are client-chosen, so an unscoped
+// lookup would hand a stranger's order (escrow id, totals, state) to whoever
+// replays their key (mirrors vet petByIdem / restaurant
+// findOrderByIdempotencyKey).
+func (s *Service) getByIdem(ctx context.Context, patientID, idemKey string) (*Order, error) {
 	var id string
-	if err := s.db.QueryRow(ctx, `SELECT id FROM pharmacy_orders WHERE idempotency_key=$1`, idemKey).Scan(&id); err != nil {
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM pharmacy_orders WHERE idempotency_key=$1 AND patient_id=$2`,
+		idemKey, patientID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	o, err := s.load(ctx, id)
@@ -1319,6 +1584,68 @@ func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Order, error)
 	}
 	o.Lines, _ = s.loadLines(ctx, id)
 	return o, nil
+}
+
+// idemTakenByOther reports whether idemKey is already bound to an order owned
+// by a DIFFERENT patient — i.e. this call is a replay of someone else's key.
+// Fail closed on lookup error: a transient pool failure must not be mistaken
+// for "key is free" and let a replay slip through to the money leg.
+func (s *Service) idemTakenByOther(ctx context.Context, patientID, idemKey string) (bool, error) {
+	var taken bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM pharmacy_orders WHERE idempotency_key=$1 AND patient_id<>$2)`,
+		idemKey, patientID).Scan(&taken); err != nil {
+		return true, fmt.Errorf("pharmacy: resolve idempotency key: %w", err)
+	}
+	return taken, nil
+}
+
+// lockEscrowForBinding is the BINDING half of the hold-bind / resolution-race
+// fix: inside the transaction that writes the bound pharmacy_orders row it
+// locks the escrow_holds row FOR UPDATE and requires it to still be HELD. The
+// loser's RefundIf compensation takes the SAME row lock before probing
+// bound-ness, so binding and resolution are fully serialized: whichever takes
+// the lock first wins — a loser refunding first leaves the hold non-HELD and
+// this binding refuses; a winner binding first makes the loser's guard see the
+// committed order row (escrow.ErrHoldBound). escrow_id has no FK to
+// escrow_holds, so nothing else serializes these two paths.
+func (s *Service) lockEscrowForBinding(ctx context.Context, tx pgx.Tx, escrowID string) error {
+	var state string
+	if err := tx.QueryRow(ctx,
+		`SELECT state FROM escrow_holds WHERE id=$1 FOR UPDATE`, escrowID).Scan(&state); err != nil {
+		return fmt.Errorf("pharmacy: lock escrow hold for binding: %w", err)
+	}
+	if state != string(escrow.StateHeld) {
+		return fmt.Errorf("pharmacy: escrow hold is %s, not HELD — refusing to bind an order", state)
+	}
+	return nil
+}
+
+// unboundHoldGuard is the RESOLUTION half: the RefundIf guard, run inside the
+// refund's own transaction after the hold row is FOR UPDATE-locked and the
+// HELD→REFUNDED transition has passed the FSM check. It re-proves the hold is
+// this payer's AND that no committed pharmacy_orders row is bound to it —
+// either failure means the hold belongs to a live order (a concurrent same-key
+// winner, or a foreign replay's hold) and refunding it would reverse a live
+// payment out from under it. Veto with escrow.ErrHoldBound, which
+// failAfterHold folds into ErrIdemConflict — the same "winner exists" signal
+// the unique-key path returns.
+func (s *Service) unboundHoldGuard(escrowID, payerID string) func(context.Context, pgx.Tx) error {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		var free bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2
+				  AND NOT EXISTS (SELECT 1 FROM pharmacy_orders o WHERE o.escrow_id = h.id))`,
+			escrowID, payerID).Scan(&free); err != nil {
+			return fmt.Errorf("pharmacy: bound-hold guard: %w", err)
+		}
+		if !free {
+			return escrow.ErrHoldBound
+		}
+		return nil
+	}
 }
 
 func (s *Service) loadLines(ctx context.Context, orderID string) ([]OrderLine, error) {
@@ -1649,10 +1976,10 @@ func failCreateOrder(c *gin.Context, err error) {
 	// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
 	switch {
 	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		ginutil.FailOK(c, http.StatusForbidden, httperr.Sanitize(c, http.StatusForbidden, err.Error()))
 		return
 	case errors.Is(err, escrow.ErrTierGateUnwired):
-		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+		ginutil.FailOK(c, http.StatusServiceUnavailable, httperr.Sanitize(c, http.StatusServiceUnavailable, err.Error()))
 		return
 	}
 	if qe, ok := errors.AsType[*QuantityCapError](err); ok {
@@ -1667,7 +1994,7 @@ func failCreateOrder(c *gin.Context, err error) {
 		})
 		return
 	}
-	ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+	ginutil.FailOK(c, http.StatusUnprocessableEntity, httperr.Sanitize(c, http.StatusUnprocessableEntity, err.Error()))
 }
 
 // PgxQuantityGate enforces the cap against pharmacy_skus (cap definition) and

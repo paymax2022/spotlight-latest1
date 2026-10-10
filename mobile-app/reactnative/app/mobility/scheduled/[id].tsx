@@ -70,7 +70,7 @@ export default function ScheduledDetailScreen() {
 
   if (detail.isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Scheduled trip" />
         <ScreenHeader title="Scheduled trip" showBack={false} />
         <StateView kind="loading" message="Loading your scheduled trip…" />
       </SafeAreaView>

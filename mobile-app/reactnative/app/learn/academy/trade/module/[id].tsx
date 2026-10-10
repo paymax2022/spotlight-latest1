@@ -23,8 +23,8 @@ export default function TradeModuleScreen() {
 
   React.useEffect(() => { if (mod.data) trackEvent('lesson_started', { kind: 'trade_module', module: mod.data.id }); }, [mod.data]);
 
-  if (mod.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading lesson…" /></SafeAreaView>;
-  if (mod.isError || !mod.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Not found" message="This lesson is unavailable." /></SafeAreaView>;
+  if (mod.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="loading" message="Loading lesson…" /></SafeAreaView>;
+  if (mod.isError || !mod.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="error" title="Not found" message="This lesson is unavailable." /></SafeAreaView>;
 
   const m = mod.data;
   const cta = m.kind === 'project' && m.projectId

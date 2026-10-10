@@ -23,6 +23,13 @@ export interface KycStepUp {
    */
   ensure: () => Promise<boolean>;
   /**
+   * Like `ensure` but never navigates: resolves whether the freshest tier meets
+   * the requirement so the caller can explain first and call `open()` on consent.
+   * If the profile can't be read, resolves true and lets the server's own tier
+   * gate decide (fail-open here only; the backend remains fail-closed).
+   */
+  check: () => Promise<boolean>;
+  /**
    * Imperatively open the step-up flow for the required tier. Pass a `resume`
    * target to return there (and re-open the action) once verified; if omitted,
    * the current screen is remembered automatically.
@@ -64,5 +71,12 @@ export function useKycStepUp(requiredTier: Exclude<KycTier, 0>): KycStepUp {
     return false;
   }, [refetch, requiredTier, open]);
 
-  return { currentTier, satisfied, isLoading, ensure, open };
+  const check = useCallback(async () => {
+    const fresh = await refetch();
+    if (fresh.isError && fresh.data === undefined) return true;
+    const tier = Math.max((fresh.data?.tier ?? 0), kycGrant.tier) as KycTier;
+    return tier >= requiredTier;
+  }, [refetch, requiredTier]);
+
+  return { currentTier, satisfied, isLoading, ensure, check, open };
 }

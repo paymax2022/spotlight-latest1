@@ -120,11 +120,17 @@ func (h *internalLedgerHandler) resolveAccount(c *gin.Context, name, userID stri
 
 // PostJournal posts a balanced cash leg through the finance ledger.
 //
-//	balanceChecked=true  → the TOCTOU-safe wallet-debit path (ledger.Service.Debit,
-//	                       advisory-locked check+insert). The debit MUST be the user
-//	                       wallet — the only balance-checked primitive the ledger
-//	                       exposes debits the caller's wallet.
-//	balanceChecked=false → ledger.Service.PostJournal (balanced pair, no gate).
+//	balanceChecked=true  → the TOCTOU-safe wallet-debit path
+//	                       (ledger.Service.DebitGated: advisory-locked
+//	                       check+insert PLUS the strict daily-debit cap
+//	                       re-evaluated inside the same tx, F7). The debit MUST
+//	                       be the user wallet — the only balance-checked
+//	                       primitive the ledger exposes debits the caller's
+//	                       wallet.
+//	balanceChecked=false → ledger.Service.PostJournal (balanced pair, no gate)
+//	                       for system↔system journals ONLY — a user_wallet
+//	                       debit here would bypass BOTH the sufficiency check
+//	                       and the daily cap, so it is refused outright.
 //
 // Idempotency is the ledger's (UNIQUE idempotency_key). A replay is reported as
 // {posted:true, replay:true}; insufficient funds as 409 {error:"insufficient_funds"}.
@@ -201,9 +207,21 @@ func (h *internalLedgerHandler) PostJournal(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "balanceChecked requires debitAccount=user_wallet"})
 			return
 		}
-		// Debit resolves + locks the user wallet itself and credits creditID.
-		err = h.ledger.Debit(ctx, req.UserID, req.Reference, req.IdempotencyKey, creditID, req.AmountKobo)
+		// DebitGated resolves + locks the user wallet and credits creditID — the
+		// strict daily-debit cap is re-evaluated inside the same tx (F7), so a
+		// service-token caller cannot burst past the user's cap either. A
+		// committed journal under this key converges via the in-tx replay check
+		// BEFORE the guard runs, so replays are never refused by re-gating.
+		err = h.ledger.DebitGated(ctx, req.UserID, req.Reference, req.IdempotencyKey, creditID, req.AmountKobo)
 	} else {
+		// An UNCHECKED user-wallet debit could overdraw the wallet and bypass the
+		// daily-cap check entirely — a service token must never mint that shape.
+		// Money out of a user wallet requires balanceChecked=true (advisory lock
+		// + in-tx sufficiency + tier cap). System-account journals stay ungated.
+		if _, ok := userScopedLedgerAccounts[strings.TrimSpace(req.DebitAccount)]; ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_wallet debits require balanceChecked=true"})
+			return
+		}
 		err = h.ledger.PostJournal(ctx, ledger.JournalEntry{
 			Reference:       req.Reference,
 			IdempotencyKey:  req.IdempotencyKey,

@@ -220,6 +220,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// EnforceWalletDebitLimit and are never relaxed.
 	tiersSvc := tiers.NewService(pool).WithCheckoutAllowance(cfg.FeatureCheckoutTopupTier0)
 	log.Printf("[tiers] Tier-0 checkout allowance: %t (FEATURE_CHECKOUT_TOPUP_TIER0)", cfg.FeatureCheckoutTopupTier0)
+	// The strict daily-cap guard every ledger.DebitGated/PostJournalGated runs
+	// inside the debit tx under the wallet advisory lock (F7): wire the SHARED
+	// tiers service so the in-tx check and the pooled advisory check can never
+	// drift (e.g. if a tier table or rule ever diverges).
+	ledgerSvc.SetDebitGuard(tiersSvc.EnforceWalletDebitLimitTx)
 	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
 	kycSvc := kyc.NewService(pool)
 	referralSvc := referrals.NewService(pool, ledgerSvc)
@@ -549,7 +554,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		staysExtranet := r.Group("/api/stays/extranet")
 		staysExtranet.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysWebhooks := r.Group("/internal/webhooks")                                                // provider-signed, no user auth
-		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                       // supply-gateway/search/prebook→book saga/pricing
+		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg, tiersSvc)                             // supply-gateway/search/prebook→book saga/pricing
 		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac, cfg) // ari/extranet/settlement/reviews/webhooks
 	}
 
@@ -655,7 +660,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// already rejects a missing/invalid token itself, so requireUserID()
 			// adds nothing here besides that ordering hazard — see
 			// health_pharmacy_routes.go's own comment at ag.Use(...).
-			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase)
+			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase, redisClient)
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {
@@ -1965,6 +1970,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// console writes to (doctor_compliance_audit via doctor.Repository), so an
 		// approve/reject recorded from EITHER admin console lands in one trail.
 		telemedSvc := telemedicine.NewService(pool, settlementSvcT).
+			WithTiers(tiersSvc).
 			WithPlatformFeeBp(platformFeeBp).
 			WithAudit(doctor.NewRepository(pool))
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
@@ -2615,6 +2621,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Pool:     pool,
 			Ledger:   ledgerSvc,
 			Wallet:   walletSvc,
+			Tiers:    tiersSvc,
 			Provider: cacProvider,
 			Payment:  paymentProvider, // Paystack gateway for the fee (wallet-or-gateway choice)
 			RBAC:     rbac,

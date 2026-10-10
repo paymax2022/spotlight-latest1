@@ -55,7 +55,7 @@ export default function BundleDetail() {
     );
   };
 
-  if (bundle.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading bundle…" /></SafeAreaView>;
+  if (bundle.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Bundle" /><StateView kind="loading" message="Loading bundle…" /></SafeAreaView>;
   if (!bundle.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Bundle" /><StateView kind="error" title="Bundle not found" /></SafeAreaView>;
 
   const busy = createOrder.isPending || payOrder.isPending || bnpl.isPending;

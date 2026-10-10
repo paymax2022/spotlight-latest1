@@ -18,6 +18,16 @@ const (
 	keySuccess = "success"
 )
 
+// ErrRecordNotFound is the uniform object-level denial for the vault: a missing
+// record, an erased record, a malformed id, and a record the caller cannot read
+// are INDISTINGUISHABLE — "forbidden" on an existing foreign record vs "not
+// found" on a missing one would let an attacker probe record ids (PHI oracle).
+// The DENIED access-log row is still appended for attribution (SC-005).
+var ErrRecordNotFound = errors.New("records: not found")
+
+// ErrInvalidInput marks malformed input (bad enum/uuid in the body) → 400.
+var ErrInvalidInput = errors.New("records: invalid input")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -81,10 +91,15 @@ func NewService(db *pgxpool.Pool, consent ConsentChecker, signer Signer, audit A
 // subject's behalf; ownerID is always the data subject (object-level authZ anchor).
 func (s *Service) Create(ctx context.Context, ownerID, createdBy, subjectType, recordType, title, body string, petRef *string) (*Record, error) {
 	if ownerID == "" {
-		return nil, errors.New("records: owner required")
+		return nil, fmt.Errorf("%w: owner required", ErrInvalidInput)
 	}
 	if subjectType != "PATIENT" && subjectType != "PET" {
-		return nil, errors.New("records: invalid subject_type")
+		return nil, fmt.Errorf("%w: invalid subject_type", ErrInvalidInput)
+	}
+	if petRef != nil {
+		if _, err := uuid.Parse(*petRef); err != nil {
+			return nil, fmt.Errorf("%w: pet_ref must be a uuid", ErrInvalidInput)
+		}
 	}
 	r := &Record{
 		ID:          uuid.New().String(),
@@ -120,11 +135,11 @@ func (s *Service) AddDocument(ctx context.Context, accessorID, recordID, storage
 	if err != nil {
 		return nil, err
 	}
-	if owner != accessorID { // only the data subject attaches docs to own record
-		return nil, errors.New("records: forbidden")
+	if owner != accessorID { // only the data subject attaches docs — fold to not-found
+		return nil, ErrRecordNotFound
 	}
 	if storageKey == "" {
-		return nil, errors.New("records: storage_key required")
+		return nil, fmt.Errorf("%w: storage_key required", ErrInvalidInput)
 	}
 	d := &Document{ID: uuid.New().String(), RecordID: recordID, StorageKey: storageKey, ContentType: contentType, Label: label, CreatedAt: time.Now()}
 	if d.ContentType == "" {
@@ -151,7 +166,7 @@ func (s *Service) Get(ctx context.Context, accessorID, recordID string, isAdmin 
 		return nil, err
 	}
 	if erased {
-		return nil, errors.New("records: erased")
+		return nil, ErrRecordNotFound // an erased record is indistinguishable from gone
 	}
 
 	// Resolve consent for a non-owner/non-admin BEFORE the decision so authorizeRead
@@ -173,7 +188,7 @@ func (s *Service) Get(ctx context.Context, accessorID, recordID string, isAdmin 
 		_ = s.logAccess(ctx, recordID, accessorID, string(BasisDenied), nil)
 		s.audited(accessorID, owner, "health.record.access_denied", recordID, nil,
 			map[string]any{"basis": string(BasisDenied)})
-		return nil, errors.New("records: forbidden")
+		return nil, ErrRecordNotFound // denial is uniform — no existence oracle
 	}
 
 	// 2) Append the immutable access log row BEFORE handing back any data (HL-8/HL-12).
@@ -210,8 +225,8 @@ func (s *Service) Erase(ctx context.Context, ownerID, recordID string) error {
 	if err != nil {
 		return err
 	}
-	if owner != ownerID {
-		return errors.New("records: forbidden")
+	if owner != ownerID { // non-owner erase folds to not-found
+		return ErrRecordNotFound
 	}
 	const q = `UPDATE health_records SET erased=true, erased_at=now(), body='', title='' WHERE id=$1 AND erased=false`
 	if _, err := s.db.Exec(ctx, q, recordID); err != nil {
@@ -227,8 +242,8 @@ func (s *Service) AccessLog(ctx context.Context, requesterID, recordID string, i
 	if err != nil {
 		return nil, err
 	}
-	if !isAdmin && requesterID != owner {
-		return nil, errors.New("records: forbidden")
+	if !isAdmin && requesterID != owner { // member reading another's trail → not-found
+		return nil, ErrRecordNotFound
 	}
 	const q = `SELECT id, accessor_id, access_basis, consent_id, accessed_at
 	           FROM health_record_access_log WHERE record_id=$1 ORDER BY accessed_at DESC`
@@ -263,7 +278,7 @@ func (s *Service) recordOwner(ctx context.Context, recordID string) (string, boo
 	var erased bool
 	err := s.db.QueryRow(ctx, `SELECT owner_user_id, erased FROM health_records WHERE id=$1`, recordID).Scan(&owner, &erased)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, errors.New("records: not found")
+		return "", false, ErrRecordNotFound
 	}
 	if err != nil {
 		return "", false, err
@@ -360,6 +375,31 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 	return &Handler{svc: svc, isAdmin: isAdmin}
 }
 
+// uuidSubjectID gates :subjectId before it reaches pgx — health_records.id is
+// uuid, so a malformed value otherwise surfaces as a driver error instead of a
+// clean 400.
+func uuidSubjectID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("subjectId")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "subjectId must be a uuid")
+		return false
+	}
+	return true
+}
+
+// recordFail maps service errors: ErrRecordNotFound (missing, erased OR
+// unauthorized — all uniform) → 404; ErrInvalidInput → 400; anything else is a
+// sanitized internal error. FailOK sanitizes the message.
+func recordFail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrRecordNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "record not found")
+	case errors.Is(err, ErrInvalidInput):
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+	default:
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+	}
+}
+
 // Create — POST /records
 func (h *Handler) Create(c *gin.Context) {
 	id := ginutil.UserID(c)
@@ -378,6 +418,12 @@ func (h *Handler) Create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
+	}
+	if req.PetRef != nil {
+		if _, perr := uuid.Parse(*req.PetRef); perr != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "pet_ref must be a uuid")
+			return
+		}
 	}
 	owner := req.OwnerUserID
 	if owner == "" {
@@ -404,9 +450,12 @@ func (h *Handler) Get(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidSubjectID(c) {
+		return
+	}
 	r, err := h.svc.Get(c.Request.Context(), id, c.Param("subjectId"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		recordFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, "record": r})
@@ -428,9 +477,12 @@ func (h *Handler) AddDocument(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidSubjectID(c) {
+		return
+	}
 	d, err := h.svc.AddDocument(c.Request.Context(), id, c.Param("subjectId"), req.StorageKey, req.ContentType, req.Label)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		recordFail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "document": d})
@@ -443,8 +495,11 @@ func (h *Handler) Erase(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidSubjectID(c) {
+		return
+	}
 	if err := h.svc.Erase(c.Request.Context(), id, c.Param("subjectId")); err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		recordFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true})
@@ -453,9 +508,12 @@ func (h *Handler) Erase(c *gin.Context) {
 // AccessLog — GET /records/:subjectId/access-log
 func (h *Handler) AccessLog(c *gin.Context) {
 	id := ginutil.UserID(c)
+	if !uuidSubjectID(c) {
+		return
+	}
 	out, err := h.svc.AccessLog(c.Request.Context(), id, c.Param("subjectId"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		recordFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, "access_log": out})

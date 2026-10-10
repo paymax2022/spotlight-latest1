@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -173,6 +174,9 @@ func (a *vetEscrowAdapter) Release(ctx context.Context, escrowID, payeeID string
 }
 func (a *vetEscrowAdapter) Refund(ctx context.Context, escrowID string) error {
 	return a.e.Refund(ctx, escrowID)
+}
+func (a *vetEscrowAdapter) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return a.e.RefundIf(ctx, escrowID, guard)
 }
 
 // vetDispatchAdapter books a home-visit dispatch as a parcel job on the transport

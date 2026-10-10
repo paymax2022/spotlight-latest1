@@ -66,7 +66,7 @@ func (r *repository) getProfile(ctx context.Context, userID, profileID string) (
 	if err := r.db.QueryRow(ctx, q, profileID, userID).Scan(&p.ID, &p.UserID, &p.Kind, &p.Name,
 		&p.DOB, &p.Sex, &p.IsPregnant, &p.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("core: profile not found")
+			return nil, ErrProfileNotFound
 		}
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (r *repository) getSession(ctx context.Context, userID, sessionID string) (
 		&s.DispositionLevel, &s.DispositionCode, &s.EngineRef, &s.RedFlag,
 		&s.StartedAt, &s.AssessedAt, &s.ClosedAt, &s.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("core: session not found")
+			return nil, ErrSessionNotFound
 		}
 		return nil, err
 	}

@@ -33,6 +33,16 @@ const (
 
 const auditModule = "health.triage"
 
+// ErrSessionNotFound is the uniform object-level denial on session paths:
+// health_triage_sessions rows are owner-fused (WHERE id=$1 AND user_id=$2), so a
+// missing session, a malformed id, and another user's session are
+// INDISTINGUISHABLE.
+var ErrSessionNotFound = errors.New("core: session not found")
+
+// ErrProfileNotFound is the uniform denial on triage-profile paths (owner-fused
+// load).
+var ErrProfileNotFound = errors.New("core: profile not found")
+
 // Auditor is the minimal immutable-audit slice (SC-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -116,6 +126,15 @@ func (s *SessionService) StartSession(ctx context.Context, userID string, p Star
 	}
 	lang := strutil.FirstNonEmpty(p.Language, "en")
 	ch := strutil.FirstNonEmpty(p.Channel, "app")
+
+	// A caller-supplied profile_id must name one of the CALLER's own profiles —
+	// getProfile is owner-fused, so a foreign profile folds to not-found and can
+	// never be linked into someone else's session (deidentify then reads it).
+	if p.ProfileID != nil && *p.ProfileID != "" {
+		if _, perr := s.repo.getProfile(ctx, userID, *p.ProfileID); perr != nil {
+			return nil, perr
+		}
+	}
 
 	sess := &Session{
 		UserID:    userID,

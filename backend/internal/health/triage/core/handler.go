@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"net/http"
 	"spotlight/backend/internal/health/triage"
 	"spotlight/backend/internal/middleware"
@@ -10,6 +11,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,6 +36,28 @@ type Handler struct{ svc *SessionService }
 
 // NewHandler builds the handler.
 func NewHandler(svc *SessionService) *Handler { return &Handler{svc: svc} }
+
+// uuidPathID gates the :id path parameter before it reaches pgx —
+// health_triage_sessions.id is uuid, so a malformed value otherwise surfaces as
+// a driver error instead of a clean 400.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+		return false
+	}
+	return true
+}
+
+// triageFail maps service errors: ErrSessionNotFound / ErrProfileNotFound
+// (missing OR non-owner — owner-fused loads make them uniform) → 404; anything
+// else → 409 (state refusals). FailOK sanitizes the message.
+func triageFail(c *gin.Context, err error) {
+	if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrProfileNotFound) {
+		ginutil.FailOK(c, http.StatusNotFound, "session not found")
+		return
+	}
+	ginutil.FailOK(c, http.StatusConflict, err.Error())
+}
 
 // ListProfiles — GET /health/triage/profiles
 func (h *Handler) ListProfiles(c *gin.Context) {
@@ -89,6 +113,13 @@ func (h *Handler) StartSession(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// profile_id feeds a uuid column + the owner-fused profile load — gate first.
+	if req.ProfileID != nil && *req.ProfileID != "" {
+		if _, perr := uuid.Parse(*req.ProfileID); perr != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "profile_id must be a uuid")
+			return
+		}
+	}
 	sess, err := h.svc.StartSession(c.Request.Context(), id, req)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
@@ -110,9 +141,12 @@ func (h *Handler) SubmitIntake(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	view, err := h.svc.SubmitIntake(c.Request.Context(), id, c.Param("id"), req)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		triageFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": view})
@@ -133,9 +167,12 @@ func (h *Handler) Answer(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	view, err := h.svc.Answer(c.Request.Context(), id, c.Param("id"), req.Code, req.Value)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		triageFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": view})
@@ -148,9 +185,12 @@ func (h *Handler) GetSession(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	view, err := h.svc.GetSession(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusNotFound, err.Error())
+		triageFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": view})

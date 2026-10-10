@@ -18,7 +18,7 @@ export default function SuitabilityResultScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your profile" />
         <ScreenHeader title="Your profile" showBack={false} />
         <StateView kind="loading" message="Scoring your answers…" />
       </SafeAreaView>

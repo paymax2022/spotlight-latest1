@@ -24,8 +24,8 @@ export default function SkillAssessmentScreen() {
   const [answers, setAnswers] = React.useState<Record<string, string[]>>({});
   const [result, setResult] = React.useState<AssessmentResult | null>(null);
 
-  if (asm.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading assessment…" /></SafeAreaView>;
-  if (asm.isError || !asm.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Not found" message="This assessment is unavailable." /></SafeAreaView>;
+  if (asm.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="loading" message="Loading assessment…" /></SafeAreaView>;
+  if (asm.isError || !asm.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="error" title="Not found" message="This assessment is unavailable." /></SafeAreaView>;
 
   const a = asm.data;
 

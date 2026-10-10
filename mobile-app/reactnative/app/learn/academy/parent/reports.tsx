@@ -32,7 +32,7 @@ export default function ReportsScreen() {
     generate.mutate({ minorId: targetChild, period }, { onSuccess: () => flash(`${period === 'weekly' ? 'Weekly' : 'Termly'} report generated`) });
   };
 
-  if (reports.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading reports…" /></SafeAreaView>;
+  if (reports.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Progress reports" /><StateView kind="loading" message="Loading reports…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

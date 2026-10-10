@@ -344,3 +344,94 @@ func TestLiveDB_PayDues_NilTierGateRefusesRatherThanDebitingUngated(t *testing.T
 		t.Fatalf("err = %v, want ErrTierGateUnwired", err)
 	}
 }
+
+// TestLiveDB_PayDues_DurableReplayAtCap_Converges pins the F-3 residual class:
+// a dues debit that COMMITTED but lost its group_payments row (crash between
+// the ledger post and the row insert) must converge on retry — the pooled
+// advisory gate may NOT refuse it by re-counting the legs it already posted.
+// Setup pushes the member's daily debited over the Tier-1 cap AFTER the first
+// payment commits, then deletes the payment row; the replay must heal the row
+// without a second debit, while a FRESH key at the same cap still refuses.
+func TestLiveDB_PayDues_DurableReplayAtCap_Converges(t *testing.T) {
+	pool := duesPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+	tiersSvc := tiers.NewService(pool)
+	svc := NewService(pool, led).WithTiers(tiersSvc)
+
+	creator := uuid.New().String()
+	groupID, planID := setupDuesGroup(t, ctx, pool, svc, creator)
+
+	// Tier-1 member: ₦50k/day cap — plan is ₦2k, so the first payment fits.
+	member := uuid.New().String()
+	addGroupMember(t, ctx, pool, groupID, member)
+	seedGroupKYCTier(t, ctx, pool, member, 1)
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("standing acct: %v", err)
+	}
+	if err := led.Credit(ctx, member, "seed-fund", "capreplay-fund-"+member, revAcc.ID, 10_000_000); err != nil {
+		t.Fatalf("fund member: %v", err)
+	}
+
+	key := "dues-" + uuid.New().String()
+	p, err := svc.PayDues(ctx, groupID, member, PayDuesRequest{PlanID: planID, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("first dues payment: %v", err)
+	}
+	if p.Status != "paid" {
+		t.Fatalf("first payment status = %q, want paid", p.Status)
+	}
+
+	// Simulate the crash window the probe exists for: debit committed, row lost.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM group_payments WHERE member_id=$1 AND idempotency_key=$2`, member, key); err != nil {
+		t.Fatalf("drop payment row: %v", err)
+	}
+
+	// Push today's debited past the Tier-1 cap (₦50k/day = 5_000_000 kobo):
+	// 200_000 (dues) + 4_900_000 (drain) = 5_100_000 used. A pooled re-check of
+	// the ₦2k dues would refuse at-cap — exactly what the probe must skip.
+	if err := led.Debit(ctx, member, "cap-drain", "capdrain-"+member, revAcc.ID, 4_900_000); err != nil {
+		t.Fatalf("drain to cap: %v", err)
+	}
+
+	// Replay the same key — the row is gone but the journal is durable. Must
+	// converge (heal the row), NOT refuse at-cap and NOT debit a second time.
+	p2, err := svc.PayDues(ctx, groupID, member, PayDuesRequest{PlanID: planID, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("durable replay at-cap must converge, got %v", err)
+	}
+	if p2.Status != "paid" {
+		t.Fatalf("healed payment status = %q, want paid", p2.Status)
+	}
+
+	var debitLegs int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries WHERE idempotency_key=$1`,
+		"groups:dues:"+key+":debit").Scan(&debitLegs); err != nil {
+		t.Fatalf("count debit legs: %v", err)
+	}
+	if debitLegs != 1 {
+		t.Fatalf("replay must not double-debit — %d debit legs under the key", debitLegs)
+	}
+	var payments int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM group_payments WHERE member_id=$1 AND idempotency_key=$2`, member, key).Scan(&payments); err != nil {
+		t.Fatalf("count payments: %v", err)
+	}
+	if payments != 1 {
+		t.Fatalf("healed replay must leave exactly one payment row, got %d", payments)
+	}
+
+	// Control: a FRESH key at the same cap still refuses — the pooled gate
+	// still gates new attempts; only a durable replay skips it.
+	_, err = svc.PayDues(ctx, groupID, member, PayDuesRequest{PlanID: planID, IdempotencyKey: "dues-" + uuid.New().String()})
+	if err == nil {
+		t.Fatal("a fresh at-cap dues attempt must still be refused")
+	}
+	if !errors.Is(err, tiers.ErrDailyLimitExceeded) {
+		t.Fatalf("fresh at-cap attempt err = %v, want ErrDailyLimitExceeded", err)
+	}
+}

@@ -18,7 +18,7 @@ export default function NotesScreen() {
   const notes = useNotes();
   const del = useDeleteNote();
 
-  if (notes.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading notes…" /></SafeAreaView>;
+  if (notes.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="My notes" /><StateView kind="loading" message="Loading notes…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

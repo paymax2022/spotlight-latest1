@@ -18,7 +18,7 @@ const COLOR_KEY = (k: string) => (Colors as unknown as Record<string, string>)[k
 /** T2 — Tutor profile: bio, ratings, availability (read view of the public card). */
 export default function TutorProfile() {
   const me = useTutorMe();
-  if (me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading profile…" /></SafeAreaView>;
+  if (me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Profile" /><StateView kind="loading" message="Loading profile…" /></SafeAreaView>;
   if (me.isError || !me.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Profile" /><StateView kind="error" title="Could not load profile" /></SafeAreaView>;
 
   const t = me.data;

@@ -304,13 +304,23 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	// contributor's wallet into escrow, so the same EnforceWalletDebitLimit the
 	// transfer rail applies runs BEFORE money moves — a refused attempt posts
 	// zero ledger legs and no contribution row. Replays already returned the
-	// existing contribution above, so a completed key never reaches this gate.
-	if err := s.enforceDebitLimit(ctx, contributorID, req.AmountKobo); err != nil {
+	// existing contribution above; the ledger probe covers the remaining case
+	// (F2): a retry whose escrow legs committed but whose contribution row
+	// never inserted converges through EscrowGated's in-tx replay verification.
+	escrowPosted, err := s.ledger.Posted(ctx, req.IdempotencyKey+":escrow")
+	if err != nil {
 		return nil, err
+	}
+	if !escrowPosted {
+		if err := s.enforceDebitLimit(ctx, contributorID, req.AmountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	ref := "campaign:" + campaignID + ":contributor:" + contributorID
-	sett, err := s.settlement.Escrow(ctx, contributorID, ref, req.IdempotencyKey, "crowdfunding", req.AmountKobo)
+	// EscrowGated re-runs the strict daily-cap check INSIDE the debit tx under
+	// the wallet lock (F7) — the pooled gate above is advisory only.
+	sett, err := s.settlement.EscrowGated(ctx, contributorID, ref, req.IdempotencyKey, "crowdfunding", req.AmountKobo)
 	if err != nil {
 		// ledger.ErrDuplicate on the ":escrow" leg with a caller-scoped replay
 		// miss above means the key was already claimed by ANOTHER member's

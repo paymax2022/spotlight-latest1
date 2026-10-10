@@ -110,12 +110,18 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileEdit' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyProfile' } } } } }
   /associations/me/privacy:
-    get: { tags: [Member], summary: Privacy settings, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } } } }
+    get:
+      tags: [Member]
+      summary: Privacy settings
+      description: Returns the EFFECTIVE flags — what co-members actually receive — not raw preference rows.
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } } }
     put:
       tags: [Member]
       summary: Update privacy settings
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } }
+        '404': { description: "ErrNoMembership — caller holds no ACTIVE membership (fails closed, no silent 200 over zero rows)" }
   /associations/me/activity:
     get: { tags: [Member], summary: My activity history, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ActivityEntry' } } } } } } }
   /associations/me/dues:
@@ -159,6 +165,7 @@ paths:
     get:
       tags: [Directory]
       summary: Member directory
+      description: Members whose effective privacy flags hide them from the directory are simply absent from this list.
       parameters:
         - { name: search, in: query, schema: { type: string } }
         - { name: chapterId, in: query, schema: { type: string } }
@@ -169,6 +176,7 @@ paths:
     get:
       tags: [Directory]
       summary: Member profile (respects privacy)
+      description: A member hidden by privacy flags answers 404 — indistinguishable from a nonexistent member. Self and admin views are unrestricted.
       parameters: [ { $ref: '#/components/parameters/Id' } ]
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MemberProfile' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
 

@@ -21,7 +21,7 @@ export default function ChildDashboard() {
   const { minorId } = useLocalSearchParams<{ minorId: string }>();
   const dash = useChildDashboard(minorId);
 
-  if (dash.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading dashboard…" /></SafeAreaView>;
+  if (dash.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Child" /><StateView kind="loading" message="Loading dashboard…" /></SafeAreaView>;
   if (dash.isError) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Child" /><StateView kind="error" title="No active link" message={dash.error instanceof Error ? dash.error.message : 'Cannot load this child.'} actionLabel="Back" onAction={() => goBack('/learn/academy/parent')} /></SafeAreaView>;
   if (!dash.data) return null;
 

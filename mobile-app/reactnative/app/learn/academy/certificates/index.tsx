@@ -17,7 +17,7 @@ import { formatDate } from '@/features/academy/constants';
 /** G10 — My certificates: academic + trade credentials. */
 export default function CertificatesScreen() {
   const creds = useCredentials();
-  if (creds.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading certificates…" /></SafeAreaView>;
+  if (creds.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="My certificates" /><StateView kind="loading" message="Loading certificates…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

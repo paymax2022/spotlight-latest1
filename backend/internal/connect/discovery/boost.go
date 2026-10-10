@@ -192,9 +192,35 @@ func (s *BoostService) Purchase(ctx context.Context, userID, idemKey string, req
 	}
 	duration := s.durationMinutes(ctx, requestedDuration)
 
+	ref := "connect:boost:" + userID
+	ledgerKey := boostLedgerKey(userID, idemKey)
+
+	// Committed-charge replay probe BEFORE the pooled advisory gate (F-2): a
+	// same-day replay of a completed purchase would be refused by re-counting
+	// its own debit once the cap is consumed — it must converge to the
+	// existing boost instead. Only a durable journal carrying THIS charge's
+	// identity (namespaced key, or the raw key a pre-namespace deploy posted
+	// under) skips the gate; a bare Redis-lock duplicate or a foreign claim
+	// still prices through it.
+	chargeCommitted := false
+	if s.confirmer != nil {
+		for _, k := range []string{ledgerKey, idemKey} {
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, k, priceKobo)
+			if cerr != nil {
+				return nil, fmt.Errorf("connect: confirm committed boost debit: %w", cerr)
+			}
+			if ok {
+				chargeCommitted = true
+				break
+			}
+		}
+	}
+
 	// Tier limit, fail-closed, BEFORE any money moves.
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, priceKobo); err != nil {
-		return nil, err
+	if !chargeCommitted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, priceKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	revAcc, err := s.revenue.RevenueAccountID(ctx)
@@ -202,8 +228,6 @@ func (s *BoostService) Purchase(ctx context.Context, userID, idemKey string, req
 		return nil, err
 	}
 
-	ref := "connect:boost:" + userID
-	ledgerKey := boostLedgerKey(userID, idemKey)
 	// Deploy-mid-flight convergence: a purchase that committed under the
 	// pre-namespace code posted its journal under the RAW client key. If that
 	// exact journal is durably posted, the charge already happened — record the

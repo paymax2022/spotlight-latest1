@@ -34,7 +34,7 @@ export default function CarHireDetailScreen() {
   const b = booking.data;
 
   if (booking.isLoading) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your hire" showBack={false} /><StateView kind="loading" message="Loading…" /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your hire" /><ScreenHeader title="Your hire" showBack={false} /><StateView kind="loading" message="Loading…" /></SafeAreaView>;
   }
   if (booking.isError || !b) {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your hire" /><MobilityEdgeState kind={errKind(booking.error)} actionLabel="Retry" onAction={() => booking.refetch()} /></SafeAreaView>;

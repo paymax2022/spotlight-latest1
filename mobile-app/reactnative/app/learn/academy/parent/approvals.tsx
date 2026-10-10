@@ -19,7 +19,7 @@ export default function ApprovalsScreen() {
   const approvals = useApprovals();
   const decide = useDecideApproval();
 
-  if (approvals.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading approvals…" /></SafeAreaView>;
+  if (approvals.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Purchase approvals" /><StateView kind="loading" message="Loading approvals…" /></SafeAreaView>;
 
   const pending = approvals.data?.filter((a) => a.status === 'pending') ?? [];
   const decided = approvals.data?.filter((a) => a.status !== 'pending') ?? [];

@@ -25,6 +25,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // mainLedgerCurrency is the one currency held outside orch_balances.
@@ -240,7 +242,11 @@ func customerBalances(ctx context.Context, q querier, customerID string) ([]Mone
 // the immutable main ledger, so an FX spend shows up in the wallet, in
 // statements and in reconciliation like any other spend. Other currencies
 // decrement the orch_balances pot under a row lock, exactly as before.
-func debitCustomerWallet(ctx context.Context, tx pgx.Tx, customerID, currency string, amountMinor int64, reference, idemKey string) error {
+// tierSvc enforces the strict KYC-tier daily-debit cap on the NGN wallet leg
+// INSIDE this transaction, under the caller-held wallet lock (F7): without it
+// an NGN conversion/payout/card-funding burst could jointly overshoot the cap.
+// A nil gate fails closed — the NGN wallet leg never debits uncapped.
+func debitCustomerWallet(ctx context.Context, tx pgx.Tx, tierSvc *tiers.Service, customerID, currency string, amountMinor int64, reference, idemKey string) error {
 	if amountMinor <= 0 {
 		return NewError(ErrInvalidRequest, "invalid_amount", "Amount must be a positive minor-unit value.")
 	}
@@ -252,6 +258,44 @@ func debitCustomerWallet(ctx context.Context, tx pgx.Tx, customerID, currency st
 			return err
 		}
 		if ok {
+			// Identity-verified replay check FIRST: if THIS exact debit leg is
+			// already durable under the derived key, the retry converges on the
+			// original outcome — never refuse a true replay on today's cap
+			// counting the very leg it is replaying (same ordering as
+			// ledger.Repository.DebitWithBalanceCheck). A key held by a
+			// DIFFERENT leg is a foreign/tampered claim — postMainLedgerPair's
+			// ON CONFLICT would silently no-op it, so fail closed instead.
+			// The reference is normalised exactly as postMainLedgerPair writes
+			// it, so a replay with an empty reference still matches the leg.
+			effectiveRef := reference
+			if effectiveRef == "" {
+				effectiveRef = "fx:" + idemKey
+			}
+			var replay, matches bool
+			err = tx.QueryRow(ctx, `
+				SELECT TRUE, account_id=$2 AND type='DEBIT' AND amount_kobo=$3 AND reference=$4
+				FROM ledger_entries WHERE idempotency_key=$1`,
+				"fx:"+idemKey+":debit", acct, amountMinor, effectiveRef).Scan(&replay, &matches)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if replay {
+				if !matches {
+					return NewError(ErrConflict, "idempotency_key_conflict", "idempotency key held by a different journal leg")
+				}
+				return nil
+			}
+
+			// Strict daily-cap check under the wallet lock — serialised with
+			// every other gated debit posting on this wallet (F7). Fail-closed:
+			// an unwired gate or a gate error refuses before a leg lands.
+			if tierSvc == nil {
+				return NewError(ErrComplianceBlock, "tier_gate_unwired", "tier limit gate unavailable")
+			}
+			if err := tierSvc.EnforceWalletDebitLimitTx(ctx, tx, customerID, amountMinor); err != nil {
+				return NewError(ErrComplianceBlock, "tier_limit_exceeded", err.Error())
+			}
+
 			var bal int64
 			if err := tx.QueryRow(ctx, mainWalletBalanceSQL, acct).Scan(&bal); err != nil {
 				return err

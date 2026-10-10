@@ -239,8 +239,8 @@ func (s *Service) PresignAttachment(ctx context.Context, caller, appointmentID, 
 	if err != nil {
 		return nil, err
 	}
-	if caller != patientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != patientID { // foreign appointment → uniform not-found
+		return nil, ErrAppointmentNotFound
 	}
 	if s.presigner == nil || !s.presigner.Configured() {
 		return nil, ErrUploadsNotConfigured
@@ -277,8 +277,8 @@ func (s *Service) RecordAttachment(ctx context.Context, caller, appointmentID, k
 	if err != nil {
 		return nil, err
 	}
-	if caller != it.PatientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != it.PatientID { // foreign intake → uniform not-found
+		return nil, ErrIntakeNotFound
 	}
 	if !attachmentKinds[kind] {
 		return nil, errors.New("preconsult: unsupported attachment kind")

@@ -18,9 +18,13 @@ import (
 
 // Payment charges the member's wallet via the double-entry ledger. It MUST be
 // idempotent on idemKey (a replay returns the same ref, charges once). Amount is
-// in minor units (kobo).
+// in minor units (kobo). Reverse compensates a posted charge when the guarded
+// state transition loses the race — the ledger keeps it as a reversing entry.
 type Payment interface {
 	Charge(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (ref string, err error)
+	// Reverse posts the balancing reversal for a previously charged amount.
+	// Idempotent on idemKey — a replay is a safe no-op.
+	Reverse(ctx context.Context, userID, reference, idemKey string, amountMinor int64) error
 }
 
 // EmergencyLocator finds the nearest emergency room (maps PostGIS findNearbyOwn /
@@ -75,13 +79,26 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 //   - PAID (telemed/lab/pharmacy): CareBooker.Book → pins target_ref + amount; the
 //     referral is routed and awaits PayReferral.
 //   - SELF_CARE: routed, no payment, no booking.
-func (s *CareService) Refer(ctx context.Context, userID, sessionID string, level int) (*ReferResult, error) {
+//
+// The disposition level is derived SERVER-SIDE from the session's recorded
+// disposition — never from the request body (a caller could otherwise mint a
+// level-1 emergency escalation on demand). The session load is owner-fused:
+// a foreign session is indistinguishable from a missing one.
+func (s *CareService) Refer(ctx context.Context, userID, sessionID string) (*ReferResult, error) {
 	if userID == "" {
 		return nil, errors.New("care: unauthenticated")
 	}
 	if sessionID == "" {
 		return nil, errors.New("care: session id required")
 	}
+	disp, err := s.repo.GetSessionDisposition(ctx, sessionID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if disp == nil {
+		return nil, errors.New("care: session has no disposition yet")
+	}
+	level := triage.SafeLevel(*disp)
 	route := triage.RouteForLevel(level)
 
 	ref := &CareReferral{
@@ -169,14 +186,31 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		return nil, errors.New("care: unauthenticated")
 	}
 	if idemKey == "" {
-		return nil, errors.New("care: idempotency key required")
+		return nil, ErrIdempotencyRequired
 	}
 	ref, err := s.repo.GetReferral(ctx, referralID)
 	if err != nil {
 		return nil, err
 	}
+	// Owner gate BEFORE any state/route checks: a foreign referral folds to the
+	// same not-found a missing one returns — otherwise a stranger could probe
+	// referral ids and observe their payment state.
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
+	}
+	// Replay check ACROSS owners (the UNIQUE index on idempotency_key is global):
+	// a key held by another user's referral folds to the same not-found as a
+	// missing one — before any charge attempt; the same key on a DIFFERENT
+	// referral of this user is a client error — fail closed.
+	if ref.IdempotencyKey == nil || *ref.IdempotencyKey != idemKey {
+		if prior, ierr := s.repo.GetReferralByIdemAny(ctx, idemKey); ierr == nil && prior != nil {
+			switch {
+			case prior.UserID != userID:
+				return nil, ErrNotFound
+			case prior.ID != ref.ID:
+				return nil, fmt.Errorf("%w: idempotency key already used for another referral", ErrIllegalTransition)
+			}
+		}
 	}
 	// Idempotent re-apply: already settled → return as-is (no second charge).
 	if ref.State == triage.RefPaid || ref.State == triage.RefFulfilled ||
@@ -194,19 +228,57 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		return nil, errors.New("care: referral has no positive amount to charge")
 	}
 
-	// Money: ledger-backed, idempotent on idemKey (charges exactly once on replay).
+	// Pin the key BEFORE money moves: the guarded patch binds idempotency_key
+	// while the row is still `routed`, so concurrent payers carrying different
+	// keys serialize at the row — the loser fails the CAS (or hits the UNIQUE
+	// index) and never reaches Charge.
+	if ref.IdempotencyKey == nil {
+		if err := s.repo.PinReferralIdem(ctx, ref.ID, idemKey); err != nil {
+			return nil, err
+		}
+		ref.IdempotencyKey = &idemKey
+	}
+
+	// Money: ledger-backed and DETERMINISTICALLY keyed on the referral — the
+	// ledger idempotency key derives from the referral id, not the caller's key,
+	// so racing requests carrying different keys can never post two charges for
+	// one referral: the second is a verified replay at the ledger.
+	reference := "triage.care:" + ref.ID
+	chargeKey := "triage.care:pay:" + ref.ID
 	var payRef string
+	charged := false
 	if s.pay != nil {
-		reference := "triage.care:" + ref.ID
-		pr, perr := s.pay.Charge(ctx, userID, reference, idemKey, ref.AmountMinor)
+		pr, perr := s.pay.Charge(ctx, userID, reference, chargeKey, ref.AmountMinor)
 		if perr != nil {
 			return nil, fmt.Errorf("care: charge wallet: %w", perr)
 		}
 		payRef = pr
+		charged = true
 	}
-	// routed → paid (guarded; pins payment_ref + idempotency_key is already set
-	// upstream on the row creation path if used; here we record the payment ref).
-	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid, ReferralPatch{PaymentRef: &payRef}); err != nil {
+	// routed → paid (guarded; pins payment_ref — the idem key is already bound).
+	patch := ReferralPatch{}
+	if payRef != "" {
+		patch.PaymentRef = &payRef
+	}
+	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid, patch); err != nil {
+		// Charge posted but the CAS lost. Before compensating, re-read the
+		// referral: a racing payer who reached `paid` first means this journal
+		// IS the referral's payment — reversing it would refund the winner and
+		// leave a fulfilled referral with a zero net charge. Reverse ONLY when
+		// the row is `closed` (a concurrent Close beat the pay — no payee).
+		// paid/fulfilled/follow_up → the charge stands as the referral's own
+		// payment; still `routed` (transient failure, not a state loss) → the
+		// charge also stands — the pinned key + deterministic ledger key let
+		// the next pay attempt replay it and settle, and reversing here would
+		// race a second payer's in-flight CAS.
+		if charged {
+			cur, rerr := s.repo.GetReferral(ctx, ref.ID)
+			if rerr == nil && cur.State == triage.RefClosed {
+				if revErr := s.pay.Reverse(ctx, userID, reference, chargeKey+":rev", ref.AmountMinor); revErr != nil {
+					log.Printf("[care] reversal for referral %s failed: %v", ref.ID, revErr)
+				}
+			}
+		}
 		return nil, err
 	}
 	ref.State = triage.RefPaid
@@ -229,7 +301,7 @@ func (s *CareService) MarkFulfilled(ctx context.Context, userID, referralID stri
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
 	}
 	if ref.State == triage.RefFulfilled || ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -249,7 +321,7 @@ func (s *CareService) FollowUp(ctx context.Context, userID, referralID string, a
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
 	}
 	if ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -274,15 +346,31 @@ func (s *CareService) Close(ctx context.Context, userID, referralID string) (*Ca
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
 	}
 	if ref.State == triage.RefClosed {
 		return ref, nil
 	}
+	// A charged referral (payment_ref pinned) being closed must be refunded —
+	// closing while keeping the debit is a money leak. The CAS runs FIRST so a
+	// racing PayReferral can no longer win routed→paid after we commit; the
+	// reversal then reuses the same deterministic key as the CAS-loss path
+	// (triage.care:pay:<id>:rev), so the two paths can never double-reverse.
+	// A `routed` close posts no reversal — an in-flight racer's CAS-loss path
+	// re-reads `closed` and compensates its own charge.
+	charged := ref.PaymentRef != nil && ref.AmountMinor > 0 && s.pay != nil
 	if err := s.transitionReferral(ctx, ref, ref.State, triage.RefClosed, ReferralPatch{}); err != nil {
 		return nil, err
 	}
 	ref.State = triage.RefClosed
+	if charged {
+		if err := s.pay.Reverse(ctx, userID, "triage.care:"+ref.ID, "triage.care:pay:"+ref.ID+":rev", ref.AmountMinor); err != nil {
+			// The state is committed closed; a failed reversal leaves a
+			// recon-visible orphan (closed row + unrefunded journal), never a
+			// double-charge. Log for ops; no balance edit is ever made here.
+			log.Printf("[care] close-refund reversal for referral %s failed: %v", ref.ID, err)
+		}
+	}
 	return ref, nil
 }
 
@@ -292,9 +380,17 @@ func (s *CareService) ListReferrals(ctx context.Context, userID string) ([]CareR
 }
 
 // Raise opens a new escalation case in `raised` (SC-5). Always auditable.
+// Idempotent per session: one session has at most ONE open case — a retry (or a
+// repeated emergency refer) returns the existing case instead of broadcasting a
+// second clinician hand-off for the same session.
 func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason string) (*Escalation, error) {
 	if sessionID == "" || userID == "" {
 		return nil, errors.New("care: session id and user id required")
+	}
+	if existing, err := s.repo.GetOpenEscalationBySession(ctx, sessionID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	e := &Escalation{
 		ID:        uuid.New().String(),
@@ -305,6 +401,13 @@ func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason strin
 		RaisedAt:  time.Now(),
 	}
 	if err := s.repo.CreateEscalation(ctx, e); err != nil {
+		// The partial unique index deduped the insert — a concurrent emergency
+		// Refer opened the case first. Return the winner.
+		if errors.Is(err, ErrEscalationExists) {
+			if existing, gerr := s.repo.GetOpenEscalationBySession(ctx, sessionID); gerr == nil {
+				return existing, nil
+			}
+		}
 		return nil, err
 	}
 	return e, nil
@@ -423,6 +526,9 @@ func (s *CareService) transitionReferral(ctx context.Context, ref *CareReferral,
 	}
 	if patch.PaymentRef != nil {
 		ref.PaymentRef = patch.PaymentRef
+	}
+	if patch.IdempotencyKey != nil {
+		ref.IdempotencyKey = patch.IdempotencyKey
 	}
 	return nil
 }

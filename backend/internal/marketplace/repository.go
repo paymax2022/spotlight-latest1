@@ -84,6 +84,14 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 	)
 	out, err := scanListing(row)
 	if err != nil {
+		if dbutil.IsForeignKeyViolation(err) {
+			// mkt_listings carries the composite category+market FK
+			// (mkt_listings_category_market_fk): the category was removed
+			// between the service's GetCategory read and this insert. Same
+			// answer the read gave for an absent category — a 400 naming
+			// category_id, not a 500.
+			return nil, fieldErr(CodeValidation, "unknown category_id", "category_id")
+		}
 		return nil, wrapInternal("insert listing", err)
 	}
 	return out, nil
@@ -110,6 +118,12 @@ func (r *Repository) InsertListingMedia(ctx context.Context, listingID string, k
 	defer func() { _ = br.Close() }()
 	for range keys {
 		if _, err := br.Exec(); err != nil {
+			if dbutil.IsForeignKeyViolation(err) {
+				// mkt_listing_media.listing_id FK → mkt_listings(id): the
+				// listing was removed between the service's ownership read
+				// and this batch — a 404 for the caller, not a 500.
+				return ErrListingNotFound
+			}
 			return wrapInternal("insert listing media", err)
 		}
 	}
@@ -924,6 +938,13 @@ func (r *Repository) InsertBoost(ctx context.Context, b *Boost) (*Boost, error) 
 	)
 	out, err := scanBoost(row)
 	if err != nil {
+		if dbutil.IsForeignKeyViolation(err) {
+			// mkt_boosts.listing_id FK → mkt_listings(id): the listing was
+			// removed between the service's ownership/status read and this
+			// insert (the wallet debit is rolled back with the charge tx —
+			// see PurchaseBoost). A 404 for the caller, not a 500.
+			return nil, ErrListingNotFound
+		}
 		return nil, wrapInternal("insert boost", err)
 	}
 	return out, nil
@@ -1209,6 +1230,12 @@ func (r *Repository) InsertOffer(ctx context.Context, o *Offer) (*Offer, error) 
 		o.ListingID, o.BuyerID, o.OfferPriceKobo, o.ParentOfferID)
 	out, err := scanOffer(row)
 	if err != nil {
+		if dbutil.IsForeignKeyViolation(err) {
+			// listing_id / parent_offer_id FKs: the listing (or the parent
+			// offer on a counter) was removed between the service's read and
+			// this insert — a 404 for the caller, not a 500.
+			return nil, ErrNotFoundCoded("resource")
+		}
 		return nil, wrapInternal("insert offer", err)
 	}
 	return out, nil

@@ -111,29 +111,38 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 		return p, nil
 	}
 
+	// Journal keys are namespaced ("social:p2p:") so a caller key can never be
+	// absorbed by a journal posted under another rail's purpose — the same
+	// convention groups.dues uses (S2). Derived before the gate so the replay
+	// probe can check the exact debit key.
+	journalKey := "social:p2p:" + idemKey
+
 	// Tier guard (fail-closed, E2E-FIN-041): a cashtag send is a wallet debit, so
 	// it runs the same EnforceWalletDebitLimit the transfer rail applies — Tier 0
 	// and over-daily-cap senders are refused. Placed AFTER the replay short-
 	// circuit (same ordering rule as transfers.walletPreflight): once a send has
 	// completed, re-running the gate could only refuse a request whose money
 	// already moved — telling the caller it failed invites a fresh-key retry,
-	// which is a real second debit.
-	if err := s.enforceDebitLimit(ctx, senderID, amountKobo); err != nil {
+	// which is a real second debit. The ledger replay probe covers the OTHER
+	// half of that ordering (F2): a retry whose debit leg committed but whose
+	// payment row never inserted converges through DebitGated's in-tx
+	// verification, so the pooled gate is skipped for a committed key too.
+	if posted, err := s.led.Posted(ctx, journalKey+":dr"); err != nil {
 		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, senderID, amountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// Move money: debit sender -> escrow standing, credit escrow -> recipient.
 	// (Escrow account is used as the neutral transit bucket; net zero, no float
 	// retained, no yield — NL-2.)
-	// Journal keys are namespaced ("social:p2p:") so a caller key can never be
-	// absorbed by a journal posted under another rail's purpose — the same
-	// convention groups.dues uses (S2).
-	journalKey := "social:p2p:" + idemKey
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, senderID, "p2p:"+idemKey, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, senderID, "p2p:"+idemKey, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return nil, fmt.Errorf("social: send debit: %w", err)
 	}
 	if err := s.led.Credit(ctx, recipientID, "p2p:"+idemKey, journalKey+":cr", escrowAcc.ID, amountKobo); err != nil {
@@ -227,7 +236,15 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 		return err
 	}
 	if r.PayerID != payerID {
-		return ErrForbidden // cannot pay a request not addressed to you
+		// Non-party callers get the uniform ErrNotFound — a 403 here would
+		// confirm the request id exists (existence oracle, same class the
+		// split/pool reads already close). The requester is a PARTY to the
+		// request and already knows it exists, so they keep the precise 403
+		// "only the named payer may pay".
+		if r.RequesterID == payerID {
+			return ErrForbidden
+		}
+		return ErrNotFound
 	}
 	key := "req:" + requestID
 	if r.State == RequestPaid {
@@ -237,9 +254,7 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 		// rows marked PAID with no money moved, and the old early-return
 		// answered "not payable" to every retry. The ledger decides:
 		//   requester credit posted  → genuinely paid, return nil;
-		//   payer debit only         → complete the missing credit under the
-		//                              deterministic key (idempotent no-op if
-		//                              a concurrent caller beat us to it);
+		//   payer debit only         → complete the missing credit below;
 		//   no legs at all           → stale claim — revert to PENDING and pay
 		//                              through the normal path below.
 		settled, err := s.legPosted(ctx, r.RequesterID, key, ledger.EntryCredit, r.AmountKobo)
@@ -249,6 +264,14 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 		if settled {
 			return nil
 		}
+	}
+	// Debit-leg heal BEFORE the pooled gate, and regardless of the row's
+	// state (F-3): the payer's debit can outlive the claim it backed — a
+	// failed credit reverted the row to PENDING, or the flip never landed.
+	// When the :dr leg is durable the retry must CONVERGE — post the missing
+	// requester credit and settle the row — never re-charge the payer or let
+	// a pooled cap read refuse the heal (the debit already spent the cap).
+	if r.State == RequestPaid || r.State == RequestPending {
 		debited, err := s.legPosted(ctx, payerID, key, ledger.EntryDebit, r.AmountKobo)
 		if err != nil {
 			return err
@@ -258,11 +281,44 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 			if err != nil {
 				return err
 			}
-			if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-				return fmt.Errorf("social: pay request credit: %w", err)
+			if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil {
+				if !errors.Is(err, ledger.ErrDuplicate) {
+					return fmt.Errorf("social: pay request credit: %w", err)
+				}
+				// R-2: a dup claim is never proof — a bare Redis-lock TTL or a
+				// foreign claim can hold the key with zero legs behind it.
+				// Tolerating it would flip the row PAID + audit a heal over a
+				// requester credit that does not exist. Re-probe the durable
+				// credit leg (exact per-leg key + reference) before accepting:
+				// absent → retryable pending, mismatched amount → refuse.
+				crAmt, crFound, verr := s.walletEntryAmount(ctx, r.RequesterID, key+":cr:credit", key)
+				if verr != nil {
+					return verr
+				}
+				if !crFound {
+					return fmt.Errorf("%w: heal credit key %s claimed duplicate with no legs", ErrReconPending, key+":cr")
+				}
+				if crAmt != r.AmountKobo {
+					return fmt.Errorf("social: request %s credit leg amount %d != request amount %d — refusing to settle on a mismatched leg", requestID, crAmt, r.AmountKobo)
+				}
 			}
+			if r.State == RequestPending {
+				if _, err := s.db.Exec(ctx,
+					`UPDATE social_requests SET state='PAID', resolved_at=now() WHERE id=$1 AND state='PENDING'`,
+					requestID); err != nil {
+					return fmt.Errorf("social: settle healed request claim: %w", err)
+				}
+			}
+			// A heal credit is a money mutation — it must audit (iron rule).
+			s.log(payerID, r.RequesterID, "social.request.pay.heal", "social_request", requestID,
+				nil, map[string]any{"amount_kobo": r.AmountKobo, "state": "PAID"})
 			return nil
 		}
+	}
+	if r.State == RequestPaid {
+		// PAID with no legs at all — a stale claim (crash or failed debit
+		// between the flip and the posting). Revert to PENDING and pay
+		// through the normal path below.
 		if _, err := s.db.Exec(ctx,
 			`UPDATE social_requests SET state='PENDING', resolved_at=NULL WHERE id=$1 AND state='PAID'`,
 			requestID); err != nil {
@@ -301,7 +357,7 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 		unclaim()
 		return err
 	}
-	if err := s.led.Debit(ctx, payerID, key, key+":dr", escrowAcc.ID, r.AmountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, payerID, key, key+":dr", escrowAcc.ID, r.AmountKobo); err != nil {
 		unclaim()
 		return fmt.Errorf("social: pay request debit: %w", err)
 	}
@@ -329,11 +385,21 @@ func (s *Service) resolveRequest(ctx context.Context, requestID, actorID string,
 	if err != nil {
 		return err
 	}
+	// Party-only refusal visibility: the OTHER party gets the precise 403
+	// (they can already see the request via ListRequests); a caller who is
+	// neither requester nor payer gets the uniform ErrNotFound so the route
+	// cannot confirm the request id exists.
 	if actorIsRequester && r.RequesterID != actorID {
-		return ErrForbidden
+		if r.PayerID == actorID {
+			return ErrForbidden
+		}
+		return ErrNotFound
 	}
 	if !actorIsRequester && r.PayerID != actorID {
-		return ErrForbidden
+		if r.RequesterID == actorID {
+			return ErrForbidden
+		}
+		return ErrNotFound
 	}
 	if !canRequest(r.State, to) {
 		return fmt.Errorf("social: illegal request transition %s -> %s", r.State, to)
@@ -478,6 +544,18 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	}
 	sh.State = ShareState(state)
 	if sh.UserID != payerID {
+		// A participant of the same bill (incl. the organiser) keeps the
+		// precise 403 — they can already see this share via GetSplit, so the
+		// refusal confirms nothing new. An outsider gets the uniform
+		// ErrNotFound: a 403 would confirm the share id exists (existence
+		// oracle on the shares rail).
+		member, err := s.IsSplitParticipant(ctx, sh.SplitID, payerID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return ErrNotFound
+		}
 		return ErrForbidden
 	}
 	bill, err := s.getSplit(ctx, sh.SplitID)
@@ -499,9 +577,7 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 		// early-return answered nil to every retry — the share became
 		// settled-looking and unpayable. The ledger decides:
 		//   organiser credit posted → genuinely paid, return nil;
-		//   payer debit only        → complete the missing credit under the
-		//                             deterministic key (idempotent no-op if
-		//                             a concurrent caller beat us to it);
+		//   payer debit only        → complete the missing credit below;
 		//   no legs at all          → stale claim — revert to PENDING and pay
 		//                             through the normal path below.
 		// The probes key on the deterministic PER-SHARE ledger keys
@@ -519,6 +595,14 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 			}
 			return fmt.Errorf("social: share %s credit leg amount %d != share amount %d — refusing to converge on a mismatched leg", shareID, creditedAmt, sh.AmountKobo)
 		}
+	}
+	// Debit-leg heal BEFORE the pooled gate, and regardless of the row's
+	// state (F-3): the payer's debit can outlive the claim it backed — a
+	// failed credit reverted the share to PENDING, or the flip never landed.
+	// When the :dr leg is durable the retry must CONVERGE — post the missing
+	// organiser credit and settle the share — never re-charge the payer or
+	// let a pooled cap read refuse the heal (the debit already spent the cap).
+	if sh.State == SharePaid || sh.State == SharePending {
 		debitedAmt, debited, err := s.walletEntryAmount(ctx, payerID, key+":dr:debit", ref)
 		if err != nil {
 			return err
@@ -531,14 +615,47 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 			if err != nil {
 				return err
 			}
-			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-				return fmt.Errorf("social: pay share credit: %w", err)
+			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil {
+				if !errors.Is(err, ledger.ErrDuplicate) {
+					return fmt.Errorf("social: pay share credit: %w", err)
+				}
+				// R-2: a dup claim is never proof — re-probe the durable
+				// organiser credit leg (exact per-share key + reference) before
+				// accepting it: absent → retryable pending (no state flip, no
+				// audit), mismatched amount → refuse loudly.
+				crAmt, crFound, verr := s.walletEntryAmount(ctx, bill.OrganiserID, key+":cr:credit", ref)
+				if verr != nil {
+					return verr
+				}
+				if !crFound {
+					return fmt.Errorf("%w: heal credit key %s claimed duplicate with no legs", ErrReconPending, key+":cr")
+				}
+				if crAmt != sh.AmountKobo {
+					return fmt.Errorf("social: share %s credit leg amount %d != share amount %d — refusing to settle on a mismatched leg", shareID, crAmt, sh.AmountKobo)
+				}
+			}
+			if sh.State == SharePending {
+				if _, err := s.db.Exec(ctx,
+					`UPDATE split_shares SET state='PAID', paid_at=now() WHERE id=$1 AND state='PENDING'`,
+					shareID); err != nil {
+					return fmt.Errorf("social: settle healed share claim: %w", err)
+				}
+			}
+			var pending int
+			_ = s.db.QueryRow(ctx, `SELECT count(*) FROM split_shares WHERE split_id=$1 AND state='PENDING'`, sh.SplitID).Scan(&pending)
+			if pending == 0 {
+				_, _ = s.db.Exec(ctx, `UPDATE split_bills SET state='SETTLED', updated_at=now() WHERE id=$1 AND state='OPEN'`, sh.SplitID)
 			}
 			// A heal credit is a money mutation — it must audit (iron rule).
 			s.log(payerID, bill.OrganiserID, "social.split.pay.heal", "split_share", shareID,
 				nil, map[string]any{"amount_kobo": sh.AmountKobo, "state": "PAID"})
 			return nil
 		}
+	}
+	if sh.State == SharePaid {
+		// PAID with no legs at all — a stale claim (crash or failed debit
+		// between the flip and the posting). Revert to PENDING and pay
+		// through the normal path below.
 		if _, err := s.db.Exec(ctx,
 			`UPDATE split_shares SET state='PENDING', paid_at=NULL WHERE id=$1 AND state='PAID'`,
 			shareID); err != nil {
@@ -572,7 +689,7 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 		unclaim()
 		return err
 	}
-	if err := s.led.Debit(ctx, payerID, ref, key+":dr", escrowAcc.ID, sh.AmountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, payerID, ref, key+":dr", escrowAcc.ID, sh.AmountKobo); err != nil {
 		unclaim()
 		return fmt.Errorf("social: pay share debit: %w", err)
 	}
@@ -607,10 +724,21 @@ func (s *Service) GetSplit(ctx context.Context, callerID, splitID string) (*Spli
 	if err != nil {
 		return nil, nil, err
 	}
+	shares, err := s.splitShares(ctx, splitID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return bill, shares, nil
+}
+
+// splitShares returns the full share roster for a bill (who owes whom how
+// much) — the payload both the caller-scoped member read and the RBAC-gated
+// admin oversight read serialize.
+func (s *Service) splitShares(ctx context.Context, splitID string) ([]SplitShare, error) {
 	const q = `SELECT id, split_id, user_id, amount_kobo, state, paid_at FROM split_shares WHERE split_id=$1 ORDER BY amount_kobo DESC`
 	rows, err := s.db.Query(ctx, q, splitID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 	var shares []SplitShare
@@ -618,12 +746,31 @@ func (s *Service) GetSplit(ctx context.Context, callerID, splitID string) (*Spli
 		var sh SplitShare
 		var st string
 		if err := rows.Scan(&sh.ID, &sh.SplitID, &sh.UserID, &sh.AmountKobo, &st, &sh.PaidAt); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		sh.State = ShareState(st)
 		shares = append(shares, sh)
 	}
-	return bill, shares, rows.Err()
+	return shares, rows.Err()
+}
+
+// GetSplitOversight is the ADMIN read behind GET /api/social/admin/splits/:id.
+// The route's RBAC guard (social.admin.view) is the authZ, so the read is
+// deliberately NOT caller-scoped — ops must be able to inspect a bill + share
+// roster they are not a participant in (the member GetSplit would answer a
+// non-participant admin the same 404 it gives any outsider). NEVER mount this
+// on a member route: the member oracle stays closed. The access is audited.
+func (s *Service) GetSplitOversight(ctx context.Context, adminID, splitID string) (*SplitBill, []SplitShare, error) {
+	bill, err := s.getSplit(ctx, splitID)
+	if err != nil {
+		return nil, nil, err
+	}
+	shares, err := s.splitShares(ctx, splitID)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.log(adminID, "", "social.admin.split.view", "split_bill", bill.ID, nil, nil)
+	return bill, shares, nil
 }
 
 // IsSplitParticipant reports membership for object-level authZ.
@@ -729,24 +876,35 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	if err := s.aml.Check(ctx, userID, amountKobo); err != nil {
 		return 0, err
 	}
-	// Tier guard (fail-closed, E2E-FIN-041): a pool contribution is a wallet
-	// debit and runs the same EnforceWalletDebitLimit as the transfer rail.
-	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
-		return 0, err
-	}
-	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
-		return 0, err
-	}
 	// The journal key is namespaced AND pool-scoped ("social:pool:<pool>:"):
 	// a caller key can never be absorbed by a journal another rail — or
 	// another pool — already posted under the same raw key (S2). This path is
 	// debit-only, so without the scope a same-amount collision on a different
 	// account would satisfy the ledger's replay check while posting NOTHING
 	// here — and the ON CONFLICT row insert below would swallow the lie,
-	// leaving a phantom "contributed" state.
+	// leaving a phantom "contributed" state. It is computed BEFORE the pooled
+	// gate so the committed-key probe can use it (F-3).
 	journalKey := "social:pool:" + poolID + ":" + idemKey
-	if err := s.led.Debit(ctx, userID, "pool:contrib:"+poolID, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	journalPosted, perr := s.led.Posted(ctx, journalKey+":dr")
+	if perr != nil {
+		return 0, fmt.Errorf("social: pool contribute replay probe: %w", perr)
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a pool contribution is a wallet
+	// debit and runs the same EnforceWalletDebitLimit as the transfer rail.
+	// SKIPPED when this key's journal is already durable — the row replay
+	// above misses a debit that committed but lost its contribution row, and
+	// re-counting those legs would refuse the healing retry at-cap; the in-tx
+	// guard inside DebitGated stays the authority.
+	if !journalPosted {
+		if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+			return 0, err
+		}
+	}
+	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.led.DebitGated(ctx, userID, "pool:contrib:"+poolID, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("social: pool contribute debit: %w", err)
 	}
 	// Verify the debit leg posted on THIS contributor's wallet (S2): compare
@@ -817,7 +975,12 @@ func (s *Service) payoutAmount(ctx context.Context, poolID string) (int64, error
 // same legs (same convention as PayShare's "split:"+shareID). The drain row's
 // idempotency_key "payout:"+poolID is likewise deterministic and upserted.
 func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey string) error {
-	p, err := s.getPool(ctx, poolID)
+	// Read through callerPool so a caller with NO stake in the pool gets the
+	// uniform ErrNotFound — the old getPool+403 pair confirmed the pool id
+	// exists to any authenticated caller (existence oracle, same class as
+	// the balance read it guards). A stakeholder who is not the organiser
+	// (beneficiary/contributor) keeps the precise 403.
+	p, err := s.callerPool(ctx, organiserID, poolID)
 	if err != nil {
 		return err
 	}
@@ -928,6 +1091,44 @@ func (s *Service) GetPool(ctx context.Context, callerID, poolID string) (*GroupP
 	return s.callerPool(ctx, callerID, poolID)
 }
 
+// GetPoolOversight is the ADMIN read behind GET /api/social/admin/pools/:id:
+// the pool row, the derived balance, and the full contribution roster (who
+// put in what, incl. the negative drain row once paid out) — the money detail
+// ops oversight needs. The route's RBAC guard (social.admin.view) is the
+// authZ, so the read is deliberately NOT caller-scoped. NEVER mount on a
+// member route — member pool reads stay behind callerPool's uniform-404
+// gate. The access is audited.
+func (s *Service) GetPoolOversight(ctx context.Context, adminID, poolID string) (*GroupPool, int64, []PoolContribution, error) {
+	p, err := s.getPool(ctx, poolID)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	var bal int64
+	const balQ = `SELECT COALESCE(SUM(amount_kobo),0) FROM pool_contributions WHERE pool_id=$1`
+	if err := s.db.QueryRow(ctx, balQ, poolID).Scan(&bal); err != nil {
+		return nil, 0, nil, err
+	}
+	const cQ = `SELECT id, pool_id, user_id, amount_kobo, created_at FROM pool_contributions WHERE pool_id=$1 ORDER BY created_at`
+	rows, err := s.db.Query(ctx, cQ, poolID)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	defer rows.Close()
+	contribs := []PoolContribution{}
+	for rows.Next() {
+		var c PoolContribution
+		if err := rows.Scan(&c.ID, &c.PoolID, &c.UserID, &c.AmountKobo, &c.CreatedAt); err != nil {
+			return nil, 0, nil, err
+		}
+		contribs = append(contribs, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, nil, err
+	}
+	s.log(adminID, "", "social.admin.pool.view", "group_pool", poolID, nil, map[string]any{"balance_kobo": bal})
+	return p, bal, contribs, nil
+}
+
 func (s *Service) paymentByIdem(ctx context.Context, senderID, idemKey string) (*Payment, error) {
 	const q = `SELECT id, sender_id, recipient_id, amount_kobo, note, idempotency_key, created_at FROM social_payments WHERE idempotency_key=$1 AND sender_id=$2`
 	var p Payment
@@ -1010,6 +1211,10 @@ func (s *Service) log(actor, target, action, resType, resID string, oldV, newV m
 var (
 	ErrForbidden = errors.New("social: forbidden")
 	ErrNotFound  = errors.New("social: not found")
+	// ErrReconPending — a ledger leg key was claimed duplicate but no durable
+	// legs back the claim (a bare Redis-lock TTL or a foreign claim). Retryable:
+	// the caller must retry, never flip a row settled as though the leg posted.
+	ErrReconPending = errors.New("social: ledger leg not durably posted — retry")
 )
 
 // AMLConfig is versioned velocity policy for P2P sends (NL-10). Defaults are

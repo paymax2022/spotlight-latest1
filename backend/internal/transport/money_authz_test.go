@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ─── 1. delta-escrow stable idempotency key (the double-charge bug) ──────────
@@ -87,6 +89,16 @@ func (f *fakeTierLimiter) EnforceWalletDebitLimit(_ context.Context, userID stri
 }
 
 func (f *fakeTierLimiter) EnforceCheckoutDebitLimit(_ context.Context, userID string, amountKobo int64) error {
+	f.calls++
+	f.gotUserID = userID
+	f.gotAmount = amountKobo
+	f.gotMethod = "checkout"
+	return f.err
+}
+
+// The in-tx half (F7): the fake records like its pooled sibling — these tests
+// pin WHICH gate ran, not the serialization property (exercised live-DB).
+func (f *fakeTierLimiter) EnforceCheckoutDebitLimitTx(_ context.Context, _ pgx.Tx, userID string, amountKobo int64) error {
 	f.calls++
 	f.gotUserID = userID
 	f.gotAmount = amountKobo

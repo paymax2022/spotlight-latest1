@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -86,6 +87,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
 	lg.GET("/packages", h.ListPackages)              // bundle catalog, same shape as ListTests
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
+	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
 	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
 	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                     // object-level authZ
@@ -155,6 +157,9 @@ func (a *labEscrowAdapter) Release(ctx context.Context, escrowID, payeeID string
 func (a *labEscrowAdapter) Refund(ctx context.Context, escrowID string) error {
 	return a.e.Refund(ctx, escrowID)
 }
+func (a *labEscrowAdapter) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return a.e.RefundIf(ctx, escrowID, guard)
+}
 
 // labDispatchAdapter books a phlebotomist dispatch / results courier as a parcel
 // job on the transport last-mile rail (REUSE — no routing rebuild). The returned
@@ -209,18 +214,28 @@ func (a *labProviderGateAdapter) VerifiedLabOwner(ctx context.Context, userID, p
 	}
 	return ok, nil
 }
+
+// IsVerifiedScientist / IsVerifiedPhlebotomist answer "is userID verified staff
+// OF providerID": the lab's verified owner, or an ACTIVE lab_staff affiliation
+// with the matching role (ADR-PR641). The single-identity capability model
+// (a lab_scientist/phlebotomist health_providers row owned by the credential
+// holder) names no employing lab, so the affiliation table — granted by the
+// lab's owner — is the only non-owner answer. Fail closed on any read error.
 func (a *labProviderGateAdapter) IsVerifiedScientist(ctx context.Context, userID, providerID string) (bool, error) {
-	return a.hasCapability(ctx, userID, "lab_scientist")
+	return a.staffOrOwner(ctx, userID, providerID, "scientist")
 }
 func (a *labProviderGateAdapter) IsVerifiedPhlebotomist(ctx context.Context, userID, providerID string) (bool, error) {
-	return a.hasCapability(ctx, userID, "phlebotomist")
+	return a.staffOrOwner(ctx, userID, providerID, "phlebotomist")
 }
-func (a *labProviderGateAdapter) hasCapability(ctx context.Context, userID, providerType string) (bool, error) {
+func (a *labProviderGateAdapter) staffOrOwner(ctx context.Context, userID, providerID, role string) (bool, error) {
 	var ok bool
 	const q = `SELECT EXISTS (
 		SELECT 1 FROM health_providers
-		WHERE owner_user_id=$1 AND domain='LAB' AND provider_type=$2 AND status='APPROVED')`
-	if err := a.db.QueryRow(ctx, q, userID, providerType).Scan(&ok); err != nil {
+		WHERE id=$1 AND owner_user_id=$2 AND domain='LAB' AND provider_type='lab' AND status='APPROVED')
+		OR EXISTS (
+		SELECT 1 FROM lab_staff
+		WHERE lab_provider_id=$1 AND user_id=$2 AND status='ACTIVE' AND role=$3)`
+	if err := a.db.QueryRow(ctx, q, providerID, userID, role).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil

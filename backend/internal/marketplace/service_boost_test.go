@@ -102,6 +102,17 @@ func (f *fakeBoostLedger) Debit(ctx context.Context, userID, reference, idempote
 	return nil
 }
 
+// DebitGated satisfies boostLedger — the fake needs no in-tx tier check; the
+// serialization property is exercised by the tiers/ledger live-DB suites.
+func (f *fakeBoostLedger) DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
+	return f.Debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
+}
+
+// Posted satisfies boostLedger — seen keys are the committed journals.
+func (f *fakeBoostLedger) Posted(_ context.Context, idempotencyKey string) (bool, error) {
+	return f.seen[idempotencyKey], nil
+}
+
 func (f *fakeBoostLedger) PostReversal(_ context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error {
 	if f.seen[idempotencyKey] {
 		return ledger.ErrDuplicate

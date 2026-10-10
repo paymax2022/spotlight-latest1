@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/tiers"
@@ -29,6 +30,55 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 		isAdmin = func(c *gin.Context) bool { return false }
 	}
 	return &Handler{svc: svc, isAdmin: isAdmin}
+}
+
+// uuidPathID gates a uuid-typed :id path param before it can reach a
+// WHERE id=$1 object load — a malformed value is a 400 naming the field,
+// never a driver error → 4xx/500 (w11 covered input params; this is the
+// object-load side of the same shape-gate). Returns the param value and true
+// on success; on failure the response is already written and the caller must
+// return early.
+func uuidPathID(c *gin.Context, field string) (string, bool) {
+	v := c.Param("id")
+	if _, err := uuid.Parse(v); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, field+" must be a uuid")
+		return "", false
+	}
+	return v, true
+}
+
+// uuidQueryID gates an optional uuid-typed query param ("" = no filter) the
+// same way — malformed → 400 naming the field.
+func uuidQueryID(c *gin.Context, field string) (string, bool) {
+	v := c.Query(field)
+	if v != "" {
+		if _, err := uuid.Parse(v); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, field+" must be a uuid")
+			return "", false
+		}
+	}
+	return v, true
+}
+
+// failErr writes a service failure through the sanitiser: module-authored
+// domain text passes verbatim at 4xx, but Postgres/pgx/driver strings are
+// replaced by the status's generic message — raw driver text never reaches a
+// client at any status.
+func failErr(c *gin.Context, status int, err error) {
+	ginutil.FailOK(c, status, httperr.Sanitize(c, status, err.Error()))
+}
+
+// failVet is failErr plus the appointment-scoped uniform denial: the service
+// returns ErrAppointmentNotFound for a missing appointment AND for "exists but
+// the caller is neither patient nor vet" (same fold as social #602 /
+// association #606 / aicare — no existence oracle), so both are 404 here,
+// not the domain-refusal fallback status.
+func failVet(c *gin.Context, fallback int, err error) {
+	if errors.Is(err, ErrAppointmentNotFound) {
+		failErr(c, http.StatusNotFound, err)
+		return
+	}
+	failErr(c, fallback, err)
 }
 
 // CreatePet — POST /pets  (owner; seeds vault PET record, HL-8)
@@ -62,7 +112,7 @@ func (h *Handler) CreatePet(c *gin.Context) {
 		if errors.Is(err, ErrPetMissingIdem) {
 			status = http.StatusBadRequest
 		}
-		ginutil.FailOK(c, status, err.Error())
+		failErr(c, status, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "pet": out})
@@ -80,7 +130,7 @@ func (h *Handler) ListPets(c *gin.Context) {
 	// bug indistinguishable from a bad/missing token.
 	pets, err := h.svc.ListPets(c.Request.Context(), id)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pets": pets})
@@ -105,7 +155,7 @@ func (h *Handler) DiscoverVets(c *gin.Context) {
 	}
 	vets, err := h.svc.DiscoverVets(c.Request.Context(), lat, lng, radius)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "vets": vets})
@@ -150,7 +200,7 @@ func (h *Handler) UpsertService(c *gin.Context) {
 		VisitType: VisitType(req.VisitType), PriceKobo: req.PriceKobo, Active: req.Active,
 	})
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		failErr(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "service": out})
@@ -214,11 +264,11 @@ func (h *Handler) Book(c *gin.Context) {
 		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
 		switch {
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			ginutil.FailOK(c, http.StatusForbidden, err.Error())
+			failErr(c, http.StatusForbidden, err)
 		case errors.Is(err, escrow.ErrTierGateUnwired):
-			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+			failErr(c, http.StatusServiceUnavailable, err)
 		default:
-			ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+			failErr(c, http.StatusUnprocessableEntity, err)
 		}
 		return
 	}
@@ -232,9 +282,13 @@ func (h *Handler) Accept(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	a, err := h.svc.Accept(c.Request.Context(), id, c.Param("id"))
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
+	a, err := h.svc.Accept(c.Request.Context(), id, apptID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -247,9 +301,13 @@ func (h *Handler) Confirm(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	a, err := h.svc.Confirm(c.Request.Context(), id, c.Param("id"))
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
+	a, err := h.svc.Confirm(c.Request.Context(), id, apptID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -262,13 +320,17 @@ func (h *Handler) Cancel(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	a, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
+	a, err := h.svc.Cancel(c.Request.Context(), id, apptID, req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -281,9 +343,13 @@ func (h *Handler) Dispatch(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	a, err := h.svc.Dispatch(c.Request.Context(), id, c.Param("id"))
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
+	a, err := h.svc.Dispatch(c.Request.Context(), id, apptID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -296,9 +362,13 @@ func (h *Handler) StartConsult(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	a, err := h.svc.StartConsult(c.Request.Context(), id, c.Param("id"))
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
+	a, err := h.svc.StartConsult(c.Request.Context(), id, apptID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -352,15 +422,27 @@ func (h *Handler) CompleteConsult(c *gin.Context) {
 			return
 		}
 	}
+	// Every lab_test_ids entry feeds vet_lab_referrals.test_ids (uuid[]) —
+	// malformed → 400, never a driver error.
+	for _, testID := range req.LabTestIDs {
+		if _, err := uuid.Parse(testID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "lab_test_ids must be uuids")
+			return
+		}
+	}
 	in := CompleteInput{
 		Subjective: req.Subjective, Objective: req.Objective,
 		Assessment: req.Assessment, Plan: req.Plan,
 		RxItems: items, PharmacyProviderID: req.PharmacyProviderID,
 		LabProviderID: req.LabProviderID, LabTestIDs: req.LabTestIDs,
 	}
-	res, err := h.svc.CompleteConsult(c.Request.Context(), id, c.Param("id"), in)
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
+	res, err := h.svc.CompleteConsult(c.Request.Context(), id, apptID, in)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "result": res})
@@ -394,7 +476,7 @@ func (h *Handler) ScheduleVaccination(c *gin.Context) {
 	}
 	v, err := h.svc.ScheduleVaccination(c.Request.Context(), id, c.Param("id"), req.Vaccine, dueAt)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		failErr(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "vaccination": v})
@@ -417,7 +499,7 @@ func (h *Handler) EmergencySOS(c *gin.Context) {
 	}
 	res, err := h.svc.EmergencySOS(c.Request.Context(), id, req.Lat, req.Lng)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sos": res})
@@ -432,7 +514,7 @@ func (h *Handler) ListMyAppointments(c *gin.Context) {
 	}
 	appts, err := h.svc.ListAppointmentsForPatient(c.Request.Context(), id)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointments": appts})
@@ -440,9 +522,15 @@ func (h *Handler) ListMyAppointments(c *gin.Context) {
 
 // Get — GET /appointments/:id  (object-level authZ: owner / vet / admin)
 func (h *Handler) Get(c *gin.Context) {
-	a, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
+	apptID, ok := uuidPathID(c, "appointment id")
+	if !ok {
+		return
+	}
+	a, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), apptID, h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		// Missing-or-denied is the sentinel → uniform 404; anything else is an
+		// internal failure (the old blanket-403 misreported DB errors).
+		failVet(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointment": a})
@@ -454,9 +542,13 @@ func (h *Handler) Get(c *gin.Context) {
 
 // AdminListAppointments — GET /admin/appointments?state=&provider_id=
 func (h *Handler) AdminListAppointments(c *gin.Context) {
-	rows, err := h.svc.AdminListAppointments(c.Request.Context(), c.Query("state"), c.Query("provider_id"))
+	provID, ok := uuidQueryID(c, "provider_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminListAppointments(c.Request.Context(), c.Query("state"), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "appointments": rows})
@@ -466,7 +558,7 @@ func (h *Handler) AdminListAppointments(c *gin.Context) {
 func (h *Handler) AdminVCNAudit(c *gin.Context) {
 	rows, err := h.svc.AdminVCNAudit(c.Request.Context())
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "providers": rows})
@@ -474,9 +566,13 @@ func (h *Handler) AdminVCNAudit(c *gin.Context) {
 
 // AdminERxAudit — GET /admin/erx-audit?provider_id=  (e-prescription audit, HL-3/HL-12)
 func (h *Handler) AdminERxAudit(c *gin.Context) {
-	rows, err := h.svc.AdminERxAudit(c.Request.Context(), c.Query("provider_id"))
+	provID, ok := uuidQueryID(c, "provider_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminERxAudit(c.Request.Context(), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rows})
@@ -484,8 +580,12 @@ func (h *Handler) AdminERxAudit(c *gin.Context) {
 
 // AdminDeactivateService — POST /admin/services/:id/deactivate  (fee governance)
 func (h *Handler) AdminDeactivateService(c *gin.Context) {
-	if err := h.svc.AdminDeactivateService(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	serviceID, ok := uuidPathID(c, "service id")
+	if !ok {
+		return
+	}
+	if err := h.svc.AdminDeactivateService(c.Request.Context(), ginutil.UserID(c), serviceID); err != nil {
+		failVet(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -498,7 +598,7 @@ func (h *Handler) AdminDeactivateService(c *gin.Context) {
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})

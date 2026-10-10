@@ -8,6 +8,7 @@ import (
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,10 @@ type Auditor interface {
 // Tier-0 checkout allowance (ADR-043) does NOT apply here.
 type walletDebitLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceWalletDebitLimitTx is the SAME check evaluated inside the debiting
+	// transaction under the wallet advisory lock — the authoritative half of
+	// the gate (F7). Satisfies ledger.DebitGuard.
+	EnforceWalletDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
@@ -43,6 +48,12 @@ var ErrTierGateUnwired = errors.New("escrow: money path requires a tier gate (no
 // 503 in p2pmarket/handler.go). Distinct from ledger.ErrDuplicate, which is a
 // permanent identity conflict and must stay non-retryable.
 var ErrReconPending = errors.New("escrow: ledger reported duplicate but the journal is not posted — retryable inconsistency")
+
+// ErrDisputeRequired is returned by Release/Refund on a DISPUTED hold: contested
+// funds may only leave through Arbitrate so the dispute row is always closed
+// with the recorded ruling — a direct resolve would move the money and strand
+// the dispute bookkeeping OPEN forever (F6d). Fail closed, not retryable.
+var ErrDisputeRequired = errors.New("escrow: hold is DISPUTED — resolve via Arbitrate")
 
 // Service is a generic, ledger-backed funds-hold state machine reusable by
 // social / events / creators. It extends the finance ledger directly: a HELD
@@ -91,7 +102,25 @@ func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKo
 	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
-// Hold debits the payer's wallet into the escrow account and records a HELD hold.
+// Hold debits the payer's wallet into the escrow account and records a HELD
+// hold with no pinned counterparty (payee chosen at Release time). Callers that
+// already know who the funds are owed to — e.g. p2pmarket knows the seller at
+// checkout — should use HoldWithPayee so a later DISPUTED hold can still be
+// arbitrated to RELEASE.
+func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idemKey string, amountKobo int64) (*Hold, error) {
+	return s.hold(ctx, payerID, "", reference, moduleType, idemKey, amountKobo)
+}
+
+// HoldWithPayee is Hold plus the intended counterparty recorded at hold time.
+// Pinning the payee makes Arbitrate(DecisionRelease) reachable on a disputed
+// hold (the pre-fix flow only wrote payee_id at RELEASE commit, so every real
+// arbitration could only ever REFUND — F2). Once pinned, Release must credit
+// exactly that payee; a mismatched payee argument fails closed.
+func (s *Service) HoldWithPayee(ctx context.Context, payerID, payeeID, reference, moduleType, idemKey string, amountKobo int64) (*Hold, error) {
+	return s.hold(ctx, payerID, payeeID, reference, moduleType, idemKey, amountKobo)
+}
+
+// hold is the shared funds-hold money path behind Hold / HoldWithPayee.
 // idemKey makes the whole operation replay-safe: the ledger debit is suffixed
 // per-leg ("<idemKey>:hold") and the hold row carries a UNIQUE idempotency_key.
 //
@@ -105,16 +134,36 @@ func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKo
 // heal. The replay converges by probing the ledger of record FIRST: an
 // already-posted leg skips both the gate and the re-debit, is verified to be
 // THIS journal, and the missing row is healed by the insert below.
-func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idemKey string, amountKobo int64) (*Hold, error) {
+func (s *Service) hold(ctx context.Context, payerID, payeeID, reference, moduleType, idemKey string, amountKobo int64) (*Hold, error) {
 	if amountKobo <= 0 {
 		return nil, fmt.Errorf("escrow: amount must be positive kobo, got %d", amountKobo)
 	}
 	if payerID == "" || idemKey == "" {
 		return nil, errors.New("escrow: payer and idempotency key required")
 	}
+	if payeeID != "" && payeeID == payerID {
+		return nil, errors.New("escrow: payee cannot be the payer")
+	}
+	if moduleType == "" {
+		// module_type is the discriminator that binds a key (and its heal
+		// journal) to the domain that minted it — an empty value must fail
+		// closed, not mint an unattributable hold.
+		return nil, errors.New("escrow: module type required")
+	}
 
-	// Replay: if a hold already exists for this key, return it (no double-debit).
+	// Replay: if a hold already exists for this key, return it (no double-debit)
+	// — but only when the stored row proves the SAME caller minted it. The key
+	// is globally unique yet caller-supplied, so a same-key collision across
+	// modules (a p2pmarket order vs a health order) or across payers must
+	// refuse rather than adopt a hold another domain funded. A NULL payee is
+	// healed when THIS payer replays with a counterparty — a mid-flight hold
+	// created before payee pinning (or by a Hold caller) can still gain one,
+	// so its eventual arbitration keeps RELEASE reachable.
 	if existing, err := s.getByIdem(ctx, idemKey); err == nil && existing != nil {
+		if err := s.verifyHoldIdentity(existing, payerID, moduleType, reference, amountKobo); err != nil {
+			return nil, err
+		}
+		s.maybePinPayee(ctx, existing, payerID, payeeID)
 		return existing, nil
 	}
 
@@ -135,21 +184,28 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 		// then skip both the tier gate (the money already moved; re-counting it
 		// would refuse a same-day replay on the daily cap) and the re-debit, and
 		// let the row insert below heal the missing hold.
-		if err := s.verifyHoldDebitLeg(ctx, payerID, holdKey, reference, escrowAcc.ID, amountKobo); err != nil {
+		if err := s.verifyHoldDebitLeg(ctx, payerID, holdKey, moduleType, reference, escrowAcc.ID, amountKobo); err != nil {
 			return nil, err
 		}
 	} else {
 		// Tier gate (fail-closed, E2E-FIN-046): a hold is a wallet debit, so the
 		// same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
 		// money moves — a refused attempt posts zero ledger legs and no hold
-		// row. Fresh attempts only: replays of a completed key already returned
-		// the existing hold above, and replays of a debit-only crash take the
-		// heal branch.
+		// row. This pooled call is the ADVISORY half only (fast early refusal);
+		// postHoldDebit re-runs the same check inside the debit tx under the
+		// wallet advisory lock via ledger.DebitWithGuard — the authoritative
+		// half that closes F7 (two concurrent holds can both pass the pooled
+		// read; the serialised in-tx read admits only one). Fresh attempts
+		// only: replays of a completed key already returned the existing hold
+		// above, and replays of a debit-only crash take the heal branch — the
+		// in-tx guard is skipped on a verified committed replay by the
+		// ledger's replay-first ordering, so a retry is never refused by
+		// re-counting its own posted legs.
 		if err := s.enforceDebitLimit(ctx, payerID, amountKobo); err != nil {
 			return nil, err
 		}
 		// NL-1: ledger.Debit fails closed on insufficient funds — no negative balance.
-		if err := s.postHoldDebit(ctx, payerID, reference, holdKey, escrowAcc.ID, amountKobo); err != nil {
+		if err := s.postHoldDebit(ctx, payerID, moduleType, reference, holdKey, escrowAcc.ID, amountKobo); err != nil {
 			return nil, err
 		}
 	}
@@ -164,16 +220,26 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 		IdempotencyKey: idemKey,
 		HeldAt:         time.Now(),
 	}
+	var payeeArg any
+	if payeeID != "" {
+		p := payeeID
+		h.PayeeID = &p
+		payeeArg = payeeID
+	}
 	const ins = `
-		INSERT INTO escrow_holds (id, reference, module_type, payer_id, amount_kobo, state, idempotency_key, held_at)
-		VALUES ($1,$2,$3,$4,$5,'HELD',$6,$7)`
-	if _, err := s.db.Exec(ctx, ins, h.ID, h.Reference, h.ModuleType, h.PayerID, h.AmountKobo, h.IdempotencyKey, h.HeldAt); err != nil {
+		INSERT INTO escrow_holds (id, reference, module_type, payer_id, payee_id, amount_kobo, state, idempotency_key, held_at)
+		VALUES ($1,$2,$3,$4,$5,$6,'HELD',$7,$8)`
+	if _, err := s.db.Exec(ctx, ins, h.ID, h.Reference, h.ModuleType, h.PayerID, payeeArg, h.AmountKobo, h.IdempotencyKey, h.HeldAt); err != nil {
 		// A concurrent Hold with the same key won the insert race — converge on
-		// its persisted row instead of surfacing a raw unique violation (the
-		// shared ledger leg is keyed on idemKey, so the winner's row correctly
-		// represents the posted debit either way).
+		// its persisted row instead of surfacing a raw unique violation, but
+		// only when the winner's row is the SAME claim (module + payer). A
+		// foreign winner under this key must refuse, not be adopted.
 		if dbutil.IsUniqueViolation(err) {
 			if existing, gerr := s.getByIdem(ctx, idemKey); gerr == nil && existing != nil {
+				if verr := s.verifyHoldIdentity(existing, payerID, moduleType, reference, amountKobo); verr != nil {
+					return nil, verr
+				}
+				s.maybePinPayee(ctx, existing, payerID, payeeID)
 				return existing, nil
 			}
 		}
@@ -183,14 +249,49 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 	return h, nil
 }
 
+// maybePinPayee heals a NULL payee_id on a replayed hold — but only when the
+// replaying caller IS the stored payer and supplies a counterparty. A replay by
+// anyone else (or one carrying no payee) leaves the row untouched, so a foreign
+// claimant can never attach a beneficiary to someone else's hold. Best-effort:
+// on failure the hold still returns — a NULL payee simply keeps arbitration
+// refund-only (fail closed), never misdirects funds. The UPDATE's IS NULL guard
+// means a pinned payee can never be overwritten by a replay.
+func (s *Service) maybePinPayee(ctx context.Context, h *Hold, payerID, payeeID string) {
+	if payeeID == "" || h.PayerID != payerID || (h.PayeeID != nil && *h.PayeeID != "") {
+		return
+	}
+	ct, err := s.db.Exec(ctx,
+		`UPDATE escrow_holds SET payee_id=$2 WHERE id=$1 AND payee_id IS NULL`, h.ID, payeeID)
+	if err == nil && ct.RowsAffected() > 0 {
+		p := payeeID
+		h.PayeeID = &p
+		if s.audit != nil {
+			s.audit.LogAction(h.PayerID, "", "escrow.payee.pin", "escrow", "escrow_hold", h.ID,
+				nil,
+				map[string]any{"payee_id": payeeID},
+				"", "", "info")
+		}
+	}
+}
+
 // postHoldDebit posts the payer->escrow debit leg for a fresh hold. On
 // ledger.ErrDuplicate the ledger of record is re-probed — the Redis idem-lock
 // can report a duplicate within its TTL for a posting the DB never recorded,
 // and a racing poster may have committed the identical journal. A durably
 // posted matching leg is a no-op success; a foreign claim under the key fails
 // closed via verifyHoldDebitLeg (mirrors ensureResolutionCredit).
-func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey, escrowAccID string, amountKobo int64) error {
-	err := s.led.Debit(ctx, payerID, "escrow:"+reference, holdKey, escrowAccID, amountKobo)
+func (s *Service) postHoldDebit(ctx context.Context, payerID, moduleType, reference, holdKey, escrowAccID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	// DebitWithGuard carries the tier check INTO the posting tx: the daily-cap
+	// sum is evaluated under pg_advisory_xact_lock("wallet:"+payerID) — the same
+	// lock every gated wallet debit takes — immediately before the legs insert,
+	// so concurrent holds on one wallet cannot collectively overshoot the cap
+	// (F7). The guard runs after the repo's replay verification, so a committed
+	// prior journal under holdKey converges without re-gating.
+	err := s.led.DebitWithGuard(ctx, payerID, holdLedgerRef(moduleType, reference), holdKey, escrowAccID, amountKobo,
+		s.tiers.EnforceWalletDebitLimitTx)
 	if err == nil {
 		return nil
 	}
@@ -204,14 +305,93 @@ func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey
 	if !posted {
 		return fmt.Errorf("%w: hold debit for key %s", ErrReconPending, holdKey)
 	}
-	return s.verifyHoldDebitLeg(ctx, payerID, holdKey, reference, escrowAccID, amountKobo)
+	return s.verifyHoldDebitLeg(ctx, payerID, holdKey, moduleType, reference, escrowAccID, amountKobo)
+}
+
+// holdLedgerRef stamps the module discriminator into the durable hold-debit
+// journal reference: "escrow:<module>:<reference>". escrow_holds.module_type
+// only exists once the hold row commits — on the heal path that row is exactly
+// what is missing, so the journal itself must carry which module minted the
+// debit. A same-payer key collision across modules then fails the identity
+// check instead of healing/pinning one module's hold onto another module's
+// parked debit. Pre-discriminator journals ("escrow:<reference>", written
+// before this convention) no longer verify: a hold that crashed in that window
+// refuses closed rather than being mis-attached — the safe side, since the
+// funds stay parked in the escrow standing account for recon.
+func holdLedgerRef(moduleType, reference string) string {
+	return "escrow:" + moduleType + ":" + reference
+}
+
+// journalModule extracts the module segment from an escrow-hold journal ref
+// ("escrow:<module>:<reference>"). Returns "" for refs that are not escrow
+// hold journals at all. A pre-discriminator "escrow:<reference>" parses to its
+// first reference segment — which can only mismatch every real module — so a
+// stale journal still reads as foreign.
+func journalModule(reference string) string {
+	rest, ok := strings.CutPrefix(reference, "escrow:")
+	if !ok {
+		return ""
+	}
+	mod, _, _ := strings.Cut(rest, ":")
+	return mod
+}
+
+// verifyHoldIdentity is the row-side of the foreign-claim check: a replayed
+// (or race-won) escrow_holds row is adoptable only when the module AND the
+// payer recorded on it match the caller's claim. Both checks fail closed with
+// ledger.ErrDuplicate semantics — the key is durably claimed by a different
+// hold — and emit a foreign-claim audit event; never silently hand one
+// domain's hold to another caller.
+func (s *Service) verifyHoldIdentity(h *Hold, payerID, moduleType, reference string, amountKobo int64) error {
+	if h.ModuleType != moduleType {
+		s.logForeignClaim(payerID, h.ID, h.IdempotencyKey, "module_mismatch", moduleType, h.ModuleType)
+		return fmt.Errorf("%w: idempotency key %s is bound to a %s hold — refusing to adopt it for module %s",
+			ledger.ErrDuplicate, h.IdempotencyKey, h.ModuleType, moduleType)
+	}
+	if h.PayerID != payerID {
+		s.logForeignClaim(payerID, h.ID, h.IdempotencyKey, "payer_mismatch", moduleType, h.ModuleType)
+		return fmt.Errorf("%w: idempotency key %s is bound to a different payer's hold — refusing to adopt it",
+			ledger.ErrDuplicate, h.IdempotencyKey)
+	}
+	// Same module + payer isn't enough: a stranded unbound hold under this key
+	// must not be adopted by a DIFFERENT claim (another listing's checkout
+	// would bind an order for price B to a hold containing price A).
+	if h.Reference != reference || h.AmountKobo != amountKobo {
+		s.logForeignClaim(payerID, h.ID, h.IdempotencyKey, "params_mismatch", moduleType, h.ModuleType)
+		return fmt.Errorf("%w: idempotency key %s is bound to a hold with different reference/amount — refusing to adopt it",
+			ledger.ErrDuplicate, h.IdempotencyKey)
+	}
+	return nil
+}
+
+// logForeignClaim emits the audit event for a refused adoption/attach attempt:
+// a caller tried to replay or heal onto a hold/journal that proves to belong
+// to a different module or a different payer. Severity warning — the claim is
+// fail-closed (no money moves), but a foreign claim under a live key is
+// recon-relevant.
+func (s *Service) logForeignClaim(actorID, holdID, key, reason, requestedModule, recordedModule string) {
+	if s.audit == nil {
+		return
+	}
+	s.audit.LogAction(actorID, "", "escrow.hold.foreign_claim", "escrow", "escrow_hold", holdID,
+		nil,
+		map[string]any{
+			"reason":           reason,
+			"idempotency_key":  key,
+			"requested_module": requestedModule,
+			"recorded_module":  recordedModule,
+		}, "", "", "warning")
 }
 
 // verifyHoldDebitLeg confirms the balanced pair under holdKey is THIS hold's
 // journal, checking BOTH legs (the in-repo standard set by
-// repository.journalLegsMatchTx):
+// repository.journalLegsMatchTx) AND the module discriminator carried inside
+// the journal reference:
 //   - "<holdKey>:credit" must credit the escrow standing account the exact
-//     amount under the "escrow:<reference>" reference;
+//     amount under the "escrow:<module>:<reference>" reference — the module
+//     segment binds the parked debit to the domain that minted it, so a
+//     same-payer key collision across modules cannot heal/pin this module's
+//     hold onto another module's debit;
 //   - "<holdKey>:debit" must debit THIS caller's user_wallet — the credit leg
 //     is constant across payers, so checking it alone would let a replay
 //     carrying another payer's key adopt THEIR parked debit and write a hold
@@ -221,14 +401,25 @@ func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey
 // The payer's wallet resolves via GetOrCreateUserWallet — the same path Debit
 // uses internally — so the comparison is against the account the debit would
 // have hit. Any mismatch fails closed with ErrDuplicate semantics: never heal
-// a hold onto a caller whose debit wasn't theirs.
-func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, reference, escrowAccID string, amountKobo int64) error {
+// a hold onto a caller whose debit wasn't theirs. A refusal where the recorded
+// journal is a DIFFERENT module's escrow journal additionally emits the
+// foreign-claim audit event (recon needs to see refused cross-module claims).
+func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, moduleType, reference, escrowAccID string, amountKobo int64) error {
+	want := holdLedgerRef(moduleType, reference)
 	credit, found, err := s.led.EntryByKey(ctx, holdKey+":credit")
 	if err != nil {
 		return fmt.Errorf("escrow: read hold credit leg: %w", err)
 	}
 	if !found || credit.AccountID != escrowAccID || credit.Type != ledger.EntryCredit ||
-		credit.Reference != "escrow:"+reference || credit.AmountKobo != amountKobo {
+		credit.Reference != want || credit.AmountKobo != amountKobo {
+		if found {
+			// The recorded journal is an escrow-hold journal but minted by a
+			// DIFFERENT module — the exact cross-module adoption the
+			// discriminator exists to refuse. Audit it.
+			if recorded := journalModule(credit.Reference); recorded != "" && recorded != moduleType {
+				s.logForeignClaim(payerID, "", holdKey, "module_mismatch", moduleType, recorded)
+			}
+		}
 		return fmt.Errorf("%w: key %s held by a different journal — refusing to attach a hold row",
 			ledger.ErrDuplicate, holdKey)
 	}
@@ -241,21 +432,61 @@ func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, refe
 		return fmt.Errorf("escrow: read hold debit leg: %w", err)
 	}
 	if !found || debit.AccountID != payerAcc.ID || debit.Type != ledger.EntryDebit ||
-		debit.Reference != "escrow:"+reference || debit.AmountKobo != amountKobo {
+		debit.Reference != want || debit.AmountKobo != amountKobo {
+		// Audit parity with the row-side refusal: a same-key claim whose debit
+		// leg belongs to another payer must be visible to recon, not silent.
+		s.logForeignClaim(payerID, "", holdKey, "payer_mismatch", moduleType, moduleType)
 		return fmt.Errorf("%w: key %s debit leg is not this payer's journal — refusing to attach a hold row",
 			ledger.ErrDuplicate, holdKey)
 	}
 	return nil
 }
 
-// Release moves the held amount from escrow to the payee (HELD|DISPUTED → RELEASED).
+// Release moves the held amount from escrow to the payee (HELD → RELEASED).
+// A DISPUTED hold refuses: contested funds may only leave through Arbitrate, so
+// a direct release/refund can never bypass dispute bookkeeping (F6d).
 func (s *Service) Release(ctx context.Context, escrowID, payeeID string) error {
-	return s.resolve(ctx, escrowID, StateReleased, payeeID, "escrow.release")
+	return s.resolve(ctx, escrowID, StateReleased, payeeID, "escrow.release", false, nil)
 }
 
-// Refund returns the held amount to the original payer (HELD|DISPUTED → REFUNDED).
+// Refund returns the held amount to the original payer (HELD → REFUNDED).
+// A DISPUTED hold refuses: contested funds may only leave through Arbitrate.
 func (s *Service) Refund(ctx context.Context, escrowID string) error {
-	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund")
+	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false, nil)
+}
+
+// ErrHoldBound is what a RefundIf guard returns when the hold has already been
+// adopted by a domain order/payment row — i.e., a concurrent create won the
+// race and this request was only ever the loser. Refunding a bound hold would
+// reverse a live order's payment out from under it, so compensation callers
+// must skip the refund and treat the outcome as winner-exists idempotency
+// conflict (their ErrIdemConflict), never as success.
+var ErrHoldBound = errors.New("escrow: hold already bound to a domain order")
+
+// RefundIf is Refund plus an in-transaction guard: `guard` runs inside the
+// resolution transaction AFTER the escrow_holds row is locked FOR UPDATE and
+// AFTER the HELD→REFUNDED transition passes the FSM check, but BEFORE the hold
+// row is updated. A guarded refund therefore serializes against the domain
+// side's binding transaction (which takes the same FOR UPDATE lock before
+// inserting its order/payment row): a guard that re-probes bound-ness inside
+// this lock sees the winner's committed row and can veto with ErrHoldBound —
+// closing the pool-side EXISTS-probe + bare-Refund TOCTOU where a loser could
+// refund a hold the winner had just bound. A non-nil guard error aborts the
+// resolution (no state change, no ledger credit) and is returned verbatim.
+func (s *Service) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false, guard)
+}
+
+// resolveArbitrated is the arbitration-only lane of resolve: Arbitrate calls it
+// after its own dispute checks, so a DISPUTED hold may transition to its ruled
+// terminal state. The same FSM, the same money leg, the same heal semantics —
+// only the DISPUTED source guard differs.
+func (s *Service) resolveArbitrated(ctx context.Context, escrowID string, to State, payeeID string) error {
+	action := "escrow.release"
+	if to == StateRefunded {
+		action = "escrow.refund"
+	}
+	return s.resolve(ctx, escrowID, to, payeeID, action, true, nil)
 }
 
 // resolve performs the guarded transition + the matching ledger credit. The row
@@ -272,7 +503,7 @@ func (s *Service) Refund(ctx context.Context, escrowID string) error {
 // RELEASED/REFUNDED state, and never a double-pay: the per-leg key dedups a
 // racing poster, and a committed terminal state means the OPPOSITE leg can no
 // longer be attempted — the FSM rejects it before any money moves).
-func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string) error {
+func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string, viaArbitration bool, guard func(context.Context, pgx.Tx) error) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("escrow: begin: %w", err)
@@ -314,15 +545,46 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	if !canTransition(from, to) {
 		return fmt.Errorf("escrow: illegal transition %s -> %s", from, to)
 	}
+	if from == StateDisputed && !viaArbitration {
+		// Fail closed (F6d): a direct Release/Refund on a DISPUTED hold would
+		// move the money while the dispute row stays OPEN — contested funds may
+		// only be resolved through Arbitrate, which closes the dispute with the
+		// recorded decision + arbiter.
+		return fmt.Errorf("%w: hold %s", ErrDisputeRequired, escrowID)
+	}
 
-	const upd = `UPDATE escrow_holds SET state=$2, payee_id=$3, resolved_at=now() WHERE id=$1`
+	// RefundIf guard: runs under the FOR UPDATE lock, after the transition is
+	// proven legal, before the state write — so a domain-binding transaction
+	// holding (or queueing for) the same row lock is fully ordered against this
+	// check. A veto aborts the tx via the deferred Rollback: no state flip, no
+	// credit.
+	if guard != nil {
+		if err := guard(ctx, tx); err != nil {
+			return err
+		}
+	}
+
+	// COALESCE keeps a payee pinned at hold time on the REFUND path — refunding
+	// must not erase the counterparty record the dispute/arbitration relied on.
+	const upd = `UPDATE escrow_holds SET state=$2, payee_id=COALESCE($3, payee_id), resolved_at=now() WHERE id=$1`
 	var payeeArg any
 	if to == StateReleased {
-		if payeeID == "" {
+		effective := payeeID
+		if h.PayeeID != nil && *h.PayeeID != "" {
+			// The payee was pinned at hold time — release must credit exactly
+			// that counterparty. A different payee argument fails closed rather
+			// than redirect the funds; an empty one just uses the pin.
+			if effective == "" {
+				effective = *h.PayeeID
+			} else if effective != *h.PayeeID {
+				return fmt.Errorf("escrow: hold %s payee is pinned — cannot release to a different payee", escrowID)
+			}
+		}
+		if effective == "" {
 			return errors.New("escrow: payee required to release")
 		}
-		payeeArg = payeeID
-		h.PayeeID = &payeeID
+		payeeArg = effective
+		h.PayeeID = &effective
 	}
 	if _, err := tx.Exec(ctx, upd, escrowID, string(to), payeeArg); err != nil {
 		return fmt.Errorf("escrow: update state: %w", err)

@@ -43,9 +43,14 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { POST as resolvePOST } from '../../../app/api/v1/support/sessions/[id]/resolve/route';
 import { POST as escalatePOST } from '../../../app/api/v1/support/sessions/[id]/escalate/route';
-import { POST as messagePOST } from '../../../app/api/v1/support/sessions/[id]/messages/route';
+import { GET as messageGET, POST as messagePOST } from '../../../app/api/v1/support/sessions/[id]/messages/route';
 
 const TEST_USER = { id: 'user-aicare-1', email: 'aicare@example.com' };
+
+// The :id segment is uuid-gated at the BFF edge (w12): a malformed session id
+// is a 400 naming the field before the proxy can run, so every happy-path
+// call below uses a uuid-shaped id.
+const SESS_ID = '3f0a1c9e-0000-4000-8000-000000000001';
 
 function idParams(id: string) {
   return { params: Promise.resolve({ id }) };
@@ -60,44 +65,58 @@ describe('aicare BFF route → Go upstream mapping', () => {
 
   it('proxies POST /api/v1/support/sessions/:id/resolve to the finance support mount', async () => {
     const res = await resolvePOST(
-      makeRequest('/api/v1/support/sessions/sess-1/resolve', { method: 'POST', headers: withAuth() }),
-      idParams('sess-1')
+      makeRequest(`/api/v1/support/sessions/${SESS_ID}/resolve`, { method: 'POST', headers: withAuth() }),
+      idParams(SESS_ID)
     );
     expect(res.status).toBe(200);
     expect(vi.mocked(proxyToGoBackend)).toHaveBeenCalledWith(
       expect.anything(),
-      '/api/finance/support/sessions/sess-1/resolve'
+      `/api/finance/support/sessions/${SESS_ID}/resolve`
     );
   });
 
   it('keeps the sibling session actions on the same upstream mount', async () => {
     await escalatePOST(
-      makeRequest('/api/v1/support/sessions/sess-1/escalate', { method: 'POST', headers: withAuth(), body: { reason: 'r' } }),
-      idParams('sess-1')
+      makeRequest(`/api/v1/support/sessions/${SESS_ID}/escalate`, { method: 'POST', headers: withAuth(), body: { reason: 'r' } }),
+      idParams(SESS_ID)
     );
     expect(vi.mocked(proxyToGoBackend)).toHaveBeenCalledWith(
       expect.anything(),
-      '/api/finance/support/sessions/sess-1/escalate'
+      `/api/finance/support/sessions/${SESS_ID}/escalate`
     );
 
     await messagePOST(
-      makeRequest('/api/v1/support/sessions/sess-1/messages', { method: 'POST', headers: withAuth(), body: { content: 'hi' } }),
-      idParams('sess-1')
+      makeRequest(`/api/v1/support/sessions/${SESS_ID}/messages`, { method: 'POST', headers: withAuth(), body: { content: 'hi' } }),
+      idParams(SESS_ID)
     );
     expect(vi.mocked(proxyToGoBackend)).toHaveBeenCalledWith(
       expect.anything(),
-      '/api/finance/support/sessions/sess-1/messages'
+      `/api/finance/support/sessions/${SESS_ID}/messages`
     );
   });
 
   it('refuses 503 before auth when the aiCare flag is off', async () => {
     vi.mocked(featureFlags.aiCare).mockReturnValue(false);
     const res = await resolvePOST(
-      makeRequest('/api/v1/support/sessions/sess-1/resolve', { method: 'POST' }),
-      idParams('sess-1')
+      makeRequest(`/api/v1/support/sessions/${SESS_ID}/resolve`, { method: 'POST' }),
+      idParams(SESS_ID)
     );
     expect(res.status).toBe(503);
     expect(vi.mocked(requireRequestUser)).not.toHaveBeenCalled();
+    expect(vi.mocked(proxyToGoBackend)).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed session id with 400 before proxying', async () => {
+    for (const call of [
+      () => resolvePOST(makeRequest('/api/v1/support/sessions/not-a-uuid/resolve', { method: 'POST', headers: withAuth() }), idParams('not-a-uuid')),
+      () => escalatePOST(makeRequest('/api/v1/support/sessions/not-a-uuid/escalate', { method: 'POST', headers: withAuth() }), idParams('not-a-uuid')),
+      () => messagePOST(makeRequest('/api/v1/support/sessions/not-a-uuid/messages', { method: 'POST', headers: withAuth(), body: { content: 'hi' } }), idParams('not-a-uuid')),
+      () => messageGET(makeRequest('/api/v1/support/sessions/not-a-uuid/messages', { headers: withAuth() }), idParams('not-a-uuid')),
+    ]) {
+      const res = await call();
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain('session id');
+    }
     expect(vi.mocked(proxyToGoBackend)).not.toHaveBeenCalled();
   });
 });

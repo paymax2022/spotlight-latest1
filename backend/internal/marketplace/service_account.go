@@ -109,6 +109,12 @@ func (s *Service) BlockUser(ctx context.Context, userID, blockedUserID string) (
 	if blockedUserID == "" {
 		return nil, fieldErr(CodeValidation, "blocked_user_id is required", "blocked_user_id")
 	}
+	// blocked_user_id arrives in the request BODY (outside UUIDParams' reach)
+	// and lands in mkt_blocks.blocked_user_id, a uuid column — a malformed
+	// value would abort the INSERT and surface as a 500.
+	if err := requireUUIDField(blockedUserID, "blocked_user_id"); err != nil {
+		return nil, err
+	}
 	if blockedUserID == userID {
 		return nil, newErr(422, CodeCannotBlockSelf, "you cannot block yourself")
 	}

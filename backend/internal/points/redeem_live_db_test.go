@@ -83,7 +83,7 @@ func TestLiveDB_Redeem_SucceedsAndDebits(t *testing.T) {
 	sku := seedCatalogItem(t, pool, 100)
 	seedEarn(t, pool, uid, 500)
 
-	red, item, err := svc.Redeem(ctx, uid, sku, "")
+	red, item, err := svc.Redeem(ctx, uid, sku, "redeem-"+uuid.NewString())
 	if err != nil {
 		t.Fatalf("redeem: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestLiveDB_Redeem_InsufficientPoints(t *testing.T) {
 	sku := seedCatalogItem(t, pool, 100)
 	seedEarn(t, pool, uid, 50)
 
-	if _, _, err := svc.Redeem(ctx, uid, sku, ""); !errors.Is(err, ErrInsufficientPoints) {
+	if _, _, err := svc.Redeem(ctx, uid, sku, "redeem-"+uuid.NewString()); !errors.Is(err, ErrInsufficientPoints) {
 		t.Fatalf("expected ErrInsufficientPoints, got %v", err)
 	}
 }
@@ -145,6 +145,38 @@ func TestLiveDB_Redeem_ClientKeyReplaysIdempotently(t *testing.T) {
 	bal, _ := svc.Balance(ctx, uid)
 	if bal != 400 {
 		t.Fatalf("balance after replay: got %d, want 400 (no double debit)", bal)
+	}
+}
+
+// Same user + same key + different sku is a 409 conflict — never silently
+// return the original redemption. The single original debit must stand.
+func TestLiveDB_Redeem_SameKeyDifferentSKU_Conflict(t *testing.T) {
+	pool := livePointsPool(t)
+	svc := NewService(pool, nil)
+	ctx := context.Background()
+	uid := seedPointsUser(t, pool)
+	skuA := seedCatalogItem(t, pool, 100)
+	skuB := seedCatalogItem(t, pool, 200)
+	seedEarn(t, pool, uid, 500)
+
+	key := "client-" + uuid.NewString()
+	if _, _, err := svc.Redeem(ctx, uid, skuA, key); err != nil {
+		t.Fatalf("first redeem: %v", err)
+	}
+	if _, _, err := svc.Redeem(ctx, uid, skuB, key); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("different-sku replay: err = %v, want ErrIdempotencyConflict", err)
+	}
+	var debits int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM points_ledger WHERE user_id=$1 AND type='REDEEM'`, uid).Scan(&debits); err != nil {
+		t.Fatalf("count debits: %v", err)
+	}
+	if debits != 1 {
+		t.Fatalf("conflict must leave exactly 1 REDEEM ledger entry, got %d", debits)
+	}
+	bal, _ := svc.Balance(ctx, uid)
+	if bal != 400 {
+		t.Fatalf("balance after conflict: got %d, want 400 (no second debit)", bal)
 	}
 }
 

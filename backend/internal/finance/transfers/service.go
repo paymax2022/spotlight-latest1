@@ -300,10 +300,20 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 		return nil, fmt.Errorf("transfers: account advisory lock: %w", err)
 	}
 
+	// Daily-cap re-check INSIDE the tx, under the wallet lock (F7): the pooled
+	// EnforceWalletDebitLimit in the pre-flight is only advisory — two
+	// concurrent sends could each pass it and both post. Under the lock this
+	// read is serialised against every other gated debit on this wallet, so
+	// the loser sees the winner's committed legs. Checked on `total` (amount +
+	// fee) — the amount the DEBIT leg actually posts.
+	total := req.AmountKobo + fee
+	if err := s.tiers.EnforceWalletDebitLimitTx(ctx, tx, senderID, total); err != nil {
+		return nil, err
+	}
+
 	// Sufficiency check inside the tx (balanceTx), not the pool: a pooled
 	// read cannot observe entries a lock-honouring peer is about to commit,
 	// and re-checking here is what closes the double-spend race.
-	total := req.AmountKobo + fee
 	senderBalance, err := balanceTx(ctx, tx, senderAcc.ID)
 	if err != nil {
 		return nil, err
@@ -459,6 +469,15 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	// with no lock cycle (the RPC plane takes the account key alone).
 	if _, err := tx.Exec(ctx, lock, userAcc.ID); err != nil {
 		return nil, fmt.Errorf("bank_transfer: account advisory lock: %w", err)
+	}
+
+	// Daily-cap re-check INSIDE the tx, under the wallet lock (F7) — the pooled
+	// EnforceWalletDebitLimit above is advisory only; two concurrent transfers
+	// could each pass it and both post. Under the lock this read is serialised
+	// against every other gated debit on this wallet. Checked on `total`
+	// (amount + fee) — the amount the DEBIT leg actually posts.
+	if err := s.tiers.EnforceWalletDebitLimitTx(ctx, tx, userID, total); err != nil {
+		return nil, err
 	}
 
 	// Sufficiency check inside the tx — see InitiateWalletToWallet.

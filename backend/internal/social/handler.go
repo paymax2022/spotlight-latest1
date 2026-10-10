@@ -32,7 +32,7 @@ func NewHandler(svc *Service, tags *cashtag.Service) *Handler {
 // same status the canonical transfer rail's errMap gives them.
 var errMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusForbidden, ErrForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
-	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrReconPending),
 	httperr.R(http.StatusNotFound, ErrNotFound, cashtag.ErrNotFound),
 	httperr.R(http.StatusTooManyRequests, ErrAMLSingleLimit, ErrAMLCountLimit, ErrAMLAmountLimit),
 )
@@ -173,6 +173,21 @@ func (h *Handler) GetSplit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "bill": bill, "shares": shares})
 }
 
+// AdminGetSplit serves the ops oversight read on the social admin group. The
+// RBAC guard (social.admin.view) is the authZ, so the service read is
+// deliberately NOT caller-scoped — an ops admin who is not a participant can
+// still inspect the bill + share roster. (Mounting the member GetSplit here
+// would 404 the admin exactly like an outsider — the residual this restores.)
+// NEVER mount this handler on a member route: the member oracle stays closed.
+func (h *Handler) AdminGetSplit(c *gin.Context) {
+	bill, shares, err := h.svc.GetSplitOversight(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "bill": bill, "shares": shares})
+}
+
 func (h *Handler) PayShare(c *gin.Context) {
 	// ok was previously ignored: a missing key wrote the 400 above and then
 	// STILL paid the share — a money mutation proceeding without the
@@ -248,6 +263,19 @@ func (h *Handler) PoolBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "balance_kobo": bal})
 }
 
+// AdminGetPool is the pool twin of AdminGetSplit — the RBAC guard
+// (social.admin.view) is the authZ, so ops sees the pool + derived balance +
+// contribution roster WITHOUT needing a stake in it. NEVER mount on a member
+// route (member pool reads stay behind callerPool's uniform-404 gate).
+func (h *Handler) AdminGetPool(c *gin.Context) {
+	p, bal, contribs, err := h.svc.GetPoolOversight(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "pool": p, "balance_kobo": bal, "contributions": contribs})
+}
+
 func (h *Handler) Activity(c *gin.Context) {
 	limit, _ := ginutil.LimitOffset(c)
 	items, err := h.svc.ActivityFeed(c.Request.Context(), ginutil.UserID(c), limit)
@@ -318,7 +346,12 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	g.POST("/pools/:id/payout", h.PayoutPool)
 
 	if admin != nil && guard != nil {
-		admin.GET("/splits/:id", guard("social.admin.view"), h.GetSplit)
+		// Oversight reads use dedicated admin handlers, NOT the member ones —
+		// the member handlers are caller-scoped (uniform 404 for a caller
+		// with no stake), which would 404 an ops admin who is not a
+		// participant and defeat the oversight the RBAC grant is for.
+		admin.GET("/splits/:id", guard("social.admin.view"), h.AdminGetSplit)
+		admin.GET("/pools/:id", guard("social.admin.view"), h.AdminGetPool)
 	}
 }
 

@@ -45,7 +45,7 @@ const (
 var (
 	errIllegalTransition = errors.New("events: illegal transition")
 	errForbidden         = errors.New("events: forbidden")
-	errNotSuspendable    = errors.New("events: not suspendable (missing or terminal)")
+	errNotSuspendable    = errors.New("events: not suspendable (terminal state)")
 )
 
 // mirrorEvent replicates the row shape `transition` guards against: organiser_id + state.

@@ -260,7 +260,7 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	case err != nil && !errors.Is(err, pgx.ErrNoRows):
 		return nil, err
 	}
-	sett, err := s.settlement.Escrow(ctx, userID, ref, escrowKey, "transport", fare)
+	sett, err := s.escrowCheckout(ctx, userID, ref, escrowKey, fare)
 	if err != nil {
 		return nil, fmt.Errorf("transport: escrow bus fare: %w", err)
 	}

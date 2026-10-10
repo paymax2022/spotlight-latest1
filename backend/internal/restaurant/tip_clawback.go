@@ -168,6 +168,9 @@ func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, cus
 	// DR rider wallet → CR customer wallet as ONE balanced pair. Debit does the balance
 	// check and the insert inside a single transaction under the rider's advisory lock,
 	// so this can never overdraw the rider and never races another debit of that wallet.
+	// Deliberately UNGATED (plain Debit, not DebitGated): a clawback is a
+	// system-initiated correction, not a rider spend — the daily debit cap must
+	// not trap a pending clawback (mirroring savings' ungated penalty leg).
 	err = s.ledger.Debit(ctx, riderID, key, key, custAcc.ID, tipKobo)
 	switch {
 	case err == nil:

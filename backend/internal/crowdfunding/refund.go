@@ -163,6 +163,10 @@ func clawbackSettledLegs(ctx context.Context, db *pgxpool.Pool, led *ledger.Serv
 	}
 	ref := "cf:refund:" + contributionID
 	// (1) DR creator wallet providerKobo / CR backer wallet — balance-checked.
+	// Deliberately plain Debit (not DebitGated): a refund clawback is a
+	// system-initiated correction, not a creator spend — the daily debit cap
+	// must not trap a refund the platform owes the backer (mirrors the
+	// restaurant tip clawback / savings penalty exceptions).
 	if providerKobo > 0 {
 		err := led.Debit(ctx, creatorID, ref, ref+":provider", backerWallet.ID, providerKobo)
 		switch {

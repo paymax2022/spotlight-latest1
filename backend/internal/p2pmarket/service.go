@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 	"time"
 
 	"github.com/google/uuid"
@@ -122,41 +123,104 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 	}
 
 	// Idempotent: an order already created for this key is returned as-is.
-	if existing, err := s.orderByIdem(ctx, idemKey); err == nil && existing != nil {
+	if existing, err := s.orderByIdem(ctx, idemKey, buyerID); err == nil && existing != nil {
 		return existing, nil
 	}
 
 	// Hold buyer funds in escrow (the escrow core debits the buyer's wallet into the
 	// shared escrow standing account; tier-limit + insufficient-funds fail closed).
-	hold, err := s.escrow.Hold(ctx, buyerID, "p2p:"+listingID, moduleType, idemKey, l.PriceKobo)
+	// The seller is pinned as the hold's payee so a later dispute can still be
+	// arbitrated to RELEASE — an unpinned (NULL-payee) hold is refund-only.
+	hold, err := s.escrow.HoldWithPayee(ctx, buyerID, l.SellerID, "p2p:"+listingID, moduleType, idemKey, l.PriceKobo)
 	if err != nil {
+		// Adoption refuses a key durably claimed by a different claim
+		// (payer/module/reference/amount mismatch) with ledger.ErrDuplicate —
+		// caller-facing, that is the same "key reused with different params"
+		// signal as ErrIdemConflict.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil, ErrIdemConflict
+		}
 		return nil, fmt.Errorf("p2pmarket: escrow hold: %w", err)
+	}
+	if hold.State != escrow.StateHeld {
+		// A prior attempt under this key already resolved the hold — most often
+		// REFUNDED after an order-insert failure below. Attaching a CHECKOUT
+		// order to terminal money would wedge it forever ("in escrow" with no
+		// funds held), so refuse instead: the buyer already has their money
+		// back (refund) and must retry with a NEW idempotency key; a DISPUTED /
+		// RELEASED outcome is a recon case that must not silently proceed.
+		return nil, fmt.Errorf("p2pmarket: escrow hold %s already %s — checkout cannot proceed under this idempotency key", hold.ID, hold.State)
 	}
 
 	o := &Order{
 		ID: uuid.New().String(), ListingID: listingID, BuyerID: buyerID, SellerID: l.SellerID,
 		AmountKobo: l.PriceKobo, EscrowID: hold.ID, State: OrderCheckout, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
+
+	// The tx body runs in a closure so the deferred Rollback has released the
+	// escrow_holds FOR UPDATE lock BEFORE the RefundIf compensation below tries
+	// to take it — calling the compensation while this tx still holds the lock
+	// would deadlock the loser against itself.
 	const ins = `INSERT INTO p2p_orders (id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, idempotency_key)
 	             VALUES ($1,$2,$3,$4,$5,$6,'CHECKOUT',$7) ON CONFLICT (idempotency_key) DO NOTHING`
-	ct, err := s.db.Exec(ctx, ins, o.ID, o.ListingID, o.BuyerID, o.SellerID, o.AmountKobo, o.EscrowID, idemKey)
-	if err != nil {
-		// The escrow hold is already durable but owns no order — refund it
-		// best-effort (mirrors transport's refundOnFailure) rather than strand a
-		// HELD hold with no owning row. Refund is idempotent; a failed refund is
-		// still surfaced via the insert error, and a same-key client retry also
-		// self-heals (Hold replays the same hold, the insert is retried).
-		_ = s.escrow.Refund(ctx, hold.ID)
-		return nil, fmt.Errorf("p2pmarket: insert order: %w", err)
+	inserted, txErr := func() (bool, error) {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return false, fmt.Errorf("p2pmarket: begin order tx: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		// Binding half of the hold-bind / refund race fix: serialize the
+		// domain-row binding against escrow resolution on the hold row's lock.
+		// A loser's RefundIf that already refunded an unbound hold makes this
+		// fail (state != HELD) instead of binding an order to a REFUNDED hold;
+		// a winner's lock makes the loser's guard see the committed bound row.
+		if err := s.lockEscrowForBinding(ctx, tx, hold.ID, buyerID); err != nil {
+			return false, err
+		}
+		ct, err := tx.Exec(ctx, ins, o.ID, o.ListingID, o.BuyerID, o.SellerID, o.AmountKobo, o.EscrowID, idemKey)
+		if err != nil {
+			return false, fmt.Errorf("p2pmarket: insert order: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("p2pmarket: commit order: %w", err)
+		}
+		return ct.RowsAffected() > 0, nil
+	}()
+	if txErr != nil {
+		// The escrow hold is durable but owns no order from this attempt —
+		// refund it rather than strand a HELD hold with no owning row. The
+		// refund is GUARDED: escrow.Hold dedups on the bare idempotency key,
+		// so `hold` can be a replayed row this attempt did not mint, and a
+		// concurrent same-key checkout may have just bound a live order to it.
+		// The old pair (pool-side insert error -> bare escrow.Refund) was a
+		// TOCTOU: the refund could land AFTER a winner's binding committed,
+		// reversing a live order's payment out from under it. unboundHoldGuard
+		// re-probes bound-ness INSIDE the refund's transaction under the same
+		// FOR UPDATE lock the binding took — either the guard sees the winner's
+		// committed row (veto: ErrHoldBound -> converge) or the refund wins the
+		// lock first (the winner's binding then refuses the no-longer-HELD
+		// hold). ErrHoldBound means a winner exists: converge on its order when
+		// the key matches, else fail closed with ErrIdemConflict.
+		if rerr := s.escrow.RefundIf(ctx, hold.ID, s.unboundHoldGuard(hold.ID, buyerID)); rerr != nil {
+			if errors.Is(rerr, escrow.ErrHoldBound) {
+				if persisted, ferr := s.orderByIdem(ctx, idemKey, buyerID); ferr == nil {
+					return persisted, nil
+				}
+				return nil, ErrIdemConflict
+			}
+			return nil, fmt.Errorf("%w (refund also failed: %w)", txErr, rerr)
+		}
+		return nil, txErr
 	}
-	if ct.RowsAffected() == 0 {
+	if !inserted {
 		// A same-key order committed between our orderByIdem check and this
 		// insert (a racing retry). The escrow hold for this key IS that order's
 		// hold (escrow.Hold replays by key), so the money is accounted for —
 		// return the persisted row, never the unpersisted `o` we built above
 		// (which would report an order id/escrow pairing nothing saved). Do NOT
 		// refund: the hold is owned by the conflicting order.
-		persisted, ferr := s.orderByIdem(ctx, idemKey)
+		persisted, ferr := s.orderByIdem(ctx, idemKey, buyerID)
 		if ferr != nil {
 			return nil, fmt.Errorf("p2pmarket: order insert conflicted but re-read failed: %w", ferr)
 		}
@@ -193,14 +257,38 @@ func (s *Service) ConfirmReceipt(ctx context.Context, orderID, buyerID string) e
 
 // RaiseDispute contests an order via the shared escrow dispute extension. Either
 // party may dispute (escrow enforces party authZ). CHECKOUT → DISPUTED.
+//
+// Crash convergence (F6b): the escrow side commits first (hold DISPUTED +
+// dispute row in one tx); if the p2p_orders update then fails, the order is
+// stuck CHECKOUT over a DISPUTED hold. A retry converges because the escrow
+// core returns the existing dispute on an already-DISPUTED hold — this call
+// then succeeds and marks the order DISPUTED. Likewise an order already
+// DISPUTED replays as a no-op once its open dispute is confirmed.
 func (s *Service) RaiseDispute(ctx context.Context, orderID, raisedBy, evidence string) error {
 	o, err := s.GetOrder(ctx, orderID)
 	if err != nil {
 		return err
 	}
+	// Party authZ must precede every return — including the converged-DISPUTED
+	// no-op below, which would otherwise leak the open dispute to non-parties.
+	if raisedBy != o.BuyerID && raisedBy != o.SellerID {
+		return ErrNotParty
+	}
+	if o.State == OrderDisputed {
+		// Idempotent replay of a completed raise — converged only if the hold
+		// really carries an OPEN dispute; otherwise fail loudly (recon).
+		if d, derr := s.escrow.GetDispute(ctx, o.EscrowID); derr == nil && d != nil && d.State == "OPEN" {
+			return nil
+		}
+		return errors.New("p2pmarket: order DISPUTED but no open escrow dispute — recon required")
+	}
 	if o.State != OrderCheckout {
 		return errors.New("p2pmarket: only an in-escrow order can be disputed")
 	}
+	// Either party may dispute; the escrow core enforces party authZ against the
+	// hold's payer/payee. On an already-DISPUTED hold (the wedge above) it
+	// returns the persisted dispute, so this call still succeeds and the order
+	// update below completes the convergence.
 	if _, err := s.escrow.RaiseDispute(ctx, o.EscrowID, raisedBy, evidence); err != nil {
 		return err
 	}
@@ -214,20 +302,33 @@ func (s *Service) RaiseDispute(ctx context.Context, orderID, raisedBy, evidence 
 // Arbitrate resolves a disputed order via escrow.Arbitrate (separation-of-duties
 // enforced in the escrow core; the arbiter cannot be a party). DISPUTED →
 // CONFIRMED (release to seller) | REFUNDED (refund to buyer).
+//
+// Crash convergence (F6c): the escrow side resolves first (terminal hold +
+// RESOLVED dispute), then the order finalize commits. If it fails, the order
+// stays DISPUTED over resolved money — a retry re-runs escrow.Arbitrate (a
+// decision-consistent terminal state no-ops through its heal path) and the
+// update below lands. A fully-finalized order replayed with the same decision
+// is a no-op success; a contradicting decision or state fails closed.
 func (s *Service) Arbitrate(ctx context.Context, orderID string, decision escrow.DisputeDecision, arbiterID string) error {
+	if decision != escrow.DecisionRelease && decision != escrow.DecisionRefund {
+		return fmt.Errorf("p2pmarket: invalid decision %q", decision)
+	}
 	o, err := s.GetOrder(ctx, orderID)
 	if err != nil {
-		return err
-	}
-	if o.State != OrderDisputed {
-		return errors.New("p2pmarket: order not in DISPUTED state")
-	}
-	if err := s.escrow.Arbitrate(ctx, o.EscrowID, decision, arbiterID); err != nil {
 		return err
 	}
 	newState := OrderConfirmed
 	if decision == escrow.DecisionRefund {
 		newState = OrderRefunded
+	}
+	if o.State != OrderDisputed {
+		if o.State == newState {
+			return nil // converged replay: the decision already took effect on the order
+		}
+		return errors.New("p2pmarket: order not in DISPUTED state")
+	}
+	if err := s.escrow.Arbitrate(ctx, o.EscrowID, decision, arbiterID); err != nil {
+		return err
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE p2p_orders SET state=$2, updated_at=now() WHERE id=$1`, orderID, string(newState)); err != nil {
 		return fmt.Errorf("p2pmarket: finalize arbitration: %w", err)
@@ -287,11 +388,85 @@ func (s *Service) SellerRating(ctx context.Context, sellerID string) (avg float6
 	return avg, count, err
 }
 
-func (s *Service) orderByIdem(ctx context.Context, idemKey string) (*Order, error) {
-	const q = `SELECT id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, created_at, updated_at FROM p2p_orders WHERE idempotency_key=$1`
+// lockEscrowForBinding is the BINDING half of the hold-bind / resolution-race
+// fix (mirrors health pharmacy/vet): inside the transaction that writes the
+// bound p2p_orders row it locks the escrow_holds row FOR UPDATE and requires
+// the hold to be this buyer's, this module's, still HELD, and not already
+// bound to another order. The loser's RefundIf compensation takes the SAME
+// row lock before probing bound-ness, so binding and resolution are fully
+// serialized: whichever takes the lock first wins — a loser refunding first
+// leaves the hold non-HELD and this binding refuses; a winner binding first
+// makes the loser see the committed order row here and in the refund guard.
+// (p2p_orders.escrow_id's FK does take a FOR KEY SHARE on the hold row, which
+// serializes the INSERT against a resolution's FOR UPDATE — but that alone
+// never re-proved state or bound-ness for the refund decision, which is what
+// the old probe+refund pair got wrong.)
+func (s *Service) lockEscrowForBinding(ctx context.Context, tx pgx.Tx, escrowID, buyerID string) error {
+	var state, payer, module string
+	if err := tx.QueryRow(ctx,
+		`SELECT state, payer_id, module_type FROM escrow_holds WHERE id=$1 FOR UPDATE`,
+		escrowID).Scan(&state, &payer, &module); err != nil {
+		return fmt.Errorf("p2pmarket: lock escrow hold for binding: %w", err)
+	}
+	// escrow.Hold dedups on the bare idempotency key, so `hold` may be a row
+	// this attempt did not mint — a foreign payer's or another module's hold
+	// under a colliding key must never be bound to OUR order.
+	if payer != buyerID || module != moduleType {
+		return ErrIdemConflict
+	}
+	if state != string(escrow.StateHeld) {
+		return fmt.Errorf("p2pmarket: escrow hold is %s, not HELD — refusing to bind an order", state)
+	}
+	// Bound-ness is probed in a SECOND statement on purpose: under READ
+	// COMMITTED the FOR UPDATE statement's snapshot freezes at statement
+	// start, so an EXISTS folded into it would still miss a winner row that
+	// committed while this statement was queued on the lock. A fresh
+	// statement takes a fresh snapshot and sees the winner's committed order —
+	// the same reason RefundIf's guard probes bound-ness in its own query.
+	// Two live orders over one hold is exactly the wedge this closes.
+	var bound bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM p2p_orders WHERE escrow_id=$1)`, escrowID).Scan(&bound); err != nil {
+		return fmt.Errorf("p2pmarket: probe bound orders: %w", err)
+	}
+	if bound {
+		return ErrIdemConflict
+	}
+	return nil
+}
+
+// unboundHoldGuard is the RESOLUTION half: the RefundIf guard, run inside the
+// refund's own transaction after the hold row is FOR UPDATE-locked and the
+// HELD→REFUNDED transition has passed the FSM check. It re-proves the hold is
+// this buyer's, this module's, AND that no committed p2p_orders row is bound
+// to it — any failure means the hold belongs to a live order (a concurrent
+// same-key winner, or a foreign replay's hold) and refunding it would reverse
+// a live payment out from under it. Veto with escrow.ErrHoldBound, which the
+// caller folds into order convergence / ErrIdemConflict — the same "winner
+// exists" signal the unique-key path returns.
+func (s *Service) unboundHoldGuard(escrowID, buyerID string) func(context.Context, pgx.Tx) error {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		var free bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2 AND h.module_type=$3
+				  AND NOT EXISTS (SELECT 1 FROM p2p_orders o WHERE o.escrow_id = h.id))`,
+			escrowID, buyerID, moduleType).Scan(&free); err != nil {
+			return fmt.Errorf("p2pmarket: bound-hold guard: %w", err)
+		}
+		if !free {
+			return escrow.ErrHoldBound
+		}
+		return nil
+	}
+}
+
+func (s *Service) orderByIdem(ctx context.Context, idemKey, buyerID string) (*Order, error) {
+	const q = `SELECT id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, created_at, updated_at FROM p2p_orders WHERE idempotency_key=$1 AND buyer_id=$2`
 	var o Order
 	var state string
-	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&o.ID, &o.ListingID, &o.BuyerID, &o.SellerID, &o.AmountKobo, &o.EscrowID, &state, &o.CreatedAt, &o.UpdatedAt); err != nil {
+	if err := s.db.QueryRow(ctx, q, idemKey, buyerID).Scan(&o.ID, &o.ListingID, &o.BuyerID, &o.SellerID, &o.AmountKobo, &o.EscrowID, &state, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
@@ -314,6 +489,11 @@ var (
 	ErrOrderNotFound   = errors.New("p2pmarket: order not found")
 	ErrNotParty        = errors.New("p2pmarket: not a party to this order")
 	ErrNotOwnerOrState = errors.New("p2pmarket: not owner or not in a closable state")
+	// ErrIdemConflict refuses an idempotency key/hold claim that resolves to a
+	// different request's hold or order (foreign payer, foreign module, or a
+	// hold already bound to another order) — the same "winner exists" signal
+	// the health modules return. Mapped to 409 in the handler.
+	ErrIdemConflict = errors.New("p2pmarket: idempotency key already used")
 )
 
 // ListingState is the listing lifecycle.

@@ -461,7 +461,7 @@ func (s *Service) bookParcel(ctx context.Context, senderID string, req ParcelBoo
 	if external {
 		sett, err = s.settlement.EscrowExternal(ctx, senderID, ref, idempotencyKey, "transport", fare)
 	} else {
-		sett, err = s.settlement.Escrow(ctx, senderID, ref, idempotencyKey, "transport", fare)
+		sett, err = s.escrowCheckout(ctx, senderID, ref, idempotencyKey, fare)
 	}
 	if err != nil {
 		return "", fmt.Errorf("transport: escrow parcel fare: %w", err)

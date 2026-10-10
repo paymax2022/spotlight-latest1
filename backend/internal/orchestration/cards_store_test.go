@@ -22,20 +22,22 @@ import (
 )
 
 type memCardStore struct {
-	mu      sync.Mutex
-	cards   map[string]Card   // id → card
-	owner   map[string]string // id → business
-	wallet  map[string]int64  // business|currency → minor
-	funded  map[string]bool   // business|idemKey → applied (idempotency)
-	created int
+	mu        sync.Mutex
+	cards     map[string]Card   // id → card
+	owner     map[string]string // id → business
+	wallet    map[string]int64  // business|currency → minor
+	funded    map[string]bool   // business|idemKey → applied (funding idempotency)
+	createdBy map[string]string // business|idemKey → card id (create idempotency)
+	created   int
 }
 
 func newMemCardStore() *memCardStore {
 	return &memCardStore{
-		cards:  map[string]Card{},
-		owner:  map[string]string{},
-		wallet: map[string]int64{},
-		funded: map[string]bool{},
+		cards:     map[string]Card{},
+		owner:     map[string]string{},
+		wallet:    map[string]int64{},
+		funded:    map[string]bool{},
+		createdBy: map[string]string{},
 	}
 }
 
@@ -71,9 +73,16 @@ func (m *memCardStore) GetCard(_ context.Context, business, id string) (Card, bo
 	return m.cards[id], true, nil
 }
 
-func (m *memCardStore) CreateCard(_ context.Context, business string, draft CardDraft) (Card, error) {
+// CreateCard mirrors the SQL store's dedupe semantics: a replayed idemKey
+// returns the card it first created instead of inserting a second row.
+func (m *memCardStore) CreateCard(_ context.Context, business string, draft CardDraft, idemKey string) (Card, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if idemKey != "" {
+		if id, ok := m.createdBy[business+"|"+idemKey]; ok {
+			return m.cards[id], nil // idempotent replay
+		}
+	}
 	m.created++
 	cur := strings.ToUpper(draft.Currency)
 	if cur == "" {
@@ -87,6 +96,9 @@ func (m *memCardStore) CreateCard(_ context.Context, business string, draft Card
 	}
 	m.cards[c.ID] = c
 	m.owner[c.ID] = business
+	if idemKey != "" {
+		m.createdBy[business+"|"+idemKey] = c.ID
+	}
 	return c, nil
 }
 
@@ -167,6 +179,7 @@ func cardsRouter(store CardStore, userID string) *gin.Engine {
 	h := NewHandler(nil).WithCards(store)
 	r.Use(func(c *gin.Context) { c.Set("user_id", userID); c.Next() })
 	r.GET("/cards", h.ListCards)
+	r.POST("/cards", h.CreateCard)
 	r.GET("/cards/:id", h.GetCard)
 	r.POST("/cards/:id/fund", h.FundCard)
 	r.POST("/cards/:id/freeze", h.FreezeCard)
@@ -188,7 +201,7 @@ func doCardJSON(t *testing.T, r *gin.Engine, method, path, body string, headers 
 
 func TestFundCard_InsufficientFunds_402(t *testing.T) {
 	store := newMemCardStore()
-	card, _ := store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"})
+	card, _ := store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"}, "")
 	store.seedWallet("cust-A", "USD", 100) // only ₵1.00 available
 
 	r := cardsRouter(store, "cust-A")
@@ -205,7 +218,7 @@ func TestFundCard_InsufficientFunds_402(t *testing.T) {
 
 func TestFundCard_Idempotent(t *testing.T) {
 	store := newMemCardStore()
-	card, _ := store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"})
+	card, _ := store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"}, "")
 	store.seedWallet("cust-A", "USD", 100000)
 
 	r := cardsRouter(store, "cust-A")
@@ -223,7 +236,7 @@ func TestFundCard_Idempotent(t *testing.T) {
 
 func TestCard_CustomerScoping(t *testing.T) {
 	store := newMemCardStore()
-	card, _ := store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"})
+	card, _ := store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"}, "")
 	store.seedWallet("cust-B", "USD", 100000)
 
 	// Customer B must not see or fund customer A's card. The orchestration module
@@ -243,9 +256,114 @@ func TestCard_CustomerScoping(t *testing.T) {
 	}
 }
 
+// Replaying POST /cards with the same Idempotency-Key must return the SAME card
+// and persist exactly one row — the create leg dedupes on (business, key), not
+// just the funding leg.
+func TestCreateCard_IdempotentReplay(t *testing.T) {
+	store := newMemCardStore()
+	r := cardsRouter(store, "cust-A")
+	hdr := map[string]string{"Idempotency-Key": "create-key-1"}
+	body := `{"label":"Subscriptions","brand":"visa","currency":"USD","color":"purple","fundingAmount":0}`
+
+	w1 := doCardJSON(t, r, http.MethodPost, "/cards", body, hdr)
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("first create: status = %d, want 201; body=%s", w1.Code, w1.Body.String())
+	}
+	w2 := doCardJSON(t, r, http.MethodPost, "/cards", body, hdr)
+	if w2.Code != http.StatusCreated {
+		t.Fatalf("replay create: status = %d, want 201; body=%s", w2.Code, w2.Body.String())
+	}
+	var c1, c2 Card
+	if err := json.Unmarshal(w1.Body.Bytes(), &c1); err != nil {
+		t.Fatalf("decode first card: %v", err)
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &c2); err != nil {
+		t.Fatalf("decode replayed card: %v", err)
+	}
+	if c1.ID != c2.ID {
+		t.Fatalf("replay must return the SAME card: got %s then %s", c1.ID, c2.ID)
+	}
+	if len(store.cards) != 1 {
+		t.Fatalf("replay must persist one row, got %d", len(store.cards))
+	}
+}
+
+// A different Idempotency-Key is a different client intent → a second card row.
+func TestCreateCard_DifferentKeysSeparateCards(t *testing.T) {
+	store := newMemCardStore()
+	r := cardsRouter(store, "cust-A")
+	body := `{"label":"Subscriptions","brand":"visa","currency":"USD","color":"purple","fundingAmount":0}`
+
+	w1 := doCardJSON(t, r, http.MethodPost, "/cards", body, map[string]string{"Idempotency-Key": "k-a"})
+	w2 := doCardJSON(t, r, http.MethodPost, "/cards", body, map[string]string{"Idempotency-Key": "k-b"})
+	var c1, c2 Card
+	_ = json.Unmarshal(w1.Body.Bytes(), &c1)
+	_ = json.Unmarshal(w2.Body.Bytes(), &c2)
+	if w1.Code != http.StatusCreated || w2.Code != http.StatusCreated {
+		t.Fatalf("both creates: got %d and %d, want 201 each", w1.Code, w2.Code)
+	}
+	if c1.ID == c2.ID {
+		t.Fatalf("different keys must create distinct cards, both got %s", c1.ID)
+	}
+	if len(store.cards) != 2 {
+		t.Fatalf("want 2 card rows, got %d", len(store.cards))
+	}
+}
+
+// Replay of a create-with-funding under the same key must not double-fund: the
+// create leg returns the existing card and the funding leg dedupes on the key.
+func TestCreateCard_ReplayWithFunding(t *testing.T) {
+	store := newMemCardStore()
+	store.seedWallet("cust-A", "USD", 100000)
+	r := cardsRouter(store, "cust-A")
+	hdr := map[string]string{"Idempotency-Key": "create-fund-1"}
+	body := `{"label":"Subscriptions","brand":"visa","currency":"USD","color":"purple","fundingAmount":30000}`
+
+	w1 := doCardJSON(t, r, http.MethodPost, "/cards", body, hdr)
+	w2 := doCardJSON(t, r, http.MethodPost, "/cards", body, hdr)
+	if w1.Code != http.StatusCreated || w2.Code != http.StatusCreated {
+		t.Fatalf("create+fund replay: got %d and %d, want 201 each; bodies %s | %s",
+			w1.Code, w2.Code, w1.Body.String(), w2.Body.String())
+	}
+	var c1, c2 Card
+	_ = json.Unmarshal(w1.Body.Bytes(), &c1)
+	_ = json.Unmarshal(w2.Body.Bytes(), &c2)
+	if c1.ID != c2.ID {
+		t.Fatalf("replay must return the same card: %s vs %s", c1.ID, c2.ID)
+	}
+	if len(store.cards) != 1 {
+		t.Fatalf("replay must persist one row, got %d", len(store.cards))
+	}
+	if got := store.cards[c1.ID].Balance; got != 30000 {
+		t.Fatalf("replay must not double-fund: balance=%d want 30000", got)
+	}
+	if got := store.wallet["cust-A|USD"]; got != 70000 {
+		t.Fatalf("wallet debited once: got %d want 70000", got)
+	}
+}
+
+// Two different businesses may reuse the same key — dedupe is scoped by
+// (business, key), matching orch_fx_cards_idem_uniq.
+func TestCreateCard_IdemKeyScopedByBusiness(t *testing.T) {
+	store := newMemCardStore()
+	body := `{"label":"Subscriptions","brand":"visa","currency":"USD","color":"purple","fundingAmount":0}`
+	hdr := map[string]string{"Idempotency-Key": "shared-key"}
+
+	rA := cardsRouter(store, "cust-A")
+	rB := cardsRouter(store, "cust-B")
+	wA := doCardJSON(t, rA, http.MethodPost, "/cards", body, hdr)
+	wB := doCardJSON(t, rB, http.MethodPost, "/cards", body, hdr)
+	var cA, cB Card
+	_ = json.Unmarshal(wA.Body.Bytes(), &cA)
+	_ = json.Unmarshal(wB.Body.Bytes(), &cB)
+	if cA.ID == cB.ID {
+		t.Fatalf("same key under different businesses must not dedupe: both got %s", cA.ID)
+	}
+}
+
 func TestListCards_Shape(t *testing.T) {
 	store := newMemCardStore()
-	_, _ = store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"})
+	_, _ = store.CreateCard(nil, "cust-A", CardDraft{Currency: "USD"}, "")
 	r := cardsRouter(store, "cust-A")
 	w := doCardJSON(t, r, http.MethodGet, "/cards", "", nil)
 	if w.Code != http.StatusOK {

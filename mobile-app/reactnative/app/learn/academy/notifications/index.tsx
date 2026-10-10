@@ -31,7 +31,7 @@ export default function NotificationsScreen() {
   const markRead = useMarkNotificationRead();
   const markAll = useMarkAllNotificationsRead();
 
-  if (notifs.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading notifications…" /></SafeAreaView>;
+  if (notifs.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Notifications" /><StateView kind="loading" message="Loading notifications…" /></SafeAreaView>;
 
   const unread = notifs.data?.some((n) => !n.read);
 

@@ -3,6 +3,7 @@ package business
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"spotlight/backend/go-common/jsonx"
 	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
@@ -47,9 +49,14 @@ var (
 // Deps injects the collaborators. Ledger resolves the revenue standing account;
 // Wallet performs the tier-checked, idempotent fee debit; Provider is the CAC port.
 type Deps struct {
-	Repo     *Repository
-	Ledger   *ledger.Service
-	Wallet   *wallet.Service
+	Repo   *Repository
+	Ledger *ledger.Service
+	Wallet *wallet.Service
+	// Tiers runs the advisory pooled daily-cap check on the SUM of the two fee
+	// legs before leg 1 posts (F3): a caller who cannot fit both legs under
+	// the cap must never start a half-charge. Nil skips ONLY this advisory
+	// read — the in-tx guard inside each gated debit stays authoritative.
+	Tiers    *tiers.Service
 	Provider cac.BusinessRegistryProvider
 	// Payment is the payment gateway (Paystack) used for the gateway-funded fee
 	// alternative to the wallet debit. Optional — when nil, only wallet pay works.
@@ -72,6 +79,7 @@ type Service struct {
 	repo                 *Repository
 	ledger               *ledger.Service
 	wallet               *wallet.Service
+	tiers                *tiers.Service
 	provider             cac.BusinessRegistryProvider
 	payment              provider.PaymentProvider
 	feeKobo              int64
@@ -90,7 +98,7 @@ func NewService(d Deps) *Service {
 	if platformFee <= 0 {
 		platformFee = DefaultPlatformFeeKobo
 	}
-	return &Service{repo: d.Repo, ledger: d.Ledger, wallet: d.Wallet, provider: d.Provider, payment: d.Payment, feeKobo: fee, platformFeeKobo: platformFee, allowSandboxVerified: d.AllowSandboxVerified}
+	return &Service{repo: d.Repo, ledger: d.Ledger, wallet: d.Wallet, tiers: d.Tiers, provider: d.Provider, payment: d.Payment, feeKobo: fee, platformFeeKobo: platformFee, allowSandboxVerified: d.AllowSandboxVerified}
 }
 
 // totalFeeKobo is the full amount charged to the user: CAC registration fee (a
@@ -257,10 +265,41 @@ func (s *Service) PayRegistrationFee(ctx context.Context, userID, businessID, id
 	if err != nil {
 		return nil, err
 	}
+	// Leg 1 keys. The charge posts as TWO independent debit transactions, so a
+	// failure between them could strand a half-charge — the reversal key is the
+	// state that distinguishes refunded from charged (ledger entries are
+	// immutable; the original journal always reads "posted"). After a
+	// committed reversal the recharge runs under the deterministic successor
+	// key; a second unwind refuses rather than spawning keys forever.
+	cacKey := idemKey
+	cacRevKey := idemKey + ":cac:rev"
+	if reversed, err := s.reversalPosted(ctx, cacRevKey); err != nil {
+		return nil, err
+	} else if reversed {
+		cacKey, cacRevKey = idemKey+":cac:r1", idemKey+":cac:r1:rev"
+		if reversed2, err := s.reversalPosted(ctx, cacRevKey); err != nil {
+			return nil, err
+		} else if reversed2 {
+			return nil, fmt.Errorf("%w: cac fee unwound twice under key %s", ErrConflict, idemKey)
+		}
+	}
+
+	// Advisory TOTAL gate before leg 1 (F3): a caller who cannot fit BOTH legs
+	// under the daily cap must never start a half-charge. Skipped when leg 1
+	// already committed — a replay converges through the in-tx verification,
+	// not a pooled read that can refuse at-cap (F2). Each leg's own in-tx
+	// guard inside wallet.Debit→DebitGated remains the authority.
+	cacRef := "cac_registration_fee:" + prof.ID
+	if posted, err := s.ledger.Posted(ctx, cacKey); err != nil {
+		return nil, err
+	} else if !posted && s.tiers != nil {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, total); err != nil {
+			return nil, err
+		}
+	}
 	// Leg 1 — CAC registration fee (pass-through). The wallet service applies the
 	// tier-limit check (fail-closed) then posts the balanced double-entry.
-	cacRef := "cac_registration_fee:" + prof.ID
-	if err := s.wallet.Debit(ctx, userID, cacRef, idemKey, clearingAcc.ID, s.feeKobo); err != nil {
+	if err := s.wallet.Debit(ctx, userID, cacRef, cacKey, clearingAcc.ID, s.feeKobo); err != nil {
 		switch {
 		case errors.Is(err, ledger.ErrDuplicate):
 			// Already posted under this key — fall through to the platform leg.
@@ -271,18 +310,29 @@ func (s *Service) PayRegistrationFee(ctx context.Context, userID, businessID, id
 		}
 	}
 	// Leg 2 — Paymax platform processing fee (revenue). Distinct idempotency key so
-	// each leg dedupes independently on replay.
+	// each leg dedupes independently on replay. If it refuses or fails while
+	// leg 1 is committed, unwind leg 1 — the caller must never be charged a
+	// partial fee (F3).
 	if s.platformFeeKobo > 0 {
 		platRef := "cac_platform_fee:" + prof.ID
-		if err := s.wallet.Debit(ctx, userID, platRef, idemKey+":platform", revAcc.ID, s.platformFeeKobo); err != nil {
-			switch {
-			case errors.Is(err, ledger.ErrDuplicate):
-				// Already posted — safe.
-			case errors.Is(err, ledger.ErrInsufficientFunds):
-				return nil, ErrInsufficientFunds
-			default:
-				return nil, err
+		platKey := idemKey + ":platform"
+		leg2Err := s.wallet.Debit(ctx, userID, platRef, platKey, revAcc.ID, s.platformFeeKobo)
+		if leg2Err != nil && !errors.Is(leg2Err, ledger.ErrDuplicate) {
+			// Ambiguous outcome: unwind leg 1 only when leg 2 verifiably never
+			// committed — a posted pair converges as paid.
+			platPosted, perr := s.ledger.Posted(ctx, platKey)
+			if perr != nil {
+				return nil, fmt.Errorf("business: platform fee outcome unknown: %w", perr)
 			}
+			if !platPosted {
+				if revErr := s.unwindCacLeg(ctx, userID, cacRef, cacKey, cacRevKey, clearingAcc.ID); revErr != nil {
+					return nil, fmt.Errorf("business: unwind cac fee after platform leg failed: %w", revErr)
+				}
+			}
+			if errors.Is(leg2Err, ledger.ErrInsufficientFunds) {
+				return nil, ErrInsufficientFunds
+			}
+			return nil, leg2Err
 		}
 	}
 	setters := map[string]any{
@@ -299,6 +349,52 @@ func (s *Service) PayRegistrationFee(ctx context.Context, userID, businessID, id
 		return nil, err
 	}
 	return s.repo.GetProfile(ctx, prof.ID)
+}
+
+// reversalPosted reports whether a PostReversal pair under revKey committed —
+// the ":rev_credit" leg is the durable proof (PostReversalPair keys its legs
+// "<revKey>:rev_debit" / "<revKey>:rev_credit", NOT the ":debit"/":credit"
+// suffixes Posted probes).
+func (s *Service) reversalPosted(ctx context.Context, revKey string) (bool, error) {
+	_, found, err := s.ledger.EntryByKey(ctx, revKey+":rev_credit")
+	if err != nil {
+		return false, fmt.Errorf("business: reversal replay probe: %w", err)
+	}
+	return found, nil
+}
+
+// unwindCacLeg reverses a committed leg-1 CAC debit after the platform-fee leg
+// failed — a caller must never be charged one half of a fee pair (F3). The
+// reversal runs only when the journal under cacKey verifies as OURS (payer
+// wallet debit, clearing credit, exact reference + amount on both legs —
+// mirroring escrow.verifyHoldDebitLeg): a foreign claim under the key is
+// refused, never answered by minting a refund off someone else's legs.
+// Idempotent on revKey — a retried unwind is a no-op.
+func (s *Service) unwindCacLeg(ctx context.Context, userID, cacRef, cacKey, revKey, clearingAccID string) error {
+	walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("resolve payer wallet for reversal: %w", err)
+	}
+	dr, drFound, err := s.ledger.EntryByKey(ctx, cacKey+":debit")
+	if err != nil {
+		return fmt.Errorf("read cac debit leg: %w", err)
+	}
+	cr, crFound, err := s.ledger.EntryByKey(ctx, cacKey+":credit")
+	if err != nil {
+		return fmt.Errorf("read cac credit leg: %w", err)
+	}
+	ours := drFound && crFound &&
+		dr.AccountID == walletAcc.ID && dr.Type == ledger.EntryDebit &&
+		dr.Reference == cacRef && dr.AmountKobo == s.feeKobo &&
+		cr.AccountID == clearingAccID && cr.Type == ledger.EntryCredit &&
+		cr.Reference == cacRef && cr.AmountKobo == s.feeKobo
+	if !ours {
+		return fmt.Errorf("%w: key %s held by a different journal — refusing to reverse", ledger.ErrDuplicate, cacKey)
+	}
+	if err := s.ledger.PostReversal(ctx, walletAcc.ID, clearingAccID, s.feeKobo, cacRef+":reverse", revKey); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		return err
+	}
+	return nil
 }
 
 // InitiateRegistrationFeePaystack starts a Paystack checkout for the CAC registration

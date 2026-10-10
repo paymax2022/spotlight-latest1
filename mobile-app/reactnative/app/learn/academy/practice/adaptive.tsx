@@ -65,7 +65,7 @@ export default function AdaptivePractice() {
     }
   };
 
-  if (generate.isPending && !set) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Building your personalised set…" /></SafeAreaView>;
+  if (generate.isPending && !set) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Adaptive practice" /><StateView kind="loading" message="Building your personalised set…" /></SafeAreaView>;
   if (generate.isError) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Adaptive practice" /><StateView kind="error" title="Couldn’t build a set" message="Try again in a moment." actionLabel="Retry" onAction={() => generate.mutate(subjectId, { onSuccess: setSet })} /></SafeAreaView>;
   if (!set || !list.length) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Adaptive practice" /><StateView kind="empty" title="Nothing to drill" message="You’re on top of your objectives. Check back after more practice." /></SafeAreaView>;
 

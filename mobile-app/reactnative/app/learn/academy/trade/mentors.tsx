@@ -18,7 +18,7 @@ import type { Mentor } from '@/features/academy/types';
 export default function MentorsScreen() {
   const mentors = useMentors();
   const request = useRequestMentor();
-  if (mentors.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Finding mentors…" /></SafeAreaView>;
+  if (mentors.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Mentor connect" /><StateView kind="loading" message="Finding mentors…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -15,6 +15,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1, shadow3 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
+import ScreenHeader from '@/components/ScreenHeader';
 import OfflineBanner from '@/features/academy/components/OfflineBanner';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { useConnectivity } from '@/features/academy/offlineQueue';
@@ -35,12 +36,13 @@ export default function AcademyHome() {
   const refreshing = me.isRefetching || subjects.isRefetching;
   const refetchAll = () => { me.refetch(); gam.refetch(); subjects.refetch(); arenas.refetch(); balance.refetch(); };
 
-  if (loading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading your day…" /></SafeAreaView>;
+  if (loading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="StudyHub" backFallback="/learn" /><StateView kind="loading" message="Loading your day…" /></SafeAreaView>;
 
   // First-run → onboarding.
   if (!onboardingDone) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="StudyHub" backFallback="/learn" />
         <ScrollView contentContainerStyle={styles.scroll}>
           <LinearGradient colors={Colors.gradientPurple} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow3]}>
             <View style={styles.heroIcon}><GraduationCap size={24} color={Colors.onPrimary} /></View>
@@ -61,6 +63,7 @@ export default function AcademyHome() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScreenHeader title="StudyHub" backFallback="/learn" />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}

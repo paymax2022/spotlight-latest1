@@ -101,7 +101,7 @@ func TestCardFunding_LiveDB(t *testing.T) {
 
 	store := orchestration.NewCardStore(pool, nil) // nil issuer → no provider calls
 
-	card, err := store.CreateCard(ctx, cust, orchestration.CardDraft{Currency: cur, Label: "Test", Brand: "visa", Color: "purple"})
+	card, err := store.CreateCard(ctx, cust, orchestration.CardDraft{Currency: cur, Label: "Test", Brand: "visa", Color: "purple"}, "idem-create-funding-test")
 	if err != nil {
 		t.Fatalf("create card: %v", err)
 	}

@@ -14,10 +14,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const keyError = "error"
+
+// ErrSessionNotFound is the uniform denial for a session id that is missing
+// OR owned by someone else. Every session-scoped query fuses the ownership
+// check into the WHERE clause (AND user_id=$2), so the two cases are
+// indistinguishable by construction and a single 404 serves both — no
+// existence oracle (w12 denial-semantics contract decision; same uniform-404
+// convention as the social/association lanes).
+var ErrSessionNotFound = errors.New("aicare: session not found")
+
+// ErrSessionResolved is a domain-state refusal on the caller's OWN resolved
+// session — not a denial, so it keeps 400 semantics (the caller already knows
+// their session exists; there is nothing to hide).
+var ErrSessionResolved = errors.New("aicare: session is resolved — please open a new session")
 
 // AIProvider is a minimal interface for the AI reply backend.
 // In production, swap in an Anthropic or OpenAI client.
@@ -55,10 +69,13 @@ func (s *Service) CreateSession(ctx context.Context, userID string, req CreateSe
 func (s *Service) SendMessage(ctx context.Context, sessionID, userID string, req SendMessageRequest) (*Message, *Message, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM support_sessions WHERE id=$1 AND user_id=$2`, sessionID, userID).Scan(&status); err != nil {
-		return nil, nil, errors.New("aicare: session not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrSessionNotFound
+		}
+		return nil, nil, fmt.Errorf("aicare: load session: %w", err)
 	}
 	if status == string(SessionResolved) {
-		return nil, nil, errors.New("aicare: session is resolved — please open a new session")
+		return nil, nil, ErrSessionResolved
 	}
 
 	userMsg := &Message{
@@ -99,10 +116,10 @@ func (s *Service) Escalate(ctx context.Context, sessionID, userID string, req Es
 	const q = `UPDATE support_sessions SET status='escalated', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status='open'`
 	tag, err := s.db.Exec(ctx, q, sessionID, userID)
 	if err != nil {
-		return err
+		return fmt.Errorf("aicare: escalate session: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errors.New("aicare: session not found or already escalated/resolved")
+		return ErrSessionNotFound
 	}
 	if req.Reason != "" {
 		_, _ = s.db.Exec(ctx, `INSERT INTO support_messages (id, session_id, role, content) VALUES ($1,$2,'user',$3)`,
@@ -116,10 +133,10 @@ func (s *Service) Resolve(ctx context.Context, sessionID, actorID string) error 
 	const q = `UPDATE support_sessions SET status='resolved', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status != 'resolved'`
 	tag, err := s.db.Exec(ctx, q, sessionID, actorID)
 	if err != nil {
-		return err
+		return fmt.Errorf("aicare: resolve session: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errors.New("aicare: session not found or already resolved")
+		return ErrSessionNotFound
 	}
 	return nil
 }
@@ -127,10 +144,17 @@ func (s *Service) Resolve(ctx context.Context, sessionID, actorID string) error 
 // GetHistory returns messages for a session.
 func (s *Service) GetHistory(ctx context.Context, sessionID, userID string) ([]Message, error) {
 	var count int
-	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM support_sessions WHERE id=$1 AND user_id=$2`, sessionID, userID).Scan(&count); err != nil || count == 0 {
-		return nil, errors.New("aicare: session not found")
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM support_sessions WHERE id=$1 AND user_id=$2`, sessionID, userID).Scan(&count); err != nil {
+		return nil, fmt.Errorf("aicare: load session: %w", err)
 	}
-	return s.getHistory(ctx, sessionID, 100)
+	if count == 0 {
+		return nil, ErrSessionNotFound
+	}
+	msgs, err := s.getHistory(ctx, sessionID, 100)
+	if err != nil {
+		return nil, fmt.Errorf("aicare: load history: %w", err)
+	}
+	return msgs, nil
 }
 
 func (s *Service) getHistory(ctx context.Context, sessionID string, limit int) ([]Message, error) {
@@ -207,6 +231,33 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// sessionID gates the uuid-typed :id path param before it can reach a
+// session-scoped query — a malformed value is a 400 naming the field, never a
+// driver error (same shape-gate the health lab/vet/pharmacy handlers carry).
+func sessionID(c *gin.Context) (string, bool) {
+	v := c.Param("id")
+	if _, err := uuid.Parse(v); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "session id must be a uuid"})
+		return "", false
+	}
+	return v, true
+}
+
+// failSessionErr maps session-scoped failures: the uniform denial
+// (missing-or-foreign is one case by construction) → 404; domain-state
+// refusals on the caller's own session ("already resolved") → 400; anything
+// else is internal → 500 (never a raw driver error at 4xx).
+func failSessionErr(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrSessionNotFound):
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrSessionResolved):
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+	}
+}
+
 func (h *Handler) CreateSession(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CreateSessionRequest
@@ -229,9 +280,13 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	userMsg, aiMsg, err := h.svc.SendMessage(c.Request.Context(), c.Param("id"), userID, req)
+	sessID, ok := sessionID(c)
+	if !ok {
+		return
+	}
+	userMsg, aiMsg, err := h.svc.SendMessage(c.Request.Context(), sessID, userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		failSessionErr(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"user_message": userMsg, "ai_reply": aiMsg})
@@ -239,9 +294,13 @@ func (h *Handler) SendMessage(c *gin.Context) {
 
 func (h *Handler) GetHistory(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	msgs, err := h.svc.GetHistory(c.Request.Context(), c.Param("id"), userID)
+	sessID, ok := sessionID(c)
+	if !ok {
+		return
+	}
+	msgs, err := h.svc.GetHistory(c.Request.Context(), sessID, userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		failSessionErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": msgs})
@@ -249,10 +308,14 @@ func (h *Handler) GetHistory(c *gin.Context) {
 
 func (h *Handler) Escalate(c *gin.Context) {
 	userID := ginutil.UserID(c)
+	sessID, ok := sessionID(c)
+	if !ok {
+		return
+	}
 	var req EscalateRequest
 	_ = c.ShouldBindJSON(&req)
-	if err := h.svc.Escalate(c.Request.Context(), c.Param("id"), userID, req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+	if err := h.svc.Escalate(c.Request.Context(), sessID, userID, req); err != nil {
+		failSessionErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -260,8 +323,12 @@ func (h *Handler) Escalate(c *gin.Context) {
 
 func (h *Handler) Resolve(c *gin.Context) {
 	userID := ginutil.UserID(c)
-	if err := h.svc.Resolve(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+	sessID, ok := sessionID(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.Resolve(c.Request.Context(), sessID, userID); err != nil {
+		failSessionErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

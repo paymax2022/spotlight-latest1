@@ -295,6 +295,60 @@ func TestBoost_ForeignProjectionRow_FailsClosed(t *testing.T) {
 	}
 }
 
+func TestBoost_ReplayAtCap_ConvergesNotRefused(t *testing.T) {
+	// F-2: a same-day replay of a COMPLETED purchase arrives after the user's
+	// daily cap is consumed (partly by this very charge). The pooled advisory
+	// gate would refuse by re-counting the posted debit — the committed-charge
+	// probe must skip the gate so the replay converges to the existing boost.
+	w := newFakeWallet()
+	// The ledger already holds this journal — a replayed Debit under the key is
+	// a no-op, never a second charge (mirrors the ledger's committed-key replay).
+	w.seenKeys["connect:discovery:boost:user-1:idem-cap"] = true
+	tg := &fakeTiers{limitErr: errors.New("tiers: daily debit limit exceeded")}
+	conf := &fakeConfirmer{posted: true, onlyKey: "connect:discovery:boost:user-1:idem-cap"}
+	svc, store, _ := newBoostServiceWithFakes(w, tg)
+	svc.SetDebitConfirmer(conf)
+
+	b, err := svc.Purchase(context.Background(), "user-1", "idem-cap", 0)
+	if err != nil {
+		t.Fatalf("a durable replay must converge, not refuse at-cap: %v", err)
+	}
+	if b == nil || store.inserts != 1 {
+		t.Fatal("converged replay must produce the boost row")
+	}
+	if tg.called {
+		t.Fatal("the pooled cap gate must be SKIPPED for a durably-committed charge")
+	}
+	// The probe must have checked BOTH the namespaced key and the raw legacy key.
+	if len(conf.gotKeys) != 2 || conf.gotKeys[0] != "connect:discovery:boost:user-1:idem-cap" || conf.gotKeys[1] != "idem-cap" {
+		t.Fatalf("replay probe must check namespaced then legacy key, got %v", conf.gotKeys)
+	}
+	if w.calls != 0 {
+		t.Fatal("a durable replay must not re-debit")
+	}
+}
+
+func TestBoost_ReplayAtCap_UncommittedStillGated(t *testing.T) {
+	// Counterpoint: when the durable probe finds NO committed charge (a bare
+	// Redis-lock duplicate or a foreign claim), the pooled gate still runs —
+	// an at-cap fresh attempt refuses, nothing debits, no row is minted.
+	w := newFakeWallet()
+	tg := &fakeTiers{limitErr: errors.New("tiers: daily debit limit exceeded")}
+	conf := &fakeConfirmer{posted: false}
+	svc, store, _ := newBoostServiceWithFakes(w, tg)
+	svc.SetDebitConfirmer(conf)
+
+	if _, err := svc.Purchase(context.Background(), "user-1", "idem-unc", 0); err == nil {
+		t.Fatal("an uncommitted replay must still price through the cap gate")
+	}
+	if !tg.called {
+		t.Fatal("the pooled gate must still run when no durable charge exists")
+	}
+	if w.calls != 0 || store.inserts != 0 {
+		t.Fatal("refused purchase must not debit or mint a row")
+	}
+}
+
 func TestBoost_ExpiryDerivedFromDuration(t *testing.T) {
 	w := newFakeWallet()
 	svc, _, _ := newBoostServiceWithFakes(w, &fakeTiers{})

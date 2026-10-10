@@ -110,16 +110,29 @@ func (s *Service) Subscribe(ctx context.Context, userID, idempotencyKey, offerin
 		return nil, err
 	}
 
-	// 5. Tier wallet-debit limit (reused finance primitive, fail-closed).
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
-		return nil, err
+	// 5. Tier wallet-debit limit (reused finance primitive, fail-closed). The
+	//    pooled read is SKIPPED when this key's escrow legs already committed
+	//    (F2): the domain-row replay above only covers a COMPLETE subscription
+	//    — a retry that committed the escrow but died before the row insert
+	//    must reach EscrowGated's in-tx replay verification, not refuse at-cap
+	//    with the money already parked.
+	escrowPosted, err := s.ledger.Posted(ctx, key+":escrow")
+	if err != nil {
+		return nil, fmt.Errorf("fractionalre: escrow replay probe: %w", err)
+	}
+	if !escrowPosted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// 6. Escrow: debit investor wallet → escrow standing account (balanced
 	//    ledger) under the SCOPED key.
 	ref := fmt.Sprintf("fre-sub:%s:%s", offeringID, userID)
 	settlementRef := ptr.Deref(o.EscrowReference, "fre-round:"+offeringID)
-	sett, err := s.settlement.Escrow(ctx, userID, settlementRef+":"+ref, key, moduleType, amountKobo)
+	// EscrowGated re-runs the strict cap check inside the debit tx under the
+	// wallet lock (F7) — the pooled gate at step 5 is advisory only.
+	sett, err := s.settlement.EscrowGated(ctx, userID, settlementRef+":"+ref, key, moduleType, amountKobo)
 	if err != nil {
 		if errors.Is(err, ledger.ErrInsufficientFunds) {
 			return nil, ledger.ErrInsufficientFunds

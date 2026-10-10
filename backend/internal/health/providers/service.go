@@ -24,6 +24,12 @@ const (
 	keySuccess     = "success"
 )
 
+// ErrApplicationNotFound is the uniform object-level denial on member-facing
+// application paths: a missing application and an application owned by someone
+// else are INDISTINGUISHABLE — "forbidden" on a foreign application vs "not
+// found" on a missing one would let a member probe application ids.
+var ErrApplicationNotFound = errors.New("providers: application not found")
+
 // Auditor is the minimal slice of services.AuditService the package needs (HL-12).
 // Satisfied by the immutable audit service; nil is safe.
 type Auditor interface {
@@ -113,8 +119,8 @@ func (s *Service) AddCredential(ctx context.Context, ownerID, applicationID stri
 	if err != nil {
 		return nil, err
 	}
-	if app.OwnerUserID != ownerID { // object-level authZ
-		return nil, errors.New("providers: forbidden")
+	if app.OwnerUserID != ownerID { // object-level authZ — folds to not-found
+		return nil, ErrApplicationNotFound
 	}
 	if d.StorageKey == "" {
 		return nil, errors.New("providers: storage_key required")
@@ -186,8 +192,10 @@ func (s *Service) transition(ctx context.Context, ownerID, applicationID string,
 	if err != nil {
 		return nil, err
 	}
+	// Owner gate BEFORE the state check — a stranger gets the same not-found as a
+	// missing application and can never observe the app's state.
 	if app.OwnerUserID != ownerID {
-		return nil, errors.New("providers: forbidden")
+		return nil, ErrApplicationNotFound
 	}
 	to, err := next(app.State)
 	if err != nil {
@@ -332,8 +340,8 @@ func (s *Service) GetApplication(ctx context.Context, ownerID, applicationID str
 	if err != nil {
 		return nil, err
 	}
-	if a.OwnerUserID != ownerID {
-		return nil, errors.New("providers: forbidden")
+	if a.OwnerUserID != ownerID { // foreign application → uniform not-found
+		return nil, ErrApplicationNotFound
 	}
 	return a, nil
 }
@@ -368,7 +376,7 @@ func (s *Service) getApplication(ctx context.Context, id string) (*Application, 
 	if err := s.db.QueryRow(ctx, q, id).Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType,
 		&a.DisplayName, &state, &a.ReviewNote, &a.ProviderID, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("providers: application not found")
+			return nil, ErrApplicationNotFound
 		}
 		return nil, err
 	}
@@ -384,7 +392,7 @@ func lockApplication(ctx context.Context, tx pgx.Tx, id string) (*Application, e
 	if err := tx.QueryRow(ctx, q, id).Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType,
 		&a.DisplayName, &state, &a.ProviderID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("providers: application not found")
+			return nil, ErrApplicationNotFound
 		}
 		return nil, err
 	}
@@ -577,8 +585,8 @@ func (s *Service) PresignCredential(ctx context.Context, ownerID, applicationID,
 	if err != nil {
 		return nil, err
 	}
-	if app.OwnerUserID != ownerID {
-		return nil, errors.New("providers: forbidden")
+	if app.OwnerUserID != ownerID { // foreign application → uniform not-found
+		return nil, ErrApplicationNotFound
 	}
 	if s.presigner == nil || !s.presigner.Configured() {
 		return nil, ErrUploadsNotConfigured
@@ -612,6 +620,31 @@ func (s *Service) PresignCredential(ctx context.Context, ownerID, applicationID,
 type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// uuidPathID gates the :id path parameter before it reaches pgx —
+// health_provider_applications.id is uuid, so a malformed value otherwise
+// surfaces as a driver error instead of a clean 400.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+		return false
+	}
+	return true
+}
+
+// providerFail maps service errors: ErrApplicationNotFound (missing OR foreign —
+// uniform) → 404; ErrUploadsNotConfigured → 503; everything else → 409 (state
+// refusals / domain errors). FailOK sanitizes the message.
+func providerFail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrApplicationNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "application not found")
+	case errors.Is(err, ErrUploadsNotConfigured):
+		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+	default:
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	}
+}
 
 // CreateApplication — POST /providers/applications
 func (h *Handler) CreateApplication(c *gin.Context) {
@@ -649,9 +682,12 @@ func (h *Handler) AddCredential(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	out, err := h.svc.AddCredential(c.Request.Context(), id, c.Param("id"), d)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		providerFail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "credential": out})
@@ -672,8 +708,15 @@ func (h *Handler) PresignCredential(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	res, err := h.svc.PresignCredential(c.Request.Context(), id, c.Param("id"), req.FileName, req.ContentType)
 	if err != nil {
+		if errors.Is(err, ErrApplicationNotFound) {
+			ginutil.FailOK(c, http.StatusNotFound, "application not found")
+			return
+		}
 		if errors.Is(err, ErrUploadsNotConfigured) {
 			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
 			return
@@ -691,9 +734,12 @@ func (h *Handler) Submit(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	app, err := h.svc.Submit(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		providerFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
@@ -702,9 +748,12 @@ func (h *Handler) Submit(c *gin.Context) {
 // Get — GET /providers/applications/:id
 func (h *Handler) Get(c *gin.Context) {
 	id := ginutil.UserID(c)
+	if !uuidPathID(c) {
+		return
+	}
 	app, err := h.svc.GetApplication(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusNotFound, err.Error())
+		providerFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
@@ -735,9 +784,12 @@ func (h *Handler) Decision(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	app, err := h.svc.Decision(c.Request.Context(), id, c.Param("id"), req.Action, req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		providerFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})

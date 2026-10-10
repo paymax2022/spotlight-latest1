@@ -66,8 +66,13 @@ jobs:
       - uses: supabase/setup-cli@v3
         with:
           version: 2.114.0
+      # `supabase start` pulls ~15 images from Docker Hub — the heaviest
+      # anonymous-pull step in the pipeline and a frequent 429 casualty under
+      # concurrent-PR load. Bounded retry+backoff; `supabase start` is
+      # idempotent, so a retried run resumes where the pull died. Behaviour is
+      # identical when Docker Hub is healthy (first attempt succeeds).
       - name: Start Supabase (applies all migrations incl. 20260626* maps)
-        run: supabase start
+        run: bash scripts/ci/with-retry.sh supabase start
       - name: Run maps integration tests against PostGIS
         working-directory: backend
         env:

@@ -91,6 +91,14 @@ type boostLedger interface {
 	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
 	GetOrCreateUserWallet(ctx context.Context, userID string) (*ledger.Account, error)
 	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// DebitGated is Debit with the strict KYC-tier daily-debit cap evaluated
+	// INSIDE the posting tx under the wallet advisory lock — the F7-serialised
+	// half of TierEnforcer's pooled EnforceWalletDebitLimit.
+	DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// Posted reports whether the journal under baseIdempotencyKey already
+	// committed — the pooled advisory cap is skipped for a committed key so a
+	// replay reaches the in-tx verification instead of refusing at-cap (F2).
+	Posted(ctx context.Context, baseIdempotencyKey string) (bool, error)
 	PostReversal(ctx context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error
 }
 
@@ -332,6 +340,15 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 		return s.searcher.Search(ctx, req)
 	}
 	f := parseSearchFallback(req)
+	// The fallback casts category_id to ::uuid inside its recursive CTE, so a
+	// malformed filter would surface as 500 "invalid input syntax for type
+	// uuid" — refuse it as a caller error instead. (The ES path never reaches
+	// this: the searcher swallows a bad term filter into an empty result set.)
+	if f.CategoryID != "" {
+		if err := requireUUIDField(f.CategoryID, "category_id"); err != nil {
+			return nil, err
+		}
+	}
 	listings, err := s.repo.SearchListingsFallback(ctx, f)
 	if err != nil {
 		return nil, err
@@ -495,11 +512,14 @@ func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, off
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
-	// Guard before the fetch: an empty listingID would reach the repository and
-	// surface as 500 "invalid input syntax for type uuid" — an empty id is a
-	// caller error (400), not a DB error.
+	// Guard before the fetch: an empty or malformed listingID would reach the
+	// repository and surface as 500 "invalid input syntax for type uuid" — a
+	// bad id is a caller error (400), not a DB error.
 	if strings.TrimSpace(listingID) == "" {
 		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
+	}
+	if err := requireUUIDField(listingID, "listing_id"); err != nil {
+		return nil, err
 	}
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {
@@ -568,6 +588,12 @@ func (s *Service) CounterOffer(ctx context.Context, sellerID, offerID string, co
 // (a buyer) sees only the offers they themselves made. Ordered oldest→newest so the
 // deal room can render the counter-offer chain in sequence.
 func (s *Service) ListOffersForListing(ctx context.Context, callerID, listingID string) ([]Offer, error) {
+	// listing_id arrives as a QUERY param (?listing_id=), outside UUIDParams'
+	// path-param reach — a malformed value must be refused here rather than
+	// reaching GetListing's uuid compare and surfacing as a 500.
+	if err := requireUUIDField(listingID, "listing_id"); err != nil {
+		return nil, err
+	}
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {
 		return nil, err

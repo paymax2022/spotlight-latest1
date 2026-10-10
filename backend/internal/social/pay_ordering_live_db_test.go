@@ -270,3 +270,160 @@ func TestLiveDB_SocialPayRequest_StalePaidClaim_Heals(t *testing.T) {
 func shortTag() string {
 	return uuid.NewString()[:8]
 }
+
+// R-2: a heal credit that reports ErrDuplicate is never trusted — the durable
+// requester credit leg is re-probed before the row may settle. A phantom
+// claim (foreign legs parked under the heal's ":cr" key — the durable proxy
+// for a bare Redis-lock claim) must answer ErrReconPending, leave the row
+// PENDING and emit NO heal audit — never PAID over a credit that doesn't
+// exist on the requester's wallet.
+func TestLiveDB_SocialPayRequest_PhantomDupCredit_StaysPending(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+
+	requester := socialTestUser(t, pool)
+	payer := socialTestUser(t, pool)
+	decoy := socialTestUser(t, pool)
+	setKycTier(t, pool, payer, 1)
+	handle := "pdc" + shortTag()
+	if _, err := svc.tags.Claim(ctx, payer, handle); err != nil {
+		t.Fatalf("claim handle: %v", err)
+	}
+	req, err := svc.CreateRequest(ctx, requester, handle, "owed", 700_00)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+
+	key := "req:" + req.ID
+	escrow, err := svc.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		t.Fatalf("escrow account: %v", err)
+	}
+	// Plant the payer's debit journal — the durable half of a crashed payment
+	// that the heal path must complete.
+	fundWallet(t, ctx, svc.led, payer, 1_000_00)
+	if err := svc.led.DebitGated(ctx, payer, key, key+":dr", escrow.ID, 700_00); err != nil {
+		t.Fatalf("plant payer debit: %v", err)
+	}
+	// Plant a FOREIGN journal claiming the heal's ":cr" key — its legs land on
+	// the decoy's wallet, so the requester credit the heal must prove is
+	// absent even though the key is held.
+	decoyWallet, err := svc.led.GetOrCreateUserWallet(ctx, decoy)
+	if err != nil {
+		t.Fatalf("decoy wallet: %v", err)
+	}
+	if err := svc.led.PostJournal(ctx, ledger.JournalEntry{
+		Reference: key, IdempotencyKey: key + ":cr", AmountKobo: 700_00,
+		DebitAccountID: escrow.ID, CreditAccountID: decoyWallet.ID,
+	}); err != nil {
+		t.Fatalf("plant phantom credit claim: %v", err)
+	}
+
+	err = svc.PayRequest(ctx, payer, req.ID)
+	if !errors.Is(err, ErrReconPending) {
+		t.Fatalf("phantom dup credit must answer ErrReconPending, got %v", err)
+	}
+	got, err := svc.getRequest(ctx, req.ID)
+	if err != nil {
+		t.Fatalf("re-read request: %v", err)
+	}
+	if got.State != RequestPending {
+		t.Fatalf("request state = %q after phantom credit claim, want PENDING (a dup claim must never settle on legs that aren't the requester's)", got.State)
+	}
+	// The requester's wallet shows no credit — the phantom legs went to decoy.
+	if bal, _ := svc.led.GetBalance(ctx, requester); bal != 0 {
+		t.Fatalf("requester balance = %d, want 0 — phantom credit must never settle", bal)
+	}
+}
+
+// The debit-only heal — a PENDING request whose payer debit is durable but
+// the requester credit never posted (crash between the legs). PayRequest must
+// post ONLY the missing credit, flip PAID, and not re-charge the payer.
+func TestLiveDB_SocialPayRequest_DebitOnlyHeal_Completes(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+
+	requester := socialTestUser(t, pool)
+	payer := socialTestUser(t, pool)
+	setKycTier(t, pool, payer, 1)
+	handle := "doh" + shortTag()
+	if _, err := svc.tags.Claim(ctx, payer, handle); err != nil {
+		t.Fatalf("claim handle: %v", err)
+	}
+	req, err := svc.CreateRequest(ctx, requester, handle, "owed", 700_00)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+
+	key := "req:" + req.ID
+	escrow, err := svc.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		t.Fatalf("escrow account: %v", err)
+	}
+	fundWallet(t, ctx, svc.led, payer, 1_000_00)
+	if err := svc.led.DebitGated(ctx, payer, key, key+":dr", escrow.ID, 700_00); err != nil {
+		t.Fatalf("plant payer debit: %v", err)
+	}
+
+	if err := svc.PayRequest(ctx, payer, req.ID); err != nil {
+		t.Fatalf("heal must converge, got %v", err)
+	}
+	got, err := svc.getRequest(ctx, req.ID)
+	if err != nil || got.State != RequestPaid {
+		t.Fatalf("request state = %v err=%v after heal, want PAID", got, err)
+	}
+	if bal, _ := svc.led.GetBalance(ctx, requester); bal != 700_00 {
+		t.Fatalf("requester balance = %d, want 70000", bal)
+	}
+	// Exactly ONE debit leg on the payer — the heal never re-charges.
+	if n := ledgerLegs(t, pool, key); n != 4 {
+		t.Fatalf("healed request must hold exactly 4 ledger legs (dr pair + cr pair), got %d", n)
+	}
+}
+
+// The PAID-variant of the debit-only heal — the row flipped PAID but the
+// requester credit never landed. The heal must still post the credit.
+func TestLiveDB_SocialPayRequest_PaidDebitOnlyHeal_Completes(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+
+	requester := socialTestUser(t, pool)
+	payer := socialTestUser(t, pool)
+	setKycTier(t, pool, payer, 1)
+	handle := "pdh" + shortTag()
+	if _, err := svc.tags.Claim(ctx, payer, handle); err != nil {
+		t.Fatalf("claim handle: %v", err)
+	}
+	req, err := svc.CreateRequest(ctx, requester, handle, "owed", 700_00)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+
+	key := "req:" + req.ID
+	escrow, err := svc.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		t.Fatalf("escrow account: %v", err)
+	}
+	fundWallet(t, ctx, svc.led, payer, 1_000_00)
+	if err := svc.led.DebitGated(ctx, payer, key, key+":dr", escrow.ID, 700_00); err != nil {
+		t.Fatalf("plant payer debit: %v", err)
+	}
+	// Force the stale claim: PAID with only the debit leg durable.
+	if _, err := pool.Exec(ctx,
+		`UPDATE social_requests SET state='PAID', resolved_at=now() WHERE id=$1`, req.ID); err != nil {
+		t.Fatalf("force stale paid: %v", err)
+	}
+
+	if err := svc.PayRequest(ctx, payer, req.ID); err != nil {
+		t.Fatalf("heal of stale PAID must converge, got %v", err)
+	}
+	if bal, _ := svc.led.GetBalance(ctx, requester); bal != 700_00 {
+		t.Fatalf("requester balance = %d, want 70000", bal)
+	}
+	if n := ledgerLegs(t, pool, key); n != 4 {
+		t.Fatalf("healed request must hold exactly 4 ledger legs (dr pair + cr pair), got %d", n)
+	}
+}
