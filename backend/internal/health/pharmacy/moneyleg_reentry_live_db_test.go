@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
@@ -48,6 +49,12 @@ func (w *wedgeEscrow) Refund(ctx context.Context, escrowID string) error {
 		return errors.New("wedge: injected refund fault")
 	}
 	return w.real.Refund(ctx, escrowID)
+}
+
+// RefundIf matches the post-#639 EscrowHolder contract; the wedge only needs
+// the fault on the plain Refund leg, so this delegates straight through.
+func (w *wedgeEscrow) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return w.real.RefundIf(ctx, escrowID, guard)
 }
 
 func seedHeldHold(t *testing.T, ctx context.Context, pool *pgxpool.Pool, payerID, ref string, kobo int64) (escrowID string) {
