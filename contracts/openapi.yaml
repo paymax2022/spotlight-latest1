@@ -14956,6 +14956,60 @@ paths:
           description: reason_code is required
           content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
         '403': { $ref: '#/components/responses/MktForbidden' }
+  /v1/marketplace/admin/listings/{id}/recategorize:
+    post:
+      operationId: mktAdminRecategorizeListing
+      summary: Move a pending_review listing to another category/sub-category
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Requires marketplace.admin.approve. Fixes a seller's wrong category before the
+        listing is approved. Held to the same rules the seller faces at create time:
+        the target must exist, be active and be in the listing's market; the listing's
+        attrs must satisfy the target's attribute_schema; foreign_used/local_used only
+        applies inside the Vehicles tree. Only pending_review listings can be moved
+        (409 otherwise). Moving to the listing's current category is a no-op. Writes an
+        immutable mkt_admin_audit_log row (before/after category path) and notifies the
+        seller; reason_code is optional and defaults to "recategorized".
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_id]
+              properties:
+                category_id: { type: string, format: uuid }
+                reason_code: { type: string }
+      responses:
+        '200':
+          description: Listing moved (or already in that category)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktListing' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '409':
+          description: Listing is not awaiting review
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+        '422':
+          description: Target category unknown/inactive/other market, a required attribute is missing, or the condition does not fit the category
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+  /v1/marketplace/admin/moderation/categories:
+    get:
+      operationId: mktAdminModerationCategories
+      summary: Active category tree for the reviewer's re-assign picker
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.moderation. Flat list, parents first; the same data members see at GET /v1/marketplace/categories."
+      responses:
+        '200':
+          description: Active categories
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/MktCategory' } }
+        '403': { $ref: '#/components/responses/MktForbidden' }
   # Admin dispute queue/detail/decide/approve REMOVED (ADR-023): no disputes exist.
   # Mkt*Dispute* schemas + dispute.* RBAC perms retained (additive-only), unreachable.
   /v1/marketplace/admin/flags:

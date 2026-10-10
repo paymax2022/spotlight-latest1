@@ -70,6 +70,16 @@ export interface MktFairPriceBand {
   p75_kobo: number;
 }
 
+// GET /admin/moderation/categories row — one node of the active category tree, as a
+// flat list (parents first). parent_id is null for a main category; a sub-category
+// carries its main's id.
+export interface MktModerationCategory {
+  id: string;
+  parent_id?: string | null;
+  slug: string;
+  name: string;
+}
+
 // GET /admin/moderation/queue item + GET listing detail — the queue page needs
 // enough context (media, price-band) to review without navigating away, but the
 // detail page fetches the fuller MktListingDetail-shaped record.

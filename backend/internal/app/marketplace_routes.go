@@ -418,6 +418,11 @@ func RegisterMarketplace(
 	a.GET("/moderation/queue", guard("marketplace.admin.moderation"), h.AdminModerationQueue)
 	a.POST("/listings/:id/approve", guard("marketplace.admin.approve"), h.AdminApproveListing)
 	a.POST("/listings/:id/reject", guard("marketplace.admin.reject"), h.AdminRejectListing)
+	// Fixing a wrong category/sub-category is part of deciding on a listing, so it rides
+	// the approve permission (no new RBAC slug to seed); the tree it picks from is a
+	// read-only view scoped to moderation.
+	a.POST("/listings/:id/recategorize", guard("marketplace.admin.approve"), h.AdminRecategorizeListing)
+	a.GET("/moderation/categories", guard("marketplace.admin.moderation"), h.AdminModerationCategories)
 	// Admin dispute queue/decide/approve + orders aging REMOVED (ADR-023): no orders
 	// or disputes exist to moderate. Their handlers have been deleted; the seeded
 	// dispute.*/orders.aging RBAC perms are now unused (additive-only, left in place).

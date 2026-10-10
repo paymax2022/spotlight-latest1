@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { listModerationQueue, approveListing, rejectListing, formatKobo } from '@/services/marketplaceAdminService';
-import type { MktListing } from '@/types/marketplaceAdmin';
+import { listModerationQueue, listModerationCategories, rejectListing, formatKobo } from '@/services/marketplaceAdminService';
+import type { MktListing, MktModerationCategory } from '@/types/marketplaceAdmin';
 import {
   MarketplaceTabs, StatusBadge, DisclosureNote, StateBlock, AuditNote,
   PermissionBanner, timeAgo,
@@ -13,7 +13,6 @@ import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@
 
 export default function ModerationQueuePage() {
   const { allowed: canModerate } = useMarketplacePermission(MARKETPLACE_PERMS.moderation);
-  const { allowed: canApprove } = useMarketplacePermission(MARKETPLACE_PERMS.approve);
   const { allowed: canReject } = useMarketplacePermission(MARKETPLACE_PERMS.reject);
 
   const [rows, setRows] = useState<MktListing[]>([]);
@@ -23,6 +22,7 @@ export default function ModerationQueuePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [reasonDraft, setReasonDraft] = useState('');
+  const [categories, setCategories] = useState<MktModerationCategory[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -31,16 +31,15 @@ export default function ModerationQueuePage() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // Best-effort: without the tree the row falls back to the category name/id it was sent.
+  useEffect(() => { listModerationCategories().then(setCategories).catch(() => setCategories([])); }, []);
 
-  async function approve(l: MktListing) {
-    setBusyId(l.id); setMsg(null); setError(null);
-    try {
-      await approveListing(l.id);
-      setMsg(`Listing ${l.id} approved → active. Audit entry recorded.`);
-      await load();
-    } catch (e) { setError(String(e)); }
-    finally { setBusyId(null); }
-  }
+  const categoryPath = (l: MktListing) => {
+    const c = categories.find((x) => x.id === l.category_id);
+    if (!c) return l.category_name ?? l.category_id;
+    const parent = c.parent_id ? categories.find((x) => x.id === c.parent_id) : undefined;
+    return parent ? `${parent.name} › ${c.name}` : c.name;
+  };
 
   function startReject(l: MktListing) {
     setRejectingId(l.id);
@@ -65,13 +64,14 @@ export default function ModerationQueuePage() {
     <Page>
       <PageHeader
         title="Marketplace — Moderation Queue (M1)"
-        subtitle="Pending-review listings. Approve or reject with a mandatory reason_code — the seller sees the rejection reason verbatim."
+        subtitle="Pending-review listings. Open Review to check the category and sub-category, then approve — or reject with a mandatory reason_code (the seller sees it verbatim)."
         actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
       />
       <MarketplaceTabs active="moderation" />
       <DisclosureNote>
         Backed by <code>GET /v1/marketplace/admin/moderation/queue</code> (RBAC <code>marketplace.admin.moderation</code>).
-        Approve calls <code>POST /admin/listings/:id/approve</code> (reason_code optional) — RBAC <code>marketplace.admin.approve</code>.
+        Review opens the listing, where the reviewer confirms or corrects its category (<code>POST /admin/listings/:id/recategorize</code>) and then approves
+        (<code>POST /admin/listings/:id/approve</code>, reason_code optional) — RBAC <code>marketplace.admin.approve</code>.
         Reject calls <code>POST /admin/listings/:id/reject</code> (reason_code MANDATORY) — RBAC <code>marketplace.admin.reject</code>.
         Every mutation writes an immutable <code>mkt_admin_audit_log</code> row.
       </DisclosureNote>
@@ -93,7 +93,7 @@ export default function ModerationQueuePage() {
                 <tr key={l.id}>
                   <td style={tdCell}>
                     <Link href={`/admin/marketplace/moderation/${l.id}`} style={{ color: colors.primary, textDecoration: 'none', fontWeight: 600 }}>{l.title}</Link>
-                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{l.id} · {l.category_name ?? l.category_id}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{l.id} · {categoryPath(l)}</div>
                     {l.media?.[0] && (
                       <img src={l.media[0].url_thumb} alt="" width={56} height={56} style={{ objectFit: 'cover', borderRadius: 4, marginTop: 4 }} />
                     )}
@@ -132,9 +132,8 @@ export default function ModerationQueuePage() {
                       </div>
                     ) : (
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <Button variant="primary" sm disabled={!canApprove || busyId === l.id} onClick={() => void approve(l)}>
-                          {busyId === l.id ? '…' : 'Approve'}
-                        </Button>
+                        {/* Approving happens on the review page, where the reviewer confirms (or fixes) the category first. */}
+                        <Link href={`/admin/marketplace/moderation/${l.id}`} className="vx-btn vx-btn--primary vx-btn--sm">Review</Link>
                         <Button variant="danger" sm disabled={!canReject || busyId === l.id} onClick={() => startReject(l)}>Reject</Button>
                       </div>
                     )}
