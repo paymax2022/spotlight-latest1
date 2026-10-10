@@ -70,8 +70,10 @@ func TestLiveDB_BookAppointment_TierGate(t *testing.T) {
 	}
 
 	// An UNWIRED tier gate fails closed — never a plain ungated escrow.
+	// (Fresh slot: the successful booking above claimed 72h.)
 	svcUnwired := telemedicine.NewService(pool, settle)
 	bookReq.IdempotencyKey = "unwired-" + uuid.New().String()
+	bookReq.ScheduledAt = time.Now().Add(74 * time.Hour).Truncate(time.Second)
 	if _, err := svcUnwired.BookAppointment(ctx, tier0Patient, bookReq); !errors.Is(err, telemedicine.ErrTierGateUnwired) {
 		t.Fatalf("unwired gate must fail closed on ErrTierGateUnwired, got %v", err)
 	}
