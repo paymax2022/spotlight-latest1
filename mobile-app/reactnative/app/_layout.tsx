@@ -13,6 +13,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AndroidKeyboardAvoider from '@/components/AndroidKeyboardAvoider';
 import ToastHost from '@/components/ToastHost';
 import ConfirmHost from '@/components/ConfirmHost';
 import HomeMenuHost from '@/components/HomeMenu';
@@ -229,6 +230,7 @@ function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" backgroundColor={Colors.background} />
         <AuthGate>
+          <AndroidKeyboardAvoider>
           <Stack screenOptions={{ headerShown: false }} initialRouteName="index">
             <Stack.Screen name="index" />
             <Stack.Screen name="onboarding" />
@@ -280,6 +282,7 @@ function RootLayout() {
             <Stack.Screen name="profile" />
             <Stack.Screen name="featured" />
           </Stack>
+          </AndroidKeyboardAvoider>
         </AuthGate>
         {/* Overlay sits above the navigator so toasts survive screen changes. */}
         <ToastHost />
