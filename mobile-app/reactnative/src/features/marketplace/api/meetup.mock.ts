@@ -8,14 +8,8 @@ const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
 export const MOCK_ME = 'me';
 
-export interface SafeSpot {
-  id: string;
-  name: string;
-  category: 'police' | 'bank' | 'mall' | 'public';
-  address: string;
-  distanceKm: number;
-  verified: boolean;
-}
+import type { SafeSpot } from '../meetupSpots';
+export type { SafeSpot };
 
 const SAFE_SPOTS: SafeSpot[] = [
   { id: 'ss1', name: 'Area F Police Station forecourt', category: 'police', address: 'Ikeja, Lagos', distanceKm: 1.2, verified: true },

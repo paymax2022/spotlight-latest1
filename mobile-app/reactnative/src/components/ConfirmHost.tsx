@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
   },
   title: { ...Typography.titleMd, color: Colors.onSurface },
   message: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.sm, marginTop: Spacing.md },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: Spacing.sm, marginTop: Spacing.md },
   btn: { minWidth: 96, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' },
   cancelBtn: { backgroundColor: Colors.surfaceContainerHigh },
   confirmBtn: { backgroundColor: Colors.primary },

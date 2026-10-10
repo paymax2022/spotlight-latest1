@@ -675,6 +675,26 @@ type initiateRequest struct {
 	CallbackURL string `json:"callback_url"`
 }
 
+// fallbackCheckoutEmail is what Paystack is given when neither the request nor
+// the signed-in account carries an email (phone-only sign-ups). It matches the
+// client SDK's own fallback in useGatewayCheckout so both halves of one checkout
+// present the same customer.
+const fallbackCheckoutEmail = "customer@paymax.app"
+
+// resolveCheckoutEmail picks the email Paystack requires on every transaction:
+// the request's value, else the authenticated account's, else the shared
+// placeholder. The mobile food checkout sends none, and Paystack answers an
+// empty one with `"email" is not allowed to be empty` (a sanitized 500 here).
+func resolveCheckoutEmail(fromBody, fromAccount string) string {
+	if e := strings.TrimSpace(fromBody); e != "" {
+		return e
+	}
+	if e := strings.TrimSpace(fromAccount); e != "" {
+		return e
+	}
+	return fallbackCheckoutEmail
+}
+
 func (h *Handler) Initiate(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -705,7 +725,8 @@ func (h *Handler) Initiate(c *gin.Context) {
 		}
 	}
 
-	out, err := h.svc.InitiateCheckout(c.Request.Context(), c.Param("id"), u, req.PlaceOrderRequest, req.Email, req.CallbackURL)
+	email := resolveCheckoutEmail(req.Email, c.GetString("user_email"))
+	out, err := h.svc.InitiateCheckout(c.Request.Context(), c.Param("id"), u, req.PlaceOrderRequest, email, req.CallbackURL)
 	if err != nil {
 		h.fail(c, err)
 		return

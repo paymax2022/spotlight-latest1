@@ -2,14 +2,16 @@
 // PERMANENT seller trust card (never boost-gated), schema-driven attribute table,
 // description, a fixed off-platform safety nudge (Paymax connects, never holds
 // funds), and CTAs: Contact seller (opens the Deal Room) with Make Offer as a
-// non-binding price proposal, plus tertiary tap-to-reveal Call. Sold/expired
+// non-binding price proposal, plus a tertiary tap-to-reveal seller phone that, once
+// shown, offers WhatsApp / Call / Copy. Sold/expired
 // shows a banner over a dimmed gallery, never a 404.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Linking, View, Text, StyleSheet, Pressable, ScrollView, Image, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight, MessageCircle, Copy, Check } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -19,6 +21,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useAuthStore } from '@/store/authStore';
 import { revealSellerContact } from '@/features/marketplace/api/sell.api';
+import { whatsappUrl, dialUrl } from '@/features/marketplace/contactLinks';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
 import { useListing } from '@/features/marketplace/hooks';
 import * as accountApi from '@/features/marketplace/api/account.api';
@@ -38,6 +41,10 @@ export default function ListingDetail() {
   const [revealedPhone, setRevealedPhone] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [contactNotice, setContactNotice] = useState<string | null>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
   const currentUserId = useAuthStore((st) => st.user?.id);
   const [gallery, setGallery] = useState(0);
 
@@ -70,14 +77,10 @@ export default function ListingDetail() {
   // Ownership decides which half of this screen a viewer gets.
   const isOwnListing = !!currentUserId && l.sellerId === currentUserId;
 
-  // Reveal, then dial. A revealed number stays on screen rather than opening the
-  // dialer immediately: the viewer asked to SEE it, and a second tap to call is
-  // cheaper than an accidental call.
+  // Reveal the number first; contacting is a separate, deliberate tap (WhatsApp, Call or
+  // Copy). The viewer asked to SEE it, and an accidental call or chat is worse than a
+  // second tap.
   const onRevealPhone = async () => {
-    if (revealedPhone) {
-      Linking.openURL(`tel:${revealedPhone.replace(/[^0-9+]/g, '')}`).catch(() => {});
-      return;
-    }
     setRevealing(true);
     setRevealError(null);
     try {
@@ -95,6 +98,38 @@ export default function ListingDetail() {
       );
     } finally {
       setRevealing(false);
+    }
+  };
+
+  const onWhatsApp = async () => {
+    setContactNotice(null);
+    const url = whatsappUrl(
+      revealedPhone,
+      `Hi, I'm interested in your listing "${l.title}" on Paymax Marketplace.`,
+    );
+    if (!url) { setContactNotice("This number can't be used on WhatsApp — try Call or Copy."); return; }
+    try { await Linking.openURL(url); }
+    catch { setContactNotice("Couldn't open WhatsApp — try Call or Copy."); }
+  };
+
+  const onCall = async () => {
+    setContactNotice(null);
+    const url = dialUrl(revealedPhone);
+    if (!url) { setContactNotice("This number can't be dialled — try WhatsApp or Copy."); return; }
+    try { await Linking.openURL(url); }
+    catch { setContactNotice("Couldn't open the dialler — try Copy."); }
+  };
+
+  const onCopyPhone = async () => {
+    if (!revealedPhone) return;
+    setContactNotice(null);
+    try {
+      await Clipboard.setStringAsync(revealedPhone);
+      setCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setContactNotice("Couldn't copy — press and hold the number to copy it.");
     }
   };
   const media = l.media ?? [];
@@ -213,23 +248,57 @@ export default function ListingDetail() {
               is budgeted at 10 distinct listings per hour per viewer and records
               each reveal so a seller can ask who was given their number. */}
           {!unavailable ? (
-            <Pressable
-              style={styles.callRow}
-              disabled={revealing || !!revealedPhone}
-              onPress={onRevealPhone}
-              accessibilityRole="button"
-              accessibilityLabel={revealedPhone ? `Call seller on ${revealedPhone}` : 'Reveal seller phone number'}
-            >
-              <Phone size={16} color={MarketColors.muted} />
-              <Text style={styles.callText}>
-                {revealing
-                  ? 'Revealing…'
-                  : revealedPhone
-                    ? `Call ${revealedPhone}`
-                    : revealError ?? 'Tap to reveal seller phone'}
-              </Text>
-              {!revealedPhone && !revealing ? <ChevronRight size={16} color={MarketColors.muted} /> : null}
-            </Pressable>
+            revealedPhone ? (
+              <View style={styles.contactCard}>
+                <Text style={styles.contactLabel}>Seller phone</Text>
+                {/* selectable: press-and-hold also copies, on top of the Copy button. */}
+                <Text selectable style={styles.contactNumber}>{revealedPhone}</Text>
+                <View style={styles.contactActions}>
+                  <Pressable
+                    style={[styles.contactBtn, styles.contactBtnPrimary]}
+                    onPress={onWhatsApp}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Message seller on WhatsApp at ${revealedPhone}`}
+                  >
+                    <MessageCircle size={16} color={MarketColors.surface} />
+                    <Text style={styles.contactBtnPrimaryText}>WhatsApp</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.contactBtn}
+                    onPress={onCall}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Call seller on ${revealedPhone}`}
+                  >
+                    <Phone size={16} color={MarketColors.brand} />
+                    <Text style={styles.contactBtnText}>Call</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.contactBtn}
+                    onPress={onCopyPhone}
+                    accessibilityRole="button"
+                    accessibilityLabel={copied ? 'Phone number copied' : `Copy seller phone number ${revealedPhone}`}
+                  >
+                    {copied ? <Check size={16} color={MarketColors.ok} /> : <Copy size={16} color={MarketColors.brand} />}
+                    <Text style={styles.contactBtnText}>{copied ? 'Copied' : 'Copy'}</Text>
+                  </Pressable>
+                </View>
+                {contactNotice ? <Text style={styles.contactNotice}>{contactNotice}</Text> : null}
+              </View>
+            ) : (
+              <Pressable
+                style={styles.callRow}
+                disabled={revealing}
+                onPress={onRevealPhone}
+                accessibilityRole="button"
+                accessibilityLabel="Reveal seller phone number"
+              >
+                <Phone size={16} color={MarketColors.muted} />
+                <Text style={styles.callText}>
+                  {revealing ? 'Revealing…' : revealError ?? 'Tap to reveal seller phone'}
+                </Text>
+                {!revealing ? <ChevronRight size={16} color={MarketColors.muted} /> : null}
+              </Pressable>
+            )
           ) : null}
         </View>
       </ScrollView>
@@ -322,6 +391,15 @@ const styles = StyleSheet.create({
   safetyTextWarn: { color: MarketColors.warnText },
   callRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.md, paddingVertical: Spacing.sm },
   callText: { ...Typography.labelMd, color: MarketColors.muted, flex: 1 },
+  contactCard: { marginTop: Spacing.md, borderWidth: 1, borderColor: MarketColors.border, borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.xs },
+  contactLabel: { ...Typography.labelSm, color: MarketColors.muted },
+  contactNumber: { ...Typography.titleMd, color: MarketColors.text, fontWeight: '700' },
+  contactActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.xs },
+  contactBtn: { flex: 1, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: MarketColors.brand },
+  contactBtnPrimary: { backgroundColor: MarketColors.brand },
+  contactBtnText: { ...Typography.labelMd, color: MarketColors.brand, fontWeight: '700' },
+  contactBtnPrimaryText: { ...Typography.labelMd, color: MarketColors.surface, fontWeight: '700' },
+  contactNotice: { ...Typography.labelSm, color: MarketColors.danger, marginTop: Spacing.xs },
   ctaBar: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: MarketColors.border },
   offerBtn: { height: 52, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: MarketColors.brand, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.md },
   offerBtnText: { ...Typography.labelLg, color: MarketColors.brand, fontWeight: '700' },
