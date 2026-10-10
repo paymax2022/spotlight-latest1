@@ -30,6 +30,12 @@ func (s *Service) StartOrGetThread(ctx context.Context, buyerID, listingID, firs
 	if strings.TrimSpace(listingID) == "" {
 		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
 	}
+	// listing_id arrives in the request BODY, outside UUIDParams' path-param
+	// reach — a malformed value would abort at the mkt_listings uuid compare
+	// inside GetOrCreateThread and surface as a 500.
+	if err := requireUUIDField(listingID, "listing_id"); err != nil {
+		return nil, err
+	}
 	tr, err := s.repo.GetOrCreateThread(ctx, listingID, buyerID)
 	if err != nil {
 		return nil, err

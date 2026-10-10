@@ -85,6 +85,11 @@ func (r *Repository) AdminInsertCategory(ctx context.Context, c Category) (*Cate
 		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrConflict
 		}
+		if dbutil.IsForeignKeyViolation(err) {
+			// parent_id names a category that does not exist — a caller error
+			// (400 naming the field), not an internal failure.
+			return nil, fieldErr(CodeValidation, "unknown parent_id", "parent_id")
+		}
 		return nil, wrapInternal("insert category", err)
 	}
 	return out, nil
@@ -113,6 +118,9 @@ func (r *Repository) AdminUpdateCategory(ctx context.Context, id string, c Categ
 		}
 		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrConflict
+		}
+		if dbutil.IsForeignKeyViolation(err) {
+			return nil, fieldErr(CodeValidation, "unknown parent_id", "parent_id")
 		}
 		return nil, wrapInternal("update category", err)
 	}

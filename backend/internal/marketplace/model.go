@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ListingStatus: draft,pending_review,active,paused,expired,sold,removed_policy,removed_user
@@ -809,6 +811,19 @@ func newErr(status int, code, message string) *CodedError {
 // fieldErr constructs a 400 validation CodedError bound to a field.
 func fieldErr(code, message, field string) *CodedError {
 	return &CodedError{Status: http.StatusBadRequest, Code: code, Message: message, Field: field}
+}
+
+// requireUUIDField applies the same shape check UUIDParams applies to path
+// params (:id/:mediaId/:categoryId) to an id that arrives in a request BODY or
+// QUERY string — where the middleware never sees it. A malformed value can
+// never identify a row; without this it reaches a uuid column and Postgres's
+// "invalid input syntax for type uuid" escapes as a 500 instead of a
+// caller-correctable 400 (FileAppeal's target_id check is the precedent).
+func requireUUIDField(v, field string) error {
+	if _, err := uuid.Parse(v); err != nil {
+		return fieldErr(CodeValidation, field+" must be a uuid", field)
+	}
+	return nil
 }
 
 // asCoded unwraps err to a *CodedError, or synthesizes a 500 for anything else.

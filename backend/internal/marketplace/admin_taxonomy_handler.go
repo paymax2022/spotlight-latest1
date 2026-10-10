@@ -3,6 +3,7 @@ package marketplace
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -36,9 +37,16 @@ type categoryBody struct {
 }
 
 func (b categoryBody) toCategory(marketID string) Category {
+	// A blank parent_id means "top-level category" — normalize it to NULL. An
+	// empty string reaching the uuid column would abort the write with
+	// "invalid input syntax for type uuid" (a 500) instead of storing no parent.
+	parentID := b.ParentID
+	if parentID != nil && strings.TrimSpace(*parentID) == "" {
+		parentID = nil
+	}
 	return Category{
 		MarketID:        marketID,
-		ParentID:        b.ParentID,
+		ParentID:        parentID,
 		Slug:            b.Slug,
 		Name:            b.Name,
 		RiskTier:        b.RiskTier,
@@ -60,6 +68,14 @@ func validateCategoryBody(b categoryBody) error {
 	}
 	if b.CommissionBps < 0 || b.CommissionBps > 10000 {
 		return fieldErr(CodeValidation, "commission_bps must be 0..10000", "commission_bps")
+	}
+	// parent_id lands in mkt_categories.parent_id (uuid): a malformed value
+	// would abort the INSERT/UPDATE with "invalid input syntax for type uuid"
+	// — a 500 for a caller bug. Blank is "no parent" (normalized in toCategory).
+	if b.ParentID != nil && strings.TrimSpace(*b.ParentID) != "" {
+		if err := requireUUIDField(*b.ParentID, "parent_id"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
