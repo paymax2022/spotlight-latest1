@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -123,9 +124,40 @@ func (p triagePayment) Charge(ctx context.Context, userID, reference, idemKey st
 	// DebitGated re-runs the strict cap INSIDE the debit tx under the wallet
 	// lock (F7) — the pooled gate above is advisory only.
 	if err := p.l.DebitGated(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) {
+			// The care service keys charges deterministically ("triage.care:pay:"+refID),
+			// so a duplicate under this key should be the verified replay of the
+			// SAME journal — confirm the recorded identity before treating the
+			// charge as posted (a different journal under the key fails closed).
+			if e, ok, verr := p.l.EntryByKey(ctx, idemKey+":debit"); verr == nil && ok &&
+				e.Reference == reference && e.AmountKobo == amountMinor && e.Type == ledger.EntryDebit {
+				return idemKey, nil // true replay — the charge already stands
+			}
+			return "", fmt.Errorf("triage: charge key %s held by a different journal: %w", idemKey, ledger.ErrDuplicate)
+		}
 		return "", err
 	}
 	return idemKey, nil
+}
+
+// Reverse compensates a posted charge when the guarded referral transition
+// loses its race (charge landed, CAS failed): the held escrow is returned to
+// the member's wallet as a reversing entry — the ledger stays immutable.
+// Idempotent on idemKey (a replay is a no-op via the ledger unique constraint).
+func (p triagePayment) Reverse(ctx context.Context, userID, reference, idemKey string, amountMinor int64) error {
+	wallet, err := p.l.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return err
+	}
+	acc, err := p.l.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	if err := p.l.PostReversal(ctx, wallet.ID, acc.ID, amountMinor, reference, idemKey); err != nil &&
+		!errors.Is(err, ledger.ErrDuplicate) {
+		return err
+	}
+	return nil
 }
 
 // triageEmergencyLocator finds the nearest ER via the MapService external-place

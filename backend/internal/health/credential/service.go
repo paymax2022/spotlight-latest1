@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // ErrForbidden is an object-level authZ failure.
@@ -134,10 +135,15 @@ func (s *Service) Submit(ctx context.Context, ownerID string, in SubmitInput) (*
 	if in.RegNumber == "" || in.FullName == "" {
 		return nil, errors.New("credential: reg_number and full_name required")
 	}
-	// Object-level authZ + must be a vet application (GetApplication enforces owner).
+	if _, err := uuid.Parse(in.ApplicationID); err != nil {
+		return nil, fmt.Errorf("credential: application_id must be a uuid")
+	}
+	// Object-level authZ + must be a vet application. GetApplication folds a
+	// foreign application to ErrApplicationNotFound — propagate it so a missing
+	// and a foreign application are indistinguishable (no existence oracle).
 	app, err := s.providers.GetApplication(ctx, ownerID, in.ApplicationID)
 	if err != nil {
-		return nil, ErrForbidden
+		return nil, err
 	}
 	if app.ProviderType != "vet" {
 		return nil, errors.New("credential: not a vet application")
@@ -225,7 +231,7 @@ func (s *Service) Submit(ctx context.Context, ownerID string, in SubmitInput) (*
 // Object-level authZ: only the application owner may read.
 func (s *Service) MyStatus(ctx context.Context, ownerID, applicationID string) (*PublicStatus, error) {
 	if _, err := s.providers.GetApplication(ctx, ownerID, applicationID); err != nil {
-		return nil, ErrForbidden // owner check
+		return nil, err // missing OR foreign → ErrApplicationNotFound (uniform)
 	}
 	rec, err := s.repo.LatestByApplication(ctx, applicationID)
 	if err != nil {
@@ -263,7 +269,9 @@ func (s *Service) DocSignedURL(ctx context.Context, accessorID, docID string, is
 	case isReviewer:
 		basis = "REVIEWER"
 	default:
-		return "", ErrForbidden
+		// A member probing another owner's doc folds to the same not-found a
+		// missing doc returns — "forbidden" would confirm the doc exists.
+		return "", ErrNotFound
 	}
 	// Access-log BEFORE returning any URL (HL-12 / NDPA).
 	if err := s.repo.LogDocAccess(ctx, docID, accessorID, basis); err != nil {
@@ -493,8 +501,20 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 var credErrMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusForbidden, ErrForbidden),
 	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusNotFound, providers.ErrApplicationNotFound),
 	httperr.R(http.StatusConflict, ErrIllegalTransition),
 )
+
+// uuidParam gates a named uuid-typed path parameter before it reaches the store —
+// the record/doc id columns are uuid, so a malformed value otherwise surfaces as
+// a driver error instead of a clean 400.
+func uuidParam(c *gin.Context, name string) bool {
+	if _, err := uuid.Parse(c.Param(name)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": name + " must be a uuid"})
+		return false
+	}
+	return true
+}
 
 // Submit POST /verification/submit
 func (h *Handler) Submit(c *gin.Context) {
@@ -518,6 +538,10 @@ func (h *Handler) Submit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	if _, perr := uuid.Parse(body.ApplicationID); perr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "application_id must be a uuid"})
+		return
+	}
 	in := SubmitInput{ApplicationID: body.ApplicationID, RegNumber: body.RegNumber, FullName: body.FullName, DOB: body.DOB, Consent: body.Consent}
 	for _, d := range body.Docs {
 		in.Docs = append(in.Docs, SubmitDoc{Type: d.Type, StorageKey: d.StorageKey})
@@ -539,6 +563,10 @@ func (h *Handler) MyStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "application_id required"})
 		return
 	}
+	if _, perr := uuid.Parse(appID); perr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "application_id must be a uuid"})
+		return
+	}
 	st, err := h.svc.MyStatus(c.Request.Context(), uid, appID)
 	if err != nil {
 		credErrMap.Write(c, err)
@@ -550,6 +578,9 @@ func (h *Handler) MyStatus(c *gin.Context) {
 // MyDocURL GET /verification/documents/:docId/url — owner-scoped signed URL.
 func (h *Handler) MyDocURL(c *gin.Context) {
 	uid := ginutil.UserID(c)
+	if !uuidParam(c, "docId") {
+		return
+	}
 	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), false)
 	if err != nil {
 		credErrMap.Write(c, err)
@@ -570,6 +601,9 @@ func (h *Handler) Queue(c *gin.Context) {
 
 // GetRecord GET /verification/:recordId
 func (h *Handler) GetRecord(c *gin.Context) {
+	if !uuidParam(c, "recordId") {
+		return
+	}
 	rec, err := h.svc.GetRecordAdmin(c.Request.Context(), c.Param("recordId"))
 	if err != nil {
 		credErrMap.Write(c, err)
@@ -581,6 +615,9 @@ func (h *Handler) GetRecord(c *gin.Context) {
 // ReviewerDocURL GET /verification/documents/:docId/url — reviewer signed URL (access-logged).
 func (h *Handler) ReviewerDocURL(c *gin.Context) {
 	uid := ginutil.UserID(c)
+	if !uuidParam(c, "docId") {
+		return
+	}
 	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), true)
 	if err != nil {
 		credErrMap.Write(c, err)
@@ -609,6 +646,9 @@ func (h *Handler) Decide(c *gin.Context) {
 			return
 		}
 		expiry = &t
+	}
+	if !uuidParam(c, "recordId") {
+		return
 	}
 	rec, err := h.svc.Decide(c.Request.Context(), uid, c.Param("recordId"), body.Action, expiry, body.Notes)
 	if err != nil {

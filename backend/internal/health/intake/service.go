@@ -224,8 +224,21 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// uuidSchemaID gates :schemaId before it reaches pgx — health_intake_schemas.id
+// is uuid, so a malformed value otherwise surfaces as a driver error.
+func uuidSchemaID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("schemaId")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "schemaId must be a uuid")
+		return false
+	}
+	return true
+}
+
 // GetSchema — GET /intake/:schemaId
 func (h *Handler) GetSchema(c *gin.Context) {
+	if !uuidSchemaID(c) {
+		return
+	}
 	sc, err := h.svc.GetSchema(c.Request.Context(), c.Param("schemaId"))
 	if err != nil {
 		ginutil.FailOK(c, http.StatusNotFound, err.Error())
@@ -246,6 +259,9 @@ func (h *Handler) Submit(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if !uuidSchemaID(c) {
 		return
 	}
 	r, err := h.svc.Submit(c.Request.Context(), id, c.Param("schemaId"), req.Answers)

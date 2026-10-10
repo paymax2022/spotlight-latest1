@@ -183,9 +183,11 @@ func (s *Service) Transition(ctx context.Context, actorID, apptID string, to Sta
 	if err != nil {
 		return nil, err
 	}
-	// authZ: either the patient or the provider's owner may drive transitions.
+	// authZ BEFORE the state check: either the patient or the provider's owner may
+	// drive transitions; a stranger folds to the same not-found a missing
+	// appointment returns and can never observe the appointment's state.
 	if actorID != a.PatientID && actorID != providerOwner {
-		return nil, errors.New("scheduling: forbidden")
+		return nil, ErrAppointmentNotFound
 	}
 	if a.State == to {
 		return a, nil
@@ -250,7 +252,7 @@ func lockAppointment(ctx context.Context, tx pgx.Tx, id string) (*Appointment, s
 	           WHERE ap.id=$1 FOR UPDATE OF ap`
 	if err := tx.QueryRow(ctx, q, id).Scan(&a.ID, &a.ProviderID, &a.PatientID, &a.SubjectType, &a.VisitType, &state, &a.SlotStart, &a.SlotEnd, &providerOwner); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", errors.New("scheduling: appointment not found")
+			return nil, "", ErrAppointmentNotFound
 		}
 		return nil, "", err
 	}
@@ -276,6 +278,12 @@ func validVisit(v string) bool {
 // ErrSlotTaken is returned when a booking would collide with an existing active
 // appointment for the same provider slot (AP-002).
 var ErrSlotTaken = errors.New("scheduling: slot already booked")
+
+// ErrAppointmentNotFound is the uniform object-level denial on member-facing
+// appointment paths: a missing appointment and one the caller is not a party to
+// are INDISTINGUISHABLE — "forbidden" on a foreign appointment vs "not found" on
+// a missing one would let a member probe appointment ids.
+var ErrAppointmentNotFound = errors.New("scheduling: appointment not found")
 
 // blockingStates are the appointment states that occupy a provider's slot — a new
 // booking must not overlap an appointment in any of these. CANCELLED, NO_SHOW,
@@ -308,6 +316,28 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// uuidPathID gates the :id path parameter before it reaches pgx —
+// health_appointments.id is uuid, so a malformed value otherwise surfaces as a
+// driver error instead of a clean 400.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+		return false
+	}
+	return true
+}
+
+// schedulingFail maps service errors: ErrAppointmentNotFound (missing OR
+// non-party — uniform) → 404; anything else → 409 (state/slot refusals). FailOK
+// sanitizes the message.
+func schedulingFail(c *gin.Context, err error) {
+	if errors.Is(err, ErrAppointmentNotFound) {
+		ginutil.FailOK(c, http.StatusNotFound, "appointment not found")
+		return
+	}
+	ginutil.FailOK(c, http.StatusConflict, err.Error())
+}
+
 // Request — POST /appointments
 func (h *Handler) Request(c *gin.Context) {
 	id := ginutil.UserID(c)
@@ -324,6 +354,11 @@ func (h *Handler) Request(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// provider_id feeds WHERE provider_id=$1 on a uuid column — gate before pgx.
+	if _, perr := uuid.Parse(req.ProviderID); perr != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
 		return
 	}
 	a, err := h.svc.Request(c.Request.Context(), id, req.ProviderID, req.SubjectType, req.VisitType, req.SlotStart, req.SlotEnd)
@@ -358,9 +393,12 @@ func (h *Handler) Transition(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	a, err := h.svc.Transition(c.Request.Context(), id, c.Param("id"), State(req.State))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		schedulingFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, keyAppointment: a})
@@ -381,9 +419,12 @@ func (h *Handler) Reschedule(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	a, err := h.svc.Reschedule(c.Request.Context(), id, c.Param("id"), req.SlotStart, req.SlotEnd)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		schedulingFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, keyAppointment: a})

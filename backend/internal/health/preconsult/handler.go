@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // handler.go — member (patient + assigned doctor) HTTP surface for the pre-consult
@@ -17,6 +18,34 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// uuidAppointmentID gates :appointmentId before it reaches pgx —
+// health_appointments.id is uuid, so a malformed value otherwise surfaces as a
+// driver error instead of a clean 400.
+func uuidAppointmentID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("appointmentId")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "appointmentId must be a uuid")
+		return false
+	}
+	return true
+}
+
+// preconsultFail maps service errors onto statuses that do not leak existence:
+// ErrAppointmentNotFound / ErrIntakeNotFound (missing OR foreign — uniform) →
+// 404; ErrUploadsNotConfigured → 503; anything else → the caller's default
+// status. FailOK sanitizes the message.
+func preconsultFail(c *gin.Context, err error, defCode int) {
+	switch {
+	case errors.Is(err, ErrAppointmentNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "appointment not found")
+	case errors.Is(err, ErrIntakeNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "intake not found")
+	case errors.Is(err, ErrUploadsNotConfigured):
+		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+	default:
+		ginutil.FailOK(c, defCode, err.Error())
+	}
+}
+
 // GetAppointmentIntake — GET /intake/appointments/:appointmentId
 // Patient: get-or-create the intake + pinned schema + prefill + consent text + draft.
 func (h *Handler) GetAppointmentIntake(c *gin.Context) {
@@ -25,9 +54,12 @@ func (h *Handler) GetAppointmentIntake(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidAppointmentID(c) {
+		return
+	}
 	view, err := h.svc.GetForPatient(c.Request.Context(), id, c.Param("appointmentId"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		preconsultFail(c, err, http.StatusForbidden)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": view})
@@ -47,9 +79,12 @@ func (h *Handler) SaveDraft(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidAppointmentID(c) {
+		return
+	}
 	it, err := h.svc.SaveDraft(c.Request.Context(), id, c.Param("appointmentId"), req.Answers)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		preconsultFail(c, err, http.StatusBadRequest)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "intake": it})
@@ -71,9 +106,12 @@ func (h *Handler) Submit(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidAppointmentID(c) {
+		return
+	}
 	res, err := h.svc.Submit(c.Request.Context(), id, c.Param("appointmentId"), req.Answers, req.ConsentVersion)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		preconsultFail(c, err, http.StatusBadRequest)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": res})
@@ -95,13 +133,12 @@ func (h *Handler) PresignAttachment(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidAppointmentID(c) {
+		return
+	}
 	res, err := h.svc.PresignAttachment(c.Request.Context(), id, c.Param("appointmentId"), req.Kind, req.FileName, req.ContentType)
 	if err != nil {
-		if errors.Is(err, ErrUploadsNotConfigured) {
-			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
-			return
-		}
-		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		preconsultFail(c, err, http.StatusBadRequest)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": res})
@@ -124,9 +161,12 @@ func (h *Handler) RecordAttachment(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidAppointmentID(c) {
+		return
+	}
 	it, err := h.svc.RecordAttachment(c.Request.Context(), id, c.Param("appointmentId"), req.Kind, req.StorageKey, req.ContentType)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		preconsultFail(c, err, http.StatusBadRequest)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "intake": it})
@@ -140,9 +180,12 @@ func (h *Handler) DoctorSummary(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidAppointmentID(c) {
+		return
+	}
 	sum, err := h.svc.GetForDoctor(c.Request.Context(), id, c.Param("appointmentId"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		preconsultFail(c, err, http.StatusForbidden)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "summary": sum})
@@ -326,6 +369,9 @@ func (h *AdminHandler) Monitoring(c *gin.Context) {
 
 // ViewIntake — Intake record viewer (A9; access-logged)
 func (h *AdminHandler) ViewIntake(c *gin.Context) {
+	if !uuidAppointmentID(c) {
+		return
+	}
 	out, err := h.svc.AdminViewIntake(c.Request.Context(), ginutil.UserID(c), c.Param("appointmentId"))
 	if err != nil {
 		ginutil.FailOK(c, http.StatusNotFound, err.Error())

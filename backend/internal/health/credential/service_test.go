@@ -104,7 +104,8 @@ type fakeProviders struct {
 func (p *fakeProviders) GetApplication(_ context.Context, ownerID, appID string) (*providers.Application, error) {
 	a, ok := p.apps[appID]
 	if !ok || a.OwnerUserID != ownerID {
-		return nil, errors.New("forbidden")
+		// Mirrors the production fold: missing and foreign are one sentinel.
+		return nil, providers.ErrApplicationNotFound
 	}
 	cp := *a
 	return &cp, nil
@@ -179,7 +180,7 @@ func itoa(n int) string {
 
 const (
 	vetOwner = "owner-vet-1"
-	appID    = "app-1"
+	appID    = "3f0a1c9e-0000-4000-8000-00000000aa01" // uuid-shaped: the service gates application_id
 	reviewer = "reviewer-1"
 )
 
@@ -301,8 +302,10 @@ func TestSubmit_RequiresConsent(t *testing.T) {
 
 func TestSubmit_OwnerOnly(t *testing.T) {
 	svc, _, _, _, _ := newHarness(t) //nolint:dogsled // tuple: only svc needed
-	if _, err := svc.Submit(context.Background(), "other-vet", validSubmit()); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("expected ErrForbidden for non-owner, got %v", err)
+	// A foreign application folds to the same not-found a missing one returns —
+	// never a distinct "forbidden" existence oracle.
+	if _, err := svc.Submit(context.Background(), "other-vet", validSubmit()); !errors.Is(err, providers.ErrApplicationNotFound) {
+		t.Fatalf("expected ErrApplicationNotFound for non-owner, got %v", err)
 	}
 }
 
@@ -422,9 +425,10 @@ func TestDocSignedURL_AccessLoggedAndGated(t *testing.T) {
 	if _, err := svc.DocSignedURL(context.Background(), reviewer, "d1", true); err != nil {
 		t.Fatal(err)
 	}
-	// unrelated user, not reviewer → forbidden, and NOT logged
-	if _, err := svc.DocSignedURL(context.Background(), "stranger", "d1", false); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("expected ErrForbidden, got %v", err)
+	// unrelated user, not reviewer → the same not-found a missing doc returns
+	// (uniform denial — a "forbidden" would confirm the doc exists), NOT logged
+	if _, err := svc.DocSignedURL(context.Background(), "stranger", "d1", false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 	if len(store.accessLog) != 2 {
 		t.Fatalf("expected exactly 2 access-log rows (owner, reviewer), got %v", store.accessLog)

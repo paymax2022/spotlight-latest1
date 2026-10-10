@@ -31,6 +31,17 @@ import (
 // fabricated URL.
 var ErrUploadsNotConfigured = errors.New("preconsult: uploads are not configured")
 
+// ErrAppointmentNotFound is the uniform object-level denial on appointment-scoped
+// member paths: a missing appointment and one whose patient is not the caller are
+// INDISTINGUISHABLE — "forbidden" on a foreign appointment vs "not found" on a
+// missing one would let a member probe appointment ids.
+var ErrAppointmentNotFound = errors.New("preconsult: appointment not found")
+
+// ErrIntakeNotFound is the uniform denial on intake-scoped paths: a missing
+// intake, an intake whose patient is not the caller, and an intake a doctor is
+// not assigned to all fold here.
+var ErrIntakeNotFound = errors.New("preconsult: intake not found")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe. Bodies are never
 // passed; only IDs / status / red-flag codes.
 type Auditor interface {
@@ -104,7 +115,7 @@ func (s *Service) loadAppointment(ctx context.Context, appointmentID string) (pa
 	const q = `SELECT patient_id::text, provider_id::text FROM health_appointments WHERE id=$1`
 	if e := s.db.QueryRow(ctx, q, appointmentID).Scan(&patientID, &providerID); e != nil {
 		if errors.Is(e, pgx.ErrNoRows) {
-			return "", "", errors.New("preconsult: appointment not found")
+			return "", "", ErrAppointmentNotFound
 		}
 		return "", "", e
 	}
@@ -119,8 +130,8 @@ func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string
 	if err != nil {
 		return nil, err
 	}
-	if caller != patientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != patientID { // foreign appointment → uniform not-found
+		return nil, ErrAppointmentNotFound
 	}
 
 	if it, err := s.getIntakeByAppointment(ctx, appointmentID); err == nil {
@@ -166,8 +177,8 @@ func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, a
 	if err != nil {
 		return nil, err
 	}
-	if caller != it.PatientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != it.PatientID { // foreign intake → uniform not-found
+		return nil, ErrIntakeNotFound
 	}
 	if it.Status == "SUBMITTED" {
 		return nil, errors.New("preconsult: intake already submitted")
@@ -210,8 +221,8 @@ func (s *Service) Submit(ctx context.Context, caller, appointmentID string, answ
 	if err != nil {
 		return nil, err
 	}
-	if caller != it.PatientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != it.PatientID { // foreign intake → uniform not-found
+		return nil, ErrIntakeNotFound
 	}
 	if it.Status == "SUBMITTED" {
 		return nil, errors.New("preconsult: intake already submitted")
@@ -310,8 +321,8 @@ func (s *Service) GetForPatient(ctx context.Context, caller, appointmentID strin
 	if err != nil {
 		return nil, err
 	}
-	if caller != it.PatientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != it.PatientID { // foreign intake → uniform not-found
+		return nil, ErrIntakeNotFound
 	}
 	sc, err := s.intake.GetActiveSchemaBySlug(ctx, SchemaSlug)
 	if err != nil {
@@ -342,8 +353,8 @@ func (s *Service) Prefill(ctx context.Context, caller, appointmentID string) (ma
 	if err != nil {
 		return nil, err
 	}
-	if caller != patientID {
-		return nil, errors.New("preconsult: forbidden")
+	if caller != patientID { // foreign appointment → uniform not-found
+		return nil, ErrAppointmentNotFound
 	}
 	out := map[string]any{}
 
@@ -399,15 +410,17 @@ func (s *Service) GetForDoctor(ctx context.Context, caller, appointmentID string
 	it, err := s.getIntakeByAppointment(ctx, appointmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("preconsult: intake not found")
+			return nil, ErrIntakeNotFound
 		}
 		return nil, err
 	}
 	// Object-level authZ: only the assigned doctor (provider owner) — reuse the
-	// consult provider-owner join.
+	// consult provider-owner join. A doctor who is NOT assigned folds to the same
+	// not-found a missing intake returns — "forbidden" would confirm the intake
+	// exists for another doctor.
 	_, providerOwner, cerr := s.consult.LoadByAppointment(ctx, appointmentID)
 	if cerr != nil || !doctorAuthorized(caller, providerOwner) {
-		return nil, errors.New("preconsult: forbidden")
+		return nil, ErrIntakeNotFound
 	}
 
 	// Load the validated answers (only now that authZ passed).

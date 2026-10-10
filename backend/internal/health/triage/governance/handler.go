@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/cryptox"
@@ -66,6 +67,17 @@ func (h *Handler) CreateContent(c *gin.Context) {
 	respond(c, v, err)
 }
 
+// uuidPathID gates the :id path parameter before it reaches pgx — the content /
+// rule ids are uuid columns, so a malformed value otherwise surfaces as a
+// driver error instead of a clean 400.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: "id must be a uuid"})
+		return false
+	}
+	return true
+}
+
 func (h *Handler) EditContent(c *gin.Context) {
 	var body struct {
 		Body    string   `json:"body" binding:"required"`
@@ -73,6 +85,9 @@ func (h *Handler) EditContent(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if !uuidPathID(c) {
 		return
 	}
 	v, err := h.gov.EditContent(c.Request.Context(), actor(c), c.Param("id"), body.Body, body.RAGTags)
@@ -85,6 +100,9 @@ func (h *Handler) ListContent(c *gin.Context) {
 }
 
 func (h *Handler) ContentLifecycle(c *gin.Context) {
+	if !uuidPathID(c) {
+		return
+	}
 	id := c.Param("id")
 	uid := actor(c)
 	ctx := c.Request.Context()
@@ -131,6 +149,9 @@ func (h *Handler) EditRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	v, err := h.gov.EditRule(c.Request.Context(), actor(c), c.Param("id"), body.Name, body.Condition, body.UrgencyLevel, body.Severity)
 	respond(c, v, err)
 }
@@ -141,6 +162,9 @@ func (h *Handler) ListRules(c *gin.Context) {
 }
 
 func (h *Handler) RuleLifecycle(c *gin.Context) {
+	if !uuidPathID(c) {
+		return
+	}
 	id := c.Param("id")
 	uid := actor(c)
 	ctx := c.Request.Context()

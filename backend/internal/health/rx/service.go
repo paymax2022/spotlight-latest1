@@ -22,6 +22,16 @@ const (
 	keyPrescription = "prescription"
 )
 
+// ErrPrescriptionNotFound is the uniform object-level denial on member-facing
+// prescription paths: a missing rx, a malformed id, and an rx the caller is not
+// a party to (patient / prescriber / owner of the pinned pharmacy) are
+// INDISTINGUISHABLE — a state refusal or "forbidden" on a foreign rx would let
+// an attacker probe prescription ids and observe their lifecycle.
+var ErrPrescriptionNotFound = errors.New("rx: not found")
+
+// ErrInvalidInput marks malformed input (e.g. a non-uuid id in the body) → 400.
+var ErrInvalidInput = errors.New("rx: invalid input")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -273,10 +283,11 @@ func (s *Service) Get(ctx context.Context, requesterID, rxID string) (*Prescript
 	if err != nil {
 		return nil, err
 	}
-	// object-level authZ: patient, prescriber, or assigned pharmacist may read.
+	// object-level authZ: patient, prescriber, or assigned pharmacist may read;
+	// any other actor folds to the same not-found a missing rx returns.
 	if requesterID != p.PatientID && requesterID != p.PrescriberID &&
 		(p.VerifiedBy == nil || *p.VerifiedBy != requesterID) {
-		return nil, errors.New("rx: forbidden")
+		return nil, ErrPrescriptionNotFound
 	}
 	items, _ := s.loadItems(ctx, rxID)
 	p.Items = items
@@ -343,14 +354,16 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 	if err != nil {
 		return nil, err
 	}
+	// Object-level authZ BEFORE the state checks: a non-party must never learn
+	// the prescription's state (or that it exists) — they fold to not-found.
+	if err := s.authorizeActor(ctx, actorID, p, to); err != nil {
+		return nil, err
+	}
 	if p.State == to {
 		return &p.Prescription, nil // idempotent re-apply of a terminal-ish edge
 	}
 	if !canTransition(p.State, to) {
 		return nil, fmt.Errorf("rx: illegal transition %s -> %s", p.State, to)
-	}
-	if err := s.authorizeActor(ctx, actorID, p, to); err != nil {
-		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE health_prescriptions SET state=$2, updated_at=now() WHERE id=$1`, rxID, string(to)); err != nil {
 		// HL-3 backstop: a second DISPENSE collides with the partial UNIQUE index.
@@ -378,7 +391,7 @@ func lockPrescription(ctx context.Context, tx pgx.Tx, rxID string) (*prescriptio
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.PrescriberID, &p.PatientID, &p.PharmacyProviderID, &p.VerifiedBy, &state, &p.hasPOM); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("rx: not found")
+			return nil, ErrPrescriptionNotFound
 		}
 		return nil, err
 	}
@@ -396,7 +409,7 @@ func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) 
 		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt,
 		&p.RefillsAuthorized, &p.RefillsUsed); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("rx: not found")
+			return nil, ErrPrescriptionNotFound
 		}
 		return nil, err
 	}
@@ -433,6 +446,31 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// uuidPathID gates the :id path parameter before it reaches pgx —
+// health_prescriptions.id is uuid, so a malformed value otherwise surfaces as a
+// driver error instead of a clean 400.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+		return false
+	}
+	return true
+}
+
+// rxFail maps service errors: ErrPrescriptionNotFound (missing OR non-party —
+// uniform) → 404; ErrInvalidInput → 400; anything else → 409 (state/domain
+// refusals). FailOK sanitizes the message.
+func rxFail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrPrescriptionNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "prescription not found")
+	case errors.Is(err, ErrInvalidInput):
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+	default:
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	}
+}
+
 // Issue — POST /prescriptions  (vet/clinician)
 func (h *Handler) Issue(c *gin.Context) {
 	id := ginutil.UserID(c)
@@ -450,6 +488,17 @@ func (h *Handler) Issue(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// patient_id + consult_id feed uuid-typed columns — gate before pgx.
+	if _, perr := uuid.Parse(req.PatientID); perr != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "patient_id must be a uuid")
+		return
+	}
+	if req.ConsultID != nil && *req.ConsultID != "" {
+		if _, perr := uuid.Parse(*req.ConsultID); perr != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "consult_id must be a uuid")
+			return
+		}
+	}
 	// Human path: the injected ClinicalContextProvider supplies allergies/meds; a
 	// hard stop blocks unless override_reason is provided (audited).
 	p, err := h.svc.IssueChecked(c.Request.Context(), id, req.PatientID, req.ConsultID, req.Items, nil, req.OverrideReason)
@@ -462,9 +511,12 @@ func (h *Handler) Issue(c *gin.Context) {
 
 // Get — GET /prescriptions/:id
 func (h *Handler) Get(c *gin.Context) {
+	if !uuidPathID(c) {
+		return
+	}
 	p, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		rxFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
@@ -472,13 +524,27 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Send — POST /prescriptions/:id/send  { pharmacy_provider_id }
 func (h *Handler) Send(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !uuidPathID(c) {
+		return
+	}
 	var req struct {
 		PharmacyProviderID string `json:"pharmacy_provider_id"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	p, err := h.svc.SendToPharmacy(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.PharmacyProviderID)
+	if req.PharmacyProviderID != "" {
+		if _, perr := uuid.Parse(req.PharmacyProviderID); perr != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "pharmacy_provider_id must be a uuid")
+			return
+		}
+	}
+	p, err := h.svc.SendToPharmacy(c.Request.Context(), id, c.Param("id"), req.PharmacyProviderID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		rxFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
@@ -500,15 +566,18 @@ func (h *Handler) Verify(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	if req.Begin {
 		if _, err := h.svc.BeginVerify(c.Request.Context(), id, c.Param("id")); err != nil {
-			ginutil.FailOK(c, http.StatusConflict, err.Error())
+			rxFail(c, err)
 			return
 		}
 	}
 	p, err := h.svc.Verify(c.Request.Context(), id, c.Param("id"), req.Approve, req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		rxFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
@@ -521,9 +590,12 @@ func (h *Handler) Dispense(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	p, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		rxFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})

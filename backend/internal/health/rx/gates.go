@@ -142,21 +142,25 @@ func (s *Service) authorizeActor(ctx context.Context, actorID string, p *prescri
 	switch to {
 	case StateSent:
 		if actorID != p.PrescriberID && actorID != p.PatientID {
-			return errors.New("rx: only the prescriber or patient may send to pharmacy")
+			// Non-party sender folds to not-found — a role-specific refusal would
+			// confirm the prescription exists to a stranger.
+			return ErrPrescriptionNotFound
 		}
 	case StateVerifying, StateVerified, StateRejected, StateDispensed, StateFulfilled:
 		if s.pharmacyGate == nil {
 			return nil
 		}
 		if p.PharmacyProviderID == nil || *p.PharmacyProviderID == "" {
-			return errors.New("rx: prescription is not pinned to a pharmacy")
+			// A pharmacist-side edge on an unpinned rx can only come from someone
+			// who should not know it exists — uniform not-found.
+			return ErrPrescriptionNotFound
 		}
 		ok, err := s.pharmacyGate.VerifiedPharmacyOwner(ctx, actorID, *p.PharmacyProviderID)
 		if err != nil {
 			return fmt.Errorf("rx: could not verify pharmacy ownership: %w", err)
 		}
 		if !ok {
-			return errors.New("rx: actor is not an owner of the pinned pharmacy (HL-3)")
+			return ErrPrescriptionNotFound // not the pinned pharmacy's owner → not-found
 		}
 	}
 	return nil
@@ -220,13 +224,18 @@ func (s *Service) AuthorizeRefills(ctx context.Context, prescriberID, rxID strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var owner, state string
-	if err := tx.QueryRow(ctx, `SELECT prescriber_id, state FROM health_prescriptions WHERE id=$1 FOR UPDATE`, rxID).
-		Scan(&owner, &state); err != nil {
-		return nil, errors.New("rx: not found")
+	var owner, patient, state string
+	if err := tx.QueryRow(ctx, `SELECT prescriber_id, patient_id, state FROM health_prescriptions WHERE id=$1 FOR UPDATE`, rxID).
+		Scan(&owner, &patient, &state); err != nil {
+		return nil, ErrPrescriptionNotFound
 	}
+	// AuthZ BEFORE the state check: the patient gets the role refusal on their own
+	// rx; any other actor folds to not-found.
 	if prescriberID != owner {
-		return nil, errors.New("rx: only the prescriber may authorize refills")
+		if prescriberID == patient {
+			return nil, errors.New("rx: only the prescriber may authorize refills")
+		}
+		return nil, ErrPrescriptionNotFound
 	}
 	if st := State(state); st == StateDispensed || st == StateFulfilled {
 		return nil, ErrRefillsLocked
@@ -263,22 +272,24 @@ func (s *Service) DispenseRefill(ctx context.Context, pharmacistID, rxID string)
 	                  EXISTS (SELECT 1 FROM health_prescription_items i WHERE i.prescription_id=health_prescriptions.id AND i.is_pom)
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, rxID).Scan(&state, &verifiedBy, &pharmacyProviderID, &refillsUsed, &refillsAuthorized, &hasPOM); err != nil {
-		return nil, errors.New("rx: not found")
+		return nil, ErrPrescriptionNotFound
 	}
-	if st := State(state); st != StateDispensed && st != StateFulfilled {
-		return nil, ErrNotYetDispensed
-	}
+	// Pharmacy-owner gate BEFORE the state check: a foreign pharmacist folds to
+	// not-found and can never observe the rx's state or refill counters.
 	if s.pharmacyGate != nil {
 		if pharmacyProviderID == nil || *pharmacyProviderID == "" {
-			return nil, errors.New("rx: prescription is not pinned to a pharmacy")
+			return nil, ErrPrescriptionNotFound
 		}
 		ok, oerr := s.pharmacyGate.VerifiedPharmacyOwner(ctx, pharmacistID, *pharmacyProviderID)
 		if oerr != nil {
 			return nil, fmt.Errorf("rx: could not verify pharmacy ownership: %w", oerr)
 		}
 		if !ok {
-			return nil, errors.New("rx: actor is not an owner of the pinned pharmacy (HL-3)")
+			return nil, ErrPrescriptionNotFound
 		}
+	}
+	if st := State(state); st != StateDispensed && st != StateFulfilled {
+		return nil, ErrNotYetDispensed
 	}
 	if hasPOM && verifiedBy == nil {
 		return nil, errors.New("rx: POM items require pharmacist verification before dispense (HL-3)")

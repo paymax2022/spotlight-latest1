@@ -250,7 +250,7 @@ func (s *Service) AdminViewIntake(ctx context.Context, actor, appointmentID stri
 	it, err := s.getIntakeByAppointment(ctx, appointmentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("preconsult: intake not found")
+			return nil, ErrIntakeNotFound
 		}
 		return nil, err
 	}
