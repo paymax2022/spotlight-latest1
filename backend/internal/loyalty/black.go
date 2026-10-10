@@ -350,6 +350,22 @@ func (b *BlackService) RecordPartnerSettlement(ctx context.Context, actorUserID,
 	if amountKobo < 0 {
 		return nil, errors.New("loyalty: settlement amount must be non-negative kobo")
 	}
+	// partner_id/offer_id are uuid columns: the DB stores them canonically but
+	// the request shape is compared against the read-back string, so a
+	// valid-but-non-canonical input (uppercase/braced) would 409 its own row
+	// forever under its key. Normalize before insert AND compare.
+	if pid, err := uuid.Parse(partnerID); err != nil {
+		return nil, fmt.Errorf("loyalty: invalid partner id: %w", err)
+	} else {
+		partnerID = pid.String()
+	}
+	if offerID != "" {
+		oid, err := uuid.Parse(offerID)
+		if err != nil {
+			return nil, fmt.Errorf("loyalty: invalid offer id: %w", err)
+		}
+		offerID = oid.String()
+	}
 	// Replay short-circuit before any fresh work.
 	prior, err := b.settlementByIdem(ctx, actorUserID, idemKey)
 	if err == nil {
@@ -372,7 +388,11 @@ func (b *BlackService) RecordPartnerSettlement(ctx context.Context, actorUserID,
 	const ins = `INSERT INTO partner_settlements (id, partner_id, offer_id, amount_kobo, status, actor_user_id, idempotency_key, created_at)
 	             VALUES ($1,$2,$3,$4,'PENDING',$5,$6,$7)
 	             ON CONFLICT (actor_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
-	if _, err := b.base.db.Exec(ctx, ins, ps.ID, ps.PartnerID, ps.OfferID, ps.AmountKobo, actorUserID, idemKey, ps.CreatedAt); err != nil {
+	var offerArg any
+	if ps.OfferID != "" {
+		offerArg = ps.OfferID
+	}
+	if _, err := b.base.db.Exec(ctx, ins, ps.ID, ps.PartnerID, offerArg, ps.AmountKobo, actorUserID, idemKey, ps.CreatedAt); err != nil {
 		return nil, fmt.Errorf("loyalty: insert partner settlement: %w", err)
 	}
 	// Read back what stands under the key — the row just written or the winner
