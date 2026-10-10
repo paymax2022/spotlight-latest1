@@ -33,6 +33,14 @@ var ErrTierGateUnwired = errors.New("crypto: money path requires a tier gate (no
 // the caller must retry, never proceed as though the journal posted.
 var ErrLedgerReconPending = errors.New("crypto: ledger leg not durably posted — retry")
 
+// ErrSwapUnwound is returned when a swap's :sell credit was already reversed by
+// unwindSwapSell under this Idempotency-Key. The original :sell legs remain
+// durable (reversals never delete them), so the key can NEVER converge again:
+// the stale legs would re-verify and let a fresh :buy post with no proceeds to
+// offset — a double charge (R-1). The member must retry under a FRESH key;
+// this is a permanent refusal, not a transient one.
+var ErrSwapUnwound = errors.New("crypto: swap key unwound — retry with a fresh Idempotency-Key")
+
 // Service is the crypto money-path orchestrator. It REUSES the finance ledger:
 // a BUY debits the user's main wallet into the shared escrow standing account and
 // credits the user's crypto holding (asset-unit projection); a SELL reverses.

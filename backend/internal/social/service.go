@@ -273,8 +273,26 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 			if err != nil {
 				return err
 			}
-			if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-				return fmt.Errorf("social: pay request credit: %w", err)
+			if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil {
+				if !errors.Is(err, ledger.ErrDuplicate) {
+					return fmt.Errorf("social: pay request credit: %w", err)
+				}
+				// R-2: a dup claim is never proof — a bare Redis-lock TTL or a
+				// foreign claim can hold the key with zero legs behind it.
+				// Tolerating it would flip the row PAID + audit a heal over a
+				// requester credit that does not exist. Re-probe the durable
+				// credit leg (exact per-leg key + reference) before accepting:
+				// absent → retryable pending, mismatched amount → refuse.
+				crAmt, crFound, verr := s.walletEntryAmount(ctx, r.RequesterID, key+":cr:credit", key)
+				if verr != nil {
+					return verr
+				}
+				if !crFound {
+					return fmt.Errorf("%w: heal credit key %s claimed duplicate with no legs", ErrReconPending, key+":cr")
+				}
+				if crAmt != r.AmountKobo {
+					return fmt.Errorf("social: request %s credit leg amount %d != request amount %d — refusing to settle on a mismatched leg", requestID, crAmt, r.AmountKobo)
+				}
 			}
 			if r.State == RequestPending {
 				if _, err := s.db.Exec(ctx,
@@ -567,8 +585,24 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 			if err != nil {
 				return err
 			}
-			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-				return fmt.Errorf("social: pay share credit: %w", err)
+			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil {
+				if !errors.Is(err, ledger.ErrDuplicate) {
+					return fmt.Errorf("social: pay share credit: %w", err)
+				}
+				// R-2: a dup claim is never proof — re-probe the durable
+				// organiser credit leg (exact per-share key + reference) before
+				// accepting it: absent → retryable pending (no state flip, no
+				// audit), mismatched amount → refuse loudly.
+				crAmt, crFound, verr := s.walletEntryAmount(ctx, bill.OrganiserID, key+":cr:credit", ref)
+				if verr != nil {
+					return verr
+				}
+				if !crFound {
+					return fmt.Errorf("%w: heal credit key %s claimed duplicate with no legs", ErrReconPending, key+":cr")
+				}
+				if crAmt != sh.AmountKobo {
+					return fmt.Errorf("social: share %s credit leg amount %d != share amount %d — refusing to settle on a mismatched leg", shareID, crAmt, sh.AmountKobo)
+				}
 			}
 			if sh.State == SharePending {
 				if _, err := s.db.Exec(ctx,
@@ -1074,6 +1108,10 @@ func (s *Service) log(actor, target, action, resType, resID string, oldV, newV m
 var (
 	ErrForbidden = errors.New("social: forbidden")
 	ErrNotFound  = errors.New("social: not found")
+	// ErrReconPending — a ledger leg key was claimed duplicate but no durable
+	// legs back the claim (a bare Redis-lock TTL or a foreign claim). Retryable:
+	// the caller must retry, never flip a row settled as though the leg posted.
+	ErrReconPending = errors.New("social: ledger leg not durably posted — retry")
 )
 
 // AMLConfig is versioned velocity policy for P2P sends (NL-10). Defaults are

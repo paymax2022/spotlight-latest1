@@ -144,6 +144,12 @@ var ErrDuesExternalAmountMismatch = errors.New("estate: verified payment amount 
 // back to an ungated ledger.Debit (mirrors escrow.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("estate: money path requires a tier gate (not wired)")
 
+// ErrLedgerReconPending is returned when a ledger journal key was claimed
+// duplicate but no durable legs back the claim (a bare Redis-lock claim).
+// Retryable — the caller must retry, never mark a payment successful as
+// though the journal posted.
+var ErrLedgerReconPending = errors.New("estate: ledger journal not durably posted — retry")
+
 // resolveDuesInvoiceAmount loads and validates an invoice the same way
 // payDues does (scoped to estate + payer, not paid/waived), without moving
 // any money. Shared by payDues itself and QuoteDuesInvoice (a pre-payment
@@ -338,8 +344,21 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 			CreditAccountID: settle.ID,
 			Description:     "Paystack-funded estate dues payment (external payment, no wallet debit)",
 		})
-		if jerr != nil && !errors.Is(jerr, ledger.ErrDuplicate) {
-			return nil, fmt.Errorf("estate: dues external post: %w", jerr)
+		if jerr != nil {
+			if !errors.Is(jerr, ledger.ErrDuplicate) {
+				return nil, fmt.Errorf("estate: dues external post: %w", jerr)
+			}
+			// R-4: a dup claim is never proof — a bare-lock dup would write a
+			// 'successful' receipt and mark the invoice paid with zero
+			// clearing→settlement legs behind it. Re-probe the durable journal
+			// before tolerating; absent → retryable recon-pending, not success.
+			posted, perr := s.ledger.Posted(ctx, req.IdempotencyKey)
+			if perr != nil {
+				return nil, fmt.Errorf("estate: dues external replay probe: %w", perr)
+			}
+			if !posted {
+				return nil, fmt.Errorf("%w: dues journal for key %s", ErrLedgerReconPending, req.IdempotencyKey)
+			}
 		}
 	} else {
 		// Wallet-funded: DebitWithGuard re-runs the checkout allowance INSIDE

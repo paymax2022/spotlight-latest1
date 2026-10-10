@@ -504,4 +504,8 @@ var (
 	ErrForbidden         = errors.New("savings: forbidden")
 	ErrLockedVault       = errors.New("savings: lock vault not yet matured")
 	ErrInsufficientVault = errors.New("savings: insufficient vault balance")
+	// ErrReconPending — a ledger leg key was claimed duplicate but no durable
+	// legs back the claim. Retryable: never count a contribution (or settle
+	// any row) as though the journal posted.
+	ErrReconPending = errors.New("savings: ledger leg not durably posted — retry")
 )

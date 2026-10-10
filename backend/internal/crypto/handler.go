@@ -31,10 +31,11 @@ var errMap = httperr.New(http.StatusBadRequest,
 	// Tier-limit refusals: 403 — the same mapping the canonical transfer rail
 	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
-	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrLedgerReconPending),
 	httperr.R(http.StatusNotFound, ErrNotFound, ErrAddressNotFound),
 	httperr.R(http.StatusConflict, ErrInsufficient, ErrAssetInactive, ErrAmountTooSmall,
-		ErrSameAsset, ErrInvalidTransition, ErrWithdrawTooSmall, ErrAddressExists),
+		ErrSameAsset, ErrInvalidTransition, ErrWithdrawTooSmall, ErrAddressExists,
+		ErrSwapUnwound),
 	httperr.R(http.StatusBadRequest, ErrInvalidAddress),
 )
 

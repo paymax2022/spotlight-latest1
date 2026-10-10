@@ -50,6 +50,15 @@ func (s *Service) SetResolvers(rs []TransactionDetailResolver) { s.resolvers = r
 // is stricter, never looser.
 func (s *Service) SetDebitGuard(g DebitGuard) { s.debitGuard = g }
 
+// ResolvedDebitGuard returns the in-tx guard DebitGated/PostJournalGated would
+// apply — the SetDebitGuard override when set, else the strict daily-debit cap
+// built from the repo pool. Exposed so a caller composing its OWN in-tx policy
+// under the same wallet advisory lock (crypto's swap tombstone guard, which
+// must refuse post-unwind retries inside the buy commit itself) keeps the same
+// cap semantics instead of reconstructing a parallel tiers service. Nil means
+// unwired — the caller must fail closed, exactly like DebitGated does.
+func (s *Service) ResolvedDebitGuard() DebitGuard { return s.walletDebitGuard() }
+
 // ErrDebitGuardUnwired is returned by DebitGated when no guard can be
 // constructed at all (nil pool) — a gated debit must fail closed, not post
 // ungated.

@@ -1183,7 +1183,9 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // errMap maps domain errors to HTTP status codes (model.go documents each).
 var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusForbidden, ErrTierTooLow, ErrForbidden),
-	httperr.R(http.StatusServiceUnavailable, ErrProviderUnavailable),
+	// ErrLedgerReconPending is a retryable recon state (a dup claim with no
+	// durable legs) — 503, not a 500 and not a success.
+	httperr.R(http.StatusServiceUnavailable, ErrProviderUnavailable, ErrLedgerReconPending),
 	httperr.R(http.StatusBadRequest, ErrMissingRef, ErrInvalidAmount),
 	httperr.R(http.StatusUnprocessableEntity, ledger.ErrInsufficientFunds),
 	httperr.R(http.StatusNotFound, ErrInvalidAccount, ErrNotFound),

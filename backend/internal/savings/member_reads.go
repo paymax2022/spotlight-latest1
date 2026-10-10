@@ -278,8 +278,18 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 	if err != nil {
 		return err
 	}
-	if derr := s.led.DebitGated(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
-		return fmt.Errorf("savings: circle contribute: %w", derr)
+	if derr := s.led.DebitGated(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil {
+		if !errors.Is(derr, ledger.ErrDuplicate) {
+			return fmt.Errorf("savings: circle contribute: %w", derr)
+		}
+		// R-3: a dup claim is never proof — a bare-lock or foreign claim under
+		// legKey can carry zero (or the wrong) legs. Tolerating it counted the
+		// contribution into collected_kobo and let the scheduled payout drain
+		// escrow for money never collected. Verify the durable legs are
+		// exactly this member's contribution (the verifyPayoutLegs standard).
+		if verr := s.verifyContribLeg(ctx, userID, legKey, circleID, escrowAcc.ID, c.ContributionKobo); verr != nil {
+			return verr
+		}
 	}
 	// Credit the collected pot for the current cycle so the scheduled payout picks
 	// it up; guarded so a replay is a no-op.
@@ -366,4 +376,40 @@ func (s *TargetService) GetTargetDetail(ctx context.Context, targetID string) (*
 // IsTargetMember exposes membership for handler-level object authZ.
 func (s *TargetService) IsTargetMember(ctx context.Context, targetID, userID string) (bool, error) {
 	return s.isMember(ctx, targetID, userID)
+}
+
+// verifyContribLeg proves a legKey duplicate claim is backed by THIS member's
+// contribution journal — the verifyPayoutLegs standard (R-3). A bare-lock dup
+// leaves zero legs (or a lone partial leg): counting the contribution anyway
+// would inflate ajo_cycles.collected_kobo and let the scheduled payout drain
+// escrow for money never collected. A no-legs claim answers ErrReconPending
+// (retryable — a later attempt posts or heals the journal); legs whose
+// identity differs answer an ErrDuplicate-wrapped permanent conflict.
+func (s *AjoService) verifyContribLeg(ctx context.Context, userID, legKey, circleID, escrowAccID string, amountKobo int64) error {
+	walletAcc, err := s.led.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("savings: resolve member wallet for contribution verification: %w", err)
+	}
+	wantRef := "ajo:contrib:" + circleID
+	dr, drFound, err := s.led.EntryByKey(ctx, legKey+":debit")
+	if err != nil {
+		return fmt.Errorf("savings: read contribution debit leg: %w", err)
+	}
+	cr, crFound, err := s.led.EntryByKey(ctx, legKey+":credit")
+	if err != nil {
+		return fmt.Errorf("savings: read contribution credit leg: %w", err)
+	}
+	if !drFound && !crFound {
+		return fmt.Errorf("%w: contribution for key %s", ErrReconPending, legKey)
+	}
+	ours := drFound && crFound &&
+		dr.AccountID == walletAcc.ID && dr.Type == ledger.EntryDebit &&
+		dr.Reference == wantRef && dr.AmountKobo == amountKobo &&
+		cr.AccountID == escrowAccID && cr.Type == ledger.EntryCredit &&
+		cr.Reference == wantRef && cr.AmountKobo == amountKobo
+	if !ours {
+		return fmt.Errorf("%w: key %s held by a different journal — refusing to count the contribution",
+			ledger.ErrDuplicate, legKey)
+	}
+	return nil
 }

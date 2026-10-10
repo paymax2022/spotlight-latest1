@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
@@ -220,5 +221,104 @@ func TestLiveDB_Swap_PartialLegs_ReplayHeals(t *testing.T) {
 	}
 	if swapOrders(t, ctx, pool, user) != 1 {
 		t.Fatal("healed swap must record exactly one order")
+	}
+}
+
+// R-1: a non-duplicate :buy failure must unwind the committed :sell credit
+// under the wallet advisory lock AND tombstone the key — the stale :sell legs
+// can never re-verify and drive a fresh :buy with no proceeds to offset it.
+// The forced in-tx refusal simulates any non-dup buy failure (guard refusal,
+// transient post error); the pooled gate passes first so the :sell leg really
+// commits before the refusal.
+func TestLiveDB_Swap_BuyRefused_UnwindsSell_TombstonesKey(t *testing.T) {
+	ctx, svc, led, pool, user, usdt, btc := swapRig(t)
+	seedHoldings(t, ctx, pool, user, usdt.ID, 40_000_000)
+
+	forced := errors.New("test: forced in-tx buy refusal")
+	led.SetDebitGuard(func(context.Context, pgx.Tx, string, int64) error { return forced })
+
+	key := "swap-unwind-" + uuid.NewString()
+	if _, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key); !errors.Is(err, forced) {
+		t.Fatalf("want forced refusal, got %v", err)
+	}
+
+	// The :sell pair is durable (reversals never delete legs), the :buy pair
+	// never landed, and the unwind reversal pair IS durable — the tombstone.
+	if n, sum := countLegs(t, ctx, pool, key+":sell:%"); n != 2 || sum != 8_000_000 {
+		t.Fatalf("sell legs: want balanced pair of 4_000_000, got %d rows summing %d", n, sum)
+	}
+	if n, _ := countLegs(t, ctx, pool, key+":buy:%"); n != 0 {
+		t.Fatalf("refused buy must post ZERO legs, got %d", n)
+	}
+	if n, _ := countLegs(t, ctx, pool, key+":unwind:sell:%"); n != 2 {
+		t.Fatalf("unwind reversal pair must be durable, got %d rows", n)
+	}
+
+	// Wallet net delta is zero: +cashKobo sell credit, −cashKobo unwind.
+	if bal, err := led.GetBalance(ctx, user); err != nil || bal != 0 {
+		t.Fatalf("unwound swap must leave wallet at 0, got %d err=%v", bal, err)
+	}
+	// No order, holdings untouched — the swap never filled.
+	if swapOrders(t, ctx, pool, user) != 0 {
+		t.Fatal("refused+unwound swap must not record an order")
+	}
+	if held, err := svc.repo.HoldingUnits(ctx, user, usdt.ID); err != nil || held != 40_000_000 {
+		t.Fatalf("from-holdings must be untouched, got %d err=%v", held, err)
+	}
+
+	// THE tombstone: a same-key retry must refuse PERMANENTLY — without it the
+	// stale :sell legs would re-verify and a fresh :buy would debit the gross
+	// amount with no proceeds to offset (double charge). Early probe refusal
+	// here; the in-tx guard covers the concurrent-interleave case.
+	if _, err := svc.Swap(ctx, user, usdt.ID, btc.ID, 25_000_000, key); !errors.Is(err, ErrSwapUnwound) {
+		t.Fatalf("post-unwind replay must refuse ErrSwapUnwound, got %v", err)
+	}
+	if n, _ := countLegs(t, ctx, pool, key+":%"); n != 4 {
+		t.Fatalf("post-unwind replay must add ZERO legs — want 4 total (sell+unwind), got %d", n)
+	}
+	if swapOrders(t, ctx, pool, user) != 0 {
+		t.Fatal("post-unwind replay must not record an order")
+	}
+}
+
+// R-1 (ambiguous commit): when the :buy journal turns out durable after all,
+// unwindSwapSell must NO-OP — the same-key retry converges on the fill, never
+// unwinds a debit that actually landed.
+func TestLiveDB_Swap_UnwindNoOp_WhenBuyCommitted(t *testing.T) {
+	ctx, svc, led, pool, user, usdt, _ := swapRig(t)
+	seedHoldings(t, ctx, pool, user, usdt.ID, 40_000_000)
+
+	escrowAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		t.Fatalf("standing acct: %v", err)
+	}
+	wallet, err := led.GetOrCreateUserWallet(ctx, user)
+	if err != nil {
+		t.Fatalf("wallet: %v", err)
+	}
+
+	key := "swap-ambig-" + uuid.NewString()
+	ref := "crypto:swap:USDT->BTC"
+	// Plant BOTH cash journals durable — the ambiguous-commit shape a retried
+	// unwind could see when the original PostJournalWithGuard actually landed.
+	if err := led.Credit(ctx, user, ref+":sell", key+":sell", escrowAcc.ID, 4_000_000); err != nil {
+		t.Fatalf("plant sell leg: %v", err)
+	}
+	if err := led.PostJournalGated(ctx, ledger.JournalEntry{
+		Reference: ref + ":buy", IdempotencyKey: key + ":buy",
+		AmountKobo: 4_000_000, DebitAccountID: wallet.ID, CreditAccountID: escrowAcc.ID,
+	}, user); err != nil {
+		t.Fatalf("plant buy leg: %v", err)
+	}
+
+	if err := svc.unwindSwapSell(ctx, user, key, ref+":sell", wallet.ID, escrowAcc.ID, 4_000_000); err != nil {
+		t.Fatalf("unwind over a committed buy must no-op, got %v", err)
+	}
+	if n, _ := countLegs(t, ctx, pool, key+":unwind:sell:%"); n != 0 {
+		t.Fatalf("ambiguous-commit unwind must post ZERO reversal legs, got %d", n)
+	}
+	// Wallet still holds the +sell −buy = 0 self-funded delta — nothing drained.
+	if bal, err := led.GetBalance(ctx, user); err != nil || bal != 0 {
+		t.Fatalf("no-op unwind must not touch the wallet, got balance %d err=%v", bal, err)
 	}
 }
