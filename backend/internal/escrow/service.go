@@ -237,6 +237,12 @@ func (s *Service) maybePinPayee(ctx context.Context, h *Hold, payerID, payeeID s
 	if err == nil && ct.RowsAffected() > 0 {
 		p := payeeID
 		h.PayeeID = &p
+		if s.audit != nil {
+			s.audit.LogAction(h.PayerID, "", "escrow.payee.pin", "escrow", "escrow_hold", h.ID,
+				nil,
+				map[string]any{"payee_id": payeeID},
+				"", "", "info")
+		}
 	}
 }
 

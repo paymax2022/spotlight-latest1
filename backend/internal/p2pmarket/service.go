@@ -230,6 +230,11 @@ func (s *Service) RaiseDispute(ctx context.Context, orderID, raisedBy, evidence 
 	if err != nil {
 		return err
 	}
+	// Party authZ must precede every return — including the converged-DISPUTED
+	// no-op below, which would otherwise leak the open dispute to non-parties.
+	if raisedBy != o.BuyerID && raisedBy != o.SellerID {
+		return ErrNotParty
+	}
 	if o.State == OrderDisputed {
 		// Idempotent replay of a completed raise — converged only if the hold
 		// really carries an OPEN dispute; otherwise fail loudly (recon).
