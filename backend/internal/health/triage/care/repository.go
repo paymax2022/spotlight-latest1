@@ -196,13 +196,23 @@ func (r *pgxRepo) UpdateReferralState(ctx context.Context, id string, from, to t
 	return nil
 }
 
+// ErrEscalationExists is returned by CreateEscalation when the partial unique
+// index (one open escalation per session — ADR-PR646) dedupes the insert: a
+// concurrent emergency Refer already opened a case for this session.
+var ErrEscalationExists = errors.New("care: open escalation already exists for session")
+
 func (r *pgxRepo) CreateEscalation(ctx context.Context, e *Escalation) error {
 	const q = `
 		INSERT INTO health_triage_escalations (id, session_id, user_id, state, reason)
-		VALUES ($1,$2,$3,$4,$5)`
-	_, err := r.db.Exec(ctx, q, e.ID, e.SessionID, e.UserID, string(e.State), e.Reason)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (session_id) WHERE state IN ('raised','notified','acknowledged')
+		DO NOTHING`
+	tag, err := r.db.Exec(ctx, q, e.ID, e.SessionID, e.UserID, string(e.State), e.Reason)
 	if err != nil {
 		return fmt.Errorf("care: create escalation: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrEscalationExists
 	}
 	r.log(e.UserID, e.UserID, "health.triage.care.escalation.raise", "escalation", e.ID,
 		nil, map[string]any{"state": string(e.State), "reason": e.Reason})

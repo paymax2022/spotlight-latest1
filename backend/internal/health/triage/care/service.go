@@ -261,12 +261,22 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		patch.PaymentRef = &payRef
 	}
 	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid, patch); err != nil {
-		// Charge posted but the CAS lost (a concurrent Close or a racing payer
-		// that reached paid first): compensate — the ledger keeps the
-		// correction as a reversing entry, never a balance edit.
+		// Charge posted but the CAS lost. Before compensating, re-read the
+		// referral: a racing payer who reached `paid` first means this journal
+		// IS the referral's payment — reversing it would refund the winner and
+		// leave a fulfilled referral with a zero net charge. Reverse ONLY when
+		// the row is `closed` (a concurrent Close beat the pay — no payee).
+		// paid/fulfilled/follow_up → the charge stands as the referral's own
+		// payment; still `routed` (transient failure, not a state loss) → the
+		// charge also stands — the pinned key + deterministic ledger key let
+		// the next pay attempt replay it and settle, and reversing here would
+		// race a second payer's in-flight CAS.
 		if charged {
-			if rerr := s.pay.Reverse(ctx, userID, reference, chargeKey+":rev", ref.AmountMinor); rerr != nil {
-				log.Printf("[care] reversal for referral %s failed: %v", ref.ID, rerr)
+			cur, rerr := s.repo.GetReferral(ctx, ref.ID)
+			if rerr == nil && cur.State == triage.RefClosed {
+				if revErr := s.pay.Reverse(ctx, userID, reference, chargeKey+":rev", ref.AmountMinor); revErr != nil {
+					log.Printf("[care] reversal for referral %s failed: %v", ref.ID, revErr)
+				}
 			}
 		}
 		return nil, err
@@ -375,6 +385,13 @@ func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason strin
 		RaisedAt:  time.Now(),
 	}
 	if err := s.repo.CreateEscalation(ctx, e); err != nil {
+		// The partial unique index deduped the insert — a concurrent emergency
+		// Refer opened the case first. Return the winner.
+		if errors.Is(err, ErrEscalationExists) {
+			if existing, gerr := s.repo.GetOpenEscalationBySession(ctx, sessionID); gerr == nil {
+				return existing, nil
+			}
+		}
 		return nil, err
 	}
 	return e, nil
