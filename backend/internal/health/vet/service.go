@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/health/clinicalsafety"
 	healthconsult "spotlight/backend/internal/health/consult"
 	healthrecords "spotlight/backend/internal/health/records"
@@ -532,6 +533,12 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 	ref := "vet:" + appt.ID
 	hold, err := s.escrow.Hold(ctx, ownerID, ref, "health.vet", in.IdempotencyKey, total)
 	if err != nil {
+		// ledger.ErrDuplicate from adoption means this key is durably claimed
+		// by a different claim — caller-facing that is ErrIdemConflict. The
+		// appointment minted above still needs failBooking's cancellation.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return failBooking(ErrIdemConflict)
+		}
 		return failBooking(fmt.Errorf("vet: hold payment (HL-9): %w", err))
 	}
 	escrowID = hold.HoldID()

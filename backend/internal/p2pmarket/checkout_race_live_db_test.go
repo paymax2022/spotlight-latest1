@@ -178,10 +178,6 @@ func TestLiveDB_Checkout_LoserCannotRefundBoundHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create listing 1: %v", err)
 	}
-	l2, err := f.svc.CreateListing(ctx, f.seller, "lamp", "desk lamp", 50_000)
-	if err != nil {
-		t.Fatalf("create listing 2: %v", err)
-	}
 	key := "p2p-bind-" + uuid.New().String()
 
 	// The shared hold — escrow.Hold dedups on the bare idempotency key, so the
@@ -215,13 +211,15 @@ func TestLiveDB_Checkout_LoserCannotRefundBoundHold(t *testing.T) {
 		t.Fatalf("winner bind order: %v", err)
 	}
 
-	// Loser: same buyer + same idempotency key against a DIFFERENT listing.
-	// orderByIdem sees nothing committed (winner uncommitted) → escrow.Hold
-	// dedups onto the shared hold → its binding tx blocks on the winner's
-	// FOR UPDATE inside lockEscrowForBinding.
+	// Loser: same buyer + same idempotency key on the SAME listing — a
+	// same-key/different-params retry is now refused at adoption (the hold's
+	// recorded reference would mismatch), which is correct but would error
+	// BEFORE reaching the binding lock. Identical params let Hold dedup onto
+	// the shared hold so the binding tx blocks on the winner's FOR UPDATE
+	// inside lockEscrowForBinding — the interleave this test exists to drive.
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := f.svc.Checkout(ctx, l2.ID, f.buyer, key)
+		_, err := f.svc.Checkout(ctx, l1.ID, f.buyer, key)
 		errCh <- err
 	}()
 

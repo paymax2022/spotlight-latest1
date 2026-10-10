@@ -14,6 +14,7 @@ import (
 
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -392,6 +393,12 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// fails closed on insufficient funds before any order row is written.
 	hold, err := s.escrow.Hold(ctx, patientID, ref, "health.lab", in.IdempotencyKey, total)
 	if err != nil {
+		// ledger.ErrDuplicate from adoption = this key is durably claimed by
+		// a different claim — caller-facing, the same ErrIdemConflict the
+		// foreign-key check returns.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil, ErrIdemConflict
+		}
 		return nil, fmt.Errorf("lab: hold payment: %w", err)
 	}
 	escrowID := hold.HoldID()

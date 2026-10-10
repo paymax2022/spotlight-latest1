@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/finance/ledger"
 )
 
 // TestLiveDB_ArbitrateRelease_PaysPinnedPayee is the F2 end-to-end: a hold
@@ -168,14 +170,16 @@ func TestLiveDB_HoldReplay_HealsMissingPayee(t *testing.T) {
 		t.Fatalf("legacy Hold must leave payee NULL, got %v", *h.PayeeID)
 	}
 
-	// A different payer replaying the same key must NOT pin a payee onto a
-	// hold they don't own.
-	h2, err := f.svc.HoldWithPayee(ctx, f.decoy, f.payee, "p2p:listing-legacy", "p2pmarket", idem, amount)
-	if err != nil {
-		t.Fatalf("foreign replay returns the persisted hold: %v", err)
+	// A different payer replaying the same key is refused outright — adoption
+	// verifies the claiming payer against the persisted row, so a foreign
+	// replay can neither take the hold nor pin a payee onto it.
+	if _, err := f.svc.HoldWithPayee(ctx, f.decoy, f.payee, "p2p:listing-legacy", "p2pmarket", idem, amount); err == nil {
+		t.Fatal("foreign-payer replay must be refused, not adopted")
+	} else if !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("foreign replay must fail closed with ErrDuplicate, got %v", err)
 	}
-	if h2.PayeeID != nil {
-		t.Fatal("foreign-payer replay must not pin a payee")
+	if h2, err := f.svc.Get(ctx, h.ID); err != nil || h2.PayeeID != nil {
+		t.Fatalf("foreign replay must not pin a payee, got %+v err=%v", h2, err)
 	}
 
 	// The honest payer's replay heals the pin.

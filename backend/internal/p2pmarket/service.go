@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/ledger"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,6 +133,13 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 	// arbitrated to RELEASE — an unpinned (NULL-payee) hold is refund-only.
 	hold, err := s.escrow.HoldWithPayee(ctx, buyerID, l.SellerID, "p2p:"+listingID, moduleType, idemKey, l.PriceKobo)
 	if err != nil {
+		// Adoption refuses a key durably claimed by a different claim
+		// (payer/module/reference/amount mismatch) with ledger.ErrDuplicate —
+		// caller-facing, that is the same "key reused with different params"
+		// signal as ErrIdemConflict.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil, ErrIdemConflict
+		}
 		return nil, fmt.Errorf("p2pmarket: escrow hold: %w", err)
 	}
 	if hold.State != escrow.StateHeld {
