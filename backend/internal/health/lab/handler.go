@@ -187,6 +187,42 @@ func (h *Handler) ListProviderOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": rows})
 }
 
+// UpsertStaff — POST /staff  (lab owner registers/suspends staff, HL-2
+// affiliation ADR-PR641). The grant is what lets an affiliated scientist or
+// phlebotomist act on THIS lab's orders; only the verified owner writes it.
+func (h *Handler) UpsertStaff(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		LabProviderID string `json:"lab_provider_id"`
+		UserID        string `json:"user_id"`
+		Role          string `json:"role"`
+		Status        string `json:"status"` // optional — defaults to ACTIVE
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// Both ids feed uuid columns — malformed values must be 400s, never driver
+	// errors → 500.
+	if _, err := uuid.Parse(req.LabProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "lab_provider_id must be a uuid")
+		return
+	}
+	if _, err := uuid.Parse(req.UserID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "user_id must be a uuid")
+		return
+	}
+	if err := h.svc.UpsertStaff(c.Request.Context(), id, req.LabProviderID, req.UserID, req.Role, req.Status); err != nil {
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 // CreateOrder — POST /orders  (patient, payment HELD, HL-9)
 func (h *Handler) CreateOrder(c *gin.Context) {
 	id := ginutil.UserID(c)

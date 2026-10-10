@@ -87,6 +87,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
 	lg.GET("/packages", h.ListPackages)              // bundle catalog, same shape as ListTests
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
+	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
 	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
 	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                     // object-level authZ
@@ -215,18 +216,29 @@ func (a *labProviderGateAdapter) VerifiedLabOwner(ctx context.Context, userID, p
 }
 
 // IsVerifiedScientist / IsVerifiedPhlebotomist answer "is userID verified staff
-// OF providerID". INTERIM (HL-2): the single-identity capability model has no
-// staff↔lab affiliation — a lab_scientist/phlebotomist health_providers row is
-// owned by the credential-holder and names no employing lab, so a bare
-// capability check authorized ANY approved scientist/phlebotomist on ANY lab's
-// orders (custody, results, escrow release). Until a staff-affiliation model
-// lands, provider-scoped staff checks resolve to the lab's verified owner —
-// the only provider-scoped answer the schema can support. Fail closed.
+// OF providerID": the lab's verified owner, or an ACTIVE lab_staff affiliation
+// with the matching role (ADR-PR641). The single-identity capability model
+// (a lab_scientist/phlebotomist health_providers row owned by the credential
+// holder) names no employing lab, so the affiliation table — granted by the
+// lab's owner — is the only non-owner answer. Fail closed on any read error.
 func (a *labProviderGateAdapter) IsVerifiedScientist(ctx context.Context, userID, providerID string) (bool, error) {
-	return a.VerifiedLabOwner(ctx, userID, providerID)
+	return a.staffOrOwner(ctx, userID, providerID, "scientist")
 }
 func (a *labProviderGateAdapter) IsVerifiedPhlebotomist(ctx context.Context, userID, providerID string) (bool, error) {
-	return a.VerifiedLabOwner(ctx, userID, providerID)
+	return a.staffOrOwner(ctx, userID, providerID, "phlebotomist")
+}
+func (a *labProviderGateAdapter) staffOrOwner(ctx context.Context, userID, providerID, role string) (bool, error) {
+	var ok bool
+	const q = `SELECT EXISTS (
+		SELECT 1 FROM health_providers
+		WHERE id=$1 AND owner_user_id=$2 AND domain='LAB' AND provider_type='lab' AND status='APPROVED')
+		OR EXISTS (
+		SELECT 1 FROM lab_staff
+		WHERE lab_provider_id=$1 AND user_id=$2 AND status='ACTIVE' AND role=$3)`
+	if err := a.db.QueryRow(ctx, q, providerID, userID, role).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 // labPayoutGateAdapter enforces HL-10: the lab owner must hold a KYC tier >= 1
