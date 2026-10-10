@@ -22,6 +22,7 @@ package escrow
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -41,9 +42,9 @@ func TestLiveDB_Hold_HealsCrashedRowInsert(t *testing.T) {
 
 	ref := "p2p:listing-heal"
 	idem := "escrow-hold-heal-" + uuid.New().String()
-	// Simulate the crash: post the exact debit journal Hold would write, then
-	// die before the escrow_holds INSERT.
-	if err := f.led.Debit(ctx, f.payer, "escrow:"+ref, idem+":hold", f.escrow.ID, amount); err != nil {
+	// Simulate the crash: post the exact debit journal Hold would write
+	// (module-stamped reference), then die before the escrow_holds INSERT.
+	if err := f.led.Debit(ctx, f.payer, holdLedgerRef("p2pmarket", ref), idem+":hold", f.escrow.ID, amount); err != nil {
 		t.Fatalf("plant crashed hold debit: %v", err)
 	}
 	var rowCount int
@@ -108,7 +109,7 @@ func TestLiveDB_Hold_HealSkipsTierGate(t *testing.T) {
 
 	ref := "p2p:listing-gated"
 	idem := "escrow-hold-gate-" + uuid.New().String()
-	if err := f.led.Debit(ctx, f.payer, "escrow:"+ref, idem+":hold", f.escrow.ID, amount); err != nil {
+	if err := f.led.Debit(ctx, f.payer, holdLedgerRef("p2pmarket", ref), idem+":hold", f.escrow.ID, amount); err != nil {
 		t.Fatalf("plant crashed hold debit: %v", err)
 	}
 
@@ -138,8 +139,9 @@ func TestLiveDB_Hold_ForeignKeyClaimFailsClosed(t *testing.T) {
 	f.fund(t, f.payer, 500_000)
 
 	idem := "escrow-hold-foreign-" + uuid.New().String()
-	// A foreign claim posted under this key: same amount, DIFFERENT reference.
-	if err := f.led.Debit(ctx, f.payer, "escrow:other-listing", idem+":hold", f.escrow.ID, amount); err != nil {
+	// A foreign claim posted under this key: same module, same amount,
+	// DIFFERENT reference.
+	if err := f.led.Debit(ctx, f.payer, holdLedgerRef("p2pmarket", "other-listing"), idem+":hold", f.escrow.ID, amount); err != nil {
 		t.Fatalf("plant foreign debit: %v", err)
 	}
 
@@ -148,7 +150,7 @@ func TestLiveDB_Hold_ForeignKeyClaimFailsClosed(t *testing.T) {
 	}
 	// Same key, SAME reference, different amount — still a different journal.
 	idem2 := "escrow-hold-foreign2-" + uuid.New().String()
-	if err := f.led.Debit(ctx, f.payer, "escrow:p2p:listed", idem2+":hold", f.escrow.ID, amount); err != nil {
+	if err := f.led.Debit(ctx, f.payer, holdLedgerRef("p2pmarket", "p2p:listed"), idem2+":hold", f.escrow.ID, amount); err != nil {
 		t.Fatalf("plant foreign debit 2: %v", err)
 	}
 	if _, err := f.svc.Hold(ctx, f.payer, "p2p:listed", "p2pmarket", idem2, amount+1); !errors.Is(err, ledger.ErrDuplicate) {
@@ -182,7 +184,7 @@ func TestLiveDB_Hold_CrossPayerKeyClaimFailsClosed(t *testing.T) {
 	ref := "p2p:shared-listing"
 	idem := "escrow-hold-crosspayer-" + uuid.New().String()
 	// payer's crashed hold: debit committed under payer's wallet, row absent.
-	if err := f.led.Debit(ctx, f.payer, "escrow:"+ref, idem+":hold", f.escrow.ID, amount); err != nil {
+	if err := f.led.Debit(ctx, f.payer, holdLedgerRef("p2pmarket", ref), idem+":hold", f.escrow.ID, amount); err != nil {
 		t.Fatalf("plant crashed hold debit: %v", err)
 	}
 
@@ -215,5 +217,135 @@ func TestLiveDB_Hold_CrossPayerKeyClaimFailsClosed(t *testing.T) {
 	}
 	if n := f.entryCount(t, idem+":hold:debit"); n != 1 {
 		t.Fatalf("hold debit entries = %d, want exactly 1", n)
+	}
+}
+
+// recordAuditor is the minimal Auditor fake for asserting the foreign-claim
+// refusal event fires (the service is nil-safe, so tests must inject to see it).
+type recordAuditor struct {
+	mu      sync.Mutex
+	actions []string
+}
+
+func (r *recordAuditor) LogAction(_, _, action, _, _, _ string, _, _ map[string]any, _, _, _ string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.actions = append(r.actions, action)
+}
+
+func (r *recordAuditor) seen(action string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, a := range r.actions {
+		if a == action {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLiveDB_Hold_CrossModuleHealRefused pins the ledger-audit residual: the
+// heal path used to verify both journal legs + payer + reference + amount but
+// NOT the requesting module — a same-payer key collision across modules could
+// heal (and thereby pin resolution control of) a hold minted by a DIFFERENT
+// module. The journal reference now carries the module discriminator
+// ("escrow:<module>:<reference>"), so the identity check itself refuses a
+// foreign module's claim, and the refusal is audited.
+func TestLiveDB_Hold_CrossModuleHealRefused(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 75_000
+	f.fund(t, f.payer, 500_000)
+
+	audit := &recordAuditor{}
+	f.svc.audit = audit
+
+	ref := "lab:order-9"
+	idem := "escrow-hold-xmod-" + uuid.New().String()
+	// A health.lab hold crashed: its debit committed under the SAME payer with
+	// the SAME amount and an identical reference — only the journal's module
+	// segment differs. The hold row is absent (the wedge state).
+	if err := f.led.Debit(ctx, f.payer, holdLedgerRef("health.lab", ref), idem+":hold", f.escrow.ID, amount); err != nil {
+		t.Fatalf("plant crashed health.lab hold debit: %v", err)
+	}
+
+	// A DIFFERENT module replays the same key/payer/reference/amount — every
+	// payer-visible field matches, so only the module discriminator exposes
+	// the foreign mint. Must refuse closed, audit the claim, and never attach
+	// a p2pmarket hold row to health.lab's parked debit.
+	if _, err := f.svc.Hold(ctx, f.payer, ref, "p2pmarket", idem, amount); !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("cross-module heal replay must fail closed (ErrDuplicate), got %v", err)
+	}
+	var n int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM escrow_holds WHERE idempotency_key=$1`, idem).Scan(&n); err != nil {
+		t.Fatalf("count hold rows: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cross-module replay attached %d hold rows, want 0", n)
+	}
+	if !audit.seen("escrow.hold.foreign_claim") {
+		t.Fatal("cross-module refusal must emit the foreign-claim audit event")
+	}
+
+	// The owning module still heals its own wedge — the discriminator binds,
+	// it does not block legitimate recovery.
+	h, err := f.svc.Hold(ctx, f.payer, ref, "health.lab", idem, amount)
+	if err != nil {
+		t.Fatalf("same-module retry must heal the missing row, got %v", err)
+	}
+	if h.ModuleType != "health.lab" {
+		t.Fatalf("healed hold module = %s, want health.lab", h.ModuleType)
+	}
+	if n := f.entryCount(t, idem+":hold:debit"); n != 1 {
+		t.Fatalf("hold debit entries = %d, want exactly 1", n)
+	}
+}
+
+// TestLiveDB_Hold_CrossModuleReplayRefused pins the row-side twin: a committed
+// hold row replayed under a DIFFERENT module's (or payer's) same-key call must
+// not be silently adopted — escrow.Hold dedups on the bare key, so without the
+// identity check the second module would receive a hold ID it could bind an
+// order to and steer through its own dispute/refund paths.
+func TestLiveDB_Hold_CrossModuleReplayRefused(t *testing.T) {
+	f := newRecoveryFixture(t)
+	ctx := context.Background()
+	const amount int64 = 95_000
+	f.fund(t, f.payer, 500_000)
+
+	audit := &recordAuditor{}
+	f.svc.audit = audit
+
+	idem := "escrow-hold-xmod-row-" + uuid.New().String()
+	h, err := f.svc.Hold(ctx, f.payer, "p2p:listing-x", "p2pmarket", idem, amount)
+	if err != nil {
+		t.Fatalf("mint hold: %v", err)
+	}
+
+	// Same payer, different module → refused (module_mismatch).
+	if _, err := f.svc.Hold(ctx, f.payer, "p2p:listing-x", "health.lab", idem, amount); !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("cross-module row replay must fail closed (ErrDuplicate), got %v", err)
+	}
+	// Different payer, same module → refused (payer_mismatch).
+	if _, err := f.svc.Hold(ctx, f.decoy, "p2p:listing-x", "p2pmarket", idem, amount); !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("cross-payer row replay must fail closed (ErrDuplicate), got %v", err)
+	}
+	if !audit.seen("escrow.hold.foreign_claim") {
+		t.Fatal("foreign row claims must emit the foreign-claim audit event")
+	}
+
+	// The legitimate replay (same payer, same module) still returns the row.
+	h2, err := f.svc.Hold(ctx, f.payer, "p2p:listing-x", "p2pmarket", idem, amount)
+	if err != nil {
+		t.Fatalf("legitimate replay must return the existing hold, got %v", err)
+	}
+	if h2.ID != h.ID {
+		t.Fatalf("replay returned hold %s, want persisted row %s", h2.ID, h.ID)
+	}
+	if n := f.entryCount(t, idem+":hold:debit"); n != 1 {
+		t.Fatalf("hold debit entries = %d, want exactly 1", n)
+	}
+	if got := f.walletBalance(t, f.decoy); got != 0 {
+		t.Fatalf("decoy balance = %d, want 0 — refused claims must not move money", got)
 	}
 }
