@@ -1,0 +1,63 @@
+name: Utility intent sweep
+
+# Fulfils Paystack-paid utility purchases whose payment was never verified.
+#
+# A Paystack-funded bill only vends when something verifies the payment: the
+# charge.success webhook, the browser callback or the app's own poll. If none of
+# them lands (webhook not delivered, customer closes the app), the intent stays
+# `pending` for good: money taken, nothing vended, nothing refunded. This calls
+# the frontend-web worker route every 15 minutes; the route re-checks each stale
+# pending intent with Paystack and runs the paid ones through the same
+# idempotent verify-and-vend path as the webhook. Unpaid checkouts are untouched.
+#
+# DORMANT until enabled. To turn on:
+#   1. Set the same random value as the repo secret UTILITY_WORKER_SECRET and as
+#      the UTILITY_WORKER_SECRET variable on the frontend-web service the URL
+#      below points at (the route answers 503 without it).
+#   2. Repo variable UTILITY_SWEEP_URL = that service's origin, no trailing
+#      slash, e.g. https://frontend-web-staging-ec46.up.railway.app
+#   3. Repo variable UTILITY_SWEEP_ENABLED = true
+#
+# The stuck-TRANSACTION requery (provider_pending, wallet_debited) is a separate,
+# already-scheduled Go job (utilitybills.StartPendingSweep); this covers the step
+# before it, intents that never became a transaction.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utility-intent-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: reconcile pending utility Paystack intents
+    if: ${{ vars.UTILITY_SWEEP_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SWEEP_URL: ${{ vars.UTILITY_SWEEP_URL }}
+      WORKER_SECRET: ${{ secrets.UTILITY_WORKER_SECRET }}
+    steps:
+      - name: Check configuration
+        run: |
+          : "${SWEEP_URL:?missing repo variable UTILITY_SWEEP_URL}"
+          : "${WORKER_SECRET:?missing repo secret UTILITY_WORKER_SECRET}"
+
+      - name: Run the sweep
+        run: |
+          set -euo pipefail
+          status=$(curl -sS -o response.json -w '%{http_code}' --max-time 120 -X POST \
+            -H "x-worker-secret: ${WORKER_SECRET}" \
+            "${SWEEP_URL%/}/api/internal/utility/workers/reconcile-paystack-intents?limit=25")
+          echo "HTTP ${status}"
+          # The body carries references and outcomes only, never the secret.
+          cat response.json; echo
+          [ "${status}" = "200" ] || { echo "::error::sweep endpoint answered ${status}"; exit 1; }
+          errors=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("response.json","utf8")).errors ?? 0)')
+          [ "${errors}" = "0" ] || echo "::warning::${errors} intent(s) errored; see the response above and the frontend-web logs"
