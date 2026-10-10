@@ -1001,6 +1001,11 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 		// locks completion after maxFulfilmentCodeAttempts misses (the minted
 		// code is 6 digits and a legitimate completing party is also the
 		// escrow payee, so an uncapped guess space was a self-release oracle).
+		if pickupCode == "" {
+			// Mirror the DELIVERY early-reject: an absent code is a plain
+			// mismatch, not a burned attempt (POSTing {} must not lock).
+			return nil, errors.New("pharmacy: pickup code mismatch")
+		}
 		if err := s.verifyFulfilmentCode(ctx, o.ID, pickupCode,
 			errors.New("pharmacy: pickup code mismatch")); err != nil {
 			return nil, err
