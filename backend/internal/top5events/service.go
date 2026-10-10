@@ -141,13 +141,19 @@ func (s *Service) GoLive(ctx context.Context, organiserID, eventID string) error
 
 // Suspend moves any non-terminal state -> SUSPENDED (admin RBAC events.suspend).
 func (s *Service) Suspend(ctx context.Context, adminID, eventID string) error {
+	// Existence check (F3 drift): the UPDATE below can't tell a missing event
+	// from a terminal one (both yield RowsAffected==0), so the detail-read
+	// existence semantics run first — missing → 404, terminal → 400.
+	if _, err := s.GetEvent(ctx, eventID); err != nil {
+		return err
+	}
 	const q = `UPDATE events SET state='SUSPENDED' WHERE id=$1 AND state IN ('DRAFT','SUBMITTED','APPROVED','LIVE')`
 	ct, err := s.db.Exec(ctx, q, eventID)
 	if err != nil {
 		return fmt.Errorf("events: suspend: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return errors.New("events: not suspendable (missing or terminal)")
+		return errors.New("events: not suspendable (terminal state)")
 	}
 	s.log(adminID, "events.suspend", eventID, nil)
 	return nil
@@ -175,7 +181,9 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 	var organiser, state string
 	if err := tx.QueryRow(ctx, `SELECT organiser_id, state FROM events WHERE id=$1 FOR UPDATE`, eventID).Scan(&organiser, &state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.New("events: not found")
+			// The ErrNotFound sentinel, not a fresh errors.New — errors.Is must
+			// match so the handler answers 404, not a generic 400.
+			return ErrNotFound
 		}
 		return fmt.Errorf("events: fetch: %w", err)
 	}
@@ -201,7 +209,9 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 
 // GetEvent returns an event by id (public read).
 func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) {
-	const q = `SELECT id, organiser_id, title, description, venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
+	// COALESCE(description,'') — the legacy 20260616240000 events shape leaves
+	// description NULL-able; AdminGetEvent already coalesces it the same way.
+	const q = `SELECT id, organiser_id, title, COALESCE(description,''), venue, state, COALESCE(category,''), starts_at, ends_at, fee_bps, created_at FROM events WHERE id=$1`
 	var e Event
 	var state string
 	if err := s.db.QueryRow(ctx, q, eventID).Scan(
@@ -389,7 +399,7 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	var active bool
 	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("events: tier not found")
+			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("events: lock tier: %w", err)
 	}
@@ -864,6 +874,12 @@ func (s *Service) TicketToken(ctx context.Context, callerID, ticketID string) (*
 
 // OpenWallet creates an attendee event-wallet (state OPEN).
 func (s *Service) OpenWallet(ctx context.Context, ownerID, eventID string) (*EventWallet, error) {
+	// Existence check (F3 drift): a random event id used to die on the
+	// event_wallets FK (23503 → a sanitized 400 'invalid request') while the
+	// sibling detail read 404s — same existence semantics now.
+	if _, err := s.GetEvent(ctx, eventID); err != nil {
+		return nil, err
+	}
 	w := &EventWallet{ID: uuid.New().String(), EventID: eventID, OwnerID: ownerID, State: WalletOpen, CreatedAt: time.Now()}
 	const ins = `INSERT INTO event_wallets (id, event_id, owner_id, state) VALUES ($1,$2,$3,'OPEN')
 	             ON CONFLICT (event_id, owner_id) DO NOTHING`
@@ -934,12 +950,15 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 	if err := s.db.QueryRow(ctx, `SELECT user_id, active FROM event_vendors WHERE id=$1`, vendorID).
 		Scan(&vendorUserID, &vendorActive); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("events: vendor not found")
+			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	if !vendorActive || callerID != vendorUserID {
-		return nil, errors.New("events: only the vendor's own operator may tap-charge")
+		// One uniform refusal for both an inactive vendor and a non-operator
+		// caller — splitting them would hand a caller a free probe into the
+		// vendor's active flag (the public list only serves active vendors).
+		return nil, ErrForbidden
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -957,7 +976,7 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 	var state string
 	if err := tx.QueryRow(ctx, `SELECT state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("events: wallet not found")
+			return nil, ErrNotFound
 		}
 		return nil, err
 	}
@@ -1008,7 +1027,7 @@ func (s *Service) CloseWallet(ctx context.Context, walletID string) error {
 	var owner, state string
 	if err := tx.QueryRow(ctx, `SELECT owner_id, state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&owner, &state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.New("events: wallet not found")
+			return ErrNotFound
 		}
 		return err
 	}
@@ -1121,7 +1140,7 @@ func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey s
 	var vendorUser string
 	if err := s.db.QueryRow(ctx, `SELECT user_id FROM event_vendors WHERE id=$1 AND event_id=$2`, vendorID, eventID).Scan(&vendorUser); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, errors.New("events: vendor not found")
+			return 0, ErrNotFound
 		}
 		return 0, err
 	}
@@ -1294,6 +1313,11 @@ func (s *Service) loadWallet(ctx context.Context, walletID string) (*EventWallet
 func (s *Service) walletFor(ctx context.Context, eventID, ownerID string) (*EventWallet, error) {
 	var id string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM event_wallets WHERE event_id=$1 AND owner_id=$2`, eventID, ownerID).Scan(&id); err != nil {
+		// A raw pgx.ErrNoRows here would surface verbatim as a 400 — map it to
+		// the sentinel (can only fire on a delete-race after ON CONFLICT).
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	return s.loadWallet(ctx, id)

@@ -53,9 +53,15 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      # Resolve the backend Dockerfile's FROM bases via the ECR Public mirror of
+      # the Docker Official Images (same digests, no anonymous pull quota) so
+      # the build does not depend on Docker Hub's shared hosted-runner rate
+      # limit. Falls back to a retried docker.io pull inside the script.
+      - name: Pre-pull Dockerfile base images via the ECR Public mirror
+        run: bash scripts/ci/mirror-docker-base-images.sh backend/Dockerfile
       - name: Build & push (immutable, SHA-tagged)
         run: |
-          docker build -t "${{ steps.meta.outputs.image }}" backend
+          bash scripts/ci/with-retry.sh docker build -t "${{ steps.meta.outputs.image }}" backend
           docker push "${{ steps.meta.outputs.image }}"
 
   staging:

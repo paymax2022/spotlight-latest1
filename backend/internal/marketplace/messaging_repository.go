@@ -134,6 +134,12 @@ func (r *Repository) GetOrCreateThread(ctx context.Context, listingID, buyerID s
 		listingID, buyerID, sellerID,
 	).Scan(&tr.ID, &tr.ListingID, &tr.BuyerID, &tr.SellerID)
 	if err != nil {
+		if dbutil.IsForeignKeyViolation(err) {
+			// mkt_threads.listing_id FK → mkt_listings(id): the listing was
+			// removed between the seller resolution above and this upsert —
+			// the same ErrListingNotFound the resolution itself returns.
+			return nil, ErrListingNotFound
+		}
 		return nil, wrapInternal("get or create thread: upsert", err)
 	}
 	return &tr, nil
@@ -374,6 +380,12 @@ func (r *Repository) InsertDealReview(ctx context.Context, threadID, reviewerID,
 	if err != nil {
 		if dbutil.IsUniqueViolation(err) {
 			return DealReview{}, ErrReviewExists
+		}
+		if dbutil.IsForeignKeyViolation(err) {
+			// mkt_deal_reviews.thread_id FK → mkt_threads(id): the thread was
+			// removed between the service's participant/met check and this
+			// insert — a 404 for the caller, not a 500.
+			return DealReview{}, ErrThreadNotFound
 		}
 		return DealReview{}, wrapInternal("insert deal review", err)
 	}

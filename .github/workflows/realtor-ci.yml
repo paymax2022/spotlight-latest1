@@ -76,7 +76,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:14
+        # ECR Public mirror of the Docker Official Image — identical digest,
+        # no anonymous pull quota. Docker Hub rate-limits shared hosted-runner
+        # egress (~10 concurrent PRs ⇒ 429), which would kill this job at
+        # "Initialize containers" before any step could retry.
+        image: public.ecr.aws/docker/library/postgres:14
         env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: realtor_ci }
         ports: ['5432:5432']
         options: >-

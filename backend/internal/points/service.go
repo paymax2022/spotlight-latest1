@@ -121,12 +121,14 @@ func (s *Service) Balance(ctx context.Context, userID string) (int64, error) {
 // Redemption + the item so the caller (loyalty layer) can dispatch the NON-CASH
 // fulfilment. There is intentionally no cash-out branch (NL-4).
 //
-// idemKey is the OPTIONAL client Idempotency-Key (the BFF forwards the header
-// verbatim when the caller sends one). When supplied, a replay returns the
-// original redemption with no second debit; when empty, a `redeem:<uuid>` key is
-// self-minted per call — kept so live clients that never send the header keep
-// working (follow-up: require the header like every other mutation).
+// idemKey is the REQUIRED client Idempotency-Key — every mutation requires one
+// (iron rule); the handler enforces the header and this guard is the fail-closed
+// service boundary. A replay under the same key returns the original redemption
+// with no second debit.
 func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Redemption, *CatalogItem, error) {
+	if idemKey == "" {
+		return nil, nil, ErrIdempotencyRequired
+	}
 	item, err := s.catalogItem(ctx, sku)
 	if err != nil {
 		return nil, nil, err
@@ -155,26 +157,34 @@ func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Red
 	}
 
 	redemptionID := uuid.New().String()
-	idem := "redeem:" + redemptionID
-	if idemKey != "" {
-		// Scope the client key to the user so identical keys from two different
-		// users can never collide in the ledger's global unique index.
-		idem = "redeem:" + userID + ":" + idemKey
-		// Idempotent replay: the prior debit's `reference` holds its redemption id.
-		var priorRef string
-		err := tx.QueryRow(ctx,
-			`SELECT reference FROM points_ledger WHERE idempotency_key=$1 AND user_id=$2`,
-			idem, userID).Scan(&priorRef)
-		switch {
-		case err == nil:
-			prior, perr := redemptionByID(ctx, tx, priorRef)
-			if perr != nil {
-				return nil, nil, perr
-			}
-			return prior, item, nil
-		case !errors.Is(err, pgx.ErrNoRows):
-			return nil, nil, fmt.Errorf("points: redeem replay check: %w", err)
+	// Scope the client key to the user so identical keys from two different
+	// users can never collide in the ledger's global unique index.
+	idem := "redeem:" + userID + ":" + idemKey
+	// Idempotent replay: the prior debit's `reference` holds its redemption id.
+	var priorRef string
+	err = tx.QueryRow(ctx,
+		`SELECT reference FROM points_ledger WHERE idempotency_key=$1 AND user_id=$2`,
+		idem, userID).Scan(&priorRef)
+	switch {
+	case err == nil:
+		prior, perr := redemptionByID(ctx, tx, priorRef)
+		if perr != nil {
+			return nil, nil, perr
 		}
+		// Same key + different params is a CONFLICT, not a replay: silently
+		// returning the sku-A original to a sku-B request would debit once but
+		// fulfil the wrong item. Compare what is stored (sku determines cost).
+		if prior.SKU != sku {
+			return nil, nil, ErrIdempotencyConflict
+		}
+		// No audit event on replay — see ErrIdempotencyConflict / the replay
+		// note in the loyalty layer: the audit writer appends unconditionally
+		// (no dedupe), so one row per replayed request would inflate audit_logs
+		// under a retry storm. The original mutation's event + the stored
+		// idempotency_key already cover the trail.
+		return prior, item, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return nil, nil, fmt.Errorf("points: redeem replay check: %w", err)
 	}
 
 	// Re-project the balance INSIDE the lock+tx — no FOR UPDATE (illegal on the
@@ -378,6 +388,15 @@ func (s *Service) log(userID, action, id string, meta map[string]any) {
 var (
 	ErrInsufficientPoints      = errors.New("points: insufficient points")
 	ErrCashRedemptionForbidden = errors.New("points: points cannot be redeemed for cash (NL-4)")
+	// ErrIdempotencyRequired is the fail-closed service boundary mirroring the
+	// handler's RequireIdempotencyKey gate (iron rule: every mutation carries a
+	// client Idempotency-Key). Loyalty-layer callers surface the same sentinel.
+	ErrIdempotencyRequired = errors.New("points: Idempotency-Key required")
+	// ErrIdempotencyConflict marks a same-key replay carrying DIFFERENT request
+	// parameters than the stored mutation — mapped to 409 at the handlers rather
+	// than silently returning the original. Loyalty-layer callers surface the
+	// same sentinel (points, rewards and perk redemptions share the contract).
+	ErrIdempotencyConflict = errors.New("points: Idempotency-Key replayed with different parameters")
 )
 
 // Handler exposes read-only points endpoints to members. Earn is never a public
@@ -453,15 +472,22 @@ func (h *Handler) Redeem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	// The Idempotency-Key is optional today (legacy clients do not send it); when
-	// present the redeem replays idempotently instead of double-debiting.
-	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, ginutil.IdempotencyKey(c))
+	// Iron rule: every money mutation requires the client Idempotency-Key. The
+	// BFF edge synthesizes one for callers that omit it; the backend always
+	// requires it so a replay can never double-debit.
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
+	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, key)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInsufficientPoints):
 			c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err)})
 		case errors.Is(err, ErrCashRedemptionForbidden):
 			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+		case errors.Is(err, ErrIdempotencyConflict):
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		}

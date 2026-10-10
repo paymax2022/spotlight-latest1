@@ -42,7 +42,10 @@ type Dispute struct {
 
 // RaiseDispute contests a HELD hold. raisedBy must be the payer or the payee
 // (object-level authZ); a third party cannot dispute someone else's escrow. The
-// guarded transition HELD → DISPUTED rejects an already-resolved/disputed hold.
+// guarded transition HELD → DISPUTED rejects an already-resolved hold. An
+// already-DISPUTED hold returns its existing dispute — the caller's own
+// bookkeeping update may have failed after the escrow commit (F6b), and a
+// replay must converge, not wedge on "cannot dispute hold in state DISPUTED".
 func (s *Service) RaiseDispute(ctx context.Context, escrowID, raisedBy, evidence string) (*Dispute, error) {
 	if escrowID == "" || raisedBy == "" {
 		return nil, errors.New("escrow: escrowID and raisedBy required")
@@ -71,6 +74,24 @@ func (s *Service) RaiseDispute(ctx context.Context, escrowID, raisedBy, evidence
 	}
 
 	from := State(state)
+	if from == StateDisputed {
+		// Convergent replay: the hold and its dispute row committed atomically
+		// in this same transaction shape, so DISPUTED implies a dispute row
+		// exists — return the latest one. A module caller retrying after its
+		// own bookkeeping failure now sees success and can finish converging.
+		var d Dispute
+		const selD = `SELECT id, escrow_id, raised_by, state, decision, arbiter_id, created_at, resolved_at
+		              FROM escrow_disputes WHERE escrow_id=$1 ORDER BY created_at DESC LIMIT 1`
+		if err := tx.QueryRow(ctx, selD, escrowID).Scan(
+			&d.ID, &d.EscrowID, &d.RaisedBy, &d.State, &d.Decision, &d.ArbiterID, &d.CreatedAt, &d.ResolvedAt,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("escrow: hold DISPUTED but no dispute row exists — manual recon required")
+			}
+			return nil, fmt.Errorf("escrow: load existing dispute: %w", err)
+		}
+		return &d, nil
+	}
 	if !canTransition(from, StateDisputed) {
 		return nil, fmt.Errorf("escrow: cannot dispute hold in state %s", from)
 	}
@@ -128,11 +149,13 @@ func (s *Service) AddEvidence(ctx context.Context, escrowID, submittedBy, body s
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errors.New("escrow: no open dispute for hold")
 		}
-		return err
+		return fmt.Errorf("escrow: load dispute for evidence: %w", err)
 	}
 	const ins = `INSERT INTO escrow_dispute_evidence (id, dispute_id, submitted_by, body, created_at) VALUES ($1,$2,$3,$4,now())`
-	_, err := s.db.Exec(ctx, ins, uuid.New().String(), disputeID, submittedBy, body)
-	return err
+	if _, err := s.db.Exec(ctx, ins, uuid.New().String(), disputeID, submittedBy, body); err != nil {
+		return fmt.Errorf("escrow: insert evidence: %w", err)
+	}
+	return nil
 }
 
 // Arbitrate resolves a DISPUTED hold. The arbiter authority is enforced at the route
@@ -199,11 +222,11 @@ func (s *Service) Arbitrate(ctx context.Context, escrowID string, decision Dispu
 		if payeeID == nil || *payeeID == "" {
 			return errors.New("escrow: cannot release — no payee on hold")
 		}
-		if err := s.Release(ctx, escrowID, *payeeID); err != nil {
+		if err := s.resolveArbitrated(ctx, escrowID, StateReleased, *payeeID); err != nil {
 			return err
 		}
 	case DecisionRefund:
-		if err := s.Refund(ctx, escrowID); err != nil {
+		if err := s.resolveArbitrated(ctx, escrowID, StateRefunded, ""); err != nil {
 			return err
 		}
 	}

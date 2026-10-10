@@ -31,21 +31,14 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        # PostGIS-enabled image required: the very first migration
-        # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
-        # which a plain postgres image can't satisfy. PG17 matches production
-        # (PostgreSQL 17 via Supabase).
-        image: postgis/postgis:17-3.4
-        env:
-          POSTGRES_USER: paymax
-          POSTGRES_PASSWORD: paymax
-          POSTGRES_DB: paymax
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U paymax" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+    # NO `services:` block: service images are pulled by the runner BEFORE the
+    # first step executes, so a Docker Hub 429/timeout (anonymous rate limit
+    # shared across every concurrent PR on hosted runners) failed this job at
+    # "Initialize containers" with no chance to retry. postgis/postgis is
+    # community-published — Docker Hub only, no official ECR Public/GHCR mirror —
+    # so the container is started by a step whose pull is wrapped in bounded
+    # retry+backoff (scripts/ci/start-postgres-service.sh). Same image, env,
+    # port and pg_isready health gate as the declarative service it replaced.
     env:
       DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
       # Every live-DB test suite gates on TEST_DATABASE_URL and NONE fall back to
@@ -61,6 +54,12 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
+      # PostGIS-enabled image required: the very first migration
+      # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
+      # which a plain postgres image can't satisfy. PG17 matches production
+      # (PostgreSQL 17 via Supabase).
+      - name: Start PostGIS service container (pull retried — Docker Hub rate limits)
+        run: bash scripts/ci/start-postgres-service.sh postgis/postgis:17-3.4 ci-postgres
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
@@ -82,7 +81,7 @@ jobs:
       - name: Raise Postgres lock table (full-schema drop in migrate-reset)
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
-          docker restart ${{ job.services.postgres.id }}
+          docker restart ci-postgres
           timeout 90 bash -c 'until pg_isready -h localhost -p 5432 -U paymax >/dev/null 2>&1; do sleep 1; done'
 
       # The migrations assume the surface Supabase provides at runtime (auth
@@ -177,5 +176,16 @@ jobs:
       - name: Security / dependency scan
         run: make security-scan
 
+      # `docker build` pulls golang:*-alpine + alpine:* from Docker Hub by tag.
+      # public.ecr.aws/docker/library carries the SAME Docker Official Image
+      # digests with no anonymous pull quota — pre-pull there, tag under the
+      # docker.io names, and the build's FROMs resolve from the local image
+      # store without touching Docker Hub. Falls back to a retried docker.io
+      # pull inside the script if ECR itself is down. Dockerfile unchanged, so
+      # Railway/Render builds behave exactly as before.
+      - name: Pre-pull Dockerfile base images via the ECR Public mirror
+        run: bash scripts/ci/mirror-docker-base-images.sh backend/Dockerfile
+      # Wrapped in bounded retry+backoff — apk/go-mod fetches inside the build
+      # can still flake on transient network errors even with bases cached.
       - name: Build-once image (tagged by commit SHA)
-        run: make docker-build SHA=${{ github.sha }}
+        run: SHA=${{ github.sha }} bash scripts/ci/with-retry.sh make docker-build

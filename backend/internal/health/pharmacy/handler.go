@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
 	"strconv"
 	"strings"
@@ -28,6 +29,55 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 	return &Handler{svc: svc, isAdmin: isAdmin}
 }
 
+// uuidPathID gates a uuid-typed :id path param before it can reach a
+// WHERE id=$1 object load — a malformed value is a 400 naming the field,
+// never a driver error → 4xx/500 (w11 covered input params; this is the
+// object-load side of the same shape-gate). Returns the param value and true
+// on success; on failure the response is already written and the caller must
+// return early.
+func uuidPathID(c *gin.Context, field string) (string, bool) {
+	v := c.Param("id")
+	if _, err := uuid.Parse(v); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, field+" must be a uuid")
+		return "", false
+	}
+	return v, true
+}
+
+// uuidQueryID gates an optional uuid-typed query param ("" = no filter) the
+// same way — malformed → 400 naming the field.
+func uuidQueryID(c *gin.Context, field string) (string, bool) {
+	v := c.Query(field)
+	if v != "" {
+		if _, err := uuid.Parse(v); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, field+" must be a uuid")
+			return "", false
+		}
+	}
+	return v, true
+}
+
+// failErr writes a service failure through the sanitiser: module-authored
+// domain text passes verbatim at 4xx, but Postgres/pgx/driver strings are
+// replaced by the status's generic message — raw driver text never reaches a
+// client at any status.
+func failErr(c *gin.Context, status int, err error) {
+	ginutil.FailOK(c, status, httperr.Sanitize(c, status, err.Error()))
+}
+
+// failOrder is failErr plus the order-scoped uniform denial: the service
+// returns ErrOrderNotFound for a missing order AND for "exists but the caller
+// has no access" (same fold as social #602 / association #606 / aicare / vet /
+// lab — no existence oracle), so both are 404, not the domain-refusal
+// fallback.
+func failOrder(c *gin.Context, fallback int, err error) {
+	if errors.Is(err, ErrOrderNotFound) {
+		failErr(c, http.StatusNotFound, err)
+		return
+	}
+	failErr(c, fallback, err)
+}
+
 // VerifyPrescription — POST /prescriptions/:id/verify  (pharmacist, HL-3)
 // body: { begin, approve, reason }. Reuses healthrx via the service verifier.
 func (h *Handler) VerifyPrescription(c *gin.Context) {
@@ -45,8 +95,12 @@ func (h *Handler) VerifyPrescription(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := h.svc.VerifyPrescription(c.Request.Context(), id, c.Param("id"), req.Begin, req.Approve, req.Reason); err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	rxID, ok := uuidPathID(c, "prescription id")
+	if !ok {
+		return
+	}
+	if err := h.svc.VerifyPrescription(c.Request.Context(), id, rxID, req.Begin, req.Approve, req.Reason); err != nil {
+		failErr(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -61,7 +115,7 @@ func (h *Handler) ListMyPrescriptions(c *gin.Context) {
 	}
 	rx, err := h.svc.MyPrescriptions(c.Request.Context(), id)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
@@ -82,7 +136,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	}
 	products, err := h.svc.ListProducts(c.Request.Context(), provID, c.Query("q"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "products": products})
@@ -90,7 +144,11 @@ func (h *Handler) ListProducts(c *gin.Context) {
 
 // GetProduct — GET /products/:id  (single catalog product + owning pharmacy name)
 func (h *Handler) GetProduct(c *gin.Context) {
-	p, err := h.svc.GetProduct(c.Request.Context(), c.Param("id"))
+	productID, ok := uuidPathID(c, "product id")
+	if !ok {
+		return
+	}
+	p, err := h.svc.GetProduct(c.Request.Context(), productID)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusNotFound, "product not found")
 		return
@@ -125,7 +183,7 @@ func (h *Handler) UpsertProduct(c *gin.Context) {
 	}
 	out, err := h.svc.UpsertProduct(c.Request.Context(), id, p)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		failErr(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "product": out})
@@ -138,7 +196,7 @@ func (h *Handler) UpsertProduct(c *gin.Context) {
 func (h *Handler) MyProducts(c *gin.Context) {
 	list, err := h.svc.ListProductsForOwner(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "products": list})
@@ -221,22 +279,15 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "order": o})
 }
 
-// failOrderMutation maps the uniform denial sentinel to 404 — a foreign actor
-// and a missing order must return the same response — and keeps every other
-// service error at the historical 409.
-func failOrderMutation(c *gin.Context, err error) {
-	if errors.Is(err, ErrOrderNotFound) {
-		ginutil.FailOK(c, http.StatusNotFound, ErrOrderNotFound.Error())
-		return
-	}
-	ginutil.FailOK(c, http.StatusConflict, err.Error())
-}
-
 // Confirm — POST /orders/:id/confirm  (pharmacy owner; HL-3 verified e-Rx gate for Rx orders)
 func (h *Handler) Confirm(c *gin.Context) {
-	o, err := h.svc.Confirm(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Confirm(c.Request.Context(), ginutil.UserID(c), orderID)
 	if err != nil {
-		failOrderMutation(c, err)
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -249,9 +300,13 @@ func (h *Handler) Dispense(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	o, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Dispense(c.Request.Context(), id, orderID)
 	if err != nil {
-		failOrderMutation(c, err)
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -264,9 +319,13 @@ func (h *Handler) Dispatch(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	o, err := h.svc.Dispatch(c.Request.Context(), id, c.Param("id"))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Dispatch(c.Request.Context(), id, orderID)
 	if err != nil {
-		failOrderMutation(c, err)
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -280,13 +339,17 @@ func (h *Handler) Complete(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
 	var req struct {
 		PickupCode string `json:"pickup_code"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	o, err := h.svc.Complete(c.Request.Context(), id, c.Param("id"), req.PickupCode)
+	o, err := h.svc.Complete(c.Request.Context(), id, orderID, req.PickupCode)
 	if err != nil {
-		failOrderMutation(c, err)
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -299,13 +362,17 @@ func (h *Handler) Cancel(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	o, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
+	o, err := h.svc.Cancel(c.Request.Context(), id, orderID, req.Reason)
 	if err != nil {
-		failOrderMutation(c, err)
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -313,13 +380,15 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // Get — GET /orders/:id  (object-level authZ: patient / pharmacy / admin)
 func (h *Handler) Get(c *gin.Context) {
-	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), orderID, h.isAdmin(c))
 	if err != nil {
-		if errors.Is(err, ErrOrderNotFound) {
-			ginutil.FailOK(c, http.StatusNotFound, ErrOrderNotFound.Error())
-			return
-		}
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		// Missing-or-denied is the sentinel → uniform 404; anything else is an
+		// internal failure (the old blanket-403 misreported DB errors).
+		failOrder(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -337,7 +406,7 @@ func (h *Handler) ListMine(c *gin.Context) {
 		c.Request.Context(), ginutil.UserID(c), c.Query("state"), limit, offset,
 	)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
@@ -359,7 +428,7 @@ func (h *Handler) ListMyOrders(c *gin.Context) {
 		c.Request.Context(), id, c.Query("state"), limit, offset,
 	)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
@@ -371,7 +440,7 @@ func (h *Handler) ListMyOrders(c *gin.Context) {
 func (h *Handler) Earnings(c *gin.Context) {
 	e, err := h.svc.EarningsForOwner(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "earnings": e})
@@ -387,7 +456,7 @@ func (h *Handler) DiscoverPharmacies(c *gin.Context) {
 	radiusM, _ := strconv.ParseFloat(c.Query("radius_m"), 64)
 	rows, err := h.svc.DiscoverPharmacies(c.Request.Context(), lat, lng, radiusM, c.Query("sort"), c.Query("q"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pharmacies": rows})
@@ -395,9 +464,15 @@ func (h *Handler) DiscoverPharmacies(c *gin.Context) {
 
 // GetPharmacy — GET /pharmacies/:id  discoverable pharmacy detail (HL-2).
 func (h *Handler) GetPharmacy(c *gin.Context) {
-	p, err := h.svc.GetPharmacyProfile(c.Request.Context(), c.Param("id"))
+	providerID, ok := uuidPathID(c, "pharmacy id")
+	if !ok {
+		return
+	}
+	p, err := h.svc.GetPharmacyProfile(c.Request.Context(), providerID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusNotFound, err.Error())
+		// Constant text — never service error text (a driver error must not
+		// reach the body even at 404).
+		ginutil.FailOK(c, http.StatusNotFound, "pharmacy not found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pharmacy": p})
@@ -413,7 +488,7 @@ func (h *Handler) ListPharmacyReviews(c *gin.Context) {
 	}
 	rows, err := h.svc.ListReviews(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "reviews": rows})
@@ -439,7 +514,7 @@ func (h *Handler) UpsertPharmacyProfile(c *gin.Context) {
 	}
 	p, err := h.svc.UpsertPharmacyProfile(c.Request.Context(), id, c.Param("id"), req)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		failErr(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pharmacy": p})
@@ -460,9 +535,13 @@ func (h *Handler) SubmitReview(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	r, err := h.svc.SubmitReview(c.Request.Context(), id, c.Param("id"), req.Rating, req.Body)
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	r, err := h.svc.SubmitReview(c.Request.Context(), id, orderID, req.Rating, req.Body)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		failOrder(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "review": r})
@@ -489,9 +568,13 @@ func parseOptionalFloat(s string) *float64 {
 func (h *Handler) AdminListOrders(c *gin.Context) {
 	state := strings.ToUpper(strings.TrimSpace(strutil.FirstNonEmpty(c.Query("status"), c.Query("state"))))
 	fulfilment := strings.ToUpper(strings.TrimSpace(strutil.FirstNonEmpty(c.Query("fulfilment"), c.Query("fulfilment_method"))))
-	rows, err := h.svc.AdminListOrders(c.Request.Context(), state, fulfilment, c.Query("pharmacy_provider_id"))
+	provID, ok := uuidQueryID(c, "pharmacy_provider_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminListOrders(c.Request.Context(), state, fulfilment, provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows, "orders": rows})
@@ -501,9 +584,13 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 // (PHARMACY-001). Only a list existed before; the admin console's order-detail
 // drawer (healthPharmacyAdminService.ts getOrder) had nothing to call and 404'd.
 func (h *Handler) AdminGetOrder(c *gin.Context) {
-	o, err := h.svc.AdminGetOrder(c.Request.Context(), c.Param("id"))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.AdminGetOrder(c.Request.Context(), orderID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusNotFound, err.Error())
+		ginutil.FailOK(c, http.StatusNotFound, "order not found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": o, "order": o})
@@ -516,7 +603,7 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
@@ -524,9 +611,13 @@ func (h *Handler) AdminDashboard(c *gin.Context) {
 
 // AdminDispenseAudit — GET /admin/dispense-audit  Rx/controlled dispense audit (HL-12).
 func (h *Handler) AdminDispenseAudit(c *gin.Context) {
-	rows, err := h.svc.AdminDispenseAudit(c.Request.Context(), c.Query("pharmacy_provider_id"))
+	provID, ok := uuidQueryID(c, "pharmacy_provider_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminDispenseAudit(c.Request.Context(), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "records": rows})
@@ -534,8 +625,12 @@ func (h *Handler) AdminDispenseAudit(c *gin.Context) {
 
 // AdminRecallProduct — POST /admin/products/:id/recall  pharmacovigilance/recall.
 func (h *Handler) AdminRecallProduct(c *gin.Context) {
-	if err := h.svc.AdminRecallProduct(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	productID, ok := uuidPathID(c, "product id")
+	if !ok {
+		return
+	}
+	if err := h.svc.AdminRecallProduct(c.Request.Context(), ginutil.UserID(c), productID); err != nil {
+		failErr(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

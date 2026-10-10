@@ -195,21 +195,33 @@ func (s *Service) GetMembership(ctx context.Context, userID string) (*Membership
 // records a PENDING fulfilment for the owning module to dispatch (airtime/bill/
 // ticket-discount). The points debit and the loyalty redemption row are linked by SKU.
 //
-// idemKey is the OPTIONAL client Idempotency-Key. When supplied, a replay returns
+// idemKey is the REQUIRED client Idempotency-Key (iron rule; the handler enforces
+// the header, this guard is the fail-closed service boundary). A replay returns
 // the original redemption — no second points debit and no duplicate PENDING
-// fulfilment row (loyalty_redemptions.idempotency_key dedupes the insert). When
-// empty the behaviour is the legacy per-call record — kept so live clients that
-// never send the header keep working (follow-up: require it like other mutations).
+// fulfilment row (loyalty_redemptions.idempotency_key dedupes the insert).
 func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Redemption, error) {
-	if idemKey != "" {
-		// Replay short-circuit before any fresh work: return the original row.
-		prior, err := s.redemptionByIdem(ctx, userID, idemKey)
-		if err == nil {
-			return prior, nil
+	if idemKey == "" {
+		return nil, points.ErrIdempotencyRequired
+	}
+	// Replay short-circuit before any fresh work: return the original row.
+	prior, err := s.redemptionByIdem(ctx, userID, idemKey)
+	if err == nil {
+		// Same key + different params is a CONFLICT, not a replay: silently
+		// returning the sku-A original to a sku-B request would debit once but
+		// dispatch the wrong fulfilment. The stored row carries the request
+		// shape (sku determines kind+cost), so no params-hash is needed.
+		if prior.SKU != sku {
+			return nil, points.ErrIdempotencyConflict
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("loyalty: redeem replay check: %w", err)
-		}
+		// No audit event on replay: auditService.LogAction appends a row
+		// unconditionally (REST insert, no dedupe), so auditing every replayed
+		// request would write unbounded duplicate-ish rows under a retry storm.
+		// The original mutation's loyalty.redeem event + the stored
+		// idempotency_key already cover the trail.
+		return prior, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("loyalty: redeem replay check: %w", err)
 	}
 	item, err := s.catalogItem(ctx, sku)
 	if err != nil {
@@ -240,26 +252,35 @@ func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Red
 		FulfilStatus: "PENDING",
 		CreatedAt:    time.Now(),
 	}
-	// NULLIF keeps headerless calls unaffected by the partial unique index; the
-	// ON CONFLICT arm covers a same-key race that slipped past the pre-check.
+	// The ON CONFLICT arm covers a same-key race that slipped past the pre-check.
 	const ins = `
 		INSERT INTO loyalty_redemptions (id, user_id, sku, kind, cost_points, fulfil_status, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,'PENDING',NULLIF($6,''))
+		VALUES ($1,$2,$3,$4,$5,'PENDING',$6)
 		ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	if _, err := s.db.Exec(ctx, ins, red.ID, red.UserID, red.SKU, red.Kind, red.CostPoints, idemKey); err != nil {
 		return nil, fmt.Errorf("loyalty: insert redemption: %w", err)
 	}
-	if idemKey != "" {
-		// Read back what stands under the key — either the row just written or,
-		// on a lost same-key race, the winner's row. A miss after the insert
-		// conflict would mean the points debit has no persisted redemption:
-		// fail loudly rather than return an untracked success.
-		stored, err := s.redemptionByIdem(ctx, userID, idemKey)
-		if err != nil {
-			return nil, fmt.Errorf("loyalty: redeem conflict read-back: %w", err)
-		}
-		red = stored
+	// Read back what stands under the key — either the row just written or, on a
+	// lost same-key race, the winner's row. A miss after the insert conflict
+	// would mean the points debit has no persisted redemption: fail loudly
+	// rather than return an untracked success.
+	stored, err := s.redemptionByIdem(ctx, userID, idemKey)
+	if err != nil {
+		return nil, fmt.Errorf("loyalty: redeem conflict read-back: %w", err)
 	}
+	if stored.SKU != sku {
+		// Race lost to a different-params request under the same key. Normally
+		// points.Redeem upstream already returns ErrIdempotencyConflict for a
+		// sku mismatch — this is defence-in-depth.
+		return nil, points.ErrIdempotencyConflict
+	}
+	if stored.ID != red.ID {
+		// Same-key race lost to an identical request: return the winner's row.
+		// No audit event — only the winner emits loyalty.redeem so the mutation
+		// stays exactly-once in the log (and replays emit nothing — see above).
+		return stored, nil
+	}
+	red = stored
 	// Fulfilment is a non-cash dispatch handled by the owning module (airtime / bill
 	// / ticket-discount). It is intentionally decoupled and marked PENDING here.
 	s.log(userID, "loyalty.redeem", red.ID, map[string]any{"sku": sku, "kind": pitem.Kind, "cost": pr.CostPoints})
@@ -429,11 +450,21 @@ func (h *Handler) Redeem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, ginutil.IdempotencyKey(c))
+	// Iron rule: every money mutation requires the client Idempotency-Key. The
+	// BFF edge synthesizes one for callers that omit it; the backend always
+	// requires it so a replay can never double-debit points.
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
+	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, key)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, ErrTierTooLow) {
+		switch {
+		case errors.Is(err, ErrTierTooLow):
 			status = http.StatusForbidden
+		case errors.Is(err, points.ErrIdempotencyConflict):
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return

@@ -6,11 +6,12 @@ package loyalty
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/loyalty/... -v
 //
-// Requires migration 20271009000000_loyalty_redemption_idem_key.sql applied
+// Requires migration 20271009010000_loyalty_redemption_idem_key.sql applied
 // (loyalty_redemptions.idempotency_key partial unique index).
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -124,8 +125,39 @@ func TestLiveDB_LoyaltyRedeem_SucceedsAndReplaysIdempotently(t *testing.T) {
 	}
 }
 
-// Headerless calls keep the legacy per-call record (no client key → no dedupe).
-func TestLiveDB_LoyaltyRedeem_NoKey_StillWorks(t *testing.T) {
+// Same key + different sku is a 409 conflict — never silently return the
+// original redemption (which would debit once but fulfil the wrong item).
+// The single original debit must stand.
+func TestLiveDB_LoyaltyRedeem_SameKeyDifferentSKU_Conflict(t *testing.T) {
+	pool := liveLoyaltyPool(t)
+	pts := points.NewService(pool, nil)
+	svc := NewService(pool, pts, nil)
+	ctx := context.Background()
+	uid := seedLoyaltyUser(t, pool)
+	skuA := seedReward(t, pool, 100)
+	skuB := seedReward(t, pool, 200)
+	seedLoyaltyEarn(t, pool, uid, 500)
+
+	key := "loyalty-" + uuid.NewString()
+	if _, err := svc.Redeem(ctx, uid, skuA, key); err != nil {
+		t.Fatalf("first redeem: %v", err)
+	}
+	if _, err := svc.Redeem(ctx, uid, skuB, key); !errors.Is(err, points.ErrIdempotencyConflict) {
+		t.Fatalf("different-sku replay: err = %v, want points.ErrIdempotencyConflict", err)
+	}
+	var debits int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM points_ledger WHERE user_id=$1 AND type='REDEEM'`, uid).Scan(&debits); err != nil {
+		t.Fatalf("count debits: %v", err)
+	}
+	if debits != 1 {
+		t.Fatalf("conflict must leave exactly 1 debit, got %d", debits)
+	}
+}
+
+// Headerless calls are rejected fail-closed (iron rule): the client key is
+// required so a replay can never double-debit or double-fulfil.
+func TestLiveDB_LoyaltyRedeem_NoKey_Rejected(t *testing.T) {
 	pool := liveLoyaltyPool(t)
 	pts := points.NewService(pool, nil)
 	svc := NewService(pool, pts, nil)
@@ -134,11 +166,19 @@ func TestLiveDB_LoyaltyRedeem_NoKey_StillWorks(t *testing.T) {
 	sku := seedReward(t, pool, 100)
 	seedLoyaltyEarn(t, pool, uid, 500)
 
-	red, err := svc.Redeem(ctx, uid, sku, "")
-	if err != nil {
-		t.Fatalf("headerless redeem: %v", err)
+	if _, err := svc.Redeem(ctx, uid, sku, ""); !errors.Is(err, points.ErrIdempotencyRequired) {
+		t.Fatalf("headerless redeem: err = %v, want points.ErrIdempotencyRequired", err)
 	}
-	if red.FulfilStatus != "PENDING" || red.CostPoints != 100 {
-		t.Fatalf("unexpected redemption: %+v", red)
+	var debits, fulfilments int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM points_ledger WHERE user_id=$1 AND type='REDEEM'`, uid).Scan(&debits); err != nil {
+		t.Fatalf("count debits: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM loyalty_redemptions WHERE user_id=$1`, uid).Scan(&fulfilments); err != nil {
+		t.Fatalf("count fulfilments: %v", err)
+	}
+	if debits != 0 || fulfilments != 0 {
+		t.Fatalf("rejected redeem must write nothing, got %d debits / %d fulfilments", debits, fulfilments)
 	}
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { createAdminClient } from '@/lib/supabase/server';
+import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,11 +52,17 @@ export async function GET(
 
     const ids = enrollments.map((e: any) => e.id);
 
-    const { data: totalsRows } = await supabase
-      .from('vote_totals')
-      .select('contestant_id, total_confirmed_votes, rank')
-      .eq('contest_id', contestId)
-      .in('contestant_id', ids);
+    const [{ data: totalsRows }, visibility] = await Promise.all([
+      supabase
+        .from('vote_totals')
+        .select('contestant_id, total_confirmed_votes, rank')
+        .eq('contest_id', contestId)
+        .in('contestant_id', ids),
+      // Phase-aware effective visibility (D-004/VV-007 convention) — the same
+      // gate the contestant DETAIL route applies: a phase can hide counts/rank
+      // even when the contest-level flags are permissive.
+      getEffectiveVisibility(contestId),
+    ]);
 
     const totalsById = new Map((totalsRows ?? []).map((t: any) => [t.contestant_id, t]));
     const grandTotal = (totalsRows ?? []).reduce(
@@ -69,19 +76,34 @@ export async function GET(
         const voteCount = totals?.total_confirmed_votes ?? 0;
         const rank = totals?.rank ?? idx + 1;
         return {
-          id: e.id,
-          name: e.name ?? e.stage_name ?? 'Contestant',
-          stageName: e.stage_name || null,
-          category: e.category || null,
-          state: e.state || null,
-          photoUrl: e.photo_url || null,
-          rank,
-          voteCount,
-          votePercent: grandTotal > 0 ? Math.round((voteCount / grandTotal) * 1000) / 10 : 0,
-          isTopContestant: rank <= 3,
+          body: {
+            id: e.id,
+            name: e.name ?? e.stage_name ?? 'Contestant',
+            stageName: e.stage_name || null,
+            category: e.category || null,
+            state: e.state || null,
+            photoUrl: e.photo_url || null,
+            // Never leak hidden vote counts / rank through this public list —
+            // the same redaction the sibling detail route applies. Fields are
+            // omitted, not nulled, so a caller can't distinguish "hidden" from
+            // "zero". (List order follows the leaderboard convention: rows stay
+            // vote-ordered even when the counts themselves are hidden.)
+            ...(visibility.showRank
+              ? { rank, isTopContestant: rank <= 3 }
+              : {}),
+            ...(visibility.showVoteCount
+              ? {
+                  voteCount,
+                  votePercent:
+                    grandTotal > 0 ? Math.round((voteCount / grandTotal) * 1000) / 10 : 0,
+                }
+              : {}),
+          },
+          sortKey: voteCount,
         };
       })
-      .sort((a: any, b: any) => b.voteCount - a.voteCount);
+      .sort((a: any, b: any) => b.sortKey - a.sortKey)
+      .map((r: any) => r.body);
 
     return NextResponse.json(result);
   } catch (error) {

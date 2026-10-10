@@ -1056,6 +1056,8 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 	}
 	// Uniform denial: a foreign order is indistinguishable from a missing one.
 	if o.PatientID != patientID {
+		// Uniform denial: a non-owner's cancel on an existing order is
+		// indistinguishable from a missing one — no existence oracle.
 		return nil, ErrOrderNotFound
 	}
 	if !isPreCollection(o.State) {
@@ -1149,6 +1151,8 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	// readers rather than erroring differently for "order exists".
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
+		// Uniform denial (see Get's sibling folds): denied reads answer with
+		// the same "order not found" a missing id would — no existence oracle.
 		return nil, ErrOrderNotFound
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
@@ -1166,7 +1170,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 	// Deliberately swallowed — owner="" fails closed (see Get above).
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, ErrOrderNotFound
+		return nil, ErrOrderNotFound // uniform denial, see Get
 	}
 	return s.loadResults(ctx, orderID)
 }
@@ -1181,7 +1185,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 	// Deliberately swallowed — owner="" fails closed (see Get above).
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, ErrOrderNotFound
+		return nil, ErrOrderNotFound // uniform denial, see Get
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
@@ -1544,6 +1548,15 @@ var (
 	ErrResultNotFound = errors.New("lab: no current result for that test to amend")
 	// ErrNoAmendmentReason — an amendment must state why the prior result was wrong.
 	ErrNoAmendmentReason = errors.New("lab: an amendment reason is required")
+	// ErrOrderNotFound is the uniform denial for order-scoped reads and
+	// transitions: a caller without access to an EXISTING order gets this, not
+	// a distinct "forbidden" — "exists but not yours" is indistinguishable
+	// from "does not exist" (no existence oracle; same fold as social #602 /
+	// association #606 / aicare / vet). The handler maps it to 404.
+	ErrOrderNotFound = errors.New("lab: order not found")
+	// ErrSampleNotFound — same shape for the sample-scoped custody routes:
+	// a missing sample id is a 404, distinct from transition refusals (409).
+	ErrSampleNotFound = errors.New("lab: sample not found")
 )
 
 // canAmendResult reports whether an order is in a state where a published result
