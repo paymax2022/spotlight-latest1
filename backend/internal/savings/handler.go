@@ -33,7 +33,7 @@ func NewHandler(v *VaultService, a *AjoService, t *TargetService) *Handler {
 // silent pass).
 var errMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusForbidden, ErrForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
-	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrReconPending),
 	httperr.R(http.StatusNotFound, ErrNotFound),
 	httperr.R(http.StatusConflict, ErrLockedVault, ErrInsufficientVault, ErrReleaseRuleUnmet),
 )
