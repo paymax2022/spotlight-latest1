@@ -50,6 +50,11 @@ func (s *Service) getUserTier(ctx context.Context, q Querier, userID string) (Ti
 }
 
 // getDailyDebited returns the total kobo debited from the user's wallet today.
+// The sum counts EVERY DEBIT typed entry on the wallet — including system-
+// initiated debits (corrections, clawbacks, batch collections like ajo cycle
+// sweeps). That is intentional and conservative: a system debit still spent
+// the user's money and still consumes cap, so the day can only refuse MORE
+// than an attacker could move by triggering system debits, never less.
 func (s *Service) getDailyDebited(ctx context.Context, q Querier, userID string) (int64, error) {
 	const query = `
 		SELECT COALESCE(SUM(le.amount_kobo), 0)
