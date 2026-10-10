@@ -135,6 +135,11 @@ func (s *Service) ListInvoices(ctx context.Context, estateID, userID, status str
 // cross-check.
 var ErrDuesExternalAmountMismatch = errors.New("estate: verified payment amount no longer matches the invoice amount")
 
+// ErrTierGateUnwired is returned by the wallet-funded dues path when
+// WithTiers was never called — a nil tier gate must fail CLOSED, never fall
+// back to an ungated ledger.Debit (mirrors escrow.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("estate: money path requires a tier gate (not wired)")
+
 // resolveDuesInvoiceAmount loads and validates an invoice the same way
 // payDues does (scoped to estate + payer, not paid/waived), without moving
 // any money. Shared by payDues itself and QuoteDuesInvoice (a pre-payment
@@ -250,8 +255,13 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 	// 4. Tier-limit check, fail-closed, before any money moves. Skipped entirely
 	// when external is true: an externally-funded payment is collected by an
 	// ALREADY-VERIFIED Paystack charge that never touches the payer's wallet,
-	// so there is no wallet debit for this gate to price against.
-	if !external && s.tiers != nil {
+	// so there is no wallet debit for this gate to price against. A wallet-
+	// funded payment with the gate UNWIRED refuses outright — a nil tier gate
+	// is a deployment fault, not a license to debit ungated (F5).
+	if !external {
+		if s.tiers == nil {
+			return nil, ErrTierGateUnwired
+		}
 		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, payerID, amount); err != nil {
 			return nil, fmt.Errorf("estate: dues payment blocked by tier limit: %w", err)
 		}
@@ -316,16 +326,15 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 		if jerr != nil && !errors.Is(jerr, ledger.ErrDuplicate) {
 			return nil, fmt.Errorf("estate: dues external post: %w", jerr)
 		}
-	} else if s.tiers != nil {
-		// Wallet-funded + gate wired: DebitWithGuard re-runs the checkout
-		// allowance INSIDE the debit tx under the wallet lock (F7) — the pooled
-		// check at step 4 is advisory only.
+	} else {
+		// Wallet-funded: DebitWithGuard re-runs the checkout allowance INSIDE
+		// the debit tx under the wallet lock (F7) — the pooled check at step 4
+		// is advisory only. tiers is provably non-nil here (step 4 fails
+		// closed on an unwired gate); no ungated-debit fallback exists.
 		if err := s.ledger.DebitWithGuard(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount,
 			s.tiers.EnforceCheckoutDebitLimitTx); err != nil {
 			return nil, fmt.Errorf("estate: dues debit: %w", err)
 		}
-	} else if err := s.ledger.Debit(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
-		return nil, fmt.Errorf("estate: dues debit: %w", err)
 	}
 
 	// 8. Immutable receipt + mark invoice paid + lift restriction + audit.
