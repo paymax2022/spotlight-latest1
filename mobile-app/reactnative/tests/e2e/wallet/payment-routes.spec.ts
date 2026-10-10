@@ -86,6 +86,18 @@ test.describe('Payment routes - Add Money (wallet/add)', () => {
     expect(captured).toHaveLength(0);
   });
 
+  test('KYC lookup unavailable: a server Tier 1 rejection still shows the KYC prompt', async ({ page }) => {
+    await page.route('**/api/finance/kyc/me', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' }));
+    await page.route('**/api/v1/wallet/topup', (route) =>
+      route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'This feature requires KYC Tier 1. Your current tier is 0.' }) }));
+
+    await page.goto('/wallet/add');
+    await page.getByText('Continue to Paystack').click();
+
+    await expect(page.getByText('Verify your identity to add money')).toBeVisible();
+    await expect(page.getByText('Could not start funding')).toBeHidden();
+  });
+
   test('does not submit funding request for an amount under ₦100', async ({ page }) => {
     const captured: Record<string, unknown>[] = [];
 

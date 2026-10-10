@@ -227,7 +227,15 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       }
     },
     onError: (error) => {
-      void alertAsync({ title: 'Could not start funding', message: normalizeApiError(error).message });
+      const { status, message } = normalizeApiError(error);
+      // The server is the authority on the tier gate. If our own tier lookup was
+      // unavailable (so the pre-check let the request through) and the server says
+      // Tier 1 is required, show the same KYC prompt instead of a raw error.
+      if (status === 403 && /kyc tier/i.test(message)) {
+        void promptKycForFunding();
+        return;
+      }
+      void alertAsync({ title: 'Could not start funding', message });
     },
   });
 
@@ -386,18 +394,22 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
 
   // Adding money needs Tier 1 KYC (verified through Dojah). Explain that before
   // sending the user to Paystack, and let them start verification or back out.
+  const promptKycForFunding = async () => {
+    const proceed = await confirmAsync({
+      title: 'Verify your identity to add money',
+      message:
+        'Adding money to your wallet requires at least Tier 1 verification. ' +
+        'It only takes a few minutes: we confirm your details with our verification partner, Dojah. ' +
+        'Would you like to continue with verification now?',
+      confirmLabel: 'Continue to verification',
+      cancelLabel: 'Cancel',
+    });
+    if (proceed) kycStepUp.open();
+  };
+
   const startFunding = async () => {
     if (!(await kycStepUp.check())) {
-      const proceed = await confirmAsync({
-        title: 'Verify your identity to add money',
-        message:
-          'Adding money to your wallet requires at least Tier 1 verification. ' +
-          'It only takes a few minutes: we confirm your details with our verification partner, Dojah. ' +
-          'Would you like to continue with verification now?',
-        confirmLabel: 'Continue to verification',
-        cancelLabel: 'Cancel',
-      });
-      if (proceed) kycStepUp.open();
+      await promptKycForFunding();
       return;
     }
     fundMutation.mutate();
