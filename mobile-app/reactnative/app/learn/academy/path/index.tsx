@@ -27,7 +27,7 @@ export default function MyPath() {
   const activeSubject = subjectId ?? subjects.data?.[0]?.id;
   const path = usePath(activeSubject);
 
-  if (subjects.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading your path…" /></SafeAreaView>;
+  if (subjects.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="My path" /><StateView kind="loading" message="Loading your path…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

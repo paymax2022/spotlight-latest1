@@ -77,7 +77,7 @@ export default function MasteryCheck() {
     );
   }
 
-  if (!questions) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Preparing your check…" /></SafeAreaView>;
+  if (!questions) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Mastery check" /><StateView kind="loading" message="Preparing your check…" /></SafeAreaView>;
 
   if (result) {
     const passed = result.scorePct >= PASS_THRESHOLD;

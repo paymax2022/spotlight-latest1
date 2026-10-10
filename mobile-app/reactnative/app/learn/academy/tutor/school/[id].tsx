@@ -27,7 +27,7 @@ export default function SchoolOverviewScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const overview = useSchoolOverview(id);
 
-  if (overview.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading overview…" /></SafeAreaView>;
+  if (overview.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="School" /><StateView kind="loading" message="Loading overview…" /></SafeAreaView>;
   if (overview.isError || !overview.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="School" /><StateView kind="error" title="Could not load overview" /></SafeAreaView>;
 
   const o = overview.data;

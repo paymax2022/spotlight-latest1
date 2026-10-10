@@ -13,13 +13,14 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useMatchableCampaign } from '@/features/crowdfunding/hooks/useCsr';
 import { formatNaira, progressPct } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ScreenHeader from '@/components/ScreenHeader';
 
 export default function CsrCampaignDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: c, isLoading, isError, refetch } = useMatchableCampaign(id);
 
-  if (isLoading) return <SafeAreaView style={styles.safe}><StateView kind="loading" /></SafeAreaView>;
-  if (isError || !c) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Campaign not found" actionLabel="Retry" onAction={refetch} /></SafeAreaView>;
+  if (isLoading) return <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/crowdfunding/csr" /><StateView kind="loading" /></SafeAreaView>;
+  if (isError || !c) return <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/crowdfunding/csr" /><StateView kind="error" title="Campaign not found" actionLabel="Retry" onAction={refetch} /></SafeAreaView>;
 
   const pct = progressPct(c.raisedKobo, c.goalKobo);
 

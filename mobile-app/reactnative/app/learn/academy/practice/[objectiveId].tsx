@@ -58,7 +58,7 @@ export default function PracticeScreen() {
     }
   };
 
-  if (questions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading practice…" /></SafeAreaView>;
+  if (questions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Practice" /><StateView kind="loading" message="Loading practice…" /></SafeAreaView>;
   if (!list.length) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Practice" /><StateView kind="empty" title="No questions yet" /></SafeAreaView>;
 
   if (result) {

@@ -30,7 +30,7 @@ export default function TutorEarnings() {
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (earnings.isLoading || me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading earnings…" /></SafeAreaView>;
+  if (earnings.isLoading || me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Earnings" /><StateView kind="loading" message="Loading earnings…" /></SafeAreaView>;
   if (!earnings.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Earnings" /><StateView kind="error" title="Could not load earnings" /></SafeAreaView>;
 
   const e = earnings.data;

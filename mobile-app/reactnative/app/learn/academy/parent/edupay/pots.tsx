@@ -52,7 +52,7 @@ export default function PotsScreen() {
     );
   };
 
-  if (pots.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading pots…" /></SafeAreaView>;
+  if (pots.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Save for school" /><StateView kind="loading" message="Loading pots…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

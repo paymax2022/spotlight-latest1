@@ -18,7 +18,7 @@ import { useTradeTracks } from '@/features/academy/hooks';
 /** A11/S1 — Trade selection: pick or switch your trade. */
 export default function TradeTracksScreen() {
   const tracks = useTradeTracks();
-  if (tracks.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading trades…" /></SafeAreaView>;
+  if (tracks.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Choose a trade" /><StateView kind="loading" message="Loading trades…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

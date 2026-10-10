@@ -18,7 +18,7 @@ export default function BillingScreen() {
   const subs = useSubscriptions();
   const invoices = useInvoices();
 
-  if (subs.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading billing…" /></SafeAreaView>;
+  if (subs.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Billing & subscriptions" /><StateView kind="loading" message="Loading billing…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

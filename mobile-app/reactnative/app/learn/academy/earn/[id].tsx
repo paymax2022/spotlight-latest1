@@ -26,8 +26,8 @@ export default function OpportunityDetailScreen() {
   const apply = useApplyOpportunity();
   const [application, setApplication] = React.useState<EarningApplication | null>(null);
 
-  if (opp.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading role…" /></SafeAreaView>;
-  if (opp.isError || !opp.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Not found" message="This opportunity is unavailable." /></SafeAreaView>;
+  if (opp.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="loading" message="Loading role…" /></SafeAreaView>;
+  if (opp.isError || !opp.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader /><StateView kind="error" title="Not found" message="This opportunity is unavailable." /></SafeAreaView>;
 
   const o = opp.data;
   const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[o.icon] ?? Icons.Briefcase;

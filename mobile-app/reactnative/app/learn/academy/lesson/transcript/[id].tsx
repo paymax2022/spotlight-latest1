@@ -50,7 +50,7 @@ export default function LessonTranscript() {
     );
   };
 
-  if (lesson.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading transcript…" /></SafeAreaView>;
+  if (lesson.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Transcript" /><StateView kind="loading" message="Loading transcript…" /></SafeAreaView>;
   if (!lesson.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Transcript" /><StateView kind="error" title="Lesson not found" /></SafeAreaView>;
 
   return (

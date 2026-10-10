@@ -35,7 +35,7 @@ export default function TutorOnboard() {
   const [acct, setAcct] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  if (me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading…" /></SafeAreaView>;
+  if (me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Tutor verification" /><StateView kind="loading" message="Loading…" /></SafeAreaView>;
 
   // Already onboarded → show verification status instead of the form.
   if (me.data?.onboardingComplete) {

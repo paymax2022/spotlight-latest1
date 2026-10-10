@@ -34,7 +34,7 @@ export default function TutorLive() {
   const [cohortId, setCohortId] = useState<string | undefined>(undefined);
   const [scheduled, setScheduled] = useState<string | null>(null);
 
-  if (sessions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading classes…" /></SafeAreaView>;
+  if (sessions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Host live class" /><StateView kind="loading" message="Loading classes…" /></SafeAreaView>;
 
   // Tutor sees the same sessions feed; hosting reuses the live room.
   const myCohort = cohortId ?? cohorts.data?.[0]?.id;

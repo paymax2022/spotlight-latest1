@@ -30,7 +30,7 @@ function whenLabel(s: LiveSession): string {
 /** C1 — Live classes schedule: upcoming / live / replay. */
 export default function LiveScheduleScreen() {
   const sessions = useLiveSessions();
-  if (sessions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading classes…" /></SafeAreaView>;
+  if (sessions.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Live classes" /><StateView kind="loading" message="Loading classes…" /></SafeAreaView>;
 
   const data = sessions.data ?? [];
   const groups: { key: LiveStatus; title: string }[] = [

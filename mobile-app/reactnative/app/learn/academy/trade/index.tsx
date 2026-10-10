@@ -11,6 +11,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1, shadow3 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
+import ScreenHeader from '@/components/ScreenHeader';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import Chip from '@/features/academy/components/Chip';
 import OfflineBanner from '@/features/academy/components/OfflineBanner';
@@ -21,14 +22,15 @@ import type { TradeModule } from '@/features/academy/types';
 export default function TradeHubScreen() {
   const hub = useTradeHub();
 
-  if (hub.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading your trade…" /></SafeAreaView>;
-  if (hub.isError || !hub.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Could not load" message="Please try again." actionLabel="Retry" onAction={() => hub.refetch()} /></SafeAreaView>;
+  if (hub.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Trade & Skills" backFallback="/learn/academy" /><StateView kind="loading" message="Loading your trade…" /></SafeAreaView>;
+  if (hub.isError || !hub.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Trade & Skills" backFallback="/learn/academy" /><StateView kind="error" title="Could not load" message="Please try again." actionLabel="Retry" onAction={() => hub.refetch()} /></SafeAreaView>;
 
   const { track, modules, projects, credentialEarned } = hub.data;
   const TrackIcon = (Icons as unknown as Record<string, Icons.LucideIcon>)[track.icon] ?? Icons.Wrench;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScreenHeader title="Trade & Skills" backFallback="/learn/academy" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <OfflineBanner />
         <LinearGradient colors={Colors.gradientPurple} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow3]}>

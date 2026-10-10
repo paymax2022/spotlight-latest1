@@ -13,13 +13,14 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useOffer } from '@/features/crowdfunding/hooks/useInvestment';
 import { formatNaira, formatNairaCompact, progressPct } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ScreenHeader from '@/components/ScreenHeader';
 
 export default function OfferDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: o, isLoading, isError, refetch } = useOffer(id);
 
-  if (isLoading) return <SafeAreaView style={styles.safe}><StateView kind="loading" /></SafeAreaView>;
-  if (isError || !o) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Offer not found" actionLabel="Retry" onAction={refetch} /></SafeAreaView>;
+  if (isLoading) return <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/crowdfunding/investment" /><StateView kind="loading" /></SafeAreaView>;
+  if (isError || !o) return <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/crowdfunding/investment" /><StateView kind="error" title="Offer not found" actionLabel="Retry" onAction={refetch} /></SafeAreaView>;
 
   const pct = progressPct(o.raisedKobo, o.targetKobo);
   const open = o.status === 'OPEN' || o.status === 'CLOSING_SOON';

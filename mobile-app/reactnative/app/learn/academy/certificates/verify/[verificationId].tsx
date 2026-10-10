@@ -22,8 +22,8 @@ export default function VerifyCredentialScreen() {
   const { verificationId } = useLocalSearchParams<{ verificationId: string }>();
   const v = useVerifyCredential(verificationId);
 
-  if (v.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Verifying…" /></SafeAreaView>;
-  if (v.isError || !v.data) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="error" title="Verification failed" message="Could not reach the verification service." actionLabel="Retry" onAction={() => v.refetch()} /></SafeAreaView>;
+  if (v.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Verify credential" /><StateView kind="loading" message="Verifying…" /></SafeAreaView>;
+  if (v.isError || !v.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Verify credential" /><StateView kind="error" title="Verification failed" message="Could not reach the verification service." actionLabel="Retry" onAction={() => v.refetch()} /></SafeAreaView>;
 
   const d = v.data;
   const valid = d.valid;

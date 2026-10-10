@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1, shadow3 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
+import ScreenHeader from '@/components/ScreenHeader';
 import Chip from '@/features/academy/components/Chip';
 import { formatNaira } from '@/features/academy/constants';
 import { useTutorMe, useTutorEarnings, useCohorts } from '@/features/academy/hooks';
@@ -23,12 +24,13 @@ export default function TutorHome() {
   const earnings = useTutorEarnings();
   const cohorts = useCohorts();
 
-  if (me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading your studio…" /></SafeAreaView>;
+  if (me.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Tutor studio" backFallback="/learn/academy" /><StateView kind="loading" message="Loading your studio…" /></SafeAreaView>;
 
   // Not onboarded yet → push to T1.
   if (!me.data?.onboardingComplete) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Tutor studio" backFallback="/learn/academy" />
         <ScrollView contentContainerStyle={styles.scroll}>
           <LinearGradient colors={Colors.gradientPurple} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow3]}>
             <View style={styles.heroIcon}><GraduationCap size={24} color={Colors.onPrimary} /></View>
@@ -49,6 +51,7 @@ export default function TutorHome() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScreenHeader title="Tutor studio" backFallback="/learn/academy" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.topRow}>
           <View style={{ flex: 1 }}>

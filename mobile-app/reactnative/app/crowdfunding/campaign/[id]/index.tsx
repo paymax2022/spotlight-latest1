@@ -24,6 +24,7 @@ import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.ap
 import { formatNaira, relativeTime } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import type { CampaignStatus, DisbursementModel } from '@/features/crowdfunding/types/crowdfunding.types';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ScreenHeader from '@/components/ScreenHeader';
 
 const DISBURSEMENT_LABEL: Record<DisbursementModel, string> = {
   IMMEDIATE: 'Funds released after admin-approved withdrawal',
@@ -60,12 +61,11 @@ export default function CampaignDetailScreen() {
   const toggleSave = useToggleSave();
 
   if (isLoading) {
-    return <SafeAreaView style={styles.safe}><FloatingBack /><StateView kind="loading" message="Loading campaign…" /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/crowdfunding" /><StateView kind="loading" message="Loading campaign…" /></SafeAreaView>;
   }
   if (isError || !c) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <FloatingBack />
+      <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/crowdfunding" />
         <StateView kind="error" icon="FileQuestion" title="Campaign not found" message="This campaign may have been removed." actionLabel="Go back" onAction={() => goBack('/crowdfunding')} />
       </SafeAreaView>
     );
@@ -284,18 +284,6 @@ export default function CampaignDetailScreen() {
         )}
       </SafeAreaView>
     </View>
-  );
-}
-
-function FloatingBack() {
-  return (
-    <SafeAreaView edges={['top']} style={styles.floatingBack}>
-      <Pressable onPress={() => goBack('/crowdfunding')} style={styles.circleBtn} accessibilityLabel="Go back">
-        <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
-      </Pressable>
-      <View style={{ flex: 1 }} />
-      <HomeMenuButton />
-    </SafeAreaView>
   );
 }
 

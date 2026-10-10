@@ -40,7 +40,7 @@ export default function TutorAssignments() {
   const [dueDays, setDueDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
 
-  if (assignments.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading assignments…" /></SafeAreaView>;
+  if (assignments.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Assignments" /><StateView kind="loading" message="Loading assignments…" /></SafeAreaView>;
 
   const cohort = cohortId ?? cohorts.data?.[0]?.id;
   const valid = title.trim().length >= 3 && !!cohort;

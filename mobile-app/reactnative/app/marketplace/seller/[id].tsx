@@ -19,6 +19,7 @@ import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSellerProfile, useSellerListings, useSellerReviews } from '@/features/marketplace/hooks';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ScreenHeader from '@/components/ScreenHeader';
 
 export default function SellerProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,7 +28,7 @@ export default function SellerProfileScreen() {
   const reviews = useSellerReviews(id!);
 
   if (profile.isLoading && !profile.data) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading seller…" /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader backFallback="/marketplace" /><StateView kind="loading" message="Loading seller…" /></SafeAreaView>;
   }
   if (profile.isError || !profile.data) {
     return (

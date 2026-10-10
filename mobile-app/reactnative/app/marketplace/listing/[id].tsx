@@ -24,6 +24,7 @@ import { useListing } from '@/features/marketplace/hooks';
 import * as accountApi from '@/features/marketplace/api/account.api';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ScreenHeader from '@/components/ScreenHeader';
 
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -48,7 +49,7 @@ export default function ListingDetail() {
 
   if (listing.isLoading && !listing.data) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader backFallback="/marketplace" />
         <StateView kind="loading" message="Loading listing…" />
       </SafeAreaView>
     );

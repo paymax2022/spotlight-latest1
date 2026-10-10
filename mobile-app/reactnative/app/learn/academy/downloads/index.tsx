@@ -24,7 +24,7 @@ export default function DownloadsScreen() {
   const sync = useSyncDownload();
   const { pendingCount } = useConnectivity();
 
-  if (downloads.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading library…" /></SafeAreaView>;
+  if (downloads.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Downloads" /><StateView kind="loading" message="Loading library…" /></SafeAreaView>;
 
   const usedPct = storage.data ? Math.round((storage.data.usedMb / (storage.data.budgetMb || 1)) * 100) : 0;
 

@@ -12,6 +12,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1, shadow3 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
+import ScreenHeader from '@/components/ScreenHeader';
 import Chip from '@/features/academy/components/Chip';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { useChildren, useApprovals, useParentNotifications } from '@/features/academy/hooks';
@@ -26,10 +27,11 @@ export default function ParentHome() {
   const pendingApprovals = approvals.data?.filter((a) => a.status === 'pending').length ?? 0;
   const unread = notifications.data?.filter((n) => !n.read).length ?? 0;
 
-  if (children.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading family…" /></SafeAreaView>;
+  if (children.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your family" backFallback="/learn/academy" /><StateView kind="loading" message="Loading family…" /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScreenHeader title="Your family" backFallback="/learn/academy" />
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}

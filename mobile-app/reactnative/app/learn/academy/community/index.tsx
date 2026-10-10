@@ -26,7 +26,7 @@ export default function CommunityScreen() {
   const [subject, setSubject] = React.useState('');
   const [goal, setGoal] = React.useState('');
 
-  if (groups.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading groups…" /></SafeAreaView>;
+  if (groups.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Study groups" /><StateView kind="loading" message="Loading groups…" /></SafeAreaView>;
 
   const onCreate = () => {
     if (!name.trim()) return;

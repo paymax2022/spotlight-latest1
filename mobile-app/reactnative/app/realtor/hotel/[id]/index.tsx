@@ -16,12 +16,13 @@ import StatusBadge from '@/features/realtor/components/StatusBadge';
 import { useHotel } from '@/features/realtor/hooks/useRealtorHotel';
 import { formatNaira } from '@/features/realtor/utils/realtorFormatters';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import ScreenHeader from '@/components/ScreenHeader';
 
 export default function HotelDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const hotel = useHotel(String(id));
 
-  if (hotel.isLoading) return <SafeAreaView style={styles.safe}><StateView kind="loading" message="Loading hotel…" /></SafeAreaView>;
+  if (hotel.isLoading) return <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/realtor/hotel" /><StateView kind="loading" message="Loading hotel…" /></SafeAreaView>;
   if (!hotel.data) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Hotel unavailable" actionLabel="Back" onAction={() => goBack('/realtor/hotel')} /></SafeAreaView>;
   const h = hotel.data;
 
