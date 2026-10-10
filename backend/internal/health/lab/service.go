@@ -63,12 +63,12 @@ type ProviderGate interface {
 	// APPROVED (catalog governance authZ).
 	VerifiedLabOwner(ctx context.Context, userID, providerID string) (bool, error)
 	// IsVerifiedScientist reports whether userID is verified scientist staff OF
-	// the lab (HL-7 sign-off authority; HL-2). Since ADR-PR640 the affiliation
+	// the lab (HL-7 sign-off authority; HL-2). Since ADR-PR641 the affiliation
 	// itself is read from lab_staff inside the service (isLabAffiliated); this
 	// seam retains the provider-scoped contract for adapters.
 	IsVerifiedScientist(ctx context.Context, userID, providerID string) (bool, error)
 	// IsVerifiedPhlebotomist reports whether userID is verified phlebotomist
-	// staff OF the lab (home-collection authority; HL-2). Same ADR-PR640 note:
+	// staff OF the lab (home-collection authority; HL-2). Same ADR-PR641 note:
 	// the affiliation is read from lab_staff inside the service.
 	IsVerifiedPhlebotomist(ctx context.Context, userID, providerID string) (bool, error)
 }
@@ -537,7 +537,7 @@ func (s *Service) isLabOwner(ctx context.Context, actorID, providerID string) (b
 
 // isLabStaff reports whether actorID may act as staff on this lab's orders:
 // the lab's verified owner, or an ACTIVE lab_staff affiliation of ANY role
-// (ADR-PR640). Custody-facing actions — collect, handover, breach — use this
+// (ADR-PR641). Custody-facing actions — collect, handover, breach — use this
 // gate: both roles move a sample through the chain of custody legitimately.
 // Fail-closed when the provider gate is unwired (owner-row fallback via
 // isLabOwner) and when no affiliation store is available.
@@ -553,7 +553,7 @@ func (s *Service) isLabScientist(ctx context.Context, actorID, providerID string
 	return s.isLabAffiliated(ctx, actorID, providerID, labRoleScientist)
 }
 
-// labStaffRole is a lab_staff affiliation role (ADR-PR640): 'scientist' runs
+// labStaffRole is a lab_staff affiliation role (ADR-PR641): 'scientist' runs
 // the bench and signs results off; 'phlebotomist' collects and carries samples.
 type labStaffRole = string
 
@@ -562,7 +562,7 @@ const (
 	labRolePhlebotomist labStaffRole = "phlebotomist"
 )
 
-// isLabAffiliated is the staff↔lab affiliation gate (ADR-PR640): verified
+// isLabAffiliated is the staff↔lab affiliation gate (ADR-PR641): verified
 // owner of THIS lab, or an ACTIVE lab_staff row for (provider, actor) —
 // optionally narrowed to one role. The affiliation row is the ONLY non-owner
 // path: the single-identity capability model (a lab_scientist/phlebotomist
@@ -595,7 +595,7 @@ func (s *Service) isLabAffiliated(ctx context.Context, actorID, providerID, role
 }
 
 // UpsertStaff grants, re-activates, or suspends a staff affiliation on a lab
-// the caller verifiably owns (HL-2, ADR-PR640). The grant is the affiliation
+// the caller verifiably owns (HL-2, ADR-PR641). The grant is the affiliation
 // the interim owner-only gate lacked: an ACTIVE 'scientist' may then perform
 // bench work and sign results off for THIS lab; an ACTIVE 'phlebotomist' may
 // collect samples and move custody — never on another lab's orders. status
@@ -693,7 +693,7 @@ func (s *Service) Schedule(ctx context.Context, actorID, orderID string, isAdmin
 // SAMPLE_COLLECTED, mints a barcode, and writes the first immutable custody event
 // (→ COLLECTED). The collector becomes the initial custodian. Only the lab's
 // staff — an ACTIVE lab_staff affiliation of either role, or the owner
-// (HL-2, ADR-PR640) — may collect a HOME sample or run WALK_IN intake. The
+// (HL-2, ADR-PR641) — may collect a HOME sample or run WALK_IN intake. The
 // actor gate runs BEFORE the state check so a foreign actor cannot learn
 // another patient's order state from the refusal.
 func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string) (*Sample, error) {

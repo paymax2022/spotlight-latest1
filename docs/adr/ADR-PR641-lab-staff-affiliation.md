@@ -1,4 +1,4 @@
-# ADR-PR640: Scope lab staff authorization to per-lab affiliations
+# ADR-PR641: Scope lab staff authorization to per-lab affiliations
 
 ## Status
 Accepted (implemented in PR #640 — number assigned on merge).

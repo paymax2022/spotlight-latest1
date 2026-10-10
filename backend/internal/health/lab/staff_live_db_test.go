@@ -1,7 +1,7 @@
 package healthlab
 
 // LIVE-DB regression coverage for the lab_staff affiliation model
-// (ADR-PR640) that replaces the interim owner-only HL-2 gate:
+// (ADR-PR641) that replaces the interim owner-only HL-2 gate:
 //
 //   - A verified owner may grant a staff affiliation (scientist or
 //     phlebotomist) on THEIR lab via UpsertStaff — nobody else may.

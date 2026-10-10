@@ -87,7 +87,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
 	lg.GET("/packages", h.ListPackages)              // bundle catalog, same shape as ListTests
 	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
-	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR640)
+	lg.POST("/staff", h.UpsertStaff)                 // lab owner registers/suspends staff (HL-2 affiliation, ADR-PR641)
 	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
 	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                     // object-level authZ
@@ -217,7 +217,7 @@ func (a *labProviderGateAdapter) VerifiedLabOwner(ctx context.Context, userID, p
 
 // IsVerifiedScientist / IsVerifiedPhlebotomist answer "is userID verified staff
 // OF providerID": the lab's verified owner, or an ACTIVE lab_staff affiliation
-// with the matching role (ADR-PR640). The single-identity capability model
+// with the matching role (ADR-PR641). The single-identity capability model
 // (a lab_scientist/phlebotomist health_providers row owned by the credential
 // holder) names no employing lab, so the affiliation table — granted by the
 // lab's owner — is the only non-owner answer. Fail closed on any read error.

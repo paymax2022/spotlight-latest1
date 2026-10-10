@@ -188,7 +188,7 @@ func (h *Handler) ListProviderOrders(c *gin.Context) {
 }
 
 // UpsertStaff — POST /staff  (lab owner registers/suspends staff, HL-2
-// affiliation ADR-PR640). The grant is what lets an affiliated scientist or
+// affiliation ADR-PR641). The grant is what lets an affiliated scientist or
 // phlebotomist act on THIS lab's orders; only the verified owner writes it.
 func (h *Handler) UpsertStaff(c *gin.Context) {
 	id := ginutil.UserID(c)
