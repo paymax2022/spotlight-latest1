@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,11 +37,12 @@ type walletDebit func(ctx context.Context, userID, reference, idempotencyKey, cr
 // so a retry converges to exactly one debit and one row — escrow is never
 // stranded without a row, and money is never debited twice.
 //
-// UNGATED: the wallet debit posts via ledger.Debit — no in-tx tier cap. This
-// variant remains for paths that intentionally run no user-facing daily-cap
-// gate (telemedicine, stays); every gated caller uses EscrowGated (strict) or
-// EscrowWithGuard (checkout allowance) so the cap is checked under the wallet
-// lock inside the posting tx (F7).
+// UNGATED: the wallet debit posts via ledger.Debit — no in-tx tier cap.
+// Production callers MUST use EscrowGated (strict) or EscrowWithGuard
+// (checkout allowance) so the cap is checked under the wallet lock inside
+// the posting tx (F7); this variant survives for test fixtures and any
+// system-initiated path that is deliberately outside the user-facing cap —
+// never for a request-scoped wallet debit.
 func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64) (*Settlement, error) {
 	return s.escrow(ctx, payerID, reference, idempotencyKey, moduleType, totalKobo, s.ledger.Debit)
 }
@@ -72,9 +74,26 @@ func (s *Service) escrow(ctx context.Context, payerID, reference, idempotencyKey
 		return nil, err
 	}
 	// ErrDuplicate means the debit already ran on an earlier attempt — proceed
-	// to (re)ensure the tracking row rather than erroring the retry.
-	if err := debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-		return nil, fmt.Errorf("settlement: escrow debit: %w", err)
+	// to (re)ensure the tracking row rather than erroring the retry. Key
+	// EXISTENCE alone is never proof of that (F6): the duplicate could be a
+	// foreign journal pre-claiming the key, or a Redis-lock duplicate with no
+	// committed legs at all. Verify BOTH legs carry THIS payer's money
+	// identity (mirroring escrow.verifyHoldDebitLeg) before attaching the
+	// row — the committed journal's reference is the canonical one.
+	debitErr := debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo)
+	if debitErr != nil && !errors.Is(debitErr, ledger.ErrDuplicate) {
+		return nil, fmt.Errorf("settlement: escrow debit: %w", debitErr)
+	}
+	if errors.Is(debitErr, ledger.ErrDuplicate) {
+		canonicalRef, verr := s.verifyEscrowDebitLegs(ctx, payerID, idempotencyKey+":escrow", escrowAcc.ID, totalKobo)
+		if verr != nil {
+			return nil, verr
+		}
+		// The committed journal's reference wins over this attempt's arg —
+		// callers may derive refs from fresh ids (e.g. "order:<uuid>"), so a
+		// stranded retry legitimately presents a different one. Writing the
+		// canonical ref keeps the row consistent with the legs it claims.
+		reference = canonicalRef
 	}
 	now := time.Now()
 	sett := &Settlement{
@@ -99,13 +118,70 @@ func (s *Service) escrow(ctx context.Context, payerID, reference, idempotencyKey
 	// total_kobo is re-read, NOT echoed from the argument: on a replay the
 	// existing row wins and may hold a DIFFERENT amount than this attempt
 	// computed. Callers must compare the returned TotalKobo against intent and
-	// fail closed on a mismatch.
+	// fail closed on a mismatch. payer_id is re-read too (F6): a settlement
+	// row under this key naming a DIFFERENT payer is a foreign claim — the
+	// key was consumed by another payer's escrow, and converging here would
+	// attach this caller's request to someone else's parked money.
 	if err = s.db.QueryRow(ctx,
-		`SELECT id, status, total_kobo FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
-	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo); err != nil {
+		`SELECT id, reference, status, total_kobo, payer_id FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
+	).Scan(&sett.ID, &sett.Reference, &sett.Status, &sett.TotalKobo, &sett.PayerID); err != nil {
 		return nil, fmt.Errorf("settlement: resolve escrow row: %w", err)
 	}
+	if sett.PayerID != payerID {
+		return nil, fmt.Errorf("%w: settlement %s under key %s belongs to a different payer",
+			ledger.ErrDuplicate, sett.ID, idempotencyKey)
+	}
 	return sett, nil
+}
+
+// verifyEscrowDebitLegs confirms the balanced pair under holdKey is THIS
+// payer's escrow journal, checking BOTH legs (the in-repo standard set by
+// repository.journalLegsMatchTx):
+//   - "<holdKey>:credit" must credit the escrow standing account the exact
+//     amount under an "escrow:"-prefixed reference (proving the pair is an
+//     escrow journal, not some other balanced posting under the same key);
+//   - "<holdKey>:debit" must debit THIS payer's user_wallet the same amount
+//     under the SAME reference — the credit leg is constant across payers,
+//     so checking it alone would let a replay carrying another payer's key
+//     adopt THEIR parked debit and write a settlement row naming this caller
+//     as payer_id (F6).
+//
+// The caller's `reference` arg is deliberately NOT compared: callers may
+// derive references from freshly-generated ids (e.g. restaurant's
+// "order:<uuid>"), so a stranded retry legitimately presents the same key
+// with a different derived ref. What must not drift are the money-identity
+// fields — the payer's wallet, the amount, the escrow-shaped pair. The
+// committed legs' reference is canonical instead: it is returned so the
+// settlement row always agrees with the journal it claims.
+//
+// The payer's wallet resolves via GetOrCreateUserWallet — the same path Debit
+// uses internally — so the comparison is against the account the debit would
+// have hit. Any mismatch fails closed with ErrDuplicate semantics: never heal
+// a settlement row onto a caller whose debit wasn't theirs.
+func (s *Service) verifyEscrowDebitLegs(ctx context.Context, payerID, holdKey, escrowAccID string, totalKobo int64) (string, error) {
+	credit, found, err := s.ledger.EntryByKey(ctx, holdKey+":credit")
+	if err != nil {
+		return "", fmt.Errorf("settlement: read escrow credit leg: %w", err)
+	}
+	if !found || credit.AccountID != escrowAccID || credit.Type != ledger.EntryCredit ||
+		!strings.HasPrefix(credit.Reference, "escrow:") || credit.AmountKobo != totalKobo {
+		return "", fmt.Errorf("%w: key %s held by a different journal — refusing to attach a settlement row",
+			ledger.ErrDuplicate, holdKey)
+	}
+	payerAcc, err := s.ledger.GetOrCreateUserWallet(ctx, payerID)
+	if err != nil {
+		return "", fmt.Errorf("settlement: resolve payer wallet for debit-leg verification: %w", err)
+	}
+	debit, found, err := s.ledger.EntryByKey(ctx, holdKey+":debit")
+	if err != nil {
+		return "", fmt.Errorf("settlement: read escrow debit leg: %w", err)
+	}
+	if !found || debit.AccountID != payerAcc.ID || debit.Type != ledger.EntryDebit ||
+		debit.Reference != credit.Reference || debit.AmountKobo != totalKobo {
+		return "", fmt.Errorf("%w: key %s held by a different journal — refusing to attach a settlement row",
+			ledger.ErrDuplicate, holdKey)
+	}
+	return strings.TrimPrefix(credit.Reference, "escrow:"), nil
 }
 
 // EscrowExternal holds funds ALREADY COLLECTED by an external payment rail (a
