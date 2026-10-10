@@ -336,13 +336,35 @@ func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, refe
 // A DISPUTED hold refuses: contested funds may only leave through Arbitrate, so
 // a direct release/refund can never bypass dispute bookkeeping (F6d).
 func (s *Service) Release(ctx context.Context, escrowID, payeeID string) error {
-	return s.resolve(ctx, escrowID, StateReleased, payeeID, "escrow.release", false)
+	return s.resolve(ctx, escrowID, StateReleased, payeeID, "escrow.release", false, nil)
 }
 
 // Refund returns the held amount to the original payer (HELD → REFUNDED).
 // A DISPUTED hold refuses: contested funds may only leave through Arbitrate.
 func (s *Service) Refund(ctx context.Context, escrowID string) error {
-	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false)
+	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false, nil)
+}
+
+// ErrHoldBound is what a RefundIf guard returns when the hold has already been
+// adopted by a domain order/payment row — i.e., a concurrent create won the
+// race and this request was only ever the loser. Refunding a bound hold would
+// reverse a live order's payment out from under it, so compensation callers
+// must skip the refund and treat the outcome as winner-exists idempotency
+// conflict (their ErrIdemConflict), never as success.
+var ErrHoldBound = errors.New("escrow: hold already bound to a domain order")
+
+// RefundIf is Refund plus an in-transaction guard: `guard` runs inside the
+// resolution transaction AFTER the escrow_holds row is locked FOR UPDATE and
+// AFTER the HELD→REFUNDED transition passes the FSM check, but BEFORE the hold
+// row is updated. A guarded refund therefore serializes against the domain
+// side's binding transaction (which takes the same FOR UPDATE lock before
+// inserting its order/payment row): a guard that re-probes bound-ness inside
+// this lock sees the winner's committed row and can veto with ErrHoldBound —
+// closing the pool-side EXISTS-probe + bare-Refund TOCTOU where a loser could
+// refund a hold the winner had just bound. A non-nil guard error aborts the
+// resolution (no state change, no ledger credit) and is returned verbatim.
+func (s *Service) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund", false, guard)
 }
 
 // resolveArbitrated is the arbitration-only lane of resolve: Arbitrate calls it
@@ -354,7 +376,7 @@ func (s *Service) resolveArbitrated(ctx context.Context, escrowID string, to Sta
 	if to == StateRefunded {
 		action = "escrow.refund"
 	}
-	return s.resolve(ctx, escrowID, to, payeeID, action, true)
+	return s.resolve(ctx, escrowID, to, payeeID, action, true, nil)
 }
 
 // resolve performs the guarded transition + the matching ledger credit. The row
@@ -371,7 +393,7 @@ func (s *Service) resolveArbitrated(ctx context.Context, escrowID string, to Sta
 // RELEASED/REFUNDED state, and never a double-pay: the per-leg key dedups a
 // racing poster, and a committed terminal state means the OPPOSITE leg can no
 // longer be attempted — the FSM rejects it before any money moves).
-func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string, viaArbitration bool) error {
+func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string, viaArbitration bool, guard func(context.Context, pgx.Tx) error) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("escrow: begin: %w", err)
@@ -419,6 +441,17 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 		// only be resolved through Arbitrate, which closes the dispute with the
 		// recorded decision + arbiter.
 		return fmt.Errorf("%w: hold %s", ErrDisputeRequired, escrowID)
+	}
+
+	// RefundIf guard: runs under the FOR UPDATE lock, after the transition is
+	// proven legal, before the state write — so a domain-binding transaction
+	// holding (or queueing for) the same row lock is fully ordered against this
+	// check. A veto aborts the tx via the deferred Rollback: no state flip, no
+	// credit.
+	if guard != nil {
+		if err := guard(ctx, tx); err != nil {
+			return err
+		}
 	}
 
 	// COALESCE keeps a payee pinned at hold time on the REFUND path — refunding

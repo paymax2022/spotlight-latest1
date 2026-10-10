@@ -660,7 +660,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// already rejects a missing/invalid token itself, so requireUserID()
 			// adds nothing here besides that ordering hazard — see
 			// health_pharmacy_routes.go's own comment at ag.Use(...).
-			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase)
+			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase, redisClient)
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {

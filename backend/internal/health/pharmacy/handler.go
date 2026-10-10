@@ -279,7 +279,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "order": o})
 }
 
-// Confirm — POST /orders/:id/confirm  (HL-3 verified e-Rx gate for Rx orders)
+// Confirm — POST /orders/:id/confirm  (pharmacy owner; HL-3 verified e-Rx gate for Rx orders)
 func (h *Handler) Confirm(c *gin.Context) {
 	orderID, ok := uuidPathID(c, "order id")
 	if !ok {
