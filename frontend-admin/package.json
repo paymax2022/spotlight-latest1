@@ -12,7 +12,7 @@
     "check:mock-flags": "node scripts/check-mock-flags.mjs --strict"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.117.2",
+    "@supabase/supabase-js": "^2.117.3",
     "jose": "^6.2.12",
     "next": "^16.4.0",
     "react": "^19.3.0",
