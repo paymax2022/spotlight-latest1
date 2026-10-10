@@ -53,25 +53,24 @@ func careFail(c *gin.Context, err error) {
 }
 
 // Refer — POST /health/triage/sessions/:id/refer
-// body: { level }. Routes the disposition; for emergency returns the SC-8 payload
-// and the raised escalation.
+// The disposition level is read from the session's stored disposition — a
+// client-supplied level is ignored (never trusted). For emergency returns the
+// SC-8 payload and the raised escalation.
 func (h *Handler) Refer(c *gin.Context) {
 	id := ginutil.UserID(c)
 	if id == "" {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	// Body is optional and ignored — the level comes from the session.
 	var req struct {
 		Level int `json:"level"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
-		return
-	}
+	_ = c.ShouldBindJSON(&req)
 	if !uuidPathID(c) {
 		return
 	}
-	res, err := h.svc.Refer(c.Request.Context(), id, c.Param("id"), req.Level)
+	res, err := h.svc.Refer(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
 		careFail(c, err)
 		return

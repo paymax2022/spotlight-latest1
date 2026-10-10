@@ -18,9 +18,13 @@ import (
 
 // Payment charges the member's wallet via the double-entry ledger. It MUST be
 // idempotent on idemKey (a replay returns the same ref, charges once). Amount is
-// in minor units (kobo).
+// in minor units (kobo). Reverse compensates a posted charge when the guarded
+// state transition loses the race — the ledger keeps it as a reversing entry.
 type Payment interface {
 	Charge(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (ref string, err error)
+	// Reverse posts the balancing reversal for a previously charged amount.
+	// Idempotent on idemKey — a replay is a safe no-op.
+	Reverse(ctx context.Context, userID, reference, idemKey string, amountMinor int64) error
 }
 
 // EmergencyLocator finds the nearest emergency room (maps PostGIS findNearbyOwn /
@@ -75,13 +79,26 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 //   - PAID (telemed/lab/pharmacy): CareBooker.Book → pins target_ref + amount; the
 //     referral is routed and awaits PayReferral.
 //   - SELF_CARE: routed, no payment, no booking.
-func (s *CareService) Refer(ctx context.Context, userID, sessionID string, level int) (*ReferResult, error) {
+//
+// The disposition level is derived SERVER-SIDE from the session's recorded
+// disposition — never from the request body (a caller could otherwise mint a
+// level-1 emergency escalation on demand). The session load is owner-fused:
+// a foreign session is indistinguishable from a missing one.
+func (s *CareService) Refer(ctx context.Context, userID, sessionID string) (*ReferResult, error) {
 	if userID == "" {
 		return nil, errors.New("care: unauthenticated")
 	}
 	if sessionID == "" {
 		return nil, errors.New("care: session id required")
 	}
+	disp, err := s.repo.GetSessionDisposition(ctx, sessionID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if disp == nil {
+		return nil, errors.New("care: session has no disposition yet")
+	}
+	level := triage.SafeLevel(*disp)
 	route := triage.RouteForLevel(level)
 
 	ref := &CareReferral{
@@ -181,12 +198,18 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 	if ref.UserID != userID {
 		return nil, ErrNotFound
 	}
-	// Owner-scoped replay: if this key already paid a DIFFERENT referral, this
-	// request is a client error — fail closed rather than double-charging or
-	// binding another referral's payment ref.
+	// Replay check ACROSS owners (the UNIQUE index on idempotency_key is global):
+	// a key held by another user's referral folds to the same not-found as a
+	// missing one — before any charge attempt; the same key on a DIFFERENT
+	// referral of this user is a client error — fail closed.
 	if ref.IdempotencyKey == nil || *ref.IdempotencyKey != idemKey {
-		if prior, ierr := s.repo.GetReferralByIdem(ctx, userID, idemKey); ierr == nil && prior != nil && prior.ID != ref.ID {
-			return nil, fmt.Errorf("%w: idempotency key already used for another referral", ErrIllegalTransition)
+		if prior, ierr := s.repo.GetReferralByIdemAny(ctx, idemKey); ierr == nil && prior != nil {
+			switch {
+			case prior.UserID != userID:
+				return nil, ErrNotFound
+			case prior.ID != ref.ID:
+				return nil, fmt.Errorf("%w: idempotency key already used for another referral", ErrIllegalTransition)
+			}
 		}
 	}
 	// Idempotent re-apply: already settled → return as-is (no second charge).
@@ -205,20 +228,47 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		return nil, errors.New("care: referral has no positive amount to charge")
 	}
 
-	// Money: ledger-backed, idempotent on idemKey (charges exactly once on replay).
+	// Pin the key BEFORE money moves: the guarded patch binds idempotency_key
+	// while the row is still `routed`, so concurrent payers carrying different
+	// keys serialize at the row — the loser fails the CAS (or hits the UNIQUE
+	// index) and never reaches Charge.
+	if ref.IdempotencyKey == nil {
+		if err := s.repo.PinReferralIdem(ctx, ref.ID, idemKey); err != nil {
+			return nil, err
+		}
+		ref.IdempotencyKey = &idemKey
+	}
+
+	// Money: ledger-backed and DETERMINISTICALLY keyed on the referral — the
+	// ledger idempotency key derives from the referral id, not the caller's key,
+	// so racing requests carrying different keys can never post two charges for
+	// one referral: the second is a verified replay at the ledger.
+	reference := "triage.care:" + ref.ID
+	chargeKey := "triage.care:pay:" + ref.ID
 	var payRef string
+	charged := false
 	if s.pay != nil {
-		reference := "triage.care:" + ref.ID
-		pr, perr := s.pay.Charge(ctx, userID, reference, idemKey, ref.AmountMinor)
+		pr, perr := s.pay.Charge(ctx, userID, reference, chargeKey, ref.AmountMinor)
 		if perr != nil {
 			return nil, fmt.Errorf("care: charge wallet: %w", perr)
 		}
 		payRef = pr
+		charged = true
 	}
-	// routed → paid (guarded; pins payment_ref AND idempotency_key — the partial
-	// UNIQUE index on idempotency_key then dedups any future replay of this key).
-	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid,
-		ReferralPatch{PaymentRef: &payRef, IdempotencyKey: &idemKey}); err != nil {
+	// routed → paid (guarded; pins payment_ref — the idem key is already bound).
+	patch := ReferralPatch{}
+	if payRef != "" {
+		patch.PaymentRef = &payRef
+	}
+	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid, patch); err != nil {
+		// Charge posted but the CAS lost (a concurrent Close or a racing payer
+		// that reached paid first): compensate — the ledger keeps the
+		// correction as a reversing entry, never a balance edit.
+		if charged {
+			if rerr := s.pay.Reverse(ctx, userID, reference, chargeKey+":rev", ref.AmountMinor); rerr != nil {
+				log.Printf("[care] reversal for referral %s failed: %v", ref.ID, rerr)
+			}
+		}
 		return nil, err
 	}
 	ref.State = triage.RefPaid
@@ -304,9 +354,17 @@ func (s *CareService) ListReferrals(ctx context.Context, userID string) ([]CareR
 }
 
 // Raise opens a new escalation case in `raised` (SC-5). Always auditable.
+// Idempotent per session: one session has at most ONE open case — a retry (or a
+// repeated emergency refer) returns the existing case instead of broadcasting a
+// second clinician hand-off for the same session.
 func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason string) (*Escalation, error) {
 	if sessionID == "" || userID == "" {
 		return nil, errors.New("care: session id and user id required")
+	}
+	if existing, err := s.repo.GetOpenEscalationBySession(ctx, sessionID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	e := &Escalation{
 		ID:        uuid.New().String(),

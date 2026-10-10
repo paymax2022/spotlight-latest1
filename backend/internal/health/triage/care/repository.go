@@ -39,17 +39,32 @@ type Auditor interface {
 type Repository interface {
 	CreateReferral(ctx context.Context, r *CareReferral) error
 	GetReferral(ctx context.Context, id string) (*CareReferral, error)
-	// GetReferralByIdem is the idempotent-replay lookup — it is OWNER-SCOPED so a
-	// replay check can never leak (or bind) another user's referral by key.
-	GetReferralByIdem(ctx context.Context, userID, idemKey string) (*CareReferral, error)
+	// GetReferralByIdemAny is the idempotent-replay lookup ACROSS owners — the
+	// partial UNIQUE index on idempotency_key is global, so the service reads
+	// the holder row and folds a foreign-owned key to ErrNotFound BEFORE any
+	// charge attempt (a scoped lookup would miss the foreign row and let the
+	// charge run first).
+	GetReferralByIdemAny(ctx context.Context, idemKey string) (*CareReferral, error)
 	ListReferralsByUser(ctx context.Context, userID string) ([]CareReferral, error)
 	// UpdateReferralState is the guarded transition: it sets state=to (plus the
 	// optional fields) ONLY when the row is currently in `from`. RowsAffected 0 →
 	// ErrIllegalTransition. set carries target_ref/amount_minor/payment_ref.
 	UpdateReferralState(ctx context.Context, id string, from, to triage.ReferralState, set ReferralPatch) error
+	// PinReferralIdem binds idempotency_key to a still-`routed` referral BEFORE
+	// money moves — the guarded CAS (state='routed' AND key IS NULL) plus the
+	// UNIQUE index serialize concurrent payers so only one ever reaches Charge.
+	PinReferralIdem(ctx context.Context, id, idemKey string) error
+	// GetSessionDisposition returns the triage session's recorded disposition
+	// level, owner-fused: a missing session and one owned by another user are
+	// indistinguishable (ErrNotFound). Nil level = session has no disposition.
+	GetSessionDisposition(ctx context.Context, sessionID, userID string) (*int, error)
 
 	CreateEscalation(ctx context.Context, e *Escalation) error
 	GetEscalation(ctx context.Context, id string) (*Escalation, error)
+	// GetOpenEscalationBySession returns the session's still-open escalation
+	// (raised/notified/acknowledged) or ErrNotFound — the dedupe guard that
+	// bounds emergency escalation broadcasts to one live case per session.
+	GetOpenEscalationBySession(ctx context.Context, sessionID string) (*Escalation, error)
 	ListEscalations(ctx context.Context, state string) ([]Escalation, error)
 	UpdateEscalationState(ctx context.Context, id string, from, to triage.EscalationState, clinicianID *string, stamp *time.Time) error
 }
@@ -94,12 +109,45 @@ func (r *pgxRepo) GetReferral(ctx context.Context, id string) (*CareReferral, er
 	return scanReferral(r.db.QueryRow(ctx, q, id))
 }
 
-func (r *pgxRepo) GetReferralByIdem(ctx context.Context, userID, idemKey string) (*CareReferral, error) {
+func (r *pgxRepo) GetReferralByIdemAny(ctx context.Context, idemKey string) (*CareReferral, error) {
 	const q = `
 		SELECT id, session_id, user_id, disposition_level, route, target_ref, state,
 		       amount_minor, payment_ref, idempotency_key, created_at, updated_at
-		FROM health_triage_care_referrals WHERE idempotency_key=$1 AND user_id=$2`
-	return scanReferral(r.db.QueryRow(ctx, q, idemKey, userID))
+		FROM health_triage_care_referrals WHERE idempotency_key=$1`
+	return scanReferral(r.db.QueryRow(ctx, q, idemKey))
+}
+
+func (r *pgxRepo) PinReferralIdem(ctx context.Context, id, idemKey string) error {
+	// Guarded pin: only a still-`routed` referral with no key bound yet can take
+	// one. RowsAffected 0 → ErrIllegalTransition (lost the race, or the row
+	// already moved). A key already bound to ANOTHER referral trips the partial
+	// UNIQUE index — surfaced as an error (409 at the edge), never a second pin.
+	const q = `
+		UPDATE health_triage_care_referrals
+		SET idempotency_key=$2, updated_at=now()
+		WHERE id=$1 AND state='routed' AND idempotency_key IS NULL`
+	tag, err := r.db.Exec(ctx, q, id, idemKey)
+	if err != nil {
+		return fmt.Errorf("care: pin idempotency key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrIllegalTransition
+	}
+	return nil
+}
+
+func (r *pgxRepo) GetSessionDisposition(ctx context.Context, sessionID, userID string) (*int, error) {
+	// Owner-fused: a foreign session is indistinguishable from a missing one.
+	var level *int
+	if err := r.db.QueryRow(ctx,
+		`SELECT disposition_level FROM health_triage_sessions WHERE id=$1 AND user_id=$2`,
+		sessionID, userID).Scan(&level); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("care: session disposition: %w", err)
+	}
+	return level, nil
 }
 
 func (r *pgxRepo) ListReferralsByUser(ctx context.Context, userID string) ([]CareReferral, error) {
@@ -166,6 +214,15 @@ func (r *pgxRepo) GetEscalation(ctx context.Context, id string) (*Escalation, er
 		SELECT id, session_id, user_id, state, reason, clinician_id, raised_at, ack_at, resolved_at
 		FROM health_triage_escalations WHERE id=$1`
 	return scanEscalation(r.db.QueryRow(ctx, q, id))
+}
+
+func (r *pgxRepo) GetOpenEscalationBySession(ctx context.Context, sessionID string) (*Escalation, error) {
+	const q = `
+		SELECT id, session_id, user_id, state, reason, clinician_id, raised_at, ack_at, resolved_at
+		FROM health_triage_escalations
+		WHERE session_id=$1 AND state IN ('raised','notified','acknowledged')
+		ORDER BY raised_at DESC LIMIT 1`
+	return scanEscalation(r.db.QueryRow(ctx, q, sessionID))
 }
 
 func (r *pgxRepo) ListEscalations(ctx context.Context, state string) ([]Escalation, error) {

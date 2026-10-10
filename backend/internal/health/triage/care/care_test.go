@@ -9,14 +9,70 @@ import (
 	triage "spotlight/backend/internal/health/triage"
 )
 
+type fakeSession struct {
+	userID string
+	level  int
+}
+
 type fakeRepo struct {
 	referrals   map[string]*CareReferral
 	escalations map[string]*Escalation
+	sessions    map[string]fakeSession
 	seq         int
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{referrals: map[string]*CareReferral{}, escalations: map[string]*Escalation{}}
+	return &fakeRepo{referrals: map[string]*CareReferral{}, escalations: map[string]*Escalation{}, sessions: map[string]fakeSession{}}
+}
+
+// seedSession records a triage session's stored disposition — Refer now reads
+// the level from here (owner-fused), never from the caller.
+func (f *fakeRepo) seedSession(sessionID, userID string, level int) {
+	f.sessions[sessionID] = fakeSession{userID: userID, level: level}
+}
+
+func (f *fakeRepo) GetSessionDisposition(_ context.Context, sessionID, userID string) (*int, error) {
+	s, ok := f.sessions[sessionID]
+	if !ok || s.userID != userID {
+		return nil, ErrNotFound
+	}
+	lvl := s.level
+	return &lvl, nil
+}
+
+func (f *fakeRepo) GetReferralByIdemAny(_ context.Context, idem string) (*CareReferral, error) {
+	for _, r := range f.referrals {
+		if r.IdempotencyKey != nil && *r.IdempotencyKey == idem {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (f *fakeRepo) PinReferralIdem(_ context.Context, id, idemKey string) error {
+	r, ok := f.referrals[id]
+	if !ok || r.State != triage.RefRouted || r.IdempotencyKey != nil {
+		return ErrIllegalTransition
+	}
+	for _, o := range f.referrals {
+		if o.ID != id && o.IdempotencyKey != nil && *o.IdempotencyKey == idemKey {
+			return ErrIllegalTransition // stands in for the UNIQUE index
+		}
+	}
+	k := idemKey
+	r.IdempotencyKey = &k
+	return nil
+}
+
+func (f *fakeRepo) GetOpenEscalationBySession(_ context.Context, sessionID string) (*Escalation, error) {
+	for _, e := range f.escalations {
+		if e.SessionID == sessionID && e.State != triage.EscResolved {
+			cp := *e
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 func (f *fakeRepo) CreateReferral(_ context.Context, r *CareReferral) error {
@@ -135,6 +191,14 @@ func (p *fakePayment) Charge(_ context.Context, userID, reference, idemKey strin
 	return ref, nil
 }
 
+func (p *fakePayment) Reverse(_ context.Context, userID, reference, idemKey string, amountMinor int64) error {
+	if _, ok := p.charges[idemKey]; ok {
+		return nil // replay — reversal already posted
+	}
+	p.charges[idemKey] = "rev-" + idemKey
+	return nil
+}
+
 type fakeLocator struct{ called bool }
 
 func (l *fakeLocator) NearestER(_ context.Context, lat, lng float64) (string, string, float64, error) {
@@ -233,8 +297,9 @@ func TestReferEmergencyRaisesEscalationNoCharge(t *testing.T) {
 	loc := &fakeLocator{}
 	notify := &fakeNotifier{}
 	svc := NewCareService(repo, pay, loc, notify, &fakeBooker{amount: 500000}, nil)
+	repo.seedSession("sess-1", "user-1", triage.LevelEmergencyAmbulance)
 
-	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelEmergencyAmbulance)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1")
 	if err != nil {
 		t.Fatalf("Refer emergency: %v", err)
 	}
@@ -271,8 +336,9 @@ func TestPayReferralIdempotency(t *testing.T) {
 	repo := newFakeRepo()
 	pay := newFakePayment()
 	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
+	repo.seedSession("sess-1", "user-1", triage.LevelConsult)
 
-	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelConsult)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1")
 	if err != nil {
 		t.Fatalf("Refer telemed: %v", err)
 	}
@@ -309,8 +375,9 @@ func TestReferSelfCareNoCharge(t *testing.T) {
 	repo := newFakeRepo()
 	pay := newFakePayment()
 	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 1}, nil)
+	repo.seedSession("sess-1", "user-1", triage.LevelSelfCare)
 
-	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelSelfCare)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1")
 	if err != nil {
 		t.Fatalf("Refer self_care: %v", err)
 	}
@@ -423,7 +490,8 @@ func TestPayReferralForeignFoldsToNotFound(t *testing.T) {
 	repo := newFakeRepo()
 	pay := newFakePayment()
 	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
-	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelConsult)
+	repo.seedSession("sess-1", "user-1", triage.LevelConsult)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1")
 	if err != nil {
 		t.Fatalf("Refer: %v", err)
 	}
@@ -453,7 +521,8 @@ func TestPayReferralRequiresIdempotencyKey(t *testing.T) {
 	repo := newFakeRepo()
 	pay := newFakePayment()
 	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
-	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelConsult)
+	repo.seedSession("sess-1", "user-1", triage.LevelConsult)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1")
 	if err != nil {
 		t.Fatalf("Refer: %v", err)
 	}
@@ -473,11 +542,13 @@ func TestPayReferralIdemKeyBoundToReferral(t *testing.T) {
 	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
 	ctx := context.Background()
 
-	r1, err := svc.Refer(ctx, "user-1", "sess-1", triage.LevelConsult)
+	repo.seedSession("sess-1", "user-1", triage.LevelConsult)
+	repo.seedSession("sess-2", "user-1", triage.LevelConsult)
+	r1, err := svc.Refer(ctx, "user-1", "sess-1")
 	if err != nil {
 		t.Fatalf("Refer 1: %v", err)
 	}
-	r2, err := svc.Refer(ctx, "user-1", "sess-2", triage.LevelConsult)
+	r2, err := svc.Refer(ctx, "user-1", "sess-2")
 	if err != nil {
 		t.Fatalf("Refer 2: %v", err)
 	}
