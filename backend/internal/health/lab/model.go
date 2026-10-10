@@ -306,6 +306,16 @@ func sumLineKobo(prices []int64) (int64, error) {
 // sample↔patient bond (§4.3 "right patient, right result").
 var ErrBarcodeMismatch = errors.New("lab: scanned barcode does not match the sample on record (possible mix-up) — recollection/verification required")
 
+// ErrOrderNotFound is the not-found sentinel for lab_orders. Handlers map it to
+// a uniform 404.
+var ErrOrderNotFound = errors.New("lab: order not found")
+
+// ErrIdemConflict refuses an Idempotency-Key already bound to an order owned by
+// a DIFFERENT patient. Replaying a foreign key must fail closed here, before
+// escrow.Hold — the hold rail dedups on the bare key, and a replay must never
+// resolve a stranger's order (escrow id, totals, state).
+var ErrIdemConflict = errors.New("lab: idempotency key already used")
+
 // normalizeBarcode canonicalizes a barcode for comparison (case + surrounding
 // whitespace only; internal characters are significant).
 func normalizeBarcode(b string) string { return strings.ToUpper(strings.TrimSpace(b)) }

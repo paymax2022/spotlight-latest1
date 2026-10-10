@@ -26,6 +26,19 @@ import (
 // concurrent order already consumed the remainder.
 var ErrInsufficientStock = errors.New("pharmacy: insufficient stock for one or more items")
 
+// ErrOrderNotFound is the uniform denial for a missing order AND for an order
+// the caller has no business with — a foreign actor must not be able to tell
+// "not your order" apart from "no such order" from the error they get back.
+// Handlers map it to 404.
+var ErrOrderNotFound = errors.New("pharmacy: order not found")
+
+// ErrIdemConflict refuses an Idempotency-Key already bound to an order owned
+// by a DIFFERENT patient. Replaying a foreign key must fail closed here,
+// before escrow.Hold — the hold rail dedups on the bare key, so without this
+// check a replay would attach (and, on a downstream insert failure, refund)
+// the original payer's hold.
+var ErrIdemConflict = errors.New("pharmacy: idempotency key already used")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -483,9 +496,21 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return nil, errors.New("pharmacy: a delivery order requires delivery_address, delivery_lat, and delivery_lng")
 		}
 	}
-	// Replay: return the existing order for this idempotency key (no double-hold).
-	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
+	// Replay: return the existing order for this idempotency key — but only when
+	// it belongs to THIS patient. Keys are client-chosen: resolving one to
+	// whichever order happens to hold it would hand a caller a stranger's order
+	// (escrow id, totals, state) by replaying their key.
+	if existing, err := s.getByIdem(ctx, patientID, in.IdempotencyKey); err == nil && existing != nil {
 		return existing, nil
+	}
+	// Fail closed on a foreign key BEFORE the money leg: escrow.Hold dedups on
+	// the bare key and would return the other patient's hold, which
+	// failAfterHold below would then refund out from under their live order if
+	// this attempt failed after the hold.
+	if taken, err := s.idemTakenByOther(ctx, patientID, in.IdempotencyKey); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrIdemConflict
 	}
 	// HL-2: order only against a live, verified pharmacy supplier.
 	if s.prov != nil {
@@ -527,7 +552,23 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// doesn't" shape this engagement has fixed repeatedly in other modules.
 	// Best-effort: if the refund itself fails, that failure is folded into
 	// the returned error so it surfaces rather than being silently dropped.
+	//
+	// The refund is gated on the hold actually belonging to THIS payer:
+	// escrow.Hold dedups on the bare idempotency key, so under a foreign-key
+	// replay race (or a dedup onto a stranger's hold) escrowID can name a hold
+	// this caller did not create — refunding it would unwind someone else's
+	// live order. Fail closed: never refund a hold whose payer is not the
+	// ordering patient.
 	failAfterHold := func(err error) (*Order, error) {
+		var ours bool
+		if perr := s.db.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM escrow_holds WHERE id=$1 AND payer_id=$2)`,
+			escrowID, patientID).Scan(&ours); perr != nil {
+			return nil, fmt.Errorf("%w (could not verify hold payer for refund: %v)", err, perr)
+		}
+		if !ours {
+			return nil, fmt.Errorf("%w (refund skipped: hold payer is not this patient)", err)
+		}
 		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
 			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
 		}
@@ -708,12 +749,59 @@ func (s *Service) openReviewCase(ctx context.Context, actorID, orderID, provider
 	}
 }
 
+// authorizePharmacyActor requires the actor to be the verified owner of the
+// order's fulfilling pharmacy (HL-2): the provider-gate answer when the gate
+// is wired, the provider row's owner_user_id when it is not (fail-closed
+// fallback — never trust an unverified write path just because the gate is
+// unwired). Denials return ErrOrderNotFound so a foreign actor cannot tell
+// "not your pharmacy's order" apart from "no such order".
+func (s *Service) authorizePharmacyActor(ctx context.Context, actorID string, o *Order) error {
+	if actorID == "" {
+		return ErrOrderNotFound
+	}
+	if s.prov != nil {
+		ok, err := s.prov.VerifiedPharmacyOwner(ctx, actorID, o.PharmacyProviderID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrOrderNotFound
+		}
+		return nil
+	}
+	owner, err := s.pharmacyOwner(ctx, o.PharmacyProviderID)
+	if err != nil {
+		return err
+	}
+	if actorID != owner {
+		return ErrOrderNotFound
+	}
+	return nil
+}
+
+// authorizeOrderParty requires the actor to be a party to the order: the
+// patient who owns it, or the verified owner of the fulfilling pharmacy.
+// Denials are the same uniform ErrOrderNotFound.
+func (s *Service) authorizeOrderParty(ctx context.Context, actorID string, o *Order) error {
+	if actorID != "" && actorID == o.PatientID {
+		return nil
+	}
+	return s.authorizePharmacyActor(ctx, actorID, o)
+}
+
 // Confirm moves CREATED|RX_PENDING_VERIFICATION → CONFIRMED. For an Rx-required
 // order the pinned e-Rx MUST be VERIFIED first (HL-3) — the verification is the
 // P0 healthrx workflow and EnsureVerified is the gate.
+// Only the fulfilling pharmacy may confirm — it is the pharmacist's acceptance
+// of the order (for an Rx-pending order it is also the act that binds the
+// verified e-Rx, so a patient self-confirming would bypass HL-3 review). A
+// foreign actor gets ErrOrderNotFound, indistinguishable from a missing order.
 func (s *Service) Confirm(ctx context.Context, actorID, orderID string) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizePharmacyActor(ctx, actorID, o); err != nil {
 		return nil, err
 	}
 	if o.State == StateRxPending {
@@ -846,9 +934,18 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 // RELEASES the held payment to the pharmacy payee (HL-9) and finally closes the
 // order. Release requires the pharmacy owner to be payout-eligible (HL-10 KYC).
 // The release is idempotent on the escrow hold (escrow tolerates re-resolve).
+//
+// Actor gate runs FIRST — before the state/proof checks and long before escrow
+// release: only the patient (presenting the pickup/proof code) or the verified
+// pharmacy owner may complete the order. A foreign actor gets ErrOrderNotFound,
+// indistinguishable from a missing order, so the endpoint is no longer an
+// "any authenticated user + a 6-digit OTP releases escrow" oracle.
 func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode string) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeOrderParty(ctx, actorID, o); err != nil {
 		return nil, err
 	}
 	var to OrderState
@@ -866,8 +963,9 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 	}
 
 	// DP-006: for delivery orders, require proof-of-delivery before DELIVERED transition.
-	// Proof is captured by the courier/driver and validated before this call. If a
-	// ProofRecorder is wired, store the proof (actorID assumed to be the driver).
+	// Proof is captured by the courier/driver and validated before this call. The
+	// completing actor is an order party (patient or pharmacy owner, gated above);
+	// CapturedBy records which party attested delivery.
 	if o.State == StateInDelivery {
 		if o.DeliveryRef == nil || *o.DeliveryRef == "" {
 			return nil, errors.New("pharmacy: missing delivery reference (not dispatched)")
@@ -1279,7 +1377,7 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("pharmacy: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1299,7 +1397,7 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt,
 		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("pharmacy: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1308,9 +1406,21 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	return &o, nil
 }
 
-func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Order, error) {
+// getByIdem resolves the caller's replay: the order THIS patient created under
+// idemKey, or (nil, nil) when no such order exists for this patient. Scoped to
+// the caller, never the stored row — keys are client-chosen, so an unscoped
+// lookup would hand a stranger's order (escrow id, totals, state) to whoever
+// replays their key (mirrors vet petByIdem / restaurant
+// findOrderByIdempotencyKey).
+func (s *Service) getByIdem(ctx context.Context, patientID, idemKey string) (*Order, error) {
 	var id string
-	if err := s.db.QueryRow(ctx, `SELECT id FROM pharmacy_orders WHERE idempotency_key=$1`, idemKey).Scan(&id); err != nil {
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM pharmacy_orders WHERE idempotency_key=$1 AND patient_id=$2`,
+		idemKey, patientID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	o, err := s.load(ctx, id)
@@ -1319,6 +1429,20 @@ func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Order, error)
 	}
 	o.Lines, _ = s.loadLines(ctx, id)
 	return o, nil
+}
+
+// idemTakenByOther reports whether idemKey is already bound to an order owned
+// by a DIFFERENT patient — i.e. this call is a replay of someone else's key.
+// Fail closed on lookup error: a transient pool failure must not be mistaken
+// for "key is free" and let a replay slip through to the money leg.
+func (s *Service) idemTakenByOther(ctx context.Context, patientID, idemKey string) (bool, error) {
+	var taken bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM pharmacy_orders WHERE idempotency_key=$1 AND patient_id<>$2)`,
+		idemKey, patientID).Scan(&taken); err != nil {
+		return true, fmt.Errorf("pharmacy: resolve idempotency key: %w", err)
+	}
+	return taken, nil
 }
 
 func (s *Service) loadLines(ctx context.Context, orderID string) ([]OrderLine, error) {

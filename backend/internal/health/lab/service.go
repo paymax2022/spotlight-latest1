@@ -320,9 +320,19 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if in.CollectionMethod != CollectHome && in.CollectionMethod != CollectWalkIn {
 		return nil, errors.New("lab: collection_method must be HOME or WALK_IN")
 	}
-	// Replay: return the existing order for this idempotency key (no double-hold).
-	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
+	// Replay: return the existing order for this idempotency key — but only when
+	// it belongs to THIS patient. Keys are client-chosen: resolving one to
+	// whichever order happens to hold it would hand a caller a stranger's order
+	// (escrow id, totals, state) by replaying their key.
+	if existing, err := s.getByIdem(ctx, patientID, in.IdempotencyKey); err == nil && existing != nil {
 		return existing, nil
+	}
+	// Fail closed on a foreign key BEFORE the money leg: escrow.Hold dedups on
+	// the bare key and would attach the other patient's hold to this attempt.
+	if taken, err := s.idemTakenByOther(ctx, patientID, in.IdempotencyKey); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrIdemConflict
 	}
 	// HL-2: order only against a live, verified MLSCN lab.
 	if s.prov != nil {
@@ -415,13 +425,68 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	return o, nil
 }
 
+// isLabOwner reports whether actorID owns the order's lab: the provider-gate
+// answer when the gate is wired (VerifiedLabOwner = owner AND APPROVED), else
+// the provider row's owner_user_id as a fail-closed fallback — an unwired gate
+// must not silently open provider-side writes to any caller.
+func (s *Service) isLabOwner(ctx context.Context, actorID, providerID string) (bool, error) {
+	if actorID == "" {
+		return false, nil
+	}
+	if s.prov != nil {
+		return s.prov.VerifiedLabOwner(ctx, actorID, providerID)
+	}
+	owner, err := s.labOwner(ctx, providerID)
+	if err != nil {
+		return false, err
+	}
+	return actorID == owner, nil
+}
+
+// mayCollectSample reports whether actorID may collect this order's sample.
+// A HOME collection requires the lab's verified phlebotomist (field
+// collection, HL-2) or the lab owner; WALK_IN intake may be done by any
+// verified staffer of this lab — owner, scientist, or phlebotomist. Called
+// BEFORE the order-state check so a foreign actor cannot learn the state from
+// the refusal.
+func (s *Service) mayCollectSample(ctx context.Context, actorID string, o *Order) (bool, error) {
+	ok, err := s.isLabOwner(ctx, actorID, o.LabProviderID)
+	if err != nil || ok {
+		return ok, err
+	}
+	if s.prov == nil {
+		return false, nil // unwired gate: owner-only fallback already answered
+	}
+	if ok, perr := s.prov.IsVerifiedPhlebotomist(ctx, actorID, o.LabProviderID); perr != nil {
+		return false, perr
+	} else if ok {
+		return true, nil
+	}
+	if o.CollectionMethod == CollectWalkIn {
+		return s.prov.IsVerifiedScientist(ctx, actorID, o.LabProviderID)
+	}
+	return false, nil
+}
+
 // Schedule moves CREATED → SCHEDULED. For a HOME collection it dispatches a
 // phlebotomist on the transport last-mile rail (REUSE — no routing rebuild) and
 // pins the returned dispatch reference. Walk-in orders schedule without dispatch.
-func (s *Service) Schedule(ctx context.Context, actorID, orderID string) (*Order, error) {
+// Only the lab itself (verified owner) or a platform admin may schedule —
+// scheduling books real dispatch resources and advances someone else's paid
+// order, so the actor gate runs before any state probe or side effect.
+func (s *Service) Schedule(ctx context.Context, actorID, orderID string, isAdmin bool) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
+	}
+	if !isAdmin {
+		ok, err := s.isLabOwner(ctx, actorID, o.LabProviderID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("lab: only the lab may schedule collection (HL-2)")
+		}
 	}
 	var deliveryRef *string
 	if o.CollectionMethod == CollectHome && s.dispatch != nil {
@@ -446,24 +511,24 @@ func (s *Service) Schedule(ctx context.Context, actorID, orderID string) (*Order
 // the Sample and opens the chain of custody (HL-6). It moves the order SCHEDULED →
 // SAMPLE_COLLECTED, mints a barcode, and writes the first immutable custody event
 // (→ COLLECTED). The collector becomes the initial custodian. Only the lab's
-// verified phlebotomist may collect a HOME sample (HL-2).
+// verified phlebotomist (or owner) may collect a HOME sample; WALK_IN intake is
+// gated to the lab's verified staff (HL-2). The actor gate runs BEFORE the
+// state check so a foreign actor cannot learn another patient's order state
+// from the refusal.
 func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string) (*Sample, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
+	// HL-2 actor gate first — a foreign actor gets the same role refusal
+	// regardless of what state the order is in (no state oracle).
+	if ok, err := s.mayCollectSample(ctx, collectorID, o); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, errors.New("lab: only verified lab staff may collect (HL-2)")
+	}
 	if o.State != StateScheduled {
 		return nil, fmt.Errorf("lab: order must be SCHEDULED before collection, is %s", o.State)
-	}
-	// HL-2: a HOME collection requires a verified phlebotomist of this lab.
-	if o.CollectionMethod == CollectHome && s.prov != nil {
-		ok, perr := s.prov.IsVerifiedPhlebotomist(ctx, collectorID, o.LabProviderID)
-		if perr != nil {
-			return nil, perr
-		}
-		if !ok {
-			return nil, errors.New("lab: only a verified phlebotomist may collect (HL-2)")
-		}
 	}
 	// One sample per order (HL-6: the order's specimen is a single tracked entity).
 	if existing, _ := s.sampleByOrder(ctx, orderID); existing != nil {
@@ -673,13 +738,8 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 	if err != nil {
 		return nil, err
 	}
-	if o.State != StateProcessing {
-		return nil, fmt.Errorf("lab: order must be PROCESSING to enter results, is %s", o.State)
-	}
-	if len(results) == 0 {
-		return nil, errors.New("lab: at least one result required")
-	}
-	// HL-2: only a verified scientist of this lab may enter/validate results.
+	// HL-2 actor gate BEFORE the state check: a foreign actor must not learn
+	// another patient's order state from the error it gets back.
 	if s.prov != nil {
 		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
 		if perr != nil {
@@ -688,6 +748,12 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 		if !ok {
 			return nil, errors.New("lab: only a verified lab scientist may enter results (HL-2)")
 		}
+	}
+	if o.State != StateProcessing {
+		return nil, fmt.Errorf("lab: order must be PROCESSING to enter results, is %s", o.State)
+	}
+	if len(results) == 0 {
+		return nil, errors.New("lab: at least one result required")
 	}
 	// HL-6: no result without an unbroken, accessioned chain of custody.
 	sm, err := s.sampleByOrder(ctx, orderID)
@@ -774,10 +840,8 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 	if err != nil {
 		return nil, err
 	}
-	if !canReleaseFrom(o.State) {
-		return nil, fmt.Errorf("lab: order not ready for release, is %s", o.State)
-	}
-	// HL-2: only a verified scientist of this lab may sign off and release.
+	// HL-2 actor gate BEFORE the state check: a foreign actor must not learn
+	// another patient's order state from the error it gets back.
 	if s.prov != nil {
 		ok, perr := s.prov.IsVerifiedScientist(ctx, scientistID, o.LabProviderID)
 		if perr != nil {
@@ -786,6 +850,9 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 		if !ok {
 			return nil, errors.New("lab: only a verified lab scientist may release results (HL-2/HL-7)")
 		}
+	}
+	if !canReleaseFrom(o.State) {
+		return nil, fmt.Errorf("lab: order not ready for release, is %s", o.State)
 	}
 
 	results, err := s.loadResults(ctx, orderID)
@@ -1143,7 +1210,7 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("lab: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1161,7 +1228,7 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("lab: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1170,9 +1237,21 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	return &o, nil
 }
 
-func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Order, error) {
+// getByIdem resolves the caller's replay: the order THIS patient created under
+// idemKey, or (nil, nil) when no such order exists for this patient. Scoped to
+// the caller, never the stored row — keys are client-chosen, so an unscoped
+// lookup would hand a stranger's order (escrow id, totals, state) to whoever
+// replays their key (mirrors vet petByIdem / restaurant
+// findOrderByIdempotencyKey).
+func (s *Service) getByIdem(ctx context.Context, patientID, idemKey string) (*Order, error) {
 	var id string
-	if err := s.db.QueryRow(ctx, `SELECT id FROM lab_orders WHERE idempotency_key=$1`, idemKey).Scan(&id); err != nil {
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM lab_orders WHERE idempotency_key=$1 AND patient_id=$2`,
+		idemKey, patientID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	o, err := s.load(ctx, id)
@@ -1181,6 +1260,20 @@ func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Order, error)
 	}
 	o.Lines, _ = s.loadLines(ctx, id)
 	return o, nil
+}
+
+// idemTakenByOther reports whether idemKey is already bound to an order owned
+// by a DIFFERENT patient — i.e. this call is a replay of someone else's key.
+// Fail closed on lookup error: a transient pool failure must not be mistaken
+// for "key is free" and let a replay slip through to the money leg.
+func (s *Service) idemTakenByOther(ctx context.Context, patientID, idemKey string) (bool, error) {
+	var taken bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM lab_orders WHERE idempotency_key=$1 AND patient_id<>$2)`,
+		idemKey, patientID).Scan(&taken); err != nil {
+		return true, fmt.Errorf("lab: resolve idempotency key: %w", err)
+	}
+	return taken, nil
 }
 
 func (s *Service) loadLines(ctx context.Context, orderID string) ([]OrderLine, error) {

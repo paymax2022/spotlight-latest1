@@ -2,6 +2,7 @@ package healthpharmacy
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -106,11 +107,39 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 		}
 	})
 
+	// Test 1b: a foreign actor (not the patient, not the pharmacy owner) must be
+	// refused with the uniform not-found sentinel BEFORE the proof is checked
+	// and before any escrow release — the courier's driver id is not an order
+	// party.
+	t.Run("foreign_actor_denied", func(t *testing.T) {
+		_, err := svc.Complete(ctx, driverID, orderID, "123456")
+		if err == nil {
+			t.Fatal("a foreign actor (driver) must not be able to complete the order")
+		}
+		if !errors.Is(err, ErrOrderNotFound) {
+			t.Fatalf("foreign denial must be ErrOrderNotFound (no state/proof leak), got: %v", err)
+		}
+		var state string
+		if err := pool.QueryRow(ctx, `SELECT state FROM public.pharmacy_orders WHERE id=$1`, orderID).Scan(&state); err != nil {
+			t.Fatalf("query order state: %v", err)
+		}
+		if state != "IN_DELIVERY" {
+			t.Fatalf("order state = %s after refused Complete, want unchanged IN_DELIVERY", state)
+		}
+		var proofs int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM public.pharmacy_delivery_proofs WHERE order_id=$1`, orderID).Scan(&proofs); err != nil {
+			t.Fatalf("count proofs: %v", err)
+		}
+		if proofs != 0 {
+			t.Fatalf("a refused Complete must not record a proof, got %d rows", proofs)
+		}
+	})
+
 	// Test 2: Complete with valid OTP proof (DP-006)
 	t.Run("complete_with_valid_proof", func(t *testing.T) {
-		// Complete the delivery with a valid 6-digit OTP proof
+		// The patient completes the delivery with a valid 6-digit OTP proof
 		// (Using pickupCode field for MVP proof OTP)
-		order, err := svc.Complete(ctx, driverID, orderID, "123456")
+		order, err := svc.Complete(ctx, patientID, orderID, "123456")
 		if err != nil {
 			t.Fatalf("complete with valid proof should succeed: %v", err)
 		}
@@ -137,8 +166,8 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 		if proofData != "123456" {
 			t.Errorf("expected proof_data 123456, got %s", proofData)
 		}
-		if capturedBy != driverID {
-			t.Errorf("expected captured_by %s, got %s", driverID, capturedBy)
+		if capturedBy != patientID {
+			t.Errorf("expected captured_by %s, got %s", patientID, capturedBy)
 		}
 	})
 
@@ -214,7 +243,7 @@ func TestDeliveryProof_InvalidProof(t *testing.T) {
 
 	// Test: Complete without proof should fail
 	t.Run("missing_proof", func(t *testing.T) {
-		_, err := svc.Complete(ctx, driverID, orderID, "")
+		_, err := svc.Complete(ctx, patientID, orderID, "")
 		if err == nil {
 			t.Error("expected error for missing proof, got nil")
 		}
@@ -225,7 +254,7 @@ func TestDeliveryProof_InvalidProof(t *testing.T) {
 
 	// Test: Complete with invalid proof format should fail
 	t.Run("invalid_proof_format", func(t *testing.T) {
-		_, err := svc.Complete(ctx, driverID, orderID, "12345") // 5 digits, not 6
+		_, err := svc.Complete(ctx, patientID, orderID, "12345") // 5 digits, not 6
 		if err == nil {
 			t.Error("expected error for invalid OTP length, got nil")
 		}

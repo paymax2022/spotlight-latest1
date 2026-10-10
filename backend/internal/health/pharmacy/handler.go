@@ -1,6 +1,7 @@
 package healthpharmacy
 
 import (
+	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/strutil"
@@ -220,11 +221,22 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "order": o})
 }
 
-// Confirm — POST /orders/:id/confirm  (HL-3 verified e-Rx gate for Rx orders)
+// failOrderMutation maps the uniform denial sentinel to 404 — a foreign actor
+// and a missing order must return the same response — and keeps every other
+// service error at the historical 409.
+func failOrderMutation(c *gin.Context, err error) {
+	if errors.Is(err, ErrOrderNotFound) {
+		ginutil.FailOK(c, http.StatusNotFound, ErrOrderNotFound.Error())
+		return
+	}
+	ginutil.FailOK(c, http.StatusConflict, err.Error())
+}
+
+// Confirm — POST /orders/:id/confirm  (pharmacy owner; HL-3 verified e-Rx gate for Rx orders)
 func (h *Handler) Confirm(c *gin.Context) {
 	o, err := h.svc.Confirm(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -239,7 +251,7 @@ func (h *Handler) Dispense(c *gin.Context) {
 	}
 	o, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -254,7 +266,7 @@ func (h *Handler) Dispatch(c *gin.Context) {
 	}
 	o, err := h.svc.Dispatch(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -274,7 +286,7 @@ func (h *Handler) Complete(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	o, err := h.svc.Complete(c.Request.Context(), id, c.Param("id"), req.PickupCode)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -293,7 +305,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	o, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})

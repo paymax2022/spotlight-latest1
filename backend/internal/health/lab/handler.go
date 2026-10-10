@@ -191,16 +191,26 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "order": o})
 }
 
-// Schedule — POST /orders/:id/schedule  (phlebotomist dispatch for HOME)
+// failOrderMutation maps the not-found sentinel to a uniform 404 and keeps
+// every other service error at the historical 409.
+func failOrderMutation(c *gin.Context, err error) {
+	if errors.Is(err, ErrOrderNotFound) {
+		ginutil.FailOK(c, http.StatusNotFound, ErrOrderNotFound.Error())
+		return
+	}
+	ginutil.FailOK(c, http.StatusConflict, err.Error())
+}
+
+// Schedule — POST /orders/:id/schedule  (lab owner/admin; phlebotomist dispatch for HOME)
 func (h *Handler) Schedule(c *gin.Context) {
 	id := ginutil.UserID(c)
 	if id == "" {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	o, err := h.svc.Schedule(c.Request.Context(), id, c.Param("id"))
+	o, err := h.svc.Schedule(c.Request.Context(), id, c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -219,7 +229,7 @@ func (h *Handler) Collect(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	sample, err := h.svc.Collect(c.Request.Context(), id, c.Param("id"), req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "sample": sample})
@@ -313,7 +323,7 @@ func (h *Handler) EnterResults(c *gin.Context) {
 	}
 	o, err := h.svc.EnterResults(c.Request.Context(), id, c.Param("id"), req.ScannedBarcode, in)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -328,7 +338,7 @@ func (h *Handler) Release(c *gin.Context) {
 	}
 	o, err := h.svc.Release(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrderMutation(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})

@@ -283,6 +283,10 @@ func (h *Handler) Dispatch(c *gin.Context) {
 	}
 	a, err := h.svc.Dispatch(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrAppointmentNotFound) {
+			ginutil.FailOK(c, http.StatusNotFound, ErrAppointmentNotFound.Error())
+			return
+		}
 		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}

@@ -150,6 +150,17 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // lookup with ” and silently receive a previous ”-keyed row.
 var ErrPetMissingIdem = errors.New("vet: idempotency key required")
 
+// ErrAppointmentNotFound is the not-found sentinel for appointments. Handlers
+// map it to a uniform 404.
+var ErrAppointmentNotFound = errors.New("vet: appointment not found")
+
+// ErrIdemConflict refuses an Idempotency-Key already bound to a booking owned
+// by a DIFFERENT owner. Replaying a foreign key must fail closed here, before
+// the scheduling engine creates an appointment and escrow.Hold runs — the hold
+// rail dedups on the bare key, and a replay must never resolve a stranger's
+// booking (escrow id, totals, state).
+var ErrIdemConflict = errors.New("vet: idempotency key already used")
+
 // petByIdem returns the caller's pet created under idemKey, or (nil, nil) when
 // no such pet exists. Scoped to ownerID — keys are client-chosen, so resolving
 // one to another owner's row would let a caller read a stranger's pet by
@@ -423,9 +434,20 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 	if !owns {
 		return nil, errors.New("vet: forbidden — not the pet owner")
 	}
-	// Replay: return the existing appointment for this idempotency key (no re-hold).
-	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
+	// Replay: return the existing appointment for this idempotency key — but
+	// only when it belongs to THIS owner. Keys are client-chosen: resolving one
+	// to whichever booking happens to hold it would hand a caller a stranger's
+	// appointment (escrow id, totals, state) by replaying their key.
+	if existing, err := s.getByIdem(ctx, ownerID, in.IdempotencyKey); err == nil && existing != nil {
 		return existing, nil
+	}
+	// Fail closed on a foreign key BEFORE the scheduling engine and the money
+	// leg run — otherwise a replay would mint an orphaned appointment and
+	// escrow.Hold would dedup onto the other owner's hold.
+	if taken, err := s.idemTakenByOther(ctx, ownerID, in.IdempotencyKey); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrIdemConflict
 	}
 	// HL-2: book only against a live, verified VCN vet.
 	if s.prov != nil {
@@ -591,9 +613,8 @@ func (s *Service) Dispatch(ctx context.Context, actorID, apptID string) (*Appoin
 	if err != nil {
 		return nil, err
 	}
-	if a.VisitType != VisitHome {
-		return nil, errors.New("vet: dispatch only applies to HOME visits")
-	}
+	// HL-2 actor gate BEFORE the visit-type probe: a foreign actor must not
+	// learn another owner's appointment details from the error it gets back.
 	if s.prov != nil {
 		ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
 		if perr != nil {
@@ -602,6 +623,9 @@ func (s *Service) Dispatch(ctx context.Context, actorID, apptID string) (*Appoin
 		if !ok {
 			return nil, errors.New("vet: only the verified vet may dispatch (HL-2)")
 		}
+	}
+	if a.VisitType != VisitHome {
+		return nil, errors.New("vet: dispatch only applies to HOME visits")
 	}
 	if s.dispatch == nil {
 		return nil, errors.New("vet: dispatch rail unavailable")
@@ -969,7 +993,7 @@ func (s *Service) load(ctx context.Context, apptID string) (*Appointment, error)
 		&a.SlotStart, &a.SlotEnd, &a.PetID, &a.ServiceID, &a.TotalKobo, &a.EscrowID, &a.ConsultID,
 		&a.DeliveryRef, &payState, &a.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("vet: appointment not found")
+			return nil, ErrAppointmentNotFound
 		}
 		return nil, err
 	}
@@ -979,12 +1003,38 @@ func (s *Service) load(ctx context.Context, apptID string) (*Appointment, error)
 	return &a, nil
 }
 
-func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Appointment, error) {
+// getByIdem resolves the caller's replay: the appointment THIS owner booked
+// under idemKey, or (nil, nil) when no such booking exists for this owner.
+// Scoped to the caller, never the stored row — keys are client-chosen, so an
+// unscoped lookup would hand a stranger's appointment (escrow id, totals,
+// state) to whoever replays their key (same model as petByIdem above and
+// restaurant findOrderByIdempotencyKey).
+func (s *Service) getByIdem(ctx context.Context, ownerID, idemKey string) (*Appointment, error) {
 	var apptID string
-	if err := s.db.QueryRow(ctx, `SELECT appointment_id FROM vet_appointment_payments WHERE idempotency_key=$1`, idemKey).Scan(&apptID); err != nil {
+	err := s.db.QueryRow(ctx,
+		`SELECT appointment_id FROM vet_appointment_payments WHERE idempotency_key=$1 AND owner_id=$2`,
+		idemKey, ownerID).Scan(&apptID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return s.load(ctx, apptID)
+}
+
+// idemTakenByOther reports whether idemKey is already bound to a booking owned
+// by a DIFFERENT owner — i.e. this call is a replay of someone else's key.
+// Fail closed on lookup error: a transient pool failure must not be mistaken
+// for "key is free" and let a replay slip through to the money leg.
+func (s *Service) idemTakenByOther(ctx context.Context, ownerID, idemKey string) (bool, error) {
+	var taken bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM vet_appointment_payments WHERE idempotency_key=$1 AND owner_id<>$2)`,
+		idemKey, ownerID).Scan(&taken); err != nil {
+		return true, fmt.Errorf("vet: resolve idempotency key: %w", err)
+	}
+	return taken, nil
 }
 
 func (s *Service) providerOwner(ctx context.Context, providerID string) (string, error) {
