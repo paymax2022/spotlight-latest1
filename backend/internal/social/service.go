@@ -227,7 +227,15 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 		return err
 	}
 	if r.PayerID != payerID {
-		return ErrForbidden // cannot pay a request not addressed to you
+		// Non-party callers get the uniform ErrNotFound — a 403 here would
+		// confirm the request id exists (existence oracle, same class the
+		// split/pool reads already close). The requester is a PARTY to the
+		// request and already knows it exists, so they keep the precise 403
+		// "only the named payer may pay".
+		if r.RequesterID == payerID {
+			return ErrForbidden
+		}
+		return ErrNotFound
 	}
 	key := "req:" + requestID
 	if r.State == RequestPaid {
@@ -329,11 +337,21 @@ func (s *Service) resolveRequest(ctx context.Context, requestID, actorID string,
 	if err != nil {
 		return err
 	}
+	// Party-only refusal visibility: the OTHER party gets the precise 403
+	// (they can already see the request via ListRequests); a caller who is
+	// neither requester nor payer gets the uniform ErrNotFound so the route
+	// cannot confirm the request id exists.
 	if actorIsRequester && r.RequesterID != actorID {
-		return ErrForbidden
+		if r.PayerID == actorID {
+			return ErrForbidden
+		}
+		return ErrNotFound
 	}
 	if !actorIsRequester && r.PayerID != actorID {
-		return ErrForbidden
+		if r.RequesterID == actorID {
+			return ErrForbidden
+		}
+		return ErrNotFound
 	}
 	if !canRequest(r.State, to) {
 		return fmt.Errorf("social: illegal request transition %s -> %s", r.State, to)
@@ -478,6 +496,18 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	}
 	sh.State = ShareState(state)
 	if sh.UserID != payerID {
+		// A participant of the same bill (incl. the organiser) keeps the
+		// precise 403 — they can already see this share via GetSplit, so the
+		// refusal confirms nothing new. An outsider gets the uniform
+		// ErrNotFound: a 403 would confirm the share id exists (existence
+		// oracle on the shares rail).
+		member, err := s.IsSplitParticipant(ctx, sh.SplitID, payerID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return ErrNotFound
+		}
 		return ErrForbidden
 	}
 	bill, err := s.getSplit(ctx, sh.SplitID)
@@ -607,10 +637,21 @@ func (s *Service) GetSplit(ctx context.Context, callerID, splitID string) (*Spli
 	if err != nil {
 		return nil, nil, err
 	}
+	shares, err := s.splitShares(ctx, splitID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return bill, shares, nil
+}
+
+// splitShares returns the full share roster for a bill (who owes whom how
+// much) — the payload both the caller-scoped member read and the RBAC-gated
+// admin oversight read serialize.
+func (s *Service) splitShares(ctx context.Context, splitID string) ([]SplitShare, error) {
 	const q = `SELECT id, split_id, user_id, amount_kobo, state, paid_at FROM split_shares WHERE split_id=$1 ORDER BY amount_kobo DESC`
 	rows, err := s.db.Query(ctx, q, splitID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 	var shares []SplitShare
@@ -618,12 +659,31 @@ func (s *Service) GetSplit(ctx context.Context, callerID, splitID string) (*Spli
 		var sh SplitShare
 		var st string
 		if err := rows.Scan(&sh.ID, &sh.SplitID, &sh.UserID, &sh.AmountKobo, &st, &sh.PaidAt); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		sh.State = ShareState(st)
 		shares = append(shares, sh)
 	}
-	return bill, shares, rows.Err()
+	return shares, rows.Err()
+}
+
+// GetSplitOversight is the ADMIN read behind GET /api/social/admin/splits/:id.
+// The route's RBAC guard (social.admin.view) is the authZ, so the read is
+// deliberately NOT caller-scoped — ops must be able to inspect a bill + share
+// roster they are not a participant in (the member GetSplit would answer a
+// non-participant admin the same 404 it gives any outsider). NEVER mount this
+// on a member route: the member oracle stays closed. The access is audited.
+func (s *Service) GetSplitOversight(ctx context.Context, adminID, splitID string) (*SplitBill, []SplitShare, error) {
+	bill, err := s.getSplit(ctx, splitID)
+	if err != nil {
+		return nil, nil, err
+	}
+	shares, err := s.splitShares(ctx, splitID)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.log(adminID, "", "social.admin.split.view", "split_bill", bill.ID, nil, nil)
+	return bill, shares, nil
 }
 
 // IsSplitParticipant reports membership for object-level authZ.
@@ -817,7 +877,12 @@ func (s *Service) payoutAmount(ctx context.Context, poolID string) (int64, error
 // same legs (same convention as PayShare's "split:"+shareID). The drain row's
 // idempotency_key "payout:"+poolID is likewise deterministic and upserted.
 func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey string) error {
-	p, err := s.getPool(ctx, poolID)
+	// Read through callerPool so a caller with NO stake in the pool gets the
+	// uniform ErrNotFound — the old getPool+403 pair confirmed the pool id
+	// exists to any authenticated caller (existence oracle, same class as
+	// the balance read it guards). A stakeholder who is not the organiser
+	// (beneficiary/contributor) keeps the precise 403.
+	p, err := s.callerPool(ctx, organiserID, poolID)
 	if err != nil {
 		return err
 	}
@@ -926,6 +991,44 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 // and state to any authenticated caller.
 func (s *Service) GetPool(ctx context.Context, callerID, poolID string) (*GroupPool, error) {
 	return s.callerPool(ctx, callerID, poolID)
+}
+
+// GetPoolOversight is the ADMIN read behind GET /api/social/admin/pools/:id:
+// the pool row, the derived balance, and the full contribution roster (who
+// put in what, incl. the negative drain row once paid out) — the money detail
+// ops oversight needs. The route's RBAC guard (social.admin.view) is the
+// authZ, so the read is deliberately NOT caller-scoped. NEVER mount on a
+// member route — member pool reads stay behind callerPool's uniform-404
+// gate. The access is audited.
+func (s *Service) GetPoolOversight(ctx context.Context, adminID, poolID string) (*GroupPool, int64, []PoolContribution, error) {
+	p, err := s.getPool(ctx, poolID)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	var bal int64
+	const balQ = `SELECT COALESCE(SUM(amount_kobo),0) FROM pool_contributions WHERE pool_id=$1`
+	if err := s.db.QueryRow(ctx, balQ, poolID).Scan(&bal); err != nil {
+		return nil, 0, nil, err
+	}
+	const cQ = `SELECT id, pool_id, user_id, amount_kobo, created_at FROM pool_contributions WHERE pool_id=$1 ORDER BY created_at`
+	rows, err := s.db.Query(ctx, cQ, poolID)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	defer rows.Close()
+	contribs := []PoolContribution{}
+	for rows.Next() {
+		var c PoolContribution
+		if err := rows.Scan(&c.ID, &c.PoolID, &c.UserID, &c.AmountKobo, &c.CreatedAt); err != nil {
+			return nil, 0, nil, err
+		}
+		contribs = append(contribs, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, nil, err
+	}
+	s.log(adminID, "", "social.admin.pool.view", "group_pool", poolID, nil, map[string]any{"balance_kobo": bal})
+	return p, bal, contribs, nil
 }
 
 func (s *Service) paymentByIdem(ctx context.Context, senderID, idemKey string) (*Payment, error) {

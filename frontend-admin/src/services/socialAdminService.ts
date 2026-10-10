@@ -37,7 +37,8 @@ function authHeaders(): Record<string, string> {
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
 // Verified against backend/internal/social (Handler.Register): the only admin
-// route registered is GET /splits/:id. No reversal, cashtag-review, or
+// routes registered are GET /splits/:id and GET /pools/:id (RBAC
+// social.admin.view, unscoped oversight reads). No reversal, cashtag-review, or
 // velocity-limits mutation exists anywhere in the module or in the ledger
 // service it would depend on — grepped for "Reverse" as a ledger method
 // (zero matches, the ledger has no reversal capability at all), "/cashtags"
