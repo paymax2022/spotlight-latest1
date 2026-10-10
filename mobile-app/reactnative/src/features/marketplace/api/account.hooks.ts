@@ -105,11 +105,28 @@ export function useIsFollowing(sellerId: string): boolean {
   return (data ?? []).some((f) => f.sellerId === sellerId);
 }
 
+// Follow/unfollow flip the cached list instantly (so the button never lags the tap)
+// and roll back if the server refuses; the refetch afterwards makes the server the
+// source of truth either way.
 export function useFollowSeller() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { sellerId: string; sellerName?: string }) => accountApi.followSeller(input.sellerId, input.sellerName),
-    onSuccess: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers }),
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers });
+      const prev = qc.getQueryData<accountApi.FollowedSeller[]>(MKT_ACCOUNT_KEYS.followedSellers);
+      qc.setQueryData<accountApi.FollowedSeller[]>(MKT_ACCOUNT_KEYS.followedSellers, (old) => {
+        const list = old ?? [];
+        if (list.some((f) => f.sellerId === input.sellerId)) return list;
+        return [
+          { id: `pending-${input.sellerId}`, sellerId: input.sellerId, sellerName: input.sellerName ?? 'Seller', trustScore: 0.5, activeListings: 0, followedAt: new Date().toISOString() },
+          ...list,
+        ];
+      });
+      return { prev };
+    },
+    onError: (_e, _i, ctx) => { if (ctx) qc.setQueryData(MKT_ACCOUNT_KEYS.followedSellers, ctx.prev); },
+    onSettled: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers }),
   });
 }
 
@@ -117,7 +134,14 @@ export function useUnfollowSeller() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (sellerId: string) => accountApi.unfollowSeller(sellerId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers }),
+    onMutate: async (sellerId) => {
+      await qc.cancelQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers });
+      const prev = qc.getQueryData<accountApi.FollowedSeller[]>(MKT_ACCOUNT_KEYS.followedSellers);
+      qc.setQueryData<accountApi.FollowedSeller[]>(MKT_ACCOUNT_KEYS.followedSellers, (old) => (old ?? []).filter((f) => f.sellerId !== sellerId));
+      return { prev };
+    },
+    onError: (_e, _i, ctx) => { if (ctx) qc.setQueryData(MKT_ACCOUNT_KEYS.followedSellers, ctx.prev); },
+    onSettled: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers }),
   });
 }
 

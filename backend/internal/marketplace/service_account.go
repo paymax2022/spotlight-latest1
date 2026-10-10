@@ -74,7 +74,16 @@ func (s *Service) UnsaveListing(ctx context.Context, userID, listingID string) e
 // ListSavedItems returns the caller's saved listings (newest first), each joined
 // to its current listing row so the client can render cards + price-change badges.
 func (s *Service) ListSavedItems(ctx context.Context, userID string, limit, offset int) ([]SavedItem, error) {
-	return s.repo.ListSavedItems(ctx, userID, limit, offset)
+	items, err := s.repo.ListSavedItems(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	ls := make([]*Listing, 0, len(items))
+	for i := range items {
+		ls = append(ls, items[i].Listing)
+	}
+	s.attachThumbs(ctx, ls)
+	return items, nil
 }
 
 // CreateReport files a safety report against a listing, seller, or chat. Validates
@@ -140,15 +149,34 @@ func (s *Service) ListBlocks(ctx context.Context, userID string) ([]Block, error
 }
 
 // FollowSeller follows a seller. Idempotent (see InsertFollow).
-func (s *Service) FollowSeller(ctx context.Context, followerID, sellerID string) error {
+func (s *Service) FollowSeller(ctx context.Context, followerID, sellerID string) (*FollowedSeller, error) {
 	sellerID = strings.TrimSpace(sellerID)
 	if sellerID == "" {
-		return fieldErr(CodeValidation, "seller_id is required", "seller_id")
+		return nil, fieldErr(CodeValidation, "seller_id is required", "seller_id")
+	}
+	if err := requireUUIDField(sellerID, "seller_id"); err != nil {
+		return nil, err
 	}
 	if sellerID == followerID {
-		return ErrCannotFollowSelf
+		return nil, ErrCannotFollowSelf
 	}
-	return s.repo.InsertFollow(ctx, followerID, sellerID)
+	// mkt_seller_follows has no FK to users, so existence is checked here.
+	ok, err := s.repo.SellerExists(ctx, sellerID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrSellerNotFound
+	}
+	if blocked, berr := s.repo.IsBlockedEitherWay(ctx, followerID, sellerID); berr != nil {
+		return nil, berr
+	} else if blocked {
+		return nil, ErrUserBlocked
+	}
+	if err := s.repo.InsertFollow(ctx, followerID, sellerID); err != nil {
+		return nil, err
+	}
+	return s.repo.GetFollow(ctx, followerID, sellerID)
 }
 
 // UnfollowSeller removes a follow. Idempotent (see DeleteFollow) — no OLA

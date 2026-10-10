@@ -3544,11 +3544,17 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        name: { type: string, description: 'Privacy-safe public name, "First L."' }
+        avatar_url: { type: string, nullable: true }
         trust_score: { type: number, format: double }
         verified_id_badge: { type: boolean }
         verified_business_badge: { type: boolean }
         tenure_label: { type: string }
         response_time_minutes: { type: integer, nullable: true }
+        kyc_tier: { type: string }
+        member_since: { type: string, format: date-time, nullable: true }
+        follower_count: { type: integer }
+        active_listings: { type: integer }
 
     MktMedia:
       type: object
@@ -4050,6 +4056,7 @@ components:
         id:              { type: string, format: uuid }
         user_id:         { type: string, format: uuid }
         blocked_user_id: { type: string, format: uuid }
+        blocked_user_name: { type: string, description: 'Privacy-safe public name of the blocked user' }
         created_at:      { type: string, format: date-time }
     MktNotificationPrefs:
       type: object
@@ -14823,6 +14830,26 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MktSellerSummary' }
         '404': { $ref: '#/components/responses/MktNotFound' }
+  /v1/marketplace/sellers/{id}/follow:
+    post:
+      operationId: mktFollowSeller
+      summary: Follow a seller (idempotent). 404 SELLER_NOT_FOUND if no such seller; 403 USER_BLOCKED if either side blocked the other.
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201': { description: The follow record }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+    delete:
+      operationId: mktUnfollowSeller
+      summary: Unfollow a seller (idempotent)
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Unfollowed }
   /v1/marketplace/sellers/{id}/listings:
     get:
       operationId: mktGetSellerListings

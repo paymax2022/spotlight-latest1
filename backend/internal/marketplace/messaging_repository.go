@@ -123,6 +123,11 @@ func (r *Repository) GetOrCreateThread(ctx context.Context, listingID, buyerID s
 	if sellerID == buyerID {
 		return nil, ErrCannotMessageSelf
 	}
+	if blocked, err := r.IsBlockedEitherWay(ctx, buyerID, sellerID); err != nil {
+		return nil, err
+	} else if blocked {
+		return nil, ErrUserBlocked
+	}
 
 	var tr threadRow
 	err = r.db.QueryRow(ctx, `
@@ -243,6 +248,21 @@ func (r *Repository) SendMessage(ctx context.Context, userID, threadID, body str
 	}
 	if ct.RowsAffected() == 0 {
 		return nil, ErrThreadNotFound
+	}
+	// Checked only AFTER the caller is proven a participant: asking about a thread you
+	// are not in must not reveal whether its two people have blocked each other.
+	var blocked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.mkt_threads t
+			JOIN public.mkt_blocks b
+			  ON (b.user_id = t.buyer_id AND b.blocked_user_id = t.seller_id)
+			  OR (b.user_id = t.seller_id AND b.blocked_user_id = t.buyer_id)
+			WHERE t.id = $1)`, threadID).Scan(&blocked); err != nil {
+		return nil, wrapInternal("send message: block check", err)
+	}
+	if blocked {
+		return nil, ErrUserBlocked
 	}
 
 	var m Message

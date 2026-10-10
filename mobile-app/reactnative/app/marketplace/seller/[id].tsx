@@ -17,6 +17,7 @@ import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSellerProfile, useSellerListings, useSellerReviews } from '@/features/marketplace/hooks';
+import FollowButton from '@/features/marketplace/components/FollowButton';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import ScreenHeader from '@/components/ScreenHeader';
@@ -43,6 +44,7 @@ export default function SellerProfileScreen() {
   }
 
   const p = profile.data;
+  const sellerName = p.name || 'Seller';
   const reviewList = reviews.data ?? [];
 
   return (
@@ -56,7 +58,7 @@ export default function SellerProfileScreen() {
             accessibilityLabel="Report seller"
             onPress={() =>
               router.push(
-                `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never,
+                `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(sellerName)}&sellerId=${id}` as never,
               )
             }
           >
@@ -69,13 +71,14 @@ export default function SellerProfileScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>{p.name[0]?.toUpperCase()}</Text></View>
+          <View style={styles.avatar}><Text style={styles.avatarText}>{sellerName[0]?.toUpperCase()}</Text></View>
           <View style={styles.nameRow}>
-            <Text style={styles.name}>{p.name}</Text>
+            <Text style={styles.name}>{sellerName}</Text>
             {p.verifiedIdBadge ? <ShieldCheck size={18} color={MarketColors.ok} /> : null}
             {p.verifiedBusinessBadge ? <BadgeCheck size={18} color={MarketColors.brand} /> : null}
           </View>
-          <Text style={styles.tenure}>{p.tenureLabel}</Text>
+          {p.tenureLabel ? <Text style={styles.tenure}>{p.tenureLabel}</Text> : null}
+          {p.followerCount != null ? <Text style={styles.tenure}>{p.followerCount} {p.followerCount === 1 ? 'follower' : 'followers'}</Text> : null}
         </View>
 
         {/* Stat strip */}
@@ -88,6 +91,7 @@ export default function SellerProfileScreen() {
         </View>
 
         <View style={styles.msgWrap}>
+          <FollowButton sellerId={id!} sellerName={sellerName} />
           <Pressable style={styles.msgBtn} onPress={() => router.push(`/marketplace/deals?sellerId=${id}` as never)}>
             <MessageCircle size={18} color={MarketColors.brand} />
             <Text style={styles.msgText}>Message</Text>
@@ -169,7 +173,7 @@ const styles = StyleSheet.create({
   stat: { flex: 1, alignItems: 'center', gap: 2 },
   statVal: { ...Typography.titleMd, color: MarketColors.text },
   statLabel: { ...Typography.labelSm, color: MarketColors.muted },
-  msgWrap: { marginBottom: Spacing.lg },
+  msgWrap: { marginBottom: Spacing.lg, gap: Spacing.sm },
   msgBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: MarketColors.brand, borderRadius: Radius.lg, paddingVertical: 12 },
   msgText: { ...Typography.labelLg, color: MarketColors.brand, fontWeight: '700' },
   sectionTitle: { ...Typography.titleMd, color: MarketColors.text, marginTop: Spacing.md, marginBottom: Spacing.sm },

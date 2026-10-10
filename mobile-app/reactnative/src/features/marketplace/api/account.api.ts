@@ -338,7 +338,7 @@ export async function listFollowedSellers(): Promise<FollowedSeller[]> {
     await delay();
     return mockFollows.map((f) => ({ ...f }));
   }
-  return mktGet<FollowedSeller[]>('/followed-sellers');
+  return arr(await mktGet<FollowedSeller[]>('/followed-sellers'));
 }
 
 export async function followSeller(sellerId: string, sellerName?: string): Promise<FollowedSeller> {

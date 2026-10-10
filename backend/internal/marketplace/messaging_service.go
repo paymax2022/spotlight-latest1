@@ -383,6 +383,12 @@ func (s *Service) RevealSellerContact(ctx context.Context, viewerID, listingID s
 		return &c, nil
 	}
 
+	if blocked, berr := s.repo.IsBlockedEitherWay(ctx, viewerID, l.SellerID); berr != nil {
+		return nil, berr
+	} else if blocked {
+		return nil, ErrUserBlocked
+	}
+
 	since := time.Now().Add(-contactRevealWindow)
 
 	// A listing already revealed in this window is free to look at again — the
