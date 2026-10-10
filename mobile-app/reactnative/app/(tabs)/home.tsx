@@ -165,7 +165,6 @@ export default function HomeScreen() {
       >
         <AppHeader name={userName} notifCount={0} />
         <SearchBar value={search} onChangeText={setSearch} onSubmit={runSearch} />
-        <RemoteBanner slug="home-hero" priority style={styles.heroBanner} />
 
         {isLoading ? (
           <View style={styles.loader}>
@@ -286,7 +285,6 @@ const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: Colors.background },
   scroll:  { flex: 1 },
   content: { paddingBottom: Spacing.xl },
-  heroBanner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
   featuredBanner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, marginTop: Spacing.lg },
   loader:  { paddingVertical: Spacing.xl, alignItems: 'center' },
   errorBox:{ marginHorizontal: Spacing.containerMargin, padding: Spacing.md, backgroundColor: 'rgba(220,38,38,0.06)', borderRadius: Radius.lg, marginBottom: Spacing.md },
