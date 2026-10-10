@@ -228,11 +228,20 @@ jobs:
 
       # A single redeploy picks up every variable at once. Without this the flags
       # sit in Railway's config unread — the process only sees them on restart.
+      # `railway redeploy` re-runs the LATEST deployment, and Railway refuses with
+      # "latest deployment cannot be redeployed" when that one is SKIPPED (any
+      # workflow-only or docs-only merge leaves one), building, or removed. The
+      # services are connected to GitHub main, so fall back to pulling and
+      # deploying the latest commit from that source, which has no such limit.
       - name: Redeploy so the new variables take effect
         run: |
           set -euo pipefail
-          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --yes
+          if ! railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes; then
+            echo "Plain redeploy refused; deploying the latest commit from the connected source instead."
+            railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --from-source --yes
+          fi
 
   # frontend-web's Next.js API routes re-check their OWN copy of a module's
   # feature flag (src/lib/feature-flags.ts, e.g. featureFlags.referrals())
@@ -291,8 +300,12 @@ jobs:
       - name: Restart so the new variable takes effect
         run: |
           set -euo pipefail
-          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --yes
+          if ! railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes; then
+            echo "Plain redeploy refused; deploying the latest commit from the connected source instead."
+            railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --from-source --yes
+          fi
 
   fix-proxy:
     name: repoint frontend-web at the private network
@@ -551,8 +564,12 @@ jobs:
       - name: Redeploy the backend so it picks up the new key
         run: |
           set -euo pipefail
-          railway redeploy --service backend --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --yes
+          if ! railway redeploy --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes; then
+            echo "Plain redeploy refused; deploying the latest commit from the connected source instead."
+            railway redeploy --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --from-source --yes
+          fi
 
   set-web-base-url:
     name: set NEXT_PUBLIC_WEB_APP_BASE_URL on frontend-admin
@@ -689,8 +706,12 @@ jobs:
       - name: Redeploy the backend so a fresh process reads it
         run: |
           set -euo pipefail
-          railway redeploy --service backend --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --yes
+          if ! railway redeploy --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes; then
+            echo "Plain redeploy refused; deploying the latest commit from the connected source instead."
+            railway redeploy --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --from-source --yes
+          fi
           echo "  redeploy TRIGGERED - not live until the build reaches SUCCESS."
           echo "  Verify with the staging-inspect workflow, which reports"
           echo "    INSURANCE_MYCOVER_API_KEY = set (len N, sha256 XXXXXXXXXXXX)"
