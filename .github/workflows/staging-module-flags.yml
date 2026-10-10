@@ -102,6 +102,13 @@ jobs:
       - name: Set APP_ENV and the module flags
         run: |
           set -euo pipefail
+          # FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED mounts POST
+          # /api/finance/restaurant/:id/orders/paystack/initiate (finance_routes.go,
+          # ANDed with a configured Paystack client). Unset, the route does not
+          # exist, so the mobile checkout's "Pay with Card/Transfer" got a gin 404
+          # ("No API route matches POST .../orders/paystack/initiate"). Staging
+          # only — and only with a Paystack TEST key; see
+          # docs/runbooks/restaurant-paystack-checkout.md.
           # FEATURE_CONNECT_ENABLED is the umbrella gate for the whole Connect
           # surface (internal/app/connect_routes.go) — every /api/v1/connect/*
           # and /api/connect/admin/* route, including the base "list contests"
@@ -134,6 +141,7 @@ jobs:
             FEATURE_SOCIAL_PAY_ENABLED=true \
             FEATURE_LOYALTY_ENABLED=true \
             FEATURE_RESTAURANT_ENABLED=true \
+            FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED=true \
             FEATURE_TRANSPORT_ENABLED=true \
             FEATURE_TELEMEDICINE_ENABLED=true \
             FEATURE_HEALTH_PHARMACY_ENABLED=true \
@@ -193,7 +201,7 @@ jobs:
           node -e '
             const want = [
               "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS","REFERRAL_REWARDS",
-              "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
+              "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","RESTAURANT_PAYSTACK_CHECKOUT","TRANSPORT","TELEMEDICINE",
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
