@@ -21,7 +21,8 @@ package adminext
 //   - A withdrawal pays the creator OUT to a bank (funds LEAVE the platform). The
 //     balanced payout leg therefore debits the CREATOR'S OWN WALLET, not the
 //     shared escrow account:
-//         DEBIT  creator's user_wallet    (ledger.Debit — balance-checked, TOCTOU-safe)
+//         DEBIT  creator's user_wallet    (ledger.DebitGated — balance- and
+//         cap-checked in-tx under the wallet advisory lock, TOCTOU-safe)
 //         CREDIT AccountProviderClearing  (stage funds for the payout rail)
 //     Debiting AccountEscrow instead would drain money belonging to OTHER
 //     campaigns'/creators' still-unsettled contributions rather than the
@@ -33,8 +34,9 @@ package adminext
 // IRON RULES enforced here:
 //   - integer kobo only (BIGINT throughout);
 //   - a deterministic idempotency key derived from the withdrawal id makes the
-//     whole approval safe to replay (ledger.Debit + guarded UPDATEs);
-//   - a balance-checked double-entry is posted before the terminal state flip —
+//     whole approval safe to replay (ledger.DebitGated + guarded UPDATEs);
+//   - a balance- AND daily-cap-checked double-entry is posted before the
+//     terminal state flip —
 //     insufficient creator balance fails closed, before any state change;
 //   - an immutable cf_audit_logs row is written in the same tx as the flip;
 //   - fail-closed: illegal states are rejected, and a missing ledger dependency
@@ -86,6 +88,15 @@ var ErrInsufficientBalance = errors.New("adminext: creator's wallet balance is i
 // through this door.
 var ErrCampaignFrozen = errors.New("adminext: campaign is frozen — withdrawal payout is disabled")
 
+// ErrWithdrawalPayoutPending marks a transient ledger/idempotency
+// inconsistency: DebitGated reported ErrDuplicate for a key whose journal is
+// NOT durably posted (e.g. the Redis idem-lock outlived a failed post inside
+// its TTL window). RETRYABLE — callers map it to a 503-style response so the
+// admin retries; a later attempt either posts the legs or heals them (the
+// escrow.ErrReconPending convention). The payout must never flip COMPLETED
+// on a phantom duplicate — that would mark the creator paid with zero legs.
+var ErrWithdrawalPayoutPending = errors.New("adminext: ledger reported duplicate but the payout journal is not posted — retryable inconsistency")
+
 // ApproveWithdrawalResult summarises the outcome of an approval.
 type ApproveWithdrawalResult struct {
 	ID         string `json:"id"`
@@ -110,7 +121,11 @@ type ApproveWithdrawalResult struct {
 //
 // A nil idempotencyKey/approverID or a missing ledger dependency fails closed
 // BEFORE any state change. The ledger posting is idempotent (Redis fast-path +
-// DB unique constraint on idempotency_key) so ErrDuplicate on replay is success.
+// DB unique constraint on idempotency_key), but ErrDuplicate alone is NOT
+// proof the money moved — a Redis-lock duplicate can outlive a failed post,
+// and a foreign journal can hold the key. A duplicate is re-probed against
+// the ledger of record (Posted + per-leg identity via EntryByKey) before the
+// COMPLETED flip is allowed (F-1).
 func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverID, idempotencyKey string) (*ApproveWithdrawalResult, error) {
 	if withdrawalID == "" {
 		return nil, errors.New("adminext: withdrawal id is required")
@@ -170,10 +185,20 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		return nil, fmt.Errorf("adminext: resolve clearing account: %w", err)
 	}
 	posted := true
-	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, amount); err != nil {
+	if err := s.ledger.DebitGated(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, amount); err != nil {
 		switch {
 		case errors.Is(err, financeledger.ErrDuplicate):
-			posted = false // already posted on an earlier attempt — safe to continue
+			// Key existence is not proof the payout journal committed (F-1):
+			// a Redis-lock duplicate inside the TTL window reports ErrDuplicate
+			// with NO durable legs, and a foreign journal could hold the key.
+			// Re-prove against the ledger of record before letting the row
+			// flip COMPLETED — an unposted duplicate is retryable-pending,
+			// a foreign claim is a hard conflict. Neither may mark the
+			// creator paid with zero legs.
+			if perr := s.verifyPayoutLegs(ctx, creatorID, reference, payoutIdem, clearingAcc.ID, amount); perr != nil {
+				return nil, perr
+			}
+			posted = false // durable journal confirmed — safe to continue
 		case errors.Is(err, financeledger.ErrInsufficientFunds):
 			return nil, ErrInsufficientBalance
 		default:
@@ -234,4 +259,50 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		ID: withdrawalID, Reference: reference, Status: wStatusCompleted,
 		AmountKobo: amount, Posted: posted,
 	}, nil
+}
+
+// verifyPayoutLegs re-proves a duplicate-keyed payout journal against the
+// ledger of record before the withdrawal may flip COMPLETED (F-1). Key
+// existence is never proof the money moved; BOTH legs must exist and carry
+// THIS payout's identity (the settlement.verifyEscrowDebitLegs standard):
+//   - "<payoutIdem>:debit"  → THIS creator's user_wallet, DEBIT,
+//     "cf:withdraw:<reference>", the exact amount;
+//   - "<payoutIdem>:credit" → the provider-clearing account, CREDIT, the
+//     same reference and amount.
+//
+// A duplicate with no durable legs is ErrWithdrawalPayoutPending (retryable
+// — a later attempt posts or heals the journal); a journal whose identity
+// doesn't match is an ErrDuplicate-wrapped permanent conflict — never heal
+// a COMPLETED flip onto legs that aren't this payout's.
+func (s *Service) verifyPayoutLegs(ctx context.Context, creatorID, reference, payoutIdem, clearingAccID string, amount int64) error {
+	posted, err := s.ledger.Posted(ctx, payoutIdem)
+	if err != nil {
+		return fmt.Errorf("adminext: verify payout journal after duplicate: %w", err)
+	}
+	if !posted {
+		return fmt.Errorf("%w: payout for key %s", ErrWithdrawalPayoutPending, payoutIdem)
+	}
+	walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, creatorID)
+	if err != nil {
+		return fmt.Errorf("adminext: resolve creator wallet for payout verification: %w", err)
+	}
+	wantRef := "cf:withdraw:" + reference
+	dr, drFound, err := s.ledger.EntryByKey(ctx, payoutIdem+":debit")
+	if err != nil {
+		return fmt.Errorf("adminext: read payout debit leg: %w", err)
+	}
+	cr, crFound, err := s.ledger.EntryByKey(ctx, payoutIdem+":credit")
+	if err != nil {
+		return fmt.Errorf("adminext: read payout credit leg: %w", err)
+	}
+	ours := drFound && crFound &&
+		dr.AccountID == walletAcc.ID && dr.Type == financeledger.EntryDebit &&
+		dr.Reference == wantRef && dr.AmountKobo == amount &&
+		cr.AccountID == clearingAccID && cr.Type == financeledger.EntryCredit &&
+		cr.Reference == wantRef && cr.AmountKobo == amount
+	if !ours {
+		return fmt.Errorf("%w: key %s held by a different journal — refusing to complete the withdrawal",
+			financeledger.ErrDuplicate, payoutIdem)
+	}
+	return nil
 }

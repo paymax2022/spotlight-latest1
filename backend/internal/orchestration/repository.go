@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // sqlStore is the production, Postgres-backed Store. Money moves happen inside a
@@ -139,7 +140,7 @@ func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTot
 	// Debit source / credit destination through the pot selector: NGN moves in
 	// the main ledger, every other currency in orch_balances. The sufficiency
 	// check happens inside the debit, under this lock, in this transaction.
-	if err = debitCustomerWallet(ctx, tx, c.CustomerID, c.Source.Currency, sourceTotalMinor, c.Reference, c.IdempotencyKey+":src"); err != nil {
+	if err = debitCustomerWallet(ctx, tx, tiers.NewService(s.db), c.CustomerID, c.Source.Currency, sourceTotalMinor, c.Reference, c.IdempotencyKey+":src"); err != nil {
 		return err
 	}
 	if err = creditCustomerWallet(ctx, tx, c.CustomerID, c.Destination.Currency, c.Destination.AmountMinor, c.Reference, c.IdempotencyKey+":dst"); err != nil {
@@ -191,7 +192,7 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 	}
 	// Payout funding goes through the same pot selector as a conversion, so a
 	// NGN payout draws down the wallet the rest of the app shows.
-	if err = debitCustomerWallet(ctx, tx, t.CustomerID, t.Source.Currency, sourceTotalMinor, t.Reference, t.IdempotencyKey+":out"); err != nil {
+	if err = debitCustomerWallet(ctx, tx, tiers.NewService(s.db), t.CustomerID, t.Source.Currency, sourceTotalMinor, t.Reference, t.IdempotencyKey+":out"); err != nil {
 		return err
 	}
 	// Double-entry, balanced within the source currency (ADR-029). A payout only ever

@@ -29,6 +29,10 @@ type Auditor interface {
 // Tier-0 checkout allowance (ADR-043) does NOT apply here.
 type walletDebitLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceWalletDebitLimitTx is the SAME check evaluated inside the debiting
+	// transaction under the wallet advisory lock — the authoritative half of
+	// the gate (F7). Satisfies ledger.DebitGuard.
+	EnforceWalletDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
@@ -173,9 +177,16 @@ func (s *Service) hold(ctx context.Context, payerID, payeeID, reference, moduleT
 		// Tier gate (fail-closed, E2E-FIN-046): a hold is a wallet debit, so the
 		// same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
 		// money moves — a refused attempt posts zero ledger legs and no hold
-		// row. Fresh attempts only: replays of a completed key already returned
-		// the existing hold above, and replays of a debit-only crash take the
-		// heal branch.
+		// row. This pooled call is the ADVISORY half only (fast early refusal);
+		// postHoldDebit re-runs the same check inside the debit tx under the
+		// wallet advisory lock via ledger.DebitWithGuard — the authoritative
+		// half that closes F7 (two concurrent holds can both pass the pooled
+		// read; the serialised in-tx read admits only one). Fresh attempts
+		// only: replays of a completed key already returned the existing hold
+		// above, and replays of a debit-only crash take the heal branch — the
+		// in-tx guard is skipped on a verified committed replay by the
+		// ledger's replay-first ordering, so a retry is never refused by
+		// re-counting its own posted legs.
 		if err := s.enforceDebitLimit(ctx, payerID, amountKobo); err != nil {
 			return nil, err
 		}
@@ -253,7 +264,17 @@ func (s *Service) maybePinPayee(ctx context.Context, h *Hold, payerID, payeeID s
 // posted matching leg is a no-op success; a foreign claim under the key fails
 // closed via verifyHoldDebitLeg (mirrors ensureResolutionCredit).
 func (s *Service) postHoldDebit(ctx context.Context, payerID, reference, holdKey, escrowAccID string, amountKobo int64) error {
-	err := s.led.Debit(ctx, payerID, "escrow:"+reference, holdKey, escrowAccID, amountKobo)
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	// DebitWithGuard carries the tier check INTO the posting tx: the daily-cap
+	// sum is evaluated under pg_advisory_xact_lock("wallet:"+payerID) — the same
+	// lock every gated wallet debit takes — immediately before the legs insert,
+	// so concurrent holds on one wallet cannot collectively overshoot the cap
+	// (F7). The guard runs after the repo's replay verification, so a committed
+	// prior journal under holdKey converges without re-gating.
+	err := s.led.DebitWithGuard(ctx, payerID, "escrow:"+reference, holdKey, escrowAccID, amountKobo,
+		s.tiers.EnforceWalletDebitLimitTx)
 	if err == nil {
 		return nil
 	}

@@ -87,6 +87,10 @@ func TestLiveDB_ConnectWalletTransfer_ConcurrentCannotOverdraw(t *testing.T) {
 
 	sender := connectTransferUser(t, pool)
 	recipient := connectTransferUser(t, pool)
+	// The adapter debits via DebitGated (F7-serialised strict tier gate), so
+	// the sender fixture must hold a wallet-enabled KYC tier — seeded users
+	// default to Tier 0 = wallet disabled.
+	testsupport.SetKycTier(t, ctx, pool, sender, testsupport.KycTierUnlimited)
 	connectTransferFund(t, ledgerSvc, sender, 100_000)
 
 	const attempts = 8
@@ -142,6 +146,7 @@ func TestLiveDB_ConnectWalletTransfer_SameKeyReplayIsNoop(t *testing.T) {
 
 	sender := connectTransferUser(t, pool)
 	recipient := connectTransferUser(t, pool)
+	testsupport.SetKycTier(t, ctx, pool, sender, testsupport.KycTierUnlimited)
 	// Fund enough that the replay's pre-insert balance check still passes and
 	// the dedup path is what runs — the balance check fires before the key
 	// conflict is discovered, by design.

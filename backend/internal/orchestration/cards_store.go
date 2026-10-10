@@ -33,6 +33,7 @@ import (
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/provider"
 )
 
@@ -380,7 +381,7 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 	// pot selector as conversions and payouts, so an NGN card top-up draws down
 	// the main-ledger wallet rather than a private FX pot that is always empty.
 	// Missing/short → fail-closed.
-	if err = debitCustomerWallet(ctx, tx, business, currency, amountMinor, "card-funding:"+id, cardFundIdem(business, id, idemKey)); err != nil {
+	if err = debitCustomerWallet(ctx, tx, tiers.NewService(s.db), business, currency, amountMinor, "card-funding:"+id, cardFundIdem(business, id, idemKey)); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Type == ErrInsufficientBalance {
 			return Card{}, ErrInsufficientCardBalance

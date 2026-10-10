@@ -232,7 +232,7 @@ func (s *Service) ensureSubscribeDebit(ctx context.Context, userID string, order
 	if err := s.enforceDebitLimit(ctx, userID, order.CashKobo); err != nil {
 		return err
 	}
-	err := s.led.Debit(ctx, userID, order.LedgerRef, walletKey, clearingAcct, order.CashKobo)
+	err := s.led.DebitGated(ctx, userID, order.LedgerRef, walletKey, clearingAcct, order.CashKobo)
 	if err == nil {
 		return nil
 	}

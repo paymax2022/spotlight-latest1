@@ -154,6 +154,18 @@ func (f *fakeLedger) Debit(_ context.Context, _, _, idem, _ string, _ int64) err
 	f.debits++
 	return nil
 }
+
+// DebitGated satisfies LedgerPort — the fake needs no in-tx tier check; the
+// serialization property is exercised by the tiers/ledger live-DB suites.
+func (f *fakeLedger) DebitGated(ctx context.Context, a, b, c, d string, e int64) error {
+	return f.Debit(ctx, a, b, c, d, e)
+}
+
+// Posted satisfies LedgerPort — the fake tracks committed keys in idem.
+func (f *fakeLedger) Posted(_ context.Context, idem string) (bool, error) {
+	return f.idem[idem], nil
+}
+
 func (f *fakeLedger) StandingAccountID(context.Context, string) (string, error) {
 	return "acct-pot", nil
 }
@@ -218,6 +230,11 @@ func (f *realReplayLedger) Debit(_ context.Context, _, _, idem, _ string, _ int6
 	f.debits++
 	return nil
 }
+
+// DebitGated satisfies LedgerPort — same replay contract as Debit.
+func (f *realReplayLedger) DebitGated(ctx context.Context, a, b, c, d string, e int64) error {
+	return f.Debit(ctx, a, b, c, d, e)
+}
 func (f *realReplayLedger) Credit(_ context.Context, _, _, idem, _ string, _ int64) error {
 	if f.seen[idem] {
 		return ledger.ErrDuplicate
@@ -226,6 +243,12 @@ func (f *realReplayLedger) Credit(_ context.Context, _, _, idem, _ string, _ int
 	f.credits++
 	return nil
 }
+
+// Posted satisfies LedgerPort — seen keys are the committed journals.
+func (f *realReplayLedger) Posted(_ context.Context, idem string) (bool, error) {
+	return f.seen[idem], nil
+}
+
 func (f *realReplayLedger) StandingAccountID(context.Context, string) (string, error) {
 	return "acct-pot", nil
 }

@@ -23,6 +23,9 @@ type Handler struct{ svc *Service }
 var errMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusNotFound, ErrWithdrawalNotFound, ErrCampaignNotFound, ErrFeatureRequestNotFound),
 	httperr.R(http.StatusConflict, ErrWithdrawalIllegalState, ErrInsufficientBalance, ErrCampaignNotActive, ErrFeatureRequestNotPending),
+	// ErrWithdrawalPayoutPending is RETRYABLE (a duplicate-keyed payout whose
+	// journal isn't durable yet) — 503 so the admin retries, never 4xx.
+	httperr.R(http.StatusServiceUnavailable, ErrWithdrawalPayoutPending),
 )
 
 // NewHandler constructs the admin handler.

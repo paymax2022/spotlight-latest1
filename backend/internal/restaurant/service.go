@@ -75,6 +75,12 @@ type TierLimiter interface {
 	// Merchant withdrawals deliberately keep EnforceWalletDebitLimit — cash out is
 	// never relaxed.
 	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// The Tx variants are the SAME checks evaluated inside the debiting
+	// transaction under the wallet advisory lock — the authoritative half of
+	// each gate (F7): the pooled calls above are advisory pre-checks only.
+	// Satisfies ledger.DebitGuard for EscrowWithGuard / in-tx calls.
+	EnforceWalletDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
+	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // ErrTierGateUnwired is returned by every restaurant money path when the Service was
@@ -875,7 +881,10 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	if external {
 		sett, err = s.settlement.EscrowExternal(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
 	} else {
-		sett, err = s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
+		// EscrowWithGuard re-runs the checkout allowance INSIDE the debit tx
+		// under the wallet lock (F7) — the pooled gate above is advisory only.
+		sett, err = s.settlement.EscrowWithGuard(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total,
+			s.tiers.EnforceCheckoutDebitLimitTx)
 	}
 	if err != nil {
 		s.releasePromoReservationSafe(ctx, promoID, orderID)

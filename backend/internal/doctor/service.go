@@ -265,8 +265,18 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 	//     purchase. The Tier-0 checkout allowance (ADR-043) must never reach it —
 	//     ADR-042 permits an unverified account to move money only because it
 	//     cannot get value out, and this is exactly the way out.
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, req.AmountKobo); err != nil {
-		return nil, fmt.Errorf("doctor: payout tier check (fail closed): %w", err)
+	//     The pooled read is SKIPPED when this key's journal already committed
+	//     (F2): a retry whose debit legs posted but whose payout row insert died
+	//     must reach DebitGated's in-tx replay verification, not refuse at-cap
+	//     with the money already moved.
+	posted, err := s.ledger.Posted(ctx, idemKey)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: payout replay probe: %w", err)
+	}
+	if !posted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, req.AmountKobo); err != nil {
+			return nil, fmt.Errorf("doctor: payout tier check (fail closed): %w", err)
+		}
 	}
 
 	// (3) Balanced double-entry: debit the doctor's wallet, credit the settlement
@@ -277,7 +287,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		return nil, fmt.Errorf("doctor: resolve settlement account: %w", err)
 	}
 	ledgerRef := "doctor:payout:" + idemKey
-	if err := s.ledger.Debit(ctx, userID, ledgerRef, idemKey, settlementAcc.ID, req.AmountKobo); err != nil {
+	if err := s.ledger.DebitGated(ctx, userID, ledgerRef, idemKey, settlementAcc.ID, req.AmountKobo); err != nil {
 		// Insufficient funds / duplicate ledger key surface to the handler.
 		return nil, err
 	}

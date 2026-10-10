@@ -80,6 +80,36 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 	return orderID, false, nil
 }
 
+// SwapOrderByIdem returns the recorded swap order for an idempotency key —
+// the replay anchor consulted BEFORE the holdings re-check. The order row is
+// written last in Swap (after every cash leg), so a found row means the whole
+// swap is durable and the replay can return it directly.
+func (r *Repository) SwapOrderByIdem(ctx context.Context, idemKey string) (*SwapOrder, error) {
+	const q = `SELECT s.id, s.user_id, s.from_asset_id, fa.symbol, s.to_asset_id, ta.symbol,
+	                  s.status, s.from_units, s.to_units, s.from_price_kobo, s.to_price_kobo,
+	                  s.cash_kobo, s.spread_kobo, s.spread_bps, s.reference, s.created_at
+	           FROM crypto_swap_orders s
+	           JOIN crypto_assets fa ON fa.id = s.from_asset_id
+	           JOIN crypto_assets ta ON ta.id = s.to_asset_id
+	           WHERE s.idempotency_key=$1`
+	var o SwapOrder
+	var ref *string
+	err := r.db.QueryRow(ctx, q, idemKey).Scan(&o.ID, &o.UserID, &o.FromAssetID, &o.FromSymbol,
+		&o.ToAssetID, &o.ToSymbol, &o.Status, &o.FromUnits, &o.ToUnits, &o.FromPriceKobo,
+		&o.ToPriceKobo, &o.CashKobo, &o.SpreadKobo, &o.SpreadBps, &ref, &o.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("crypto: load swap order by key: %w", err)
+	}
+	if ref != nil {
+		o.Reference = *ref
+	}
+	o.idem = idemKey
+	return &o, nil
+}
+
 // SwapOrdersForUser returns the caller's swap history (newest first).
 func (r *Repository) SwapOrdersForUser(ctx context.Context, userID string, limit, offset int) ([]SwapOrder, error) {
 	const q = `SELECT s.id, s.user_id, s.from_asset_id, fa.symbol, s.to_asset_id, ta.symbol,

@@ -8,6 +8,7 @@ import (
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/provider"
@@ -272,9 +273,12 @@ const ReviewPermission = "business.registry.review"
 
 // RouteDeps carries the collaborators to wire the business-registry routes.
 type RouteDeps struct {
-	Pool     *pgxpool.Pool
-	Ledger   *ledger.Service
-	Wallet   *wallet.Service
+	Pool   *pgxpool.Pool
+	Ledger *ledger.Service
+	Wallet *wallet.Service
+	// Tiers runs the advisory pooled daily-cap check on the SUM of the two fee
+	// legs before leg 1 posts (F3) — same *tiers.Service the wallet uses.
+	Tiers    *tiers.Service
 	Provider cac.BusinessRegistryProvider
 	Payment  provider.PaymentProvider // Paystack gateway for the fee (optional)
 	RBAC     services.RBACService
@@ -295,6 +299,7 @@ func Register(member, admin *gin.RouterGroup, d RouteDeps) *Service {
 		Repo:                 NewRepository(d.Pool),
 		Ledger:               d.Ledger,
 		Wallet:               d.Wallet,
+		Tiers:                d.Tiers,
 		Provider:             d.Provider,
 		Payment:              d.Payment,
 		FeeKobo:              d.FeeKobo,

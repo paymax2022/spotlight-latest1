@@ -275,15 +275,22 @@ func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amo
 	// wallet — the same EnforceWalletDebitLimit the transfer rail runs. The
 	// scheduled auto-save path (autoSaveRunner → Deposit) rides through this
 	// check too, so a downgraded member's recurring saves also refuse.
-	if err := enforceDebitLimit(s.tiers, ctx, ownerID, amountKobo); err != nil {
+	// SKIPPED when this key's debit leg already committed (F2): a retry whose
+	// wallet debit posted must reach DebitGated's in-tx replay verification,
+	// not refuse at-cap after the money already moved.
+	if posted, err := s.led.Posted(ctx, idemKey+":wallet"); err != nil {
 		return 0, err
+	} else if !posted {
+		if err := enforceDebitLimit(s.tiers, ctx, ownerID, amountKobo); err != nil {
+			return 0, err
+		}
 	}
 	// Real money leaves the main wallet into the shared escrow/savings hold.
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.led.Debit(ctx, ownerID, "savings:deposit:"+vaultID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, ownerID, "savings:deposit:"+vaultID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("savings: wallet debit: %w", err)
 	}
 	if err := s.appendVaultEntry(ctx, vaultID, "CREDIT", amountKobo, "deposit", idemKey+":vault"); err != nil {
@@ -497,4 +504,8 @@ var (
 	ErrForbidden         = errors.New("savings: forbidden")
 	ErrLockedVault       = errors.New("savings: lock vault not yet matured")
 	ErrInsufficientVault = errors.New("savings: insufficient vault balance")
+	// ErrReconPending — a ledger leg key was claimed duplicate but no durable
+	// legs back the claim. Retryable: never count a contribution (or settle
+	// any row) as though the journal posted.
+	ErrReconPending = errors.New("savings: ledger leg not durably posted — retry")
 )

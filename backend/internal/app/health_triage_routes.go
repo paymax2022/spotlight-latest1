@@ -103,15 +103,26 @@ type triagePayment struct {
 
 func (p triagePayment) Charge(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (string, error) {
 	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
-	// transfer rail applies — a refused attempt posts zero ledger legs.
-	if err := enforceAdapterDebitLimit(ctx, p.tiers, userID, amountMinor); err != nil {
+	// transfer rail applies — a refused attempt posts zero ledger legs. The
+	// pooled read is SKIPPED when this key's journal already committed (F2): a
+	// replay of money that already moved must reach DebitGated's in-tx replay
+	// verification, or an at-cap retry wedges with the charge already posted.
+	posted, err := p.l.Posted(ctx, idemKey)
+	if err != nil {
 		return "", err
+	}
+	if !posted {
+		if err := enforceAdapterDebitLimit(ctx, p.tiers, userID, amountMinor); err != nil {
+			return "", err
+		}
 	}
 	acc, err := p.l.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return "", err
 	}
-	if err := p.l.Debit(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
+	// DebitGated re-runs the strict cap INSIDE the debit tx under the wallet
+	// lock (F7) — the pooled gate above is advisory only.
+	if err := p.l.DebitGated(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
 		return "", err
 	}
 	return idemKey, nil

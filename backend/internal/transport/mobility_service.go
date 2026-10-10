@@ -163,7 +163,7 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 		if external {
 			sett, err = s.settlement.EscrowExternal(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
 		} else {
-			sett, err = s.settlement.Escrow(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
+			sett, err = s.escrowCheckout(ctx, riderID, ref, idempotencyKey, escrowKobo)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("transport: escrow fare: %w", err)
@@ -393,7 +393,7 @@ func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) e
 	}
 	deltaRef := deltaEscrowKey(t.ID, newFare)
 	idem := deltaRef // stable, derived from trip id + target fare
-	if _, err := s.settlement.Escrow(ctx, t.RiderID, deltaRef, idem, "transport", delta); err != nil {
+	if _, err := s.escrowCheckout(ctx, t.RiderID, deltaRef, idem, delta); err != nil {
 		return fmt.Errorf("transport: escrow delta: %w", err)
 	}
 	return nil

@@ -31,6 +31,7 @@ import (
 
 	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 
 	"spotlight/backend/internal/testsupport"
 )
@@ -51,7 +52,9 @@ func internalLedgerPool(t *testing.T) *pgxpool.Pool {
 }
 
 // seedAuthUser inserts an auth.users row (ledger_accounts.user_id may FK it) and
-// returns the id.
+// returns the id. The user is promoted to the unlimited KYC tier because
+// balanceChecked wallet debits now run the strict in-tx daily-cap gate (F7) —
+// an untiered user fails closed.
 func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 	t.Helper()
 	uid := uuid.NewString()
@@ -60,15 +63,19 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, uid)
+	testsupport.SetKycTier(t, context.Background(), pool, uid, testsupport.KycTierUnlimited)
 	return uid
 }
 
 // newInternalLedgerRouter builds a gin engine with ONLY the internal ledger API
-// mounted (flag on, token set), backed by a real ledger.Service over pool.
+// mounted (flag on, token set), backed by a real ledger.Service over pool. The
+// strict in-tx debit guard is wired exactly like production (F7): a
+// balanceChecked user-wallet debit must observe the daily cap.
 func newInternalLedgerRouter(pool *pgxpool.Pool) (*gin.Engine, *financeledger.Service) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
+	ledgerSvc.SetDebitGuard(tiers.NewService(pool).EnforceWalletDebitLimitTx)
 	cfg := config.Config{
 		FeatureInternalLedgerAPIEnabled: true,
 		LedgerServiceToken:              testServiceToken,
@@ -196,6 +203,69 @@ func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 	_ = json.Unmarshal(bw.Body.Bytes(), &balResp)
 	if balResp.BalanceKobo != 70_000 {
 		t.Fatalf("balance endpoint = %d, want 70000", balResp.BalanceKobo)
+	}
+}
+
+// TestInternalLedgerAPI_UncheckedUserWalletDebitRefused_Integration pins the
+// fail-closed combination: a service-token caller must never post an
+// UNCHECKED user-wallet debit — it would bypass BOTH the sufficiency check
+// and the strict daily cap (in-tx since F7). The route answers 400 before any
+// posting; the wallet balance must be untouched.
+func TestInternalLedgerAPI_UncheckedUserWalletDebitRefused_Integration(t *testing.T) {
+	pool := internalLedgerPool(t)
+	t.Cleanup(pool.Close)
+	r, ledgerSvc := newInternalLedgerRouter(pool)
+	ctx := context.Background()
+
+	uid := seedAuthUser(t, pool)
+
+	// Fund the wallet via the legitimate system→user direction.
+	w := postJournal(t, r, testServiceToken, map[string]any{
+		"userId":         uid,
+		"debitAccount":   "settlement",
+		"creditAccount":  "user_wallet",
+		"amountKobo":     100_000,
+		"reference":      "trade:fund:" + uid,
+		"idempotencyKey": "il-uw-fund-" + uid,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("fund: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// DR user_wallet WITHOUT balanceChecked → refused 400, no legs posted.
+	w = postJournal(t, r, testServiceToken, map[string]any{
+		"userId":         uid,
+		"debitAccount":   "user_wallet",
+		"creditAccount":  "settlement",
+		"amountKobo":     10_000,
+		"reference":      "trade:unchecked:" + uid,
+		"idempotencyKey": "il-unchecked-" + uid,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unchecked user_wallet debit: status=%d body=%s, want 400", w.Code, w.Body.String())
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &errResp)
+	if errResp.Error != "user_wallet debits require balanceChecked=true" {
+		t.Fatalf("unchecked debit error = %q, want the balanceChecked refusal", errResp.Error)
+	}
+	if bal, _ := ledgerSvc.GetBalance(ctx, uid); bal != 100_000 {
+		t.Fatalf("balance after refused debit = %d, want 100000 (no posting)", bal)
+	}
+
+	// System↔system unchecked journals still post (no wallet leg to guard).
+	w = postJournal(t, r, testServiceToken, map[string]any{
+		"userId":         uid,
+		"debitAccount":   "settlement",
+		"creditAccount":  "provider_clearing",
+		"amountKobo":     5_000,
+		"reference":      "trade:sys:" + uid,
+		"idempotencyKey": "il-sys-" + uid,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("system journal: status=%d body=%s, want 200", w.Code, w.Body.String())
 	}
 }
 

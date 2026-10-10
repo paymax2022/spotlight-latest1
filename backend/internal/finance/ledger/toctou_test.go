@@ -20,7 +20,7 @@ func TestDebitWithBalanceCheckRejectsNonPositive(t *testing.T) {
 		CreditAccountID: "acct-escrow",
 	}
 	for _, amt := range []int64{0, -1, -100_000} {
-		if err := repo.DebitWithBalanceCheck(context.Background(), "user-1", j, amt); err == nil {
+		if err := repo.DebitWithBalanceCheck(context.Background(), "user-1", j, amt, nil); err == nil {
 			t.Errorf("DebitWithBalanceCheck(amount=%d) must reject non-positive amount", amt)
 		}
 	}

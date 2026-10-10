@@ -210,6 +210,19 @@ func getBalanceTx(ctx context.Context, tx pgx.Tx, accountID string) (int64, erro
 	return balance, nil
 }
 
+// DebitGuard is a fail-closed check evaluated INSIDE the debit transaction,
+// after the replay check and the in-tx balance projection but before the
+// journal legs insert — i.e. under the wallet's pg_advisory_xact_lock, so its
+// reads are serialised against every other locked debit on the same wallet.
+// This is the hook that lets the KYC-tier daily-debit cap
+// (tiers.EnforceWalletDebitLimitTx) close the F7 TOCTOU: a cap check run on
+// the pool before the debit can be passed by two concurrent debits that then
+// both post; run here it sees every committed ledger entry a lock-honouring
+// peer wrote.
+// It receives (tx, userID, amountKobo) — userID is the wallet owner the lock
+// covers — and returning any error aborts the whole tx (no legs post).
+type DebitGuard func(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
+
 // DebitWithBalanceCheck performs the balance sufficiency check and the balanced
 // debit/credit insert as ONE atomic, serialised unit — closing the TOCTOU race
 // where two concurrent debits both pass a pre-debit balance check and overdraw.
@@ -218,11 +231,13 @@ func getBalanceTx(ctx context.Context, tx pgx.Tx, accountID string) (int64, erro
 //     no lock cycle.
 //   - The balance is re-projected INSIDE the tx (getBalanceTx); short →
 //     ErrInsufficientFunds.
+//   - guard, when non-nil, runs under the same lock before the legs insert
+//     (see DebitGuard) — the tier daily-cap check plugs in here.
 //   - The balanced pair posts on the same tx; per-side unique idempotency_key
 //   - ON CONFLICT DO NOTHING makes a replay a no-op.
 //
 // walletLockKey is the owner of the wallet being drawn down.
-func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey string, j JournalEntry, amountKobo int64) error {
+func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey string, j JournalEntry, amountKobo int64, guard DebitGuard) error {
 	if amountKobo <= 0 {
 		return fmt.Errorf("ledger: debit amount must be positive kobo, got %d", amountKobo)
 	}
@@ -262,6 +277,16 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	}
 	if balance < amountKobo {
 		return ErrInsufficientFunds
+	}
+
+	// Optional policy guard under the SAME lock — the tier daily-debit cap.
+	// It runs AFTER the replay check (a committed journal converges regardless
+	// of today's usage) and after sufficiency, and any refusal rolls the whole
+	// tx back, so a refused attempt posts zero legs.
+	if guard != nil {
+		if err := guard(ctx, tx, walletLockKey, amountKobo); err != nil {
+			return err
+		}
 	}
 
 	// Balanced pair on the SAME tx. ON CONFLICT makes a retry idempotent — but
@@ -410,6 +435,91 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("ledger: insert credit entry: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// PostJournalWithGuard writes a balanced journal like PostJournal, but inside
+// the wallet's advisory lock and behind a replay-verified guard — the
+// user_wallet-debit counterpart of DebitWithBalanceCheck for callers that post
+// via planned journal legs (maplerad) rather than the wallet-Debit primitive.
+//   - pg_advisory_xact_lock(hashtext("wallet:"+walletLockKey)) — same key
+//     namespace as DebitWithBalanceCheck, so a journal-debit serialises
+//     against a wallet debit on the same user.
+//   - The replay check (journalLegsMatchTx) runs BEFORE the guard: a committed
+//     journal converges on its original outcome even when today's cap would
+//     now refuse (the money is already counted); a foreign claim fails closed.
+//   - guard runs under the lock with (tx, userID=walletLockKey,
+//     j.AmountKobo); any refusal rolls back before a leg lands.
+//
+// Callers must use this ONLY when j.DebitAccountID is the user's own wallet —
+// for standing-to-standing journals the wallet lock is meaningless (use
+// PostJournal).
+func (r *Repository) PostJournalWithGuard(ctx context.Context, j JournalEntry, walletLockKey string, guard DebitGuard) error {
+	if j.AmountKobo <= 0 {
+		return fmt.Errorf("ledger: amount must be positive kobo, got %d", j.AmountKobo)
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ledger: begin guarded journal tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
+	if _, err := tx.Exec(ctx, lock, "wallet:"+walletLockKey); err != nil {
+		return fmt.Errorf("ledger: advisory lock wallet=%s: %w", walletLockKey, err)
+	}
+
+	matched, held, err := journalLegsMatchTx(ctx, tx, j, j.AmountKobo)
+	if err != nil {
+		return err
+	}
+	if held {
+		if matched {
+			return nil // true replay — this journal already posted identically
+		}
+		return fmt.Errorf("%w: key %s held by a different journal", ErrDuplicate, j.IdempotencyKey)
+	}
+
+	// Sufficiency check under the same lock — the debit leg is the wallet, so
+	// an unlocked caller-side balance check could otherwise let a concurrent
+	// debit overdraw between read and post (same TOCTOU DebitWithBalanceCheck
+	// closes).
+	balance, err := getBalanceTx(ctx, tx, j.DebitAccountID)
+	if err != nil {
+		return err
+	}
+	if balance < j.AmountKobo {
+		return ErrInsufficientFunds
+	}
+
+	if guard != nil {
+		if err := guard(ctx, tx, walletLockKey, j.AmountKobo); err != nil {
+			return err
+		}
+	}
+
+	const insertEntry = `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	tag, err := tx.Exec(ctx, insertEntry,
+		j.DebitAccountID, string(EntryDebit), j.AmountKobo, j.Reference, j.IdempotencyKey+":debit")
+	if err != nil {
+		return fmt.Errorf("ledger: insert debit entry: %w", err)
+	}
+	if err := verifyReplay(ctx, tx, j.IdempotencyKey+":debit", j.DebitAccountID, j.Reference, EntryDebit, j.AmountKobo, tag); err != nil {
+		return err
+	}
+	tag, err = tx.Exec(ctx, insertEntry,
+		j.CreditAccountID, string(EntryCredit), j.AmountKobo, j.Reference, j.IdempotencyKey+":credit")
+	if err != nil {
+		return fmt.Errorf("ledger: insert credit entry: %w", err)
+	}
+	if err := verifyReplay(ctx, tx, j.IdempotencyKey+":credit", j.CreditAccountID, j.Reference, EntryCredit, j.AmountKobo, tag); err != nil {
+		return err
 	}
 
 	return tx.Commit(ctx)

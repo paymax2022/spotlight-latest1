@@ -77,6 +77,18 @@ func (l *LedgerAdapter) Debit(ctx context.Context, userID, reference, idempotenc
 	return l.svc.Debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
 }
 
+// DebitGated posts a wallet debit with the strict daily-debit cap checked
+// inside the posting tx under the wallet advisory lock (F7-serialised).
+func (l *LedgerAdapter) DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
+	return l.svc.DebitGated(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
+}
+
+// Posted reports whether the journal under baseIdempotencyKey already
+// committed — used to skip the pooled advisory cap on a replay (F2).
+func (l *LedgerAdapter) Posted(ctx context.Context, baseIdempotencyKey string) (bool, error) {
+	return l.svc.Posted(ctx, baseIdempotencyKey)
+}
+
 // StandingAccountID resolves (or creates) a standing account id by type name.
 func (l *LedgerAdapter) StandingAccountID(ctx context.Context, accountType string) (string, error) {
 	acc, err := l.svc.GetOrCreateStandingAccount(ctx, ledger.AccountType(accountType))

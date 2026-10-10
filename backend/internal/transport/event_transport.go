@@ -194,7 +194,7 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 
 	bookingID := uuid.New().String()
 	ref := "event_transport:" + bookingID
-	sett, err := s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", total)
+	sett, err := s.escrowCheckout(ctx, userID, ref, idempotencyKey, total)
 	if err != nil {
 		return nil, fmt.Errorf("transport: escrow event fare: %w", err)
 	}

@@ -59,7 +59,7 @@ func (h *Handler) PayDues(c *gin.Context) {
 
 var duesErrMap = httperr.New(http.StatusConflict,
 	httperr.R(http.StatusBadRequest, ErrIdempotencyRequired),
-	httperr.R(http.StatusServiceUnavailable, ErrLedgerUnavailable),
+	httperr.R(http.StatusServiceUnavailable, ErrLedgerUnavailable, ErrLedgerReconPending),
 )
 
 func (h *Handler) ApplyRestriction(c *gin.Context) {

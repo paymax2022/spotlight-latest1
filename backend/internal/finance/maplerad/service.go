@@ -247,8 +247,19 @@ func (s *Service) InitiateTransfer(ctx context.Context, userID string, req Trans
 	if err := s.requireTier(ctx, userID, RequiredTransferTier); err != nil {
 		return nil, err
 	}
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, total); err != nil {
-		return nil, err
+	// The pooled cap is SKIPPED when the hold leg for this ref already
+	// committed (F2): a retry whose PlanHold journal posted must reach the
+	// InsertReference replay below (stored row) and PostJournalGated's in-tx
+	// verification — refusing at-cap here would wedge a transfer whose money
+	// already moved.
+	holdPosted, err := s.ledger.Posted(ctx, LegKey(req.Ref, LegHold))
+	if err != nil {
+		return nil, fmt.Errorf("maplerad: hold replay probe: %w", err)
+	}
+	if !holdPosted {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, total); err != nil {
+			return nil, err
+		}
 	}
 	bal, err := s.ledger.GetBalance(ctx, userID)
 	if err != nil {
@@ -421,8 +432,10 @@ func (s *Service) applyTransition(ctx context.Context, ref string, target OpStat
 }
 
 // applyLegs resolves each PlannedLeg's named accounts to ledger account IDs and
-// posts via the matching ledger primitive. Duplicate keys are benign no-ops
-// (ErrDuplicate is swallowed) so replays never double-post.
+// posts via the matching ledger primitive. A duplicate claim is only a benign
+// no-op once the durable ledger PROVES the committed legs are exactly this
+// journal — a bare Redis-lock duplicate (zero legs) fails retryable, and a
+// foreign/mismatched journal fails closed (F-4). Replays never double-post.
 func (s *Service) applyLegs(ctx context.Context, userID, ref string, legs []PlannedLeg) error {
 	for _, leg := range legs {
 		switch leg.Kind {
@@ -435,14 +448,34 @@ func (s *Service) applyLegs(ctx context.Context, userID, ref string, legs []Plan
 			if err != nil {
 				return err
 			}
-			err = s.ledger.PostJournal(ctx, ledger.JournalEntry{
+			j := ledger.JournalEntry{
 				Reference:       ref,
 				IdempotencyKey:  leg.IdempotencyKey,
 				AmountKobo:      leg.AmountKobo,
 				DebitAccountID:  debitID,
 				CreditAccountID: creditID,
-			})
-			if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+			}
+			if leg.DebitIsUserWallet {
+				// The hold leg debits the customer's own wallet: post it
+				// through the gated journal — the strict daily cap is
+				// re-evaluated inside the tx under the wallet advisory
+				// lock (F7), so the pooled EnforceWalletDebitLimit in
+				// InitiateTransfer/PurchaseBill stays advisory-only and a
+				// concurrent burst of holds cannot jointly overshoot it.
+				// A durably-posted leg verifies as a replay BEFORE the
+				// guard runs, so webhook-driven finalize/reverse retries
+				// are never refused by re-counting their own legs.
+				err = s.ledger.PostJournalGated(ctx, j, userID)
+			} else {
+				err = s.ledger.PostJournal(ctx, j)
+			}
+			switch {
+			case err == nil:
+			case errors.Is(err, ledger.ErrDuplicate):
+				if verr := s.verifyJournalLeg(ctx, j); verr != nil {
+					return verr
+				}
+			default:
 				return fmt.Errorf("maplerad: post journal leg %s: %w", leg.IdempotencyKey, err)
 			}
 		case LegReversalPair:
@@ -455,10 +488,82 @@ func (s *Service) applyLegs(ctx context.Context, userID, ref string, legs []Plan
 				return err
 			}
 			err = s.ledger.PostReversal(ctx, restoreID, releaseID, leg.AmountKobo, ref, leg.IdempotencyKey)
-			if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+			switch {
+			case err == nil:
+			case errors.Is(err, ledger.ErrDuplicate):
+				if verr := s.verifyReversalLeg(ctx, leg.IdempotencyKey, restoreID, releaseID, leg.AmountKobo, ref); verr != nil {
+					return verr
+				}
+			default:
 				return fmt.Errorf("maplerad: post reversal leg %s: %w", leg.IdempotencyKey, err)
 			}
 		}
+	}
+	return nil
+}
+
+// verifyJournalLeg decides what an ErrDuplicate on journal j actually means —
+// the duplicate claim itself is NEVER proof. Reads the durable ledger:
+//   - both legs committed with exactly j's identity → true replay, benign;
+//   - key claimed but no legs (bare Redis lock) → ErrLedgerReconPending
+//     (retryable — the caller must retry, never proceed on a phantom);
+//   - legs exist but under different accounts/types/amount/reference → a
+//     foreign claim — fail closed, loudly.
+func (s *Service) verifyJournalLeg(ctx context.Context, j ledger.JournalEntry) error {
+	posted, err := s.ledger.Posted(ctx, j.IdempotencyKey)
+	if err != nil {
+		return fmt.Errorf("maplerad: verify journal leg %s: %w", j.IdempotencyKey, err)
+	}
+	if !posted {
+		return fmt.Errorf("maplerad: journal leg %s claimed duplicate but posted no legs: %w",
+			j.IdempotencyKey, ErrLedgerReconPending)
+	}
+	d, ok, err := s.ledger.EntryByKey(ctx, j.IdempotencyKey+":debit")
+	if err != nil {
+		return fmt.Errorf("maplerad: verify journal leg %s: %w", j.IdempotencyKey, err)
+	}
+	if !ok || d.AccountID != j.DebitAccountID || d.Type != ledger.EntryDebit ||
+		d.AmountKobo != j.AmountKobo || d.Reference != j.Reference {
+		return fmt.Errorf("%w: maplerad journal key %s held by a different journal — refusing to converge",
+			ledger.ErrDuplicate, j.IdempotencyKey)
+	}
+	c, ok, err := s.ledger.EntryByKey(ctx, j.IdempotencyKey+":credit")
+	if err != nil {
+		return fmt.Errorf("maplerad: verify journal leg %s: %w", j.IdempotencyKey, err)
+	}
+	if !ok || c.AccountID != j.CreditAccountID || c.Type != ledger.EntryCredit ||
+		c.AmountKobo != j.AmountKobo || c.Reference != j.Reference {
+		return fmt.Errorf("%w: maplerad journal key %s held by a different journal — refusing to converge",
+			ledger.ErrDuplicate, j.IdempotencyKey)
+	}
+	return nil
+}
+
+// verifyReversalLeg is verifyJournalLeg for reversal pairs: leg keys are
+// "<key>:rev_debit" (REVERSAL_DEBIT on the restore account) and
+// "<key>:rev_credit" (REVERSAL_CREDIT on the release account).
+func (s *Service) verifyReversalLeg(ctx context.Context, key, restoreAccountID, releaseAccountID string, amountKobo int64, ref string) error {
+	d, ok, err := s.ledger.EntryByKey(ctx, key+":rev_debit")
+	if err != nil {
+		return fmt.Errorf("maplerad: verify reversal leg %s: %w", key, err)
+	}
+	if !ok {
+		return fmt.Errorf("maplerad: reversal leg %s claimed duplicate but posted no legs: %w",
+			key, ErrLedgerReconPending)
+	}
+	if d.AccountID != restoreAccountID || d.Type != ledger.EntryReversalDebit ||
+		d.AmountKobo != amountKobo || d.Reference != ref {
+		return fmt.Errorf("%w: maplerad reversal key %s held by a different journal — refusing to converge",
+			ledger.ErrDuplicate, key)
+	}
+	c, ok, err := s.ledger.EntryByKey(ctx, key+":rev_credit")
+	if err != nil {
+		return fmt.Errorf("maplerad: verify reversal leg %s: %w", key, err)
+	}
+	if !ok || c.AccountID != releaseAccountID || c.Type != ledger.EntryReversalCredit ||
+		c.AmountKobo != amountKobo || c.Reference != ref {
+		return fmt.Errorf("%w: maplerad reversal key %s held by a different journal — refusing to converge",
+			ledger.ErrDuplicate, key)
 	}
 	return nil
 }
@@ -497,6 +602,15 @@ func (s *Service) PurchaseBill(ctx context.Context, userID string, req provider.
 	if err := s.requireTier(ctx, userID, RequiredTransferTier); err != nil {
 		return nil, err
 	}
+	// NOTE (F-6): the provider-facing bill purchase is NOT backed by a wallet
+	// hold leg in v1 — InitiateTransfer takes a wallet hold through applyLegs,
+	// but this path moves provider float first and only reconciles later via
+	// webhook. The gate below is therefore advisory-only for that exposure:
+	// it bounds how much a user can INITIATE per day, but there is no wallet
+	// debit for an in-tx guard to serialise, so two concurrent purchases at
+	// the cap boundary can both pass it. A v1-safe hold leg is intentionally
+	// not added — there is no defined release/settle pairing for provider
+	// bills, so a hold would strand funds.
 	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, req.AmountKobo); err != nil {
 		return nil, err
 	}
@@ -1069,7 +1183,9 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // errMap maps domain errors to HTTP status codes (model.go documents each).
 var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusForbidden, ErrTierTooLow, ErrForbidden),
-	httperr.R(http.StatusServiceUnavailable, ErrProviderUnavailable),
+	// ErrLedgerReconPending is a retryable recon state (a dup claim with no
+	// durable legs) — 503, not a 500 and not a success.
+	httperr.R(http.StatusServiceUnavailable, ErrProviderUnavailable, ErrLedgerReconPending),
 	httperr.R(http.StatusBadRequest, ErrMissingRef, ErrInvalidAmount),
 	httperr.R(http.StatusUnprocessableEntity, ledger.ErrInsufficientFunds),
 	httperr.R(http.StatusNotFound, ErrInvalidAccount, ErrNotFound),

@@ -14,10 +14,30 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// checkoutLimiter is the in-tx tier gate the booking escrow runs — the
+// consumer-purchase variant (ADR-043): identical to the strict cap for
+// Tier 1+, capped-but-permitted for Tier 0 when the allowance flag is on.
+// Satisfied by *tiers.Service. The Tx method satisfies ledger.DebitGuard.
+type checkoutLimiter interface {
+	// EnforceCheckoutDebitLimitTx evaluates the checkout daily-debit cap INSIDE
+	// the debiting transaction under the wallet advisory lock — the
+	// authoritative half of the gate (F7).
+	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned by BookAppointment when the checkout gate is
+// not wired — a nil gate must fail CLOSED, never escrow ungated (mirrors
+// escrow.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("telemedicine: money path requires a tier gate (not wired)")
+
 // Service manages doctors, appointments, prescriptions, SOAP notes, and pharmacy.
 type Service struct {
 	db         *pgxpool.Pool
 	settlement *settlement.Service
+	// tiers is the checkout daily-cap gate evaluated inside the escrow debit
+	// tx (F7). An appointment booking is a consumer purchase — the wallet
+	// debit must never run uncapped.
+	tiers checkoutLimiter
 	// platformFeeBp is the booking fee rate in basis points, resolved from
 	// FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED at wiring time. Zero (the default)
 	// means the flag is off and consultations price exactly as they did before
@@ -36,6 +56,15 @@ type Service struct {
 // under-charges rather than over-charges, which is the safe direction to fail.
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement}
+}
+
+// WithTiers wires the checkout daily-debit gate (fail-closed on the wallet
+// escrow). The booking escrow itself is the replay anchor, so NO pooled
+// advisory check runs here — the in-tx guard is the whole gate, which keeps a
+// committed replay convergent even at-cap (F2).
+func (s *Service) WithTiers(t checkoutLimiter) *Service {
+	s.tiers = t
+	return s
 }
 
 // WithPlatformFeeBp enables the platform booking fee at the given rate in basis
@@ -461,7 +490,15 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	// Escrow the FULL total (consultation + platform fee). The platform fee is
 	// released to platform revenue at settlement as its own 100%-platform leg, so
 	// every kobo the patient pays has a ledger entry behind it.
-	sett, err := s.settlement.Escrow(ctx, patientID, ref, req.IdempotencyKey, "telemedicine", quote.TotalKobo)
+	if s.tiers == nil {
+		return nil, ErrTierGateUnwired
+	}
+	// EscrowWithGuard runs the checkout daily cap INSIDE the debit tx under the
+	// wallet advisory lock (F7) — no pooled advisory pre-check: the escrow row
+	// and the ledger replay verification are the replay anchors, so a retry of
+	// a committed booking converges even when today's usage would refuse.
+	sett, err := s.settlement.EscrowWithGuard(ctx, patientID, ref, req.IdempotencyKey, "telemedicine", quote.TotalKobo,
+		s.tiers.EnforceCheckoutDebitLimitTx)
 	if err != nil {
 		return nil, fmt.Errorf("telemedicine: escrow fee: %w", err)
 	}
