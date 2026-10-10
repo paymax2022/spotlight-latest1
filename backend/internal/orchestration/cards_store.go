@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/jsonx"
 	"spotlight/backend/internal/provider"
 )
@@ -108,7 +109,11 @@ type CardDraft struct {
 type CardStore interface {
 	ListCards(ctx context.Context, business string) ([]Card, error)
 	GetCard(ctx context.Context, business, id string) (Card, bool, error)
-	CreateCard(ctx context.Context, business string, draft CardDraft) (Card, error)
+	// CreateCard is idempotent on (business, idemKey): a replayed Idempotency-Key
+	// returns the card that key first created instead of inserting a second row.
+	// The HTTP handler requires the key, so it is always non-empty on the API
+	// path; an empty key skips dedupe for non-HTTP store callers.
+	CreateCard(ctx context.Context, business string, draft CardDraft, idemKey string) (Card, error)
 	// FundCard is money-path: atomic wallet-debit + card-credit, idempotent on
 	// idemKey. Returns ErrInsufficientCardBalance when the wallet is short and
 	// ErrCardNotFound when the card does not exist for the business.
@@ -195,9 +200,37 @@ func (s *sqlCardStore) GetCard(ctx context.Context, business, id string) (Card, 
 	return cd, true, nil
 }
 
-// CreateCard inserts a zero-balance active card. The initial funding load (if any)
-// is applied separately via FundCard so it stays on the idempotent money path.
-func (s *sqlCardStore) CreateCard(ctx context.Context, business string, draft CardDraft) (Card, error) {
+// cardByIdemKey returns the card a given create Idempotency-Key already
+// produced for this business (replay probe). ok=false when the key is unseen.
+func (s *sqlCardStore) cardByIdemKey(ctx context.Context, business, idemKey string) (Card, bool, error) {
+	cd, err := scanCard(s.db.QueryRow(ctx,
+		`SELECT `+cardCols+` FROM orch_fx_cards WHERE business_id=$1 AND idempotency_key=$2`, business, idemKey))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Card{}, false, nil
+	}
+	if err != nil {
+		return Card{}, false, err
+	}
+	return cd, true, nil
+}
+
+// CreateCard inserts a zero-balance active card, deduped on
+// (business_id, idempotency_key): a replayed key returns the card the first
+// request created — never a second row. The insert is arbitrated by the
+// orch_fx_cards_idem_uniq partial unique index, so a concurrent same-key race
+// cannot double-insert either: the loser takes 23505 and re-selects the
+// winner's row (which is committed by then at READ COMMITTED — the conflicting
+// insert blocks until the winner commits). The initial funding load (if any) is
+// applied separately via FundCard so it stays on the idempotent money path.
+func (s *sqlCardStore) CreateCard(ctx context.Context, business string, draft CardDraft, idemKey string) (Card, error) {
+	idemKey = strings.TrimSpace(idemKey)
+	if idemKey != "" {
+		if existing, ok, err := s.cardByIdemKey(ctx, business, idemKey); err != nil {
+			return Card{}, err
+		} else if ok {
+			return existing, nil // idempotent replay: same card, no new row
+		}
+	}
 	id := stubID("card")
 	now := time.Now()
 	label := strings.TrimSpace(draft.Label)
@@ -257,16 +290,29 @@ func (s *sqlCardStore) CreateCard(ctx context.Context, business string, draft Ca
 	if providerCardID != "" {
 		providerCardIDArg = &providerCardID
 	}
+	var idemArg *string
+	if idemKey != "" {
+		idemArg = &idemKey
+	}
 
 	cd, err := scanCard(s.db.QueryRow(ctx, `
 		INSERT INTO orch_fx_cards
 			(id, business_id, label, brand, currency, last4, exp_month, exp_year, cardholder_name,
-			 balance_minor, status, color, spent_this_month_minor, controls, provider, provider_card_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,'active',$10,0,$11,'maplerad',$12)
+			 balance_minor, status, color, spent_this_month_minor, controls, provider, provider_card_id,
+			 idempotency_key)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,'active',$10,0,$11,'maplerad',$12,$13)
 		RETURNING `+cardCols,
 		id, business, label, brand, currency, last4, expMonth, expYear, cardholder,
-		color, controlsJSON(defaultCardControls()), providerCardIDArg))
+		color, controlsJSON(defaultCardControls()), providerCardIDArg, idemArg))
 	if err != nil {
+		// Lost a same-key create race: the winning row is committed by the time
+		// the unique index reports 23505, so re-select and return it rather than
+		// erroring — the caller sees exactly one card per (business, key).
+		if idemArg != nil && dbutil.IsUniqueViolation(err) {
+			if existing, ok, rerr := s.cardByIdemKey(ctx, business, idemKey); rerr == nil && ok {
+				return existing, nil
+			}
+		}
 		return Card{}, err
 	}
 	return cd, nil

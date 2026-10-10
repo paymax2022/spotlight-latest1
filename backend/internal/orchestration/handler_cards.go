@@ -122,7 +122,8 @@ var cardCurrencies = map[string]bool{
 // funding load (money path) via the idempotent FundCard so the load carries the
 // request Idempotency-Key. Idempotency-Key is contract-required on the whole
 // endpoint: create-then-fund is one client operation and a retried request must
-// never double-fund.
+// never double-fund — and the create itself is deduped on the same key, so a
+// replay returns the SAME card instead of minting a second row.
 func (h *Handler) CreateCard(c *gin.Context) {
 	var d struct {
 		Label         string `json:"label"`
@@ -172,15 +173,16 @@ func (h *Handler) CreateCard(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	idemKey := ginutil.IdempotencyKey(c)
 	card, err := h.cards.CreateCard(ctx, ginutil.UserID(c), CardDraft{
 		Label: label, Brand: brand, Currency: cur, Color: color, FundingAmount: funding,
-	})
+	}, idemKey)
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
 	}
 	if funding > 0 {
-		funded, ferr := h.cards.FundCard(ctx, ginutil.UserID(c), card.ID, funding, ginutil.IdempotencyKey(c))
+		funded, ferr := h.cards.FundCard(ctx, ginutil.UserID(c), card.ID, funding, idemKey)
 		if ferr != nil {
 			if errors.Is(ferr, ErrInsufficientCardBalance) {
 				writeInsufficientCardFunds(c)
