@@ -26,6 +26,13 @@ import (
 // concurrent order already consumed the remainder.
 var ErrInsufficientStock = errors.New("pharmacy: insufficient stock for one or more items")
 
+// ErrOrderNotFound is the uniform denial for order-scoped reads and
+// transitions: a caller without access to an EXISTING order gets this, not a
+// distinct "forbidden" — "exists but not yours" is indistinguishable from
+// "does not exist" (no existence oracle; same fold as social #602 /
+// association #606 / aicare / vet / lab). The handler maps it to 404.
+var ErrOrderNotFound = errors.New("pharmacy: order not found")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -962,7 +969,9 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, errors.New("pharmacy: forbidden")
+		// Uniform denial: a non-owner's cancel on an existing order is
+		// indistinguishable from a missing one — no existence oracle.
+		return nil, ErrOrderNotFound
 	}
 	if !isPreDispense(o.State) {
 		return nil, fmt.Errorf("pharmacy: order can only be cancelled before dispense, is %s", o.State)
@@ -996,7 +1005,9 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	}
 	owner, _ := s.pharmacyOwner(ctx, o.PharmacyProviderID)
 	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
-		return nil, errors.New("pharmacy: forbidden")
+		// Uniform denial: denied and missing orders return the same "not
+		// found" — no existence oracle (same fold as Cancel/SubmitReview).
+		return nil, ErrOrderNotFound
 	}
 	lines, _ := s.loadLines(ctx, orderID)
 	o.Lines = lines
@@ -1179,7 +1190,7 @@ func (s *Service) SubmitReview(ctx context.Context, patientID, orderID string, r
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, errors.New("pharmacy: forbidden")
+		return nil, ErrOrderNotFound // uniform denial, see Get
 	}
 	if !isReviewable(o.State) {
 		return nil, fmt.Errorf("pharmacy: order must be completed before it can be reviewed, is %s", o.State)
@@ -1279,7 +1290,7 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("pharmacy: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1299,7 +1310,7 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt,
 		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("pharmacy: order not found")
+			return nil, ErrOrderNotFound
 		}
 		return nil, err
 	}
@@ -1649,10 +1660,10 @@ func failCreateOrder(c *gin.Context, err error) {
 	// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
 	switch {
 	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		ginutil.FailOK(c, http.StatusForbidden, httperr.Sanitize(c, http.StatusForbidden, err.Error()))
 		return
 	case errors.Is(err, escrow.ErrTierGateUnwired):
-		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+		ginutil.FailOK(c, http.StatusServiceUnavailable, httperr.Sanitize(c, http.StatusServiceUnavailable, err.Error()))
 		return
 	}
 	if qe, ok := errors.AsType[*QuantityCapError](err); ok {
@@ -1667,7 +1678,7 @@ func failCreateOrder(c *gin.Context, err error) {
 		})
 		return
 	}
-	ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+	ginutil.FailOK(c, http.StatusUnprocessableEntity, httperr.Sanitize(c, http.StatusUnprocessableEntity, err.Error()))
 }
 
 // PgxQuantityGate enforces the cap against pharmacy_skus (cap definition) and

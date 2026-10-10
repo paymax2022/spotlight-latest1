@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/tiers"
@@ -28,6 +29,54 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 	return &Handler{svc: svc, isAdmin: isAdmin}
 }
 
+// uuidPathID gates a uuid-typed :id path param before it can reach a
+// WHERE id=$1 object load — a malformed value is a 400 naming the field,
+// never a driver error → 4xx/500 (w11 covered input params; this is the
+// object-load side of the same shape-gate). Returns the param value and true
+// on success; on failure the response is already written and the caller must
+// return early.
+func uuidPathID(c *gin.Context, field string) (string, bool) {
+	v := c.Param("id")
+	if _, err := uuid.Parse(v); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, field+" must be a uuid")
+		return "", false
+	}
+	return v, true
+}
+
+// uuidQueryID gates an optional uuid-typed query param ("" = no filter) the
+// same way — malformed → 400 naming the field.
+func uuidQueryID(c *gin.Context, field string) (string, bool) {
+	v := c.Query(field)
+	if v != "" {
+		if _, err := uuid.Parse(v); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, field+" must be a uuid")
+			return "", false
+		}
+	}
+	return v, true
+}
+
+// failErr writes a service failure through the sanitiser: module-authored
+// domain text passes verbatim at 4xx, but Postgres/pgx/driver strings are
+// replaced by the status's generic message — raw driver text never reaches a
+// client at any status.
+func failErr(c *gin.Context, status int, err error) {
+	ginutil.FailOK(c, status, httperr.Sanitize(c, status, err.Error()))
+}
+
+// failOrder is failErr plus the order-scoped uniform denial: the service
+// returns ErrOrderNotFound for a missing order AND for "exists but the caller
+// has no access" (same fold as social #602 / association #606 / aicare / vet —
+// no existence oracle), so both are 404, not the domain-refusal fallback.
+func failOrder(c *gin.Context, fallback int, err error) {
+	if errors.Is(err, ErrOrderNotFound) || errors.Is(err, ErrSampleNotFound) {
+		failErr(c, http.StatusNotFound, err)
+		return
+	}
+	failErr(c, fallback, err)
+}
+
 // ListTests — GET /tests?lab_provider_id=  (catalog: prep, TAT, price)
 func (h *Handler) ListTests(c *gin.Context) {
 	// lab_provider_id is optional, but once supplied it feeds a uuid-column
@@ -41,7 +90,7 @@ func (h *Handler) ListTests(c *gin.Context) {
 	}
 	tests, err := h.svc.ListTests(c.Request.Context(), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "tests": tests})
@@ -59,7 +108,7 @@ func (h *Handler) ListPackages(c *gin.Context) {
 	}
 	packages, err := h.svc.ListPackages(c.Request.Context(), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "packages": packages})
@@ -74,7 +123,7 @@ func (h *Handler) ListMyOrders(c *gin.Context) {
 	}
 	orders, err := h.svc.ListOrdersForPatient(c.Request.Context(), id)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
@@ -108,7 +157,7 @@ func (h *Handler) UpsertTest(c *gin.Context) {
 	}
 	out, err := h.svc.UpsertTest(c.Request.Context(), id, t)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		failErr(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "test": out})
@@ -130,7 +179,9 @@ func (h *Handler) ListProviderOrders(c *gin.Context) {
 	}
 	rows, err := h.svc.ListProviderOrders(c.Request.Context(), id, provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		// Provider-ownership denial — a scope refusal, not an object oracle:
+		// provider ids are public catalogue data, so 403 is correct here.
+		failErr(c, http.StatusForbidden, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": rows})
@@ -180,11 +231,11 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
 		switch {
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			ginutil.FailOK(c, http.StatusForbidden, err.Error())
+			failErr(c, http.StatusForbidden, err)
 		case errors.Is(err, escrow.ErrTierGateUnwired):
-			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+			failErr(c, http.StatusServiceUnavailable, err)
 		default:
-			ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+			failErr(c, http.StatusUnprocessableEntity, err)
 		}
 		return
 	}
@@ -198,9 +249,13 @@ func (h *Handler) Schedule(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	o, err := h.svc.Schedule(c.Request.Context(), id, c.Param("id"))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Schedule(c.Request.Context(), id, orderID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -213,13 +268,17 @@ func (h *Handler) Collect(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Note string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	sample, err := h.svc.Collect(c.Request.Context(), id, c.Param("id"), req.Note)
+	sample, err := h.svc.Collect(c.Request.Context(), id, orderID, req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "sample": sample})
@@ -232,14 +291,27 @@ func (h *Handler) Handover(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	sampleID, ok := uuidPathID(c, "sample id")
+	if !ok {
+		return
+	}
 	var req struct {
 		ToCustodianID string `json:"to_custodian_id"`
 		Note          string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	sample, err := h.svc.Handover(c.Request.Context(), id, c.Param("id"), req.ToCustodianID, req.Note)
+	// to_custodian_id feeds lab_samples.custodian_id / lab_custody_events
+	// .to_custodian (uuid columns) — when present a malformed value must be a
+	// 400, never a driver error.
+	if req.ToCustodianID != "" {
+		if _, err := uuid.Parse(req.ToCustodianID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "to_custodian_id must be a uuid")
+			return
+		}
+	}
+	sample, err := h.svc.Handover(c.Request.Context(), id, sampleID, req.ToCustodianID, req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sample": sample})
@@ -252,13 +324,17 @@ func (h *Handler) FlagBreach(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	sampleID, ok := uuidPathID(c, "sample id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	sample, err := h.svc.FlagBreach(c.Request.Context(), id, c.Param("id"), req.Reason)
+	sample, err := h.svc.FlagBreach(c.Request.Context(), id, sampleID, req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sample": sample})
@@ -271,14 +347,18 @@ func (h *Handler) Accession(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	sampleID, ok := uuidPathID(c, "sample id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Note           string `json:"note"`
 		ScannedBarcode string `json:"scanned_barcode"` // EC-001: verified against the sample's minted barcode
 	}
 	_ = c.ShouldBindJSON(&req)
-	sample, err := h.svc.Accession(c.Request.Context(), id, c.Param("id"), req.ScannedBarcode, req.Note)
+	sample, err := h.svc.Accession(c.Request.Context(), id, sampleID, req.ScannedBarcode, req.Note)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "sample": sample})
@@ -305,15 +385,25 @@ func (h *Handler) EnterResults(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
 	in := make([]EnterResultInput, 0, len(req.Results))
 	for _, r := range req.Results {
+		// Each test_id feeds lab_order_lines.test_id / lab_results.test_id
+		// (uuid columns) — malformed → 400, never a driver error.
+		if _, err := uuid.Parse(r.TestID); err != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "results.test_id must be a uuid")
+			return
+		}
 		in = append(in, EnterResultInput{
 			TestID: r.TestID, Value: r.Value, Unit: r.Unit, RefRange: r.RefRange, Status: ResultStatus(r.Status),
 		})
 	}
-	o, err := h.svc.EnterResults(c.Request.Context(), id, c.Param("id"), req.ScannedBarcode, in)
+	o, err := h.svc.EnterResults(c.Request.Context(), id, orderID, req.ScannedBarcode, in)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -326,9 +416,13 @@ func (h *Handler) Release(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	o, err := h.svc.Release(c.Request.Context(), id, c.Param("id"))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Release(c.Request.Context(), id, orderID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -341,13 +435,17 @@ func (h *Handler) Cancel(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	o, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
+	o, err := h.svc.Cancel(c.Request.Context(), id, orderID, req.Reason)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		failOrder(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -355,9 +453,15 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // Get — GET /orders/:id  (object-level authZ: patient / lab / admin)
 func (h *Handler) Get(c *gin.Context) {
-	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), orderID, h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		// Missing-or-denied is the sentinel → uniform 404; anything else is an
+		// internal failure (the old blanket-403 misreported DB errors).
+		failOrder(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -365,9 +469,13 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Results — GET /orders/:id/results  (object-level authZ, HL-8)
 func (h *Handler) Results(c *gin.Context) {
-	rows, err := h.svc.Results(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.Results(c.Request.Context(), ginutil.UserID(c), orderID, h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		failOrder(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "results": rows})
@@ -375,9 +483,13 @@ func (h *Handler) Results(c *gin.Context) {
 
 // Custody — GET /orders/:id/custody  (chain-of-custody trail, HL-6/12)
 func (h *Handler) Custody(c *gin.Context) {
-	rows, err := h.svc.CustodyTrail(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
+	orderID, ok := uuidPathID(c, "order id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.CustodyTrail(c.Request.Context(), ginutil.UserID(c), orderID, h.isAdmin(c))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		failOrder(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "custody": rows})
@@ -385,9 +497,13 @@ func (h *Handler) Custody(c *gin.Context) {
 
 // AdminListOrders — GET /admin/orders  order/results oversight.
 func (h *Handler) AdminListOrders(c *gin.Context) {
-	rows, err := h.svc.AdminListOrders(c.Request.Context(), c.Query("state"), c.Query("lab_provider_id"))
+	provID, ok := uuidQueryID(c, "lab_provider_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminListOrders(c.Request.Context(), c.Query("state"), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": rows})
@@ -399,9 +515,17 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 // comment) so the admin console's per-sample custody-chain drawer can reuse
 // this one route instead of a second custody read path.
 func (h *Handler) AdminCustodyAudit(c *gin.Context) {
-	rows, err := h.svc.AdminCustodyAudit(c.Request.Context(), c.Query("lab_provider_id"), c.Query("sample_id"))
+	provID, ok := uuidQueryID(c, "lab_provider_id")
+	if !ok {
+		return
+	}
+	sampleID, ok := uuidQueryID(c, "sample_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminCustodyAudit(c.Request.Context(), provID, sampleID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "events": rows})
@@ -414,7 +538,7 @@ func (h *Handler) AdminCustodyAudit(c *gin.Context) {
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
@@ -422,9 +546,13 @@ func (h *Handler) AdminDashboard(c *gin.Context) {
 
 // AdminEscalations — GET /admin/escalations  critical-result escalation oversight (HL-7).
 func (h *Handler) AdminEscalations(c *gin.Context) {
-	rows, err := h.svc.AdminEscalations(c.Request.Context(), c.Query("lab_provider_id"))
+	provID, ok := uuidQueryID(c, "lab_provider_id")
+	if !ok {
+		return
+	}
+	rows, err := h.svc.AdminEscalations(c.Request.Context(), provID)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "escalations": rows})
@@ -432,8 +560,12 @@ func (h *Handler) AdminEscalations(c *gin.Context) {
 
 // AdminDeactivateTest — POST /admin/tests/:id/deactivate  catalog governance.
 func (h *Handler) AdminDeactivateTest(c *gin.Context) {
-	if err := h.svc.AdminDeactivateTest(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	testID, ok := uuidPathID(c, "test id")
+	if !ok {
+		return
+	}
+	if err := h.svc.AdminDeactivateTest(c.Request.Context(), ginutil.UserID(c), testID); err != nil {
+		failErr(c, http.StatusConflict, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
