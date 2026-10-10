@@ -5,16 +5,20 @@
 import { MKT_USE_MOCK, mktGet, mktPost } from './client';
 import * as M from './meetup.mock';
 import type { Review } from '../types';
+import { normalizeSafeSpots, type SafeSpot } from '../meetupSpots';
 
-export type { SafeSpot } from './meetup.mock';
+export type { SafeSpot };
 
-export async function getSafeSpots(): Promise<M.SafeSpot[]> {
-  if (MKT_USE_MOCK) return M.mockGetSafeSpots();
+// The live endpoint's shape differs from the mock's ({ kind, lat, lng } vs { category,
+// distanceKm }), so BOTH go through normalizeSafeSpots — the sheet never sees a field
+// the server did not send. `near` (the user's position, when known) adds distances.
+export async function getSafeSpots(near?: { lat: number; lng: number } | null): Promise<SafeSpot[]> {
+  if (MKT_USE_MOCK) return normalizeSafeSpots(await M.mockGetSafeSpots(), near);
   try {
-    return await mktGet<M.SafeSpot[]>('/meetup/safe-spots');
+    return normalizeSafeSpots(await mktGet<unknown>('/meetup/safe-spots'), near);
   } catch {
-    // Endpoint not live yet — fall back to the offline suggestions.
-    return M.mockGetSafeSpots();
+    // Endpoint unavailable — fall back to the offline suggestions.
+    return normalizeSafeSpots(await M.mockGetSafeSpots(), near);
   }
 }
 

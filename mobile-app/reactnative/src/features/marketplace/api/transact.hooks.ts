@@ -120,7 +120,7 @@ export function useMarkDealMet(dealId: string) {
 }
 
 export const useSafeSpots = () =>
-  useQuery({ queryKey: TX_KEYS.safeSpots, queryFn: meetupApi.getSafeSpots, staleTime: 5 * 60_000 });
+  useQuery({ queryKey: TX_KEYS.safeSpots, queryFn: () => meetupApi.getSafeSpots(), staleTime: 5 * 60_000 });
 
 // Re-export offer type for screens that only import from the hooks module.
 export type { Offer };
