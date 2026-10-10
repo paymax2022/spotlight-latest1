@@ -208,6 +208,10 @@ func (h *Handler) GetListing(c *gin.Context) {
 	// userID is always "". See its doc for why an unverified id is sound for a
 	// counter and why it must never reach the gin context.
 	h.svc.RecordListingView(c.Request.Context(), c.Param("id"), viewerIDForCounting(c))
+	// Public seller card (privacy-safe name, no contact data) so the detail screen can
+	// show who is selling and link to their profile. Best effort: a missing profile
+	// leaves it absent rather than failing the listing.
+	l.Seller = h.svc.sellerSummary(c.Request.Context(), l.SellerID)
 	respond(c, http.StatusOK, l)
 }
 

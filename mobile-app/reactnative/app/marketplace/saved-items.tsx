@@ -3,7 +3,7 @@
 // ("Save items you're considering — we'll tell you if the price drops"), not a
 // bare blank grid.
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
+import { View, Text, StyleSheet, Pressable, FlatList, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -14,11 +14,12 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
-import { useSavedItems } from '@/features/marketplace/hooks';
+import { useSavedItems, useUnsaveListing } from '@/features/marketplace/hooks';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SavedItems() {
   const saved = useSavedItems();
+  const unsave = useUnsaveListing();
   const items = saved.data ?? [];
 
   return (
@@ -58,7 +59,18 @@ export default function SavedItems() {
             const rose = delta > 0;
             return (
               <Pressable style={styles.card} onPress={() => router.push(`/marketplace/listing/${item.listing.id}?source=saved` as never)}>
-                <View style={styles.image} />
+                <View style={styles.image}>
+                  {item.listing.thumbUrl ? <Image source={{ uri: item.listing.thumbUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : null}
+                </View>
+                <Pressable
+                  style={styles.removeBtn}
+                  onPress={() => unsave.mutate(item.listing.id)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${item.listing.title} from saved items`}
+                >
+                  <HeartOff size={16} color={MarketColors.danger} />
+                </Pressable>
                 {dropped || rose ? (
                   <View style={[styles.priceBadge, dropped ? styles.priceBadgeDrop : styles.priceBadgeRise]}>
                     {dropped ? <ArrowDown size={11} color="#FFFFFF" /> : <ArrowUp size={11} color="#FFFFFF" />}
@@ -78,13 +90,14 @@ export default function SavedItems() {
 }
 
 const styles = StyleSheet.create({
+  removeBtn: { position: 'absolute', top: 8, right: 8, zIndex: 2, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' },
   safe: { flex: 1, backgroundColor: Colors.background },
   topRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm },
   title: { ...Typography.titleLg, color: Colors.onSurface },
   grid: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: Spacing.xxl },
   col: { gap: Spacing.sm },
   card: { flex: 1, backgroundColor: MarketColors.surface, borderRadius: Radius.lg, padding: Spacing.sm },
-  image: { height: 120, borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt },
+  image: { height: 120, borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt, overflow: 'hidden' },
   priceBadge: { position: 'absolute', top: 14, left: 14, flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 2 },
   priceBadgeDrop: { backgroundColor: MarketColors.ok },
   priceBadgeRise: { backgroundColor: MarketColors.muted },

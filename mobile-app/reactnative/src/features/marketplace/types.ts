@@ -115,6 +115,7 @@ export interface SellerSummary {
   tenureLabel: string;
   responseTimeMinutes: number | null;
   kycTier?: KYCTier;
+  avatarUrl?: string;
 }
 
 /** Full listing — mirrors mkt_listings (Listing in model.go) plus the read-model
@@ -258,6 +259,8 @@ export interface SellerProfile {
   completedEscrowCount: number;
   disputeCount: number;
   kycTier: KYCTier;
+  followerCount?: number;
+  activeListings?: number;
 }
 
 /** mkt_reviews (Review in model.go). In the connect model reviews are optional

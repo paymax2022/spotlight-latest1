@@ -66,7 +66,7 @@ func (r *Repository) ListSavedItems(ctx context.Context, userID string, limit, o
 		return nil, wrapInternal("list saved items", err)
 	}
 	defer rows.Close()
-	var out []SavedItem
+	out := []SavedItem{}
 	for rows.Next() {
 		var it SavedItem
 		l, err := scanSavedItemJoin(rows, &it)
@@ -167,8 +167,7 @@ func (r *Repository) DeleteFollow(ctx context.Context, followerID, sellerID stri
 // enriched with the seller's live name/avatar (public.user_profiles) and
 // trust signals (public.mkt_trust_scores / a live active-listings count) —
 // never a stored snapshot.
-func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]FollowedSeller, error) {
-	rows, err := r.db.Query(ctx, `
+const followSelect = `
 		SELECT
 			f.id, f.seller_id,
 			COALESCE(up.full_name, '') AS seller_name,
@@ -178,7 +177,19 @@ func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]Foll
 			f.created_at
 		FROM public.mkt_seller_follows f
 		LEFT JOIN public.user_profiles up ON up.id = f.seller_id
-		LEFT JOIN public.mkt_trust_scores ts ON ts.user_id = f.seller_id
+		LEFT JOIN public.mkt_trust_scores ts ON ts.user_id = f.seller_id`
+
+func scanFollow(row interface{ Scan(...any) error }) (FollowedSeller, error) {
+	var f FollowedSeller
+	if err := row.Scan(&f.ID, &f.SellerID, &f.SellerName, &f.AvatarURL, &f.TrustScore, &f.ActiveListings, &f.FollowedAt); err != nil {
+		return f, err
+	}
+	f.SellerName = PublicDisplayName(f.SellerName)
+	return f, nil
+}
+
+func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]FollowedSeller, error) {
+	rows, err := r.db.Query(ctx, followSelect+`
 		WHERE f.follower_id = $1
 		ORDER BY f.created_at DESC`, followerID)
 	if err != nil {
@@ -187,8 +198,8 @@ func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]Foll
 	defer rows.Close()
 	out := []FollowedSeller{}
 	for rows.Next() {
-		var f FollowedSeller
-		if err := rows.Scan(&f.ID, &f.SellerID, &f.SellerName, &f.AvatarURL, &f.TrustScore, &f.ActiveListings, &f.FollowedAt); err != nil {
+		f, err := scanFollow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -196,21 +207,114 @@ func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]Foll
 	return out, rows.Err()
 }
 
+// GetFollow returns one follow row in the same shape as the list.
+func (r *Repository) GetFollow(ctx context.Context, followerID, sellerID string) (*FollowedSeller, error) {
+	f, err := scanFollow(r.db.QueryRow(ctx, followSelect+`
+		WHERE f.follower_id = $1 AND f.seller_id = $2`, followerID, sellerID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrSellerNotFound
+		}
+		return nil, wrapInternal("get follow", err)
+	}
+	return &f, nil
+}
+
+// SellerExists reports whether a user profile exists for the id. mkt_seller_follows has
+// no FK to users (cross-module reference), so without this a follow could target any
+// well-formed uuid and sit in the table forever.
+func (r *Repository) SellerExists(ctx context.Context, sellerID string) (bool, error) {
+	var ok bool
+	if err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public.user_profiles WHERE id=$1)`, sellerID).Scan(&ok); err != nil {
+		return false, wrapInternal("seller exists", err)
+	}
+	return ok, nil
+}
+
+// IsBlockedEitherWay reports whether either user has blocked the other. Blocking is
+// symmetric for contact: the blocker does not want the blocked person reaching them,
+// and a blocker reaching out would defeat the block from the other side.
+func (r *Repository) IsBlockedEitherWay(ctx context.Context, a, b string) (bool, error) {
+	var blocked bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.mkt_blocks
+			WHERE (user_id=$1 AND blocked_user_id=$2) OR (user_id=$2 AND blocked_user_id=$1))`, a, b).Scan(&blocked)
+	if err != nil {
+		return false, wrapInternal("is blocked", err)
+	}
+	return blocked, nil
+}
+
+// userFullName returns a profile's full name ("" when none).
+func (r *Repository) userFullName(ctx context.Context, userID string) string {
+	var n string
+	_ = r.db.QueryRow(ctx, `SELECT COALESCE(full_name,'') FROM public.user_profiles WHERE id=$1`, userID).Scan(&n)
+	return n
+}
+
+// sellerCard is everything the public seller surfaces need, read in one round trip.
+type sellerCard struct {
+	Exists         bool
+	FullName       string
+	AvatarURL      *string
+	Trust          TrustProfile
+	AvgResponseMin *int
+	MemberSince    *time.Time
+	Followers      int
+	ActiveListings int
+}
+
+// GetSellerCard assembles a seller's public identity + trust + counts. An unknown id is
+// not an error: it yields the same neutral defaults GetTrustProfile always has, with
+// Exists=false so callers that must reject unknown sellers can.
+func (r *Repository) GetSellerCard(ctx context.Context, sellerID string) (*sellerCard, error) {
+	c := sellerCard{Trust: TrustProfile{UserID: sellerID}}
+	var tier string
+	err := r.db.QueryRow(ctx, `
+		SELECT (up.id IS NOT NULL), COALESCE(up.full_name,''), up.avatar_url,
+		       COALESCE(ts.market_id, $2), COALESCE(ts.kyc_tier::text, 'tier0_browse'),
+		       COALESCE(ts.verified_id_badge, false), COALESCE(ts.verified_business_badge, false),
+		       COALESCE(ts.completed_escrow_count, 0), COALESCE(ts.dispute_count, 0),
+		       COALESCE(ts.trust_score, 0.5), ts.avg_response_minutes,
+		       COALESCE(ts.account_created_at, up.created_at),
+		       (SELECT count(*) FROM public.mkt_seller_follows f WHERE f.seller_id = x.id),
+		       (SELECT count(*) FROM public.mkt_listings l WHERE l.seller_id = x.id AND l.status = 'active')
+		FROM (SELECT $1::uuid AS id) x
+		LEFT JOIN public.user_profiles up ON up.id = x.id
+		LEFT JOIN public.mkt_trust_scores ts ON ts.user_id = x.id`, sellerID, DefaultMarketID).Scan(
+		&c.Exists, &c.FullName, &c.AvatarURL,
+		&c.Trust.MarketID, &tier,
+		&c.Trust.VerifiedIDBadge, &c.Trust.VerifiedBusinessBadge,
+		&c.Trust.CompletedEscrowCount, &c.Trust.DisputeCount,
+		&c.Trust.TrustScore, &c.AvgResponseMin, &c.MemberSince,
+		&c.Followers, &c.ActiveListings)
+	if err != nil {
+		return nil, wrapInternal("get seller card", err)
+	}
+	c.Trust.KYCTier = KYCTier(tier)
+	return &c, nil
+}
+
 // ListBlocks returns the caller's blocked users newest-first.
 func (r *Repository) ListBlocks(ctx context.Context, userID string) ([]Block, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, blocked_user_id, created_at
-		FROM public.mkt_blocks WHERE user_id=$1 ORDER BY created_at DESC`, userID)
+		SELECT b.id, b.user_id, b.blocked_user_id, b.created_at, COALESCE(up.full_name, '')
+		FROM public.mkt_blocks b
+		LEFT JOIN public.user_profiles up ON up.id = b.blocked_user_id
+		WHERE b.user_id=$1 ORDER BY b.created_at DESC`, userID)
 	if err != nil {
 		return nil, wrapInternal("list blocks", err)
 	}
 	defer rows.Close()
-	var out []Block
+	out := []Block{}
 	for rows.Next() {
 		var b Block
-		if err := rows.Scan(&b.ID, &b.UserID, &b.BlockedUserID, &b.CreatedAt); err != nil {
+		var fullName string
+		if err := rows.Scan(&b.ID, &b.UserID, &b.BlockedUserID, &b.CreatedAt, &fullName); err != nil {
 			return nil, err
 		}
+		b.BlockedUserName = PublicDisplayName(fullName)
 		out = append(out, b)
 	}
 	return out, rows.Err()
