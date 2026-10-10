@@ -178,14 +178,19 @@ func (h *Handler) ActivateCircle(c *gin.Context) {
 func (h *Handler) GetCircle(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	circleID := c.Param("id")
-	// Object-level authZ: only members may view circle detail.
+	// Object-level authZ: only members may view circle detail — and the denial
+	// is the SAME ErrNotFound a nonexistent circle id returns (a distinct 403
+	// "not a member" would confirm the circle exists to any authenticated
+	// caller: membership rosters are financial data, not a public directory).
+	// The member oracle stays closed; ops oversight lives on the dedicated
+	// admin routes behind savings.admin.view.
 	isMem, err := h.ajo.IsMember(c.Request.Context(), circleID, uid)
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return
 	}
 	if !isMem {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "not a member"})
+		errMap.WriteOK(c, ErrNotFound)
 		return
 	}
 	circle, members, err := h.ajo.GetCircle(c.Request.Context(), circleID)
@@ -194,6 +199,35 @@ func (h *Handler) GetCircle(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "circle": circle, "members": members})
+}
+
+// AdminGetCircle serves the ops oversight read on the savings admin group. The
+// RBAC guard (savings.admin.view) is the authZ, so the service read is
+// deliberately NOT member-scoped — an ops admin who is not a circle member can
+// still inspect the circle, the full member roster (all states) and the
+// per-cycle contribution/payout state. (Mounting the member GetCircle here
+// denied the admin exactly like an outsider — the residual this restores.)
+// NEVER mount this handler on a member route: the member oracle stays closed.
+func (h *Handler) AdminGetCircle(c *gin.Context) {
+	circle, members, cycles, err := h.ajo.GetCircleOversight(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "circle": circle, "members": members, "cycles": cycles})
+}
+
+// AdminGetCircleMembers is the roster twin of AdminGetCircle — the RBAC guard
+// (savings.admin.view) is the authZ, so ops sees the FULL member roster (every
+// state, incl. EXITED/DEFAULTED) without needing membership in the circle.
+// NEVER mount on a member route: member reads stay member-scoped.
+func (h *Handler) AdminGetCircleMembers(c *gin.Context) {
+	members, err := h.ajo.GetCircleMembersOversight(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "members": members})
 }
 
 func (h *Handler) MakeGood(c *gin.Context) {
@@ -466,9 +500,14 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	g.POST("/targets/:id/release", h.ReleaseTarget)
 	g.GET("/targets/:id/balance", h.TargetBalance)
 
-	// Admin (ops): read-only oversight gated by savings.admin.*
+	// Admin (ops): read-only oversight gated by savings.admin.*. Oversight reads
+	// use dedicated admin handlers, NOT the member ones — the member GetCircle
+	// is member-scoped (uniform denial for a caller with no membership), which
+	// would refuse an ops admin who is not a member and defeat the oversight
+	// the RBAC grant is for.
 	if admin != nil && guard != nil {
-		admin.GET("/circles/:id", guard("savings.admin.view"), h.GetCircle)
+		admin.GET("/circles/:id", guard("savings.admin.view"), h.AdminGetCircle)
+		admin.GET("/circles/:id/members", guard("savings.admin.view"), h.AdminGetCircleMembers)
 	}
 }
 
