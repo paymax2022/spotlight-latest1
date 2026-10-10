@@ -188,6 +188,15 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 	// return the original row.
 	prior, err := b.perkRedemptionByIdem(ctx, userID, idemKey)
 	if err == nil {
+		// Same key + different params is a CONFLICT, not a replay: silently
+		// returning the original perk to a different-perk/different-event
+		// request would grant the wrong benefit. The stored row carries the
+		// full request shape (perk_code + context_ref) — no params-hash needed.
+		if prior.PerkCode != perkCode || prior.ContextRef != contextRef {
+			return nil, points.ErrIdempotencyConflict
+		}
+		// No audit event on replay: LogAction appends unconditionally (no
+		// dedupe), so one row per replayed request would inflate audit_logs.
 		return prior, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -239,8 +248,13 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 
 	// Credential-rail perks (lounge, early-ticket gate): mint a single-use credential
 	// the member presents at the event. Reuse of the shared primitive guarantees
-	// single-use + replay rejection.
-	if redeemVia == "credential" && b.cred != nil {
+	// single-use + replay rejection. Fail-closed: a credential-rail perk with no
+	// credential primitive available is an error, never a credential-less row
+	// the member could not present at the gate.
+	if redeemVia == "credential" {
+		if b.cred == nil {
+			return nil, errors.New("loyalty: credential primitive unavailable for credential perk")
+		}
 		c, err := b.cred.Issue(ctx, userID, credential.KindLoyaltyPerk, credential.Policy{
 			SingleUse: true,
 			ValidFrom: time.Now(),
@@ -255,18 +269,52 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 	             VALUES ($1,$2,$3,$4,$5,$6,$7)
 	             ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	if _, err := b.base.db.Exec(ctx, ins, red.ID, red.UserID, red.PerkCode, red.ContextRef, red.CredentialID, idemKey, red.CreatedAt); err != nil {
+		// The minted credential never got attached to a redemption — revoke it
+		// so it cannot pass a gate scan unattached.
+		b.revokeOrphanCredential(ctx, red.CredentialID)
 		return nil, fmt.Errorf("loyalty: insert perk redemption: %w", err)
 	}
 	// Read back what stands under the key — the row just written or, on a lost
-	// same-key race, the winner's. A race loss may leave the credential minted
-	// above orphaned (single-use, bound to this user — low harm); the member
-	// still gets exactly one recorded redemption.
+	// same-key race, the winner's.
 	stored, err := b.perkRedemptionByIdem(ctx, userID, idemKey)
 	if err != nil {
+		b.revokeOrphanCredential(ctx, red.CredentialID)
 		return nil, fmt.Errorf("loyalty: perk conflict read-back: %w", err)
+	}
+	if stored.ID != red.ID {
+		// Race lost: the winner's row references its own credential, so the
+		// credential minted above is an orphan — revoke it rather than leave an
+		// ACTIVE credential floating outside any redemption.
+		b.revokeOrphanCredential(ctx, red.CredentialID)
+		if stored.PerkCode != perkCode || stored.ContextRef != contextRef {
+			return nil, points.ErrIdempotencyConflict
+		}
+		// Same-key race lost to an identical request: return the winner's row.
+		// No audit event — only the winner emits the mutation event.
+		return stored, nil
+	}
+	if stored.PerkCode != perkCode || stored.ContextRef != contextRef {
+		// Unreachable for our own freshly-written row — defence-in-depth.
+		return nil, points.ErrIdempotencyConflict
 	}
 	b.base.log(userID, "loyalty.black.perk.redeem", stored.ID, map[string]any{"perk": perkCode, "context": contextRef})
 	return stored, nil
+}
+
+// revokeOrphanCredential best-effort revokes a credential minted for a
+// redemption row that failed to persist (insert error / read-back failure /
+// lost same-key race). Without it the credential stays ACTIVE-but-unattached —
+// an orphan that could still pass a gate scan. Runs on a detached context so a
+// cancelled request still cleans up; failures are audit-logged, never fatal.
+func (b *BlackService) revokeOrphanCredential(ctx context.Context, credentialID *string) {
+	if b.cred == nil || credentialID == nil || *credentialID == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := b.cred.Revoke(cctx, *credentialID); err != nil {
+		b.base.log("", "loyalty.black.perk.orphan_revoke_error", *credentialID, map[string]any{"err": err.Error()})
+	}
 }
 
 // perkRedemptionByIdem loads the perk redemption recorded under a client
@@ -285,9 +333,49 @@ func (b *BlackService) perkRedemptionByIdem(ctx context.Context, userID, idemKey
 // RecordPartnerSettlement books a partner-funded offer redemption for billing
 // reconciliation. The member never receives cash (NL-5) — this settles partner ↔
 // Paymax, not Paymax ↔ member.
-func (b *BlackService) RecordPartnerSettlement(ctx context.Context, partnerID, offerID string, amountKobo int64) (*PartnerSettlement, error) {
+//
+// idemKey is the REQUIRED client Idempotency-Key (iron rule — this is a money
+// mutation: a retried booking must never double-book partner billing). Dedupe is
+// scoped (actor_user_id, idempotency_key): the same key from a different admin is
+// a different mutation. A replay under the same admin+key returns the original
+// settlement; a replay carrying different params (partner/offer/amount) is a
+// 409 conflict, never a silent original.
+func (b *BlackService) RecordPartnerSettlement(ctx context.Context, actorUserID, partnerID, offerID string, amountKobo int64, idemKey string) (*PartnerSettlement, error) {
+	if idemKey == "" {
+		return nil, points.ErrIdempotencyRequired
+	}
+	if actorUserID == "" {
+		return nil, errors.New("loyalty: settlement actor required")
+	}
 	if amountKobo < 0 {
 		return nil, errors.New("loyalty: settlement amount must be non-negative kobo")
+	}
+	// partner_id/offer_id are uuid columns: the DB stores them canonically but
+	// the request shape is compared against the read-back string, so a
+	// valid-but-non-canonical input (uppercase/braced) would 409 its own row
+	// forever under its key. Normalize before insert AND compare.
+	if pid, err := uuid.Parse(partnerID); err != nil {
+		return nil, fmt.Errorf("loyalty: invalid partner id: %w", err)
+	} else {
+		partnerID = pid.String()
+	}
+	if offerID != "" {
+		oid, err := uuid.Parse(offerID)
+		if err != nil {
+			return nil, fmt.Errorf("loyalty: invalid offer id: %w", err)
+		}
+		offerID = oid.String()
+	}
+	// Replay short-circuit before any fresh work.
+	prior, err := b.settlementByIdem(ctx, actorUserID, idemKey)
+	if err == nil {
+		if prior.PartnerID != partnerID || prior.OfferID != offerID || prior.AmountKobo != amountKobo {
+			return nil, points.ErrIdempotencyConflict
+		}
+		return prior, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("loyalty: settlement replay check: %w", err)
 	}
 	ps := &PartnerSettlement{
 		ID:         uuid.New().String(),
@@ -297,12 +385,46 @@ func (b *BlackService) RecordPartnerSettlement(ctx context.Context, partnerID, o
 		Status:     "PENDING",
 		CreatedAt:  time.Now(),
 	}
-	const ins = `INSERT INTO partner_settlements (id, partner_id, offer_id, amount_kobo, status, created_at)
-	             VALUES ($1,$2,$3,$4,'PENDING',$5)`
-	if _, err := b.base.db.Exec(ctx, ins, ps.ID, ps.PartnerID, ps.OfferID, ps.AmountKobo, ps.CreatedAt); err != nil {
+	const ins = `INSERT INTO partner_settlements (id, partner_id, offer_id, amount_kobo, status, actor_user_id, idempotency_key, created_at)
+	             VALUES ($1,$2,$3,$4,'PENDING',$5,$6,$7)
+	             ON CONFLICT (actor_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	var offerArg any
+	if ps.OfferID != "" {
+		offerArg = ps.OfferID
+	}
+	if _, err := b.base.db.Exec(ctx, ins, ps.ID, ps.PartnerID, offerArg, ps.AmountKobo, actorUserID, idemKey, ps.CreatedAt); err != nil {
 		return nil, fmt.Errorf("loyalty: insert partner settlement: %w", err)
 	}
-	return ps, nil
+	// Read back what stands under the key — the row just written or the winner
+	// of a same-key race — then apply the same params check.
+	stored, err := b.settlementByIdem(ctx, actorUserID, idemKey)
+	if err != nil {
+		return nil, fmt.Errorf("loyalty: settlement conflict read-back: %w", err)
+	}
+	if stored.PartnerID != partnerID || stored.OfferID != offerID || stored.AmountKobo != amountKobo {
+		return nil, points.ErrIdempotencyConflict
+	}
+	if stored.ID != ps.ID {
+		// Race lost to an identical request: return the winner's row. No audit
+		// event — only the winner emits the mutation event.
+		return stored, nil
+	}
+	b.base.log(actorUserID, "loyalty.black.settlement.record", stored.ID,
+		map[string]any{"partner": partnerID, "offer": offerID, "amount_kobo": amountKobo})
+	return stored, nil
+}
+
+// settlementByIdem loads the partner settlement recorded under an admin's
+// idempotency key.
+func (b *BlackService) settlementByIdem(ctx context.Context, actorUserID, idemKey string) (*PartnerSettlement, error) {
+	const q = `SELECT id, partner_id, COALESCE(offer_id::text,''), amount_kobo, status, created_at
+		FROM partner_settlements WHERE actor_user_id=$1 AND idempotency_key=$2`
+	var s PartnerSettlement
+	if err := b.base.db.QueryRow(ctx, q, actorUserID, idemKey).Scan(
+		&s.ID, &s.PartnerID, &s.OfferID, &s.AmountKobo, &s.Status, &s.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // Sentinel errors.
@@ -396,6 +518,8 @@ func (h *BlackHandler) Redeem(c *gin.Context) {
 			status = http.StatusForbidden
 		case errors.Is(err, ErrPerkCapReached):
 			status = http.StatusTooManyRequests
+		case errors.Is(err, points.ErrIdempotencyConflict):
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
@@ -455,14 +579,30 @@ type partnerSettlementRequest struct {
 }
 
 func (h *BlackHandler) AdminPartnerSettlement(c *gin.Context) {
+	// Dedupe is scoped to the calling admin (actor + key).
+	actor, ok := ginutil.RequireUser(c)
+	if !ok {
+		return
+	}
 	var req partnerSettlementRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	ps, err := h.svc.RecordPartnerSettlement(c.Request.Context(), req.PartnerID, req.OfferID, req.AmountKobo)
+	// Iron rule: partner settlement is a money mutation — the client
+	// Idempotency-Key is required so a retry can never double-book partner
+	// billing.
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
+	ps, err := h.svc.RecordPartnerSettlement(c.Request.Context(), actor, req.PartnerID, req.OfferID, req.AmountKobo, key)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		status := http.StatusBadRequest
+		if errors.Is(err, points.ErrIdempotencyConflict) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "settlement": ps})

@@ -206,6 +206,18 @@ func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Red
 	// Replay short-circuit before any fresh work: return the original row.
 	prior, err := s.redemptionByIdem(ctx, userID, idemKey)
 	if err == nil {
+		// Same key + different params is a CONFLICT, not a replay: silently
+		// returning the sku-A original to a sku-B request would debit once but
+		// dispatch the wrong fulfilment. The stored row carries the request
+		// shape (sku determines kind+cost), so no params-hash is needed.
+		if prior.SKU != sku {
+			return nil, points.ErrIdempotencyConflict
+		}
+		// No audit event on replay: auditService.LogAction appends a row
+		// unconditionally (REST insert, no dedupe), so auditing every replayed
+		// request would write unbounded duplicate-ish rows under a retry storm.
+		// The original mutation's loyalty.redeem event + the stored
+		// idempotency_key already cover the trail.
 		return prior, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -255,6 +267,18 @@ func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Red
 	stored, err := s.redemptionByIdem(ctx, userID, idemKey)
 	if err != nil {
 		return nil, fmt.Errorf("loyalty: redeem conflict read-back: %w", err)
+	}
+	if stored.SKU != sku {
+		// Race lost to a different-params request under the same key. Normally
+		// points.Redeem upstream already returns ErrIdempotencyConflict for a
+		// sku mismatch — this is defence-in-depth.
+		return nil, points.ErrIdempotencyConflict
+	}
+	if stored.ID != red.ID {
+		// Same-key race lost to an identical request: return the winner's row.
+		// No audit event — only the winner emits loyalty.redeem so the mutation
+		// stays exactly-once in the log (and replays emit nothing — see above).
+		return stored, nil
 	}
 	red = stored
 	// Fulfilment is a non-cash dispatch handled by the owning module (airtime / bill
@@ -436,8 +460,11 @@ func (h *Handler) Redeem(c *gin.Context) {
 	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, key)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, ErrTierTooLow) {
+		switch {
+		case errors.Is(err, ErrTierTooLow):
 			status = http.StatusForbidden
+		case errors.Is(err, points.ErrIdempotencyConflict):
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
