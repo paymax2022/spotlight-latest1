@@ -78,6 +78,33 @@ func TestLiveDB_PerkRedeem_ClientKeyReplaysIdempotently(t *testing.T) {
 	}
 }
 
+// Same key + different params (perk_code or context_ref) is a 409 conflict —
+// never silently return the original perk redemption.
+func TestLiveDB_PerkRedeem_SameKeyDifferentParams_Conflict(t *testing.T) {
+	pool := liveLoyaltyPool(t)
+	base := NewService(pool, points.NewService(pool, nil), nil)
+	svc := NewBlackService(base, nil)
+	ctx := context.Background()
+	uid := seedBlackMember(t, pool)
+	perk := seedEntitlementPerk(t, pool)
+
+	key := "blk-" + uuid.NewString()
+	if _, err := svc.RedeemPerk(ctx, uid, perk, "evt-1", key); err != nil {
+		t.Fatalf("first redeem: %v", err)
+	}
+	if _, err := svc.RedeemPerk(ctx, uid, perk, "evt-2", key); !errors.Is(err, points.ErrIdempotencyConflict) {
+		t.Fatalf("different-context replay: err = %v, want points.ErrIdempotencyConflict", err)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM perk_redemptions WHERE user_id=$1`, uid).Scan(&rows); err != nil {
+		t.Fatalf("count redemptions: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("conflict must leave exactly 1 redemption row, got %d", rows)
+	}
+}
+
 // Headerless calls are rejected fail-closed (iron rule): no key, no perk mint,
 // no redemption row.
 func TestLiveDB_PerkRedeem_NoKey_Rejected(t *testing.T) {

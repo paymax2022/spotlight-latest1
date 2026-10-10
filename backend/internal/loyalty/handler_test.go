@@ -36,6 +36,20 @@ func TestRedeemPerk_RequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+// BlackService.RecordPartnerSettlement is a money mutation (partner billing):
+// it rejects a missing client key and a missing admin actor before any DB
+// access — same fail-closed contract as the member redeem paths.
+func TestRecordPartnerSettlement_RequiresIdempotencyKey(t *testing.T) {
+	s := NewBlackService(nil, nil)
+	ctx := context.Background()
+	if _, err := s.RecordPartnerSettlement(ctx, "admin-1", "prt-1", "off-1", 1000, ""); !errors.Is(err, points.ErrIdempotencyRequired) {
+		t.Fatalf("keyless settlement: err = %v, want points.ErrIdempotencyRequired", err)
+	}
+	if _, err := s.RecordPartnerSettlement(ctx, "", "prt-1", "off-1", 1000, "key-1"); err == nil {
+		t.Fatalf("actorless settlement: err = nil, want actor-required error")
+	}
+}
+
 func newRedeemContext(w *httptest.ResponseRecorder, path, body string) *gin.Context {
 	c, _ := gin.CreateTestContext(w)
 	c.Set("user_id", "user-1")
@@ -62,5 +76,18 @@ func TestBlackRedeemHandler_RequiresIdempotencyKeyHeader(t *testing.T) {
 	NewBlackHandler(nil).Redeem(newRedeemContext(w, "/api/finance/loyalty/black/redeem", `{"perk_code":"LOUNGE","context_ref":"evt-1"}`))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("headerless perk redeem: status = %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+// The admin partner-settlement handler writes 400 when the Idempotency-Key
+// header is absent — the svc is nil and must never be reached. Partner billing
+// is a money path: an unkeyed retry must never double-book it.
+func TestAdminPartnerSettlement_RequiresIdempotencyKeyHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	NewBlackHandler(nil).AdminPartnerSettlement(newRedeemContext(w, "/api/loyalty/admin/black/partner-settlement",
+		`{"partner_id":"prt-1","offer_id":"off-1","amount_kobo":1000}`))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("headerless settlement: status = %d, want 400 (body %s)", w.Code, w.Body.String())
 	}
 }
