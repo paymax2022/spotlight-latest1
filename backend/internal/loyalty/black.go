@@ -8,6 +8,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/credential"
+	"spotlight/backend/internal/points"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -175,7 +176,24 @@ func (b *BlackService) ListPerks(ctx context.Context) ([]Perk, error) {
 // credential is minted (validated at the event gate by the shared credential
 // primitive — single-use + replay-rejected). The redemption is audited (NL-12).
 // NL-5/NL-4: a perk is access/content only, never cash.
-func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, contextRef string) (*PerkRedemption, error) {
+//
+// idemKey is the REQUIRED client Idempotency-Key (iron rule): a replay returns
+// the original PerkRedemption — no second credential mint and no duplicate row
+// (perk_redemptions.idempotency_key dedupes the insert).
+func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, contextRef, idemKey string) (*PerkRedemption, error) {
+	if idemKey == "" {
+		return nil, points.ErrIdempotencyRequired
+	}
+	// Replay short-circuit before any fresh work (esp. the credential mint):
+	// return the original row.
+	prior, err := b.perkRedemptionByIdem(ctx, userID, idemKey)
+	if err == nil {
+		return prior, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("loyalty: perk replay check: %w", err)
+	}
+
 	ok, err := b.isActiveBlack(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -233,13 +251,35 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 		red.CredentialID = &c.ID
 	}
 
-	const ins = `INSERT INTO perk_redemptions (id, user_id, perk_code, context_ref, credential_id, created_at)
-	             VALUES ($1,$2,$3,$4,$5,$6)`
-	if _, err := b.base.db.Exec(ctx, ins, red.ID, red.UserID, red.PerkCode, red.ContextRef, red.CredentialID, red.CreatedAt); err != nil {
+	const ins = `INSERT INTO perk_redemptions (id, user_id, perk_code, context_ref, credential_id, idempotency_key, created_at)
+	             VALUES ($1,$2,$3,$4,$5,$6,$7)
+	             ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	if _, err := b.base.db.Exec(ctx, ins, red.ID, red.UserID, red.PerkCode, red.ContextRef, red.CredentialID, idemKey, red.CreatedAt); err != nil {
 		return nil, fmt.Errorf("loyalty: insert perk redemption: %w", err)
 	}
-	b.base.log(userID, "loyalty.black.perk.redeem", red.ID, map[string]any{"perk": perkCode, "context": contextRef})
-	return red, nil
+	// Read back what stands under the key — the row just written or, on a lost
+	// same-key race, the winner's. A race loss may leave the credential minted
+	// above orphaned (single-use, bound to this user — low harm); the member
+	// still gets exactly one recorded redemption.
+	stored, err := b.perkRedemptionByIdem(ctx, userID, idemKey)
+	if err != nil {
+		return nil, fmt.Errorf("loyalty: perk conflict read-back: %w", err)
+	}
+	b.base.log(userID, "loyalty.black.perk.redeem", stored.ID, map[string]any{"perk": perkCode, "context": contextRef})
+	return stored, nil
+}
+
+// perkRedemptionByIdem loads the perk redemption recorded under a client
+// idempotency key.
+func (b *BlackService) perkRedemptionByIdem(ctx context.Context, userID, idemKey string) (*PerkRedemption, error) {
+	const q = `SELECT id, user_id, perk_code, context_ref, credential_id, created_at
+		FROM perk_redemptions WHERE user_id=$1 AND idempotency_key=$2`
+	var r PerkRedemption
+	if err := b.base.db.QueryRow(ctx, q, userID, idemKey).Scan(
+		&r.ID, &r.UserID, &r.PerkCode, &r.ContextRef, &r.CredentialID, &r.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // RecordPartnerSettlement books a partner-funded offer redemption for billing
@@ -341,7 +381,14 @@ func (h *BlackHandler) Redeem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	red, err := h.svc.RedeemPerk(c.Request.Context(), userID, req.PerkCode, req.ContextRef)
+	// Iron rule: every money mutation requires the client Idempotency-Key — a
+	// replay must never mint a second perk credential. The BFF edge synthesizes
+	// one for callers that omit it; the backend always requires it.
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
+	red, err := h.svc.RedeemPerk(c.Request.Context(), userID, req.PerkCode, req.ContextRef, key)
 	if err != nil {
 		status := http.StatusBadRequest
 		switch {

@@ -6,12 +6,25 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 // Catch-all proxy: /api/v1/loyalty/<...> → Go /api/finance/loyalty/<...>
 // transitions, ledger/idempotency and the NL-1..12 invariants. Admin routes hit
 // Go directly. Money mutations forward the Idempotency-Key.
+//
+// The Go backend now REQUIRES Idempotency-Key on every redeem (iron rule — a
+// replay must never double-debit points). The BFF is the edge: when a caller
+// omits the header we synthesize one per submit (crypto.randomUUID) and forward
+// it; dedupe still happens at the backend. A caller-supplied key is forwarded
+// verbatim by the proxy so its own retries collapse onto one redemption.
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 async function forward(request: Request, path: string[]) {
   if (!featureFlags.loyalty()) return errorResponse('This service is not available.', 503);
   try {
     await requireRequestUser(request);
     const sub = (path ?? []).join('/');
-    return proxyToGoBackend(request, `/api/finance/loyalty/${sub}`);
+    const hasKey = (request.headers.get('Idempotency-Key') ?? '').trim() !== '';
+    const options =
+      MUTATING_METHODS.has(request.method) && !hasKey
+        ? { headers: { 'Idempotency-Key': crypto.randomUUID() } }
+        : undefined;
+    return proxyToGoBackend(request, `/api/finance/loyalty/${sub}`, options);
   } catch (err) { return handleApiError(err); }
 }
 export async function GET(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path); }

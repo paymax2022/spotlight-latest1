@@ -50,11 +50,15 @@ test.describe('FIN-005 points / loyalty / cashtag', () => {
     expect((cat.body.items ?? []).length).toBeGreaterThan(0);
     expect(assertKoboIntegers(cat.body)).toEqual([]);
 
-    // Redeem with 0 points → refused, never a negative balance.
+    // Redeem with 0 points → refused, never a negative balance. The
+    // Idempotency-Key is required on every redeem (iron rule) — without it the
+    // handler 400s before the balance check and this assertion would pass for
+    // the wrong reason.
     const sku = cat.body.items[0].sku;
     const redeem = await goFetch(request, '/api/finance/loyalty/points/redeem', {
       method: 'POST',
       token,
+      headers: { 'Idempotency-Key': idemKey('redeem') },
       data: { sku },
     });
     expect([400, 402, 409, 422]).toContain(redeem.status);
