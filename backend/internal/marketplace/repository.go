@@ -316,6 +316,33 @@ func (r *Repository) SetListingStatus(ctx context.Context, id string, from, to L
 	return nil
 }
 
+// SetListingCategory re-files a listing under another category, replacing its attrs with
+// the reconciled set (see Service.reconcileAttrs). Status-conditioned
+// like SetListingStatus: a 0-row update means the listing left `from` underneath us,
+// reported as ErrConflict rather than re-filing a listing that has since gone live or
+// been removed. The (market_id, category_id) composite FK is the backstop for a
+// cross-market target; the service checks it first so the caller gets a field error.
+func (r *Repository) SetListingCategory(ctx context.Context, id string, from ListingStatus, categoryID string, attrs map[string]any) error {
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+	attrsJSON, merr := json.Marshal(attrs)
+	if merr != nil {
+		return wrapInternal("marshal listing attrs", merr)
+	}
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.mkt_listings
+		SET category_id=$3, attrs=$4::jsonb, updated_at=now()
+		WHERE id=$1 AND status=$2::listing_status`, id, string(from), categoryID, attrsJSON)
+	if err != nil {
+		return wrapInternal("set listing category", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 // RenewListing flips an expired listing back to active AND pushes expires_at out
 // another 60 days (matching mkt_listings.expires_at's own creation-time default,
 // 20260905000000_marketplace_v1.sql:123) — a status-only flip would leave

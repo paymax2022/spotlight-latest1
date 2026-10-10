@@ -63,6 +63,47 @@ func (h *Handler) AdminRejectListing(c *gin.Context) {
 	respond(c, http.StatusOK, l)
 }
 
+// recategorizeBody is the body of POST /admin/listings/:id/recategorize.
+type recategorizeBody struct {
+	CategoryID string `json:"category_id"`
+	ReasonCode string `json:"reason_code"`
+}
+
+// AdminRecategorizeListing POST /admin/listings/:id/recategorize — moves a listing
+// awaiting review to the category/sub-category it belongs in. reason_code is optional
+// (it is a correction, not a refusal); the audit row and the seller notice are written
+// either way.
+func (h *Handler) AdminRecategorizeListing(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var body recategorizeBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	l, err := h.svc.RecategorizeListing(c.Request.Context(), uid, c.Param("id"), body.CategoryID, body.ReasonCode)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
+// AdminModerationCategories GET /admin/moderation/categories — the active category
+// tree (flat, parents first) for the reviewer's re-assign picker. A read-only view of
+// what members already see via GET /categories, scoped to the moderation permission so
+// a reviewer does not need taxonomy-management rights just to fix a listing's category.
+func (h *Handler) AdminModerationCategories(c *gin.Context) {
+	cats, err := h.svc.ListCategories(c.Request.Context(), DefaultMarketID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, cats)
+}
+
 // AdminFlags GET /admin/flags
 func (h *Handler) AdminFlags(c *gin.Context) {
 	limit, offset := pageParams(c)
