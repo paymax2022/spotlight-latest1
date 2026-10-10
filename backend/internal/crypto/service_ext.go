@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -80,9 +81,15 @@ func (s *Service) priceSwap(ctx context.Context, fromAssetID, toAssetID string, 
 // nothing minted):
 //   - Holdings: from-asset units DEBIT, to-asset units CREDIT (one DB tx).
 //   - Cash legs (finance ledger, one idempotency envelope):
+//     buy  B : wallet → escrow DEBIT     (−cashKobo gross, ONE gated journal —
+//     the daily cap is evaluated once on
+//     the full charge, so a cap-boundary
+//     split between the buy and spread
+//     legs is impossible; F-5)
 //     sell A : escrow → wallet CREDIT   (+cashKobo)
-//     buy  B : wallet → escrow DEBIT     (−netCash)
-//     spread : wallet → paymax_revenue   (−spreadKobo)
+//     spread : escrow → paymax_revenue   (−spreadKobo, standing-account
+//     journal — no wallet debit, never
+//     cap-refused)
 //     Net wallet delta is zero (cashKobo = netCash + spreadKobo), so a swap needs
 //     no NGN balance; the spread is retained revenue. Fail-closed: an oversell is
 //     rejected by the holdings CHECK before any ledger post is finalised.
@@ -93,6 +100,20 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 	q, from, to, spreadBps, err := s.priceSwap(ctx, fromAssetID, toAssetID, fromUnits)
 	if err != nil {
 		return nil, err
+	}
+
+	// Replay anchor BEFORE the holdings check: the order row records LAST in
+	// this flow, so a found row means every leg is durable — a completed swap
+	// already consumed its from-holdings, and re-checking them would refuse a
+	// convergent retry with ErrInsufficient. Identity is verified: a key held
+	// by a different order fails closed, never adopts.
+	if existing, err := s.repo.SwapOrderByIdem(ctx, idemKey); err != nil {
+		return nil, err
+	} else if existing != nil {
+		if existing.UserID != userID || existing.FromAssetID != fromAssetID || existing.ToAssetID != toAssetID {
+			return nil, errors.New("crypto: swap idempotency key held by a different order")
+		}
+		return existing, nil
 	}
 
 	// Fail-closed holdings check before any movement.
@@ -127,17 +148,11 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		}
 	}
 
-	// 1) Asset legs FIRST (fail-closed oversell): record the order + move both
-	//    holdings atomically. A replay is a no-op (dup → holdings untouched).
-	orderID, dup, err := s.repo.RecordSwapFill(ctx, o)
-	if err != nil {
-		return nil, err
-	}
-	o.ID = orderID
-
-	// 2) Cash legs on the finance ledger (idempotent per suffix; a replay is a
-	//    safe no-op because each leg's key is stable). Sell A proceeds land in the
-	//    wallet, the buy-B cost leaves it, and the spread is retained to revenue.
+	// 1) Cash legs BEFORE the order/holdings record (F-5): a cap or balance
+	//    refusal posts zero legs and records NOTHING — the old ordering
+	//    recorded a 'filled' order and moved holdings first, so a refused cash
+	//    leg left assets moved with no payment. Every leg is keyed on idemKey,
+	//    so a crash between the legs and the order record converges on retry.
 	escrow, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
@@ -146,23 +161,89 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 	if err != nil {
 		return nil, err
 	}
-	// sell A: escrow → wallet CREDIT (+cashKobo)
-	if err := s.led.Credit(ctx, userID, o.Reference+":sell", idemKey+":sell", escrow.ID, q.CashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	wallet, err := s.led.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
-	// buy B: wallet → escrow DEBIT (−netCash)
-	netCash := q.CashKobo - q.SpreadKobo
-	if netCash > 0 {
-		if err := s.led.DebitGated(ctx, userID, o.Reference+":buy", idemKey+":buy", escrow.ID, netCash); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	// sell A: escrow → wallet CREDIT (+cashKobo) FIRST — the swap is
+	// self-funding by construction: the sale proceeds are what cover the gross
+	// wallet debit below, so a member needs no NGN balance to swap. If the
+	// debit is refused the credit is unwound (unwindSwapSell) — a refused swap
+	// mints nothing.
+	if err := s.led.Credit(ctx, userID, o.Reference+":sell", idemKey+":sell", escrow.ID, q.CashKobo); err != nil {
+		if !errors.Is(err, ledger.ErrDuplicate) {
+			return nil, err
+		}
+		if verr := s.verifySwapLeg(ctx, ledger.JournalEntry{
+			Reference: o.Reference + ":sell", IdempotencyKey: idemKey + ":sell",
+			AmountKobo: q.CashKobo, DebitAccountID: escrow.ID, CreditAccountID: wallet.ID,
+		}); verr != nil {
+			return nil, verr
+		}
+	}
+	// buy B: wallet → escrow DEBIT for the GROSS cashKobo (net + spread), keyed
+	// ":buy". F-5: the wallet charge is ONE gated journal — the daily cap and
+	// the balance check are evaluated exactly once, atomically, under the
+	// wallet advisory lock. The old split (:buy gated netCash, then :spread
+	// gated wallet→revenue) could post :buy and then refuse :spread at the cap
+	// boundary — a filled order with the spread uncollected. A single wallet
+	// debit for the full amount makes that wedge impossible; the revenue split
+	// below carries no wallet debit and can never be cap-refused.
+	buy := ledger.JournalEntry{
+		Reference:       o.Reference + ":buy",
+		IdempotencyKey:  idemKey + ":buy",
+		AmountKobo:      q.CashKobo,
+		DebitAccountID:  wallet.ID,
+		CreditAccountID: escrow.ID,
+	}
+	if err := s.led.PostJournalGated(ctx, buy, userID); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) {
+			// The duplicate claim is never proof — verify the committed legs
+			// are exactly this journal before treating the debit as done.
+			if verr := s.verifySwapLeg(ctx, buy); verr != nil {
+				return nil, verr
+			}
+		} else {
+			// Refused or failed — unwind the sell credit (idempotent keyed
+			// reversal, identity-verified) so no proceeds linger on a swap
+			// that never filled. unwindSwapSell no-ops when the buy journal
+			// actually committed (ambiguous commit) — the retry converges.
+			if uwErr := s.unwindSwapSell(ctx, idemKey, o.Reference+":sell", wallet.ID, escrow.ID, q.CashKobo); uwErr != nil {
+				return nil, fmt.Errorf("crypto: unwind swap sell leg after buy refused: %w", uwErr)
+			}
 			return nil, err
 		}
 	}
-	// spread: wallet → paymax_revenue (−spreadKobo)
+	// spread: escrow → paymax_revenue (−spreadKobo). A standing-account
+	// journal, not a wallet debit — it cannot be refused at the cap. A hard
+	// failure leaves the spread parked in escrow and a same-key retry
+	// converges; the order is never left filled with the spread unpayable.
 	if q.SpreadKobo > 0 {
-		if err := s.led.DebitGated(ctx, userID, o.Reference+":spread", idemKey+":spread", revenue.ID, q.SpreadKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-			return nil, err
+		spread := ledger.JournalEntry{
+			Reference:       o.Reference + ":spread",
+			IdempotencyKey:  idemKey + ":spread",
+			AmountKobo:      q.SpreadKobo,
+			DebitAccountID:  escrow.ID,
+			CreditAccountID: revenue.ID,
+		}
+		if err := s.led.PostJournal(ctx, spread); err != nil {
+			if !errors.Is(err, ledger.ErrDuplicate) {
+				return nil, err
+			}
+			if verr := s.verifySwapLeg(ctx, spread); verr != nil {
+				return nil, verr
+			}
 		}
 	}
+
+	// 2) Asset legs LAST: record the order + move both holdings atomically,
+	//    only once every cash leg is durable. A replay is a no-op (dup →
+	//    holdings untouched).
+	orderID, dup, err := s.repo.RecordSwapFill(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	o.ID = orderID
 
 	if dup {
 		o.Status = "filled"
@@ -549,6 +630,83 @@ func (s *Service) Withdrawals(ctx context.Context, userID string, limit, offset 
 		offset = 0
 	}
 	return s.repo.ListWithdrawals(ctx, userID, limit, offset)
+}
+
+// verifySwapLeg decides what an ErrDuplicate on a swap cash-leg journal means —
+// the duplicate claim itself is NEVER proof (a bare Redis-lock "duplicate" can
+// carry zero legs). Reads the durable ledger:
+//   - both legs committed with exactly j's identity → true replay, benign;
+//   - key claimed but no legs → ErrLedgerReconPending (retryable — the caller
+//     retries, never proceeds as though the debit posted);
+//   - legs under different accounts/types/amount/reference → a foreign claim —
+//     fail closed, loudly.
+func (s *Service) verifySwapLeg(ctx context.Context, j ledger.JournalEntry) error {
+	posted, err := s.led.Posted(ctx, j.IdempotencyKey)
+	if err != nil {
+		return err
+	}
+	if !posted {
+		return ErrLedgerReconPending
+	}
+	d, ok, err := s.led.EntryByKey(ctx, j.IdempotencyKey+":debit")
+	if err != nil {
+		return err
+	}
+	if !ok || d.AccountID != j.DebitAccountID || d.Type != ledger.EntryDebit ||
+		d.AmountKobo != j.AmountKobo || d.Reference != j.Reference {
+		return ledger.ErrDuplicate
+	}
+	c, ok, err := s.led.EntryByKey(ctx, j.IdempotencyKey+":credit")
+	if err != nil {
+		return err
+	}
+	if !ok || c.AccountID != j.CreditAccountID || c.Type != ledger.EntryCredit ||
+		c.AmountKobo != j.AmountKobo || c.Reference != j.Reference {
+		return ledger.ErrDuplicate
+	}
+	return nil
+}
+
+// unwindSwapSell reverses the committed :sell credit after the :buy journal
+// refused or failed — a caller must never keep the sale proceeds of a swap
+// that never filled (F-5; the business unwindCacLeg pattern). The reversal
+// runs only when the :sell journal verifies as OURS (escrow debit / wallet
+// credit, exact reference + amount on both legs): a foreign claim under the
+// key is refused, never answered by minting a reversal off someone else's
+// legs. No-ops when the :buy journal turns out durable after all — an
+// ambiguous commit means the retry converges, not unwinds. Idempotent on
+// "<idem>:unwind:sell" — a retried unwind is a no-op.
+func (s *Service) unwindSwapSell(ctx context.Context, idemKey, sellRef, walletID, escrowID string, amountKobo int64) error {
+	buyPosted, err := s.led.Posted(ctx, idemKey+":buy")
+	if err != nil {
+		return fmt.Errorf("crypto: re-probe buy journal before unwind: %w", err)
+	}
+	if buyPosted {
+		return nil // ambiguous commit — the buy landed; nothing to unwind
+	}
+	sellKey := idemKey + ":sell"
+	dr, drFound, err := s.led.EntryByKey(ctx, sellKey+":debit")
+	if err != nil {
+		return fmt.Errorf("crypto: read sell debit leg: %w", err)
+	}
+	cr, crFound, err := s.led.EntryByKey(ctx, sellKey+":credit")
+	if err != nil {
+		return fmt.Errorf("crypto: read sell credit leg: %w", err)
+	}
+	ours := drFound && crFound &&
+		dr.AccountID == escrowID && dr.Type == ledger.EntryDebit &&
+		dr.Reference == sellRef && dr.AmountKobo == amountKobo &&
+		cr.AccountID == walletID && cr.Type == ledger.EntryCredit &&
+		cr.Reference == sellRef && cr.AmountKobo == amountKobo
+	if !ours {
+		return fmt.Errorf("%w: sell key %s held by a different journal — refusing to reverse", ledger.ErrDuplicate, sellKey)
+	}
+	// PostReversal(restore, release): escrow is restored (+cashKobo), the wallet
+	// is drained (−cashKobo) — the exact inverse of the :sell journal.
+	if err := s.led.PostReversal(ctx, escrowID, walletID, amountKobo, sellRef+":unwind", idemKey+":unwind:sell"); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		return err
+	}
+	return nil
 }
 
 // trimmed is a tiny helper (kept local to avoid a strings import churn elsewhere).

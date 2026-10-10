@@ -28,6 +28,11 @@ type walletDebitLimiter interface {
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("crypto: money path requires a tier gate (not wired)")
 
+// ErrLedgerReconPending is returned when a ledger leg key was claimed duplicate
+// but no durable legs back the claim (a bare Redis-lock replay). Retryable —
+// the caller must retry, never proceed as though the journal posted.
+var ErrLedgerReconPending = errors.New("crypto: ledger leg not durably posted — retry")
+
 // Service is the crypto money-path orchestrator. It REUSES the finance ledger:
 // a BUY debits the user's main wallet into the shared escrow standing account and
 // credits the user's crypto holding (asset-unit projection); a SELL reverses.
