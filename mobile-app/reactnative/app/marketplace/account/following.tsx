@@ -1,4 +1,4 @@
-// inline. Following a seller surfaces their new listings in the notifications feed.
+// inline. Following keeps a seller one tap away; new-listing alerts are not sent yet.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,7 +33,7 @@ export default function FollowingScreen() {
         <View style={styles.centre}>
           <Store size={40} color={MarketColors.muted} />
           <Text style={styles.emptyTitle}>You’re not following anyone yet</Text>
-          <Text style={styles.muted}>Follow a seller from their profile to get their new listings in your notifications.</Text>
+          <Text style={styles.muted}>Tap Follow on a seller’s profile or on a listing to keep them here for quick access.</Text>
         </View>
       ) : (
         <FlatList
@@ -43,7 +43,7 @@ export default function FollowingScreen() {
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} tintColor={MarketColors.brand} />}
           renderItem={({ item }) => (
             <Pressable style={styles.row} onPress={() => router.push(`/marketplace/seller/${item.sellerId}` as never)} accessibilityRole="button">
-              <View style={styles.avatar}><Text style={styles.avatarText}>{item.sellerName[0]?.toUpperCase()}</Text></View>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{(item.sellerName ?? 'S')[0]?.toUpperCase()}</Text></View>
               <View style={styles.rowBody}>
                 <Text style={styles.name} numberOfLines={1}>{item.sellerName}</Text>
                 <View style={styles.metaRow}>

@@ -16,7 +16,8 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';
-import { useCreateReport, useBlockUser } from '@/features/marketplace/api/account.hooks';
+import { useCreateReport, useBlockUser, useFollowedSellers } from '@/features/marketplace/api/account.hooks';
+import { useSavedItems } from '@/features/marketplace/hooks';
 import type { ReportTargetType } from '@/features/marketplace/api/account.api';
 import { alertAsync } from '@/lib/confirm';
 
@@ -32,10 +33,16 @@ const REASONS = [
 
 export default function ReportFlow() {
   const params = useLocalSearchParams<{ targetType?: string; targetId?: string; targetName?: string; sellerId?: string }>();
-  const targetType = (params.targetType as ReportTargetType) || 'listing';
-  const targetId = params.targetId ?? '';
-  const targetName = params.targetName ?? 'this item';
-  const blockableUserId = params.sellerId || (targetType === 'seller' ? targetId : undefined);
+  // Opened from the Account hub there is no target yet: the user picks one below.
+  // Without it the report could never be submitted (the API needs a target id).
+  const [picked, setPicked] = useState<{ type: ReportTargetType; id: string; name: string; sellerId?: string } | null>(null);
+  const targetType = picked?.type ?? ((params.targetType as ReportTargetType) || 'listing');
+  const targetId = picked?.id ?? params.targetId ?? '';
+  const targetName = picked?.name ?? params.targetName ?? 'this item';
+  const blockableUserId = picked ? (picked.type === 'seller' ? picked.id : picked.sellerId) : params.sellerId || (targetType === 'seller' ? targetId : undefined);
+  const needsTarget = targetId === '';
+  const followed = useFollowedSellers();
+  const savedItems = useSavedItems();
 
   const [reason, setReason] = useState<string>('');
   const [note, setNote] = useState('');
@@ -91,8 +98,28 @@ export default function ReportFlow() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Report a problem" subtitle={`Reporting ${targetName}`} />
+      <ScreenHeader title="Report a problem" subtitle={needsTarget ? 'Choose what to report' : `Reporting ${targetName}`} />
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        {needsTarget ? (
+          <>
+            <Text style={styles.sectionLabel}>What are you reporting?</Text>
+            {(followed.data ?? []).map((f) => (
+              <Pressable key={`s-${f.sellerId}`} style={styles.reason} onPress={() => setPicked({ type: 'seller', id: f.sellerId, name: f.sellerName })} accessibilityRole="button">
+                <Text style={styles.reasonLabel}>Seller · {f.sellerName}</Text>
+              </Pressable>
+            ))}
+            {(savedItems.data ?? []).map((s) => (
+              <Pressable key={`l-${s.listing.id}`} style={styles.reason} onPress={() => setPicked({ type: 'listing', id: s.listing.id, name: s.listing.title })} accessibilityRole="button">
+                <Text style={styles.reasonLabel} numberOfLines={1}>Listing · {s.listing.title}</Text>
+              </Pressable>
+            ))}
+            <Text style={styles.hint}>
+              Don’t see it here? Open the listing, seller or chat and tap the flag icon — that reports exactly what you’re looking at.
+            </Text>
+          </>
+        ) : picked ? (
+          <Pressable onPress={() => setPicked(null)} hitSlop={8}><Text style={styles.remove}>Change what I’m reporting</Text></Pressable>
+        ) : null}
         <Text style={styles.sectionLabel}>Why are you reporting this?</Text>
         <View style={styles.reasons}>
           {REASONS.map((r) => {
@@ -177,6 +204,7 @@ const styles = StyleSheet.create({
   evidenceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface },
   evidenceThumb: { width: 40, height: 40, borderRadius: Radius.sm },
   evidenceOk: { ...Typography.labelLg, color: MarketColors.text, flex: 1 },
+  hint: { ...Typography.bodySm, color: MarketColors.muted, marginTop: Spacing.xs },
   remove: { ...Typography.labelLg, color: MarketColors.danger },
   blockToggle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.md, padding: Spacing.md, borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt },
   checkbox: { width: 22, height: 22, borderRadius: Radius.sm, borderWidth: 1.5, borderColor: MarketColors.muted, alignItems: 'center', justifyContent: 'center' },

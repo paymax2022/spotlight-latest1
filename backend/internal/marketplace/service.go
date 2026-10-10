@@ -452,8 +452,57 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 }
 
 // SellerProfile returns a seller's trust card.
-func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustProfile, error) {
-	return s.repo.GetTrustProfile(ctx, sellerID)
+func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*SellerProfileView, error) {
+	if err := requireUUIDField(sellerID, "seller_id"); err != nil {
+		return nil, err
+	}
+	c, err := s.repo.GetSellerCard(ctx, sellerID)
+	if err != nil {
+		return nil, err
+	}
+	// An id with no profile is not a seller: 404 rather than a blank "Seller" page that
+	// the app would then offer to follow.
+	if !c.Exists {
+		return nil, ErrSellerNotFound
+	}
+	v := &SellerProfileView{
+		TrustProfile:        c.Trust,
+		ID:                  sellerID,
+		Name:                PublicDisplayName(c.FullName),
+		AvatarURL:           c.AvatarURL,
+		MemberSince:         c.MemberSince,
+		TenureLabel:         TenureLabel(time.Now(), derefTime(c.MemberSince)),
+		ResponseTimeMinutes: c.AvgResponseMin,
+		FollowerCount:       c.Followers,
+		ActiveListings:      c.ActiveListings,
+	}
+	return v, nil
+}
+
+func derefTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+// sellerSummary builds the public seller card shown on a listing.
+func (s *Service) sellerSummary(ctx context.Context, sellerID string) *SellerSummary {
+	c, err := s.repo.GetSellerCard(ctx, sellerID)
+	if err != nil || !c.Exists {
+		return nil
+	}
+	return &SellerSummary{
+		ID:                    sellerID,
+		Name:                  PublicDisplayName(c.FullName),
+		AvatarURL:             c.AvatarURL,
+		TrustScore:            c.Trust.TrustScore,
+		VerifiedIDBadge:       c.Trust.VerifiedIDBadge,
+		VerifiedBusinessBadge: c.Trust.VerifiedBusinessBadge,
+		TenureLabel:           TenureLabel(time.Now(), derefTime(c.MemberSince)),
+		ResponseTimeMinutes:   c.AvgResponseMin,
+		KYCTier:               c.Trust.KYCTier,
+	}
 }
 
 // SellerListings returns a seller's listings.
@@ -530,6 +579,11 @@ func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, of
 	}
 	if l.SellerID == buyerID {
 		return nil, newErr(422, CodeSelfPurchaseNotAllowed, "cannot make an offer on your own listing")
+	}
+	if blocked, berr := s.repo.IsBlockedEitherWay(ctx, buyerID, l.SellerID); berr != nil {
+		return nil, berr
+	} else if blocked {
+		return nil, ErrUserBlocked
 	}
 	if offerKobo <= 0 {
 		return nil, fieldErr(CodeValidation, "offer_price_kobo must be positive", "offer_price_kobo")
