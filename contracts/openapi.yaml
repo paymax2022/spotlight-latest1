@@ -6894,7 +6894,7 @@ paths:
   /api/v1/fx/cards:
     get:
       operationId: fxListCards
-      summary: List FX virtual cards (STUB — no issuer wired)
+      summary: List the caller's FX virtual cards (persisted; no issuer wired)
       tags: [FX Cards]
       security: [{ bearerAuth: [] }]
       responses:
@@ -6908,7 +6908,12 @@ paths:
                   data: { type: array, items: { $ref: '#/components/schemas/FxCard' } }
     post:
       operationId: fxCreateCard
-      summary: Issue an FX virtual card (STUB; funding is money-path when real)
+      summary: Issue an FX virtual card (no issuer wired; funding leg is money-path)
+      description: >-
+        Idempotent on (business, Idempotency-Key): a same-key replay returns the
+        originally created card rather than minting a second one, and a
+        create+fund replay produces one card and one funding leg — the unique
+        index on orch_fx_cards(business_id, idempotency_key) arbitrates races.
       tags: [FX Cards]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -6920,7 +6925,7 @@ paths:
             schema: { $ref: '#/components/schemas/FxCreateCardRequest' }
       responses:
         '201':
-          description: Created card
+          description: Created card (or the original card on a same-key replay)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FxCard' }
@@ -7049,6 +7054,74 @@ paths:
       responses:
         '200':
           description: Card transaction list
+
+  # ── FX business API keys (console credential management; NOT money-path — no
+  # ledger posting, no Idempotency-Key. The key hash is stored; the plaintext
+  # secret is returned exactly once at create/rotate.) ──────────────────────────
+  /api/v1/fx/api-keys:
+    get:
+      operationId: fxListAPIKeys
+      summary: List the caller business's API keys (prefix/mode only — never the secret)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: API key list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        label: { type: string }
+                        prefix: { type: string, description: "Non-secret display fragment, e.g. sk_live_8x21" }
+                        mode: { type: string, enum: [sandbox, live] }
+                        createdAt: { type: string, format: date-time }
+                        lastUsed: { type: string, format: date-time, nullable: true }
+    post:
+      operationId: fxCreateAPIKey
+      summary: Mint a new API key — the plaintext secret is returned once, only the hash persists
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              properties:
+                label: { type: string, minLength: 1 }
+                mode: { type: string, enum: [sandbox, live], default: sandbox, description: "test is accepted as an alias for sandbox" }
+      responses:
+        '201':
+          description: Created key including the one-time plaintext secret
+        '400':
+          description: Missing label, or an unsupported mode
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/api-keys/{id}/rotate:
+    post:
+      operationId: fxRotateAPIKey
+      summary: Rotate an API key — new secret, same seat (mode is inherited from the existing key)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Rotated key including the new one-time plaintext secret
+        '400':
+          description: API key not found for the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
 
   # ── Merchant Onboarding & Role-Upgrade (PRD: Identity/Upgrade/Onboarding) ──
   /api/v1/onboarding/modules:
@@ -8163,7 +8236,7 @@ paths:
   /events/{id}:
     get:
       operationId: getEvent
-      summary: Get an event by id (public read)
+      summary: Get an event by id (public read; non-public states are 404 for anyone but the organiser)
       tags: [Events]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -8178,6 +8251,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
+        '404': { description: "Event not found, or in a non-public state and the caller is not the organiser (existence is never leaked)" }
 
   /events/{id}/submit:
     post:
@@ -8193,6 +8267,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { description: Event not found }
 
   /events/{id}/golive:
     post:
@@ -8208,6 +8283,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { description: Event not found }
 
   /events/{id}/close:
     post:
@@ -8223,6 +8299,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { description: Event not found }
 
   /events/{id}/tiers:
     post:
@@ -8253,6 +8330,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/TicketTier' }
+        '404': { description: Event not found }
 
   /events/{id}/promos:
     post:
@@ -8283,8 +8361,27 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/PromoCode' }
+        '404': { description: Event not found }
 
   /events/{id}/vendors:
+    get:
+      operationId: listEventVendors
+      summary: Identity-only vendor list for tap-to-pay ({id, name, active} — any authenticated attendee)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Vendor list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  vendors: { type: array, items: { $ref: '#/components/schemas/Vendor' } }
+        '404': { description: Event not found }
     post:
       operationId: addEventVendor
       summary: Organiser registers a POS-lite vendor
@@ -8312,6 +8409,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Vendor' }
+        '404': { description: Event not found }
 
   /events/{id}/purchase:
     post:
@@ -8342,6 +8440,8 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Ticket' }
+        '400': { description: "Missing Idempotency-Key or invalid body" }
+        '404': { description: Event or tier not found }
 
   /events/tickets/{ticketId}/gift:
     post:
@@ -8394,6 +8494,10 @@ paths:
     post:
       operationId: scanEventTicket
       summary: Steward gate scan — validates a rotating-QR/NFC token (single-use, replay-rejected)
+      description: >-
+        Mounted at POST /api/finance/events/scan (Go) and proxied at
+        POST /api/v1/events/scan (BFF — a dedicated scan leaf, since the [id]
+        leaf shadows the catch-all for single-segment paths).
       tags: [Events]
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -8416,6 +8520,9 @@ paths:
                 properties:
                   success: { type: boolean }
                   result: { type: object }
+        '400': { description: Invalid request body (generic message — binding internals are never echoed) }
+        '403': { description: Caller is not a registered steward for the event }
+        '404': { description: Event or ticket not found }
 
   /events/{id}/wallet:
     post:
@@ -8435,6 +8542,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/EventWallet' }
+        '404': { description: Event not found }
 
   /events/wallet/{walletId}/topup:
     post:
@@ -8465,6 +8573,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/EventWallet' }
+        '404': { description: Wallet not found }
 
   /events/wallet/{walletId}:
     get:
@@ -8484,6 +8593,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/EventWallet' }
+        '404': { description: Wallet not found }
 
   /events/wallet/{walletId}/close:
     post:
@@ -8499,6 +8609,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { description: Wallet not found }
 
   /events/vendors/{vendorId}/charge:
     post:
@@ -8529,6 +8640,8 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/VendorCharge' }
+        '400': { description: "Missing Idempotency-Key or invalid body" }
+        '404': { description: Vendor or wallet not found }
 
   # ── Events admin (RBAC events.*) — mounted at /api/events/admin/*, OUTSIDE the
   # /api/finance server base (see `servers:` above). Documented here as full
@@ -8548,6 +8661,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { description: Event not found }
 
   /api/events/admin/{id}/suspend:
     post:
@@ -8563,6 +8677,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { description: Event not found }
 
   /api/events/admin/{id}/vendors/{vendorId}/settle:
     post:
@@ -8586,6 +8701,7 @@ paths:
                   net_kobo: { type: integer, format: int64 }
         '403':
           description: Vendor has not completed KYC (fail-closed, NL-10)
+        '404': { description: Event or vendor not found }
 
   # ── Crowdfunding ──────────────────────────────────────────────────────────────
   /crowdfunding/campaigns:
@@ -9121,6 +9237,8 @@ paths:
       parameters:
         - { name: category, in: query, schema: { type: string, enum: [pain, vitamins, first_aid, baby, skincare, devices, prescription, otc] } }
         - { name: search, in: query, schema: { type: string } }
+        - { name: pharmacy_provider_id, in: query, schema: { type: string, format: uuid }, description: "Optional provider filter — feeds a uuid-column WHERE clause" }
+        - { name: q, in: query, schema: { type: string }, description: "Case-insensitive search on medicine or pharmacy name" }
         - { name: limit, in: query, schema: { type: integer, default: 20 } }
         - { name: offset, in: query, schema: { type: integer, default: 0 } }
       responses:
@@ -9132,6 +9250,19 @@ paths:
                 type: object
                 properties:
                   data: { type: array, items: { $ref: '#/components/schemas/PharmacyProduct' } }
+        '400': { description: "pharmacy_provider_id is not a uuid — gated before the query" }
+  /pharmacy/products/{id}:
+    get:
+      operationId: getPharmacyProduct
+      summary: Single catalog product + owning pharmacy name
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Product detail }
+        '400': { description: "id must be a uuid" }
+        '404': { description: Product not found }
 
   /pharmacy/cart:
     get:
@@ -9292,6 +9423,11 @@ paths:
                 properties:
                   success: { type: boolean }
                   order: { $ref: '#/components/schemas/PharmacyOrder' }
+        '400':
+          description: >
+            Malformed uuid-typed field — pharmacy_provider_id, prescription_id,
+            search_event_id or a line's product_id that is not a uuid fails fast
+            naming the field (never a driver error).
         '422':
           description: >
             Validation / catalog / prescription / funds failure — or a per-SKU
@@ -9339,6 +9475,11 @@ paths:
                   success: { type: boolean }
                   pharmacies: { type: array, items: { $ref: '#/components/schemas/PharmacyProfile' } }
 
+  # Every :id path param across the pharmacy surface is uuid-gated at the
+  # handler edge — a malformed value is a 400 naming the field BEFORE any query,
+  # never a Postgres invalid-input-syntax error. Order-scoped reads/writes
+  # answer a uniform 404 for missing-or-foreign orders (ErrOrderNotFound folds
+  # object-level denial into not-found so existence is never an oracle).
   /pharmacy/pharmacies/{id}:
     get:
       operationId: getPharmacy
@@ -9357,6 +9498,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   pharmacy: { $ref: '#/components/schemas/PharmacyProfile' }
+        '400': { description: "id must be a uuid" }
         '404': { description: "Not found, or not currently discoverable" }
 
   /pharmacy/pharmacies/{id}/reviews:
@@ -9377,6 +9519,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   reviews: { type: array, items: { $ref: '#/components/schemas/PharmacyReview' } }
+        '400': { description: "id must be a uuid" }
 
   /pharmacy/pharmacies/{id}/profile:
     post:
@@ -9412,6 +9555,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   pharmacy: { $ref: '#/components/schemas/PharmacyProfile' }
+        '400': { description: "id must be a uuid" }
         '422': { description: "Not a verified pharmacy owner, or invalid input" }
 
   /pharmacy/orders/{id}/reviews:
@@ -9447,7 +9591,9 @@ paths:
                 properties:
                   success: { type: boolean }
                   review: { $ref: '#/components/schemas/PharmacyReview' }
-        '422': { description: "Order not found/owned, not yet completed, or already reviewed" }
+        '400': { description: "id must be a uuid, or invalid body" }
+        '404': { description: "Order not found — uniform denial covering an order owned by someone else" }
+        '422': { description: "Order not yet completed, or already reviewed" }
 
   # ── Pharmacy — symptom-based medication search ────────────────────────────────
   # Symptom-guided product discovery with professional review — NOT diagnosis and
@@ -11133,6 +11279,8 @@ paths:
                 properties:
                   user_message: { $ref: '#/components/schemas/SupportMessage' }
                   ai_reply: { $ref: '#/components/schemas/SupportMessage' }
+        '400': { description: "Malformed body, non-uuid session id, or session already resolved" }
+        '404': { description: "Session not found — uniform denial covering a foreign (other-user) session too" }
     get:
       operationId: getSupportHistory
       summary: Get full message history for a session
@@ -11149,6 +11297,8 @@ paths:
                 type: object
                 properties:
                   data: { type: array, items: { $ref: '#/components/schemas/SupportMessage' } }
+        '400': { description: Non-uuid session id }
+        '404': { description: "Session not found — uniform denial covering a foreign (other-user) session too" }
 
   /support/sessions/{id}/escalate:
     post:
@@ -11167,6 +11317,34 @@ paths:
                 reason: { type: string }
       responses:
         '200': { description: Session escalated }
+        '400': { description: Non-uuid session id }
+        '404': { description: "Session not found — uniform denial covering a foreign (other-user) session or a non-open session" }
+
+  /support/sessions/{id}/resolve:
+    post:
+      operationId: resolveSupportSession
+      summary: Resolve (close) the caller's support session
+      description: >-
+        Owner-scoped close: marks the session `resolved`. Ownership is fused into
+        the session query, so a foreign session answers the same 404 as one that
+        does not exist — no existence oracle. Mounted at
+        POST /api/finance/support/sessions/{id}/resolve (Go) and proxied at
+        POST /api/v1/support/sessions/{id}/resolve (BFF).
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Session resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '400': { description: Non-uuid session id }
+        '404': { description: "Session not found — uniform denial covering a foreign session or an already-resolved one" }
 
   # ── Disputes ─────────────────────────────────────────────────────────────────
   /disputes:
@@ -11241,6 +11419,200 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RatingSummary' }
+
+  # ── Social Pay (splits & group pools) ───────────────────────────────────────
+  # Member routes live under /api/finance/social/*, mirrored for browsers by the
+  # BFF at /api/v1/social/* (flag-gated on socialPay → 503 when off). Reads are
+  # CALLER-SCOPED: a caller with no stake in the object gets the same 404 as an id that never
+  # existed — share rosters and pool balances are financial data, not a public
+  # directory (non-party 403s were an existence oracle). Mutations not listed
+  # here (send/requests/split-share pay/pool contribute+payout) are money-path
+  # and require Idempotency-Key; they apply the same uniform-404 rule.
+  /api/finance/social/splits/{id}:
+    get:
+      operationId: socialGetSplit
+      summary: Split bill detail + share roster (participant only)
+      tags: [Social Pay]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Bill and its shares
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  bill: { type: object }
+                  shares: { type: array, items: { type: object } }
+        '404': { description: "Uniform denial — non-participant sees the same 404 as a nonexistent bill" }
+  /api/finance/social/pools/{id}/balance:
+    get:
+      operationId: socialPoolBalance
+      summary: Group-pool derived balance (organiser / beneficiary / contributor only)
+      tags: [Social Pay]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Ledger-projected pool balance in kobo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  balance_kobo: { type: integer, format: int64 }
+        '404': { description: "Uniform denial — non-stakeholder sees the same 404 as a nonexistent pool" }
+
+  # Ops oversight reads, mounted OUTSIDE /api/finance at /api/social/admin/* with
+  # per-route RBAC (social.admin.view). They deliberately bypass the member
+  # caller-scope so an ops admin who is not a participant retains oversight;
+  # every read is audited (social.admin.split.view / social.admin.pool.view).
+  /api/social/admin/splits/{id}:
+    get:
+      operationId: socialAdminGetSplit
+      summary: Admin oversight read — split bill + full share roster (audited)
+      tags: [Social Pay Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Bill and its shares
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  bill: { type: object }
+                  shares: { type: array, items: { type: object } }
+        '403': { description: Missing social.admin.view }
+        '404': { description: Split not found }
+  /api/social/admin/pools/{id}:
+    get:
+      operationId: socialAdminGetPool
+      summary: Admin oversight read — pool + derived balance + contribution roster (audited)
+      tags: [Social Pay Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Pool, balance and contributions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  pool: { type: object }
+                  balance_kobo: { type: integer, format: int64 }
+                  contributions: { type: array, items: { type: object } }
+        '403': { description: Missing social.admin.view }
+        '404': { description: Pool not found }
+
+  # ── Loyalty & Points (member, /api/finance/loyalty/*) ─────────────────────────
+  # Redeem endpoints are money mutations: the Go backend REQUIRES an
+  # Idempotency-Key header and answers 400 without one. The Next.js BFF
+  # (/api/v1/loyalty/*) synthesizes a crypto.randomUUID() key for headerless
+  # mutating calls, so browser clients may omit it; caller-supplied keys pass
+  # through verbatim so client retries collapse to one redemption.
+  /api/finance/loyalty/redeem:
+    post:
+      operationId: loyaltyRedeem
+      summary: Redeem a loyalty-catalog reward with points (idempotent per key)
+      tags: [Loyalty]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sku]
+              properties:
+                sku: { type: string }
+      responses:
+        '200':
+          description: Redemption recorded (or replayed under the same key)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  redemption: { type: object }
+        '400': { description: "Missing Idempotency-Key, or invalid/unknown sku" }
+        '403': { description: "Membership tier below the reward's minimum tier" }
+  /api/finance/loyalty/points/redeem:
+    post:
+      operationId: pointsRedeem
+      summary: Redeem points against a catalog sku (idempotent per key; fail-closed)
+      tags: [Loyalty]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sku]
+              properties:
+                sku: { type: string }
+      responses:
+        '200':
+          description: Redemption recorded (or replayed under the same key)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  redemption: { type: object }
+                  item: { type: object }
+        '400': { description: "Missing Idempotency-Key, or invalid/unknown sku" }
+        '402': { description: Insufficient points balance }
+        '403': { description: Cash-equivalent redemption forbidden for this caller }
+  /api/finance/loyalty/black/redeem:
+    post:
+      operationId: loyaltyBlackRedeem
+      summary: Redeem a Paymax Black perk — mints a single-use credential (idempotent per key)
+      tags: [Loyalty]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [perk_code, context_ref]
+              properties:
+                perk_code: { type: string }
+                context_ref: { type: string, description: "Redemption context (e.g. event id the perk applies to)" }
+      responses:
+        '200':
+          description: Perk credential minted (or replayed under the same key — never a second credential)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  redemption: { type: object }
+        '400': { description: "Missing Idempotency-Key, or invalid perk_code/context_ref" }
+        '403': { description: Caller is not a Black-tier member }
+        '429': { description: Perk redemption cap reached }
 
   # ── Vote Bridge ───────────────────────────────────────────────────────────────
   /vote-bridge/debit:
@@ -12652,6 +13024,7 @@ paths:
       responses:
         '201': { description: Prediction recorded }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: "Competition not found (FK-mapped ErrNotFound — never a 500)" }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
 
   # ── Arena — admin (bearerAuth + scoped RBAC; audited) ─────────────────────────
@@ -14092,6 +14465,51 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MktListing' }
         '422': { $ref: '#/components/responses/MktUnprocessable' }
+  /v1/marketplace/listings/{id}/pause:
+    post:
+      operationId: mktPauseListing
+      summary: Pause an active listing (owner only)
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Listing paused
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktListing' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+        '409':
+          description: "INVALID_LISTING_TRANSITION — the listing is not in a state with a legal edge to paused"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+  /v1/marketplace/listings/{id}/resume:
+    post:
+      operationId: mktResumeListing
+      summary: Resume a paused listing (owner only)
+      description: >-
+        Requires the listing to be in `paused` — resuming a draft,
+        pending_review or active listing is a 409 INVALID_LISTING_TRANSITION
+        (the 0-row UPDATE no longer surfaces as a phantom 'conflicting
+        concurrent write').
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Listing resumed to active
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktListing' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+        '409':
+          description: "INVALID_LISTING_TRANSITION — the listing is not paused"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
 
   # ── Search & categories ───────────────────────────────────────────────
   /v1/marketplace/search:
@@ -14120,6 +14538,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MktSearchResponse' }
+        '400':
+          description: "Malformed uuid query param (e.g. category_id) — SCHEMA_VALIDATION_FAILED naming the field"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
   /v1/marketplace/categories:
     get:
       operationId: mktListCategories
@@ -14186,6 +14607,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MktOffer' }
+        '400':
+          description: "Missing or non-uuid listing_id — SCHEMA_VALIDATION_FAILED naming the field"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
         '422': { $ref: '#/components/responses/MktUnprocessable' }
   /v1/marketplace/offers/{id}/accept:
     post:
@@ -14299,6 +14723,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MktBoost' }
+        '400':
+          description: "Missing Idempotency-Key, or missing/non-uuid listing_id — SCHEMA_VALIDATION_FAILED naming the field"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
         '402':
           description: INSUFFICIENT_WALLET_BALANCE
           content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
@@ -14774,6 +15201,156 @@ paths:
                   report: { $ref: '#/components/schemas/MktReport' }
         '400': { $ref: '#/components/responses/MktBadRequest' }
         '401': { $ref: '#/components/responses/MktUnauthorized' }
+
+  # ── Appeals (MKT-007) ────────────────────────────────────────────────────
+  # A member appeals a STANDING moderation action taken against their own
+  # target. original_action is constrained to the closed per-target vocab of
+  # real moderation outcomes, and the target must currently carry that action —
+  # a fabricated action or an unmoderated target never reaches the admin queue.
+  /v1/marketplace/appeals:
+    post:
+      operationId: mktFileAppeal
+      summary: File an appeal against a standing moderation action (member, auth-only)
+      description: >-
+        target_type is one of listing | boost | user. original_action must be a
+        real moderation outcome for that target type — listing: removed_policy;
+        boost: rejected_with_reason | auto_refunded; user: suspended | banned —
+        AND the target must currently carry it (a seller-cancelled boost's
+        auto_refunded does not count; only an admin rejection does). A `user`
+        target can only ever be the caller themself: the self-check runs before
+        any user-row read, so a foreign id is a 403 without leaking existence.
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, target_id, original_action, original_reason_code, appellant_note]
+              properties:
+                target_type: { type: string, enum: [listing, boost, user] }
+                target_id: { type: string, format: uuid }
+                original_action: { type: string, description: "The standing moderation action being appealed (closed per-target vocab — see description)" }
+                original_reason_code: { type: string }
+                appellant_note: { type: string }
+      responses:
+        '201':
+          description: Appeal filed into the admin review queue
+        '400':
+          description: "SCHEMA_VALIDATION_FAILED — missing field, non-uuid target_id, or an original_action outside the target type's moderation vocabulary"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403':
+          description: "FORBIDDEN — the target is not the caller's (a `user` target that is not the caller answers 403 before any user-existence read)"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+        '422':
+          description: "NO_APPEALABLE_ACTION — the target exists and is the caller's, but does not currently carry the claimed moderation action"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+
+  # Admin appeals workbench (RBAC marketplace.admin.appeals.*). 'overturn' is a
+  # maker-checker decision — decide proposes, approve executes; 'uphold' applies
+  # immediately on decide.
+  /v1/marketplace/admin/appeals:
+    get:
+      operationId: mktAdminListAppeals
+      summary: List appeals (admin queue)
+      tags: [Marketplace Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: Appeal list }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+  /v1/marketplace/admin/appeals/{id}:
+    get:
+      operationId: mktAdminGetAppeal
+      summary: Appeal detail (admin)
+      tags: [Marketplace Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Appeal detail }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+  /v1/marketplace/admin/appeals/{id}/status:
+    patch:
+      operationId: mktAdminSetAppealStatus
+      summary: Transition appeal status (admin)
+      tags: [Marketplace Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+                reason_code: { type: string }
+      responses:
+        '200': { description: Appeal updated }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+  /v1/marketplace/admin/appeals/{id}/decide:
+    post:
+      operationId: mktAdminDecideAppeal
+      summary: Propose an appeal decision (admin; 'uphold' executes at once, 'overturn' awaits a second approver)
+      tags: [Marketplace Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [uphold, overturn] }
+                reason_code: { type: string }
+                notes: { type: string }
+      responses:
+        '200': { description: Decision recorded (stored as upheld/overturned) }
+        '400':
+          description: "decision must be one of uphold, overturn"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+  /v1/marketplace/admin/appeals/{id}/approve:
+    post:
+      operationId: mktAdminApproveAppeal
+      summary: Second-approve an 'overturn' appeal decision (maker-checker)
+      tags: [Marketplace Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason_code: { type: string }
+      responses:
+        '200': { description: Overturn executed }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+        '404': { $ref: '#/components/responses/MktNotFound' }
+
   /v1/marketplace/blocks:
     get:
       operationId: mktListBlocks
@@ -14807,6 +15384,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MktBlock' }
+        '400':
+          description: "Missing or non-uuid blocked_user_id — SCHEMA_VALIDATION_FAILED naming the field"
+          content: { application/json: { schema: { $ref: '#/components/schemas/MarketplaceError' } } }
         '401': { $ref: '#/components/responses/MktUnauthorized' }
         '409':
           description: "ALREADY_BLOCKED"
@@ -15194,10 +15774,10 @@ paths:
         referrer while the placeholder is still claimable; a caller already
         attributed to a real referrer keeps it — first-real-attribution wins.
         Invisible to the referred user by design. No reward is created here.
+        NOT a money mutation — no Idempotency-Key is read; server-side idem is
+        keyed on (flag_id, attributed user).
       tags: [Referral]
       security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
         required: true
         content:
@@ -15222,6 +15802,7 @@ paths:
                   attributed: { type: boolean, description: "True only when the submitted code is the attribution now in effect" }
         '400': { description: "Invalid body, unknown code, or self-referral" }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: "Per-user attribute budget exceeded — the 200-vs-400 verdict is a code-validity oracle by design, so enumeration is rate-bounded (default 20/min, REFERRAL_ATTRIBUTE_RATE_PER_MIN)" }
   /api/finance/referral/withdraw:
     post:
       operationId: withdrawReferralEarnings
@@ -16134,7 +16715,7 @@ paths:
       responses:
         '200': { description: Unresolved bind count }
         '403': { description: Missing finance.admin.utilitybills }
-  /insurance/admin/provider-policies:
+  /api/insurance/admin/provider-policies:
     get:
       operationId: insuranceAdminListProviderPolicies
       summary: Policies the provider (MyCover) holds for us, and whether Paymax's own book has each
@@ -16194,7 +16775,7 @@ paths:
                             paymax_state: { type: string }
         '400': { description: in_paymax is not true/false }
         '403': { description: Missing insurance.reconciliation.view }
-  /insurance/admin/provider-policies/sync:
+  /api/insurance/admin/provider-policies/sync:
     post:
       operationId: insuranceAdminSyncProviderPolicies
       summary: Pull the provider's policy list into the mirror
@@ -16224,3 +16805,112 @@ paths:
         '403': { description: Missing insurance.reconciliation.resolve }
         '502': { description: Provider or network failure; body.data reports what was written before it broke }
         '503': { description: Provider API key not configured on this server }
+  # ── Insurance reconciliation + commission (Wave-12) — admin workbench.
+  # Mounted at /api/insurance/admin. Every uuid-typed path param (:id,
+  # :policy_id) is shape-gated BEFORE the query — a malformed value answers the
+  # same 404 not_found as a missing row, never a driver 22P02.
+  /api/insurance/admin/reconciliation:
+    get:
+      operationId: insuranceAdminReconList
+      summary: Reconciliation records list (admin workbench)
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: provider, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: "{ data: reconciliation records }" }
+        '403': { description: Missing insurance.reconciliation.view }
+  /api/insurance/admin/reconciliation/match:
+    post:
+      operationId: insuranceAdminReconMatch
+      summary: Match a provider statement batch against premium rows (admin)
+      description: >-
+        Every lines[i].policy_id feeds a uuid-typed premium lookup — a malformed
+        value is a 400 naming the offending line index, never a mid-batch 500.
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, lines]
+              properties:
+                provider: { type: string }
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      policy_id: { type: string, format: uuid }
+                      statement_ref: { type: string }
+                      amount_kobo: { type: integer, format: int64 }
+      responses:
+        '200': { description: "{ data: matched reconciliation records }" }
+        '400': { description: "Malformed body, or lines[i].policy_id is not a uuid — the index is named" }
+        '403': { description: Missing insurance.reconciliation.resolve }
+        '404': { description: not_found }
+  /api/insurance/admin/reconciliation/{id}/resolve:
+    post:
+      operationId: insuranceAdminReconResolve
+      summary: Resolve a reconciliation break (admin)
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { note: { type: string } } }
+      responses:
+        '200': { description: "{ data: { resolved: true } }" }
+        '403': { description: Missing insurance.reconciliation.resolve }
+        '404': { description: "not_found — malformed uuid id OR row absent" }
+  /api/insurance/admin/commission:
+    get:
+      operationId: insuranceAdminCommissionList
+      summary: Commission ledger view (admin)
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: provider, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: "{ data: commission entries }" }
+        '403': { description: Missing insurance.commission.view }
+  /api/insurance/admin/commission/{policy_id}/confirm:
+    post:
+      operationId: insuranceAdminCommissionConfirm
+      summary: Confirm a pending commission entry (admin)
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: policy_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: "{ data: commission entry }" }
+        '403': { description: Missing insurance.reconciliation.resolve }
+        '404': { description: "not_found — malformed uuid policy_id OR entry absent" }
+        '409': { description: already_reversed }
+  /api/insurance/admin/commission/{policy_id}/reverse:
+    post:
+      operationId: insuranceAdminCommissionReverse
+      summary: Reverse a commission entry (admin)
+      tags: [Insurance Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: policy_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200': { description: "{ data: commission entry }" }
+        '403': { description: Missing insurance.reconciliation.resolve }
+        '404': { description: "not_found — malformed uuid policy_id OR entry absent" }
+        '409': { description: already_reversed }
