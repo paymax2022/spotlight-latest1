@@ -12,8 +12,15 @@ import (
 	triage "spotlight/backend/internal/health/triage"
 )
 
-// ErrNotFound is returned when a referral/escalation row is absent.
+// ErrNotFound is the uniform object-level denial on member-facing care paths:
+// a missing referral/escalation, and one owned by another user, are
+// INDISTINGUISHABLE — a "forbidden" on a foreign referral vs "not found" on a
+// missing one would let a member probe referral ids (and their payment state).
 var ErrNotFound = errors.New("care: not found")
+
+// ErrIdempotencyRequired is returned when a money mutation (PayReferral) is
+// invoked without an idempotency key — money mutations fail closed (400).
+var ErrIdempotencyRequired = errors.New("care: idempotency key required")
 
 // ErrIllegalTransition is returned when a guarded compare-and-set finds the row in
 // an unexpected state (lost the race or an illegal request) — fail-closed.
@@ -32,7 +39,9 @@ type Auditor interface {
 type Repository interface {
 	CreateReferral(ctx context.Context, r *CareReferral) error
 	GetReferral(ctx context.Context, id string) (*CareReferral, error)
-	GetReferralByIdem(ctx context.Context, idemKey string) (*CareReferral, error)
+	// GetReferralByIdem is the idempotent-replay lookup — it is OWNER-SCOPED so a
+	// replay check can never leak (or bind) another user's referral by key.
+	GetReferralByIdem(ctx context.Context, userID, idemKey string) (*CareReferral, error)
 	ListReferralsByUser(ctx context.Context, userID string) ([]CareReferral, error)
 	// UpdateReferralState is the guarded transition: it sets state=to (plus the
 	// optional fields) ONLY when the row is currently in `from`. RowsAffected 0 →
@@ -47,9 +56,10 @@ type Repository interface {
 
 // ReferralPatch carries the optional columns a guarded referral transition may set.
 type ReferralPatch struct {
-	TargetRef   *string
-	AmountMinor *int64
-	PaymentRef  *string
+	TargetRef      *string
+	AmountMinor    *int64
+	PaymentRef     *string
+	IdempotencyKey *string
 }
 
 // pgxRepo is the production Repository over the pgx pool.
@@ -84,12 +94,12 @@ func (r *pgxRepo) GetReferral(ctx context.Context, id string) (*CareReferral, er
 	return scanReferral(r.db.QueryRow(ctx, q, id))
 }
 
-func (r *pgxRepo) GetReferralByIdem(ctx context.Context, idemKey string) (*CareReferral, error) {
+func (r *pgxRepo) GetReferralByIdem(ctx context.Context, userID, idemKey string) (*CareReferral, error) {
 	const q = `
 		SELECT id, session_id, user_id, disposition_level, route, target_ref, state,
 		       amount_minor, payment_ref, idempotency_key, created_at, updated_at
-		FROM health_triage_care_referrals WHERE idempotency_key=$1`
-	return scanReferral(r.db.QueryRow(ctx, q, idemKey))
+		FROM health_triage_care_referrals WHERE idempotency_key=$1 AND user_id=$2`
+	return scanReferral(r.db.QueryRow(ctx, q, idemKey, userID))
 }
 
 func (r *pgxRepo) ListReferralsByUser(ctx context.Context, userID string) ([]CareReferral, error) {
@@ -120,12 +130,13 @@ func (r *pgxRepo) UpdateReferralState(ctx context.Context, id string, from, to t
 	const q = `
 		UPDATE health_triage_care_referrals
 		SET state=$3,
-		    target_ref   = COALESCE($4, target_ref),
-		    amount_minor = COALESCE($5, amount_minor),
-		    payment_ref  = COALESCE($6, payment_ref),
-		    updated_at   = now()
+		    target_ref      = COALESCE($4, target_ref),
+		    amount_minor    = COALESCE($5, amount_minor),
+		    payment_ref     = COALESCE($6, payment_ref),
+		    idempotency_key = COALESCE($7, idempotency_key),
+		    updated_at      = now()
 		WHERE id=$1 AND state=$2`
-	tag, err := r.db.Exec(ctx, q, id, string(from), string(to), set.TargetRef, set.AmountMinor, set.PaymentRef)
+	tag, err := r.db.Exec(ctx, q, id, string(from), string(to), set.TargetRef, set.AmountMinor, set.PaymentRef, set.IdempotencyKey)
 	if err != nil {
 		return fmt.Errorf("care: update referral state: %w", err)
 	}

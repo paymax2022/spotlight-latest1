@@ -225,12 +225,28 @@ func (h *Handler) Grant(c *gin.Context) {
 		return
 	}
 	if req.Action == "revoke" {
+		// consent_id feeds WHERE id=$1 on a uuid column — gate before pgx so a
+		// malformed value is a clean 400, never a driver error.
+		if _, perr := uuid.Parse(req.ConsentID); perr != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "consent_id must be a uuid")
+			return
+		}
 		if err := h.svc.Revoke(c.Request.Context(), id, req.ConsentID); err != nil {
 			ginutil.FailOK(c, http.StatusConflict, err.Error())
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{keySuccess: true})
 		return
+	}
+	if _, perr := uuid.Parse(req.GranteeID); perr != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "grantee_id must be a uuid")
+		return
+	}
+	if req.SubjectOwnerID != "" {
+		if _, perr := uuid.Parse(req.SubjectOwnerID); perr != nil {
+			ginutil.FailOK(c, http.StatusBadRequest, "subject_owner_id must be a uuid")
+			return
+		}
 	}
 	out, err := h.svc.Grant(c.Request.Context(), id, req.GranteeID, req.SubjectOwnerID, req.Scope, req.ExpiresAt)
 	if err != nil {

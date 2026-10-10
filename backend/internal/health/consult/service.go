@@ -21,6 +21,16 @@ const (
 	keySuccess = "success"
 )
 
+// ErrConsultNotFound is the uniform object-level denial for member-facing consult
+// paths: a missing consult, a malformed id, and a consult the caller is not a
+// party to are INDISTINGUISHABLE (all fold here so a foreign actor cannot probe
+// for consult existence).
+var ErrConsultNotFound = errors.New("consult: not found")
+
+// ErrInvalidInput marks malformed input (e.g. a lobby request missing required
+// fields) — distinct from a state denial so the handler can return 400.
+var ErrInvalidInput = errors.New("consult: invalid input")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -142,8 +152,11 @@ func (s *Service) IssueLobbyToken(ctx context.Context, userID, consultID string)
 	if err != nil {
 		return nil, err
 	}
+	// Object-level authZ BEFORE any token issuance: a caller who is neither the
+	// patient nor the provider owner gets the same not-found as a missing consult
+	// — "forbidden" here would confirm the consult exists.
 	if userID != c.PatientID && userID != providerOwner {
-		return nil, errors.New("consult: forbidden")
+		return nil, ErrConsultNotFound
 	}
 	exp := time.Now().Add(15 * time.Minute).Unix()
 	room := "consult-" + consultID
@@ -183,8 +196,14 @@ func (s *Service) Complete(ctx context.Context, providerOwnerID, consultID strin
 	if err != nil {
 		return nil, nil, err
 	}
-	if providerOwnerID != providerOwner { // only the clinician completes + signs the note
-		return nil, nil, errors.New("consult: forbidden")
+	// Only the clinician completes + signs the note. A patient calling on their
+	// OWN consult gets the role refusal; any other actor folds to not-found so a
+	// foreign id cannot be probed for existence.
+	if providerOwnerID != providerOwner {
+		if providerOwnerID == c.PatientID {
+			return nil, nil, errors.New("consult: only the clinician may complete")
+		}
+		return nil, nil, ErrConsultNotFound
 	}
 	if c.State == StateCompleted {
 		return c, nil, nil
@@ -220,8 +239,13 @@ func (s *Service) AddNote(ctx context.Context, providerOwnerID, consultID string
 	if err != nil {
 		return nil, err
 	}
+	// Same split as Complete: the patient gets the clinician-role refusal on
+	// their own consult; any other actor folds to not-found.
 	if providerOwnerID != providerOwner {
-		return nil, errors.New("consult: forbidden")
+		if providerOwnerID == c.PatientID {
+			return nil, errors.New("consult: only the clinician may add notes")
+		}
+		return nil, ErrConsultNotFound
 	}
 	if c.State != StateInProgress && c.State != StateScheduled {
 		return nil, errors.New("consult: notes only while scheduled/in-progress")
@@ -264,7 +288,7 @@ func (s *Service) LoadByAppointment(ctx context.Context, appointmentID string) (
 	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
 		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &providerOwner); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", errors.New("consult: not found")
+			return nil, "", ErrConsultNotFound
 		}
 		return nil, "", err
 	}
@@ -283,8 +307,10 @@ func (s *Service) transition(ctx context.Context, actorID, consultID string, to 
 	if err != nil {
 		return nil, err
 	}
+	// Party gate BEFORE state checks: a stranger must never learn the consult's
+	// state (or even that it exists).
 	if actorID != c.PatientID && actorID != providerOwner {
-		return nil, errors.New("consult: forbidden")
+		return nil, ErrConsultNotFound
 	}
 	if c.State == to {
 		return c, nil
@@ -321,7 +347,7 @@ func (s *Service) load(ctx context.Context, consultID string) (*Consult, string,
 	if err := s.db.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
 		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &c.ParentConsultID, &c.ReferralID, &providerOwner); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", errors.New("consult: not found")
+			return nil, "", ErrConsultNotFound
 		}
 		return nil, "", err
 	}
@@ -338,7 +364,7 @@ func lockConsult(ctx context.Context, tx pgx.Tx, consultID string) (*Consult, st
 	           WHERE cs.id=$1 FOR UPDATE OF cs`
 	if err := tx.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.ProviderID, &c.PatientID, &state, &c.RecordingEnabled, &providerOwner); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", errors.New("consult: not found")
+			return nil, "", ErrConsultNotFound
 		}
 		return nil, "", err
 	}
@@ -357,11 +383,38 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// uuidPathID gates the :id path parameter before it reaches pgx — the consult id
+// column is uuid, so a malformed value otherwise surfaces as a driver error.
+func uuidPathID(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "id must be a uuid")
+		return false
+	}
+	return true
+}
+
+// consultFail maps service errors onto statuses that do not leak existence:
+// ErrConsultNotFound (missing OR foreign) → 404; ErrInvalidInput → 400; state
+// refusals → 409. FailOK sanitizes the message.
+func consultFail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrConsultNotFound):
+		ginutil.FailOK(c, http.StatusNotFound, "consult not found")
+	case errors.Is(err, ErrInvalidInput):
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+	default:
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+	}
+}
+
 // AddNote — Notes — POST /consults/:id/notes  (in-call clinical note while in progress)
 func (h *Handler) AddNote(c *gin.Context) {
 	id := ginutil.UserID(c)
 	if id == "" {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !uuidPathID(c) {
 		return
 	}
 	var n ClinicalNote
@@ -371,7 +424,7 @@ func (h *Handler) AddNote(c *gin.Context) {
 	}
 	out, err := h.svc.AddNote(c.Request.Context(), id, c.Param("id"), n)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		consultFail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "note": out})
@@ -384,9 +437,12 @@ func (h *Handler) Lobby(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	tok, err := h.svc.IssueLobbyToken(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		consultFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, "av": tok})
@@ -394,9 +450,12 @@ func (h *Handler) Lobby(c *gin.Context) {
 
 // Start — POST /consults/:id/start
 func (h *Handler) Start(c *gin.Context) {
+	if !uuidPathID(c) {
+		return
+	}
 	out, err := h.svc.Start(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		consultFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consult": out})
@@ -409,6 +468,9 @@ func (h *Handler) Complete(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	if !uuidPathID(c) {
+		return
+	}
 	var n ClinicalNote
 	if err := c.ShouldBindJSON(&n); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
@@ -416,7 +478,7 @@ func (h *Handler) Complete(c *gin.Context) {
 	}
 	cs, note, err := h.svc.Complete(c.Request.Context(), id, c.Param("id"), n)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		consultFail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consult": cs, "note": note})

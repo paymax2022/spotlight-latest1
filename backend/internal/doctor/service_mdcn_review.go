@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // service_mdcn_review.go — the ops (assisted) review service for MDCN doctor
@@ -262,8 +263,22 @@ func (h *MDCNReviewHandler) Queue(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
+// uuidParam gates a named uuid path parameter before it reaches pgx — the
+// verification/document ids are uuid columns, so a malformed value otherwise
+// surfaces as a driver error instead of a clean 400.
+func uuidParam(c *gin.Context, name string) bool {
+	if _, err := uuid.Parse(c.Param(name)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: name + " must be a uuid"})
+		return false
+	}
+	return true
+}
+
 // GetRecord GET /verification/:verificationId
 func (h *MDCNReviewHandler) GetRecord(c *gin.Context) {
+	if !uuidParam(c, "verificationId") {
+		return
+	}
 	rec, err := h.svc.GetForReview(c.Request.Context(), c.Param("verificationId"))
 	if err != nil {
 		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
@@ -275,6 +290,9 @@ func (h *MDCNReviewHandler) GetRecord(c *gin.Context) {
 // DocURL GET /verification/documents/:docId/url — reviewer signed URL (access-logged).
 func (h *MDCNReviewHandler) DocURL(c *gin.Context) {
 	uid := ginutil.UserID(c)
+	if !uuidParam(c, "docId") {
+		return
+	}
 	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), true)
 	if err != nil {
 		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
@@ -307,6 +325,9 @@ func (h *MDCNReviewHandler) Decide(c *gin.Context) {
 	}
 	if body.Discipline != "" {
 		in.Discipline = &body.Discipline
+	}
+	if !uuidParam(c, "verificationId") {
+		return
 	}
 	rec, err := h.svc.Decide(c.Request.Context(), uid, c.Param("verificationId"), in)
 	if err != nil {

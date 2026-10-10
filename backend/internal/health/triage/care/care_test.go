@@ -32,9 +32,9 @@ func (f *fakeRepo) GetReferral(_ context.Context, id string) (*CareReferral, err
 	cp := *r
 	return &cp, nil
 }
-func (f *fakeRepo) GetReferralByIdem(_ context.Context, idem string) (*CareReferral, error) {
+func (f *fakeRepo) GetReferralByIdem(_ context.Context, userID, idem string) (*CareReferral, error) {
 	for _, r := range f.referrals {
-		if r.IdempotencyKey != nil && *r.IdempotencyKey == idem {
+		if r.UserID == userID && r.IdempotencyKey != nil && *r.IdempotencyKey == idem {
 			cp := *r
 			return &cp, nil
 		}
@@ -67,6 +67,9 @@ func (f *fakeRepo) UpdateReferralState(_ context.Context, id string, from, to tr
 	}
 	if set.PaymentRef != nil {
 		r.PaymentRef = set.PaymentRef
+	}
+	if set.IdempotencyKey != nil {
+		r.IdempotencyKey = set.IdempotencyKey
 	}
 	r.UpdatedAt = time.Now()
 	return nil
@@ -410,5 +413,92 @@ func TestNearestEmergencyAlwaysAvailable(t *testing.T) {
 	}
 	if info.AmbulanceNumber == "" || info.FirstAid == "" {
 		t.Fatalf("SC-8 payload must never be empty: %+v", info)
+	}
+}
+
+// Foreign and missing referrals must be INDISTINGUISHABLE — the owner gate runs
+// before any state check so a stranger cannot probe referral ids (or learn
+// their payment state).
+func TestPayReferralForeignFoldsToNotFound(t *testing.T) {
+	repo := newFakeRepo()
+	pay := newFakePayment()
+	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelConsult)
+	if err != nil {
+		t.Fatalf("Refer: %v", err)
+	}
+	if _, err := svc.PayReferral(context.Background(), "stranger", res.Referral.ID, "idem-x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign pay: err = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.PayReferral(context.Background(), "stranger", "no-such-referral", "idem-x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing pay: err = %v, want ErrNotFound", err)
+	}
+	if pay.calls != 0 {
+		t.Fatalf("foreign/missing pay must never charge, got %d charges", pay.calls)
+	}
+	// Same fold on the other member-side mutation paths.
+	if _, err := svc.MarkFulfilled(context.Background(), "stranger", res.Referral.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign MarkFulfilled: err = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.FollowUp(context.Background(), "stranger", res.Referral.ID, time.Now()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign FollowUp: err = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.Close(context.Background(), "stranger", res.Referral.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign Close: err = %v, want ErrNotFound", err)
+	}
+}
+
+// Money mutations fail closed without an idempotency key.
+func TestPayReferralRequiresIdempotencyKey(t *testing.T) {
+	repo := newFakeRepo()
+	pay := newFakePayment()
+	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
+	res, err := svc.Refer(context.Background(), "user-1", "sess-1", triage.LevelConsult)
+	if err != nil {
+		t.Fatalf("Refer: %v", err)
+	}
+	if _, err := svc.PayReferral(context.Background(), "user-1", res.Referral.ID, ""); !errors.Is(err, ErrIdempotencyRequired) {
+		t.Fatalf("pay without idem key: err = %v, want ErrIdempotencyRequired", err)
+	}
+	if pay.calls != 0 {
+		t.Fatalf("missing idem key must never charge, got %d charges", pay.calls)
+	}
+}
+
+// Paying pins the key on the referral; replaying the same key against a
+// DIFFERENT referral of the same user fails closed (owner-scoped replay check).
+func TestPayReferralIdemKeyBoundToReferral(t *testing.T) {
+	repo := newFakeRepo()
+	pay := newFakePayment()
+	svc := NewCareService(repo, pay, nil, nil, &fakeBooker{amount: 500000}, nil)
+	ctx := context.Background()
+
+	r1, err := svc.Refer(ctx, "user-1", "sess-1", triage.LevelConsult)
+	if err != nil {
+		t.Fatalf("Refer 1: %v", err)
+	}
+	r2, err := svc.Refer(ctx, "user-1", "sess-2", triage.LevelConsult)
+	if err != nil {
+		t.Fatalf("Refer 2: %v", err)
+	}
+	out, err := svc.PayReferral(ctx, "user-1", r1.Referral.ID, "idem-shared")
+	if err != nil {
+		t.Fatalf("PayReferral r1: %v", err)
+	}
+	if out.IdempotencyKey == nil || *out.IdempotencyKey != "idem-shared" {
+		t.Fatalf("paid referral must pin idempotency_key, got %+v", out.IdempotencyKey)
+	}
+	// Same key, different referral → conflict, no charge.
+	if _, err := svc.PayReferral(ctx, "user-1", r2.Referral.ID, "idem-shared"); !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("reused key on another referral: err = %v, want ErrIllegalTransition", err)
+	}
+	if pay.calls != 1 {
+		t.Fatalf("reused key must not charge twice, got %d charges", pay.calls)
+	}
+	// A DIFFERENT user reusing the key is unaffected by the first user's pin —
+	// the replay lookup is owner-scoped (their own referral still charges once
+	// for them under their own key binding).
+	if _, err := svc.PayReferral(ctx, "user-2", r2.Referral.ID, "idem-shared"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("user-2 paying user-1's referral: err = %v, want ErrNotFound", err)
 	}
 }

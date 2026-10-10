@@ -169,14 +169,25 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		return nil, errors.New("care: unauthenticated")
 	}
 	if idemKey == "" {
-		return nil, errors.New("care: idempotency key required")
+		return nil, ErrIdempotencyRequired
 	}
 	ref, err := s.repo.GetReferral(ctx, referralID)
 	if err != nil {
 		return nil, err
 	}
+	// Owner gate BEFORE any state/route checks: a foreign referral folds to the
+	// same not-found a missing one returns — otherwise a stranger could probe
+	// referral ids and observe their payment state.
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
+	}
+	// Owner-scoped replay: if this key already paid a DIFFERENT referral, this
+	// request is a client error — fail closed rather than double-charging or
+	// binding another referral's payment ref.
+	if ref.IdempotencyKey == nil || *ref.IdempotencyKey != idemKey {
+		if prior, ierr := s.repo.GetReferralByIdem(ctx, userID, idemKey); ierr == nil && prior != nil && prior.ID != ref.ID {
+			return nil, fmt.Errorf("%w: idempotency key already used for another referral", ErrIllegalTransition)
+		}
 	}
 	// Idempotent re-apply: already settled → return as-is (no second charge).
 	if ref.State == triage.RefPaid || ref.State == triage.RefFulfilled ||
@@ -204,9 +215,10 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		}
 		payRef = pr
 	}
-	// routed → paid (guarded; pins payment_ref + idempotency_key is already set
-	// upstream on the row creation path if used; here we record the payment ref).
-	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid, ReferralPatch{PaymentRef: &payRef}); err != nil {
+	// routed → paid (guarded; pins payment_ref AND idempotency_key — the partial
+	// UNIQUE index on idempotency_key then dedups any future replay of this key).
+	if err := s.transitionReferral(ctx, ref, triage.RefRouted, triage.RefPaid,
+		ReferralPatch{PaymentRef: &payRef, IdempotencyKey: &idemKey}); err != nil {
 		return nil, err
 	}
 	ref.State = triage.RefPaid
@@ -229,7 +241,7 @@ func (s *CareService) MarkFulfilled(ctx context.Context, userID, referralID stri
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
 	}
 	if ref.State == triage.RefFulfilled || ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -249,7 +261,7 @@ func (s *CareService) FollowUp(ctx context.Context, userID, referralID string, a
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
 	}
 	if ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -274,7 +286,7 @@ func (s *CareService) Close(ctx context.Context, userID, referralID string) (*Ca
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, errors.New("care: forbidden")
+		return nil, ErrNotFound
 	}
 	if ref.State == triage.RefClosed {
 		return ref, nil
@@ -423,6 +435,9 @@ func (s *CareService) transitionReferral(ctx context.Context, ref *CareReferral,
 	}
 	if patch.PaymentRef != nil {
 		ref.PaymentRef = patch.PaymentRef
+	}
+	if patch.IdempotencyKey != nil {
+		ref.IdempotencyKey = patch.IdempotencyKey
 	}
 	return nil
 }
