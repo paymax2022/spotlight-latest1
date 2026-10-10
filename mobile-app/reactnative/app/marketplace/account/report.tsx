@@ -18,7 +18,19 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';
 import { useCreateReport, useBlockUser } from '@/features/marketplace/api/account.hooks';
 import type { ReportTargetType } from '@/features/marketplace/api/account.api';
+import { presignListingMedia } from '@/features/marketplace/api/account.api';
 import { alertAsync } from '@/lib/confirm';
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+// The presign endpoint only accepts png/jpeg/webp; derive from the picked file.
+function mimeFor(uri: string, declared?: string | null): string {
+  if (declared && /^image\/(png|jpeg|webp)$/i.test(declared)) return declared.toLowerCase();
+  const ext = uri.split('?')[0].split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
 
 const REASONS = [
   { key: 'prohibited_item', label: 'Prohibited or illegal item' },
@@ -32,14 +44,23 @@ const REASONS = [
 
 export default function ReportFlow() {
   const params = useLocalSearchParams<{ targetType?: string; targetId?: string; targetName?: string; sellerId?: string }>();
-  const targetType = (params.targetType as ReportTargetType) || 'listing';
-  const targetId = params.targetId ?? '';
-  const targetName = params.targetName ?? 'this item';
+  // Opened from a listing/seller/chat flag icon, the target arrives in the route
+  // params. Opened from the menu there is none, so the user identifies it here —
+  // without this the Submit button could never enable (targetId stayed '').
+  const hasRouteTarget = !!params.targetId;
+  const [pickedType, setPickedType] = useState<ReportTargetType>('listing');
+  const [targetText, setTargetText] = useState('');
+  const pickedId = targetText.match(UUID_RE)?.[0] ?? '';
+  const targetType = hasRouteTarget ? ((params.targetType as ReportTargetType) || 'listing') : pickedType;
+  const targetId = hasRouteTarget ? (params.targetId ?? '') : pickedId;
+  const targetName = params.targetName ?? (pickedId ? `this ${pickedType}` : 'this item');
   const blockableUserId = params.sellerId || (targetType === 'seller' ? targetId : undefined);
 
   const [reason, setReason] = useState<string>('');
   const [note, setNote] = useState('');
   const [evidenceUri, setEvidenceUri] = useState<string | null>(null);
+  const [evidenceMime, setEvidenceMime] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [alsoBlock, setAlsoBlock] = useState(false);
 
   const createReport = useCreateReport();
@@ -58,17 +79,38 @@ export default function ReportFlow() {
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
       : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
-    if (!result.canceled && result.assets?.[0]) setEvidenceUri(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      setEvidenceUri(result.assets[0].uri);
+      setEvidenceMime(result.assets[0].mimeType ?? null);
+    }
+  };
+
+  // The server needs a URL it can open; a file:// URI on this phone is useless to
+  // the safety team. Upload through the same presign flow listing photos use.
+  const uploadEvidence = async (uri: string): Promise<string> => {
+    const mime = mimeFor(uri, evidenceMime);
+    const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+    const presigned = await presignListingMedia(`report-evidence.${ext}`, mime);
+    const blob = await (await fetch(uri)).blob();
+    if (!blob.size) throw new Error('The photo could not be read.');
+    const put = await fetch(presigned.uploadUrl, { method: presigned.method || 'PUT', headers: { 'Content-Type': mime }, body: blob });
+    if (!put.ok) throw new Error('Could not upload the photo — try again, or submit without it.');
+    return presigned.fileUrl;
   };
 
   const submit = async () => {
     if (!canSubmit) return;
     try {
+      let evidenceUrl: string | undefined;
+      if (evidenceUri) {
+        setUploading(true);
+        try { evidenceUrl = await uploadEvidence(evidenceUri); } finally { setUploading(false); }
+      }
       await createReport.mutateAsync({
         targetType,
         targetId,
         reason: REASONS.find((r) => r.key === reason)?.label ?? reason,
-        evidenceUrl: evidenceUri ?? undefined,
+        evidenceUrl,
         note: note.trim() || undefined,
       });
       if (alsoBlock && blockableUserId) {
@@ -93,6 +135,37 @@ export default function ReportFlow() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Report a problem" subtitle={`Reporting ${targetName}`} />
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        {!hasRouteTarget ? (
+          <>
+            <Text style={styles.sectionLabel}>What are you reporting?</Text>
+            <View style={styles.uploadRow}>
+              {(['listing', 'seller'] as const).map((t) => (
+                <Pressable
+                  key={t}
+                  style={[styles.upload, pickedType === t && styles.reasonActive]}
+                  onPress={() => setPickedType(t)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: pickedType === t }}
+                >
+                  <Text style={styles.uploadLabel}>{t === 'listing' ? 'A listing' : 'A seller'}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              style={styles.targetInput}
+              value={targetText}
+              onChangeText={setTargetText}
+              placeholder={`Paste the ${pickedType} link or ID`}
+              placeholderTextColor={MarketColors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {targetText.trim() !== '' && !pickedId ? (
+              <Text style={styles.targetHint}>That doesn’t look like a {pickedType} link or ID.</Text>
+            ) : null}
+          </>
+        ) : null}
+
         <Text style={styles.sectionLabel}>Why are you reporting this?</Text>
         <View style={styles.reasons}>
           {REASONS.map((r) => {
@@ -153,7 +226,7 @@ export default function ReportFlow() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="Submit report" onPress={submit} disabled={!canSubmit} loading={createReport.isPending} />
+        <PrimaryButton label="Submit report" onPress={submit} disabled={!canSubmit} loading={createReport.isPending || uploading} />
       </View>
     </SafeAreaView>
   );
@@ -170,6 +243,8 @@ const styles = StyleSheet.create({
   radioActive: { backgroundColor: MarketColors.brand, borderColor: MarketColors.brand },
   reasonLabel: { ...Typography.bodyMd, color: MarketColors.text, flex: 1 },
   reasonLabelActive: { color: MarketColors.text, fontWeight: '600' },
+  targetInput: { borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface, padding: Spacing.md, ...Typography.bodyMd, color: MarketColors.text },
+  targetHint: { ...Typography.labelSm, color: MarketColors.danger },
   note: { minHeight: 88, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface, padding: Spacing.md, ...Typography.bodyMd, color: MarketColors.text, textAlignVertical: 'top' },
   uploadRow: { flexDirection: 'row', gap: Spacing.sm },
   upload: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingVertical: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surfaceAlt },

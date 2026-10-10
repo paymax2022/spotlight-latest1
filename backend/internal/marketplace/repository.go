@@ -1365,10 +1365,10 @@ func (r *Repository) InsertSavedSearch(ctx context.Context, s *SavedSearch) (*Sa
 	}
 	filters, _ := json.Marshal(f)
 	row := r.db.QueryRow(ctx, `
-		INSERT INTO public.mkt_saved_searches (user_id, market_id, query, filters, alert_enabled)
-		VALUES ($1,$2,$3,$4,$5)
-		RETURNING id, user_id, market_id, query, filters, alert_enabled, created_at`,
-		s.UserID, strutil.Or(s.MarketID, DefaultMarketID), s.Query, filters, s.AlertEnabled)
+		INSERT INTO public.mkt_saved_searches (user_id, market_id, query, filters, alert_enabled, alert_frequency)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING id, user_id, market_id, query, filters, alert_enabled, alert_frequency, created_at`,
+		s.UserID, strutil.Or(s.MarketID, DefaultMarketID), s.Query, filters, s.AlertEnabled, normalizeAlertFrequency(s.AlertFrequency, s.AlertEnabled))
 	out, err := scanSavedSearch(row)
 	if err != nil {
 		return nil, wrapInternal("insert saved search", err)
@@ -1379,7 +1379,7 @@ func (r *Repository) InsertSavedSearch(ctx context.Context, s *SavedSearch) (*Sa
 func scanSavedSearch(row pgx.Row) (*SavedSearch, error) {
 	var s SavedSearch
 	var filtersRaw []byte
-	if err := row.Scan(&s.ID, &s.UserID, &s.MarketID, &s.Query, &filtersRaw, &s.AlertEnabled, &s.CreatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.UserID, &s.MarketID, &s.Query, &filtersRaw, &s.AlertEnabled, &s.AlertFrequency, &s.CreatedAt); err != nil {
 		return nil, err
 	}
 	if len(filtersRaw) > 0 {
@@ -1394,7 +1394,7 @@ func scanSavedSearch(row pgx.Row) (*SavedSearch, error) {
 // ListSavedSearches returns a user's saved searches.
 func (r *Repository) ListSavedSearches(ctx context.Context, userID string) ([]SavedSearch, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, market_id, query, filters, alert_enabled, created_at
+		SELECT id, user_id, market_id, query, filters, alert_enabled, alert_frequency, created_at
 		FROM public.mkt_saved_searches WHERE user_id=$1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, wrapInternal("list saved searches", err)
@@ -1427,9 +1427,29 @@ func (r *Repository) DeleteSavedSearch(ctx context.Context, id string) error {
 	return err
 }
 
-// SetSavedSearchAlert toggles the alert flag.
-func (r *Repository) SetSavedSearchAlert(ctx context.Context, id string, enabled bool) error {
-	_, err := r.db.Exec(ctx, `UPDATE public.mkt_saved_searches SET alert_enabled=$2 WHERE id=$1`, id, enabled)
+// normalizeAlertFrequency maps a requested frequency to a stored value. An
+// unknown or empty value falls back to what alertEnabled implies.
+func normalizeAlertFrequency(freq string, alertEnabled bool) string {
+	switch freq {
+	case "instant", "daily", "off":
+		return freq
+	}
+	if alertEnabled {
+		return "instant"
+	}
+	return "off"
+}
+
+// SetSavedSearchAlert sets the alert flag and frequency together so the two can
+// never disagree ("off" always means alert_enabled=false).
+func (r *Repository) SetSavedSearchAlert(ctx context.Context, id string, enabled bool, freq string) error {
+	freq = normalizeAlertFrequency(freq, enabled)
+	if freq == "off" {
+		enabled = false
+	} else {
+		enabled = true
+	}
+	_, err := r.db.Exec(ctx, `UPDATE public.mkt_saved_searches SET alert_enabled=$2, alert_frequency=$3 WHERE id=$1`, id, enabled, freq)
 	return err
 }
 
