@@ -160,7 +160,7 @@ func (s *Service) hold(ctx context.Context, payerID, payeeID, reference, moduleT
 	// created before payee pinning (or by a Hold caller) can still gain one,
 	// so its eventual arbitration keeps RELEASE reachable.
 	if existing, err := s.getByIdem(ctx, idemKey); err == nil && existing != nil {
-		if err := s.verifyHoldIdentity(existing, payerID, moduleType); err != nil {
+		if err := s.verifyHoldIdentity(existing, payerID, moduleType, reference, amountKobo); err != nil {
 			return nil, err
 		}
 		s.maybePinPayee(ctx, existing, payerID, payeeID)
@@ -236,7 +236,7 @@ func (s *Service) hold(ctx context.Context, payerID, payeeID, reference, moduleT
 		// foreign winner under this key must refuse, not be adopted.
 		if dbutil.IsUniqueViolation(err) {
 			if existing, gerr := s.getByIdem(ctx, idemKey); gerr == nil && existing != nil {
-				if verr := s.verifyHoldIdentity(existing, payerID, moduleType); verr != nil {
+				if verr := s.verifyHoldIdentity(existing, payerID, moduleType, reference, amountKobo); verr != nil {
 					return nil, verr
 				}
 				s.maybePinPayee(ctx, existing, payerID, payeeID)
@@ -342,7 +342,7 @@ func journalModule(reference string) string {
 // ledger.ErrDuplicate semantics — the key is durably claimed by a different
 // hold — and emit a foreign-claim audit event; never silently hand one
 // domain's hold to another caller.
-func (s *Service) verifyHoldIdentity(h *Hold, payerID, moduleType string) error {
+func (s *Service) verifyHoldIdentity(h *Hold, payerID, moduleType, reference string, amountKobo int64) error {
 	if h.ModuleType != moduleType {
 		s.logForeignClaim(payerID, h.ID, h.IdempotencyKey, "module_mismatch", moduleType, h.ModuleType)
 		return fmt.Errorf("%w: idempotency key %s is bound to a %s hold — refusing to adopt it for module %s",
@@ -351,6 +351,14 @@ func (s *Service) verifyHoldIdentity(h *Hold, payerID, moduleType string) error 
 	if h.PayerID != payerID {
 		s.logForeignClaim(payerID, h.ID, h.IdempotencyKey, "payer_mismatch", moduleType, h.ModuleType)
 		return fmt.Errorf("%w: idempotency key %s is bound to a different payer's hold — refusing to adopt it",
+			ledger.ErrDuplicate, h.IdempotencyKey)
+	}
+	// Same module + payer isn't enough: a stranded unbound hold under this key
+	// must not be adopted by a DIFFERENT claim (another listing's checkout
+	// would bind an order for price B to a hold containing price A).
+	if h.Reference != reference || h.AmountKobo != amountKobo {
+		s.logForeignClaim(payerID, h.ID, h.IdempotencyKey, "params_mismatch", moduleType, h.ModuleType)
+		return fmt.Errorf("%w: idempotency key %s is bound to a hold with different reference/amount — refusing to adopt it",
 			ledger.ErrDuplicate, h.IdempotencyKey)
 	}
 	return nil
@@ -425,6 +433,9 @@ func (s *Service) verifyHoldDebitLeg(ctx context.Context, payerID, holdKey, modu
 	}
 	if !found || debit.AccountID != payerAcc.ID || debit.Type != ledger.EntryDebit ||
 		debit.Reference != want || debit.AmountKobo != amountKobo {
+		// Audit parity with the row-side refusal: a same-key claim whose debit
+		// leg belongs to another payer must be visible to recon, not silent.
+		s.logForeignClaim(payerID, "", holdKey, "payer_mismatch", moduleType, moduleType)
 		return fmt.Errorf("%w: key %s debit leg is not this payer's journal — refusing to attach a hold row",
 			ledger.ErrDuplicate, holdKey)
 	}

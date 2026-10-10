@@ -122,7 +122,7 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 	}
 
 	// Idempotent: an order already created for this key is returned as-is.
-	if existing, err := s.orderByIdem(ctx, idemKey); err == nil && existing != nil {
+	if existing, err := s.orderByIdem(ctx, idemKey, buyerID); err == nil && existing != nil {
 		return existing, nil
 	}
 
@@ -196,7 +196,7 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 		// the key matches, else fail closed with ErrIdemConflict.
 		if rerr := s.escrow.RefundIf(ctx, hold.ID, s.unboundHoldGuard(hold.ID, buyerID)); rerr != nil {
 			if errors.Is(rerr, escrow.ErrHoldBound) {
-				if persisted, ferr := s.orderByIdem(ctx, idemKey); ferr == nil {
+				if persisted, ferr := s.orderByIdem(ctx, idemKey, buyerID); ferr == nil {
 					return persisted, nil
 				}
 				return nil, ErrIdemConflict
@@ -212,7 +212,7 @@ func (s *Service) Checkout(ctx context.Context, listingID, buyerID, idemKey stri
 		// return the persisted row, never the unpersisted `o` we built above
 		// (which would report an order id/escrow pairing nothing saved). Do NOT
 		// refund: the hold is owned by the conflicting order.
-		persisted, ferr := s.orderByIdem(ctx, idemKey)
+		persisted, ferr := s.orderByIdem(ctx, idemKey, buyerID)
 		if ferr != nil {
 			return nil, fmt.Errorf("p2pmarket: order insert conflicted but re-read failed: %w", ferr)
 		}
@@ -454,11 +454,11 @@ func (s *Service) unboundHoldGuard(escrowID, buyerID string) func(context.Contex
 	}
 }
 
-func (s *Service) orderByIdem(ctx context.Context, idemKey string) (*Order, error) {
-	const q = `SELECT id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, created_at, updated_at FROM p2p_orders WHERE idempotency_key=$1`
+func (s *Service) orderByIdem(ctx context.Context, idemKey, buyerID string) (*Order, error) {
+	const q = `SELECT id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, created_at, updated_at FROM p2p_orders WHERE idempotency_key=$1 AND buyer_id=$2`
 	var o Order
 	var state string
-	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&o.ID, &o.ListingID, &o.BuyerID, &o.SellerID, &o.AmountKobo, &o.EscrowID, &state, &o.CreatedAt, &o.UpdatedAt); err != nil {
+	if err := s.db.QueryRow(ctx, q, idemKey, buyerID).Scan(&o.ID, &o.ListingID, &o.BuyerID, &o.SellerID, &o.AmountKobo, &o.EscrowID, &state, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
