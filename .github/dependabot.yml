@@ -98,6 +98,13 @@ updates:
       # react-native / Expo SDK migration, never as a rollup bump — not even patches.
       - dependency-name: "react"
       - dependency-name: "react-dom"
+      # react-native-screens ≥4.28 ships fabric/*.ts that babel-preset-expo@54
+      # cannot transform ("first argument of method blur must be of type
+      # React.ElementRef<>") — it broke the deploy-gate expo-export TWICE
+      # (#634 then #672) because that lane skips on PR CI, so a green dependabot
+      # check proves nothing about bundle compatibility. Ignore ALL updates to
+      # this package until the Expo SDK 57 migration upgrades the toolchain.
+      - dependency-name: "react-native-screens"
       # Same native-port caveat as /frontend-web: treat any TypeScript major as a
       # deliberate migration, not a weekly bump.
       - dependency-name: "typescript"
