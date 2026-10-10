@@ -23,7 +23,8 @@ import { fetchBanks } from '@/features/transfers/api';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import TripPinInput from '@/features/mobility/components/TripPinInput';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
-import { alertAsync } from '@/lib/confirm';
+import { alertAsync, confirmAsync } from '@/lib/confirm';
+import { useKycStepUp } from '@/features/kycverify/useKycStepUp';
 import { showToast } from '@/store/toastStore';
 import { normalizeApiError } from '@/utils/errorMapper';
 import { sanitizeMoneyInput } from '@/utils/money';
@@ -204,6 +205,8 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const amountKobo = useMemo(() => Math.round(amountValue * 100), [amountValue]);
   const feeKobo = useMemo(() => calculateTransferFee(amountKobo), [amountKobo]);
 
+  const kycStepUp = useKycStepUp(1);
+
   const fundMutation = useMutation({
     mutationFn: async () => {
       if (!amountValue || amountValue < 100) {
@@ -381,8 +384,27 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     void beneficiariesQuery.refetch();
   };
 
+  // Adding money needs Tier 1 KYC (verified through Dojah). Explain that before
+  // sending the user to Paystack, and let them start verification or back out.
+  const startFunding = async () => {
+    if (!(await kycStepUp.check())) {
+      const proceed = await confirmAsync({
+        title: 'Verify your identity to add money',
+        message:
+          'Adding money to your wallet requires at least Tier 1 verification. ' +
+          'It only takes a few minutes: we confirm your details with our verification partner, Dojah. ' +
+          'Would you like to continue with verification now?',
+        confirmLabel: 'Continue to verification',
+        cancelLabel: 'Cancel',
+      });
+      if (proceed) kycStepUp.open();
+      return;
+    }
+    fundMutation.mutate();
+  };
+
   const handlePrimary = () => {
-    if (kind === 'fund') { fundMutation.mutate(); return; }
+    if (kind === 'fund') { void startFunding(); return; }
     if (kind === 'transfer') {
       if (transferStep === 'form')    { resolveMutation.mutate(); return; }
       if (transferStep === 'confirm') { transferMutation.mutate(); return; }

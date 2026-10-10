@@ -61,6 +61,31 @@ test.describe('Payment routes - Add Money (wallet/add)', () => {
     expect(captured[0]).toHaveProperty('amount_kobo');
   });
 
+  test('below Tier 1: explains the KYC requirement before Paystack and offers verification or cancel', async ({ page }) => {
+    const captured: Record<string, unknown>[] = [];
+    await page.route('**/api/finance/kyc/me', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { kyc_tier: 0, tier: 0 } }) }));
+    await page.route('**/api/v1/wallet/topup', async (route) => {
+      captured.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { reference: 'x' } }) });
+    });
+
+    await page.goto('/wallet/add');
+    await page.getByText('Continue to Paystack').click();
+
+    await expect(page.getByText('Verify your identity to add money')).toBeVisible();
+    await expect(page.getByText('Continue to verification')).toBeVisible();
+
+    await page.getByText('Cancel', { exact: true }).click();
+    await expect(page.getByText('Verify your identity to add money')).toBeHidden();
+    expect(captured).toHaveLength(0); // never reached Paystack
+
+    await page.getByText('Continue to Paystack').click();
+    await page.getByText('Continue to verification').click();
+    await expect(page).toHaveURL(/kyc-verify/);
+    expect(captured).toHaveLength(0);
+  });
+
   test('does not submit funding request for an amount under ₦100', async ({ page }) => {
     const captured: Record<string, unknown>[] = [];
 
