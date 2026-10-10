@@ -72,7 +72,6 @@ export default function ListingDetailScreen() {
   if (listing.isError || !listing.data) {
     return (
       <SafeAreaView style={styles.safe}><ScreenHeader backFallback="/realtor" />
-        <FloatingBack />
         <StateView kind="error" icon="Home" title="Listing unavailable" message="This property may have been removed or is no longer available." actionLabel="Back to search" onAction={() => router.replace('/realtor/search')} />
       </SafeAreaView>
     );
@@ -253,18 +252,6 @@ function Fact({ icon, value, label }: { icon: React.ReactNode; value: string; la
       <Text style={styles.factValue}>{value}</Text>
       <Text style={styles.factLabel}>{label}</Text>
     </View>
-  );
-}
-
-function FloatingBack() {
-  return (
-    <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
-      <Pressable onPress={() => goBack('/realtor')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
-        <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
-      </Pressable>
-      <View style={{ flex: 1 }} />
-      <HomeMenuButton />
-    </SafeAreaView>
   );
 }
 
