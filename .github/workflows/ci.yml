@@ -261,20 +261,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.live_db == 'true'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        # PostGIS image: the first migration (20260101000000_enable_extensions)
-        # runs CREATE EXTENSION postgis, which plain postgres cannot satisfy.
-        # PG17 matches production.
-        image: postgis/postgis:17-3.4
-        env:
-          POSTGRES_USER: paymax
-          POSTGRES_PASSWORD: paymax
-          POSTGRES_DB: paymax
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U paymax" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+    # NO `services:` block: the runner pulls service images BEFORE the first
+    # step executes, so a Docker Hub 429/timeout (rate-limited anonymous pulls —
+    # ~10 concurrent PRs share the hosted-runner egress pool) failed this job at
+    # "Initialize containers" with no chance to retry. postgis/postgis is
+    # community-published — Docker Hub only, no official ECR Public/GHCR mirror —
+    # so the container is started by a step whose pull is wrapped in bounded
+    # retry+backoff (scripts/ci/start-postgres-service.sh). Same image, env,
+    # port and pg_isready health gate as the declarative service it replaced.
     env:
       DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
       # The whole point of this job. Both names address the same ephemeral
@@ -284,6 +278,11 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
+      # PostGIS image: the first migration (20260101000000_enable_extensions)
+      # runs CREATE EXTENSION postgis, which plain postgres cannot satisfy.
+      # PG17 matches production.
+      - name: Start PostGIS service container (pull retried — Docker Hub rate limits)
+        run: bash scripts/ci/start-postgres-service.sh postgis/postgis:17-3.4 ci-postgres
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
@@ -293,7 +292,7 @@ jobs:
       - name: Raise Postgres lock table
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
-          docker restart ${{ job.services.postgres.id }}
+          docker restart ci-postgres
           timeout 90 bash -c 'until pg_isready -h localhost -p 5432 -U paymax >/dev/null 2>&1; do sleep 1; done'
       # Migrations assume the surface Supabase provides at runtime (auth schema,
       # auth.uid()/role(), storage, anon/authenticated/service_role).

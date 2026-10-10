@@ -38,21 +38,14 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        # PostGIS-enabled image required: the very first migration
-        # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
-        # which a plain postgres image cannot satisfy. PG17 matches production
-        # (PostgreSQL 17 via Supabase).
-        image: postgis/postgis:17-3.4
-        env:
-          POSTGRES_USER: paymax
-          POSTGRES_PASSWORD: paymax
-          POSTGRES_DB: paymax
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U paymax" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+    # NO `services:` block: service images are pulled by the runner BEFORE the
+    # first step executes, so a Docker Hub 429/timeout (anonymous rate limit
+    # shared across every concurrent PR on hosted runners) failed this job at
+    # "Initialize containers" with no chance to retry. postgis/postgis is
+    # community-published — Docker Hub only, no official ECR Public/GHCR mirror —
+    # so the container is started by a step whose pull is wrapped in bounded
+    # retry+backoff (scripts/ci/start-postgres-service.sh). Same image, env,
+    # port and pg_isready health gate as the declarative service it replaced.
     env:
       DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
       # The live-DB suites gate on TEST_DATABASE_URL and NONE fall back to
@@ -64,6 +57,12 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
+      # PostGIS-enabled image required: the very first migration
+      # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
+      # which a plain postgres image cannot satisfy. PG17 matches production
+      # (PostgreSQL 17 via Supabase).
+      - name: Start PostGIS service container (pull retried — Docker Hub rate limits)
+        run: bash scripts/ci/start-postgres-service.sh postgis/postgis:17-3.4 ci-postgres
       - uses: actions/setup-go@v7
         with:
           # go-version-file, not a hardcoded '1.2x.x' — a literal version goes
