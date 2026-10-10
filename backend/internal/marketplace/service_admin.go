@@ -214,6 +214,17 @@ func (s *Service) ReviewKYC(ctx context.Context, adminID, adminRole, userID stri
 	if in.Decision != "approve" && in.Decision != "reject" {
 		return nil, fieldErr(CodeValidation, "decision must be approve or reject", "decision")
 	}
+	// grant_tier lands in TWO constrained columns — mkt_user_moderation.kyc_tier
+	// (CHECK) inside SetKYCReview and mkt_trust_scores.kyc_tier (the kyc_tier SQL
+	// enum) inside SetSellerKYCTier. An out-of-vocab value surfaces as a raw
+	// check_violation / enum error → 500 for a caller bug. Whitelist it here.
+	if in.GrantTier != nil {
+		switch KYCTier(*in.GrantTier) {
+		case KYCTier0Browse, KYCTier1Buy, KYCTier2Sell, KYCTier3Business:
+		default:
+			return nil, fieldErr(CodeValidation, "grant_tier must be one of tier0_browse, tier1_buy, tier2_sell, tier3_business", "grant_tier")
+		}
+	}
 	if _, err := s.repo.GetOrInitUserModeration(ctx, userID, DefaultMarketID); err != nil {
 		return nil, err
 	}

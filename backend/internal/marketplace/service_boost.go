@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
+	"strings"
 	"time"
 )
 
@@ -155,6 +156,15 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 	}
 	if sr, hit, _ := checkIdempotent(ctx, s.redis, idemKey); hit {
 		return nil, replayError{Stored: sr}
+	}
+	// listing_id arrives in the request BODY, outside UUIDParams' path-param
+	// reach — an absent or malformed value would reach GetListing's uuid
+	// compare and surface as a 500 rather than a caller-correctable 400.
+	if strings.TrimSpace(in.ListingID) == "" {
+		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
+	}
+	if err := requireUUIDField(in.ListingID, "listing_id"); err != nil {
+		return nil, err
 	}
 	quote, err := s.ComputeBoostQuote(ctx, in.Tier, in.EndsAt)
 	if err != nil {

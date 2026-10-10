@@ -28,6 +28,12 @@ func (r *Repository) InsertSavedItem(ctx context.Context, userID, listingID stri
 		if dbutil.IsUniqueViolation(err) {
 			return nil, &CodedError{Status: 409, Code: CodeAlreadySaved, Message: "listing already saved"}
 		}
+		if dbutil.IsForeignKeyViolation(err) {
+			// mkt_saved_items.listing_id FK → mkt_listings(id): the listing was
+			// removed between the service's GetListing read and this insert.
+			// For the caller that is simply "no such listing" — 404, not 500.
+			return nil, ErrNotFoundCoded("listing")
+		}
 		return nil, wrapInternal("insert saved item", err)
 	}
 	return &it, nil

@@ -143,8 +143,26 @@ func (h *Handler) AdminAuditLog(c *gin.Context) {
 // marketplace.admin.moderation (same style as AdminModerationQueue / AdminFlags).
 // Returns the uniform {"data":[...]} envelope (respond) with camel-free snake_case
 // keys matching the member boost API + an additive listing_title per row.
+// validBoostStatusFilters mirrors the boost_status SQL ENUM exactly
+// (20260905000000_marketplace_v1.sql). mkt_boosts.status is a real enum column,
+// so an out-of-vocabulary ?status= value would abort the query with "invalid
+// input value for enum boost_status" — a 500 for a caller bug. Refused as a
+// 400 here instead. Note 'cancelled_by_seller' is a Go-side display status,
+// NOT a stored enum value, so it is deliberately absent.
+var validBoostStatusFilters = map[string]bool{
+	"purchased":            true,
+	"active":               true,
+	"completed":            true,
+	"rejected_with_reason": true,
+	"auto_refunded":        true,
+}
+
 func (h *Handler) AdminListBoosts(c *gin.Context) {
 	limit, offset := pageParams(c)
+	if st := c.Query("status"); st != "" && !validBoostStatusFilters[st] {
+		fail(c, fieldErr(CodeValidation, "status must be one of purchased, active, completed, rejected_with_reason, auto_refunded", "status"))
+		return
+	}
 	bs, err := h.svc.repo.ListBoosts(c.Request.Context(), c.Query("status"), limit, offset)
 	if err != nil {
 		fail(c, err)
