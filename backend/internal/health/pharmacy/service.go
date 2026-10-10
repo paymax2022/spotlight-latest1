@@ -984,6 +984,11 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 // pharmacy owner may complete the order. A foreign actor gets ErrOrderNotFound,
 // indistinguishable from a missing order, so the endpoint is no longer an
 // "any authenticated user + a 6-digit OTP releases escrow" oracle.
+//
+// Re-entry (ledger F2): if a prior attempt committed DELIVERED/COLLECTED (or
+// even CLOSED) and then faulted in the escrow leg, the call re-enters from that
+// state — credential checks are skipped (they passed on the committed attempt)
+// and the idempotent escrow resolve re-runs until the hold is RELEASED.
 func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode string) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
@@ -1012,6 +1017,17 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 			return nil, err
 		}
 		to = StateCollected
+	case StateDelivered, StateCollected, StateClosed:
+		// Post-transition money-leg re-entry (ledger F2): a prior attempt
+		// committed DELIVERED/COLLECTED and then faulted in the escrow release
+		// leg — refusing here would wedge the order with the funds HELD
+		// forever. The state already equals the transition target, so the
+		// transition (and its credential checks, already passed once) is
+		// skipped below and the idempotent escrow resolve re-runs — the same
+		// self-heal scheduling.Transition gives vet.Cancel. CLOSED is the same
+		// replay: release is idempotent per its leg key and the close
+		// transition early-returns.
+		to = o.State
 	default:
 		return nil, fmt.Errorf("pharmacy: order not ready to complete, is %s", o.State)
 	}
@@ -1086,9 +1102,15 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 		}
 	}
 
-	out, err := s.transition(ctx, actorID, orderID, to, nil, "health.pharmacy.order.complete")
-	if err != nil {
-		return nil, err
+	// When the state already equals the target (money-leg re-entry) the guarded
+	// transition is skipped — its credential checks passed on the committed
+	// attempt — and execution drops straight to the idempotent escrow leg.
+	out := o
+	if o.State != to {
+		out, err = s.transition(ctx, actorID, orderID, to, nil, "health.pharmacy.order.complete")
+		if err != nil {
+			return nil, err
+		}
 	}
 	// HL-9: RELEASE the held amount to the pharmacy payee.
 	if o.EscrowID != nil {
@@ -1169,15 +1191,26 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 		// indistinguishable from a missing one — no existence oracle.
 		return nil, ErrOrderNotFound
 	}
-	if !isPreDispense(o.State) {
+	out := o
+	switch {
+	case isPreDispense(o.State):
+		out, err = s.transition(ctx, patientID, orderID, StateCancelled, func(tx pgx.Tx, cur *Order) error {
+			_, e := tx.Exec(ctx, `UPDATE pharmacy_orders SET cancel_reason=$2 WHERE id=$1`, orderID, reason)
+			return e
+		}, "health.pharmacy.order.cancel")
+		if err != nil {
+			return nil, err
+		}
+	case o.State == StateCancelled || o.State == StateRefunded:
+		// Post-transition money-leg re-entry (ledger F2): a prior cancel
+		// committed CANCELLED and then faulted in the escrow refund leg —
+		// isPreDispense alone would refuse every retry and strand the hold
+		// HELD forever. The cancel transition is skipped (the state is already
+		// the target; cancel_reason was written in the same committed tx) and
+		// the idempotent refund leg re-runs below. REFUNDED is the same replay:
+		// refund is idempotent and the terminal transition early-returns.
+	default:
 		return nil, fmt.Errorf("pharmacy: order can only be cancelled before dispense, is %s", o.State)
-	}
-	out, err := s.transition(ctx, patientID, orderID, StateCancelled, func(tx pgx.Tx, cur *Order) error {
-		_, e := tx.Exec(ctx, `UPDATE pharmacy_orders SET cancel_reason=$2 WHERE id=$1`, orderID, reason)
-		return e
-	}, "health.pharmacy.order.cancel")
-	if err != nil {
-		return nil, err
 	}
 	// HL-9: REFUND the held amount to the original payer.
 	if o.EscrowID != nil {
