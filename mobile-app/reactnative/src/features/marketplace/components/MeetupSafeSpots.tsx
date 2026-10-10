@@ -41,7 +41,11 @@ export default function MeetupSafeSpots({
                 <Text style={styles.name} numberOfLines={1}>{s.name}</Text>
                 {s.verified ? <BadgeCheck size={14} color={MarketColors.ok} /> : null}
               </View>
-              <Text style={styles.meta}>{s.address} · {s.distanceKm.toFixed(1)} km</Text>
+              <Text style={styles.meta}>
+                {[s.address, s.distanceKm != null && Number.isFinite(s.distanceKm) ? `${s.distanceKm.toFixed(1)} km` : '']
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
             </View>
             {active ? <Check size={18} color={MarketColors.brand} /> : null}
           </Pressable>
