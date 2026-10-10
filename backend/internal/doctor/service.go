@@ -277,7 +277,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		return nil, fmt.Errorf("doctor: resolve settlement account: %w", err)
 	}
 	ledgerRef := "doctor:payout:" + idemKey
-	if err := s.ledger.Debit(ctx, userID, ledgerRef, idemKey, settlementAcc.ID, req.AmountKobo); err != nil {
+	if err := s.ledger.DebitGated(ctx, userID, ledgerRef, idemKey, settlementAcc.ID, req.AmountKobo); err != nil {
 		// Insufficient funds / duplicate ledger key surface to the handler.
 		return nil, err
 	}

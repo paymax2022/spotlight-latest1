@@ -376,7 +376,7 @@ func (s *SupportService) Contribute(ctx context.Context, userID, idemKey, compet
 		return err
 	}
 	ref := fmt.Sprintf("arena:support:%s:%s", competitionID, contestantID)
-	if err := s.ledger.Debit(ctx, userID, ref, idemKey, potAcct, amountKobo); err != nil {
+	if err := s.ledger.DebitGated(ctx, userID, ref, idemKey, potAcct, amountKobo); err != nil {
 		if isLedgerReplay(err) {
 			// Same key already moved this money on a prior attempt — the tag
 			// row and audit log were written then too, so this call is done.
@@ -429,7 +429,7 @@ func (s *SupportService) ContributeWithState(ctx context.Context, userID, idemKe
 		return err
 	}
 	ref := fmt.Sprintf("arena:support:%s:%s", competitionID, contestantID)
-	if err := s.ledger.Debit(ctx, userID, ref, idemKey, potAcct, amountKobo); err != nil {
+	if err := s.ledger.DebitGated(ctx, userID, ref, idemKey, potAcct, amountKobo); err != nil {
 		if isLedgerReplay(err) {
 			return nil
 		}

@@ -1071,7 +1071,7 @@ func (t *connectWalletTransferAdapter) Transfer(ctx context.Context, fromUserID,
 	// takes the wallet advisory lock, re-projects the balance inside the tx and
 	// posts the balanced pair — a concurrent transfer on the same sender
 	// serialises behind the lock and sees the committed debit.
-	return t.ledger.Debit(ctx, fromUserID, reference, idempotencyKey, toAcc.ID, amountKobo)
+	return t.ledger.DebitGated(ctx, fromUserID, reference, idempotencyKey, toAcc.ID, amountKobo)
 }
 
 // connectTierGateAdapter adapts tiers.Service.GetUserTier (returns tiers.Tier) to

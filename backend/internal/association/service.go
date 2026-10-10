@@ -246,7 +246,7 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 
 	// Ledger debit (idempotent on IdempotencyKey).
 	ref := "assoc_dues:" + invoiceID
-	if err := s.ledger.Debit(ctx, userID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
+	if err := s.ledger.DebitGated(ctx, userID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
 		return nil, fmt.Errorf("association: dues debit: %w", err)
 	}
 

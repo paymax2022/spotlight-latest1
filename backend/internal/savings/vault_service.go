@@ -283,7 +283,7 @@ func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amo
 	if err != nil {
 		return 0, err
 	}
-	if err := s.led.Debit(ctx, ownerID, "savings:deposit:"+vaultID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, ownerID, "savings:deposit:"+vaultID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("savings: wallet debit: %w", err)
 	}
 	if err := s.appendVaultEntry(ctx, vaultID, "CREDIT", amountKobo, "deposit", idemKey+":vault"); err != nil {

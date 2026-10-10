@@ -82,7 +82,7 @@ func (a academyLedgerRail) move(ctx context.Context, userID, reference, idemKey 
 	if err != nil {
 		return "", err
 	}
-	if err := a.ledger.Debit(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
+	if err := a.ledger.DebitGated(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
 		return "", err
 	}
 	return idemKey, nil

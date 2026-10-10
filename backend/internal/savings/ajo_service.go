@@ -245,7 +245,7 @@ func (s *AjoService) RunCycle(ctx context.Context, circleID, idemKey string) err
 		}
 		// NL-1: peer funds only — Debit fails closed on insufficient balance; the
 		// shortfall is NOT covered by Paymax. A failing member is marked DEFAULTED.
-		derr := s.led.Debit(ctx, m.UserID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo)
+		derr := s.led.DebitGated(ctx, m.UserID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo)
 		if errors.Is(derr, ledger.ErrDuplicate) {
 			collected += c.ContributionKobo // already debited on a prior attempt
 			continue
@@ -330,7 +330,7 @@ func (s *AjoService) MakeGood(ctx context.Context, circleID, userID string, cycl
 		return err
 	}
 	key := fmt.Sprintf("%s:ajo:%s:c%d:makegood:%s", idemKey, circleID, cycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
+	if derr := s.led.DebitGated(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: makegood debit: %w", derr)
 	}
 	// Restore membership DEFAULTED→ACTIVE (guarded).

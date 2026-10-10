@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,11 +23,25 @@ func NewService(db *pgxpool.Pool) *Service {
 	return &Service{db: db}
 }
 
+// Querier is the single-row read seam shared by *pgxpool.Pool and pgx.Tx, so
+// the SAME limit queries can run as an advisory pre-check on the pool
+// (EnforceWalletDebitLimit) or authoritatively inside the debiting transaction
+// under the wallet advisory lock (EnforceWalletDebitLimitTx — the F7 TOCTOU
+// fix: the cap check is only race-free when it is serialised against the
+// posting it gates).
+type Querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // GetUserTier fetches the user's current KYC tier from user_profiles.
 func (s *Service) GetUserTier(ctx context.Context, userID string) (Tier, error) {
-	const q = `SELECT COALESCE(kyc_tier, 0) FROM user_profiles WHERE id = $1`
+	return s.getUserTier(ctx, s.db, userID)
+}
+
+func (s *Service) getUserTier(ctx context.Context, q Querier, userID string) (Tier, error) {
+	const query = `SELECT COALESCE(kyc_tier, 0) FROM user_profiles WHERE id = $1`
 	var t int
-	err := s.db.QueryRow(ctx, q, userID).Scan(&t)
+	err := q.QueryRow(ctx, query, userID).Scan(&t)
 	if err != nil {
 		// Fail closed — if we can't determine tier, block the operation.
 		return Tier0, fmt.Errorf("tiers: get tier for user %s: %w", userID, err)
@@ -35,8 +50,8 @@ func (s *Service) GetUserTier(ctx context.Context, userID string) (Tier, error) 
 }
 
 // getDailyDebited returns the total kobo debited from the user's wallet today.
-func (s *Service) getDailyDebited(ctx context.Context, userID string) (int64, error) {
-	const q = `
+func (s *Service) getDailyDebited(ctx context.Context, q Querier, userID string) (int64, error) {
+	const query = `
 		SELECT COALESCE(SUM(le.amount_kobo), 0)
 		FROM ledger_entries le
 		JOIN ledger_accounts la ON la.id = le.account_id
@@ -46,7 +61,7 @@ func (s *Service) getDailyDebited(ctx context.Context, userID string) (int64, er
 		  AND le.created_at >= $2`
 	startOfDay := time.Now().UTC().Truncate(24 * time.Hour)
 	var total int64
-	err := s.db.QueryRow(ctx, q, userID, startOfDay).Scan(&total)
+	err := q.QueryRow(ctx, query, userID, startOfDay).Scan(&total)
 	return total, err
 }
 
@@ -77,7 +92,7 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 	}
 	cfg := GetConfig(tier)
 
-	used, err := s.getDailyDebited(ctx, userID)
+	used, err := s.getDailyDebited(ctx, s.db, userID)
 	if err != nil {
 		return Usage{}, fmt.Errorf("tiers: get daily debited: %w", err)
 	}
@@ -101,7 +116,7 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 	// otherwise the checkout sheet reads WalletDisabled and refuses a rail the
 	// server would have accepted.
 	if u.WalletDisabled && s.checkoutAllowance {
-		spent, err := s.debitedSince(ctx, userID, time.Now().UTC().Add(-checkoutWindow))
+		spent, err := s.debitedSince(ctx, s.db, userID, time.Now().UTC().Add(-checkoutWindow))
 		if err != nil {
 			return Usage{}, fmt.Errorf("tiers: get checkout window spend: %w", err)
 		}
@@ -114,8 +129,30 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 
 // EnforceWalletDebitLimit checks tier limits before a wallet debit.
 // Fail-closed: any DB error blocks the operation.
+//
+// This is the ADVISORY pre-check: it reads on the pool, so two concurrent
+// same-payer debits can each pass it and then both post. The AUTHORITATIVE
+// check runs inside the debiting transaction under the wallet advisory lock
+// (EnforceWalletDebitLimitTx, wired into ledger debit paths) — keep this call
+// for the cheap early 403, but it is not what makes the cap race-free.
 func (s *Service) EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
-	tier, err := s.GetUserTier(ctx, userID)
+	return s.enforceWalletDebitLimit(ctx, s.db, userID, amountKobo)
+}
+
+// EnforceWalletDebitLimitTx is EnforceWalletDebitLimit evaluated inside an
+// open transaction. The caller MUST already hold
+// pg_advisory_xact_lock(hashtext("wallet:"+userID)) in tx — the same lock
+// ledger.DebitWithBalanceCheck and finance/transfers take — because the lock
+// is what serialises this read against every other gated debit posting on the
+// wallet. Run on its own (no lock) it is just the pooled check again.
+// Satisfies ledger.DebitGuard: pass it straight to DebitWithGuard /
+// EscrowWithGuard / SetDebitGuard.
+func (s *Service) EnforceWalletDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error {
+	return s.enforceWalletDebitLimit(ctx, tx, userID, amountKobo)
+}
+
+func (s *Service) enforceWalletDebitLimit(ctx context.Context, q Querier, userID string, amountKobo int64) error {
+	tier, err := s.getUserTier(ctx, q, userID)
 	if err != nil {
 		return fmt.Errorf("tiers: enforce limit (fail closed): %w", err)
 	}
@@ -128,7 +165,7 @@ func (s *Service) EnforceWalletDebitLimit(ctx context.Context, userID string, am
 		return nil // unlimited
 	}
 
-	debited, err := s.getDailyDebited(ctx, userID)
+	debited, err := s.getDailyDebited(ctx, q, userID)
 	if err != nil {
 		return fmt.Errorf("tiers: get daily debited (fail closed): %w", err)
 	}
@@ -182,20 +219,34 @@ func (s *Service) WithCheckoutAllowance(enabled bool) *Service {
 // Tier 0 differs, and only when the allowance is enabled.
 // Fail-closed: any error reading the tier or the spend history blocks the debit.
 func (s *Service) EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
-	tier, err := s.GetUserTier(ctx, userID)
+	return s.enforceCheckoutDebitLimit(ctx, s.db, userID, amountKobo)
+}
+
+// EnforceCheckoutDebitLimitTx is EnforceCheckoutDebitLimit evaluated inside an
+// open transaction — the in-tx counterpart to EnforceWalletDebitLimitTx for
+// consumer-purchase paths (ADR-043). Same contract: the caller MUST hold
+// pg_advisory_xact_lock(hashtext("wallet:"+userID)) in tx, which is what
+// serialises the rolling-window spend read against the posting. Satisfies
+// ledger.DebitGuard.
+func (s *Service) EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error {
+	return s.enforceCheckoutDebitLimit(ctx, tx, userID, amountKobo)
+}
+
+func (s *Service) enforceCheckoutDebitLimit(ctx context.Context, q Querier, userID string, amountKobo int64) error {
+	tier, err := s.getUserTier(ctx, q, userID)
 	if err != nil {
 		return fmt.Errorf("tiers: enforce checkout limit (fail closed): %w", err)
 	}
 	// Tier 1+ delegates to the strict gate so the two can never drift.
 	if tier != Tier0 {
-		return s.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+		return s.enforceWalletDebitLimit(ctx, q, userID, amountKobo)
 	}
 	// Cheap refusals first, so an oversized request costs no history read.
 	if err := checkoutDecision(s.checkoutAllowance, amountKobo, 0); err != nil {
 		return err
 	}
 
-	used, err := s.debitedSince(ctx, userID, time.Now().UTC().Add(-checkoutWindow))
+	used, err := s.debitedSince(ctx, q, userID, time.Now().UTC().Add(-checkoutWindow))
 	if err != nil {
 		return fmt.Errorf("tiers: get checkout window spend (fail closed): %w", err)
 	}
@@ -227,8 +278,8 @@ func checkoutDecision(enabled bool, amountKobo, usedKobo int64) error {
 // from midnight UTC, which would let a Tier-0 account spend a full allowance either
 // side of midnight; the rolling window keeps the spend cap aligned with the funding
 // cap that authorised it.
-func (s *Service) debitedSince(ctx context.Context, userID string, since time.Time) (int64, error) {
-	const q = `
+func (s *Service) debitedSince(ctx context.Context, q Querier, userID string, since time.Time) (int64, error) {
+	const query = `
 		SELECT COALESCE(SUM(le.amount_kobo), 0)
 		FROM ledger_entries le
 		JOIN ledger_accounts la ON la.id = le.account_id
@@ -237,7 +288,7 @@ func (s *Service) debitedSince(ctx context.Context, userID string, since time.Ti
 		  AND le.type = 'DEBIT'
 		  AND le.created_at >= $2`
 	var total int64
-	err := s.db.QueryRow(ctx, q, userID, since).Scan(&total)
+	err := q.QueryRow(ctx, query, userID, since).Scan(&total)
 	return total, err
 }
 

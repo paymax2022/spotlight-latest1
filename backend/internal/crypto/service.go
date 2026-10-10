@@ -247,7 +247,7 @@ func (s *Service) Buy(ctx context.Context, userID, assetID string, cashKobo int6
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, userID, o.Reference, walletKey, escrow.ID, cashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := s.led.DebitGated(ctx, userID, o.Reference, walletKey, escrow.ID, cashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, err
 	}
 	// 2) Record the order + credit the holding projection atomically. ON CONFLICT

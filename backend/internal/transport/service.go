@@ -35,6 +35,10 @@ type tierLimiter interface {
 	// Rider fares are consumer purchases, so they use the checkout gate: identical
 	// for Tier 1+, capped-but-permitted for Tier 0 (ADR-043).
 	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceCheckoutDebitLimitTx is the SAME checkout check evaluated inside
+	// the debiting transaction under the wallet advisory lock — the
+	// authoritative half of the gate (F7). Satisfies ledger.DebitGuard.
+	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
@@ -136,6 +140,20 @@ func (s *Service) enforceTierLimit(ctx context.Context, riderID string, amountKo
 		return codedErr(http.StatusForbidden, CodeForbidden, err.Error())
 	}
 	return nil
+}
+
+// escrowCheckout is the ONLY way transport escrows a rider's wallet: the
+// checkout allowance is re-evaluated INSIDE the debit tx under the wallet
+// advisory lock (settlement.EscrowWithGuard → ledger.DebitWithGuard), closing
+// the F7 TOCTOU the pooled enforceTierLimit cannot — two concurrent wallet
+// rides can both pass the pooled read, never the serialised in-tx one.
+// Fails closed the same way enforceTierLimit does when the gate is unwired.
+func (s *Service) escrowCheckout(ctx context.Context, userID, ref, idempotencyKey string, amountKobo int64) (*settlement.Settlement, error) {
+	if s.tiers == nil { // defensive: gate is always wired by NewService
+		return nil, codedErr(http.StatusForbidden, CodeForbidden, "tier limit gate unavailable")
+	}
+	return s.settlement.EscrowWithGuard(ctx, userID, ref, idempotencyKey, "transport", amountKobo,
+		s.tiers.EnforceCheckoutDebitLimitTx)
 }
 
 // WithMaps swaps the maps adapter (e.g. a live provider in production).
@@ -253,7 +271,7 @@ func (s *Service) RequestTrip(ctx context.Context, riderID string, req RequestTr
 	}
 	tripID := uuid.New().String()
 	ref := "trip:" + tripID
-	sett, err := s.settlement.Escrow(ctx, riderID, ref, req.IdempotencyKey, "transport", req.FareKobo)
+	sett, err := s.escrowCheckout(ctx, riderID, ref, req.IdempotencyKey, req.FareKobo)
 	if err != nil {
 		return nil, fmt.Errorf("transport: escrow fare: %w", err)
 	}
@@ -1092,6 +1110,10 @@ func (s *Service) settleCashTrip(ctx context.Context, t *tripRow) error {
 	}
 	ref := "trip:" + t.ID + ":cash_fee"
 	idem := "cash_fee:" + t.ID
+	// Deliberately plain Debit (not DebitGated): the cash-trip commission is a
+	// system-initiated fee collection on an already-completed ride, not a
+	// driver spend — gating it on the daily cap could strand a debt the
+	// platform is owed (mirrors tip clawback / savings penalty).
 	if err := s.ledger.Debit(ctx, driverUserID, ref, idem, revAcc.ID, fee); err != nil {
 		return fmt.Errorf("transport: debit driver cash fee: %w", err)
 	}

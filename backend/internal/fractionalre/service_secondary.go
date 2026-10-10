@@ -207,7 +207,9 @@ func (s *Service) BuyFraction(ctx context.Context, buyerID, idempotencyKey, list
 
 	// 5. Escrow buyer funds under the SCOPED key.
 	ref := fmt.Sprintf("fre-secondary:%s:%s", listingID, buyerID)
-	sett, err := s.settlement.Escrow(ctx, buyerID, ref, key, moduleType, amountKobo)
+	// EscrowGated re-runs the strict cap check inside the debit tx under the
+	// wallet lock (F7) — the pooled gate at step 4 is advisory only.
+	sett, err := s.settlement.EscrowGated(ctx, buyerID, ref, key, moduleType, amountKobo)
 	if err != nil {
 		if errors.Is(err, ledger.ErrInsufficientFunds) {
 			return nil, ledger.ErrInsufficientFunds

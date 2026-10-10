@@ -119,7 +119,9 @@ func (s *Service) Subscribe(ctx context.Context, userID, idempotencyKey, offerin
 	//    ledger) under the SCOPED key.
 	ref := fmt.Sprintf("fre-sub:%s:%s", offeringID, userID)
 	settlementRef := ptr.Deref(o.EscrowReference, "fre-round:"+offeringID)
-	sett, err := s.settlement.Escrow(ctx, userID, settlementRef+":"+ref, key, moduleType, amountKobo)
+	// EscrowGated re-runs the strict cap check inside the debit tx under the
+	// wallet lock (F7) — the pooled gate at step 5 is advisory only.
+	sett, err := s.settlement.EscrowGated(ctx, userID, settlementRef+":"+ref, key, moduleType, amountKobo)
 	if err != nil {
 		if errors.Is(err, ledger.ErrInsufficientFunds) {
 			return nil, ledger.ErrInsufficientFunds

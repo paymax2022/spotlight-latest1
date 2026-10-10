@@ -490,7 +490,7 @@ func (s *Service) postBoostCharge(ctx context.Context, sellerID, listingID strin
 		return "", wrapInternal("commission account", err)
 	}
 	key := boostChargeKey(sellerID, listingID, tier.Tier)
-	if derr := s.ledger.Debit(ctx, sellerID, key, key, commission.ID, tier.PriceKobo); derr != nil {
+	if derr := s.ledger.DebitGated(ctx, sellerID, key, key, commission.ID, tier.PriceKobo); derr != nil {
 		switch {
 		case errors.Is(derr, ledger.ErrInsufficientFunds):
 			return "", newErr(402, CodeInsufficientWallet, "insufficient wallet balance for boost")

@@ -170,7 +170,7 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		return nil, fmt.Errorf("adminext: resolve clearing account: %w", err)
 	}
 	posted := true
-	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, amount); err != nil {
+	if err := s.ledger.DebitGated(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, amount); err != nil {
 		switch {
 		case errors.Is(err, financeledger.ErrDuplicate):
 			posted = false // already posted on an earlier attempt — safe to continue

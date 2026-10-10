@@ -40,6 +40,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -376,6 +377,11 @@ func TestLiveDB_OrderEscrowTierGate_UnwiredGateRefuses(t *testing.T) {
 // food subtotal, because every order there is far under or far over the cap.
 type recordingLimiter struct {
 	gotKobo, calls int64
+	// txCalls counts the in-tx half separately (F7): a gated debit runs the
+	// pooled advisory check AND the serialised in-tx check, so a correctly
+	// gated order calls the limiter twice — once unlocked, once under the
+	// wallet advisory lock.
+	txCalls int64
 	// gotMethod records WHICH gate ran. A customer order must use the checkout
 	// gate and a merchant withdrawal must NOT (cash out is never relaxed —
 	// ADR-043), so the method name is part of what these tests protect.
@@ -393,6 +399,25 @@ func (r *recordingLimiter) EnforceCheckoutDebitLimit(_ context.Context, _ string
 	r.gotKobo = amountKobo
 	r.calls++
 	r.gotMethod = "checkout"
+	return nil
+}
+
+// The in-tx halves (F7): these tests pin WHICH pooled gate ran; the Tx seam is
+// allow-all here — the live-DB serialization property is exercised by the
+// tiers/ledger concurrency suites, not by this decision fake.
+func (r *recordingLimiter) EnforceWalletDebitLimitTx(_ context.Context, _ pgx.Tx, _ string, amountKobo int64) error {
+	r.txCalls++
+	if amountKobo != r.gotKobo {
+		r.gotKobo = amountKobo // keep gotKobo = the last amount authorized either way
+	}
+	return nil
+}
+
+func (r *recordingLimiter) EnforceCheckoutDebitLimitTx(_ context.Context, _ pgx.Tx, _ string, amountKobo int64) error {
+	r.txCalls++
+	if amountKobo != r.gotKobo {
+		r.gotKobo = amountKobo
+	}
 	return nil
 }
 
@@ -422,8 +447,9 @@ func TestLiveDB_OrderEscrowTierGate_GatesTheFullEscrowedTotal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("place order: %v", err)
 	}
-	if rec.calls != 1 {
-		t.Fatalf("tier gate called %d times, want exactly 1 per order", rec.calls)
+	if rec.calls != 1 || rec.txCalls != 1 {
+		t.Fatalf("tier gate called %d pooled / %d in-tx, want exactly 1 of each per order (F7)",
+			rec.calls, rec.txCalls)
 	}
 	// The gated amount must be the escrowed amount, to the kobo.
 	if rec.gotKobo != order.TotalKobo {

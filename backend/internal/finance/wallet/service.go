@@ -56,12 +56,16 @@ func (s *Service) Credit(ctx context.Context, userID, reference, idempotencyKey 
 	return s.ledger.Credit(ctx, userID, reference, idempotencyKey, clearingAcc.ID, amountKobo)
 }
 
-// Debit debits the user's wallet. Enforces tier limits before posting.
+// Debit debits the user's wallet. The pooled EnforceWalletDebitLimit below is
+// an advisory pre-check only — DebitGated re-evaluates the daily cap INSIDE the
+// ledger tx under the wallet advisory lock, which is the authoritative half
+// (F7): two concurrent debits can both pass the pooled read, never the
+// serialised in-tx one.
 func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
 	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo); err != nil {
 		return err
 	}
-	return s.ledger.Debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
+	return s.ledger.DebitGated(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
 }
 
 // VoteDebit debits the user's wallet and credits the platform commission account.

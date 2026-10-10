@@ -111,7 +111,9 @@ func (p triagePayment) Charge(ctx context.Context, userID, reference, idemKey st
 	if err != nil {
 		return "", err
 	}
-	if err := p.l.Debit(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
+	// DebitGated re-runs the strict cap INSIDE the debit tx under the wallet
+	// lock (F7) — the pooled gate above is advisory only.
+	if err := p.l.DebitGated(ctx, userID, reference, idemKey, acc.ID, amountMinor); err != nil {
 		return "", err
 	}
 	return idemKey, nil

@@ -84,6 +84,10 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 		// charge levied while returning the member's OWN funds; gating it with
 		// EnforceWalletDebitLimit would strand a Tier-0 member's vault balance —
 		// they could neither deposit (gated) nor withdraw what they already hold.
+		// Deliberately plain Debit (not DebitGated): the early-withdrawal penalty
+		// is a system-initiated fee levied DURING a withdrawal the member is
+		// entitled to make — gating it on the daily cap could strand funds the
+		// withdrawal itself already moved.
 		revAcc, rerr := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 		if rerr != nil {
 			return 0, 0, rerr
@@ -263,7 +267,7 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		return err
 	}
 	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
+	if derr := s.led.DebitGated(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: circle contribute: %w", derr)
 	}
 	// Credit the collected pot for the current cycle so the scheduled payout picks

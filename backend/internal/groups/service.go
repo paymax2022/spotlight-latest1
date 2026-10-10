@@ -47,6 +47,10 @@ var ErrPlanNotFound = errors.New("groups: subscription plan not found")
 // keep the surface this package depends on small and testable.
 type tierLimiter interface {
 	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceCheckoutDebitLimitTx is the SAME checkout check evaluated inside
+	// the debiting transaction under the wallet advisory lock — the
+	// authoritative half of the gate (F7). Satisfies ledger.DebitGuard.
+	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // Service manages groups, membership, and dues payments.
@@ -233,7 +237,10 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	// so a raw caller key used on, say, a transfer with the same amount would
 	// silently no-op the debit while the 'paid' row below recorded success.
 	key := "groups:dues:" + req.IdempotencyKey
-	if err := s.ledger.Debit(ctx, memberID, ref, key, groupWalletID, plan.AmountKobo); err != nil {
+	// DebitWithGuard re-runs the checkout allowance INSIDE the debit tx under
+	// the wallet advisory lock (F7) — the pooled gate above is advisory only.
+	if err := s.ledger.DebitWithGuard(ctx, memberID, ref, key, groupWalletID, plan.AmountKobo,
+		s.tiers.EnforceCheckoutDebitLimitTx); err != nil {
 		return nil, fmt.Errorf("groups: pay dues debit: %w", err)
 	}
 

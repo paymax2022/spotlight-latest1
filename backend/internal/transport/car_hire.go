@@ -404,7 +404,7 @@ func (s *Service) bookCarHire(ctx context.Context, userID string, req CarHireBoo
 		if external {
 			return s.settlement.EscrowExternal(ctx, userID, ref, key, "transport", amt)
 		}
-		return s.settlement.Escrow(ctx, userID, ref, key, "transport", amt)
+		return s.escrowCheckout(ctx, userID, ref, key, amt)
 	}
 	fareSett, err := escrow(fareRef, idempotencyKey+":fare", fare)
 	if err != nil {
@@ -649,7 +649,7 @@ func (s *Service) ExtendCarHire(ctx context.Context, id, userID string, extraHou
 		return nil, err
 	}
 	extRef := fmt.Sprintf("carhire:%s:ext:%d", id, time.Now().UnixNano())
-	if _, err := s.settlement.Escrow(ctx, userID, extRef, idempotencyKey, "transport", delta); err != nil {
+	if _, err := s.escrowCheckout(ctx, userID, extRef, idempotencyKey, delta); err != nil {
 		return nil, fmt.Errorf("transport: escrow car-hire extension: %w", err)
 	}
 	// active → extended, or extended → extended (repeat).

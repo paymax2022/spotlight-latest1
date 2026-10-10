@@ -15,6 +15,7 @@ import (
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/go-common/timeutil"
+	"spotlight/backend/internal/finance/tiers"
 	redisPkg "spotlight/backend/internal/platform/redis"
 )
 
@@ -27,6 +28,10 @@ type Service struct {
 	repo      *Repository
 	redis     *goredis.Client             // optional; nil means no idempotency cache
 	resolvers []TransactionDetailResolver // optional; nil/empty means no per-module admin detail
+	// debitGuard overrides the in-tx policy check DebitGated runs (nil → the
+	// strict KYC-tier daily-debit cap, built from the repo pool). Wired once at
+	// app composition via SetDebitGuard; tests inject a fake.
+	debitGuard DebitGuard
 }
 
 func NewService(repo *Repository, redis *goredis.Client) *Service {
@@ -37,6 +42,32 @@ func NewService(repo *Repository, redis *goredis.Client) *Service {
 // resolvers (see admin_transactions.go) for callers that construct ledgerSvc
 // before the resolvers exist. Nil-safe.
 func (s *Service) SetResolvers(rs []TransactionDetailResolver) { s.resolvers = rs }
+
+// SetDebitGuard overrides the in-tx guard DebitGated applies (e.g.
+// tiers.Service.EnforceWalletDebitLimitTx in app wiring, a fake in tests).
+// Leaving it unset does NOT ungate DebitGated: the default is the strict
+// KYC-tier daily-debit cap built from the repo's own pool — an unwired service
+// is stricter, never looser.
+func (s *Service) SetDebitGuard(g DebitGuard) { s.debitGuard = g }
+
+// ErrDebitGuardUnwired is returned by DebitGated when no guard can be
+// constructed at all (nil pool) — a gated debit must fail closed, not post
+// ungated.
+var ErrDebitGuardUnwired = errors.New("ledger: gated debit has no tier guard (nil pool)")
+
+// walletDebitGuard resolves the in-tx policy check for gated wallet debits:
+// the caller's override when set, else the strict daily-debit cap. Constructed
+// per call from the repo pool — tiers.NewService is a trivial wrapper, so no
+// wiring is required at any of the service's many construction sites.
+func (s *Service) walletDebitGuard() DebitGuard {
+	if s.debitGuard != nil {
+		return s.debitGuard
+	}
+	if s.repo == nil || s.repo.db == nil {
+		return nil
+	}
+	return tiers.NewService(s.repo.db).EnforceWalletDebitLimitTx
+}
 
 // GetOrCreateUserWallet returns (or creates) the user_wallet ledger account.
 func (s *Service) GetOrCreateUserWallet(ctx context.Context, userID string) (*Account, error) {
@@ -107,7 +138,49 @@ func (s *Service) Credit(ctx context.Context, userID, reference, idempotencyKey,
 // TOCTOU-safe: check + insert run in ONE tx under the wallet's advisory lock
 // (Repository.DebitWithBalanceCheck). The Redis fast-path is the cheap dedup;
 // the unique idempotency_key is the durable fallback when Redis is down.
+//
+// UNGATED: this primitive runs no policy check beyond sufficiency. It is for
+// system-initiated debits that must not be refused by the user's daily cap
+// (fee collection, clawbacks, admin postings, ledger drains). Callers moving
+// money AT THE USER'S REQUEST must use DebitGated (strict daily cap) or
+// DebitWithGuard (explicit policy) instead — the in-tx guard is what
+// serialises the cap check against the posting (F7).
 func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
+	return s.debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo, nil)
+}
+
+// DebitGated is Debit plus the strict KYC-tier daily-debit cap evaluated
+// INSIDE the posting transaction under the wallet advisory lock
+// (tiers.EnforceWalletDebitLimitTx via DebitGuard). Two concurrent gated
+// debits can no longer both pass a pooled pre-check and post over the cap —
+// the loser of the lock re-reads the daily sum after the winner commits.
+// Replays converge BEFORE the guard runs (a committed journal is a no-op even
+// when today's usage would now refuse), so idempotent retries cannot wedge on
+// the cap. The tier sentinels (tiers.ErrWalletDisabled /
+// tiers.ErrDailyLimitExceeded) propagate unwrapped for errors.Is mapping.
+func (s *Service) DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
+	guard := s.walletDebitGuard()
+	if guard == nil {
+		return ErrDebitGuardUnwired
+	}
+	return s.debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo, guard)
+}
+
+// DebitWithGuard is Debit with a caller-chosen in-tx policy guard — for paths
+// whose gate is NOT the strict daily cap. The canonical user is the Tier-0
+// checkout allowance (ADR-043): consumer-purchase call sites pass
+// tiers.Service.EnforceCheckoutDebitLimitTx so a Tier-0 customer's capped
+// allowance is evaluated under the lock instead of the strict rule that would
+// refuse them outright. A nil guard fails closed — a gated primitive must
+// never silently degrade to an ungated debit.
+func (s *Service) DebitWithGuard(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64, guard DebitGuard) error {
+	if guard == nil {
+		return ErrDebitGuardUnwired
+	}
+	return s.debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo, guard)
+}
+
+func (s *Service) debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64, guard DebitGuard) error {
 	if amountKobo <= 0 {
 		return fmt.Errorf("ledger: debit amount must be positive, got %d", amountKobo)
 	}
@@ -131,7 +204,7 @@ func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, 
 		AmountKobo:      amountKobo,
 		DebitAccountID:  acc.ID,
 		CreditAccountID: creditAccountID,
-	}, amountKobo)
+	}, amountKobo, guard)
 }
 
 // EntryAmount returns the amount_kobo posted under this idempotency_key on the
@@ -155,6 +228,9 @@ func (s *Service) EntryByKey(ctx context.Context, idempotencyKey string) (*Entry
 // PostJournal posts a balanced entry between two existing account IDs.
 // Use for non-wallet postings such as offline-payment approval
 // (DR provider_clearing → CR settlement) where no user wallet is involved.
+// UNGATED + UNLOCKED: when the debit leg is a user's own wallet, prefer
+// PostJournalGated/PostJournalWithGuard (wallet advisory lock + in-tx policy
+// check) — a pooled journal insert can race the daily-cap check (F7).
 func (s *Service) PostJournal(ctx context.Context, j JournalEntry) error {
 	if s.redis != nil {
 		ok, _, err := redisPkg.AcquireLock(ctx, s.redis, "idem:"+j.IdempotencyKey, 0)
@@ -163,6 +239,39 @@ func (s *Service) PostJournal(ctx context.Context, j JournalEntry) error {
 		}
 	}
 	return s.repo.PostJournal(ctx, j)
+}
+
+// PostJournalGated posts a balanced journal whose DEBIT leg is the user's own
+// wallet, running the strict KYC-tier daily-debit cap inside the tx under the
+// wallet advisory lock — the serialised counterpart to PostJournal for callers
+// that post planned legs (maplerad) instead of the wallet-Debit primitive.
+// walletLockKey is the wallet owner (the lock key; usually the payer's userID).
+func (s *Service) PostJournalGated(ctx context.Context, j JournalEntry, walletLockKey string) error {
+	guard := s.walletDebitGuard()
+	if guard == nil {
+		return ErrDebitGuardUnwired
+	}
+	return s.postJournalWithGuard(ctx, j, walletLockKey, guard)
+}
+
+// PostJournalWithGuard is PostJournalGated with a caller-chosen in-tx policy
+// guard (e.g. tiers.Service.EnforceCheckoutDebitLimitTx for consumer-purchase
+// journals). Nil guard fails closed.
+func (s *Service) PostJournalWithGuard(ctx context.Context, j JournalEntry, walletLockKey string, guard DebitGuard) error {
+	if guard == nil {
+		return ErrDebitGuardUnwired
+	}
+	return s.postJournalWithGuard(ctx, j, walletLockKey, guard)
+}
+
+func (s *Service) postJournalWithGuard(ctx context.Context, j JournalEntry, walletLockKey string, guard DebitGuard) error {
+	if s.redis != nil {
+		ok, _, err := redisPkg.AcquireLock(ctx, s.redis, "idem:"+j.IdempotencyKey, 0)
+		if err == nil && !ok {
+			return ErrDuplicate
+		}
+	}
+	return s.repo.PostJournalWithGuard(ctx, j, walletLockKey, guard)
 }
 
 // PostReversal posts a balanced REVERSAL_DEBIT / REVERSAL_CREDIT correction.

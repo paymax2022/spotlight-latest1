@@ -289,7 +289,7 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ledger.Debit(ctx, userID, reference, req.IdempotencyKey+":debit", fxSpreadAcc.ID, totalDebitKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := s.ledger.DebitGated(ctx, userID, reference, req.IdempotencyKey+":debit", fxSpreadAcc.ID, totalDebitKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("fx: debit source wallet: %w", err)
 	}
 

@@ -205,6 +205,10 @@ type LedgerPort interface {
 	Credit(ctx context.Context, userID, reference, idempotencyKey, debitAccountID string, amountKobo int64) error
 	// Debit posts money out of userID's wallet into a standing account.
 	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// DebitGated is Debit with the strict KYC-tier daily-debit cap evaluated
+	// INSIDE the posting tx under the wallet advisory lock — the F7-serialised
+	// half of DebitLimitPort's pooled EnforceWalletDebitLimit.
+	DebitGated(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
 	// StandingAccountID resolves (or creates) a standing account id by type name.
 	StandingAccountID(ctx context.Context, accountType string) (string, error)
 }

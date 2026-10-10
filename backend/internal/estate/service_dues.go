@@ -21,6 +21,10 @@ import (
 type LedgerPoster interface {
 	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
 	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// DebitWithGuard is Debit with a caller-chosen policy check evaluated INSIDE
+	// the posting tx under the wallet advisory lock — the F7-serialised half of
+	// TierEnforcer's pooled EnforceCheckoutDebitLimit.
+	DebitWithGuard(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64, guard ledger.DebitGuard) error
 	// Credit posts a balanced entry that increases the user's wallet, debiting the
 	// given standing account. Used for vendor payouts (Block 42).
 	Credit(ctx context.Context, userID, reference, idempotencyKey, debitAccountID string, amountKobo int64) error
@@ -38,6 +42,10 @@ type TierEnforcer interface {
 	// Dues are a resident paying for a service, so they use the checkout gate:
 	// identical for Tier 1+, capped-but-permitted for Tier 0 (ADR-043).
 	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceCheckoutDebitLimitTx is the SAME checkout check evaluated inside
+	// the debiting transaction under the wallet advisory lock — the
+	// authoritative half of the gate (F7). Satisfies ledger.DebitGuard.
+	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 }
 
 // WithLedger wires the ledger so the dues money path can post balanced
@@ -307,6 +315,14 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 		})
 		if jerr != nil && !errors.Is(jerr, ledger.ErrDuplicate) {
 			return nil, fmt.Errorf("estate: dues external post: %w", jerr)
+		}
+	} else if s.tiers != nil {
+		// Wallet-funded + gate wired: DebitWithGuard re-runs the checkout
+		// allowance INSIDE the debit tx under the wallet lock (F7) — the pooled
+		// check at step 4 is advisory only.
+		if err := s.ledger.DebitWithGuard(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount,
+			s.tiers.EnforceCheckoutDebitLimitTx); err != nil {
+			return nil, fmt.Errorf("estate: dues debit: %w", err)
 		}
 	} else if err := s.ledger.Debit(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
 		return nil, fmt.Errorf("estate: dues debit: %w", err)

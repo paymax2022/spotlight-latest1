@@ -24,6 +24,10 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 	return &Service{db: db, ledger: ledger}
 }
 
+// walletDebit is the ledger debit primitive shape Escrow posts through
+// (ledger.Service.Debit / DebitGated / DebitWithGuard all satisfy it).
+type walletDebit func(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+
 // Escrow holds funds when a payment is made, before the provider fulfils the order.
 // Called by every marketplace vertical after a successful payment.
 // ATOMICITY: the ledger API has no tx-aware Debit, so the money move and the
@@ -31,14 +35,45 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 // idempotencyKey (":escrow" leg key; UNIQUE(idempotency_key) ON CONFLICT row),
 // so a retry converges to exactly one debit and one row — escrow is never
 // stranded without a row, and money is never debited twice.
+//
+// UNGATED: the wallet debit posts via ledger.Debit — no in-tx tier cap. This
+// variant remains for paths that intentionally run no user-facing daily-cap
+// gate (telemedicine, stays); every gated caller uses EscrowGated (strict) or
+// EscrowWithGuard (checkout allowance) so the cap is checked under the wallet
+// lock inside the posting tx (F7).
 func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64) (*Settlement, error) {
+	return s.escrow(ctx, payerID, reference, idempotencyKey, moduleType, totalKobo, s.ledger.Debit)
+}
+
+// EscrowGated is Escrow with the strict KYC-tier daily-debit cap evaluated
+// inside the debit tx under the wallet advisory lock (ledger.DebitGated) —
+// the serialized counterpart every strict-gated caller should use.
+func (s *Service) EscrowGated(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64) (*Settlement, error) {
+	return s.escrow(ctx, payerID, reference, idempotencyKey, moduleType, totalKobo, s.ledger.DebitGated)
+}
+
+// EscrowWithGuard is Escrow with a caller-chosen in-tx policy guard — the
+// consumer-purchase variant: pass tiers.Service.EnforceCheckoutDebitLimitTx so
+// a Tier-0 customer's capped checkout allowance (ADR-043) is enforced under
+// the lock rather than refused by the strict gate.
+func (s *Service) EscrowWithGuard(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64, guard ledger.DebitGuard) (*Settlement, error) {
+	if guard == nil {
+		return nil, ledger.ErrDebitGuardUnwired
+	}
+	return s.escrow(ctx, payerID, reference, idempotencyKey, moduleType, totalKobo,
+		func(ctx context.Context, userID, ref, key, creditAcc string, amountKobo int64) error {
+			return s.ledger.DebitWithGuard(ctx, userID, ref, key, creditAcc, amountKobo, guard)
+		})
+}
+
+func (s *Service) escrow(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64, debit walletDebit) (*Settlement, error) {
 	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
 	}
 	// ErrDuplicate means the debit already ran on an earlier attempt — proceed
 	// to (re)ensure the tracking row rather than erroring the retry.
-	if err := s.ledger.Debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("settlement: escrow debit: %w", err)
 	}
 	now := time.Now()

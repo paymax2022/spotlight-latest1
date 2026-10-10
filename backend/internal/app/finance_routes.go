@@ -220,6 +220,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// EnforceWalletDebitLimit and are never relaxed.
 	tiersSvc := tiers.NewService(pool).WithCheckoutAllowance(cfg.FeatureCheckoutTopupTier0)
 	log.Printf("[tiers] Tier-0 checkout allowance: %t (FEATURE_CHECKOUT_TOPUP_TIER0)", cfg.FeatureCheckoutTopupTier0)
+	// The strict daily-cap guard every ledger.DebitGated/PostJournalGated runs
+	// inside the debit tx under the wallet advisory lock (F7): wire the SHARED
+	// tiers service so the in-tx check and the pooled advisory check can never
+	// drift (e.g. if a tier table or rule ever diverges).
+	ledgerSvc.SetDebitGuard(tiersSvc.EnforceWalletDebitLimitTx)
 	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
 	kycSvc := kyc.NewService(pool)
 	referralSvc := referrals.NewService(pool, ledgerSvc)

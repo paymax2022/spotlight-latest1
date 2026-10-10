@@ -68,7 +68,7 @@ func (s *Service) RateTrip(ctx context.Context, tripID, raterID string, req Rate
 			return r, err
 		}
 		tipRef := "trip:" + tripID + ":tip"
-		sett, err := s.settlement.Escrow(ctx, raterID, tipRef, tipRef, "transport", req.TipKobo)
+		sett, err := s.escrowCheckout(ctx, raterID, tipRef, tipRef, req.TipKobo)
 		if err != nil {
 			return r, fmt.Errorf("transport: tip escrow failed (rating saved): %w", err)
 		}
@@ -158,7 +158,7 @@ func (s *Service) rateModeCore(ctx context.Context, mode, jobID, raterID, provid
 			return r, err
 		}
 		tipRef := mode + ":" + jobID + ":tip"
-		sett, err := s.settlement.Escrow(ctx, raterID, tipRef, tipRef, "transport", req.TipKobo)
+		sett, err := s.escrowCheckout(ctx, raterID, tipRef, tipRef, req.TipKobo)
 		if err != nil {
 			return r, fmt.Errorf("transport: mode tip escrow failed (rating saved): %w", err)
 		}

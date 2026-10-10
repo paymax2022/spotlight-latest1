@@ -162,7 +162,7 @@ func (s *TargetService) Contribute(ctx context.Context, targetID, userID string,
 	if err != nil {
 		return 0, err
 	}
-	if err := s.led.Debit(ctx, userID, "target:contrib:"+targetID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, userID, "target:contrib:"+targetID, idemKey+":wallet", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("savings: contribute debit: %w", err)
 	}
 	const ins = `INSERT INTO group_target_ledger (id, target_id, user_id, direction, amount_kobo, idempotency_key)

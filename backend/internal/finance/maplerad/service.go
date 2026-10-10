@@ -435,13 +435,27 @@ func (s *Service) applyLegs(ctx context.Context, userID, ref string, legs []Plan
 			if err != nil {
 				return err
 			}
-			err = s.ledger.PostJournal(ctx, ledger.JournalEntry{
+			j := ledger.JournalEntry{
 				Reference:       ref,
 				IdempotencyKey:  leg.IdempotencyKey,
 				AmountKobo:      leg.AmountKobo,
 				DebitAccountID:  debitID,
 				CreditAccountID: creditID,
-			})
+			}
+			if leg.DebitIsUserWallet {
+				// The hold leg debits the customer's own wallet: post it
+				// through the gated journal — the strict daily cap is
+				// re-evaluated inside the tx under the wallet advisory
+				// lock (F7), so the pooled EnforceWalletDebitLimit in
+				// InitiateTransfer/PurchaseBill stays advisory-only and a
+				// concurrent burst of holds cannot jointly overshoot it.
+				// A durably-posted leg verifies as a replay BEFORE the
+				// guard runs, so webhook-driven finalize/reverse retries
+				// are never refused by re-counting their own legs.
+				err = s.ledger.PostJournalGated(ctx, j, userID)
+			} else {
+				err = s.ledger.PostJournal(ctx, j)
+			}
 			if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("maplerad: post journal leg %s: %w", leg.IdempotencyKey, err)
 			}

@@ -246,7 +246,7 @@ func (s *Service) insertDelivery(ctx context.Context, b *businessAccountRow, sto
 			return "", err
 		}
 		ref := "business_logistics:" + deliveryID
-		sett, err := s.settlement.Escrow(ctx, b.OwnerID, ref, idempotencyKey, "transport", fare)
+		sett, err := s.escrowCheckout(ctx, b.OwnerID, ref, idempotencyKey, fare)
 		if err != nil {
 			return "", fmt.Errorf("transport: escrow delivery fare: %w", err)
 		}

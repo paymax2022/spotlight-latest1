@@ -133,7 +133,7 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, senderID, "p2p:"+idemKey, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, senderID, "p2p:"+idemKey, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return nil, fmt.Errorf("social: send debit: %w", err)
 	}
 	if err := s.led.Credit(ctx, recipientID, "p2p:"+idemKey, journalKey+":cr", escrowAcc.ID, amountKobo); err != nil {
@@ -301,7 +301,7 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 		unclaim()
 		return err
 	}
-	if err := s.led.Debit(ctx, payerID, key, key+":dr", escrowAcc.ID, r.AmountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, payerID, key, key+":dr", escrowAcc.ID, r.AmountKobo); err != nil {
 		unclaim()
 		return fmt.Errorf("social: pay request debit: %w", err)
 	}
@@ -572,7 +572,7 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 		unclaim()
 		return err
 	}
-	if err := s.led.Debit(ctx, payerID, ref, key+":dr", escrowAcc.ID, sh.AmountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, payerID, ref, key+":dr", escrowAcc.ID, sh.AmountKobo); err != nil {
 		unclaim()
 		return fmt.Errorf("social: pay share debit: %w", err)
 	}
@@ -746,7 +746,7 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	// here — and the ON CONFLICT row insert below would swallow the lie,
 	// leaving a phantom "contributed" state.
 	journalKey := "social:pool:" + poolID + ":" + idemKey
-	if err := s.led.Debit(ctx, userID, "pool:contrib:"+poolID, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.DebitGated(ctx, userID, "pool:contrib:"+poolID, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return 0, fmt.Errorf("social: pool contribute debit: %w", err)
 	}
 	// Verify the debit leg posted on THIS contributor's wallet (S2): compare

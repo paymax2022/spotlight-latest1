@@ -310,7 +310,9 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	}
 
 	ref := "campaign:" + campaignID + ":contributor:" + contributorID
-	sett, err := s.settlement.Escrow(ctx, contributorID, ref, req.IdempotencyKey, "crowdfunding", req.AmountKobo)
+	// EscrowGated re-runs the strict daily-cap check INSIDE the debit tx under
+	// the wallet lock (F7) — the pooled gate above is advisory only.
+	sett, err := s.settlement.EscrowGated(ctx, contributorID, ref, req.IdempotencyKey, "crowdfunding", req.AmountKobo)
 	if err != nil {
 		// ledger.ErrDuplicate on the ":escrow" leg with a caller-scoped replay
 		// miss above means the key was already claimed by ANOTHER member's

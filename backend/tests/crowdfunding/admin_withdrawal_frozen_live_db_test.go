@@ -115,6 +115,10 @@ func TestLiveDB_AdminApproveWithdrawal_UnfrozenCampaignStillWorks(t *testing.T) 
 			t.Fatalf("seed user %s: %v", id, err)
 		}
 	}
+	// The payout debit is tier-gated (F7-serialised DebitGated): the seeded
+	// creator defaults to Tier 0 = wallet disabled, so promote the fixture to
+	// the unlimited tier the same way the other money-path suites do.
+	testsupport.SetKycTier(t, ctx, pool, creatorID, testsupport.KycTierUnlimited)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO campaigns (id, creator_id, title, goal_kobo, status, review_status, deadline)
 		VALUES ($1, $2, 'Unfrozen-approval fixture', 5000000, 'active', 'ACTIVE', NOW() + INTERVAL '30 days')`,

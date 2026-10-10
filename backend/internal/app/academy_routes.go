@@ -461,7 +461,7 @@ func (a feesPaymentLedger) MoveGuardianToSchool(ctx context.Context, guardianUse
 		return "", err
 	}
 	// Debit the guardian wallet, crediting the settlement standing account.
-	if err := a.ledger.Debit(ctx, guardianUserID, reference, idempotencyKey, settlement.ID, amountMinor); err != nil {
+	if err := a.ledger.DebitGated(ctx, guardianUserID, reference, idempotencyKey, settlement.ID, amountMinor); err != nil {
 		return "", err
 	}
 	// The ledger reference posted is the same reference the confirmation carries, so the
@@ -560,7 +560,7 @@ func (a feesVaultLedger) DebitToVault(ctx context.Context, userID, reference, id
 	}
 	// Debit the guardian wallet, crediting the segregated vault standing account.
 	// TOCTOU-safe + fail-closed on insufficient funds (ledger.Service.Debit).
-	return a.ledger.Debit(ctx, userID, reference, idempotencyKey, vaultAccountID, amountKobo)
+	return a.ledger.DebitGated(ctx, userID, reference, idempotencyKey, vaultAccountID, amountKobo)
 }
 
 func (a feesVaultLedger) TransferVaultToInvoice(ctx context.Context, vaultAccountID, invoiceSettlementAccountID, reference, idempotencyKey string, amountKobo int64) error {
@@ -610,7 +610,7 @@ func (a feesScholarshipLedger) PostFunding(ctx context.Context, sponsorIdentityI
 		return "", err
 	}
 	// Debit the sponsor wallet into the settlement account (fail-closed on funds).
-	if err := a.ledger.Debit(ctx, sponsorIdentityID, reference, idempotencyKey, settlement.ID, amountMinor); err != nil {
+	if err := a.ledger.DebitGated(ctx, sponsorIdentityID, reference, idempotencyKey, settlement.ID, amountMinor); err != nil {
 		return "", err
 	}
 	return reference, nil
