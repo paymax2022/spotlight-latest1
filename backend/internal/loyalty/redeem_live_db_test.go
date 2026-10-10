@@ -6,7 +6,7 @@ package loyalty
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/loyalty/... -v
 //
-// Requires migration 20271009000000_loyalty_redemption_idem_key.sql applied
+// Requires migration 20271009010000_loyalty_redemption_idem_key.sql applied
 // (loyalty_redemptions.idempotency_key partial unique index).
 
 import (

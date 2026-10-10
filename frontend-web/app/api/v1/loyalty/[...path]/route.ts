@@ -19,10 +19,14 @@ async function forward(request: Request, path: string[]) {
   try {
     await requireRequestUser(request);
     const sub = (path ?? []).join('/');
-    const hasKey = (request.headers.get('Idempotency-Key') ?? '').trim() !== '';
+    const canonical = (request.headers.get('Idempotency-Key') ?? '').trim();
+    const alt = (request.headers.get('X-Idempotency-Key') ?? '').trim();
+    // Canonical key flows verbatim via proxyToGoBackend; an X- spelling is
+    // mapped onto it so the caller's dedupe still engages; absent both, the
+    // edge synthesizes a fresh key per submit.
     const options =
-      MUTATING_METHODS.has(request.method) && !hasKey
-        ? { headers: { 'Idempotency-Key': crypto.randomUUID() } }
+      MUTATING_METHODS.has(request.method) && canonical === ''
+        ? { headers: { 'Idempotency-Key': alt || crypto.randomUUID() } }
         : undefined;
     return proxyToGoBackend(request, `/api/finance/loyalty/${sub}`, options);
   } catch (err) { return handleApiError(err); }

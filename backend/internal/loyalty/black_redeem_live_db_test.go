@@ -3,7 +3,7 @@ package loyalty
 // Live-DB tests for BlackService.RedeemPerk idempotency. SKIPPED whenever
 // TEST_DATABASE_URL is unset — same convention as redeem_live_db_test.go.
 //
-// Requires migration 20271017000000_loyalty_perk_redemption_idem_key.sql applied
+// Requires migration 20271017010000_loyalty_perk_redemption_idem_key.sql applied
 // (perk_redemptions.idempotency_key partial unique index).
 
 import (
