@@ -30,12 +30,17 @@ func (g authzFakeProv) VerifiedLabOwner(ctx context.Context, userID, providerID 
 	return userID == g.ownerID && providerID == g.providerID, nil
 }
 
+// The capability checks delegate to VerifiedLabOwner — the same answer the
+// production adapter gives under the interim affiliation gate (isLabStaff
+// resolves to the owner until a staff↔lab affiliation model exists). A fake
+// that reported scientist/phlebotomist independently would be a dead-path test
+// double authorizing callers production denies.
 func (g authzFakeProv) IsVerifiedScientist(ctx context.Context, userID, providerID string) (bool, error) {
-	return userID == g.scientistID && providerID == g.providerID, nil
+	return g.VerifiedLabOwner(ctx, userID, providerID)
 }
 
 func (g authzFakeProv) IsVerifiedPhlebotomist(ctx context.Context, userID, providerID string) (bool, error) {
-	return userID == g.phleboID && providerID == g.providerID, nil
+	return g.VerifiedLabOwner(ctx, userID, providerID)
 }
 
 func authzTestSvc() *Service {

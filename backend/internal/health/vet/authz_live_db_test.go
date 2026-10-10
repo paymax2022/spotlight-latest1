@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -62,6 +63,9 @@ func (e *vetAuthzEscrow) Hold(ctx context.Context, payerID, reference, moduleTyp
 }
 func (e *vetAuthzEscrow) Release(ctx context.Context, escrowID, payeeID string) error { return nil }
 func (e *vetAuthzEscrow) Refund(ctx context.Context, escrowID string) error           { return nil }
+func (e *vetAuthzEscrow) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return nil
+}
 
 // seedVetAuthzFixture creates a vet (owner vetOwnerID), a pet owner with a pet
 // and an ACCEPTED appointment + HELD payment row under a known idempotency

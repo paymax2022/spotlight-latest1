@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/testsupport"
@@ -70,6 +71,12 @@ func (e *authzEscrow) Release(ctx context.Context, escrowID, payeeID string) err
 func (e *authzEscrow) Refund(ctx context.Context, escrowID string) error {
 	e.refunded = append(e.refunded, escrowID)
 	return nil
+}
+
+// RefundIf mirrors the real contract loosely — the fake has no hold row to
+// lock or guard against, so it just records the refund.
+func (e *authzEscrow) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return e.Refund(ctx, escrowID)
 }
 
 // seedAuthzFixture creates a patient, a pharmacy provider owned by ownerID,

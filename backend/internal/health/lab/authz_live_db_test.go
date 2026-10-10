@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/testsupport"
@@ -58,6 +59,9 @@ func (e *labAuthzEscrow) Hold(ctx context.Context, payerID, reference, moduleTyp
 }
 func (e *labAuthzEscrow) Release(ctx context.Context, escrowID, payeeID string) error { return nil }
 func (e *labAuthzEscrow) Refund(ctx context.Context, escrowID string) error           { return nil }
+func (e *labAuthzEscrow) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return nil
+}
 
 // labAuthzDispatch records CreateDelivery calls so tests can prove a denied
 // Schedule never books transport.

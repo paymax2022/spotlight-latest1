@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -20,6 +21,7 @@ import (
 	healthrx "spotlight/backend/internal/health/rx"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
 )
@@ -38,7 +40,7 @@ import (
 // Returns the pharmacy service so the orchestrator can hand it optional
 // collaborators (e.g. the symptom-search ReviewCaseOpener seam — PRD §10);
 // nil when the pool is absent.
-func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient) *healthpharmacy.Service {
+func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient, redis *platformRedis.Client) *healthpharmacy.Service {
 	if pool == nil {
 		log.Println("[health.pharmacy] nil pool — skipping pharmacy routes")
 		return nil
@@ -112,8 +114,14 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/orders/:id", h.Get)              // object-level authZ
 	pg.POST("/orders/:id/confirm", h.Confirm) // HL-3 verified e-Rx gate
 	pg.POST("/orders/:id/dispense", h.Dispense)
-	pg.POST("/orders/:id/dispatch", h.Dispatch)    // transport last-mile rail
-	pg.POST("/orders/:id/complete", h.Complete)    // release payment (HL-9)
+	pg.POST("/orders/:id/dispatch", h.Dispatch) // transport last-mile rail
+	// Per-user cap on the completion endpoint (security R3): the 6-digit
+	// fulfilment code is additionally guarded server-side by the per-order
+	// attempt counter + pickup_locked (service.go verifyFulfilmentCode) —
+	// this limiter throttles the guess rate itself across order churn.
+	pg.POST("/orders/:id/complete",
+		middleware.PerUserRateLimit(redis, "health-pharmacy-complete", 30),
+		h.Complete) // release payment (HL-9)
 	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
 	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
 
@@ -180,6 +188,9 @@ func (a *escrowAdapter) Release(ctx context.Context, escrowID, payeeID string) e
 }
 func (a *escrowAdapter) Refund(ctx context.Context, escrowID string) error {
 	return a.e.Refund(ctx, escrowID)
+}
+func (a *escrowAdapter) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return a.e.RefundIf(ctx, escrowID, guard)
 }
 
 // rxGateAdapter bridges healthrx for the fulfilment path (HL-3 dispense-once).

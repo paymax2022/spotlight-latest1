@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/escrow"
@@ -62,6 +63,9 @@ func (e vetUnwindEscrow) Release(ctx context.Context, escrowID, payeeID string) 
 }
 func (e vetUnwindEscrow) Refund(ctx context.Context, escrowID string) error {
 	return e.e.Refund(ctx, escrowID)
+}
+func (e vetUnwindEscrow) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return e.e.RefundIf(ctx, escrowID, guard)
 }
 
 func TestLiveDB_Book_PostHoldFailureUnwindsSlotAndHold(t *testing.T) {

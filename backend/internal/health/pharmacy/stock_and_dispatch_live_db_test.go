@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/escrow"
@@ -75,6 +76,9 @@ func (a *testEscrowAdapter) Release(ctx context.Context, escrowID, payeeID strin
 }
 func (a *testEscrowAdapter) Refund(ctx context.Context, escrowID string) error {
 	return a.e.Refund(ctx, escrowID)
+}
+func (a *testEscrowAdapter) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return a.e.RefundIf(ctx, escrowID, guard)
 }
 
 // testProviderGate always reports the given pharmacy as approved/verified —

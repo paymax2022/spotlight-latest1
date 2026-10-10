@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/escrow"
@@ -58,6 +59,9 @@ func (e labUnwindEscrow) Release(ctx context.Context, escrowID, payeeID string) 
 }
 func (e labUnwindEscrow) Refund(ctx context.Context, escrowID string) error {
 	return e.e.Refund(ctx, escrowID)
+}
+func (e labUnwindEscrow) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return e.e.RefundIf(ctx, escrowID, guard)
 }
 
 // labUnwindProv approves the seeded lab only.

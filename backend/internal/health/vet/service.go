@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/health/clinicalsafety"
 	healthconsult "spotlight/backend/internal/health/consult"
 	healthrecords "spotlight/backend/internal/health/records"
@@ -32,6 +33,10 @@ type EscrowHolder interface {
 	Hold(ctx context.Context, payerID, reference, moduleType, idemKey string, amountKobo int64) (HoldRef, error)
 	Release(ctx context.Context, escrowID, payeeID string) error
 	Refund(ctx context.Context, escrowID string) error
+	// RefundIf is Refund plus an in-transaction guard run under the hold's
+	// FOR UPDATE lock — compensation paths use it to re-prove the hold is
+	// still unbound before any money moves back (see failBooking).
+	RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error
 }
 
 // HoldRef is the minimal projection of an escrow hold the appointment needs.
@@ -503,19 +508,16 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		if escrowID == "" {
 			return nil, err
 		}
-		var unbound bool
-		if perr := s.db.QueryRow(ctx,
-			`SELECT EXISTS(
-				SELECT 1 FROM escrow_holds h
-				WHERE h.id=$1 AND h.payer_id=$2
-				  AND NOT EXISTS (SELECT 1 FROM vet_appointment_payments p WHERE p.escrow_id = h.id))`,
-			escrowID, ownerID).Scan(&unbound); perr != nil {
-			return nil, fmt.Errorf("%w (could not verify hold ownership for refund: %v)", err, perr)
-		}
-		if !unbound {
-			return nil, fmt.Errorf("%w (refund skipped: hold is not this payer's or is bound to a committed booking)", err)
-		}
-		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
+		// The bound-ness probe runs INSIDE RefundIf's resolution transaction
+		// under the same FOR UPDATE lock the payment-binding transaction below
+		// takes on escrow_holds — the pool-side EXISTS-probe + bare-Refund pair
+		// this replaces was a TOCTOU (a loser could refund between the probe
+		// and the winner's committed bind). ErrHoldBound ⇒ a winner exists ⇒
+		// the same uniform ErrIdemConflict the foreign-key check returns.
+		if rerr := s.escrow.RefundIf(ctx, escrowID, s.unboundHoldGuard(escrowID, ownerID)); rerr != nil {
+			if errors.Is(rerr, escrow.ErrHoldBound) {
+				return nil, ErrIdemConflict
+			}
 			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
 		}
 		return nil, err
@@ -530,14 +532,38 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 	}
 	escrowID = hold.HoldID()
 
-	const insPay = `
-		INSERT INTO vet_appointment_payments
-			(id, appointment_id, owner_id, provider_id, pet_id, service_id, visit_type,
-			 total_kobo, escrow_id, pay_state, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10)`
-	if _, err := s.db.Exec(ctx, insPay, uuid.New().String(), appt.ID, ownerID, in.ProviderID,
-		in.PetID, in.ServiceID, string(in.VisitType), total, escrowID, in.IdempotencyKey); err != nil {
-		return failBooking(fmt.Errorf("vet: insert appointment payment: %w", err))
+	// The payment row binds the hold — write it inside a transaction that first
+	// takes the escrow_holds FOR UPDATE lock and requires HELD (the binding half
+	// of the resolution race fix; identical mechanics to healthpharmacy's
+	// lockEscrowForBinding). The tx commits/rolls back BEFORE failBooking's
+	// RefundIf runs so this tx's own hold lock never deadlocks the refund's.
+	payErr := func() error {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("vet: begin payment binding: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		var holdState string
+		if err := tx.QueryRow(ctx,
+			`SELECT state FROM escrow_holds WHERE id=$1 FOR UPDATE`, escrowID).Scan(&holdState); err != nil {
+			return fmt.Errorf("vet: lock escrow hold for binding: %w", err)
+		}
+		if holdState != string(escrow.StateHeld) {
+			return fmt.Errorf("vet: escrow hold is %s, not HELD — refusing to bind a payment", holdState)
+		}
+		const insPay = `
+			INSERT INTO vet_appointment_payments
+				(id, appointment_id, owner_id, provider_id, pet_id, service_id, visit_type,
+				 total_kobo, escrow_id, pay_state, idempotency_key)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'HELD',$10)`
+		if _, err := tx.Exec(ctx, insPay, uuid.New().String(), appt.ID, ownerID, in.ProviderID,
+			in.PetID, in.ServiceID, string(in.VisitType), total, escrowID, in.IdempotencyKey); err != nil {
+			return fmt.Errorf("vet: insert appointment payment: %w", err)
+		}
+		return tx.Commit(ctx)
+	}()
+	if payErr != nil {
+		return failBooking(payErr)
 	}
 
 	serviceID := in.ServiceID
@@ -624,6 +650,10 @@ func (s *Service) Cancel(ctx context.Context, actorID, apptID, reason string) (*
 		return nil, err
 	}
 	owner := a.OwnerID
+	// Deliberately swallowed: a transient providerOwner failure leaves
+	// vetOwner="" which fails closed — only the owner (or a resolvable vet
+	// owner) cancels, so the appointment is never denied on a lookup blip for
+	// the owner nor authorized for a stranger.
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	// Uniform denial: a foreign appointment is indistinguishable from a
 	// missing one.
@@ -980,6 +1010,8 @@ func (s *Service) Get(ctx context.Context, requesterID, apptID string, isAdmin b
 	if err != nil {
 		return nil, err
 	}
+	// Deliberately swallowed — vetOwner="" fails closed (denies a foreign
+	// reader rather than leaking the appointment on a lookup blip).
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if !isAdmin && requesterID != a.OwnerID && requesterID != vetOwner {
 		return nil, ErrAppointmentNotFound
@@ -1083,6 +1115,30 @@ func (s *Service) idemTakenByOther(ctx context.Context, ownerID, idemKey string)
 		return true, fmt.Errorf("vet: resolve idempotency key: %w", err)
 	}
 	return taken, nil
+}
+
+// unboundHoldGuard is the RESOLUTION half of the hold-bind / resolution-race
+// fix: the RefundIf guard, run under the refund tx's FOR UPDATE hold lock after
+// the FSM check — re-proves payer ownership AND that no committed
+// vet_appointment_payments row is bound, vetoing with escrow.ErrHoldBound
+// (folded into ErrIdemConflict by failBooking). Identical mechanics to
+// healthpharmacy.unboundHoldGuard.
+func (s *Service) unboundHoldGuard(escrowID, payerID string) func(context.Context, pgx.Tx) error {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		var free bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM escrow_holds h
+				WHERE h.id=$1 AND h.payer_id=$2
+				  AND NOT EXISTS (SELECT 1 FROM vet_appointment_payments p WHERE p.escrow_id = h.id))`,
+			escrowID, payerID).Scan(&free); err != nil {
+			return fmt.Errorf("vet: bound-hold guard: %w", err)
+		}
+		if !free {
+			return escrow.ErrHoldBound
+		}
+		return nil
+	}
 }
 
 func (s *Service) providerOwner(ctx context.Context, providerID string) (string, error) {

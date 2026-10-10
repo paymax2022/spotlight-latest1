@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -154,6 +155,9 @@ func (a *labEscrowAdapter) Release(ctx context.Context, escrowID, payeeID string
 }
 func (a *labEscrowAdapter) Refund(ctx context.Context, escrowID string) error {
 	return a.e.Refund(ctx, escrowID)
+}
+func (a *labEscrowAdapter) RefundIf(ctx context.Context, escrowID string, guard func(context.Context, pgx.Tx) error) error {
+	return a.e.RefundIf(ctx, escrowID, guard)
 }
 
 // labDispatchAdapter books a phlebotomist dispatch / results courier as a parcel
