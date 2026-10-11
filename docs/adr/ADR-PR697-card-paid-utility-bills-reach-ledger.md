@@ -34,6 +34,13 @@ Two guards, each pinned by a test:
 - **Spend refused** (Tier 0 / daily limit) leaves the collected funds in the
   wallet. `settleFailedUtilityTransaction` detects `collectPosted && !debitPosted`
   and does **not** post `PAYSTACK_REFUND` — that would pay the customer twice.
+- **Callers that assumed "any throw = nothing posted".**
+  `verifyUtilityPaystackPayment` no longer posts `VALIDATION_REFUND` when
+  `payUtility` already created the transaction row (it owns compensation), and
+  `reverseUtilityTransaction` skips the credit for a collect-only row. The Go
+  stuck sweeper (`settleFailedTransaction`) recognises `CARD_COLLECT` the same
+  way (`retainCollectedFunds`); Go's admin reversal already refuses a row with
+  no debit leg.
 - **Reference collision.** The collect credit's `reference` is the receipt, never
   the Paystack `payment_reference`: `lookupUtilityMoneyLegs` reads any CREDIT with
   that reference as "refund already posted".
@@ -44,6 +51,12 @@ Two guards, each pinned by a test:
   bill is refused at the spend and their money stays in the wallet. This is a
   product decision to make before enabling.
 - Historical card payments are not backfilled.
-- The Go plane (`backend/internal/utilitybills`) is not mirrored here.
+- Known residual (ledger-auditor MEDIUM): a sweep claim landing between the
+  collect and the spend retains the funds, and the live writer's spend can still
+  post afterwards (it yields with a `writer_outraced` alert). Rare (10-minute
+  stuck threshold); review before enabling the flag in production.
+- A retained collect-only row is labelled `reversed` although no reversal
+  entry exists; the event `paystack_collected_funds_retained` distinguishes it.
+- The daily-limit counter was not verified against the collect credit.
 - Other card-only modules with the same gap (contest votes, school fees, Open
   Mic votes, application fee, registration fee) are separate changes.
