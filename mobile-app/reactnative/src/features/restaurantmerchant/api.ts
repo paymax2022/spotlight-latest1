@@ -400,6 +400,7 @@ export async function createTaxonomyItem(id: string, input: TaxonomyItemPayload)
     taxonomy_subcategory_id: input.taxonomySubcategoryId,
     name: input.name,
     price_kobo: input.priceKobo,
+    ...(input.prepTimeMinutes !== undefined ? { prep_time_minutes: input.prepTimeMinutes } : {}),
   };
   return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
 }

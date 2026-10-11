@@ -667,6 +667,7 @@ paths:
                 image_url: { type: string }
                 taxonomy_category_id: { type: string, format: uuid, description: 'Flag on: required' }
                 taxonomy_subcategory_id: { type: string, format: uuid, nullable: true, description: 'Flag on: optional, must be under taxonomy_category_id' }
+                prep_time_minutes: { type: integer, minimum: 5, maximum: 180, description: 'Optional own prep time. Absent uses the restaurant default.' }
                 category_id: { type: string, description: 'Flag off only (legacy)' }
       responses:
         '200': { description: Item created, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
@@ -715,6 +716,7 @@ paths:
                 available: { type: boolean }
                 is_available: { type: boolean }
                 unavailable_until: { type: string, format: date-time, description: 'With is_available false: back on its own at this time. Must be in the future. Ignored when is_available is true.' }
+                prep_time_minutes: { type: integer, minimum: 0, maximum: 180, description: 'Own prep time, 5 to 180. 0 clears it back to the restaurant default.' }
       responses:
         '200': { description: Updated item, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
         '400': { description: 'unavailable_until is not RFC 3339, or is in the past' }

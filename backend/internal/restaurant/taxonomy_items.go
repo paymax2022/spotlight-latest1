@@ -26,6 +26,8 @@ type CreateTaxonomyItemRequest struct {
 	ImageURL              *string `json:"image_url,omitempty"`
 	TaxonomyCategoryID    string  `json:"taxonomy_category_id" binding:"required"`
 	TaxonomySubcategoryID *string `json:"taxonomy_subcategory_id,omitempty"`
+	// PrepTimeMinutes is an optional override (5 to 180); absent means the restaurant default.
+	PrepTimeMinutes *int `json:"prep_time_minutes,omitempty"`
 }
 
 // CreateTaxonomyItem adds an item under a taxonomy category. Owners and staff with
@@ -36,6 +38,11 @@ func (s *Service) CreateTaxonomyItem(ctx context.Context, restaurantID, userID s
 	}
 	if req.PriceKobo <= 0 {
 		return nil, errors.New("restaurant: price must be more than zero")
+	}
+	if req.PrepTimeMinutes != nil {
+		if err := validItemPrepMinutes(*req.PrepTimeMinutes); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateItemPriceKobo(req.PriceKobo); err != nil {
 		return nil, err
@@ -98,10 +105,10 @@ func createTaxonomyItem(ctx context.Context, db *pgxpool.Pool, restaurantID stri
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO menu_items (id, restaurant_id, category_id, name, description, price_kobo, image_url,
-		                         is_available, taxonomy_category_id, taxonomy_subcategory_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8,$9)`,
+		                         is_available, taxonomy_category_id, taxonomy_subcategory_id, prep_time_minutes)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8,$9,$10)`,
 		it.ID, it.RestaurantID, it.CategoryID, it.Name, it.Description, it.PriceKobo, it.ImageURL,
-		req.TaxonomyCategoryID, req.TaxonomySubcategoryID); err != nil {
+		req.TaxonomyCategoryID, req.TaxonomySubcategoryID, req.PrepTimeMinutes); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

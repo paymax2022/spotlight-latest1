@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  nairaToKobo, subcategoriesFor, validateItemDraft, type TaxonomyCategory,
+  nairaToKobo, parsePrepMinutes, subcategoriesFor, validateItemDraft, type TaxonomyCategory,
 } from '../taxonomy.ts';
 
 const tree: TaxonomyCategory[] = [
@@ -70,4 +70,28 @@ test('name and price errors are reported together', () => {
     assert.ok(r.errors.price);
     assert.equal(r.errors.category, undefined);
   }
+});
+
+test('prep time: empty means the restaurant default, otherwise whole minutes 5 to 180', () => {
+  assert.equal(parsePrepMinutes(''), undefined);
+  assert.equal(parsePrepMinutes('   '), undefined);
+  assert.equal(parsePrepMinutes('5'), 5);
+  assert.equal(parsePrepMinutes('25'), 25);
+  assert.equal(parsePrepMinutes('180'), 180);
+  for (const bad of ['4', '181', '12.5', '-5', 'abc', '1e2']) {
+    assert.equal(parsePrepMinutes(bad), null, `${bad} should be refused`);
+  }
+});
+
+test('an out-of-range prep time is reported on the form and not sent', () => {
+  const r = validateItemDraft({ categoryId: 'rice', subcategoryId: null, name: 'X', priceNaira: '100', prepMinutes: '400' }, tree);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.prep);
+});
+
+test('a valid prep time is carried in the payload; an empty one is left out', () => {
+  const withPrep = validateItemDraft({ categoryId: 'rice', subcategoryId: null, name: 'X', priceNaira: '100', prepMinutes: '20' }, tree);
+  assert.equal(withPrep.ok && withPrep.payload.prepTimeMinutes, 20);
+  const without = validateItemDraft({ categoryId: 'rice', subcategoryId: null, name: 'X', priceNaira: '100', prepMinutes: '' }, tree);
+  assert.equal(without.ok && 'prepTimeMinutes' in without.payload, false);
 });

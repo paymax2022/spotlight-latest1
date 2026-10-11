@@ -63,8 +63,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		return nil, err
 	}
 
-	const qi = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, ` + availableNow + ` AS is_available, dietary_tags
-	            FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
+	const qi = `SELECT ` + menuItemCols + ` FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
 	irows, err := s.db.Query(ctx, qi, restaurantID)
 	if err != nil {
 		return nil, err
@@ -73,7 +72,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	for irows.Next() {
 		var it MenuItem
 		var catID *string
-		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
+		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
 			return nil, err
 		}
 		if catID != nil {
@@ -329,6 +328,9 @@ type UpdateItemRequest struct {
 	// time (RFC 3339). Ignored when is_available is true.
 	UnavailableUntil *string   `json:"unavailable_until,omitempty"`
 	DietaryTags      *[]string `json:"dietary_tags,omitempty"`
+	// PrepTimeMinutes sets the item's own prep time (5 to 180); 0 clears it back to the
+	// restaurant default.
+	PrepTimeMinutes *int `json:"prep_time_minutes,omitempty"`
 }
 
 // UpdateItem updates an item's price/availability/dietary tags (owner only).
@@ -358,6 +360,19 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 			return nil, err
 		}
 	}
+	if req.PrepTimeMinutes != nil {
+		var prep *int
+		if *req.PrepTimeMinutes != 0 {
+			if err := validItemPrepMinutes(*req.PrepTimeMinutes); err != nil {
+				return nil, err
+			}
+			prep = req.PrepTimeMinutes
+		}
+		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET prep_time_minutes=$1 WHERE id=$2 AND restaurant_id=$3`,
+			prep, itemID, restaurantID); err != nil {
+			return nil, err
+		}
+	}
 	if req.DietaryTags != nil {
 		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET dietary_tags=$1 WHERE id=$2 AND restaurant_id=$3`,
 			normalizeDietaryTags(*req.DietaryTags), itemID, restaurantID); err != nil {
@@ -366,10 +381,9 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 	}
 	var it MenuItem
 	var catID *string
-	const q = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, ` + availableNow + ` AS is_available, dietary_tags
-	           FROM menu_items WHERE id=$1 AND restaurant_id=$2`
+	const q = `SELECT ` + menuItemCols + ` FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 	if err := s.db.QueryRow(ctx, q, itemID, restaurantID).Scan(&it.ID, &catID, &it.RestaurantID, &it.Name,
-		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
+		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
 		return nil, errors.New("restaurant: menu item not found")
 	}
 	if catID != nil {
