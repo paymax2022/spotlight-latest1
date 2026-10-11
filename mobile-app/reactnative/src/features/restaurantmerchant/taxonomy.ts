@@ -20,15 +20,18 @@ export interface ItemDraft {
   subcategoryId: string | null;
   name: string;
   priceNaira: string;
+  /** Optional override, whole minutes 5 to 180. Empty uses the restaurant default. */
+  prepMinutes?: string;
 }
 
-export type ItemDraftErrors = Partial<Record<'category' | 'subcategory' | 'name' | 'price', string>>;
+export type ItemDraftErrors = Partial<Record<'category' | 'subcategory' | 'name' | 'price' | 'prep', string>>;
 
 export interface TaxonomyItemPayload {
   taxonomyCategoryId: string;
   taxonomySubcategoryId: string | null;
   name: string;
   priceKobo: number;
+  prepTimeMinutes?: number;
 }
 
 // Active only, and only the categories an owner may pick: inactive rows are hidden
@@ -56,6 +59,16 @@ export function nairaToKobo(input: string): number | null {
   return Number.isSafeInteger(total) && total > 0 ? total : null;
 }
 
+// Whole minutes from 5 to 180, or undefined when left empty (the restaurant default
+// applies). Anything else is null, so the form can say what is wrong.
+export function parsePrepMinutes(input: string | undefined): number | undefined | null {
+  const s = (input ?? '').trim();
+  if (!s) return undefined;
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return n >= 5 && n <= 180 ? n : null;
+}
+
 export function validateItemDraft(
   d: ItemDraft,
   tree: TaxonomyCategory[],
@@ -76,6 +89,8 @@ export function validateItemDraft(
   else if (name.length > 200) errors.name = 'Keep the name under 200 characters.';
   const priceKobo = nairaToKobo(d.priceNaira);
   if (priceKobo === null) errors.price = 'Enter a price in naira, more than zero (e.g. 2500 or 2500.50).';
+  const prep = parsePrepMinutes(d.prepMinutes);
+  if (prep === null) errors.prep = 'Prep time must be whole minutes from 5 to 180, or left empty.';
 
   if (Object.keys(errors).length > 0 || !d.categoryId || priceKobo === null) {
     return { ok: false, errors };
@@ -87,6 +102,7 @@ export function validateItemDraft(
       taxonomySubcategoryId: d.subcategoryId ?? null,
       name,
       priceKobo,
+      ...(prep !== undefined && prep !== null ? { prepTimeMinutes: prep } : {}),
     },
   };
 }

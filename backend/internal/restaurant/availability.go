@@ -13,6 +13,12 @@ import (
 // time that has passed. A timed restock needs no job, because it is decided on read.
 const availableNow = "(is_available OR (unavailable_until IS NOT NULL AND unavailable_until <= now()))"
 
+// menuItemCols is the item read shared by the menu and the single-item read. prep_minutes
+// is the effective prep time: the item's own, or the restaurant's default.
+const menuItemCols = `id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, ` + availableNow + ` AS is_available, dietary_tags,
+	prep_time_minutes,
+	COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes`
+
 // maxBulkAvailabilityIDs bounds one bulk toggle, so one request cannot touch an
 // unbounded number of rows.
 const maxBulkAvailabilityIDs = 200

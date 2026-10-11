@@ -180,8 +180,8 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 		}
 	}
 	if req.PrepTimeMinutes != nil {
-		if *req.PrepTimeMinutes < 0 || *req.PrepTimeMinutes > 240 {
-			return errors.New("restaurant: prep_time_minutes must be in [0,240]")
+		if err := validRestaurantPrepMinutes(*req.PrepTimeMinutes); err != nil {
+			return err
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET prep_time_minutes=$1, updated_at=NOW() WHERE id=$2`, *req.PrepTimeMinutes, restaurantID); err != nil {
 			return err
