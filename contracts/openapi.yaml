@@ -15935,7 +15935,7 @@ paths:
       responses:
         '201': { description: Created }
         '409': { description: Name or slug already exists under this parent }
-        '422': { description: Invalid kind, or a third level was requested }
+        '422': { description: 'Invalid kind, or a third level was requested' }
   /api/restaurant/admin/menu-taxonomy/categories/reorder:
     patch:
       operationId: adminReorderMenuCategories
@@ -15972,7 +15972,7 @@ paths:
       tags: [Restaurant Admin]
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Counts of inserted, skipped and duplicate rows }
+        '200': { description: 'Counts of inserted, skipped and duplicate rows' }
   /api/restaurant/admin/menu-taxonomy/cuisines:
     get:
       operationId: adminListCuisines
