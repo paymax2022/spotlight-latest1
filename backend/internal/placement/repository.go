@@ -161,7 +161,7 @@ func (r *Repository) ListByMerchant(ctx context.Context, merchantID string, limi
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Campaign
+	out := []Campaign{} // never nil: a nil slice marshals as JSON null
 	for rows.Next() {
 		c, err := scanCampaign(rows)
 		if err != nil {
