@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { getErrorMessage } from '@/utils/errorMapper';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
 import type {
   EventSummary,
@@ -29,6 +30,15 @@ import type {
 const notInFixtureMode = (action: string) =>
   new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_EVENT_USE_MOCK=false to send this against the live backend.`);
 
+// User-facing text for a failed lifecycle write. The fixture-mode refusal above
+// is a developer string; users get a plain message instead of the env-var hint.
+export function lifecycleErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.includes('unavailable in fixture mode')) {
+    return 'This action isn\'t available right now. Please try again later.';
+  }
+  return getErrorMessage(err);
+}
+
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
 // Unwrap the Go-backend envelope ({ data: ... }).
@@ -50,7 +60,7 @@ function pickList<T>(res: { data?: unknown }, key: string): T[] {
 }
 
 // Every money mutation carries an Idempotency-Key (NL-9).
-function idempotencyKey(): string {
+export function idempotencyKey(): string {
   return `evt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 

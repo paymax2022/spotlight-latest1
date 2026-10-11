@@ -5,7 +5,7 @@
 
 // Event lifecycle: DRAFT -> SUBMITTED -> APPROVED -> LIVE -> CLOSED
 // APPROVED <-> SUSPENDED is admin-only.
-export type EventState = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'LIVE' | 'CLOSED' | 'SUSPENDED';
+export type EventState = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'LIVE' | 'CLOSED' | 'SUSPENDED' | 'PAUSED' | 'CANCELLED';
 
 export type EventCategory = 'music' | 'tech' | 'sports' | 'comedy' | 'faith';
 
