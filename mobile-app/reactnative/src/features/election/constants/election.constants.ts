@@ -2,9 +2,11 @@ import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/tokens';
 import type { ElectionStatus } from '../types/election.types';
 
-// Flip to false once the real /elections endpoints land (or set
-// EXPO_PUBLIC_ELECTION_USE_MOCK=false). Mirrors the visitor/voting convention.
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ELECTION_USE_MOCK, true);
+// The /api/v1/elections route handlers (frontend-web/app/api/v1/elections/**) are
+// live and query real tables, so this defaults to live: a forgotten flag fails
+// visibly instead of inventing ballots. Set EXPO_PUBLIC_ELECTION_USE_MOCK=true to
+// force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ELECTION_USE_MOCK, false);
 
 // Elections are served by the resident-scoped frontend-web handlers under
 // /api/v1/elections (GET list, GET /active, GET /{id}, GET /{id}/ballot,
