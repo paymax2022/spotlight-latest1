@@ -109,7 +109,11 @@ export async function myProperties(): Promise<HotelierProperty[]> {
     return mockProperties.map((p) => ({ id: p.id, name: p.name, city: p.city, status: p.status, role: 'OWNER' as const }));
   }
   const res = await api.get(`${BASE}/me/properties`);
-  return (unwrap<any[]>(res) ?? []).map(mapMyProperty);
+  // A user with no properties used to get `{data: null}`; unwrap() then returns
+  // the whole envelope (null ?? res.data), and `.map` on it threw — the host
+  // console showed "Couldn't load" for exactly the people it exists to onboard.
+  const rows = unwrap<unknown>(res);
+  return (Array.isArray(rows) ? rows : []).map(mapMyProperty);
 }
 
 export async function createProperty(input: CreatePropertyInput): Promise<{ id: string }> {
