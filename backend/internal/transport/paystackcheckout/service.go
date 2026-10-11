@@ -35,6 +35,7 @@ import (
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/platform/billingemail"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/transport"
 )
@@ -512,7 +513,11 @@ func (h *Handler) Initiate(c *gin.Context) {
 		return
 	}
 
-	out, err := h.svc.InitiateCheckout(c.Request.Context(), u, req.RequestRideRequest, req.Email, req.CallbackURL)
+	email, ok := billingemail.Require(c, req.Email)
+	if !ok {
+		return
+	}
+	out, err := h.svc.InitiateCheckout(c.Request.Context(), u, req.RequestRideRequest, email, req.CallbackURL)
 	if err != nil {
 		h.fail(c, err)
 		return

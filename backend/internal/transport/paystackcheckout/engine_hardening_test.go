@@ -27,6 +27,7 @@ func TestInitiateDisabled_KeepsStatusConfirmerAndRefunderLive(t *testing.T) {
 	g2.Use(func(c *gin.Context) {
 		if u := c.GetHeader("X-Test-User"); u != "" {
 			c.Set("user_id", u)
+			c.Set("user_email", "buyer@gmail.com")
 		}
 	})
 	r2.e.SetInitiateEnabled("fake", false)
@@ -128,6 +129,7 @@ func TestInitiate_PerUserRateLimited_StatusRouteIsNot(t *testing.T) {
 	g.Use(func(c *gin.Context) {
 		if u := c.GetHeader("X-Test-User"); u != "" {
 			c.Set("user_id", u)
+			c.Set("user_email", "buyer@gmail.com")
 		}
 	})
 	r.e.RegisterRoutes(g.Group("/m"), WithInitiateMiddleware(middleware.PerUserRateLimit(nil, "test-carddirect", 2)))
