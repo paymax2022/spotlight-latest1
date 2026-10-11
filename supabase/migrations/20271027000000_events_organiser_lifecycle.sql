@@ -10,8 +10,21 @@
 
 BEGIN;
 
--- Widen events.state. The original inline CHECK is auto-named events_state_check.
-ALTER TABLE public.events DROP CONSTRAINT IF EXISTS events_state_check;
+-- Widen events.state. Name-agnostic: the legacy events migration path may have
+-- named (or shaped) the state CHECK differently, so drop every CHECK on
+-- public.events that references the state column, then add the canonical one.
+DO $$
+DECLARE c record;
+BEGIN
+  FOR c IN
+    SELECT conname FROM pg_constraint
+    WHERE conrelid = 'public.events'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%state%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.events DROP CONSTRAINT %I', c.conname);
+  END LOOP;
+END $$;
 ALTER TABLE public.events ADD CONSTRAINT events_state_check
   CHECK (state IN ('DRAFT','SUBMITTED','APPROVED','LIVE','CLOSED','SUSPENDED','PAUSED','CANCELLED'));
 
