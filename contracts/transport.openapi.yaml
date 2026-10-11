@@ -489,7 +489,7 @@ paths:
       summary: Book a car hire (escrows fare + deposit) — money mutation
       description: >
         Money mutation — escrows fare + deposit FROM THE WALLET (KYC-tier gated). Requires an Idempotency-Key;
-        keys starting `carhireorder:` are reserved for the card-direct rail (400 INVALID_IDEMPOTENCY_KEY).
+        keys starting `carhireorder-` are reserved for the card-direct rail (400 INVALID_IDEMPOTENCY_KEY).
         `hire_type` must be one of hourly, daily, airport, event, executive (400 invalid_input otherwise —
         refused BEFORE any money moves). To pay by debit card without the wallet gate use
         POST /mobility/car-hire/paystack/initiate.
@@ -576,7 +576,7 @@ paths:
         not more than a day in the past nor more than a year ahead; `duration_hours` 1-720. An invalid request is
         a 400 BEFORE any gateway call. Idempotency-Key is REQUIRED as a header (8-100 chars of A-Z a-z 0-9 . _ = -).
         Replays behave as for the other card-direct services. No wallet is debited, so the KYC-tier gate never runs;
-        the wallet rail (POST /mobility/car-hire/book) keeps it and refuses keys starting `carhireorder:`.
+        the wallet rail (POST /mobility/car-hire/book) keeps it and refuses keys starting `carhireorder-`.
         The deposit is refundable: it returns to the SAME CARD on completion (days, not instant) and the whole
         charge returns to the card on cancel before activation.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
@@ -592,7 +592,7 @@ paths:
                     type: object
                     required: [reference, amountKobo, status]
                     properties:
-                      reference: { type: string, description: 'carhireorder:<Idempotency-Key>' }
+                      reference: { type: string, description: 'carhireorder-<Idempotency-Key>' }
                       authorizationUrl: { type: string, description: Empty when status is not pending }
                       accessCode: { type: string }
                       amountKobo: { type: integer, format: int64, description: 'Server-quoted fare + deposit in kobo' }
@@ -601,6 +601,7 @@ paths:
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable' }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/car-hire/paystack/{reference}/status:
     get:
@@ -648,8 +649,8 @@ paths:
       summary: Book a parcel delivery (escrows fare) — money mutation
       description: >
         Money mutation — escrows the fare. Requires an Idempotency-Key. Keys beginning with a
-        namespace owned by the card-direct / Paystack checkouts (`parcelorder:`, `rideorder:`,
-        `foodorder:`, `duespay:`, `feespay:`, `towingorder:`, `moversorder:`, `carhireorder:`,
+        namespace owned by the card-direct / Paystack checkouts (`parcelorder-`, `rideorder-`,
+        `foodorder-`, `duespay-`, `feespay-`, `towingorder-`, `moversorder-`, `carhireorder-`,
         `busorder:`, `eventorder:`; case-insensitive) are refused with 400 INVALID_IDEMPOTENCY_KEY.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       responses: { '200': { description: Parcel }, '400': { description: INVALID_IDEMPOTENCY_KEY (reserved key namespace) }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
@@ -700,7 +701,7 @@ paths:
                     type: object
                     required: [reference, amountKobo, status]
                     properties:
-                      reference: { type: string, description: 'parcelorder:<Idempotency-Key>' }
+                      reference: { type: string, description: 'parcelorder-<Idempotency-Key>' }
                       authorizationUrl: { type: string, description: Empty when status is not pending }
                       accessCode: { type: string }
                       amountKobo: { type: integer, format: int64, description: Server-quoted amount in kobo }
@@ -709,7 +710,7 @@ paths:
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
-        '422': { description: Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED) }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored.; or Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED)" }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/parcels/paystack/{reference}/status:
     get:
@@ -965,7 +966,7 @@ paths:
         the same request returns the same reference (and the stored authorization URL while unpaid; the
         terminal status once processed); the same key with a different request or a different user is 409
         idempotency_conflict. No wallet is debited, so the KYC-tier gate never runs; the wallet rail
-        (POST /mobility/towing) keeps it and refuses keys starting `towingorder:` (400 INVALID_IDEMPOTENCY_KEY).
+        (POST /mobility/towing) keeps it and refuses keys starting `towingorder-` (400 INVALID_IDEMPOTENCY_KEY).
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       responses:
         '201':
@@ -979,7 +980,7 @@ paths:
                     type: object
                     required: [reference, amountKobo, status]
                     properties:
-                      reference: { type: string, description: 'towingorder:<Idempotency-Key>' }
+                      reference: { type: string, description: 'towingorder-<Idempotency-Key>' }
                       authorizationUrl: { type: string, description: Empty when status is not pending }
                       accessCode: { type: string }
                       amountKobo: { type: integer, format: int64, description: Server-quoted amount in kobo }
@@ -988,6 +989,7 @@ paths:
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/towing/paystack/{reference}/status:
     get:
@@ -1126,7 +1128,7 @@ paths:
         same request returns the same reference (stored authorization URL while unpaid; terminal status once
         processed); the same key with a different request or user is 409 idempotency_conflict. No wallet is
         debited, so the KYC-tier gate never runs; the wallet rail (POST /mobility/movers/{id}/accept-bid)
-        keeps it and refuses keys starting `moversorder:` (400 INVALID_IDEMPOTENCY_KEY).
+        keeps it and refuses keys starting `moversorder-` (400 INVALID_IDEMPOTENCY_KEY).
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1152,7 +1154,7 @@ paths:
                     type: object
                     required: [reference, amountKobo, status]
                     properties:
-                      reference: { type: string, description: 'moversorder:<Idempotency-Key>' }
+                      reference: { type: string, description: 'moversorder-<Idempotency-Key>' }
                       authorizationUrl: { type: string, description: Empty when status is not pending }
                       accessCode: { type: string }
                       amountKobo: { type: integer, format: int64, description: The accepted bid, read server-side, in kobo }
@@ -1162,6 +1164,7 @@ paths:
         '403': { description: Not your job }
         '404': { description: 'job/bid not found, or service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'job not open / already funded / bid not available, idempotency_conflict, or authorization_unavailable (start a new checkout; a payment already made still confirms automatically)' }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/movers/paystack/{reference}/status:
     get:

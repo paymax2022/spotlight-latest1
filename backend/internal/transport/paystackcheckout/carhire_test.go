@@ -56,19 +56,19 @@ var goodCarHire = `{"hire_type":"daily","vehicle_class":"executive","start_at":"
 
 func TestCarHireDomain_Identity(t *testing.T) {
 	d := NewCarHireDomain(&fakeCarHire{})
-	if d.Name() != "carhire" || d.ReferencePrefix() != "carhireorder:" || d.RoutePrefix() != "/car-hire/paystack" || d.EntityIDKey() != "bookingId" {
+	if d.Name() != "carhire" || d.ReferencePrefix() != "carhireorder-" || d.RoutePrefix() != "/car-hire/paystack" || d.EntityIDKey() != "bookingId" {
 		t.Fatalf("identity drifted: %s %s %s %s", d.Name(), d.ReferencePrefix(), d.RoutePrefix(), d.EntityIDKey())
 	}
 	if CarHireDomainName != transport.RefundDomainCarHire {
 		t.Fatalf("the engine registers the refunder under %q but transport files refunds under %q", CarHireDomainName, transport.RefundDomainCarHire)
 	}
-	for _, other := range []string{"rideorder:", "foodorder:", "duespay:", "feespay:", "parcelorder:", "towingorder:", "moversorder:"} {
+	for _, other := range []string{"rideorder-", "foodorder:", "duespay-", "feespay-", "parcelorder-", "towingorder-", "moversorder-"} {
 		if strings.HasPrefix(d.ReferencePrefix(), other) || strings.HasPrefix(other, d.ReferencePrefix()) {
 			t.Errorf("prefix collides with %s", other)
 		}
 	}
 	if !transport.IsReservedIdempotencyKey(d.ReferencePrefix() + "x") {
-		t.Error("carhireorder: must be a reserved wallet-path prefix")
+		t.Error("carhireorder- must be a reserved wallet-path prefix")
 	}
 }
 
@@ -110,11 +110,11 @@ func TestCarHireDomain_Quote_RejectsBadRequestsBeforePricing(t *testing.T) {
 func TestCarHireDomain_Book_PassesNamespacedKeyAndVerifiedAmountThrough(t *testing.T) {
 	f := &fakeCarHire{bookID: "b-1"}
 	d := NewCarHireDomain(f)
-	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodCarHire), json.RawMessage(`{"durationHours":8}`), "carhireorder:k", 1_064_000)
+	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodCarHire), json.RawMessage(`{"durationHours":8}`), "carhireorder-k", 1_064_000)
 	if err != nil || id != "b-1" {
 		t.Fatal(id, err)
 	}
-	if string(f.bookPrice[0]) != `{"durationHours":8}` || f.bookIdem[0] != "carhireorder:k" || f.bookAmt[0] != 1_064_000 {
+	if string(f.bookPrice[0]) != `{"durationHours":8}` || f.bookIdem[0] != "carhireorder-k" || f.bookAmt[0] != 1_064_000 {
 		t.Errorf("pricing=%s idem=%v amt=%v", f.bookPrice[0], f.bookIdem, f.bookAmt)
 	}
 	if _, err := d.Book(context.Background(), "u1", json.RawMessage(`{`), nil, "k", 1); err == nil {
@@ -151,7 +151,10 @@ func TestCarHireRoutes_CoexistWithWalletCarHireRoutes(t *testing.T) {
 	r.e.Register(NewCarHireDomain(f))
 
 	g := gin.New()
-	g.Use(func(c *gin.Context) { c.Set("user_id", c.GetHeader("X-Test-User")) })
+	g.Use(func(c *gin.Context) {
+		c.Set("user_id", c.GetHeader("X-Test-User"))
+		c.Set("user_email", "buyer@gmail.com")
+	})
 	mob := g.Group("/mobility")
 	hit := ""
 	mob.POST("/car-hire/quote", func(c *gin.Context) { hit = "quote" })
@@ -188,13 +191,13 @@ func TestCarHireRoutes_CoexistWithWalletCarHireRoutes(t *testing.T) {
 		}
 	}
 	w := req("POST", "/mobility/car-hire/paystack/initiate", goodCarHire)
-	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"carhireorder:carhire-1700000000-abcd1234"`) {
+	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"carhireorder-carhire-1700000000-abcd1234"`) {
 		t.Errorf("initiate: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}
 	if len(f.quoteReqs) != 1 {
 		t.Fatalf("quotes=%d", len(f.quoteReqs))
 	}
-	w = req("GET", "/mobility/car-hire/paystack/carhireorder:carhire-1700000000-abcd1234/status", "")
+	w = req("GET", "/mobility/car-hire/paystack/carhireorder-carhire-1700000000-abcd1234/status", "")
 	if w.Code != http.StatusOK || hit != "" || !strings.Contains(w.Body.String(), `"bookingId":"b-1"`) {
 		t.Errorf("status: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}

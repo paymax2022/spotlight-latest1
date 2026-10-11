@@ -78,8 +78,9 @@ export default function CarHireHomeScreen() {
       onCard: async () => {
         await paystackCheckout.start({
           domain: 'carhire',
-          initialize: async () => {
+          initialize: async ({ email }) => {
             const r = await carhireAPI.initiateCarHirePaystack({
+              email, // typed at checkout after the server answered email_required; else the registered email is used
               hireType, vehicleClass, startAt: new Date(startDate).toISOString(),
               durationHours, chauffeur,
               idempotencyKey: newIdempotencyKey('carhire-paystack'),

@@ -12,6 +12,12 @@ import type {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a live member endpoint (POST /points/redeem), so fixture mode refuses
+// loudly instead of reporting a redemption that never reached the points ledger —
+// mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_LOYALTY_USE_MOCK=false to send this against the live backend.`);
+
 // Redemptions still carry an Idempotency-Key (NL-9) even though points are
 // non-cash — a double-submit must never double-deduct.
 function idempotencyKey(): string {
@@ -35,7 +41,7 @@ function tierFor(lifetime: number): { tierId: TierId; pointsToNext: number; next
 }
 
 const MOCK_LIFETIME = 8450;
-let MOCK_BALANCE = 6200;
+const MOCK_BALANCE = 6200;
 
 const MOCK_LEDGER: PointsEntry[] = [
   { id: 'p1', points: 250,  source: 'signup',   label: 'Welcome bonus',              atISO: daysAgo(60) },
@@ -125,15 +131,7 @@ export async function getTiers(): Promise<Tier[]> {
 // NOT required by this endpoint) → { success, redemption, item }. NOTE: the
 // catalog "id" returned above is the SKU, so RedeemInput.itemId IS the sku.
 export async function redeem(input: RedeemInput): Promise<RedeemResult> {
-  if (USE_MOCK) {
-    await delay();
-    const item = MOCK_CATALOG.find((c) => c.id === input.itemId);
-    if (!item) throw new Error('Reward not found');
-    if (item.costPoints > MOCK_BALANCE) throw new Error('Not enough points to redeem this reward.');
-    MOCK_BALANCE -= item.costPoints;
-    MOCK_LEDGER.push({ id: `p_${Date.now()}`, points: -item.costPoints, source: 'redeem', label: `Redeemed ${item.title}`, atISO: new Date().toISOString() });
-    return { ok: true, newBalancePoints: MOCK_BALANCE, reference: `RDM-${Math.random().toString(36).slice(2, 8).toUpperCase()}` };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Redeeming points');
   const res = await api.post(
     `${POINTS_API_BASE}/points/redeem`,
     { sku: input.itemId },

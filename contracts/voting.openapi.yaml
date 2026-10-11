@@ -44,6 +44,29 @@ components:
       type: object
       properties:
         error: { type: string }
+    ConnectContest:
+      type: object
+      required: [id, title, status, created_at]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [draft, open, closed] }
+        paid_vote_kobo: { $ref: '#/components/schemas/Money' }
+        free_votes_per_user: { type: integer }
+        velocity_per_minute: { type: integer }
+        opens_at: { type: string, format: date-time }
+        closes_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        rules_text: { type: string }
+        banner_image_url:
+          type: string
+          description: Admin-uploaded banner. Omitted when none is set.
+        logo_url:
+          type: string
+          description: Admin-uploaded contest logo. Omitted when none is set.
+        contestant_count: { type: integer }
+        total_votes: { type: integer, format: int64 }
     # ── /api/v2/votes/wallet ────────────────────────────────────────────────
     V2WalletVoteRequest:
       type: object
@@ -361,6 +384,42 @@ paths:
         '403': { description: Missing votes:manage permission }
         '404': { description: Vote not found }
   # ── Contest stage eviction management ──────────────────────────────────────
+  /v1/connect/contests:
+    get:
+      summary: List contests
+      description: >
+        Lists contests that are open or closed, newest first (draft contests are
+        never returned). Each item carries the admin-set `banner_image_url` and
+        `logo_url`. With no `status` the list is open and closed together (the
+        original behaviour); `status=active` returns only open contests and
+        `status=closed` only closed ones. Any other value is a 400.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [active, closed, all] }
+          description: >
+            Narrows the list. Also accepted as aliases: `open` (= active) and
+            `ended` (= closed). Case-insensitive.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Contests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConnectContest' }
+        '400':
+          description: Unrecognised `status`
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
   /v1/connect/contests/{id}/stages/{stageNum}/evict:
     post:
       summary: Trigger evictions for a stage (admin only)

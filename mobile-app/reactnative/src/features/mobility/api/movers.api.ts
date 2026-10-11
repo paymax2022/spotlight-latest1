@@ -102,7 +102,7 @@ export async function initiateMoverPaystack(
     await delay(600);
     const bid = moverStore.active?.bids.find((b) => b.id === req.bidId);
     return {
-      reference: `moversorder:${req.idempotencyKey}`,
+      reference: `moversorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: bid?.amountKobo ?? 0,
       status: 'pending',

@@ -175,7 +175,7 @@ func RegisterMarketplace(
 	// Reuse the finance double-entry ledger (no second ledger).
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), redis)
 
-	svc := marketplace.NewService(pool, ledgerSvc, redis)
+	svc := marketplace.NewService(pool, ledgerSvc, redis).WithListingAlerts(cfg.FeatureMarketplaceAlertsEnabled)
 
 	// Fail-closed KYC-tier gate on the boost wallet debit (§6 "Tier/KYC gate"
 	// FINDING in docs/qa/modules/marketplace.md) — every wallet debit must pass

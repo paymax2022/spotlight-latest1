@@ -16,6 +16,13 @@ import type {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (backend/internal/savings/handler.go),
+// so fixture mode refuses loudly instead of reporting a deposit/withdrawal/contribution
+// that never reached the ledger — mirrors frontend-admin's crowdfundingAdminService.ts
+// NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_SAVINGS_USE_MOCK=false to send this against the live backend.`);
+
 // Backend wraps success payloads as { success: true, [key]: value } or { data: T }.
 // unwrap() returns that ENVELOPE — not the entity inside it. Mutation callers
 // below rely on that, because they read `balance_kobo` directly off the
@@ -304,15 +311,7 @@ export async function getTarget(id: string): Promise<GroupTarget> {
 }
 
 export async function createVault(input: CreateVaultInput): Promise<Vault> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      id: `v_${Date.now()}`, name: input.name, status: input.lock,
-      balanceKobo: input.initialKobo ?? 0, targetKobo: input.targetKobo,
-      maturesAtISO: input.maturesAtISO ?? null, createdAtISO: new Date().toISOString(),
-      streak: 0, interestKobo: 0, autoSave: null,
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a vault');
   const raw = envelope.entity(await api.post(
     `${API_BASE}/vaults`,
     { name: input.name, kind: input.lock, target_kobo: input.targetKobo, matures_at: input.maturesAtISO ?? null, initial_kobo: input.initialKobo },
@@ -322,11 +321,7 @@ export async function createVault(input: CreateVaultInput): Promise<Vault> {
 }
 
 export async function fundVault(id: string, amountKobo: number): Promise<ContributionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const v = MOCK_VAULTS.find((x) => x.id === id);
-    return { ok: true, newBalanceKobo: (v?.balanceKobo ?? 0) + amountKobo };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Funding a vault');
   const res = await unwrap<any>(
     await api.post(`${API_BASE}/vaults/${id}/deposit`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
   );
@@ -337,7 +332,7 @@ export async function setAutoSave(
   id: string,
   plan: { enabled: boolean; amountKobo: number; frequency: string },
 ): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Setting auto-save');
   // Backend route is POST /vaults/:id/autosave, taking amount_kobo + interval_secs
   // (no PUT, no `enabled`/`frequency` toggle — disabling auto-save has no route yet).
   const intervalSecsByFrequency: Record<string, number> = {
@@ -352,7 +347,7 @@ export async function setAutoSave(
 }
 
 export async function earlyWithdraw(id: string): Promise<ContributionResult> {
-  if (USE_MOCK) { await delay(); return { ok: true, newBalanceKobo: 0 }; }
+  if (USE_MOCK) throw notInFixtureMode('Withdrawing early from a vault');
   // Attempt to use the dedicated early-withdraw route; fall back to standard withdraw.
   // Penalty enforcement is a MISSING backend feature; the quote above is client-side only.
   const v = await getVault(id);
@@ -373,16 +368,7 @@ export async function earlyWithdraw(id: string): Promise<ContributionResult> {
 }
 
 export async function createCircle(input: CreateCircleInput): Promise<AjoCircle> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      id: `c_${Date.now()}`, name: input.name, status: 'FORMING',
-      contributionKobo: input.contributionKobo, frequency: input.frequency,
-      memberCount: input.memberCount, currentCycle: 0, paymaxGuarantees: false,
-      members: [{ id: 'm1', name: 'You', handle: '@you', avatarColor: '#340075', status: 'ACTIVE', payoutOrder: 1, paidThisCycle: false }],
-      cycles: [],
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a circle');
   const intervalSecsByFrequency: Record<string, number> = {
     daily: 86_400, weekly: 7 * 86_400, monthly: 30 * 86_400,
   };
@@ -396,26 +382,19 @@ export async function createCircle(input: CreateCircleInput): Promise<AjoCircle>
 
 // (:442) covers defaults separately.
 export async function contributeToCircle(id: string, amountKobo: number): Promise<ContributionResult> {
-  if (USE_MOCK) { await delay(); return { ok: true, newBalanceKobo: amountKobo }; }
+  if (USE_MOCK) throw notInFixtureMode('Contributing to a circle');
   const res = await unwrap<any>(await api.post(`${API_BASE}/circles/${id}/contribute`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
   return { ok: true, newBalanceKobo: res?.balance_kobo ?? res?.balanceKobo ?? amountKobo };
 }
 
 export async function joinCircle(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Joining a circle');
   await api.post(`${API_BASE}/circles/${id}/join`, {}, { headers: { 'Idempotency-Key': idempotencyKey() } });
   return { ok: true };
 }
 
 export async function createGroupTarget(input: CreateGroupTargetInput): Promise<GroupTarget> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      id: `t_${Date.now()}`, name: input.name, targetKobo: input.targetKobo, savedKobo: 0,
-      deadlineISO: input.deadlineISO, withdrawalRule: input.withdrawalRule, interestKobo: 0,
-      contributors: [{ id: 'g1', name: 'You', handle: '@you', avatarColor: '#340075', pledgedKobo: 0, savedKobo: 0 }],
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a group target');
   const raw = envelope.entity(await api.post(
     `${API_BASE}/targets`,
     { name: input.name, target_kobo: input.targetKobo, withdrawal_rule: input.withdrawalRule, target_date: input.deadlineISO },
@@ -425,11 +404,7 @@ export async function createGroupTarget(input: CreateGroupTargetInput): Promise<
 }
 
 export async function contributeToTarget(id: string, amountKobo: number): Promise<ContributionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const t = MOCK_TARGETS.find((x) => x.id === id);
-    return { ok: true, newBalanceKobo: (t?.savedKobo ?? 0) + amountKobo };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Contributing to a group target');
   const res = await unwrap<any>(
     await api.post(`${API_BASE}/targets/${id}/contribute`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
   );

@@ -147,7 +147,7 @@ func TestLiveDB_PGStore_OneOpenMoverCheckoutPerJob_EnforcedInSQL(t *testing.T) {
 	job := uuid.NewString()
 	put := func(status string) (Intent, error) {
 		key := "mvopen-" + uuid.NewString()
-		in := Intent{Domain: "movers", Reference: "moversorder:" + key, PayerID: payer, AmountKobo: 100_000, IdempotencyKey: key,
+		in := Intent{Domain: "movers", Reference: "moversorder-" + key, PayerID: payer, AmountKobo: 100_000, IdempotencyKey: key,
 			RequestJSON: json.RawMessage(fmt.Sprintf(`{"job_id":%q,"bid_id":%q}`, job, uuid.NewString()))}
 		_, inserted, err := st.Put(ctx, in)
 		if err == nil && !inserted {
@@ -168,7 +168,7 @@ func TestLiveDB_PGStore_OneOpenMoverCheckoutPerJob_EnforcedInSQL(t *testing.T) {
 		t.Fatalf("a second open checkout for one job must be a coded 409 checkout_in_progress, got %v", err)
 	}
 	// other job / other domain is independent
-	other := Intent{Domain: "movers", Reference: "moversorder:mvother-" + uuid.NewString(), PayerID: payer, AmountKobo: 1, IdempotencyKey: "mvother-" + uuid.NewString(),
+	other := Intent{Domain: "movers", Reference: "moversorder-mvother-" + uuid.NewString(), PayerID: payer, AmountKobo: 1, IdempotencyKey: "mvother-" + uuid.NewString(),
 		RequestJSON: json.RawMessage(fmt.Sprintf(`{"job_id":%q}`, uuid.NewString()))}
 	if _, ins, err := st.Put(ctx, other); err != nil || !ins {
 		t.Fatalf("a different job must not conflict: %v %v", ins, err)

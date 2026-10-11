@@ -15,6 +15,7 @@
 //   PATCH  /restaurant/:id/staff/:userId             → set staff status
 
 import { mockAllowed } from '@/config/mockPolicy';
+import type { TaxonomyCategory, TaxonomyItemPayload } from './taxonomy';
 import { api } from '@/api/client';
 import { buildUpdateStoreBody } from './packagingPrice';
 import type {
@@ -374,4 +375,31 @@ export async function submitKYB(id: string): Promise<RestaurantKYB> {
   if (USE_MOCK) { await delay(); mockKYB = { ...mockKYB, status: 'submitted' }; return mockKYB; }
   const raw = unwrap<any>(await api.post(`${BASE}/${enc(id)}/kyb/submit`, {}));
   return mapKYB(raw?.kyb ?? raw);
+}
+
+// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode, which keeps
+// the screen on the legacy per-category add. A server without the flag answers 404,
+// which surfaces as a thrown error and the same fallback.
+export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
+  if (USE_MOCK) return [];
+  const raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`));
+  const list: any[] = Array.isArray(raw) ? raw : [];
+  return list.map((c) => ({
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+    kind: c.kind,
+    children: (c.children ?? []).map((s: any) => ({ id: s.id, name: s.name, slug: s.slug })),
+  }));
+}
+
+export async function createTaxonomyItem(id: string, input: TaxonomyItemPayload): Promise<MerchantMenuItem> {
+  if (USE_MOCK) throw new Error('Taxonomy items are not available in mock mode.');
+  const body = {
+    taxonomy_category_id: input.taxonomyCategoryId,
+    taxonomy_subcategory_id: input.taxonomySubcategoryId,
+    name: input.name,
+    price_kobo: input.priceKobo,
+  };
+  return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
 }

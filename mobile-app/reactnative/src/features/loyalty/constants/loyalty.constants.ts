@@ -1,9 +1,11 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/tokens';
 
-// Flip to false once the live /api/v1/loyalty endpoints are reachable
-// (or set EXPO_PUBLIC_LOYALTY_USE_MOCK=false). Mock-first convention.
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LOYALTY_USE_MOCK, true);
+// Live endpoints confirmed (internal/loyalty + internal/points member routes; their
+// unit and live-DB suites are green on main) — defaults to live so a forgotten flag
+// fails visibly instead of inventing data. Set EXPO_PUBLIC_LOYALTY_USE_MOCK=true to
+// force mock locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LOYALTY_USE_MOCK, false);
 
 // Loyalty REST namespace. Served directly by the Go backend (Gin) under the
 // authenticated finance member group — NOT the frontend-web /api/v1 proxy.

@@ -247,7 +247,7 @@ func (l *fakeLedger) GetByID(_ context.Context, id string) (*settlement.Settleme
 	}
 	return &settlement.Settlement{
 		ID: id, Status: settlement.StatusEscrowed, FundingSource: "external",
-		TotalKobo: 250_000, PayerID: "u1", IdempotencyKey: "fakeorder:" + key1,
+		TotalKobo: 250_000, PayerID: "u1", IdempotencyKey: "fakeorder-" + key1,
 	}, nil
 }
 
@@ -478,7 +478,7 @@ type fakeDomain struct {
 }
 
 func (d *fakeDomain) Name() string            { return "fake" }
-func (d *fakeDomain) ReferencePrefix() string { return "fakeorder:" }
+func (d *fakeDomain) ReferencePrefix() string { return "fakeorder-" }
 func (d *fakeDomain) RoutePrefix() string     { return "/fakes/paystack" }
 func (d *fakeDomain) EntityIDKey() string     { return "fakeId" }
 func (d *fakeDomain) Quote(_ context.Context, _ string, raw json.RawMessage) (Quoted, error) {

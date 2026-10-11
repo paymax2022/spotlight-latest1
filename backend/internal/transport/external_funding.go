@@ -37,8 +37,12 @@ import (
 // resolve by that key). Includes the reserved prefixes of the not-yet-built
 // services (docs/adr/ADR-PR522-mobility-card-direct.md).
 var reservedIdempotencyPrefixes = []string{
-	"parcelorder:", "rideorder:", "foodorder:", "duespay:", "feespay:",
+	"parcelorder:", "rideorder:", "foodorder:", "foodorder-", "duespay:", "feespay:",
 	"towingorder:", "moversorder:", "carhireorder:", "busorder:", "eventorder:",
+	// The "-" forms: Paystack refuses ":" in a reference, so the live prefixes are
+	// these. The ":" forms above stay reserved (old rows, old clients).
+	"parcelorder-", "rideorder-", "duespay-", "feespay-",
+	"towingorder-", "moversorder-", "carhireorder-", "busorder-", "eventorder-",
 }
 
 // IsReservedIdempotencyKey reports whether a WALLET-path idempotency key lies in

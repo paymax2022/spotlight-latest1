@@ -233,7 +233,7 @@ export async function initiateRidePaystack(
   if (USE_MOCK) {
     await delay(600);
     return {
-      reference: `rideorder:${req.idempotencyKey}`,
+      reference: `rideorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: 0,
     };

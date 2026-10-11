@@ -6,7 +6,7 @@ import { View, Text, StyleSheet, Pressable, FlatList, RefreshControl } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, Bell, Tag, HandCoins, MessageCircle, TrendingDown, Search, Zap, Star, CheckCheck } from 'lucide-react-native';
+import { ArrowLeft, Bell, Tag, HandCoins, MessageCircle, TrendingDown, Search, Zap, Star, CheckCheck, Store } from 'lucide-react-native';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
@@ -20,6 +20,7 @@ const ICON: Record<MktNotificationType, typeof Bell> = {
   new_offer: HandCoins,
   new_message: MessageCircle,
   price_drop: TrendingDown,
+  new_listing: Store,
   saved_search: Search,
   boost_expiry: Zap,
   review: Star,
@@ -72,7 +73,7 @@ export default function NotificationsFeedScreen() {
         <View style={styles.centre}>
           <Bell size={40} color={MarketColors.muted} />
           <Text style={styles.emptyTitle}>You’re all caught up</Text>
-          <Text style={styles.muted}>Offers, messages, and price drops will show up here.</Text>
+          <Text style={styles.muted}>Offers, messages, price drops and new listings from sellers you follow will show up here.</Text>
         </View>
       ) : (
         <FlatList

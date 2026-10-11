@@ -98,6 +98,15 @@ updates:
       # react-native / Expo SDK migration, never as a rollup bump — not even patches.
       - dependency-name: "react"
       - dependency-name: "react-dom"
+      # react-native-screens 4.28's fabric/SearchBarNativeComponent.ts uses
+      # `React.ElementRef<>` syntax that babel-preset-expo@54 cannot transform, so
+      # `expo export` (visitor-election's expo-export job, a deploy gate) fails with
+      # "The first argument of method blur must be of type React.ElementRef<>".
+      # Dependabot shipped it twice (#634, reverted in #664; #672, reverted again
+      # in the PR that added this rule). Patches inside ~4.16 still flow; the next
+      # minor moves with the Expo SDK migration, never as a rollup bump.
+      - dependency-name: "react-native-screens"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # Same native-port caveat as /frontend-web: treat any TypeScript major as a
       # deliberate migration, not a weekly bump.
       - dependency-name: "typescript"

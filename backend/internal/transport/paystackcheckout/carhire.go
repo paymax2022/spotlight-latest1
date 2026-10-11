@@ -29,7 +29,7 @@ import (
 const CarHireDomainName = "carhire"
 
 // CarHireReferencePrefix: "carhireorder:" + Idempotency-Key.
-const CarHireReferencePrefix = "carhireorder:"
+const CarHireReferencePrefix = "carhireorder-"
 
 // CarHireBooker is the slice of transport.Service the car-hire adapter uses.
 type CarHireBooker interface {

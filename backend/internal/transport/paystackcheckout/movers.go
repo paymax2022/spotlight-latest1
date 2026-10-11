@@ -30,7 +30,7 @@ import (
 const MoversDomainName = "movers"
 
 // MoversReferencePrefix: "moversorder:" + Idempotency-Key.
-const MoversReferencePrefix = "moversorder:"
+const MoversReferencePrefix = "moversorder-"
 
 // MoverAcceptor is the slice of transport.Service the movers adapter uses.
 type MoverAcceptor interface {

@@ -448,6 +448,7 @@ func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*List
 		l.Status = ListingActive
 		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, l))
 		s.notifySafe(ctx, sellerID, "mkt.listing.active", "Your listing is live.")
+		s.notifyFollowersOfListing(l)
 		return l, nil
 	}
 
@@ -626,6 +627,7 @@ func (s *Service) ApproveListing(ctx context.Context, adminID, id, reasonCode st
 		AfterState:  map[string]any{"status": string(ListingActive)},
 	})
 	s.notifySafe(ctx, l.SellerID, "mkt.listing.active", "Your listing was approved and is live.")
+	s.notifyFollowersOfListing(l)
 	return l, nil
 }
 

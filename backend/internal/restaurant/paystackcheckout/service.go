@@ -44,6 +44,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/billingemail"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/restaurant"
 )
@@ -56,7 +57,10 @@ const keyInvalidInput = "invalid_input"
 // package (mirrors feespayment.FeesReferencePrefix's "feespay:" idiom). The
 // shared webhook pipeline dispatches charge.success events carrying this
 // prefix here instead of the wallet/VA path.
-const ReferencePrefix = "foodorder:"
+// The separator is "-", not ":": Paystack accepts only letters, digits, "-", "."
+// and "=" in a reference and refuses a ":" with "Invalid character in
+// transaction reference".
+const ReferencePrefix = "foodorder-"
 
 func referenceFor(idempotencyKey string) string { return ReferencePrefix + idempotencyKey }
 
@@ -653,7 +657,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // MUST be invoked from the EXISTING shared Paystack webhook pipeline
 // (webhooks.PaystackHandler.handleChargeSuccess), not a new receiver — the
 // integration task routes a charge.success whose reference carries the
-// ReferencePrefix ("foodorder:") to svc.OnChargeSuccess(reference, gatewayRef).
+// ReferencePrefix ("foodorder-") to svc.OnChargeSuccess(reference, gatewayRef).
 // Signature verification is already done by that pipeline.
 func RegisterRestaurantPaystackCheckout(restGroup *gin.RouterGroup, svc *Service) *Handler {
 	h := NewHandler(svc)
@@ -673,26 +677,6 @@ type initiateRequest struct {
 
 	Email       string `json:"email"`
 	CallbackURL string `json:"callback_url"`
-}
-
-// fallbackCheckoutEmail is what Paystack is given when neither the request nor
-// the signed-in account carries an email (phone-only sign-ups). It matches the
-// client SDK's own fallback in useGatewayCheckout so both halves of one checkout
-// present the same customer.
-const fallbackCheckoutEmail = "customer@paymax.app"
-
-// resolveCheckoutEmail picks the email Paystack requires on every transaction:
-// the request's value, else the authenticated account's, else the shared
-// placeholder. The mobile food checkout sends none, and Paystack answers an
-// empty one with `"email" is not allowed to be empty` (a sanitized 500 here).
-func resolveCheckoutEmail(fromBody, fromAccount string) string {
-	if e := strings.TrimSpace(fromBody); e != "" {
-		return e
-	}
-	if e := strings.TrimSpace(fromAccount); e != "" {
-		return e
-	}
-	return fallbackCheckoutEmail
 }
 
 func (h *Handler) Initiate(c *gin.Context) {
@@ -725,7 +709,10 @@ func (h *Handler) Initiate(c *gin.Context) {
 		}
 	}
 
-	email := resolveCheckoutEmail(req.Email, c.GetString("user_email"))
+	email, ok := billingemail.Require(c, req.Email)
+	if !ok {
+		return
+	}
 	out, err := h.svc.InitiateCheckout(c.Request.Context(), c.Param("id"), u, req.PlaceOrderRequest, email, req.CallbackURL)
 	if err != nil {
 		h.fail(c, err)

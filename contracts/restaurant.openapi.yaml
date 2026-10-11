@@ -646,15 +646,36 @@ paths:
     post:
       tags: [restaurant]
       summary: Create a menu item
+      description: >-
+        With FEATURE_RESTAURANT_ADMIN_CATEGORIES on, the item is placed in the admin
+        taxonomy: send taxonomy_category_id (required, a top-level category) and an
+        optional taxonomy_subcategory_id that must sit under it. The item is mirrored
+        into a legacy category of the same name so existing menu views list it. Price
+        must be more than zero. Names are unique per category, ignoring case. With the
+        flag off the legacy body (category_id) applies.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       requestBody:
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MenuItem' }
+            schema:
+              type: object
+              required: [name, price_kobo]
+              properties:
+                name: { type: string, maxLength: 200 }
+                description: { type: string }
+                price_kobo: { $ref: '#/components/schemas/Money' }
+                image_url: { type: string }
+                taxonomy_category_id: { type: string, format: uuid, description: 'Flag on: required' }
+                taxonomy_subcategory_id: { type: string, format: uuid, nullable: true, description: 'Flag on: optional, must be under taxonomy_category_id' }
+                category_id: { type: string, description: 'Flag off only (legacy)' }
       responses:
         '200': { description: Item created, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
+        '201': { description: Item created (flag on), content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
         '401': { description: Not authenticated }
         '403': { description: Not the restaurant owner }
+        '404': { description: The taxonomy category does not exist or is inactive }
+        '409': { description: An item with this name already exists in that category }
+        '422': { description: 'Placement is invalid, or the price is not more than zero' }
   /{id}/menu/items/{itemId}:
     patch:
       tags: [restaurant]

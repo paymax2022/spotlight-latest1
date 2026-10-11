@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/billingemail"
 )
 
 const keyMessage = "message"
@@ -105,6 +106,11 @@ func (h *Handler) CreateIntent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	email, ok := billingemail.Require(c, req.Email)
+	if !ok {
+		return
+	}
+	req.Email = email
 	out, err := h.svc.CreatePaymentIntent(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
@@ -123,6 +129,11 @@ func (h *Handler) PayInstallment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	email, ok := billingemail.Require(c, req.Email)
+	if !ok {
+		return
+	}
+	req.Email = email
 	out, err := h.svc.PayInstallment(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
