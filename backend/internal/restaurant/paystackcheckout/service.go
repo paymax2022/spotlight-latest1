@@ -57,7 +57,10 @@ const keyInvalidInput = "invalid_input"
 // package (mirrors feespayment.FeesReferencePrefix's "feespay:" idiom). The
 // shared webhook pipeline dispatches charge.success events carrying this
 // prefix here instead of the wallet/VA path.
-const ReferencePrefix = "foodorder:"
+// The separator is "-", not ":": Paystack accepts only letters, digits, "-", "."
+// and "=" in a reference and refuses a ":" with "Invalid character in
+// transaction reference".
+const ReferencePrefix = "foodorder-"
 
 func referenceFor(idempotencyKey string) string { return ReferencePrefix + idempotencyKey }
 
@@ -654,7 +657,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // MUST be invoked from the EXISTING shared Paystack webhook pipeline
 // (webhooks.PaystackHandler.handleChargeSuccess), not a new receiver — the
 // integration task routes a charge.success whose reference carries the
-// ReferencePrefix ("foodorder:") to svc.OnChargeSuccess(reference, gatewayRef).
+// ReferencePrefix ("foodorder-") to svc.OnChargeSuccess(reference, gatewayRef).
 // Signature verification is already done by that pipeline.
 func RegisterRestaurantPaystackCheckout(restGroup *gin.RouterGroup, svc *Service) *Handler {
 	h := NewHandler(svc)
