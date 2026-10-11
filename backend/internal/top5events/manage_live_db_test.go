@@ -116,3 +116,56 @@ func TestLiveDB_UpdateEvent_StrangerForbidden(t *testing.T) {
 		t.Fatalf("want ErrForbidden, got %v", err)
 	}
 }
+
+func TestLiveDB_DuplicateEvent(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	caller := seedTicketTokenUser(t, ctx, pool)
+	ticketID := seedIssuedTicket(t, ctx, pool, credential.NewService(pool, nil), owner)
+	var src string
+	if err := pool.QueryRow(ctx, `SELECT event_id FROM event_tickets WHERE id=$1`, ticketID).Scan(&src); err != nil {
+		t.Fatalf("lookup event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE events SET state='LIVE', venue='Hall A', category='music', fee_bps=750 WHERE id=$1`, src); err != nil {
+		t.Fatalf("set live: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, sold) VALUES ($1,$2,'VIP',900000,10,4)`,
+		uuid.New().String(), src); err != nil {
+		t.Fatalf("seed tier2: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, used) VALUES ($1,$2,'SAVE10',1,10,50,7)`,
+		uuid.New().String(), src); err != nil {
+		t.Fatalf("seed promo: %v", err)
+	}
+
+	got, err := svc.DuplicateEvent(ctx, caller, src)
+	if err != nil {
+		t.Fatalf("DuplicateEvent: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, got.ID) })
+	if got.ID == src || got.State != top5events.EventDraft || got.OrganiserID != caller {
+		t.Fatalf("bad duplicate: %+v", got)
+	}
+	var title, venue, cat, state, org1, org2 string
+	var fee int
+	if err := pool.QueryRow(ctx,
+		`SELECT title, venue, category, state, organizer_id::text, organiser_id::text, fee_bps FROM events WHERE id=$1`, got.ID).
+		Scan(&title, &venue, &cat, &state, &org1, &org2, &fee); err != nil {
+		t.Fatalf("read new event: %v", err)
+	}
+	if title != "Ticket Token Test Event (copy)" || venue != "Hall A" || cat != "music" || state != "DRAFT" ||
+		org1 != caller || org2 != caller || fee != 750 {
+		t.Fatalf("persisted mismatch: %q %q %q %q %q %q %d", title, venue, cat, state, org1, org2, fee)
+	}
+	var tiers, soldSum, promos, usedSum, tickets int
+	_ = pool.QueryRow(ctx, `SELECT count(*), COALESCE(sum(sold),0) FROM event_ticket_tiers WHERE event_id=$1`, got.ID).Scan(&tiers, &soldSum)
+	_ = pool.QueryRow(ctx, `SELECT count(*), COALESCE(sum(used),0) FROM event_promo_codes WHERE event_id=$1`, got.ID).Scan(&promos, &usedSum)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_tickets WHERE event_id=$1`, got.ID).Scan(&tickets)
+	if tiers != 2 || soldSum != 0 || promos != 1 || usedSum != 0 || tickets != 0 {
+		t.Fatalf("tiers=%d sold=%d promos=%d used=%d tickets=%d", tiers, soldSum, promos, usedSum, tickets)
+	}
+}

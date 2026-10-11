@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -171,4 +172,51 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 		s.log(callerID, "events.update", eventID, map[string]any{"field": col, "new": v})
 	}
 	return s.GetEvent(ctx, eventID)
+}
+
+// DuplicateEvent clones an event into a fresh DRAFT owned by callerID, in one
+// transaction. Copies title (suffixed " (copy)"), description, venue, category,
+// times, fee_bps, every ticket tier (sold reset to 0) and every promo code
+// (used reset to 0). Tickets, orders and wallets are never copied. Mirrors
+// CreateEvent's authz: any authenticated caller may duplicate any event.
+func (s *Service) DuplicateEvent(ctx context.Context, callerID, eventID string) (*Event, error) {
+	if callerID == "" {
+		return nil, errors.New("events: caller required")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("events: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	newID := uuid.New().String()
+	// organizer_id (legacy, NOT NULL) and organiser_id get the SAME value, as in CreateEvent.
+	const insEvent = `
+		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
+		SELECT $1, $2, $2, title || ' (copy)', description, venue, 'DRAFT', category, starts_at, ends_at, fee_bps
+		FROM events WHERE id=$3`
+	tag, err := tx.Exec(ctx, insEvent, newID, callerID, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("events: duplicate insert: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, sold, active)
+		 SELECT gen_random_uuid(), $1, name, price_kobo, capacity, 0, active FROM event_ticket_tiers WHERE event_id=$2`,
+		newID, eventID); err != nil {
+		return nil, fmt.Errorf("events: duplicate tiers: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, used, active)
+		 SELECT gen_random_uuid(), $1, code, version, percent_off, max_uses, 0, active FROM event_promo_codes WHERE event_id=$2`,
+		newID, eventID); err != nil {
+		return nil, fmt.Errorf("events: duplicate promos: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("events: duplicate commit: %w", err)
+	}
+	s.log(callerID, "events.duplicate", newID, map[string]any{"source_event_id": eventID})
+	return s.GetEvent(ctx, newID)
 }
