@@ -51,7 +51,7 @@ Two guards, each pinned by a test:
   bill is refused at the spend and their money stays in the wallet. This is a
   product decision to make before enabling.
 - Historical card payments are not backfilled.
-- Known residual (ledger-auditor MEDIUM, 0x outcome): the writer posts the
+- Known residual (ledger-auditor MEDIUM, 0x outcome) — **resolved by ADR-PR701**: the writer posts the
   collect then stalls >=10 minutes; the stuck sweep claims the row, sees
   collect-without-debit and retains the funds; the writer resumes, its spend
   posts, its status CAS fails (`writer_outraced`). Net: +X -X, no vend, no
