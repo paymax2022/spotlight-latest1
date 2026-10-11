@@ -142,10 +142,10 @@ func TestLiveDB_Taxonomy_CreateDepthAndDeleteRules_Integration(t *testing.T) {
 
 	// A category a menu item uses cannot be deleted either.
 	rid := uuid.NewString()
-	if _, err := db.Exec(ctx, `INSERT INTO restaurants (id) VALUES ($1)`, rid); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address) VALUES ($1,$2,'Taxonomy Test Kitchen','1 Test Road')`, rid, actor(t, db)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO menu_items (restaurant_id, name, taxonomy_category_id) VALUES ($1,'Jollof',$2)`, rid, sub.ID); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO menu_items (restaurant_id, name, price_kobo, taxonomy_category_id) VALUES ($1,'Jollof',0,$2)`, rid, sub.ID); err != nil {
 		t.Fatalf("seed item: %v", err)
 	}
 	if err := svc.Delete(ctx, actor(t, db), sub.ID); !errors.As(err, new(taxonomy.ErrInUse)) {
