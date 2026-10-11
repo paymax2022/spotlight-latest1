@@ -564,6 +564,7 @@ type NotificationPrefs struct {
 	OrderStatus bool      `json:"order_status"`
 	BoostExpiry bool      `json:"boost_expiry"`
 	Promotional bool      `json:"promotional"`
+	NewListing  bool      `json:"new_listing"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
@@ -576,6 +577,7 @@ func defaultNotificationPrefs(userID string) *NotificationPrefs {
 		OrderStatus: true,
 		BoostExpiry: true,
 		Promotional: false,
+		NewListing:  true,
 	}
 }
 
@@ -590,6 +592,7 @@ type NotificationPrefsPatch struct {
 	OrderStatus *bool `json:"order_status,omitempty"`
 	BoostExpiry *bool `json:"boost_expiry,omitempty"`
 	Promotional *bool `json:"promotional,omitempty"`
+	NewListing  *bool `json:"new_listing,omitempty"`
 }
 
 // SafeSpot is one curated verified-safe meetup location (§27 Meetup Mode). Seeded

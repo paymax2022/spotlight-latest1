@@ -57,6 +57,11 @@ func (s *Service) emitPriceDropNotifications(ctx context.Context, l *Listing, ol
 	if newKobo >= oldKobo {
 		return
 	}
+	if s.alerts {
+		// Bounded, idempotent, pref/block-aware path — see alerts_fanout.go.
+		s.notifySaversOfPriceDrop(l, oldKobo, newKobo)
+		return
+	}
 	rows, err := s.repo.db.Query(ctx, `SELECT user_id::text FROM mkt_saved_items WHERE listing_id = $1`, l.ID)
 	if err != nil {
 		log.Printf("[marketplace] price-drop lookup for %s failed: %v", l.ID, err)
