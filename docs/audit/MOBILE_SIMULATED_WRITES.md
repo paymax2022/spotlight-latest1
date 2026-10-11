@@ -59,6 +59,33 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   enrolment is admin-only (`BlackHandler.AdminEnroll`), there is no member endpoint, and it
   already refuses in live mode. Single flag (`FEATURE_LOYALTY_ENABLED`), no two-flag split.
 
+### Batch 3 (2026-10-11) — election; creators deferred
+- **election** (`src/features/election/{constants,api}`) — served by frontend-web route handlers
+  (`app/api/v1/elections/**`, same pattern as meetings). **No automated test suite exists** for them;
+  verified by reading the handlers (real `estate_admin` authz, closed-election and
+  one-candidate checks) and confirming `elections`, `election_candidates`, `election_votes` and
+  `estate_residents` exist in `supabase/migrations/20260616250000_estate.sql`. Gated by
+  `FEATURE_ESTATE_ENABLED` (shared with meetings; no second flag). 3 mutations converted:
+  `castVote`, `createElection`, `publishResults`. `EXPO_PUBLIC_ELECTION_USE_MOCK` is also pinned
+  `true` in `playwright.config.ts`: the active-election query runs app-wide (root push bridge),
+  so e2e must keep the fixture baseline. Note the mobile client talks to a *single-position* DB
+  schema (the handler synthesises one `${id}:main` position) — a product limitation, not changed.
+- **creators — NOT flipped; backend is only half there.** All 7 mutations have live routes
+  (`internal/creators/handler.go`: apply, tip, content, purchase, subscribe, cancel, payouts), but
+  the client's read side is not live-ready:
+  1. `listCreators`, `listMyContent`, `listSubscriptions` return `[]` in live mode with a stale
+     "MISSING BACKEND ENDPOINT" comment — the backend has since added `GET /creators-directory`,
+     `GET /my-creator/content`, `GET /my-creator/subscriptions`; the client was never wired to them.
+  2. `getStorefront` in live mode maps the real profile but **fills tiers, content and
+     `isSubscribed` from mock data** (the storefront endpoint returns only `profile`; there is no
+     tier-listing or per-creator content-listing endpoint). That shows invented tier ids a user
+     could try to subscribe to.
+  3. `completePayoutKyc` has no member endpoint at all (already refuses in live mode).
+  Flipping the default would blank Discover/My content/Subscriptions and leave a fake storefront.
+  To finish: wire the 3 list reads (response shapes: `{creators}`, `{content}`, `{subscriptions}`),
+  add a tiers + content read to the backend, then flip and convert the 7 writes. This is a money
+  module (tips, subscriptions, payouts) — have `ledger-auditor` review.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -82,7 +109,7 @@ kycverify, property, restaurantmerchant, stayshotelier.
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
 academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, announcements, arena, connect,
-creators, crowdfunding (4 files), crypto, documents, dues, election, emergencies, estateadmin,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, documents, dues, emergencies, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
