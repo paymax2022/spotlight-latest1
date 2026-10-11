@@ -79,7 +79,8 @@ type QuoteRequest struct {
 
 func (s *Service) locked(ctx context.Context, key string, fn func(context.Context) error) error {
 	if s.cfg.Locker == nil {
-		return fn(ctx)
+		// Without it, concurrent confirms and first quotes can double-act. Fail closed.
+		return errors.New("cryptosvc: no locker configured; refusing to run")
 	}
 	return s.cfg.Locker.WithSwapLock(ctx, key, fn)
 }
@@ -121,7 +122,14 @@ func (s *Service) ensureAccount(ctx context.Context, p cryptoprov.Provider, user
 		if err := s.cfg.Store.SaveProviderAccount(ctx, userID, s.cfg.Provider, made.ID); err != nil {
 			return err
 		}
-		acct = made.ID
+		saved, ok, err := s.cfg.Store.ProviderAccount(ctx, userID, s.cfg.Provider)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("cryptosvc: provider account not readable after save")
+		}
+		acct = saved // the stored id is the truth, even if another writer won
 		return nil
 	})
 	return acct, err
@@ -212,6 +220,41 @@ func isHoldRefusal(err error) bool {
 		errors.Is(err, tiers.ErrCheckoutAllowanceExceeded)
 }
 
+// isDefiniteRefusal is an ALLOWLIST of provider answers that prove the swap did not
+// execute: an explicit client-side rejection (400, 404, 422) or a rate refusal (429/444,
+// which the provider rejects before executing). 401/403/408/409/425 and every 5xx or
+// transport failure are ambiguous: the provider may have executed (or failed open).
+func isDefiniteRefusal(err error) bool {
+	var api *cryptoprov.APIError
+	if !errors.As(err, &api) {
+		return false
+	}
+	switch api.Status {
+	case 400, 404, 422, 429, 444:
+		return true
+	}
+	return false
+}
+
+// ErrOutcomeUnknown means the provider was already asked to execute and we do not know
+// what happened; the swap is parked and the hold kept.
+var ErrOutcomeUnknown = errors.New("cryptosvc: provider outcome unknown; swap parked for review")
+
+// mustTo performs a state transition that has to land, on a context that survives request
+// cancellation, retrying transient errors. A false return from the conditional update
+// means another writer moved the swap, which is not an error here.
+func (s *Service) mustTo(ctx context.Context, rec SwapRecord, to cryptoprov.SwapState, reason string) error {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err = s.cfg.Store.TransitionSwap(cctx, rec.ID, rec.State, to, decimal.Zero, reason); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("cryptosvc: could not move swap %s to %s: %w", rec.ID, to, err)
+}
+
 func (s *Service) reload(ctx context.Context, userID, id string) (SwapRecord, error) {
 	r, ok, err := s.cfg.Store.SwapByID(ctx, userID, id)
 	if err != nil {
@@ -221,11 +264,6 @@ func (s *Service) reload(ctx context.Context, userID, id string) (SwapRecord, er
 		return SwapRecord{}, ErrSwapNotFound
 	}
 	return r, nil
-}
-
-func (s *Service) to(ctx context.Context, rec SwapRecord, to cryptoprov.SwapState, reason string) {
-	// Best effort: a lost conditional update means another writer already moved the swap.
-	_, _ = s.cfg.Store.TransitionSwap(ctx, rec.ID, rec.State, to, decimal.Zero, reason)
 }
 
 // Confirm executes a quoted buy. Safe to call repeatedly: each call resumes from wherever
@@ -246,7 +284,7 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 				return err
 			}
 			if !s.cfg.Now().Before(rec.ExpiresAt) {
-				s.to(ctx, rec, cryptoprov.SwapStateExpired, "quote expired before confirm")
+				_ = s.mustTo(ctx, rec, cryptoprov.SwapStateExpired, "quote expired before confirm")
 				out, _ = s.reload(ctx, userID, swapID)
 				return ErrQuoteExpired
 			}
@@ -262,6 +300,12 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 		}
 		if rec.State != cryptoprov.SwapStateConfirming {
 			return nil // processing or final: nothing to execute
+		}
+		if rec.ProviderSwapID == "" && !rec.ExecuteAttempted {
+			// Not yet at the provider: a user frozen or de-tiered since the claim stops here.
+			if err := s.gate(ctx, userID); err != nil {
+				return err
+			}
 		}
 		out, err = s.execute(ctx, rec)
 		return err
@@ -279,17 +323,47 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, error) {
 	in := SwapLedgerInput{SwapID: rec.ID, UserID: rec.UserID, Side: SideBuy, NGNKobo: rec.NGNKobo, FeeKobo: rec.FeeKobo, FeeBps: rec.FeeBps}
 
+	// A hold that was already released means the user was made whole (for example the
+	// provider refused and only the final state write was lost). Finish the failure; never
+	// resume into a provider call.
+	if released, err := s.cfg.Settler.IsReleased(ctx, in); err != nil {
+		return rec, err
+	} else if released {
+		if err := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "hold was already released"); err != nil {
+			return rec, err
+		}
+		return rec, fmt.Errorf("%w: swap was refused and refunded", ErrSettlementConflict)
+	}
+
 	if err := s.cfg.Settler.HoldBuy(ctx, in); err != nil {
 		switch {
 		case isHoldRefusal(err):
-			s.to(ctx, rec, cryptoprov.SwapStateFailed, "hold refused: "+err.Error()) // nothing was taken
+			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "hold refused: "+err.Error()); terr != nil { // nothing was taken
+				return rec, errors.Join(err, terr)
+			}
 		case errors.Is(err, ErrPermanent):
-			s.to(ctx, rec, cryptoprov.SwapStateNeedsReview, "hold refused permanently: "+err.Error())
+			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "hold refused permanently: "+err.Error()); terr != nil {
+				return rec, errors.Join(err, terr)
+			}
 		}
 		return rec, err // other errors are transient: stay confirming, the caller retries
 	}
 
 	if rec.ProviderSwapID == "" {
+		// Stamp the attempt BEFORE the call. If a previous attempt already did, its outcome is
+		// unknown: re-calling could execute twice, and a 4xx on the re-call would wrongly look
+		// like "not executed". Park it with the hold kept.
+		first, err := s.cfg.Store.MarkExecuteAttempt(ctx, rec.ID)
+		if err != nil {
+			return rec, err // no provider call has been made; safe to retry
+		}
+		if !first {
+			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "a previous provider call has an unknown outcome"); terr != nil {
+				return rec, errors.Join(ErrOutcomeUnknown, terr)
+			}
+			return rec, ErrOutcomeUnknown
+		}
+
 		p, err := s.provider()
 		if err != nil {
 			return rec, err
@@ -300,30 +374,44 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 		}
 		sw, cerr := sp.ConfirmSwap(ctx, rec.ProviderAccountID, rec.ProviderQuoteID)
 		if cerr != nil {
-			if cryptoprov.IsDefinitive(cerr) {
-				// The provider refused: nothing executed, so give the money back.
+			if isDefiniteRefusal(cerr) {
+				// The provider explicitly refused: nothing executed, so give the money back.
 				if ferr := s.cfg.Settler.FailBuy(ctx, in); ferr != nil {
-					s.to(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider refused but the hold release failed: "+ferr.Error())
+					_ = s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider refused but the hold release failed: "+ferr.Error())
 					return rec, errors.Join(cerr, ferr)
 				}
-				s.to(ctx, rec, cryptoprov.SwapStateFailed, "provider refused: "+cerr.Error())
+				if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "provider refused: "+cerr.Error()); terr != nil {
+					return rec, errors.Join(cerr, terr)
+				}
 				return rec, cerr
 			}
 			// Unknown outcome: the swap may have executed. Keep the hold and park it.
-			s.to(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider outcome unknown: "+cerr.Error())
+			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider outcome unknown: "+cerr.Error()); terr != nil {
+				return rec, errors.Join(cerr, terr)
+			}
 			return rec, cerr
 		}
 		if sw.ID == "" {
-			s.to(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider confirm returned no swap id")
+			_ = s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider confirm returned no swap id")
 			return rec, errors.New("cryptosvc: provider confirm returned no swap id")
 		}
-		ok, err := s.cfg.Store.SetProviderSwapID(ctx, rec.ID, sw.ID)
-		if err != nil {
-			return rec, err
+		// The provider has executed. Recording its id must not be lost to a transient error.
+		var ok bool
+		var serr error
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		for attempt := 0; attempt < 3; attempt++ {
+			if ok, serr = s.cfg.Store.SetProviderSwapID(sctx, rec.ID, sw.ID); serr == nil {
+				break
+			}
 		}
-		if !ok {
-			s.to(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider swap id conflicts with the recorded one")
-			return rec, errors.New("cryptosvc: provider swap id conflict")
+		cancel()
+		if serr != nil || !ok {
+			reason := fmt.Sprintf("provider executed swap %s but its id could not be recorded", sw.ID)
+			_ = s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, reason)
+			if serr == nil {
+				serr = errors.New("cryptosvc: provider swap id conflict")
+			}
+			return rec, fmt.Errorf("%s: %w", reason, serr)
 		}
 		rec.ProviderSwapID = sw.ID
 	}

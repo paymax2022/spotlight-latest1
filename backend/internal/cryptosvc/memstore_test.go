@@ -17,6 +17,8 @@ type memStore struct {
 	swaps       map[string]*SwapRecord // by our id
 	accounts    map[string]string
 	nextID      int
+	failTo      map[cryptoprov.SwapState]error // fail every transition INTO this state
+	failSetPSID error                          // fail SetProviderSwapID
 	failInsert  error
 	failDelete  error
 	transitions []string
@@ -71,6 +73,9 @@ func (s *memStore) SwapByID(_ context.Context, userID, id string) (SwapRecord, b
 func (s *memStore) SetProviderSwapID(_ context.Context, id, psid string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failSetPSID != nil {
+		return false, s.failSetPSID
+	}
 	r := s.swaps[id]
 	if r == nil || (r.ProviderSwapID != "" && r.ProviderSwapID != psid) {
 		return false, nil
@@ -134,7 +139,24 @@ func (s *memStore) SwapByProviderID(_ context.Context, provider, id string) (Swa
 	return SwapRecord{}, false, nil
 }
 
+func (s *memStore) MarkExecuteAttempt(_ context.Context, id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.swaps[id]
+	if r == nil || r.ExecuteAttempted {
+		return false, nil
+	}
+	r.ExecuteAttempted = true
+	return true, nil
+}
+
 func (s *memStore) TransitionSwap(_ context.Context, id string, from, to cryptoprov.SwapState, received decimal.Decimal, _ string) (bool, error) {
+	s.mu.Lock()
+	if err, ok := s.failTo[to]; ok { // persistent until the test clears it
+		s.mu.Unlock()
+		return false, err
+	}
+	s.mu.Unlock()
 	if s.onTransition != nil {
 		s.onTransition(id, from)
 	}

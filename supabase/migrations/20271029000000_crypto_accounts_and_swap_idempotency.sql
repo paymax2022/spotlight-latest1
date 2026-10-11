@@ -17,8 +17,12 @@ CREATE TABLE IF NOT EXISTS public.crypto_accounts (
   UNIQUE (user_id, provider)
 );
 
+--   * execute_attempted_at is stamped immediately BEFORE the provider is asked to execute. A
+--     swap that has it but no provider_swap_id has an unknown outcome and must never be
+--     re-executed or refunded blindly (ADR-PR710).
 ALTER TABLE public.crypto_swaps
-  ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+  ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
+  ADD COLUMN IF NOT EXISTS execute_attempted_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_crypto_swaps_user_idem
   ON public.crypto_swaps (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 

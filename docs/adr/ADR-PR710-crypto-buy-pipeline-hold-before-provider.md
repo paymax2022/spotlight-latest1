@@ -27,10 +27,27 @@ shared transaction: the order of the two writes decides which failure loses mone
    (user, provider) under a lock, backed by a unique index.
 6. **Trade gate fails closed:** no gate configured means no trading.
 
+## Hardening from the independent audit (two blockers, two highs)
+- **A released hold is never resumed into a provider call.** `HoldBuy` refuses once the release exists
+  (`ErrSettlementConflict`), and `execute` checks first and finishes the failure. State writes that must
+  land (`mustTo`) run on a cancellation-proof context with retries and surface their errors.
+- **A provider call of unknown outcome is never repeated or refunded.** `execute_attempted_at` is stamped
+  immediately before `ConfirmSwap`. A confirming swap with the stamp and no provider swap id is parked in
+  `needs_review` with the hold kept; it never re-calls the provider (a 4xx on a re-call would look like
+  "not executed" and refund a swap that did execute). Recording the provider swap id is retried on a
+  detached context, and if it still fails the id goes into the review reason.
+- **Only an allowlist of provider answers proves "not executed":** 400, 404, 422, 429, 444. 401/403/408/409/425,
+  every 5xx and every transport failure are ambiguous and keep the hold.
+- **The locker is mandatory** (no locker, no trading). `PGSwapLocker` pins one connection per held lock; give it
+  its own pool sized well above concurrent confirms to avoid starvation.
+- The trade gate also runs when resuming a claimed swap that has not reached the provider.
+
 ## Consequences
 - A `confirming` swap with a hold and no provider id is the crash window; the reconciler (next slice)
   must mark stale ones `needs_review` after ~2 minutes, as the spec requires.
-- Provider-side idempotency of confirm per quote id is assumed (the quote carries a `confirmed` flag) and
-  must be verified in the sandbox before go-live; resume relies on it.
+- Resume no longer depends on provider idempotency: a swap whose provider call may have happened is parked.
+  Still unbuilt: a provider lookup by quote id so `needs_review` swaps without a swap id can resolve themselves;
+  until then they need an admin. A reused quote Idempotency-Key returns the earlier row even if it is expired or
+  failed (the client must use a fresh key).
 - No HTTP surface yet: step-up auth, rate limits and `Idempotency-Key` header plumbing belong to the
   handler slice.

@@ -40,6 +40,10 @@ type SwapRecord struct {
 	QuotedToAmount  decimal.Decimal
 	QuotedPrice     decimal.Decimal
 	ExpiresAt       time.Time
+	// ExecuteAttempted is set (once) immediately before the provider is asked to execute.
+	// A confirming swap with this set and no provider swap id has an UNKNOWN outcome and is
+	// never executed or refunded blindly.
+	ExecuteAttempted bool
 }
 
 // NewSwap is a freshly quoted swap to persist.
@@ -83,6 +87,9 @@ type Store interface {
 	SwapByIdempotencyKey(ctx context.Context, userID, key string) (SwapRecord, bool, error)
 	// SwapByID reads a swap owned by userID; another user's id is simply not found.
 	SwapByID(ctx context.Context, userID, id string) (SwapRecord, bool, error)
+	// MarkExecuteAttempt records that the provider call is about to be made. first is true
+	// only for the call that set it.
+	MarkExecuteAttempt(ctx context.Context, id string) (first bool, err error)
 	// SetProviderSwapID records the provider's swap id once; it never overwrites a different id.
 	SetProviderSwapID(ctx context.Context, id, providerSwapID string) (bool, error)
 	// ProviderAccount / SaveProviderAccount manage the user's custodial sub-account.

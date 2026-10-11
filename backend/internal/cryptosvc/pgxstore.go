@@ -43,7 +43,7 @@ func (s *PGStore) DeleteWebhookEvent(ctx context.Context, key string) error {
 
 const swapCols = `id::text, user_id::text, provider, provider_account_id, COALESCE(provider_swap_id,''), status,
 	received_amount::text, side, ngn_kobo, fee_bps, fee_kobo, COALESCE(provider_quote_id,''), COALESCE(idempotency_key,''),
-	from_currency, to_currency, from_amount::text, quoted_to_amount::text, quoted_price::text, expires_at`
+	from_currency, to_currency, from_amount::text, quoted_to_amount::text, quoted_price::text, expires_at, (execute_attempted_at IS NOT NULL)`
 
 func scanSwap(row pgx.Row) (SwapRecord, error) {
 	var (
@@ -55,7 +55,7 @@ func scanSwap(row pgx.Row) (SwapRecord, error) {
 	)
 	if err := row.Scan(&r.ID, &r.UserID, &r.Provider, &r.ProviderAccountID, &r.ProviderSwapID, &state, &received,
 		&side, &r.NGNKobo, &r.FeeBps, &r.FeeKobo, &r.ProviderQuoteID, &r.IdempotencyKey,
-		&r.FromCurrency, &r.ToCurrency, &fromAmt, &quotedTo, &quotedPx, &expires); err != nil {
+		&r.FromCurrency, &r.ToCurrency, &fromAmt, &quotedTo, &quotedPx, &expires, &r.ExecuteAttempted); err != nil {
 		return SwapRecord{}, err
 	}
 	r.State = cryptoprov.SwapState(state)
@@ -130,6 +130,16 @@ func (s *PGStore) InsertSwap(ctx context.Context, n NewSwap) (SwapRecord, bool, 
 	}
 	r, rerr := scanSwap(s.pool.QueryRow(ctx, `SELECT `+swapCols+` FROM public.crypto_swaps WHERE id = $1::uuid`, id))
 	return r, created, rerr
+}
+
+func (s *PGStore) MarkExecuteAttempt(ctx context.Context, id string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE public.crypto_swaps SET execute_attempted_at = now(), updated_at = now()
+		  WHERE id = $1::uuid AND execute_attempted_at IS NULL`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func (s *PGStore) SetProviderSwapID(ctx context.Context, id, providerSwapID string) (bool, error) {
