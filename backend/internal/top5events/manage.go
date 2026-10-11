@@ -197,8 +197,9 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 // DuplicateEvent clones an event into a fresh DRAFT owned by callerID, in one
 // transaction. Copies title (suffixed " (copy)"), description, venue, category,
 // times, fee_bps, every ticket tier (sold reset to 0) and every promo code
-// (used reset to 0). Tickets, orders and wallets are never copied. Mirrors
-// CreateEvent's authz: any authenticated caller may duplicate any event.
+// (used reset to 0). Tickets, orders and wallets are never copied. The caller
+// must own or manage the source event, or the source must be publicly visible
+// (publiclyVisibleStates); otherwise ErrForbidden.
 func (s *Service) DuplicateEvent(ctx context.Context, callerID, eventID string) (*Event, error) {
 	if callerID == "" {
 		return nil, errors.New("events: caller required")
