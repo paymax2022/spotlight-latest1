@@ -23,6 +23,13 @@ type SwapRecord struct {
 	ProviderSwapID    string
 	State             cryptoprov.SwapState
 	ReceivedAmount    decimal.Decimal
+
+	// Ledger inputs, fixed at quote time so a later fee-schedule change never reprices
+	// an open swap. Side says which NGN legs exist (buy, sell, or swap = none).
+	Side    Side
+	NGNKobo int64 // buy: NGN principal paid; sell: quoted gross proceeds
+	FeeBps  int
+	FeeKobo int64 // buy: platform fee charged on top of NGNKobo
 }
 
 // WebhookEvent is one received delivery. Key is the provider's stable dedupe key.

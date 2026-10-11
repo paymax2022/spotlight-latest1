@@ -258,3 +258,100 @@ func TestCleanupSurvivesACancelledRequestContext(t *testing.T) {
 		t.Fatalf("dedupe row stranded by a cancelled context: err=%v events=%d", err, len(r.store.events))
 	}
 }
+
+// ---- ledger settlement hook --------------------------------------------------
+
+type recSettler struct {
+	calls []string
+	err   error
+	// at records the swap state the store held at the moment of the call, to prove
+	// the ledger is written BEFORE the state moves.
+	store *memStore
+	at    []cryptoprov.SwapState
+}
+
+func (r *recSettler) Complete(_ context.Context, rec SwapRecord, got decimal.Decimal) error {
+	r.calls = append(r.calls, "complete:"+got.String())
+	if r.store != nil {
+		r.at = append(r.at, r.store.swaps[rec.ID].State)
+	}
+	return r.err
+}
+func (r *recSettler) Fail(_ context.Context, rec SwapRecord) error {
+	r.calls = append(r.calls, "fail")
+	if r.store != nil {
+		r.at = append(r.at, r.store.swaps[rec.ID].State)
+	}
+	return r.err
+}
+
+func TestSettlerRunsBeforeTheStateMoves(t *testing.T) {
+	r := newRig(t, cryptoprov.SwapStateProcessing)
+	s := &recSettler{store: r.store}
+	r.ing.WithSettler(s)
+	_ = r.mock.CompleteSwap(r.swap.ID, cryptoprov.SwapCompleted)
+	if _, err := r.deliver(t, "swap_transaction.completed"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.calls) != 1 || s.calls[0] != "complete:15000" {
+		t.Fatalf("calls = %v (the re-queried amount must be used)", s.calls)
+	}
+	if s.at[0] != cryptoprov.SwapStateProcessing {
+		t.Fatalf("ledger ran after the state moved: %s", s.at[0])
+	}
+	if r.state() != cryptoprov.SwapStateCompleted {
+		t.Fatalf("state = %s", r.state())
+	}
+}
+
+func TestSettlerFailureLeavesStateUntouchedAndReleasesTheDedupeRow(t *testing.T) {
+	r := newRig(t, cryptoprov.SwapStateProcessing)
+	s := &recSettler{err: errors.New("ledger down")}
+	r.ing.WithSettler(s)
+	_ = r.mock.CompleteSwap(r.swap.ID, cryptoprov.SwapCompleted)
+	if _, err := r.deliver(t, "swap_transaction.completed"); err == nil {
+		t.Fatal("settlement failure swallowed")
+	}
+	if r.state() != cryptoprov.SwapStateProcessing {
+		t.Fatalf("state moved to %s although the ledger did not post", r.state())
+	}
+	if len(r.store.events) != 0 {
+		t.Fatal("dedupe row kept: the retry would never settle")
+	}
+	// The retry settles and finishes.
+	s.err = nil
+	if out, err := r.deliver(t, "swap_transaction.completed"); err != nil || out != OutcomeApplied {
+		t.Fatalf("retry out=%s err=%v", out, err)
+	}
+}
+
+func TestFailedSwapIsSettledAsAFailure(t *testing.T) {
+	r := newRig(t, cryptoprov.SwapStateProcessing)
+	s := &recSettler{}
+	r.ing.WithSettler(s)
+	_ = r.mock.CompleteSwap(r.swap.ID, cryptoprov.SwapFailed)
+	if _, err := r.deliver(t, "swap_transaction.failed"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.calls) != 1 || s.calls[0] != "fail" {
+		t.Fatalf("calls = %v", s.calls)
+	}
+}
+
+func TestNeedsReviewAndPendingNeverSettle(t *testing.T) {
+	r := newRig(t, cryptoprov.SwapStateProcessing)
+	s := &recSettler{}
+	r.ing.WithSettler(s)
+	if _, err := r.deliver(t, "swap_transaction.completed"); err != nil { // provider still pending
+		t.Fatal(err)
+	}
+	r.mock.SetSwapAmount(r.swap.ID, decimal.Zero)
+	_ = r.mock.CompleteSwap(r.swap.ID, cryptoprov.SwapCompleted)
+	r.store.events = map[string]WebhookEvent{}
+	if _, err := r.deliver(t, "swap_transaction.completed"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.calls) != 0 {
+		t.Fatalf("settled without a confirmed positive amount: %v", s.calls)
+	}
+}

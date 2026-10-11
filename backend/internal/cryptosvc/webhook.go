@@ -28,12 +28,25 @@ const (
 // that must page someone; the reconciler is the safety net for the stranded swap.
 var ErrDedupeNotReleased = errors.New("cryptosvc: webhook failed and its dedupe row could not be released")
 
+// SwapSettler posts the ledger legs of a swap the provider has finalised. It runs
+// BEFORE the state transition so a crash between the two converges on retry (the
+// settler is idempotent and replay-verified); state is always the last write.
+type SwapSettler interface {
+	Complete(ctx context.Context, rec SwapRecord, received decimal.Decimal) error
+	Fail(ctx context.Context, rec SwapRecord) error
+}
+
 // Ingest authenticates, dedupes and applies provider webhooks.
 type Ingest struct {
-	reg   *cryptoprov.Registry
-	store Store
-	now   func() time.Time
+	reg     *cryptoprov.Registry
+	store   Store
+	now     func() time.Time
+	settler SwapSettler
 }
+
+// WithSettler enables ledger settlement on completed and failed swaps. Without it the
+// ingest only moves state (the original, ledger-free behaviour).
+func (i *Ingest) WithSettler(s SwapSettler) *Ingest { i.settler = s; return i }
 
 // NewIngest builds the webhook path over a registry and a store.
 func NewIngest(reg *cryptoprov.Registry, store Store) *Ingest {
@@ -137,6 +150,27 @@ func (i *Ingest) process(ctx context.Context, p cryptoprov.Provider, providerNam
 
 // apply moves rec to target, walking confirming -> processing first when needed.
 func (i *Ingest) apply(ctx context.Context, rec SwapRecord, target cryptoprov.SwapState, received decimal.Decimal, reason string) (Outcome, error) {
+	if i.settler != nil {
+		var serr error
+		switch target {
+		case cryptoprov.SwapStateCompleted:
+			serr = i.settler.Complete(ctx, rec, received)
+		case cryptoprov.SwapStateFailed:
+			serr = i.settler.Fail(ctx, rec)
+		}
+		if serr != nil {
+			if errors.Is(serr, ErrPermanent) {
+				// Retrying can never fix this; leave it for a human instead of looping.
+				return i.apply0(ctx, rec, cryptoprov.SwapStateNeedsReview, decimal.Zero, "settlement refused: "+serr.Error())
+			}
+			return "", fmt.Errorf("cryptosvc: settle swap %s: %w", rec.ID, serr)
+		}
+	}
+	return i.apply0(ctx, rec, target, received, reason)
+}
+
+// apply0 walks the swap to target with conditional transitions (no settlement).
+func (i *Ingest) apply0(ctx context.Context, rec SwapRecord, target cryptoprov.SwapState, received decimal.Decimal, reason string) (Outcome, error) {
 	if rec.State == cryptoprov.SwapStateConfirming && target != cryptoprov.SwapStateNeedsReview {
 		applied, err := i.step(ctx, rec, cryptoprov.SwapStateProcessing, decimal.Zero, "")
 		if err != nil {
