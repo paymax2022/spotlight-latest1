@@ -153,7 +153,7 @@ func (m *Mock) QuoteSwap(_ context.Context, req SwapQuoteRequest) (SwapQuote, er
 
 // ConfirmSwap implements SwapProvider. It is idempotent per quote id: a second
 // confirm returns the same swap and never executes twice.
-func (m *Mock) ConfirmSwap(_ context.Context, quoteID string) (Swap, error) {
+func (m *Mock) ConfirmSwap(_ context.Context, _, quoteID string) (Swap, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.take("confirm"); err != nil {
@@ -176,7 +176,7 @@ func (m *Mock) ConfirmSwap(_ context.Context, quoteID string) (Swap, error) {
 }
 
 // GetSwap implements SwapProvider.
-func (m *Mock) GetSwap(_ context.Context, swapID string) (Swap, error) {
+func (m *Mock) GetSwap(_ context.Context, _, swapID string) (Swap, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.take("getswap"); err != nil {
@@ -209,7 +209,7 @@ func (m *Mock) Withdraw(_ context.Context, req WithdrawRequest) (Withdrawal, err
 }
 
 // GetWithdrawal implements WithdrawalProvider, looking up by provider id.
-func (m *Mock) GetWithdrawal(_ context.Context, id string) (Withdrawal, error) {
+func (m *Mock) GetWithdrawal(_ context.Context, _, id string) (Withdrawal, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.take("getwithdraw"); err != nil {

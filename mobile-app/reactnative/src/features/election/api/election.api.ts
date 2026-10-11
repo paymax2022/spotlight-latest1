@@ -1,5 +1,5 @@
 //   • USE_MOCK === false → real HTTP against /elections via api/client
-// Signatures/types/hooks are identical for both. Flip EXPO_PUBLIC_ELECTION_USE_MOCK=false to go live.
+// Signatures/types/hooks are identical for both. Defaults to live; set EXPO_PUBLIC_ELECTION_USE_MOCK=true for fixtures.
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -12,13 +12,21 @@ import type {
   MyBallot,
   VoterEligibility,
 } from '../types/election.types';
-import { hasEnded, isLiveNow } from '../utils/electionFormatters';
+import { isLiveNow } from '../utils/electionFormatters';
 import { seedElections } from './election.mock';
 
 let elections: Election[] = JSON.parse(JSON.stringify(seedElections));
 const ballots: Record<string, MyBallot> = {};
 
 const latency = (ms = 350) => new Promise((r) => setTimeout(r, ms));
+
+// castVote / createElection / publishResults each have a live route handler
+// (frontend-web/app/api/v1/elections/**), so fixture mode refuses loudly instead of
+// reporting a ballot cast, election created or result published that never reached
+// the database — mirrors frontend-admin's crowdfundingAdminService.ts
+// NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ELECTION_USE_MOCK=false to send this against the live backend.`);
 const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? generateIdempotencyKey() } });
 
 export class ElectionApiError extends Error {
@@ -98,33 +106,7 @@ export async function getMyBallot(electionId: string): Promise<MyBallot> {
 }
 
 export async function castVote(input: CastVoteInput): Promise<MyBallot> {
-  if (USE_MOCK) {
-    await latency(450);
-    const election = elections.find((e) => e.id === input.electionId);
-    if (!election) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
-    if (!isLiveNow(election)) throw new ElectionApiError('CLOSED', 'Voting is not open for this election.');
-
-    const ballot = ballots[input.electionId] ?? { electionId: input.electionId, choices: {} };
-    if (ballot.choices[input.positionId]) {
-      throw new ElectionApiError('ALREADY_VOTED', 'You have already voted for this position.');
-    }
-
-    const position = election.positions.find((p) => p.id === input.positionId);
-    const candidate = position?.candidates.find((c) => c.id === input.candidateId);
-    if (!position || !candidate) throw new ElectionApiError('INVALID', 'Invalid candidate selection.');
-
-    candidate.votes += 1;
-    ballot.choices[input.positionId] = input.candidateId;
-
-    // Count a fully-submitted ballot once the resident has voted every position.
-    const complete = election.positions.every((p) => ballot.choices[p.id]);
-    if (complete && !ballot.submittedAt) {
-      ballot.submittedAt = new Date().toISOString();
-      election.votesCast += 1;
-    }
-    ballots[input.electionId] = ballot;
-    return JSON.parse(JSON.stringify(ballot));
-  }
+  if (USE_MOCK) throw notInFixtureMode('Casting a vote');
   // Resident-scoped: POST /api/v1/elections/{id}/vote, body { positionId,
   // candidateId }. The handler maps the single-position DB schema onto the
   // client's multi-position contract via a synthesized `${id}:main` position and
@@ -147,45 +129,7 @@ export async function castVote(input: CastVoteInput): Promise<MyBallot> {
 
 // Admin: create/schedule an election. Status is derived from the window on read.
 export async function createElection(input: CreateElectionInput): Promise<Election> {
-  if (USE_MOCK) {
-    await latency(600);
-    if (!input.title.trim()) throw new ElectionApiError('VALIDATION', 'Election title is required.');
-    if (+new Date(input.endsAt) <= +new Date(input.startsAt)) {
-      throw new ElectionApiError('VALIDATION', 'End time must be after the start time.');
-    }
-    const validPositions = input.positions
-      .map((p) => ({ ...p, title: p.title.trim(), candidateNames: p.candidateNames.map((n) => n.trim()).filter(Boolean) }))
-      .filter((p) => p.title && p.candidateNames.length >= 2);
-    if (validPositions.length === 0) {
-      throw new ElectionApiError('VALIDATION', 'Add at least one position with two or more candidates.');
-    }
-    const id = `elec_${Date.now()}`;
-    const election: Election = {
-      id,
-      estateId: 'est_amber_court',
-      title: input.title.trim(),
-      description: input.description?.trim() || undefined,
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
-      status: 'scheduled',
-      totalEligibleVoters: 142,
-      votesCast: 0,
-      resultsPublished: false,
-      positions: validPositions.map((p, pi) => ({
-        id: `pos_${id}_${pi}`,
-        title: p.title,
-        seats: Math.max(1, p.seats),
-        candidates: p.candidateNames.map((name, ci) => ({
-          id: `cand_${id}_${pi}_${ci}`,
-          positionId: `pos_${id}_${pi}`,
-          name,
-          votes: 0,
-        })),
-      })),
-    };
-    elections = [election, ...elections];
-    return JSON.parse(JSON.stringify(election));
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating an election');
   // Resident-scoped: POST /api/v1/elections (estate admin). The handler flattens
   // all positions' candidateNames onto the single-position DB schema and returns
   // the mapped Election (single synthesized position). SCHEMA LIMITATION: the DB
@@ -213,15 +157,7 @@ export async function createElection(input: CreateElectionInput): Promise<Electi
 // Resident-scoped: POST /api/v1/elections/{id}/publish (estate admin, after the
 // window closes) → the updated Election with results published.
 export async function publishResults(electionId: string): Promise<Election> {
-  if (USE_MOCK) {
-    await latency(400);
-    const e = elections.find((x) => x.id === electionId);
-    if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
-    if (!hasEnded(e)) throw new ElectionApiError('NOT_ENDED', 'Results can only be published after the election closes.');
-    e.resultsPublished = true;
-    e.status = 'results_published';
-    return JSON.parse(JSON.stringify(e));
-  }
+  if (USE_MOCK) throw notInFixtureMode('Publishing results');
   const { data } = await api.post<Election>(`${B}/${electionId}/publish`, {});
   return data;
 }

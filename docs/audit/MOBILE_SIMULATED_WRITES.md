@@ -59,6 +59,65 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   enrolment is admin-only (`BlackHandler.AdminEnroll`), there is no member endpoint, and it
   already refuses in live mode. Single flag (`FEATURE_LOYALTY_ENABLED`), no two-flag split.
 
+### Batch 3 (2026-10-11) — election; creators deferred
+- **election** (`src/features/election/{constants,api}`) — served by frontend-web route handlers
+  (`app/api/v1/elections/**`, same pattern as meetings). **No automated test suite exists** for them;
+  verified by reading the handlers (real `estate_admin` authz, closed-election and
+  one-candidate checks) and confirming `elections`, `election_candidates`, `election_votes` and
+  `estate_residents` exist in `supabase/migrations/20260616250000_estate.sql`. Gated by
+  `FEATURE_ESTATE_ENABLED` (shared with meetings; no second flag). 3 mutations converted:
+  `castVote`, `createElection`, `publishResults`. `EXPO_PUBLIC_ELECTION_USE_MOCK` is also pinned
+  `true` in `playwright.config.ts`: the active-election query runs app-wide (root push bridge),
+  so e2e must keep the fixture baseline. Note the mobile client talks to a *single-position* DB
+  schema (the handler synthesises one `${id}:main` position) — a product limitation, not changed.
+- **creators — NOT flipped; backend is only half there.** All 7 mutations have live routes
+  (`internal/creators/handler.go`: apply, tip, content, purchase, subscribe, cancel, payouts), but
+  the client's read side is not live-ready:
+  1. `listCreators`, `listMyContent`, `listSubscriptions` return `[]` in live mode with a stale
+     "MISSING BACKEND ENDPOINT" comment — the backend has since added `GET /creators-directory`,
+     `GET /my-creator/content`, `GET /my-creator/subscriptions`; the client was never wired to them.
+  2. `getStorefront` in live mode maps the real profile but **fills tiers, content and
+     `isSubscribed` from mock data** (the storefront endpoint returns only `profile`; there is no
+     tier-listing or per-creator content-listing endpoint). That shows invented tier ids a user
+     could try to subscribe to.
+  3. `completePayoutKyc` has no member endpoint at all (already refuses in live mode).
+  Flipping the default would blank Discover/My content/Subscriptions and leave a fake storefront.
+  To finish: wire the 3 list reads (response shapes: `{creators}`, `{content}`, `{subscriptions}`),
+  add a tiers + content read to the backend, then flip and convert the 7 writes. This is a money
+  module (tips, subscriptions, payouts) — have `ledger-auditor` review.
+
+### Batch 4 (2026-10-11) — visitor; social deferred
+- **visitor** (`src/features/visitor/{constants,api}`) — served by frontend-web route handlers
+  (`app/api/v1/visitor/**`). **No automated test suite exists** for them. Verified by mapping every
+  client call to a handler: **all 40 calls (method + path) have a matching route file**, every
+  handler does real Supabase work, and the nine tables they query (`visitor_access_codes`,
+  `visitor_gate_events`, `gate_sessions`, `visitor_blacklist`, `visitor_incidents`,
+  `visitor_notifications`, `estate_residents`, `estates`, `user_profiles`) exist in
+  `supabase/migrations`. The two stub handlers (`codes/:id/share` is intentionally client-rendered;
+  `gate/vehicles/scan` is a stub ANPR route) are not among the 40 calls. No feature flag gates the
+  handlers and there is no `visitor` module-visibility key. 20 mutations converted
+  (createAccessCode, revoke/extend, logShare, syncPendingLogs, approve/denyEntry,
+  recordArrival/Exit, checkOutVisit, createWalkIn, submitHandover, mark(All)NotificationsRead,
+  add/removeBlacklist, submitIncident, createEventGuestCodes, submitProofOfPayment, submitAppeal).
+  `EXPO_PUBLIC_VISITOR_USE_MOCK` is also pinned `true` in `playwright.config.ts` (the visitor push
+  bridge runs app-wide).
+  - **Pre-existing gap found (not changed here): the hard-ban payment restriction is enforced
+    only in the UI.** The fixture `createAccessCode` used to fail closed on
+    `restriction.state === 'hard_ban'` (VM-108/VM-301), but in live mode the only check is the
+    create screen disabling the button (`app/visitor/create.tsx`). Server-side,
+    `POST /api/v1/visitor/codes` validates residency, name and window but never reads
+    `payment_standing`, so a hard-banned resident can still create codes by calling the API.
+    `GET /restriction` shows the data is there. Needs a server-side check in the handler.
+- **social — NOT flipped; the read side is partly missing.** All writes have live routes
+  (`internal/social/handler.go`), and since the client comments were written the backend added
+  `GET /activity`, `GET /splits` (list), `GET /pools` (list) and `GET /requests` — the client still
+  returns `[]` for activity, splits and pools behind stale "MISSING BACKEND ENDPOINT" comments.
+  Still genuinely missing: a contacts directory, cashtag search, an escrow orders/trades list and a
+  spray-target read (`escrow.ts` / `spray.ts`). Flipping now would blank those screens. To finish:
+  wire the four existing list reads, add the missing endpoints (or drop the screens), then flip and
+  convert the writes. It is a money module (send/request, splits, pools, escrow, spray) — have
+  `ledger-auditor` review.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -82,11 +141,11 @@ kycverify, property, restaurantmerchant, stayshotelier.
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
 academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, announcements, arena, connect,
-creators, crowdfunding (4 files), crypto, documents, dues, election, emergencies, estateadmin,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, documents, dues, emergencies, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
-social, spotlightwealth, stays, stocks, tasks, transfers, vendors, visitor, plus
+social (see Batch 4 — blocked), spotlightwealth, stays, stocks, tasks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
 sub-folders and missed modules whose flag lives in `api.ts` at the feature root.)

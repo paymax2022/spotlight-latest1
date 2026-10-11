@@ -88,6 +88,7 @@ function normalizeContestPayload(
     categoryQuestionSet: contestCategory,
     rulesText: String(body.rulesText || '').trim(),
     bannerImageUrl: String(body.bannerImageUrl || '').trim(),
+    logoUrl: String(body.logoUrl || '').trim(),
   };
 
   // Only touch the form schema when the caller actually sends one, so a partial

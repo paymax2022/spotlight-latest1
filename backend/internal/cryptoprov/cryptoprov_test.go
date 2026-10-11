@@ -95,11 +95,11 @@ func TestMockConfirmSwapIsIdempotentPerQuote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, err := m.ConfirmSwap(ctx, q.QuoteID)
+	s1, err := m.ConfirmSwap(ctx, "acct", q.QuoteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := m.ConfirmSwap(ctx, q.QuoteID)
+	s2, err := m.ConfirmSwap(ctx, "acct", q.QuoteID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestMockQuoteExpiresAndConfirmFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	q, _ := m.QuoteSwap(ctx, SwapQuoteRequest{From: "USDT", To: "NGN", FromAmount: dec("10")})
 	clock = clock.Add(16 * time.Second)
-	_, err := m.ConfirmSwap(ctx, q.QuoteID)
+	_, err := m.ConfirmSwap(ctx, "acct", q.QuoteID)
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "quote_expired" || !IsDefinitive(err) {
 		t.Fatalf("expired confirm err = %v", err)

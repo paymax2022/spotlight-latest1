@@ -6,8 +6,11 @@ import type {
   RestrictionState,
 } from '../types/visitor.types';
 
-// Flip to false once the real /visitor endpoints land (or set
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VISITOR_USE_MOCK, true);
+// The /api/v1/visitor route handlers (frontend-web/app/api/v1/visitor/**) are live
+// and query real tables — all 40 client calls have a matching handler — so this
+// defaults to live: a forgotten flag fails visibly instead of inventing visitors.
+// Set EXPO_PUBLIC_VISITOR_USE_MOCK=true to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VISITOR_USE_MOCK, false);
 
 // Estate-scoped REST namespace served by the frontend-web API (see api/client).
 // Matches the stable /api/v1 convention used by all frontend-web route handlers.

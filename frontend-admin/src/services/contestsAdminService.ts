@@ -92,6 +92,11 @@ export interface FullContest {
    * render it and fall back to a placeholder tile when it is empty.
    */
   bannerImageUrl?: string;
+  /**
+   * Contest logo, shown on the contest card and header in the mobile app and on
+   * the web. Set by uploadContestLogo().
+   */
+  logoUrl?: string;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {
@@ -262,8 +267,21 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
  * header.
  */
 export async function uploadContestBanner(file: File): Promise<string> {
+  return uploadContestImage(file, 'banner');
+}
+
+/** Upload a contest logo and return the URL to store in `logoUrl`. */
+export async function uploadContestLogo(file: File): Promise<string> {
+  return uploadContestImage(file, 'logo');
+}
+
+// Banner and logo share one endpoint (same admin permission and storage); the
+// `kind` field only selects the key prefix the server stores the file under.
+async function uploadContestImage(file: File, kind: 'banner' | 'logo'): Promise<string> {
+  const label = kind === 'logo' ? 'Uploading logo' : 'Uploading banner';
   const form = new FormData();
   form.append('file', file);
+  form.append('kind', kind);
 
   // No Authorization header here — the same-origin web-proxy attaches the
   // Bearer from the HttpOnly session cookie server-side (multipart bodies must
@@ -272,10 +290,10 @@ export async function uploadContestBanner(file: File): Promise<string> {
     method: 'POST',
     body: form,
   });
-  const json = await readJsonOrThrow(res, 'Uploading banner');
+  const json = await readJsonOrThrow(res, label);
   const upload = (json.upload ?? (json.data as Record<string, unknown> | undefined)?.upload) as
     { url?: string } | undefined;
   const url = upload?.url;
-  if (!url) throw new Error('Uploading banner failed: the server returned no URL');
+  if (!url) throw new Error(`${label} failed: the server returned no URL`);
   return url;
 }

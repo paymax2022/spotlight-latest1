@@ -226,17 +226,16 @@ func (q *quidaxProvider) PriceKobo(ctx context.Context, symbol string) (int64, b
 	if err != nil || code < 200 || code >= 300 {
 		return 0, false
 	}
+	// Observed against the live API: data.<market>.ticker.last, a JSON number. The older
+	// data.ticker.last string shape is still accepted.
 	var out struct {
-		Data struct {
-			Ticker struct {
-				Last string `json:"last"`
-			} `json:"ticker"`
-		} `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if jerr := json.Unmarshal(raw, &out); jerr != nil {
 		return 0, false
 	}
-	naira, perr := strconv.ParseFloat(strings.TrimSpace(out.Data.Ticker.Last), 64)
+	last := tickerLast(out.Data, market)
+	naira, perr := strconv.ParseFloat(last, 64)
 	if perr != nil || naira <= 0 {
 		return 0, false
 	}
@@ -245,6 +244,29 @@ func (q *quidaxProvider) PriceKobo(ctx context.Context, symbol string) (int64, b
 		return 0, false
 	}
 	return kobo, true
+}
+
+// tickerLast extracts the last price text from either ticker response shape.
+func tickerLast(data json.RawMessage, market string) string {
+	var byMarket map[string]struct {
+		Ticker struct {
+			Last json.Number `json:"last"`
+		} `json:"ticker"`
+	}
+	if json.Unmarshal(data, &byMarket) == nil {
+		if m, ok := byMarket[market]; ok {
+			return strings.TrimSpace(m.Ticker.Last.String())
+		}
+	}
+	var legacy struct {
+		Ticker struct {
+			Last json.Number `json:"last"`
+		} `json:"ticker"`
+	}
+	if json.Unmarshal(data, &legacy) == nil {
+		return strings.TrimSpace(legacy.Ticker.Last.String())
+	}
+	return ""
 }
 
 // Broadcast submits an on-chain withdrawal to Quidax. Fail-closed: only a 2xx with a
