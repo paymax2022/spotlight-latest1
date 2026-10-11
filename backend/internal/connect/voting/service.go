@@ -108,6 +108,12 @@ func (s *Service) ListContests(ctx context.Context, limit int) ([]Contest, error
 	return s.repo.ListContests(ctx, limit)
 }
 
+// ListContestsByStatus returns contests in the given stored statuses (open
+// and/or closed). statuses must come from contestStatusFilter.
+func (s *Service) ListContestsByStatus(ctx context.Context, limit int, statuses []string) ([]Contest, error) {
+	return s.repo.ListContestsByStatus(ctx, limit, statuses)
+}
+
 // GetContest returns one contest.
 func (s *Service) GetContest(ctx context.Context, id string) (*Contest, error) {
 	c, err := s.repo.GetContest(ctx, id)
@@ -632,6 +638,7 @@ type Contest struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	RulesText         string     `json:"rules_text,omitempty"`
 	BannerImageURL    string     `json:"banner_image_url,omitempty"`
+	LogoURL           string     `json:"logo_url,omitempty"`
 
 	// Roster/tally summary, populated by the list + detail queries so a client
 	// rendering a contest card does not have to fetch the whole roster to show
