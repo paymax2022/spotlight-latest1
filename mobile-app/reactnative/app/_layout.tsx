@@ -16,6 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AndroidKeyboardAvoider from '@/components/AndroidKeyboardAvoider';
 import ToastHost from '@/components/ToastHost';
 import ConfirmHost from '@/components/ConfirmHost';
+import EmailPromptHost from '@/components/EmailPromptHost';
 import HomeMenuHost from '@/components/HomeMenu';
 import { Colors } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
@@ -288,6 +289,8 @@ function RootLayout() {
         <ToastHost />
         {/* Web renderer for confirmAsync/alertAsync (no-op on native). */}
         <ConfirmHost />
+        {/* "Enter your email" prompt for checkouts the backend answers email_required. */}
+        <EmailPromptHost />
         {/* Global "back to the module grid" hamburger + sheet. Above the
             navigator for the same reason as the toasts: it must outlive screen
             changes, and the floating fallback needs to sit over any screen. */}

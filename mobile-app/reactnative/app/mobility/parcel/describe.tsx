@@ -117,8 +117,9 @@ export default function ParcelDescribeScreen() {
       onCard: async () => {
         await paystackCheckout.start({
           domain: 'parcel',
-          initialize: async () => {
+          initialize: async ({ email }) => {
             const r = await parcelAPI.initiateParcelPaystack({
+              email, // typed at checkout after the server answered email_required; else the registered email is used
               pickup, dropoff, category, size, speed, declaredValueKobo,
               receiverName: receiverName.trim(),
               receiverPhone: receiverPhone.trim(),
