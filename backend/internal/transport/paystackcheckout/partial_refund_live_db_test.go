@@ -40,7 +40,7 @@ type twoDomain struct {
 }
 
 func (d *twoDomain) Name() string            { return "twosettle" }
-func (d *twoDomain) ReferencePrefix() string { return "twosettleorder:" }
+func (d *twoDomain) ReferencePrefix() string { return "twosettleorder-" }
 func (d *twoDomain) RoutePrefix() string     { return "/twosettle/paystack" }
 func (d *twoDomain) EntityIDKey() string     { return "bookingId" }
 func (d *twoDomain) Quote(context.Context, string, json.RawMessage) (Quoted, error) {
@@ -418,7 +418,7 @@ func TestLiveDB_Engine_PieceRefund_RefusesAForeignSettlement(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.CleanupUser(t, r.pool, other)
-	foreign, err := r.settle.EscrowExternal(ctx, other, "twosettle:foreign", "twosettleorder:someoneelse1:deposit", "transport", liveDeposit)
+	foreign, err := r.settle.EscrowExternal(ctx, other, "twosettle:foreign", "twosettleorder-someoneelse1:deposit", "transport", liveDeposit)
 	if err != nil {
 		t.Fatal(err)
 	}

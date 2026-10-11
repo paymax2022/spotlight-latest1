@@ -48,21 +48,21 @@ const goodTowing = `{"service_type":"flatbed","vehicle_type":"sedan","issue_type
 
 func TestTowingDomain_Identity(t *testing.T) {
 	d := NewTowingDomain(&fakeTowing{})
-	if d.Name() != "towing" || d.ReferencePrefix() != "towingorder:" || d.RoutePrefix() != "/towing/paystack" || d.EntityIDKey() != "towingJobId" {
+	if d.Name() != "towing" || d.ReferencePrefix() != "towingorder-" || d.RoutePrefix() != "/towing/paystack" || d.EntityIDKey() != "towingJobId" {
 		t.Fatalf("identity drifted: %s %s %s %s", d.Name(), d.ReferencePrefix(), d.RoutePrefix(), d.EntityIDKey())
 	}
 	// transport.CancelTowing files refunds under the same string.
 	if TowingDomainName != "towing" {
 		t.Fatal("transport.CancelTowing files refunds under \"towing\"")
 	}
-	for _, other := range []string{"rideorder:", "foodorder:", "duespay:", "feespay:", "parcelorder:"} {
+	for _, other := range []string{"rideorder-", "foodorder:", "duespay-", "feespay-", "parcelorder-"} {
 		if strings.HasPrefix(d.ReferencePrefix(), other) || strings.HasPrefix(other, d.ReferencePrefix()) {
 			t.Errorf("prefix collides with %s", other)
 		}
 	}
 	// the prefix must be one the wallet handler refuses
 	if !transport.IsReservedIdempotencyKey(d.ReferencePrefix() + "x") {
-		t.Error("towingorder: must be a reserved wallet-path prefix")
+		t.Error("towingorder- must be a reserved wallet-path prefix")
 	}
 }
 
@@ -102,14 +102,14 @@ func TestTowingDomain_Quote_RejectsBadRequestsBeforePricing(t *testing.T) {
 func TestTowingDomain_Book_PassesNamespacedKeyAndVerifiedAmountThrough(t *testing.T) {
 	f := &fakeTowing{bookID: "j-1"}
 	d := NewTowingDomain(f)
-	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodTowing), json.RawMessage(`{"distanceM":9000}`), "towingorder:k", 845_000)
+	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodTowing), json.RawMessage(`{"distanceM":9000}`), "towingorder-k", 845_000)
 	if err != nil || id != "j-1" {
 		t.Fatal(id, err)
 	}
 	if string(f.bookPrice[0]) != `{"distanceM":9000}` {
 		t.Errorf("frozen pricing not handed to the booker: %s", f.bookPrice[0])
 	}
-	if f.bookIdem[0] != "towingorder:k" || f.bookAmt[0] != 845_000 {
+	if f.bookIdem[0] != "towingorder-k" || f.bookAmt[0] != 845_000 {
 		t.Errorf("idem=%v amt=%v", f.bookIdem, f.bookAmt)
 	}
 	if _, err := d.Book(context.Background(), "u1", json.RawMessage(`{`), nil, "k", 1); err == nil {
@@ -170,13 +170,13 @@ func TestTowingRoutes_CoexistWithWalletTowingRoutes(t *testing.T) {
 		}
 	}
 	w := req("POST", "/mobility/towing/paystack/initiate", goodTowing)
-	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"towingorder:towing-1700000000-abcd1234"`) {
+	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"towingorder-towing-1700000000-abcd1234"`) {
 		t.Errorf("initiate: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}
 	if len(f.quoteReqs) != 1 {
 		t.Fatalf("quotes=%d", len(f.quoteReqs))
 	}
-	w = req("GET", "/mobility/towing/paystack/towingorder:towing-1700000000-abcd1234/status", "")
+	w = req("GET", "/mobility/towing/paystack/towingorder-towing-1700000000-abcd1234/status", "")
 	if w.Code != http.StatusOK || hit != "" || !strings.Contains(w.Body.String(), `"towingJobId":"j-1"`) {
 		t.Errorf("status: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}

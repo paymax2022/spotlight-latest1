@@ -61,8 +61,8 @@ test('the body builder refuses what the server would refuse (before a gateway ro
 
 test('paths and resolver route are service-specific and URL-safe', () => {
   assert.equal(CARHIRE_CARD_DIRECT_BASE, '/mobility/car-hire/paystack');
-  assert.equal(carHireCardDirectStatusPath('carhireorder:abc'), '/mobility/car-hire/paystack/carhireorder%3Aabc/status');
-  assert.equal(carHireCardDirectResolverRoute('carhireorder:abc'), '/mobility/paystack/carhire/carhireorder%3Aabc');
+  assert.equal(carHireCardDirectStatusPath('carhireorder-abc'), '/mobility/car-hire/paystack/carhireorder-abc/status');
+  assert.equal(carHireCardDirectResolverRoute('carhireorder-abc'), '/mobility/paystack/carhire/carhireorder-abc');
   assert.ok(CARD_DIRECT_KEY_RE.test('carhire-paystack-1700000000-abcd1234'));
 });
 

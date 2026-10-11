@@ -163,7 +163,7 @@ export async function initiateCarHirePaystack(
   if (USE_MOCK) {
     await delay(600);
     return {
-      reference: `carhireorder:${req.idempotencyKey}`,
+      reference: `carhireorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: 0,
       status: 'pending',

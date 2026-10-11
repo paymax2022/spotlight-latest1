@@ -56,10 +56,10 @@ test('declared value defaults to integer 0 and gateway fields appear only when g
 
 test('status path url-encodes the reference (it contains a colon)', () => {
   assert.equal(
-    parcelCardDirectStatusPath('parcelorder:parcel-1-abc'),
-    '/mobility/parcels/paystack/parcelorder%3Aparcel-1-abc/status',
+    parcelCardDirectStatusPath('parcelorder-parcel-1-abc'),
+    '/mobility/parcels/paystack/parcelorder-parcel-1-abc/status',
   );
-  assert.equal(parcelCardDirectResolverRoute('parcelorder:k'), '/mobility/paystack/parcel/parcelorder%3Ak');
+  assert.equal(parcelCardDirectResolverRoute('parcelorder-k'), '/mobility/paystack/parcel/parcelorder-k');
 });
 
 test('terminal / failure classification matches the server state machine', () => {
@@ -87,8 +87,8 @@ test('client idempotency keys satisfy the server key pattern', () => {
 });
 
 test('normalizeParcelStatus exposes the domain entity id as parcelId', () => {
-  const s = normalizeParcelStatus({ reference: 'parcelorder:k', status: 'confirmed', amountKobo: 300_000, parcelId: 'p-1' });
-  assert.deepEqual(s, { reference: 'parcelorder:k', status: 'confirmed', amountKobo: 300_000, parcelId: 'p-1' });
+  const s = normalizeParcelStatus({ reference: 'parcelorder-k', status: 'confirmed', amountKobo: 300_000, parcelId: 'p-1' });
+  assert.deepEqual(s, { reference: 'parcelorder-k', status: 'confirmed', amountKobo: 300_000, parcelId: 'p-1' });
 });
 
 test('refunding is non-terminal, non-failure, has honest in-flight copy, and never claims money is back', () => {

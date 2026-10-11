@@ -157,7 +157,7 @@ type FeesChargeConfirmer interface {
 
 // FeesReferencePrefix is the reference prefix fees payment intents use
 // (academy/fees/payment.referenceFor → "feespay:"+idempotencyKey).
-const FeesReferencePrefix = "feespay:"
+const FeesReferencePrefix = "feespay-"
 
 // RestaurantOrderConfirmer is the confirm-and-place entry point for
 // Paystack-funded food orders ("foodorder-" prefix). Impl is
@@ -183,7 +183,7 @@ type RideOrderConfirmer interface {
 
 // RideOrderReferencePrefix is the reference prefix transport ride-checkout
 // intents use (paystackcheckout.referenceFor → "rideorder:"+idempotencyKey).
-const RideOrderReferencePrefix = "rideorder:"
+const RideOrderReferencePrefix = "rideorder-"
 
 // DuesOrderConfirmer is the confirm-and-pay entry point for Paystack-funded
 // estate dues checkouts ("duespay:" prefix). Impl is
@@ -195,7 +195,7 @@ type DuesOrderConfirmer interface {
 
 // DuesOrderReferencePrefix is the reference prefix estate dues-checkout
 // intents use (paystackcheckout.referenceFor → "duespay:"+idempotencyKey).
-const DuesOrderReferencePrefix = "duespay:"
+const DuesOrderReferencePrefix = "duespay-"
 
 // PrefixConfirmer is the GENERIC confirm seam for any module that owns a
 // Paystack reference prefix (Mobility card-direct: "parcelorder:", and every

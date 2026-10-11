@@ -98,7 +98,7 @@ export async function initiateTowingPaystack(
   if (USE_MOCK) {
     await delay(600);
     return {
-      reference: `towingorder:${req.idempotencyKey}`,
+      reference: `towingorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: 0,
       status: 'pending',

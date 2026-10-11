@@ -12,16 +12,16 @@ import { forwardGoOwnedPaystackEvent } from './go-forward';
 //   2. Deciding if the event is relevant (by type/channel/metadata)
 //   3. Deduplicating independently
 // Promise.allSettled ensures all handlers run even if one throws.
-// The seventh entry forwards Go-exclusive events (feespay:/foodorder:/
-// rideorder:/duespay:) to the Go receiver — see go-forward.ts (AUD-INFRA-010).
+// The seventh entry forwards Go-exclusive events (feespay-/foodorder-/
+// rideorder-/duespay-) to the Go receiver — see go-forward.ts (AUD-INFRA-010).
 export async function POST(request: Request) {
   const signature = request.headers.get('x-paystack-signature') || '';
   const rawBody = await request.text();
 
   // 1. The HMAC is verified over the raw body BEFORE any handler dispatches or
   //    go-forward relays. Until now each handler verified independently — which
-  //    meant forwardGoOwnedPaystackEvent sent Go-owned references (feespay:/
-  //    foodorder:/rideorder:/duespay:) to the internal Go receiver with only
+  //    meant forwardGoOwnedPaystackEvent sent Go-owned references (feespay-/
+  //    foodorder-/rideorder-/duespay-) to the internal Go receiver with only
   //    the prefix as the claim signal. A junk-signed payload carrying one of
   //    those prefixes was forwarded, rejected there, and surfaced here as a
   //    500: a 500-vs-200 differential that leaked which prefixes Go owns, plus

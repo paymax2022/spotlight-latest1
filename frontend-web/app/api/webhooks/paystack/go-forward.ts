@@ -11,7 +11,7 @@ import { GO_BACKEND_URL } from '@/src/lib/go-backend';
 // metadata.user_id wallet top-ups are claimed by BOTH planes under different
 // idempotency keys — forwarding them risks double fulfilment. Consolidating
 // that ownership is tracked separately under AUD-INFRA-010.
-const GO_OWNED_REF_PREFIXES = ['feespay:', 'foodorder-', 'rideorder:', 'duespay:'];
+const GO_OWNED_REF_PREFIXES = ['feespay-', 'foodorder-', 'rideorder-', 'duespay-'];
 
 export interface WebhookHandleResult {
   processed: boolean;

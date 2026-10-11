@@ -106,7 +106,7 @@ func TestLiveDB_ParcelCardDirect_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initiate (Tier-0 sender): %v", err)
 	}
-	if co.AmountKobo <= 0 || co.Reference != "parcelorder:"+key {
+	if co.AmountKobo <= 0 || co.Reference != "parcelorder-"+key {
 		t.Fatalf("checkout %+v", co)
 	}
 	r.gw.verify = &provider.PaymentStatus{Status: "success", AmountKobo: co.AmountKobo, Currency: "NGN"}

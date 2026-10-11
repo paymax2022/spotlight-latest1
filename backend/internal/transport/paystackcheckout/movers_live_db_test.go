@@ -124,7 +124,7 @@ func TestLiveDB_MoversCardDirect_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initiate (Tier-0 customer): %v", err)
 	}
-	if co.AmountKobo != moverBidKobo || co.Reference != "moversorder:"+key {
+	if co.AmountKobo != moverBidKobo || co.Reference != "moversorder-"+key {
 		t.Fatalf("checkout %+v — the charge must be the server-read bid, not the client's amount_kobo", co)
 	}
 	r.gw.verify = &provider.PaymentStatus{Status: "success", AmountKobo: co.AmountKobo, Currency: "NGN"}

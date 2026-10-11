@@ -18,7 +18,7 @@ global `AccountSettlement` (payment/scholarship) or the segregated `AccountEdtec
 with per-school attribution via reference + invoice→schedule→school chain.
 
 Applicable cross-cutting (do not repeat): `../cross-cutting/money-invariants.md` (I1–I12 on payment/
-vault/scholarship), `../cross-cutting/webhooks-and-providers.md` (`feespay:` `charge.success`
+vault/scholarship), `../cross-cutting/webhooks-and-providers.md` (`feespay-` `charge.success`
 confirm-and-record), `../cross-cutting/rbac-and-permissions.md` (per-school `RequireScopedPermission`
 scope isolation), `../cross-cutting/authentication.md`, `../cross-cutting/feature-flags-and-audit.md`.
 
@@ -101,7 +101,7 @@ scoring-lock from `results_pending`.
 
 ### 2.15 payment (`RegisterFeesPayment`, ledger+provider-gated) — **MONEY, T3.x**
 `POST /payments/intent` (create intent, `Idempotency-Key`, no move), `POST /payments/installment`
-(SF-6 disclosure gate). Reference = `"feespay:" + idempotencyKey`. Webhook `charge.success` routes to
+(SF-6 disclosure gate). Reference = `"feespay-" + idempotencyKey`. Webhook `charge.success` routes to
 `OnChargeSuccess` (verify fail-closed, amount cross-check, `MoveGuardianToSchool` guardian→settlement,
 `RecordPayment` SF-2) — end-to-end idempotent on the shared key. `payment/reconcile` (SF-8) is a
 read-only nightly drift detector — never auto-corrects money.
@@ -138,7 +138,7 @@ read-only nightly drift detector — never auto-corrects money.
 | Case ID | Title | Priority | Preconditions | Steps | Test data | Expected result |
 |---|---|---|---|---|---|---|
 | `FEES-INT-001` | Issue invoice derives amount + locks schedule | P0 | fee schedule `AmountMinor=50000` | `POST /invoices` | — | Invoice `issued`; balance `50000` derived; schedule `locked=true` (SF-1) |
-| `FEES-INT-002` | Payment intent then webhook confirm | P0 | issued invoice; provider sandbox | `POST /payments/intent` + key, then POST signed `charge.success` (ref `feespay:<key>`) | sandbox | One `MoveGuardianToSchool` (guardian→settlement) + one invoice payment (SF-2); invoice → partially_paid/paid |
+| `FEES-INT-002` | Payment intent then webhook confirm | P0 | issued invoice; provider sandbox | `POST /payments/intent` + key, then POST signed `charge.success` (ref `feespay-<key>`) | sandbox | One `MoveGuardianToSchool` (guardian→settlement) + one invoice payment (SF-2); invoice → partially_paid/paid |
 | `FEES-INT-003` | Vault contribute hits segregated account | P0 | vault owned by guardian, wallet funded | `POST /vaults/:id/contribute {amountMinor}` + key | — | Debit guardian → `edtech_fees_vault`; `saved_minor` derived; auto reach_target at goal |
 | `FEES-INT-004` | Vault apply-to-invoice | P1 | vault `target_reached`; issued invoice | `POST /vaults/:id/apply-to-invoice` + key | — | Records SF-2 invoice payment + one balanced segregated→settlement transfer; vault → applied_to_invoice |
 | `FEES-INT-005` | Scholarship fund then apply | P1 | pledge; sponsor wallet funded; issued invoice | `POST /pledges/:id/fund` + key, then `/apply` + key | — | Funding leg once; award applied via SF-2 payment; state pledged→funded→applied |
@@ -198,7 +198,7 @@ Illegal transitions, terminal re-entry, and idempotent self-loops are asserted r
 
 ## 6. Security & abuse cases
 
-- **Webhook trust:** `feespay:` `charge.success` must verify HMAC, cross-check amount, and be
+- **Webhook trust:** `feespay-` `charge.success` must verify HMAC, cross-check amount, and be
   idempotent on the shared key (`FEES-SEC-001/002/003`, `FEES-INV-001`; see `webhooks-and-providers.md`).
 - **SF-1 immutability / SF-2 derived balance / SF-3 two-approval / SF-5 segregated vault** are release
   blockers — never a raw balance write, never a bypass edge (`FEES-VAL-001`, `FEES-INV-005`,

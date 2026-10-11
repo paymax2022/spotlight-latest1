@@ -47,21 +47,21 @@ const goodMove = `{"job_id":"job-1","bid_id":"bid-1"}`
 
 func TestMoversDomain_Identity(t *testing.T) {
 	d := NewMoversDomain(&fakeMovers{})
-	if d.Name() != "movers" || d.ReferencePrefix() != "moversorder:" || d.RoutePrefix() != "/movers/paystack" || d.EntityIDKey() != "moveId" {
+	if d.Name() != "movers" || d.ReferencePrefix() != "moversorder-" || d.RoutePrefix() != "/movers/paystack" || d.EntityIDKey() != "moveId" {
 		t.Fatalf("identity drifted: %s %s %s %s", d.Name(), d.ReferencePrefix(), d.RoutePrefix(), d.EntityIDKey())
 	}
 	// transport.CancelMover files refunds under this exact string.
 	if MoversDomainName != "movers" {
 		t.Fatal("transport.CancelMover files refunds under \"movers\"")
 	}
-	for _, other := range []string{"rideorder:", "foodorder:", "duespay:", "feespay:", "parcelorder:", "towingorder:", "carhireorder:", "busorder:", "eventorder:"} {
+	for _, other := range []string{"rideorder-", "foodorder:", "duespay-", "feespay-", "parcelorder-", "towingorder-", "carhireorder-", "busorder:", "eventorder:"} {
 		if strings.HasPrefix(d.ReferencePrefix(), other) || strings.HasPrefix(other, d.ReferencePrefix()) {
 			t.Errorf("prefix collides with %s", other)
 		}
 	}
 	// the wallet handler must refuse this namespace
 	if !transport.IsReservedIdempotencyKey(d.ReferencePrefix() + "abc") {
-		t.Error("moversorder: must be a reserved wallet-path prefix")
+		t.Error("moversorder- must be a reserved wallet-path prefix")
 	}
 }
 
@@ -99,11 +99,11 @@ func TestMoversDomain_Quote_RejectsBadRequestsBeforePricing(t *testing.T) {
 func TestMoversDomain_Book_PassesNamespacedKeyFrozenPricingAndVerifiedAmountThrough(t *testing.T) {
 	f := &fakeMovers{bookID: "job-1"}
 	d := NewMoversDomain(f)
-	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodMove), json.RawMessage(`{"bidId":"bid-1"}`), "moversorder:k", 4_500_000)
+	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodMove), json.RawMessage(`{"bidId":"bid-1"}`), "moversorder-k", 4_500_000)
 	if err != nil || id != "job-1" {
 		t.Fatal(id, err)
 	}
-	if string(f.bookPrice[0]) != `{"bidId":"bid-1"}` || f.bookIdem[0] != "moversorder:k" || f.bookAmt[0] != 4_500_000 {
+	if string(f.bookPrice[0]) != `{"bidId":"bid-1"}` || f.bookIdem[0] != "moversorder-k" || f.bookAmt[0] != 4_500_000 {
 		t.Errorf("pricing=%s idem=%v amt=%v", f.bookPrice[0], f.bookIdem, f.bookAmt)
 	}
 	if _, err := d.Book(context.Background(), "u1", json.RawMessage(`{`), nil, "k", 1); err == nil {
@@ -167,13 +167,13 @@ func TestMoversRoutes_CoexistWithWalletMoverRoutes(t *testing.T) {
 		t.Errorf("wallet quote mis-routed: %q", hit)
 	}
 	w := req("POST", "/mobility/movers/paystack/initiate", goodMove)
-	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"moversorder:mover-1700000000-abcd1234"`) {
+	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"moversorder-mover-1700000000-abcd1234"`) {
 		t.Errorf("initiate: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}
 	if len(f.quoteReqs) != 1 {
 		t.Fatalf("quotes=%d", len(f.quoteReqs))
 	}
-	w = req("GET", "/mobility/movers/paystack/moversorder:mover-1700000000-abcd1234/status", "")
+	w = req("GET", "/mobility/movers/paystack/moversorder-mover-1700000000-abcd1234/status", "")
 	if w.Code != http.StatusOK || hit != "" || !strings.Contains(w.Body.String(), `"moveId":"job-1"`) {
 		t.Errorf("status: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}

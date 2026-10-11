@@ -69,7 +69,7 @@ func TestInitiate_FreezesServerQuote_IgnoresClientAmount_StripsGatewayFields(t *
 	if out.AmountKobo != 250_000 || r.gw.initCalls[0].AmountKobo != 250_000 {
 		t.Fatalf("charged %d / %d, want the server quote 250000", out.AmountKobo, r.gw.initCalls[0].AmountKobo)
 	}
-	if out.Reference != "fakeorder:"+key1 || out.Status != StatusPending || out.AuthorizationURL == "" {
+	if out.Reference != "fakeorder-"+key1 || out.Status != StatusPending || out.AuthorizationURL == "" {
 		t.Fatalf("bad checkout %+v", out)
 	}
 	rec, _ := r.st.Get(context.Background(), out.Reference)
@@ -163,7 +163,7 @@ func TestInitiate_Replay_AfterConfirmed_ReturnsTerminalStatusNoGatewayInit(t *te
 	if _, err := r.initiate(t, "u1", key1, `{}`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.e.OnChargeSuccess(context.Background(), "fakeorder:"+key1, ""); err != nil {
+	if _, err := r.e.OnChargeSuccess(context.Background(), "fakeorder-"+key1, ""); err != nil {
 		t.Fatal(err)
 	}
 	out, err := r.initiate(t, "u1", key1, `{}`)
@@ -386,10 +386,10 @@ func TestConfirm_RefundFails_StatusStaysHonest_NotRefunded(t *testing.T) {
 
 func TestConfirm_UnknownReference(t *testing.T) {
 	r := newRig()
-	if _, err := r.e.OnChargeSuccess(context.Background(), "fakeorder:nope0000", ""); !errors.Is(err, ErrUnknownReference) {
+	if _, err := r.e.OnChargeSuccess(context.Background(), "fakeorder-nope0000", ""); !errors.Is(err, ErrUnknownReference) {
 		t.Errorf("got %v", err)
 	}
-	if _, err := r.e.CheckStatus(context.Background(), "fakeorder:nope0000"); !errors.Is(err, ErrUnknownReference) {
+	if _, err := r.e.CheckStatus(context.Background(), "fakeorder-nope0000"); !errors.Is(err, ErrUnknownReference) {
 		t.Errorf("got %v", err)
 	}
 }
@@ -466,7 +466,7 @@ func TestRefundExternal_UnknownEntity(t *testing.T) {
 type otherDomain struct{ fakeDomain }
 
 func (*otherDomain) Name() string            { return "other" }
-func (*otherDomain) ReferencePrefix() string { return "fakeorder:x:" } // overlaps "fakeorder:"
+func (*otherDomain) ReferencePrefix() string { return "fakeorder-x-" } // overlaps "fakeorder-"
 
 func TestRegister_RejectsOverlappingPrefixAndDuplicateName(t *testing.T) {
 	r := newRig()
@@ -538,14 +538,14 @@ func TestHTTP_Status_OwnerOnly_404ForOthers_AndSelfHeals(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatal(w.Body.String())
 	}
-	path := "/m/fakes/paystack/fakeorder:" + key1 + "/status"
+	path := "/m/fakes/paystack/fakeorder-" + key1 + "/status"
 	if w := do(g, "GET", path, "u2", "", ""); w.Code != http.StatusNotFound {
 		t.Errorf("another user's reference must 404 (not 403): %d", w.Code)
 	}
-	if w := do(g, "GET", "/m/fakes/paystack/fakeorder:nope0000/status", "u1", "", ""); w.Code != http.StatusNotFound {
+	if w := do(g, "GET", "/m/fakes/paystack/fakeorder-nope0000/status", "u1", "", ""); w.Code != http.StatusNotFound {
 		t.Errorf("unknown: %d", w.Code)
 	}
-	if w := do(g, "GET", "/m/fakes/paystack/parcelorder:"+key1+"/status", "u1", "", ""); w.Code != http.StatusNotFound {
+	if w := do(g, "GET", "/m/fakes/paystack/parcelorder-"+key1+"/status", "u1", "", ""); w.Code != http.StatusNotFound {
 		t.Errorf("another domain's reference must not resolve here: %d", w.Code)
 	}
 	w = do(g, "GET", path, "u1", "", "")
@@ -559,7 +559,7 @@ func TestHTTP_Status_OwnerOnly_404ForOthers_AndSelfHeals(t *testing.T) {
 
 func TestPrefixesAndConfirmer(t *testing.T) {
 	r := newRig()
-	if p := r.e.Prefixes(); len(p) != 1 || p[0] != "fakeorder:" {
+	if p := r.e.Prefixes(); len(p) != 1 || p[0] != "fakeorder-" {
 		t.Errorf("prefixes %v", p)
 	}
 	ref := paid(t, r)

@@ -90,7 +90,7 @@ func TestLiveDB_BookTowingPaystackFunded_SkipsTierGate_BalancedExternalEscrow(t 
 		t.Fatalf("QuoteTowingBooking = %d, %v", quoted, err)
 	}
 	before := riderWalletBalance(t, ctx, pool, user)
-	key := "towingorder:pftow-" + uuid.New().String()
+	key := "towingorder-pftow-" + uuid.New().String()
 	id, err := svc.BookTowingPaystackFunded(ctx, user, req, key, quoted)
 	if err != nil {
 		t.Fatalf("card-direct must succeed for a Tier-0 user: %v", err)
@@ -135,7 +135,7 @@ func TestLiveDB_BookTowingPaystackFunded_AmountMismatch_NothingWritten(t *testin
 		t.Fatal(err)
 	}
 	for _, wrong := range []int64{quoted - 1, quoted + 1, 0, -quoted} {
-		key := "towingorder:pftow-mm-" + uuid.New().String()
+		key := "towingorder-pftow-mm-" + uuid.New().String()
 		_, err := svc.BookTowingPaystackFunded(ctx, user, req, key, wrong)
 		var ce *CodedError
 		if !errors.As(err, &ce) || ce.Code != CodeAmountMismatch || ce.Status != http.StatusConflict {
@@ -161,7 +161,7 @@ func TestLiveDB_BookTowingPaystackFunded_RefusesInvalidRequestOrMissingKey(t *te
 	}
 	good := liveTowingReq()
 	quoted, _ := svc.QuoteTowingBooking(ctx, good)
-	if _, err := svc.BookTowingPaystackFunded(ctx, user, bad, "towingorder:bad-"+uuid.New().String(), quoted); err == nil {
+	if _, err := svc.BookTowingPaystackFunded(ctx, user, bad, "towingorder-bad-"+uuid.New().String(), quoted); err == nil {
 		t.Error("book must refuse an invalid request before escrowing")
 	}
 	if _, err := svc.BookTowingPaystackFunded(ctx, user, good, "", quoted); err == nil {
@@ -175,7 +175,7 @@ func TestLiveDB_BookTowingPaystackFunded_ReplayBooksOnce_FindScopedToUser(t *tes
 	svc, _, user := paystackRideFixture(t, ctx, pool, 0)
 	req := liveTowingReq()
 	quoted, _ := svc.QuoteTowingBooking(ctx, req)
-	key := "towingorder:pftow-replay-" + uuid.New().String()
+	key := "towingorder-pftow-replay-" + uuid.New().String()
 	a, err := svc.BookTowingPaystackFunded(ctx, user, req, key, quoted)
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestLiveDB_CancelTowing_CardFunded_UsesExternalRefunder_NeverWalletCredit(t
 
 	req := liveTowingReq()
 	quoted, _ := svc.QuoteTowingBooking(ctx, req)
-	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder:pftow-cx-"+uuid.New().String(), quoted)
+	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder-pftow-cx-"+uuid.New().String(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestLiveDB_CancelTowing_CardFunded_NoRefunderFailsClosed_ThenRetryCompletes
 	// Deliberately no SetDomainExternalRefunder.
 	req := liveTowingReq()
 	quoted, _ := svc.QuoteTowingBooking(ctx, req)
-	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder:pftow-nr-"+uuid.New().String(), quoted)
+	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder-pftow-nr-"+uuid.New().String(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestLiveDB_CancelTowing_CardFunded_RefunderFailure_RetryRePosts(t *testing.
 	svc.SetDomainExternalRefunder("towing", fake)
 	req := liveTowingReq()
 	quoted, _ := svc.QuoteTowingBooking(ctx, req)
-	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder:pftow-rf-"+uuid.New().String(), quoted)
+	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder-pftow-rf-"+uuid.New().String(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestLiveDB_BookTowingPaystackFunded_ReplayOverRefundedSettlement_BooksNothi
 	svc, _, user := paystackRideFixture(t, ctx, pool, 0)
 	req := liveTowingReq()
 	quoted, _ := svc.QuoteTowingBooking(ctx, req)
-	key := "towingorder:h2-" + uuid.New().String()
+	key := "towingorder-h2-" + uuid.New().String()
 	id, err := svc.BookTowingPaystackFunded(ctx, user, req, key, quoted)
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +358,7 @@ func TestLiveDB_BookTowingPaystackFunded_ReplayOverForeignOrWalletSettlement_Ref
 		"another payer's escrow": {other, "external"},
 		"wallet-funded escrow":   {user, "wallet"},
 	} {
-		key := "towingorder:h2x-" + uuid.New().String()
+		key := "towingorder-h2x-" + uuid.New().String()
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key, funding_source)
 			VALUES ($1,$2,'transport',$3,$4,'escrowed',now(),$5,$6)`,
@@ -386,8 +386,8 @@ func TestLiveDB_BookTowingPaystackFunded_InsertFailure_ReversesEscrowWhenNoJobOw
 	// Occupy the id the NEXT booking will use with an unrelated job so its
 	// INSERT hits the primary key: a real insert failure with no job under
 	// (user, key).
-	k1 := "towingorder:h5a-" + uuid.New().String()
-	k2 := "towingorder:h5b-" + uuid.New().String()
+	k1 := "towingorder-h5a-" + uuid.New().String()
+	k2 := "towingorder-h5b-" + uuid.New().String()
 	first, err := svc.BookTowingPaystackFunded(ctx, user, req, k1, quoted)
 	if err != nil {
 		t.Fatal(err)
@@ -452,7 +452,7 @@ func TestLiveDB_BookTowingPaystackFunded_PricedFromFrozenInputs_NotARoutingReQue
 	}
 	calls := atomic.LoadInt32(&maps.calls)
 
-	key := "towingorder:h8-" + uuid.New().String()
+	key := "towingorder-h8-" + uuid.New().String()
 	id, err := svc.BookTowingPaystackFundedFrozen(ctx, user, req, key, quoted, frozen)
 	if err != nil {
 		t.Fatalf("a correctly charged job was refused after the route moved: %v", err)
@@ -492,15 +492,15 @@ func TestLiveDB_BookTowingPaystackFunded_FrozenConfigWins_OverLiveConfig(t *test
 
 	// charged = what the frozen (edited) snapshot says → books;
 	// charged = the live price while a snapshot says otherwise → refused.
-	if _, err := svc.BookTowingPaystackFundedFrozen(ctx, user, req, "towingorder:h8c-"+uuid.New().String(), live, edited); err == nil {
+	if _, err := svc.BookTowingPaystackFundedFrozen(ctx, user, req, "towingorder-h8c-"+uuid.New().String(), live, edited); err == nil {
 		t.Error("a charge that doesn't match the frozen snapshot's price must be refused")
 	}
-	k := "towingorder:h8d-" + uuid.New().String()
+	k := "towingorder-h8d-" + uuid.New().String()
 	if _, err := svc.BookTowingPaystackFundedFrozen(ctx, user, req, k, chargedUnderEdited, edited); err != nil {
 		t.Errorf("a charge matching the frozen snapshot must book: %v", err)
 	}
 	// unreadable snapshot: error, never a silent live re-price
-	if _, err := svc.BookTowingPaystackFundedFrozen(ctx, user, req, "towingorder:h8e-"+uuid.New().String(), live, json.RawMessage(`{`)); err == nil {
+	if _, err := svc.BookTowingPaystackFundedFrozen(ctx, user, req, "towingorder-h8e-"+uuid.New().String(), live, json.RawMessage(`{`)); err == nil {
 		t.Error("garbage frozen pricing must fail closed")
 	}
 }
@@ -518,7 +518,7 @@ func TestLiveDB_QuoteTowing_RoadsideWithoutDest_DoesNotRoute(t *testing.T) {
 	if err != nil || q <= 0 {
 		t.Fatalf("roadside quote: %d %v", q, err)
 	}
-	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder:road-"+uuid.New().String(), q)
+	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder-road-"+uuid.New().String(), q)
 	if err != nil {
 		t.Fatalf("roadside book: %v", err)
 	}

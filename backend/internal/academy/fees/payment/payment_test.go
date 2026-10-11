@@ -344,7 +344,7 @@ func TestConfirm_AmountMismatchAborts(t *testing.T) {
 // Unknown reference is a benign no-op signal (not our intent).
 func TestConfirm_UnknownReferenceIsNoOp(t *testing.T) {
 	svc, _, led, inv, _ := newTestService(t, 50000)
-	if _, err := svc.OnChargeSuccess(context.Background(), "feespay:nope", "gw-ref"); !errors.Is(err, ErrUnknownReference) {
+	if _, err := svc.OnChargeSuccess(context.Background(), "feespay-nope", "gw-ref"); !errors.Is(err, ErrUnknownReference) {
 		t.Fatalf("unknown reference must return ErrUnknownReference, got %v", err)
 	}
 	if len(led.moves) != 0 || len(inv.recorded) != 0 {
