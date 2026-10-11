@@ -25,7 +25,32 @@ type Mock struct {
 	swapByQuote map[string]string
 	withdraws   map[string]Withdrawal // keyed by Reference
 	nextID      int
-	faults      map[string]error // keyed by operation name, consumed once
+	faults      map[string]error      // keyed by operation name, consumed once
+	accounts    map[string]AccountRef // keyed by UserRef.UserID
+	created     int
+}
+
+// AccountsCreated counts provider accounts created, to prove a service never makes a second one.
+func (m *Mock) AccountsCreated() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.created
+}
+
+// CreateAccount returns a stable account per platform user, creating it once.
+func (m *Mock) CreateAccount(_ context.Context, u UserRef) (AccountRef, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.take("createaccount"); err != nil {
+		return AccountRef{}, err
+	}
+	if a, ok := m.accounts[u.UserID]; ok {
+		return a, nil
+	}
+	m.created++
+	a := AccountRef{ID: m.newID("acct")}
+	m.accounts[u.UserID] = a
+	return a, nil
 }
 
 // NewMock returns a mock with the given clock. A nil clock uses time.Now.
@@ -43,6 +68,7 @@ func NewMock(name string, now func() time.Time) *Mock {
 		swapByQuote: map[string]string{},
 		withdraws:   map[string]Withdrawal{},
 		faults:      map[string]error{},
+		accounts:    map[string]AccountRef{},
 	}
 }
 
