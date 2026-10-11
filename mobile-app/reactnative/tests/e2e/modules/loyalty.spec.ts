@@ -3,7 +3,7 @@ import { loginAs } from '../helpers/auth';
 import { mockAmbientRequests } from '../helpers/common';
 
 /**
- * Loyalty (Rewards) hub. EXPO_PUBLIC_LOYALTY_USE_MOCK defaults true — the
+ * Loyalty (Rewards) hub. EXPO_PUBLIC_LOYALTY_USE_MOCK is pinned true in playwright.config.ts — the
  * account (6,200 pts balance, Silver tier, 11,550 pts to Gold) and the
  * catalog come from features/loyalty/api.ts, so no endpoint mocks are
  * needed beyond the ambient stubs.

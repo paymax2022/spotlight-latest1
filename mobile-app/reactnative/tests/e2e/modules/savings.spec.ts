@@ -3,7 +3,7 @@ import { loginAs } from '../helpers/auth';
 import { mockAmbientRequests } from '../helpers/common';
 
 /**
- * Savings hub. EXPO_PUBLIC_SAVINGS_USE_MOCK defaults true — summary, vaults,
+ * Savings hub. EXPO_PUBLIC_SAVINGS_USE_MOCK is pinned true in playwright.config.ts — summary, vaults,
  * ajo circles and targets all come from the in-app mock (Rainy Day, Office Ajo…).
  */
 test.describe('Savings E2E - hub', () => {
