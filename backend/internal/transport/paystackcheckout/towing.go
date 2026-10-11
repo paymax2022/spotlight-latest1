@@ -27,7 +27,7 @@ const TowingDomainName = "towing"
 // TowingReferencePrefix: "towingorder:" + Idempotency-Key. Registered with the
 // shared Paystack webhook by prefix; also a reserved wallet-path key prefix
 // (transport.IsReservedIdempotencyKey).
-const TowingReferencePrefix = "towingorder:"
+const TowingReferencePrefix = "towingorder-"
 
 // TowingBooker is the slice of transport.Service the towing adapter uses.
 type TowingBooker interface {

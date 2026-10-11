@@ -51,7 +51,7 @@ const (
 	statusPath   = "/m/parcels/paystack/:reference/status"
 )
 
-var cardDirectPrefixes = []string{"parcelorder:", "towingorder:", "moversorder:", "carhireorder:"}
+var cardDirectPrefixes = []string{"parcelorder-", "towingorder-", "moversorder-", "carhireorder-"}
 
 // every card-direct service: its initiate + status routes.
 var cardDirectServices = map[string][2]string{

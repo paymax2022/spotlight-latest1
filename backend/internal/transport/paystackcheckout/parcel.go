@@ -28,7 +28,7 @@ const ParcelDomainName = "parcel"
 
 // ParcelReferencePrefix: "parcelorder:" + Idempotency-Key. Registered with
 // the shared Paystack webhook by prefix.
-const ParcelReferencePrefix = "parcelorder:"
+const ParcelReferencePrefix = "parcelorder-"
 
 // ParcelBooker is the slice of transport.Service the parcel adapter uses.
 type ParcelBooker interface {

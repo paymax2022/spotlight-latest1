@@ -38,7 +38,7 @@ func TestRefundExternalByKeyPrefix_ReversesFareAndDeposit_NotOtherKeys(t *testin
 	}
 	testsupport.CleanupUser(t, pool, payer)
 
-	ref := "carhireorder:pfx" + uuid.NewString()[:10]
+	ref := "carhireorder-pfx" + uuid.NewString()[:10]
 	tag := uuid.NewString()[:12] // unique settlement references: ledger_entries persist across runs
 	fareRef, depRef := "carhire:a"+tag, "carhire:a"+tag+":deposit"
 	other := ref + "9" // shares the string prefix but is a DIFFERENT reference
@@ -83,7 +83,7 @@ func TestRefundExternalByKeyPrefix_ReversesFareAndDeposit_NotOtherKeys(t *testin
 		t.Errorf("replay posted extra ledger rows: %d entries for the fare reversal, want 2", n)
 	}
 	// Nothing escrowed under a prefix is a no-op, not an error.
-	if err := svc.RefundExternalByKeyPrefix(ctx, "carhireorder:never"+uuid.NewString()[:8], "x"); err != nil {
+	if err := svc.RefundExternalByKeyPrefix(ctx, "carhireorder-never"+uuid.NewString()[:8], "x"); err != nil {
 		t.Errorf("empty prefix: %v", err)
 	}
 }
@@ -100,11 +100,11 @@ func TestRefundExternalByKeyPrefix_UnderscoreIsNotAWildcard(t *testing.T) {
 
 	tag := uuid.NewString()[:8]
 	// "ab_c" as a LIKE pattern would also match "abXc:fare".
-	victim, err := svc.EscrowExternal(ctx, payer, "carhire:v", "carhireorder:"+tag+"abXc:fare", "transport", 50)
+	victim, err := svc.EscrowExternal(ctx, payer, "carhire:v", "carhireorder-"+tag+"abXc:fare", "transport", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RefundExternalByKeyPrefix(ctx, "carhireorder:"+tag+"ab_c", "unit"); err != nil {
+	if err := svc.RefundExternalByKeyPrefix(ctx, "carhireorder-"+tag+"ab_c", "unit"); err != nil {
 		t.Fatal(err)
 	}
 	if statusOf(t, svc, victim.ID) != settlement.StatusEscrowed {
@@ -121,7 +121,7 @@ func TestRefundExternalByKeyPrefix_WalletFundedUnderPrefixIsRefused(t *testing.T
 		t.Fatal(err)
 	}
 	testsupport.CleanupUser(t, pool, payer)
-	ref := "carhireorder:w" + uuid.NewString()[:10]
+	ref := "carhireorder-w" + uuid.NewString()[:10]
 	id := uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key, funding_source)
 		VALUES ($1,'carhire:w','transport',$2,10,'escrowed',now(),$3,'wallet')`, id, payer, ref+":fare"); err != nil {

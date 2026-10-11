@@ -92,7 +92,11 @@ var (
 
 // idempotencyKeyRE bounds what may become part of a Paystack reference and the
 // /transaction/verify/<reference> URL path. Paystack documents alphanumerics
-// and - . = only (the domain prefix adds the single ':' separator).
+// and - . = only. The domain prefix therefore ends in a single '-' separator,
+// never ':' (Paystack answers ':' with "Invalid character in transaction
+// reference").
+var referencePrefixRE = regexp.MustCompile(`^[a-z0-9]+-$`)
+
 var idempotencyKeyRE = regexp.MustCompile(`^[A-Za-z0-9._=-]{8,100}$`)
 
 // Domain is the adapter a Mobility service implements to ride the shared
@@ -342,8 +346,8 @@ func (e *Engine) SetInitiateEnabled(domainName string, enabled bool) {
 func (e *Engine) Register(d Domain) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if d.Name() == "" || d.ReferencePrefix() == "" || !strings.HasSuffix(d.ReferencePrefix(), ":") {
-		panic("paystackcheckout: domain needs a name and a ':'-terminated reference prefix")
+	if d.Name() == "" || d.ReferencePrefix() == "" || !referencePrefixRE.MatchString(d.ReferencePrefix()) {
+		panic("paystackcheckout: domain needs a name and a '-'-terminated reference prefix (Paystack refuses ':' in a reference)")
 	}
 	if _, dup := e.domains[d.Name()]; dup {
 		panic("paystackcheckout: duplicate domain " + d.Name())

@@ -27,18 +27,18 @@ func charge(t *testing.T, ref string) json.RawMessage {
 func TestRegisterPrefixConfirmer_RoutesByPrefix(t *testing.T) {
 	h := &PaystackHandler{}
 	parcel, bus := &recConfirmer{}, &recConfirmer{}
-	h.RegisterPrefixConfirmer("parcelorder:", parcel)
+	h.RegisterPrefixConfirmer("parcelorder-", parcel)
 	h.RegisterPrefixConfirmer("busorder:", bus)
 	h.RegisterPrefixConfirmer("", &recConfirmer{}) // ignored
 	h.RegisterPrefixConfirmer("x:", nil)           // ignored
 
-	if err := h.handleChargeSuccess(context.Background(), charge(t, "parcelorder:abc")); err != nil {
+	if err := h.handleChargeSuccess(context.Background(), charge(t, "parcelorder-abc")); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.handleChargeSuccess(context.Background(), charge(t, "busorder:def")); err != nil {
 		t.Fatal(err)
 	}
-	if len(parcel.refs) != 1 || parcel.refs[0] != "parcelorder:abc" || len(bus.refs) != 1 || bus.refs[0] != "busorder:def" {
+	if len(parcel.refs) != 1 || parcel.refs[0] != "parcelorder-abc" || len(bus.refs) != 1 || bus.refs[0] != "busorder:def" {
 		t.Errorf("parcel=%v bus=%v", parcel.refs, bus.refs)
 	}
 	if len(h.prefixConfirmers) != 2 {
@@ -54,7 +54,7 @@ func TestRegisterPrefixConfirmer_LegacyPrefixesStillWin(t *testing.T) {
 	h.RegisterPrefixConfirmer(RideOrderReferencePrefix, hijack)
 	ride := &recConfirmer{}
 	h.SetRideOrderConfirmer(ride)
-	if err := h.handleChargeSuccess(context.Background(), charge(t, "rideorder:k")); err != nil {
+	if err := h.handleChargeSuccess(context.Background(), charge(t, "rideorder-k")); err != nil {
 		t.Fatal(err)
 	}
 	if len(ride.refs) != 1 || len(hijack.refs) != 0 {

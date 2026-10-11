@@ -34,15 +34,15 @@ test('a body cannot be built without a job and a bid', () => {
 test('status path url-encodes the reference (it contains a colon) under the movers base', () => {
   assert.equal(MOVERS_CARD_DIRECT_BASE, '/mobility/movers/paystack');
   assert.equal(
-    moversCardDirectStatusPath('moversorder:mov-paystack-1-abc'),
-    '/mobility/movers/paystack/moversorder%3Amov-paystack-1-abc/status',
+    moversCardDirectStatusPath('moversorder-mov-paystack-1-abc'),
+    '/mobility/movers/paystack/moversorder-mov-paystack-1-abc/status',
   );
 });
 
 test('resolver route encodes the reference and matches the app/ route file', () => {
   assert.equal(
-    moversCardDirectResolverRoute('moversorder:mov-paystack-1-abc'),
-    '/mobility/paystack/movers/moversorder%3Amov-paystack-1-abc',
+    moversCardDirectResolverRoute('moversorder-mov-paystack-1-abc'),
+    '/mobility/paystack/movers/moversorder-mov-paystack-1-abc',
   );
 });
 

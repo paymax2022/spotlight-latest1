@@ -97,7 +97,7 @@ var (
 // package (mirrors restaurant/paystackcheckout.ReferencePrefix's "foodorder:"
 // idiom). The shared webhook pipeline dispatches charge.success events
 // carrying this prefix here instead of the wallet/VA path.
-const ReferencePrefix = "rideorder:"
+const ReferencePrefix = "rideorder-"
 
 func referenceFor(idempotencyKey string) string { return ReferencePrefix + idempotencyKey }
 

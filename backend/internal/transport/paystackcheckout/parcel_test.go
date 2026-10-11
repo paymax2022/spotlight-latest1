@@ -48,7 +48,7 @@ const goodParcel = `{"pickup":{"lat":6.5,"lng":3.4,"address":"A"},"dropoff":{"la
 
 func TestParcelDomain_Identity(t *testing.T) {
 	d := NewParcelDomain(&fakeParcels{})
-	if d.Name() != "parcel" || d.ReferencePrefix() != "parcelorder:" || d.RoutePrefix() != "/parcels/paystack" || d.EntityIDKey() != "parcelId" {
+	if d.Name() != "parcel" || d.ReferencePrefix() != "parcelorder-" || d.RoutePrefix() != "/parcels/paystack" || d.EntityIDKey() != "parcelId" {
 		t.Fatalf("identity drifted: %s %s %s %s", d.Name(), d.ReferencePrefix(), d.RoutePrefix(), d.EntityIDKey())
 	}
 	// The refund registry key transport files parcel refunds under must be the
@@ -58,7 +58,7 @@ func TestParcelDomain_Identity(t *testing.T) {
 	}
 	// Prefix must not collide with the ride/food/dues/fees prefixes the shared
 	// webhook already routes.
-	for _, other := range []string{"rideorder:", "foodorder:", "duespay:", "feespay:"} {
+	for _, other := range []string{"rideorder-", "foodorder:", "duespay-", "feespay-"} {
 		if strings.HasPrefix(d.ReferencePrefix(), other) || strings.HasPrefix(other, d.ReferencePrefix()) {
 			t.Errorf("prefix collides with %s", other)
 		}
@@ -100,14 +100,14 @@ func TestParcelDomain_Quote_RejectsBadRequestsBeforePricing(t *testing.T) {
 func TestParcelDomain_Book_PassesNamespacedKeyAndVerifiedAmountThrough(t *testing.T) {
 	f := &fakeParcels{bookID: "p-1"}
 	d := NewParcelDomain(f)
-	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodParcel), json.RawMessage(`{"distanceM":9000}`), "parcelorder:k", 345_000)
+	id, err := d.Book(context.Background(), "u1", json.RawMessage(goodParcel), json.RawMessage(`{"distanceM":9000}`), "parcelorder-k", 345_000)
 	if err != nil || id != "p-1" {
 		t.Fatal(id, err)
 	}
 	if string(f.bookPrice[0]) != `{"distanceM":9000}` {
 		t.Errorf("frozen pricing not handed to the booker: %s", f.bookPrice[0])
 	}
-	if f.bookIdem[0] != "parcelorder:k" || f.bookAmt[0] != 345_000 {
+	if f.bookIdem[0] != "parcelorder-k" || f.bookAmt[0] != 345_000 {
 		t.Errorf("idem=%v amt=%v", f.bookIdem, f.bookAmt)
 	}
 	if _, err := d.Book(context.Background(), "u1", json.RawMessage(`{`), nil, "k", 1); err == nil {
@@ -157,13 +157,13 @@ func TestParcelRoutes_CoexistWithWalletParcelRoutes(t *testing.T) {
 		t.Errorf("wallet cancel mis-routed: %q %d", hit, w.Code)
 	}
 	w := req("POST", "/mobility/parcels/paystack/initiate", goodParcel)
-	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"parcelorder:parcel-1700000000-abcd1234"`) {
+	if w.Code != http.StatusCreated || hit != "" || !strings.Contains(w.Body.String(), `"reference":"parcelorder-parcel-1700000000-abcd1234"`) {
 		t.Errorf("initiate: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}
 	if len(f.quoteReqs) != 1 {
 		t.Fatalf("quotes=%d", len(f.quoteReqs))
 	}
-	w = req("GET", "/mobility/parcels/paystack/parcelorder:parcel-1700000000-abcd1234/status", "")
+	w = req("GET", "/mobility/parcels/paystack/parcelorder-parcel-1700000000-abcd1234/status", "")
 	if w.Code != http.StatusOK || hit != "" || !strings.Contains(w.Body.String(), `"parcelId":"p-1"`) {
 		t.Errorf("status: %d hit=%q %s", w.Code, hit, w.Body.String())
 	}

@@ -109,11 +109,16 @@ func NewService(gateway Gateway, ledger LedgerMover, invoice InvoiceRecorder, in
 	return &Service{gateway: gateway, ledger: ledger, invoice: invoice, intents: intents}
 }
 
+// ReferencePrefix is the namespace of every fees checkout reference; the shared
+// webhook pipeline routes charge.success events carrying it here. "-" not ":" —
+// Paystack refuses a ":" in a transaction reference.
+const ReferencePrefix = "feespay-"
+
 // referenceFor derives our deterministic gateway reference from the idempotency key so a retried
 // intent (same key) reuses the same reference — the gateway then treats the re-initialization as
 // the same session, and the confirmation resolves back to one intent.
 func referenceFor(idempotencyKey string) string {
-	return "feespay:" + idempotencyKey
+	return ReferencePrefix + idempotencyKey
 }
 
 // CreatePaymentIntent starts a full-invoice checkout session. It calls the injected Gateway to

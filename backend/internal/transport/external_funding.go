@@ -39,6 +39,10 @@ import (
 var reservedIdempotencyPrefixes = []string{
 	"parcelorder:", "rideorder:", "foodorder:", "foodorder-", "duespay:", "feespay:",
 	"towingorder:", "moversorder:", "carhireorder:", "busorder:", "eventorder:",
+	// The "-" forms: Paystack refuses ":" in a reference, so the live prefixes are
+	// these. The ":" forms above stay reserved (old rows, old clients).
+	"parcelorder-", "rideorder-", "duespay-", "feespay-",
+	"towingorder-", "moversorder-", "carhireorder-", "busorder-", "eventorder-",
 }
 
 // IsReservedIdempotencyKey reports whether a WALLET-path idempotency key lies in

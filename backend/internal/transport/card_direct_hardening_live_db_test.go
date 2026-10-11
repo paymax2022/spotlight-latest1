@@ -24,7 +24,7 @@ func TestLiveDB_BookParcelPaystackFunded_ReplayOverRefundedSettlement_BooksNothi
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := "parcelorder:h2-" + uuid.New().String()
+	key := "parcelorder-h2-" + uuid.New().String()
 	id, err := svc.BookParcelPaystackFunded(ctx, sender, req, key, quoted)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestLiveDB_BookParcelPaystackFunded_ReplayOverForeignOrWalletSettlement_Ref
 		"another payer's escrow": {other, "external"},
 		"wallet-funded escrow":   {sender, "wallet"},
 	} {
-		key := "parcelorder:h2x-" + uuid.New().String()
+		key := "parcelorder-h2x-" + uuid.New().String()
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key, funding_source)
 			VALUES ($1,$2,'transport',$3,$4,'escrowed',now(),$5,$6)`,
@@ -94,8 +94,8 @@ func TestLiveDB_BookParcelPaystackFunded_InsertFailure_ReversesEscrowWhenNoParce
 	// Occupy the id the NEXT booking will use (deterministic per key) with an
 	// unrelated parcel so its INSERT hits the primary key: a real insert failure
 	// with no parcel under (sender, key).
-	k1 := "parcelorder:h5a-" + uuid.New().String()
-	k2 := "parcelorder:h5b-" + uuid.New().String()
+	k1 := "parcelorder-h5a-" + uuid.New().String()
+	k2 := "parcelorder-h5b-" + uuid.New().String()
 	first, err := svc.BookParcelPaystackFunded(ctx, sender, req, k1, quoted)
 	if err != nil {
 		t.Fatal(err)
