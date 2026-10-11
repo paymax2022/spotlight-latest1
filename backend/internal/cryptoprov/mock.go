@@ -77,6 +77,17 @@ func (m *Mock) CompleteSwap(swapID string, status SwapStatus) error {
 	return nil
 }
 
+// SetSwapAmount overrides the received amount of an existing swap, to test how a
+// service treats a provider that reports completion with a zero amount.
+func (m *Mock) SetSwapAmount(swapID string, amt decimal.Decimal) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.swaps[swapID]; ok {
+		s.ToAmt = amt
+		m.swaps[swapID] = s
+	}
+}
+
 // CompleteWithdrawal moves a withdrawal to a terminal status.
 func (m *Mock) CompleteWithdrawal(reference string, status WithdrawalStatus) error {
 	m.mu.Lock()
