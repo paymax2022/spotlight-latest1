@@ -1459,12 +1459,16 @@ func decideStuckPaystack(legs *moneyLegs, cardLedgerOn bool) stuckPaystackAction
 // frontend-web worker reads this exact shape (vend_retry) and fails closed to manual
 // review on an unreadable clock, so the time must be a real RFC3339 instant.
 func vendRetryMetadata(basis, lastError string) json.RawMessage {
+	now := time.Now().UTC().Format(time.RFC3339)
 	b, _ := json.Marshal(map[string]any{
 		"vend_retry": map[string]any{
 			"state":           "retrying",
 			"basis":           basis,
 			"attempts":        0,
-			"first_failed_at": time.Now().UTC().Format(time.RFC3339),
+			"first_failed_at": now,
+			// The first retry waits one gap, so a writer that merely stalled can
+			// wake and finish its own vend before a second vend can race it.
+			"last_attempt_at": now,
 			"last_error":      lastError,
 		},
 	})

@@ -62,12 +62,17 @@ activate the wallet.**
 ## "Active wallet" (definition used; confirm)
 
 Wallets are ledger accounts created on first credit; there is no activation state in the
-schema. So "active" is defined on the customer's *account*: `platform_users.status = 'active'`
-and not deleted. `pending`, `locked`, `suspended` and deleted accounts are inactive. A customer
-with no `platform_users` row cannot be proven inactive and is treated as active, so a data gap
-never withholds a refund. A lookup *error* skips the row for that cycle rather than deciding
-blind. The definition is one function (`hasActiveWallet`) if the product means something else
-(e.g. KYC tier or a provisioned virtual account).
+schema, so "active" is defined on the customer's *account* (`platform_users`, looked up by auth
+user id first — phone-only customers have no email — then by email):
+
+- **Not active:** `suspended`, `pending`, or deleted.
+- **Active:** `active`, and **`locked`**. A login lockout is a brute-force guard on sign-in, can be
+  triggered by someone else, and a credit to the customer's own wallet is safe.
+- **No row:** cannot be proven inactive, so it counts as active; a data gap never withholds a
+  refund. A lookup *error* skips the row for that cycle rather than deciding blind.
+
+It is one function (`hasActiveWallet`) if the product means something else (KYC tier, a provisioned
+virtual account).
 
 ## Consequences
 
@@ -80,7 +85,23 @@ blind. The definition is one function (`hasActiveWallet`) if the product means s
   dedicated admin screen yet. The "held" email is sent once; there is no reminder cadence.
 - Wallet-sourced bills keep their immediate reversal (stricter for the customer).
 
-## Known residuals (independent ledger review of the first draft; none blocking)
+## Independent review of this rework (no blocker, no high) — findings fixed
+
+- **Late collect then refund = 2X (MEDIUM).** A collect that lands after a sweeper opened the window
+  leaves collect-without-spend at refund time; the worker now retains (the customer already holds X)
+  like every other compensator.
+- **Requery-confirmed failure ended in manual review (MEDIUM).** A real-provider-reference requery that
+  says "failed" now records `ambiguity_resolved_through`, so the earlier pending/timeout attempt it
+  resolved no longer reads as "may have vended". Attempts made after the verdict still do.
+- **"Active wallet" held legitimate customers (MEDIUM).** Looked up by id, and `locked` is active (above).
+- **Crash between the settle write and the marker (MEDIUM).** The writer's marker is now in the same
+  write as the settle. The sweeper path still writes the marker after its claim; a crash in that
+  single gap leaves a `failed` row with no marker (the same hole the pre-PR code had around refunds).
+- Also: a sweeper-opened window waits one gap before its first retry; a re-failure keeps the original
+  30-minute clock; lookups happen only when the decision needs them, so a failing auth lookup cannot
+  block a retry.
+
+## Known residuals (none blocking)
 
 - **Late ledger call (LOW).** A ledger call that itself hangs >= 10 minutes can land one late
   leg after a claim (alerted). Bounding the call with a timeout is a follow-up.

@@ -36,10 +36,12 @@ export interface FakeOptions {
   dropVendRetryWrite?: boolean;
   /** Existing provider attempts, returned by the attempts list query. */
   attempts?: Row[];
-  /** platform_users rows keyed by lower-case email. */
+  /** platform_users rows keyed by auth user id OR lower-case email. */
   platformUsers?: Record<string, Row>;
   /** auth user emails keyed by user id. */
   authEmails?: Record<string, string>;
+  /** Make the auth admin lookup fail (an admin-API blip / deleted auth user). */
+  authLookupFails?: boolean;
 }
 
 /** Reads `a->b->>c` style paths (PostgREST JSON filters) from a row. */
@@ -86,8 +88,8 @@ export function makeFakeSupabase(opts: FakeOptions = {}) {
           return { data: rows.length <= 1 ? (rows[0] ?? null) : rows, error: null };
         }
         case 'platform_users': {
-          const email = String(s.f.email ?? '');
-          const row = opts.platformUsers?.[email];
+          const key = String(s.f.id ?? s.f.email ?? '');
+          const row = opts.platformUsers?.[key];
           return { data: asList ? (row ? [row] : []) : (row ?? null), error: null };
         }
         case 'utility_billers': return { data: s.f.id === BILLER.id ? BILLER : null, error: null };
@@ -146,6 +148,7 @@ export function makeFakeSupabase(opts: FakeOptions = {}) {
     auth: {
       admin: {
         getUserById: vi.fn(async (id: string) => {
+          if (opts.authLookupFails) return { data: { user: null }, error: { message: 'auth admin unavailable' } };
           const email = opts.authEmails?.[id];
           return { data: { user: email ? { id, email } : null }, error: null };
         }),

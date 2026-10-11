@@ -8,6 +8,8 @@
 // vend-retry-worker.spec.ts.
 import { describe, expect, it } from 'vitest';
 import {
+  buildVendRetryMeta,
+  unresolvedAttempts,
   VEND_REFUND_AFTER_MS,
   VEND_RETRY_GAP_MS,
   decideVendRetryAction,
@@ -86,5 +88,53 @@ describe('decideVendRetryAction', () => {
     for (const state of ['vended', 'refunded', 'manual_review'] as const) {
       expect(decideVendRetryAction({ ...base, meta: meta({ state }), nowMs: at(VEND_REFUND_AFTER_MS * 2) })).toBe('done');
     }
+  });
+});
+
+describe('buildVendRetryMeta', () => {
+  const NOW = '2026-10-12T10:00:00.000Z';
+
+  it('a writer-confirmed failure starts the clock now and counts the attempt it just made', () => {
+    const m = buildVendRetryMeta({ basis: 'provider_failed', reason: 'declined', nowIso: NOW });
+    expect(m).toMatchObject({ state: 'retrying', first_failed_at: NOW, attempts: 1, last_attempt_at: NOW, basis: 'provider_failed' });
+  });
+
+  it('a sweeper window starts with attempts 0 but waits one gap before the first retry', () => {
+    const m = buildVendRetryMeta({ basis: 'stuck_recovery', reason: 'stuck', nowIso: NOW });
+    expect(m.attempts).toBe(0);
+    expect(m.last_attempt_at).toBe(NOW);
+    expect(decideVendRetryAction({ ...base, meta: m, nowMs: Date.parse(NOW) + VEND_RETRY_GAP_MS - 1 })).toBe('wait');
+    expect(decideVendRetryAction({ ...base, meta: m, nowMs: Date.parse(NOW) + VEND_RETRY_GAP_MS })).toBe('retry');
+  });
+
+  it('a re-failure keeps the ORIGINAL clock and attempts — the 30 minutes never restart', () => {
+    const first = '2026-10-12T09:00:00.000Z';
+    const m = buildVendRetryMeta({
+      basis: 'stuck_recovery', reason: 'again', nowIso: NOW,
+      existing: { state: 'retrying', first_failed_at: first, attempts: 4 },
+    });
+    expect(m.first_failed_at).toBe(first);
+    expect(m.attempts).toBe(4);
+  });
+
+  it('an unreadable prior clock is not trusted: the window restarts rather than refunding at once', () => {
+    const m = buildVendRetryMeta({ basis: 'stuck_recovery', reason: 'x', nowIso: NOW, existing: { first_failed_at: 'garbage', attempts: 9 } });
+    expect(m.first_failed_at).toBe(NOW);
+  });
+
+  it('records which attempts an authoritative provider verdict resolved', () => {
+    expect(buildVendRetryMeta({ basis: 'stuck_recovery', reason: 'x', nowIso: NOW, resolvedThrough: 3 }).ambiguity_resolved_through).toBe(3);
+    expect(buildVendRetryMeta({ basis: 'stuck_recovery', reason: 'x', nowIso: NOW }).ambiguity_resolved_through).toBeUndefined();
+  });
+});
+
+describe('unresolvedAttempts', () => {
+  const attempts = [{ attempt_number: 1 }, { attempt_number: 2 }, { attempt_number: 3 }];
+  it('without a verdict every attempt counts', () => {
+    expect(unresolvedAttempts(attempts, {})).toHaveLength(3);
+  });
+  it('a verdict resolves the attempts up to it and no later ones', () => {
+    expect(unresolvedAttempts(attempts, { ambiguity_resolved_through: 2 }).map((a) => a.attempt_number)).toEqual([3]);
+    expect(unresolvedAttempts(attempts, { ambiguity_resolved_through: 3 })).toHaveLength(0);
   });
 });

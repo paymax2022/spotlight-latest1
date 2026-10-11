@@ -85,6 +85,7 @@ func TestVendRetryPatchMetadata(t *testing.T) {
 			Basis         string `json:"basis"`
 			Attempts      int    `json:"attempts"`
 			FirstFailedAt string `json:"first_failed_at"`
+			LastAttemptAt string `json:"last_attempt_at"`
 			LastError     string `json:"last_error"`
 		} `json:"vend_retry"`
 	}
@@ -100,5 +101,11 @@ func TestVendRetryPatchMetadata(t *testing.T) {
 	ts, err := time.Parse(time.RFC3339, v.FirstFailedAt)
 	if err != nil || ts.Before(before) {
 		t.Fatalf("first_failed_at = %q (%v) must be a current RFC3339 time", v.FirstFailedAt, err)
+	}
+	// A sweeper-opened window waits one gap before its first retry (a writer that
+	// merely stalled can wake and vend first), so last_attempt_at starts at the same
+	// instant — exactly as the TS buildVendRetryMeta does.
+	if v.LastAttemptAt != v.FirstFailedAt {
+		t.Fatalf("last_attempt_at = %q, want %q", v.LastAttemptAt, v.FirstFailedAt)
 	}
 }

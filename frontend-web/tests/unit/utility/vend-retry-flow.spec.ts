@@ -151,15 +151,34 @@ describe('writer: a confirmed failed vend starts the retry window — nothing is
     expect(creditKeys()).toEqual([`utility:${transaction.id}:CARD_COLLECT`]);
   });
 
-  it('a retry-state write that is lost is loud, never silent, and still refunds nothing', async () => {
-    wire(makeFakeSupabase({ dropVendRetryWrite: true }));
+  it('the settle and the retry marker land in ONE write, so a crash between them cannot orphan the row', async () => {
+    wire(makeFakeSupabase());
     adapterSequence(['failed']);
     await payUtility(USER_ID, input('idem-w-3'));
+    const updates = (fake.from as any).mock.results
+      .map((r: any) => r.value)
+      .flatMap((b: any) => (b.update?.mock?.calls ?? []).map((c: any[]) => c[0]));
+    // The settle write is the one that records the provider outcome (provider_id).
+    const settleWrite = updates.find((u: any) => u?.status === 'failed' && 'provider_id' in u);
+    expect(settleWrite).toBeDefined();
+    expect(settleWrite.metadata?.vend_retry).toMatchObject({ state: 'retrying', attempts: 1 });
+  });
+
+  it('a retry marker that could not be saved (sweeper path) is loud, never silent, and refunds nothing', async () => {
+    const f = makeFakeSupabase({ dropVendRetryWrite: true, transactions: [{
+      id: 'tx-u', user_id: USER_ID, payment_source: 'paystack', status: 'wallet_debited', retail_amount_kobo: 500_000,
+      receipt_number: 'R-tx-u', category: 'airtime', idempotency_key: 'k-tx-u', biller_id: BILLER.id, product_id: PRODUCT.id,
+      customer_reference: '+2348011111111', metadata: { payment_reference: 'UTIL_PAY_REF_1' },
+      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+    }] });
+    wire(f); seed(f, 'tx-u');
+    await requeryUtilityTransaction(f.txs.get('tx-u') as any);
     expect(eventTypes()).toContain('vend_retry_unrecorded');
     expect(vi.mocked(queueUtilityAdminAlert)).toHaveBeenCalledWith(
       expect.objectContaining({ audience: 'finance', title: expect.stringMatching(/could not be recorded/i) }),
     );
     expect(reverseWalletDebit).not.toHaveBeenCalled();
+    expect(creditWallet).not.toHaveBeenCalled();
   });
 });
 
@@ -308,8 +327,8 @@ describe('cron worker: 30 minutes after vending first failed', () => {
     expect(fake.txs.get('tx-i')!.metadata.vend_retry.state).toBe('refunded');
   });
 
-  it('a suspended, locked or deleted account has no active wallet', async () => {
-    for (const [i, u] of [{ status: 'suspended', deleted_at: null }, { status: 'locked', deleted_at: null }, { status: 'active', deleted_at: '2026-01-01' }].entries()) {
+  it('a suspended or deleted account has no active wallet (a login lockout does not count — see below)', async () => {
+    for (const [i, u] of [{ status: 'suspended', deleted_at: null }, { status: 'active', deleted_at: '2026-01-01' }].entries()) {
       vi.clearAllMocks();
       wire(makeFakeSupabase({ authEmails: { [USER_ID]: EMAIL }, platformUsers: { [EMAIL]: u }, transactions: [retryRow(`tx-n${i}`)] }));
       seed(fake, `tx-n${i}`);
@@ -523,5 +542,132 @@ describe('flag OFF keeps today\'s immediate automatic refund (nothing changes un
     expect(creditKeys()).toEqual([`utility:${transaction.id}:PAYSTACK_REFUND`]);
     expect(transaction.status).toBe('reversed');
     expect(fake.txs.get(transaction.id)!.metadata?.vend_retry).toBeUndefined();
+  });
+});
+
+describe('review fix: a collect that landed late is never refunded a second time', () => {
+  it('collect posted, spend never did, window open at 30 minutes: the customer already holds X — no credit', async () => {
+    wire(makeFakeSupabase({ authEmails: { [USER_ID]: EMAIL }, platformUsers: activeUser, transactions: [retryRow('tx-q')] }));
+    seed(fake, 'tx-q', ['COLLECT']); // collect only
+    adapterSequence(['failed']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_REFUND_AFTER_MS));
+    await runUtilityVendRetries({ limit: 10 });
+
+    expect(creditWallet).not.toHaveBeenCalled();
+    expect(reverseWalletDebit).not.toHaveBeenCalled();
+    expect(eventTypes()).toContain('paystack_collected_funds_retained');
+    expect(fake.txs.get('tx-q')!.metadata.vend_retry.state).toBe('refunded');
+  });
+});
+
+describe('review fix: a provider-confirmed failure is not mistaken for an ambiguous vend', () => {
+  it('a timeout attempt that an authoritative verdict already resolved still reaches the refund', async () => {
+    wire(makeFakeSupabase({
+      authEmails: { [USER_ID]: EMAIL }, platformUsers: activeUser,
+      transactions: [retryRow('tx-r', {}, { ambiguity_resolved_through: 1 })],
+      attempts: [{ transaction_id: 'tx-r', attempt_number: 1, status: 'timeout' }],
+    }));
+    seed(fake, 'tx-r');
+    adapterSequence(['failed']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_REFUND_AFTER_MS));
+    const r = await runUtilityVendRetries({ limit: 10 });
+    expect(r.refunded).toBe(1);
+    expect(reverseKeys()).toEqual(['utility:tx-r:REVERSAL_DEBIT']);
+  });
+
+  it('an ambiguous attempt made AFTER the verdict is still ambiguous: manual review, no refund', async () => {
+    wire(makeFakeSupabase({
+      authEmails: { [USER_ID]: EMAIL }, platformUsers: activeUser,
+      transactions: [retryRow('tx-s', {}, { ambiguity_resolved_through: 1 })],
+      attempts: [{ transaction_id: 'tx-s', attempt_number: 2, status: 'timeout' }],
+    }));
+    seed(fake, 'tx-s');
+    adapterSequence(['failed']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_REFUND_AFTER_MS));
+    const r = await runUtilityVendRetries({ limit: 10 });
+    expect(r.manualReview).toBe(1);
+    expect(reverseWalletDebit).not.toHaveBeenCalled();
+  });
+});
+
+describe('review fix: what "active wallet" means', () => {
+  const run = async (platformUsers: Record<string, Row>, id: string) => {
+    wire(makeFakeSupabase({ authEmails: { [USER_ID]: EMAIL }, platformUsers, transactions: [retryRow(id)] }));
+    seed(fake, id);
+    adapterSequence(['failed']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_REFUND_AFTER_MS));
+    await runUtilityVendRetries({ limit: 10 });
+    return fake.txs.get(id)!.metadata.vend_retry.state as string;
+  };
+
+  it('a login-lockout (status locked) is NOT a wallet restriction: the refund goes through', async () => {
+    expect(await run({ [EMAIL]: { status: 'locked', deleted_at: null } }, 'tx-w1')).toBe('refunded');
+  });
+  it('suspended and pending accounts are held', async () => {
+    expect(await run({ [EMAIL]: { status: 'suspended', deleted_at: null } }, 'tx-w2')).toBe('held');
+    vi.clearAllMocks();
+    expect(await run({ [EMAIL]: { status: 'pending', deleted_at: null } }, 'tx-w3')).toBe('held');
+  });
+  it('looks the account up by auth user id first, so a phone-only customer (no email) is still checked', async () => {
+    vi.clearAllMocks();
+    wire(makeFakeSupabase({
+      authEmails: {}, // phone-only: no email on the auth user
+      platformUsers: { [USER_ID]: { status: 'suspended', deleted_at: null } },
+      transactions: [retryRow('tx-w4')],
+    }));
+    seed(fake, 'tx-w4');
+    adapterSequence(['failed']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_REFUND_AFTER_MS));
+    await runUtilityVendRetries({ limit: 10 });
+    expect(fake.txs.get('tx-w4')!.metadata.vend_retry.state).toBe('held');
+    expect(reverseWalletDebit).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled(); // no address to email — the in-app notice and finance alert still fire
+  });
+});
+
+describe('review fix: lookups only block the actions that need them', () => {
+  it('an auth lookup that fails does not stop a retry inside the 30 minutes', async () => {
+    wire(makeFakeSupabase({ authLookupFails: true, transactions: [retryRow('tx-x')] }));
+    seed(fake, 'tx-x');
+    const purchase = adapterSequence(['successful']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_RETRY_GAP_MS));
+    const r = await runUtilityVendRetries({ limit: 10 });
+    expect(purchase).toHaveBeenCalledTimes(1);
+    expect(r.vended).toBe(1);
+  });
+
+  it('the same failing lookup does skip a refund (never decided blind) and posts nothing', async () => {
+    wire(makeFakeSupabase({ authLookupFails: true, transactions: [retryRow('tx-y')] }));
+    seed(fake, 'tx-y');
+    adapterSequence(['failed']);
+    vi.setSystemTime(new Date(T0.getTime() + VEND_REFUND_AFTER_MS));
+    const r = await runUtilityVendRetries({ limit: 10 });
+    expect(r.failed).toBe(1);
+    expect(reverseWalletDebit).not.toHaveBeenCalled();
+    expect(fake.txs.get('tx-y')!.metadata.vend_retry.state).toBe('retrying');
+  });
+});
+
+describe('review fix: a sweeper-opened window waits one gap before its first retry', () => {
+  it('a stalled writer gets time to finish before a second vend can race it', async () => {
+    const f = makeFakeSupabase({ transactions: [{
+      id: 'tx-z', user_id: USER_ID, payment_source: 'paystack', status: 'wallet_debited', retail_amount_kobo: 500_000,
+      amount_kobo: 500_000, convenience_fee_kobo: 0, provider_cost_kobo: 490_000, gross_profit_kobo: 10_000, gross_margin_bps: 200,
+      receipt_number: 'R-tx-z', category: 'airtime', idempotency_key: 'k-tx-z', biller_id: BILLER.id, product_id: PRODUCT.id,
+      customer_reference: '+2348011111111', metadata: { payment_reference: 'UTIL_PAY_REF_1' },
+      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+    }] });
+    wire(f); seed(f, 'tx-z');
+    await requeryUtilityTransaction(f.txs.get('tx-z') as any);
+    const purchase = adapterSequence(['successful']);
+    const opened = Date.parse(f.txs.get('tx-z')!.metadata.vend_retry.last_attempt_at);
+
+    vi.setSystemTime(new Date(opened + VEND_RETRY_GAP_MS - 1000));
+    await runUtilityVendRetries({ limit: 10 });
+    expect(purchase).not.toHaveBeenCalled();
+
+    vi.setSystemTime(new Date(opened + VEND_RETRY_GAP_MS));
+    await runUtilityVendRetries({ limit: 10 });
+    expect(purchase).toHaveBeenCalledTimes(1);
   });
 });
