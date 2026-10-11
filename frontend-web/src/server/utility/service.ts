@@ -2,6 +2,13 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { resolveUtilityCommission, type ResolvedCommission } from '@/src/server/commission/config';
 import { creditWallet, debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
+import { sendUtilityRefundEmail } from '@/src/server/utility/refundEmail';
+import {
+  buildVendRetryMeta,
+  decideVendRetryAction,
+  unresolvedAttempts,
+  type VendRetryMeta,
+} from '@/src/server/utility/vendRetryPolicy';
 import {
   calculateUtilityPricing,
   getViableUtilityRoutes,
@@ -76,6 +83,98 @@ const AMBIGUOUS_ATTEMPT_STATUSES: ReadonlySet<UtilityProviderAttemptRow['status'
 function cardLedgerEnabled(): boolean {
   const v = (process.env.FEATURE_UTILITY_CARD_LEDGER ?? '').trim().toLowerCase();
   return v === '1' || v === 'true';
+}
+
+/**
+ * Owner rule for card-paid bills: payment received => vend. A confirmed-failed vend
+ * is retried by a cron and refunded to the wallet 30 minutes after it first failed
+ * (held with admin when the wallet is not active). Applies whenever the card ledger
+ * is on, and to any row that already carries a collect leg (so a row written
+ * flag-on is still handled after the flag is flipped).
+ */
+function cardVendRetryApplies(paymentSource: string, legs?: { collectPosted: boolean }): boolean {
+  return paymentSource === 'paystack' && (cardLedgerEnabled() || legs?.collectPosted === true);
+}
+
+/**
+ * A card-ledger writer must give up well inside the 10-minute stuck-sweep age. A
+ * writer that was frozen past this (paused pod, lost CPU) may have been claimed
+ * by the sweeper while it slept, so it must not post another money leg.
+ */
+const CARD_WRITER_MAX_AGE_MS = 5 * 60 * 1000;
+
+const VEND_RETRYING_MESSAGE = 'Your payment could not be completed yet. We are retrying, and will refund you to your wallet if it cannot be completed within 30 minutes.';
+
+/**
+ * Takes the writer's version-checked turn on its own row: a no-op write that
+ * only succeeds while the row is still 'initiated' at the version this writer
+ * owns. A settlement claim flips the status and bumps updated_at, so a claimed
+ * row refuses the touch — and the writer must then post nothing further.
+ * Returns the new owned version, or null when the row was claimed.
+ */
+async function touchOwnedUtilityRow(transactionId: string, version: string): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('utility_transactions')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', transactionId)
+    .eq('status', 'initiated')
+    .eq('updated_at', version)
+    .select('updated_at');
+  const row = (data ?? [])[0] as { updated_at: string } | undefined;
+  return row ? row.updated_at : null;
+}
+
+/**
+ * Opens the vend-retry window for a card-paid bill that was paid for but whose
+ * vend is confirmed failed. Nothing is refunded here: a cron retries the vend, and
+ * 30 minutes after it first failed the customer is refunded to their wallet (held
+ * with admin and emailed if the wallet is not active). See vendRetryPolicy.ts.
+ * Returns false when the marker could not be saved (alerted, never silent).
+ */
+async function startVendRetry(
+  transaction: UtilityTransactionRow,
+  reason: string,
+  basis: 'provider_failed' | 'stuck_recovery',
+  opts: { providerConfirmedFailed?: boolean } = {},
+): Promise<boolean> {
+  const supabase = createAdminClient();
+  const now = new Date().toISOString();
+  // An authoritative provider verdict (a requery of a real provider_reference said
+  // "failed") resolves every attempt made so far: a leftover pending/timeout attempt
+  // must not later read as "may have vended" and strand the customer in manual review.
+  let resolvedThrough: number | undefined;
+  if (opts.providerConfirmedFailed) {
+    const attempts = await listUtilityTransactionAttempts(transaction.id);
+    resolvedThrough = attempts.reduce((max, a) => Math.max(max, Number(a.attempt_number) || 0), 0);
+  }
+  const vendRetry = buildVendRetryMeta({
+    basis,
+    reason,
+    nowIso: now,
+    existing: (transaction.metadata as { vend_retry?: Partial<VendRetryMeta> } | null)?.vend_retry,
+    resolvedThrough,
+  });
+  // Guarded on 'failed' so a row an admin already reversed is never overwritten.
+  const { data: written, error: writeError } = await supabase.from('utility_transactions').update({
+    status: 'failed',
+    failure_reason: reason,
+    metadata: { ...(transaction.metadata ?? {}), vend_retry: vendRetry },
+    updated_at: now,
+  }).eq('id', transaction.id).eq('status', 'failed').select('id');
+  if (writeError || (written ?? []).length === 0) {
+    // The customer is owed a retry-then-refund but the marker did not land, so the
+    // worker cannot see this row. Never silent: finance must refund it by hand.
+    await addEvent(transaction.id, 'vend_retry_unrecorded', 'The vend-retry marker could not be saved — the customer must be refunded manually.', { vend_retry: vendRetry, error: writeError?.message ?? 'no row matched' });
+    queueUtilityAdminAlert({
+      title: 'Utility vend-retry could not be recorded',
+      message: `${transaction.receipt_number ?? transaction.id}: ${transaction.retail_amount_kobo} kobo was paid but not delivered and the retry marker was not saved. Find the row by status 'failed' and refund the customer manually.`,
+      audience: 'finance',
+    });
+    return false;
+  }
+  await addEvent(transaction.id, 'vend_retry_started', 'Payment was received but the service was not delivered — retrying; the customer is refunded to their wallet if it cannot be completed within 30 minutes.', { vend_retry: vendRetry });
+  return true;
 }
 
 /**
@@ -224,7 +323,7 @@ async function reloadUtilityTransaction(transaction: UtilityTransactionRow): Pro
 async function settleFailedUtilityTransaction(
   transaction: UtilityTransactionRow,
   reason: string,
-  opts: { authoritative: boolean },
+  opts: { authoritative: boolean; providerConfirmedFailed?: boolean },
 ): Promise<UtilityTransactionRow> {
   // The claim flips the row to 'failed' in one write — outside every other
   // claim set — so exactly one compensator can ever be inside the probe→post
@@ -246,6 +345,7 @@ async function settleFailedUtilityTransaction(
 
   const legs = await lookupUtilityMoneyLegs(claimed);
   let compensated = false;
+  let vendRetryStarted = false;
   if (legs.compensationPosted) {
     // Money was already returned (by payUtility's failure branch, an earlier
     // sweep, a Go-plane reversal, or the paystack validation refund) — this
@@ -293,6 +393,10 @@ async function settleFailedUtilityTransaction(
     // would pay them twice for one card charge.
     compensated = true;
     await addEvent(claimed.id, 'paystack_collected_funds_retained', 'Card funds were collected into the wallet and the spend never posted; nothing further to refund.');
+  } else if (cardVendRetryApplies(claimed.payment_source, legs)) {
+    // Payment was received and not delivered: open the retry window instead of
+    // crediting now. No money moves here; the worker retries then refunds.
+    vendRetryStarted = await startVendRetry(claimed, reason, 'stuck_recovery', { providerConfirmedFailed: opts.providerConfirmedFailed });
   } else {
     // 'paystack' transactions only exist because the charge verified before
     // payUtility ran — the money was captured, so refund it to the wallet. The
@@ -341,9 +445,12 @@ async function settleFailedUtilityTransaction(
     failure_reason: reason,
     updated_at: new Date().toISOString(),
   }).eq('id', transaction.id);
-  await addEvent(transaction.id, compensated ? 'auto_reversed' : 'failed_no_debit', reason);
+  await addEvent(transaction.id, compensated ? 'auto_reversed' : vendRetryStarted ? 'failed_vend_retrying' : 'failed_no_debit', reason);
   const updated = await reloadUtilityTransaction(transaction);
-  await notifyUtilityTransactionStatus(updated, reason);
+  await notifyUtilityTransactionStatus(
+    updated,
+    vendRetryStarted ? VEND_RETRYING_MESSAGE : reason,
+  );
   return updated;
 }
 
@@ -1102,8 +1209,42 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
   }
 
   if (paymentSource === 'wallet' || (paymentSource === 'paystack' && cardLedgerEnabled())) {
+    // Card path: this writer may post a money leg only while it provably still
+    // owns the row. Taking the row (a version-checked touch) right before the
+    // collect and again right before the spend means a sweeper claim — or a
+    // stall long enough for one — can never be followed by a late leg, which
+    // was the ADR-PR697 residual (collect, stall, sweeper retains, spend lands:
+    // +X -X, no vend, no refund). Local clock so DB clock skew cannot matter.
+    let ownedAtMs = Date.now();
+    const takeTurn = async (leg: 'collect' | 'spend'): Promise<UtilityTransactionRow | null> => {
+      if (Date.now() - ownedAtMs > CARD_WRITER_MAX_AGE_MS) {
+        await addEvent(transactionId, 'writer_stale_yield', `Card writer stalled past ${CARD_WRITER_MAX_AGE_MS / 1000}s before the ${leg} — yielding without posting.`);
+        queueUtilityAdminAlert({
+          title: 'Utility card writer yielded after a stall',
+          message: `${receipt} stalled before its ${leg}; no further money leg was posted. Funds already collected stay in the wallet; the sweeper decides the rest.`,
+          audience: 'support',
+        });
+        return reloadUtilityTransaction(inserted as UtilityTransactionRow);
+      }
+      const next = await touchOwnedUtilityRow(transactionId, ownedVersion);
+      if (!next) {
+        await addEvent(transactionId, 'writer_outraced', `A settlement claim landed before the ${leg} — the writer yields without posting.`);
+        queueUtilityAdminAlert({
+          title: 'Utility card writer lost its row before a money leg',
+          message: `${receipt} was claimed for settlement before the ${leg}; the writer posted nothing further. Verify the claim winner's outcome.`,
+          audience: 'support',
+        });
+        return reloadUtilityTransaction(inserted as UtilityTransactionRow);
+      }
+      ownedVersion = next;
+      ownedAtMs = Date.now();
+      return null;
+    };
+
     try {
       if (paymentSource === 'paystack') {
+        const lost = await takeTurn('collect');
+        if (lost) return { alreadyProcessed: false, transaction: lost };
         // Collect the verified card charge into the wallet first. The ledger
         // `reference` is the receipt, NOT the Paystack payment_reference:
         // lookupUtilityMoneyLegs reads any CREDIT carrying that reference as an
@@ -1122,6 +1263,8 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
           },
         });
         await addEvent(transactionId, 'card_collected', 'Card payment collected into the wallet.');
+        const lostBeforeSpend = await takeTurn('spend');
+        if (lostBeforeSpend) return { alreadyProcessed: false, transaction: lostBeforeSpend };
       }
       await debitWallet(userId, {
         amountKobo: pricing.retailAmountKobo,
@@ -1143,7 +1286,11 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
       // caller is owed.
       const reason = debitError instanceof Error ? debitError.message : 'Wallet debit failed.';
       try {
-        await settleFailedUtilityTransaction(inserted as UtilityTransactionRow, reason, { authoritative: true });
+        // The card path's turn-taking touches bump updated_at, so settle the CURRENT
+        // row: the claim CASes on updated_at, and the stale insert-time row would
+        // match nothing and leave the row 'initiated' until the 10-minute sweep.
+        const current = await reloadUtilityTransaction(inserted as UtilityTransactionRow);
+        await settleFailedUtilityTransaction(current, reason, { authoritative: true });
       } catch (settleError) {
         console.error('[utility] settle after wallet-debit failure threw:', settleError);
       }
@@ -1247,7 +1394,7 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
   }
 
   const nextStatus = nextStatusFromProvider(providerResult.status);
-  const patch = {
+  const patch: Record<string, unknown> = {
     status: nextStatus,
     provider_id: fulfilledRoute.provider.id,
     provider_mapping_id: fulfilledRoute.mapping.id,
@@ -1257,6 +1404,20 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     failure_reason: providerResult.status === 'failed' ? providerResult.message ?? 'Provider failed transaction.' : null,
     updated_at: new Date().toISOString(),
   };
+  // A confirmed-failed card vend opens the retry window IN THE SAME WRITE as the
+  // settle: a crash between two writes would leave a 'failed' row no worker or
+  // sweeper ever looks at again.
+  const openRetryWindow = providerResult.status === 'failed' && cardVendRetryApplies(paymentSource);
+  if (openRetryWindow) {
+    patch.metadata = {
+      ...((inserted as UtilityTransactionRow).metadata ?? {}),
+      vend_retry: buildVendRetryMeta({
+        basis: 'provider_failed',
+        reason: providerResult.message ?? 'Provider failed transaction.',
+        nowIso: patch.updated_at as string,
+      }),
+    };
+  }
   // AUD-BILL-005: the settle patch lands only while the row is still in a
   // pre-settle status at the version this writer owns — a settlement claim
   // flips the row to 'failed' and bumps updated_at, so a claimed row rejects
@@ -1266,6 +1427,7 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     .eq('updated_at', ownedVersion)
     .select('id');
   const settleWon = (settled ?? []).length > 0;
+  let vendRetryStarted = false;
   await addEvent(transactionId, `provider_${providerResult.status}`, providerResult.message, {
     provider_id: fulfilledRoute.provider.id,
     raw: providerResult.raw ?? {},
@@ -1297,6 +1459,12 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
       });
       await addEvent(transactionId, 'wallet_reversed', 'Wallet debit reversed after provider failure.');
+    } else if (cardVendRetryApplies(paymentSource)) {
+      // Payment received, service not delivered: open the retry window — no
+      // automatic credit. The row stays 'failed'; the cron retries the vend and
+      // refunds to the wallet if it is still failing 30 minutes from now.
+      vendRetryStarted = true; // the marker was written with the settle above
+      await addEvent(transactionId, 'vend_retry_started', 'Payment was received but the service was not delivered — retrying; the customer is refunded to their wallet if it cannot be completed within 30 minutes.', { basis: 'provider_failed' });
     } else {
       // The money for a 'paystack' source already left the customer's card/bank —
       // there is no wallet debit to reverse. It was captured by Paystack, so the
@@ -1319,7 +1487,9 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
       });
       await addEvent(transactionId, 'paystack_refunded', 'Paystack payment refunded to wallet after provider failure.');
     }
-    await supabase.from('utility_transactions').update({ status: 'reversed', updated_at: new Date().toISOString() }).eq('id', transactionId);
+    if (!vendRetryStarted) {
+      await supabase.from('utility_transactions').update({ status: 'reversed', updated_at: new Date().toISOString() }).eq('id', transactionId);
+    }
   }
 
   const { data: finalRow } = await supabase.from('utility_transactions').select('*').eq('id', transactionId).maybeSingle();
@@ -1332,7 +1502,10 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     await recordUtilityCommissionEarning({ transaction, pricing, commission });
   }
 
-  await notifyUtilityTransactionStatus(transaction, providerResult.message);
+  await notifyUtilityTransactionStatus(
+    transaction,
+    vendRetryStarted ? VEND_RETRYING_MESSAGE : providerResult.message,
+  );
   if (transaction.status === 'provider_pending') {
     queueUtilityAdminAlert({
       title: 'Utility transaction pending confirmation',
@@ -1433,7 +1606,12 @@ export async function requeryUtilityTransaction(transaction: UtilityTransactionR
     return settleFailedUtilityTransaction(
       transaction,
       result.message ?? 'Provider failed transaction.',
-      { authoritative: Boolean(transaction.provider_reference) },
+      {
+        authoritative: Boolean(transaction.provider_reference),
+        // A requery of a real provider_reference said "failed": earlier pending/timeout
+        // attempts are resolved, so they must not block the retry-then-refund path.
+        providerConfirmedFailed: Boolean(transaction.provider_reference),
+      },
     );
   }
 
@@ -1526,9 +1704,15 @@ export async function reverseUtilityTransaction(transaction: UtilityTransactionR
     });
   }
   const supabase = createAdminClient();
+  const retryState = (transaction.metadata as { vend_retry?: { state?: string } } | null)?.vend_retry;
   await supabase.from('utility_transactions').update({
     status: 'reversed',
     failure_reason: reason,
+    // A retrying / held / manual-review row refunded by hand is closed on the row, so
+    // the worker never touches it again.
+    ...(retryState && ['retrying', 'held', 'manual_review'].includes(retryState.state ?? '')
+      ? { metadata: { ...(transaction.metadata ?? {}), vend_retry: { ...retryState, state: 'refunded', refunded_by: 'admin', refunded_at: new Date().toISOString() } } }
+      : {}),
     updated_at: new Date().toISOString(),
   }).eq('id', transaction.id);
   await addEvent(transaction.id, 'admin_reversed', reason);
@@ -1900,4 +2084,399 @@ export async function adminImportUtilityProducts(products: Record<string, unknow
     throw new ApiError('Failed to import utility products', 400);
   }
   return data ?? [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vend-retry worker (owner rule). A card-paid bill whose vend is CONFIRMED failed
+// is retried here on a cron; 30 minutes after vending first failed the customer is
+// refunded to their wallet; with no active wallet the funds are HELD with admin
+// and the customer is emailed to activate it, then released once it is active.
+// Every money decision is vendRetryPolicy.decideVendRetryAction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface VendRetryRunSummary {
+  scanned: number;
+  retried: number;
+  vended: number;
+  refunded: number;
+  held: number;
+  released: number;
+  manualReview: number;
+  skipped: number;
+  failed: number;
+}
+
+async function resolveUserEmail(userId: string): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.auth.admin.getUserById(userId);
+  if (error) throw new Error(`auth lookup failed: ${error.message}`);
+  return data?.user?.email ? String(data.user.email).trim().toLowerCase() : null;
+}
+
+/**
+ * "Active wallet" = the customer's account is not restricted. Wallets are ledger
+ * accounts created on first credit, so activity is read from the account
+ * (platform_users): `suspended` and `pending` accounts, and deleted ones, are NOT
+ * active. A login lockout (`locked`) is NOT a wallet restriction — it is a
+ * brute-force guard on sign-in, can be triggered by someone else, and a credit to a
+ * locked customer's own wallet is safe. Looked up by auth user id first (platform_users.id
+ * is the auth id; phone-only customers have no email), then by email. No row at all
+ * cannot be proven inactive and counts as active. Throws on a lookup error so the
+ * caller skips the row this cycle instead of deciding blind.
+ */
+async function hasActiveWallet(userId: string, email: string | null): Promise<boolean> {
+  const supabase = createAdminClient();
+  const read = async (column: 'id' | 'email', value: string) => {
+    const { data, error } = await supabase
+      .from('platform_users')
+      .select('status, deleted_at')
+      .eq(column, value)
+      .maybeSingle();
+    if (error) throw new Error(`account status lookup failed: ${error.message}`);
+    return data as { status?: string; deleted_at?: string | null } | null;
+  };
+  let row = await read('id', userId);
+  if (!row && email) row = await read('email', email);
+  if (!row) return true;
+  if (row.deleted_at) return false;
+  return row.status !== 'suspended' && row.status !== 'pending';
+}
+
+/** CAS write on a claimed row: only lands while it is still 'failed' at `version`. */
+async function writeClaimedVendRetry(
+  row: UtilityTransactionRow,
+  version: string,
+  vendRetry: VendRetryMeta,
+  rowPatch: Record<string, unknown> = {},
+): Promise<UtilityTransactionRow | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase.from('utility_transactions').update({
+    ...rowPatch,
+    metadata: { ...(row.metadata ?? {}), vend_retry: vendRetry },
+    updated_at: new Date().toISOString(),
+  }).eq('id', row.id).eq('status', 'failed').eq('updated_at', version).select('*');
+  return ((data ?? [])[0] ?? null) as UtilityTransactionRow | null;
+}
+
+export async function runUtilityVendRetries(opts: { limit?: number } = {}): Promise<VendRetryRunSummary> {
+  const summary: VendRetryRunSummary = { scanned: 0, retried: 0, vended: 0, refunded: 0, held: 0, released: 0, manualReview: 0, skipped: 0, failed: 0 };
+  const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('utility_transactions')
+    .select('*')
+    .eq('status', 'failed')
+    .in('metadata->vend_retry->>state', ['retrying', 'held'])
+    .order('updated_at', { ascending: true })
+    .limit(limit);
+  const rows = (Array.isArray(data) ? data : data ? [data] : []) as UtilityTransactionRow[];
+
+  for (const row of rows) {
+    summary.scanned += 1;
+    try {
+      await processVendRetryRow(row, summary);
+    } catch (error) {
+      // One customer's failure must never stop the others. Idempotent ledger keys
+      // make the next cycle safe.
+      summary.failed += 1;
+      console.error('[utility/vend-retry] row failed:', row.id, error instanceof Error ? error.message : error);
+    }
+  }
+  return summary;
+}
+
+async function processVendRetryRow(row: UtilityTransactionRow, summary: VendRetryRunSummary) {
+  const supabase = createAdminClient();
+  const vr = (row.metadata as { vend_retry?: VendRetryMeta } | null)?.vend_retry;
+  if (!vr) { summary.skipped += 1; return; }
+
+  // Claim: a no-op write that only lands at the version this worker read. A second
+  // worker, an admin or the sweeper bumps updated_at, so exactly one proceeds.
+  const { data: claimedRows } = await supabase.from('utility_transactions')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', row.id).eq('status', 'failed').eq('updated_at', row.updated_at).select('*');
+  const claimed = ((claimedRows ?? [])[0] ?? null) as UtilityTransactionRow | null;
+  if (!claimed) { summary.skipped += 1; return; }
+  const version = claimed.updated_at;
+
+  const legs = await lookupUtilityMoneyLegs(claimed);
+  if (legs.compensationPosted) {
+    // Money already went back (admin, sweeper, an earlier cycle): converge only.
+    await writeClaimedVendRetry(claimed, version, { ...vr, state: 'refunded' }, { status: 'reversed' });
+    summary.skipped += 1;
+    return;
+  }
+
+  // Collect posted but the spend never did (a late collect after a sweeper opened this
+  // window): the customer already holds X. Crediting again would pay them twice, and
+  // there is nothing to vend with — retain, as every other compensator does.
+  if (legs.collectPosted && !legs.debitPosted) {
+    await writeClaimedVendRetry(claimed, version, { ...vr, state: 'refunded', refunded_at: new Date().toISOString() }, { status: 'reversed', failure_reason: 'Card funds were collected into the wallet and the spend never posted; nothing further to refund.' });
+    await addEvent(claimed.id, 'paystack_collected_funds_retained', 'Card funds were collected into the wallet and the spend never posted; nothing further to refund.');
+    summary.skipped += 1;
+    return;
+  }
+
+  const attempts = await listUtilityTransactionAttempts(claimed.id);
+  const ambiguousAttempts = unresolvedAttempts(attempts, vr).some((a) => AMBIGUOUS_ATTEMPT_STATUSES.has(a.status));
+  const decide = (walletActive: boolean) => decideVendRetryAction({
+    meta: vr,
+    nowMs: Date.now(),
+    ambiguousAttempts,
+    canRetryVend: legs.collectPosted && legs.debitPosted,
+    walletActive,
+  });
+
+  // Look the customer up only when the decision can turn on it. A failing auth or
+  // account lookup must never block a retry inside the window.
+  let email: string | null = null;
+  let action = decide(true);
+  if (action === 'refund' || vr.state === 'held') {
+    email = await resolveUserEmail(claimed.user_id);
+    action = decide(await hasActiveWallet(claimed.user_id, email));
+  }
+
+  switch (action) {
+    case 'manual_review': {
+      await writeClaimedVendRetry(claimed, version, { ...vr, state: 'manual_review' });
+      await addEvent(claimed.id, 'vend_retry_manual_review', 'A provider attempt may have vended (or the retry clock is unreadable) — not retried and not refunded automatically.');
+      queueUtilityAdminAlert({
+        title: 'Utility vend needs manual reconciliation',
+        message: `${claimed.receipt_number ?? claimed.id} has ambiguous provider evidence — verify with the provider before refunding the customer.`,
+        audience: 'support',
+      });
+      summary.manualReview += 1;
+      return;
+    }
+    case 'retry':
+      await retryUtilityVend(claimed, version, vr, attempts.length, summary);
+      return;
+    case 'refund':
+      await refundFailedVend(claimed, version, vr, legs, email, vr.state === 'held', summary);
+      return;
+    case 'hold':
+      await holdFailedVend(claimed, version, vr, email, summary);
+      return;
+    default:
+      summary.skipped += 1;
+  }
+}
+
+async function retryUtilityVend(
+  claimed: UtilityTransactionRow,
+  version: string,
+  vr: VendRetryMeta,
+  priorAttempts: number,
+  summary: VendRetryRunSummary,
+) {
+  summary.retried += 1;
+  const nowIso = new Date().toISOString();
+  const biller = await getBiller(claimed.biller_id);
+  const product = await getProduct(claimed.product_id as string);
+  const pricing: UtilityPricing = {
+    amountKobo: Number(claimed.amount_kobo),
+    convenienceFeeKobo: Number(claimed.convenience_fee_kobo),
+    retailAmountKobo: Number(claimed.retail_amount_kobo),
+    providerCostKobo: Number(claimed.provider_cost_kobo),
+    grossProfitKobo: Number(claimed.gross_profit_kobo),
+    grossMarginBps: Number(claimed.gross_margin_bps),
+  };
+  const routes = getViableUtilityRoutes(await getRouteCandidates(product), {
+    category: claimed.category,
+    product,
+    amountKobo: pricing.amountKobo,
+  });
+  const { vend_retry: _omit, ...requestMetadata } = (claimed.metadata ?? {}) as Record<string, unknown>;
+
+  let result: UtilityPurchaseResult | null = null;
+  let route: UtilityRouteCandidate | null = null;
+  let lastError = routes.length === 0 ? 'No viable provider route.' : (vr.last_error ?? 'Provider failed transaction.');
+  let tried = 0;
+  for (const candidate of routes) {
+    tried += 1;
+    try {
+      const attempt = await attemptProviderPurchase({
+        transactionId: claimed.id,
+        idempotencyKey: claimed.idempotency_key,
+        route: candidate,
+        attemptNumber: priorAttempts + tried,
+        category: claimed.category,
+        biller,
+        product,
+        customerReference: claimed.customer_reference,
+        pricing,
+        metadata: requestMetadata,
+      });
+      if (attempt.status === 'successful' || attempt.status === 'pending') {
+        result = attempt;
+        route = candidate;
+        break;
+      }
+      lastError = attempt.message ?? lastError;
+    } catch (error) {
+      // A thrown provider error is ambiguous: the vend may have happened. Stop, do
+      // not try another provider, and never refund automatically.
+      await writeClaimedVendRetry(claimed, version, {
+        ...vr, state: 'manual_review', attempts: vr.attempts + tried, last_attempt_at: nowIso,
+        last_error: error instanceof Error ? error.message : 'Provider error during retry.',
+      });
+      await addEvent(claimed.id, 'vend_retry_manual_review', 'A retry attempt threw — the vend may have happened; not retried or refunded automatically.');
+      queueUtilityAdminAlert({
+        title: 'Utility vend retry needs manual reconciliation',
+        message: `${claimed.receipt_number ?? claimed.id}: a retry attempt returned an ambiguous error. Verify with the provider.`,
+        audience: 'support',
+      });
+      summary.manualReview += 1;
+      return;
+    }
+  }
+
+  if (!result || !route) {
+    await writeClaimedVendRetry(claimed, version, {
+      ...vr, attempts: vr.attempts + Math.max(tried, 1), last_attempt_at: nowIso, last_error: lastError,
+    });
+    await addEvent(claimed.id, 'vend_retry_failed', lastError, { attempts: vr.attempts + Math.max(tried, 1) });
+    return;
+  }
+
+  const delivered = result.status === 'successful';
+  const updated = await writeClaimedVendRetry(
+    claimed,
+    version,
+    { ...vr, state: 'vended', attempts: vr.attempts + tried, last_attempt_at: nowIso, last_error: undefined },
+    {
+      status: delivered ? 'successful' : 'provider_pending',
+      provider_id: route.provider.id,
+      provider_mapping_id: route.mapping.id,
+      provider_reference: result.providerReference ?? null,
+      token: result.token ?? null,
+      provider_response: result.raw ?? null,
+      failure_reason: null,
+    },
+  );
+  if (!updated) {
+    // The row was settled while the provider call was in flight (an admin refunded
+    // it). The customer may now hold the vend AND the refund — escalate.
+    await addEvent(claimed.id, 'provider_outcome_after_claim', 'A retry vend landed after another process settled the row.', { outcome: result.status });
+    queueUtilityAdminAlert({
+      title: 'Utility retry vend landed after settlement',
+      message: `${claimed.receipt_number ?? claimed.id} vended on retry after it was settled — verify the customer was not also refunded.`,
+      audience: 'support',
+    });
+    return;
+  }
+  await addEvent(claimed.id, delivered ? 'vend_retry_succeeded' : 'vend_retry_pending', result.message ?? '', { provider_id: route.provider.id });
+  if (delivered) {
+    summary.vended += 1;
+    const commission = await resolveUtilityCommission(claimed.category, biller);
+    await recordUtilityCommissionEarning({ transaction: updated, pricing, commission });
+  }
+  await notifyUtilityTransactionStatus(updated, result.message);
+}
+
+async function refundFailedVend(
+  claimed: UtilityTransactionRow,
+  version: string,
+  vr: VendRetryMeta,
+  legs: { debitPosted: boolean; collectPosted: boolean },
+  email: string | null,
+  released: boolean,
+  summary: VendRetryRunSummary,
+) {
+  const receipt = claimed.receipt_number ?? claimed.id;
+  const reason = released
+    ? 'Held refund released: the customer wallet is now active.'
+    : 'Vending kept failing for 30 minutes — refunded to the customer wallet.';
+  try {
+    if (legs.debitPosted) {
+      // The spend left the wallet for the provider; reverse it. Same key family as
+      // every other compensation, so a duplicate is a no-op.
+      await reverseWalletDebit(claimed.user_id, {
+        amountKobo: claimed.retail_amount_kobo,
+        reference: receipt,
+        idempotencyKey: `utility:${claimed.id}:REVERSAL_DEBIT`,
+        description: `Utility payment refund ${receipt}`,
+        metadata: { utility_transaction_id: claimed.id, category: claimed.category, auto_refund: true, basis: 'vend_retry_30m' },
+      });
+    } else {
+      // The card was charged but the spend never posted: the captured
+      // payment_reference is the proof of capture, without it nothing may be credited.
+      const paymentRef = claimed.metadata?.payment_reference;
+      if (typeof paymentRef !== 'string' || !paymentRef) {
+        await writeClaimedVendRetry(claimed, version, { ...vr, state: 'manual_review' });
+        await addEvent(claimed.id, 'paystack_refund_skipped', 'No captured payment_reference — no proof of capture; refusing to credit.');
+        queueUtilityAdminAlert({
+          title: 'Utility refund refused: no proof of capture',
+          message: `${receipt} is paystack-sourced but has no captured payment_reference — investigate before refunding.`,
+          audience: 'finance',
+        });
+        summary.manualReview += 1;
+        return;
+      }
+      await creditWallet(claimed.user_id, {
+        amountKobo: claimed.retail_amount_kobo,
+        reference: receipt,
+        idempotencyKey: `utility:${claimed.id}:PAYSTACK_REFUND`,
+        description: `Refund: utility payment ${receipt} (provider could not complete)`,
+        metadata: { utility_transaction_id: claimed.id, category: claimed.category, refund_reason: 'provider_failed', original_payment_source: 'paystack', auto_refund: true, basis: 'vend_retry_30m' },
+      });
+    }
+  } catch (error) {
+    // The credit did not post: leave the state alone so the next cycle retries (the
+    // ledger key makes that safe) and tell finance.
+    await addEvent(claimed.id, 'refund_failed', error instanceof Error ? error.message : 'Refund could not be posted.');
+    queueUtilityAdminAlert({
+      title: 'Utility auto-refund failed',
+      message: `${receipt}: the 30-minute refund could not be posted — it will be retried; refund manually if it persists.`,
+      audience: 'finance',
+    });
+    summary.failed += 1;
+    return;
+  }
+
+  const updated = await writeClaimedVendRetry(
+    claimed, version,
+    { ...vr, state: 'refunded', refunded_at: new Date().toISOString(), released },
+    { status: 'reversed', failure_reason: reason },
+  );
+  await addEvent(claimed.id, released ? 'refund_released' : 'auto_refunded', reason);
+  if (released) summary.released += 1; else summary.refunded += 1;
+  const row = updated ?? { ...claimed, status: 'reversed' as const };
+  await notifyUtilityCustomer(row, 'refund_processed', reason);
+  if (email) {
+    try {
+      await sendUtilityRefundEmail('refunded', { to: email, receipt, amountKobo: claimed.retail_amount_kobo });
+    } catch (error) {
+      await addEvent(claimed.id, 'refund_email_failed', error instanceof Error ? error.message : 'Email could not be sent.');
+    }
+  }
+}
+
+async function holdFailedVend(
+  claimed: UtilityTransactionRow,
+  version: string,
+  vr: VendRetryMeta,
+  email: string | null,
+  summary: VendRetryRunSummary,
+) {
+  const receipt = claimed.receipt_number ?? claimed.id;
+  const updated = await writeClaimedVendRetry(claimed, version, { ...vr, state: 'held', held_at: new Date().toISOString() });
+  if (!updated) { summary.skipped += 1; return; }
+  // The funds stay where they are (the spend sits in provider clearing, the card
+  // charge with the processor) — held with admin until the wallet is active.
+  await addEvent(claimed.id, 'refund_held', 'Vending failed for 30 minutes but the customer wallet is not active — refund held with admin; customer notified to activate.');
+  queueUtilityAdminAlert({
+    title: 'Utility refund held: customer wallet inactive',
+    message: `${receipt}: ${claimed.retail_amount_kobo} kobo is owed to the customer but their wallet is not active. Funds are held; the customer has been told to activate.`,
+    audience: 'finance',
+  });
+  await notifyUtilityCustomer(updated, 'refund_held');
+  if (email) {
+    try {
+      await sendUtilityRefundEmail('held', { to: email, receipt, amountKobo: claimed.retail_amount_kobo });
+    } catch (error) {
+      await addEvent(claimed.id, 'refund_email_failed', error instanceof Error ? error.message : 'Email could not be sent.');
+    }
+  }
+  summary.held += 1;
 }

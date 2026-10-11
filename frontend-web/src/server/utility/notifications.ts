@@ -7,6 +7,7 @@ type UtilityCustomerNotificationKind =
   | 'payment_pending'
   | 'payment_failed'
   | 'refund_processed'
+  | 'refund_held'
   | 'token_generated'
   | 'dispute_opened'
   | 'dispute_updated';
@@ -58,6 +59,14 @@ function contentFor(kind: UtilityCustomerNotificationKind, transaction: UtilityT
       title: 'Utility payment refunded',
       message: `Payment ${reference} has been reversed to your wallet.`,
       type: 'info',
+    };
+  }
+
+  if (kind === 'refund_held') {
+    return {
+      title: 'Your utility refund is on hold',
+      message: `We could not complete payment ${reference}. Activate your wallet to receive your ${money(transaction.retail_amount_kobo)} refund.`,
+      type: 'warning',
     };
   }
 

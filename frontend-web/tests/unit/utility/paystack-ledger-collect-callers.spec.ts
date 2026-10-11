@@ -363,7 +363,7 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
     expect(fake._intent.intent.status).toBe('failed');
   });
 
-  it('collect itself fails: the customer is refunded once, never by two different keys', async () => {
+  it('collect itself fails: NO immediate credit under any key — the retry window opens', async () => {
     const fake = makeFake();
     vi.mocked(createAdminClient).mockReturnValue(fake as any);
     wireWalletToLedger(fake);
@@ -375,11 +375,13 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
 
     await expect(verifyUtilityPaystackPayment(REFERENCE)).rejects.toThrow();
 
-    // Exactly one refund, under the transaction-owned key. Zero would strand the
-    // captured money; a VALIDATION_REFUND on top would pay it twice.
+    // Owner rule (ADR-PR701): payment received, service not delivered => the retry
+    // window opens, and the refund (if vending keeps failing) comes from the worker
+    // 30 minutes later. Neither PAYSTACK_REFUND nor VALIDATION_REFUND may post now:
+    // two different keys would pay the customer twice. The worker's refund is pinned
+    // in vend-retry-flow.spec.ts.
     const posted = creditKeys().filter((k) => !/:CARD_COLLECT$/.test(k));
-    expect(posted).toHaveLength(1);
-    expect(posted[0]).toMatch(/:PAYSTACK_REFUND$/);
+    expect(posted).toHaveLength(0);
   });
 
   it('the existence probe errors: do NOT refund blind — a row may exist and own the money', async () => {

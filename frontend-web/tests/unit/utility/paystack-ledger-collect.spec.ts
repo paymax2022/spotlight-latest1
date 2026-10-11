@@ -350,16 +350,17 @@ describe('payUtility — card-paid bills reach the ledger (flag ON)', () => {
     expect(collect.reference).not.toBe(PAYMENT_REF);
   });
 
-  it('vend fails: collect, spend, then ONE refund — the customer ends with exactly their money back', async () => {
+  it('vend fails: collect and spend only — the retry window opens, nothing is credited yet', async () => {
     adapterThatVends('failed');
     const { transaction } = await payUtility(USER_ID, inputFor('paystack', 'idem-ledger-3'));
 
-    expect(creditKeys()).toEqual([
-      `utility:${transaction.id}:CARD_COLLECT`,
-      `utility:${transaction.id}:PAYSTACK_REFUND`,
-    ]);
+    // Owner rule (ADR-PR701): payment received => vend; a failed vend is retried by
+    // a cron and refunded to the wallet 30 minutes after it first failed. No
+    // PAYSTACK_REFUND at failure time; the row waits as failed in the retry state.
+    // The retry, refund and hold paths are pinned in vend-retry-flow.spec.ts.
+    expect(creditKeys()).toEqual([`utility:${transaction.id}:CARD_COLLECT`]);
     expect(debitWallet).toHaveBeenCalledTimes(1);
-    expect(transaction.status).toBe('reversed');
+    expect(transaction.status).toBe('failed');
   });
 
   it('spend refused (tier/limit): the collected funds stay in the wallet and NO second credit is paid', async () => {

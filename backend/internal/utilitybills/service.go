@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -1414,6 +1415,66 @@ func retainCollectedFunds(paymentSource string, legs *moneyLegs) bool {
 	return paymentSource == paymentSourcePaystack && legs.collectPosted && !legs.debitPosted
 }
 
+// stuckPaystackAction is what the stuck sweeper does for a paystack row whose
+// vend never completed.
+type stuckPaystackAction int
+
+const (
+	// actionAutoRefund credits the wallet automatically (legacy, flag-off rows).
+	actionAutoRefund stuckPaystackAction = iota
+	// actionRetainFunds converges the status; the money is already in the wallet.
+	actionRetainFunds
+	// actionStartVendRetry opens the vend-retry window (retry, then refund at 30m).
+	actionStartVendRetry
+)
+
+// cardLedgerEnabled mirrors the TS plane's FEATURE_UTILITY_CARD_LEDGER switch. It
+// must be set on BOTH services for the planes to agree; the ledger evidence in
+// decideStuckPaystack keeps an already-collected row correct either way.
+func cardLedgerEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FEATURE_UTILITY_CARD_LEDGER")))
+	return v == "1" || v == "true"
+}
+
+// decideStuckPaystack applies the owner rule — payment received => vend; a failed
+// vend is retried and refunded to the wallet 30 minutes after it first failed — to
+// a paystack row. Collect-only means the
+// customer already holds the money (retain). A collect with a posted spend, or any
+// not-yet-collected row while the card ledger is on, is paid-but-undelivered: open
+// the retry window instead of crediting now. Only a legacy flag-off row keeps the
+// automatic refund.
+func decideStuckPaystack(legs *moneyLegs, cardLedgerOn bool) stuckPaystackAction {
+	switch {
+	case legs.collectPosted && !legs.debitPosted:
+		return actionRetainFunds
+	case legs.collectPosted || cardLedgerOn:
+		return actionStartVendRetry
+	default:
+		return actionAutoRefund
+	}
+}
+
+// vendRetryMetadata is the JSON merged into the row's metadata to open the
+// vend-retry window. The 30-minute refund clock starts at first_failed_at; the
+// frontend-web worker reads this exact shape (vend_retry) and fails closed to manual
+// review on an unreadable clock, so the time must be a real RFC3339 instant.
+func vendRetryMetadata(basis, lastError string) json.RawMessage {
+	now := time.Now().UTC().Format(time.RFC3339)
+	b, _ := json.Marshal(map[string]any{
+		"vend_retry": map[string]any{
+			"state":           "retrying",
+			"basis":           basis,
+			"attempts":        0,
+			"first_failed_at": now,
+			// The first retry waits one gap, so a writer that merely stalled can
+			// wake and finish its own vend before a second vend can race it.
+			"last_attempt_at": now,
+			"last_error":      lastError,
+		},
+	})
+	return b
+}
+
 // transactionMoneyLegs probes ledger_entries for every money leg this
 // transaction could have, under BOTH writer conventions: the TS journal writes
 // verbatim keys (utility:<tx>:DEBIT, :REVERSAL_DEBIT, :PAYSTACK_REFUND,
@@ -1546,11 +1607,12 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 		return nil, err
 	}
 	newStatus := string(StatusFailed)
+	var metadataMerge json.RawMessage
 	switch {
 	case legs.compensationPosted:
 		// Another path already returned the money — converge the status only.
 		newStatus = string(StatusReversed)
-	case retainCollectedFunds(claimed.PaymentSource, legs):
+	case claimed.PaymentSource == paymentSourcePaystack && decideStuckPaystack(legs, cardLedgerEnabled()) == actionRetainFunds:
 		// Card-ledger mode: the money is already in the wallet and the spend never
 		// posted — converge the status, post nothing.
 		newStatus = string(StatusReversed)
@@ -1560,6 +1622,15 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 		if s.postStuckReversal(ctx, claimed) {
 			newStatus = string(StatusReversed)
 		}
+	case claimed.PaymentSource == paymentSourcePaystack && decideStuckPaystack(legs, cardLedgerEnabled()) == actionStartVendRetry:
+		// Payment received, service not delivered: open the vend-retry window. The
+		// frontend-web worker retries the vend and refunds the wallet 30 minutes
+		// after this instant (held with admin and emailed when the wallet is not
+		// active). Nothing is credited here and the row stays 'failed'.
+		metadataMerge = vendRetryMetadata("stuck_recovery", reason)
+		s.event(ctx, t.ID, "vend_retry_started",
+			"Payment was received but the service was not delivered — retrying; the customer is refunded to their wallet if it cannot be completed within 30 minutes.", nil)
+		log.Printf("[utilitybills] vend retry window opened for %s (%d kobo): card payment received, not delivered", t.ID, claimed.RetailAmountKobo)
 	case claimed.PaymentSource == paymentSourcePaystack:
 		if s.postPaystackRefund(ctx, claimed) {
 			newStatus = string(StatusReversed)
@@ -1574,6 +1645,7 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
 		Status:        ptrx.Of(newStatus),
 		FailureReason: ptrx.Of(reason),
+		MetadataMerge: metadataMerge,
 	})
 	if uerr != nil {
 		return nil, uerr
