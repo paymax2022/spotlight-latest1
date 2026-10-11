@@ -231,6 +231,10 @@ type Config struct {
 	FeatureEstateDuesPaystackCheckoutEnabled bool
 	FeatureCrowdfundingEnabled               bool
 	FeatureRestaurantEnabled                 bool
+
+	// FeatureRestaurantAdminCategories moves menu-category ownership to the platform:
+	// owners get 403 on category create/delete, and the admin taxonomy routes mount.
+	FeatureRestaurantAdminCategories bool
 	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
 	// money path (wallet → saved bank account; restaurant/withdrawal.go
 	// RequestWithdrawal). Default OFF: the routes are always mounted once
@@ -882,6 +886,7 @@ func Load() Config {
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantAdminCategories:             getEnvBool("FEATURE_RESTAURANT_ADMIN_CATEGORIES", false),
 		FeatureRestaurantWithdrawalsEnabled:          getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureRestaurantPaystackCheckoutEnabled:     getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureModuleGateEnforce:                     getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),

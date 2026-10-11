@@ -1,0 +1,1976 @@
+{
+ "version": 1,
+ "categories": [
+  {
+   "name": "Combos & Meal Deals",
+   "slug": "combos-and-meal-deals",
+   "kind": "FOOD",
+   "sort_order": 10,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Student Combo",
+     "slug": "student-combo",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Family Pack",
+     "slug": "family-pack",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Couple's Combo",
+     "slug": "couples-combo",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Office Lunch Pack",
+     "slug": "office-lunch-pack",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Party Pack",
+     "slug": "party-pack",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Value Meal",
+     "slug": "value-meal",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Breakfast",
+   "slug": "breakfast",
+   "kind": "FOOD",
+   "sort_order": 20,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Nigerian Breakfast",
+     "slug": "nigerian-breakfast",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Continental Breakfast",
+     "slug": "continental-breakfast",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Eggs & Omelettes",
+     "slug": "eggs-and-omelettes",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Pancakes & Waffles",
+     "slug": "pancakes-and-waffles",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Pastries & Bread",
+     "slug": "pastries-and-bread",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Cereals & Oats",
+     "slug": "cereals-and-oats",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Akara & Pap",
+     "slug": "akara-and-pap",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Starters & Appetizers",
+   "slug": "starters-and-appetizers",
+   "kind": "FOOD",
+   "sort_order": 30,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Small Chops",
+     "slug": "small-chops",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Spring Rolls & Samosa",
+     "slug": "spring-rolls-and-samosa",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Chicken Wings",
+     "slug": "chicken-wings",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Suya Bites",
+     "slug": "suya-bites",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Pepper Soup Starters",
+     "slug": "pepper-soup-starters",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Soups (Light)",
+     "slug": "soups-light",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Bruschetta & Dips",
+     "slug": "bruschetta-and-dips",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Seafood Starters",
+     "slug": "seafood-starters",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Rice Dishes",
+   "slug": "rice-dishes",
+   "kind": "FOOD",
+   "sort_order": 40,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Jollof Rice",
+     "slug": "jollof-rice",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Fried Rice",
+     "slug": "fried-rice",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Coconut Rice",
+     "slug": "coconut-rice",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Ofada Rice",
+     "slug": "ofada-rice",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "White Rice & Stew",
+     "slug": "white-rice-and-stew",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Native Rice",
+     "slug": "native-rice",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Rice & Beans",
+     "slug": "rice-and-beans",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Special/Party Rice",
+     "slug": "special-party-rice",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Basmati & Biryani",
+     "slug": "basmati-and-biryani",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Swallows & Soups",
+   "slug": "swallows-and-soups",
+   "kind": "FOOD",
+   "sort_order": 50,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Egusi Soup",
+     "slug": "egusi-soup",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Efo Riro",
+     "slug": "efo-riro",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Okra Soup",
+     "slug": "okra-soup",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Ogbono Soup",
+     "slug": "ogbono-soup",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Edikang Ikong",
+     "slug": "edikang-ikong",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Afang",
+     "slug": "afang",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Banga/Ofe Akwu",
+     "slug": "banga-ofe-akwu",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Oha/Ofe Oha",
+     "slug": "oha-ofe-oha",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Bitterleaf/Onugbu",
+     "slug": "bitterleaf-onugbu",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Ewedu & Gbegiri",
+     "slug": "ewedu-and-gbegiri",
+     "kind": "FOOD",
+     "sort_order": 100,
+     "is_active": true
+    },
+    {
+     "name": "Pounded Yam",
+     "slug": "pounded-yam",
+     "kind": "FOOD",
+     "sort_order": 110,
+     "is_active": true
+    },
+    {
+     "name": "Eba/Garri",
+     "slug": "eba-garri",
+     "kind": "FOOD",
+     "sort_order": 120,
+     "is_active": true
+    },
+    {
+     "name": "Amala",
+     "slug": "amala",
+     "kind": "FOOD",
+     "sort_order": 130,
+     "is_active": true
+    },
+    {
+     "name": "Fufu",
+     "slug": "fufu",
+     "kind": "FOOD",
+     "sort_order": 140,
+     "is_active": true
+    },
+    {
+     "name": "Semo",
+     "slug": "semo",
+     "kind": "FOOD",
+     "sort_order": 150,
+     "is_active": true
+    },
+    {
+     "name": "Wheat/Oat Fufu",
+     "slug": "wheat-oat-fufu",
+     "kind": "FOOD",
+     "sort_order": 160,
+     "is_active": true
+    },
+    {
+     "name": "Pepper Soup",
+     "slug": "pepper-soup",
+     "kind": "FOOD",
+     "sort_order": 170,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Beans, Yam & Plantain",
+   "slug": "beans-yam-and-plantain",
+   "kind": "FOOD",
+   "sort_order": 60,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Ewa Agoyin",
+     "slug": "ewa-agoyin",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Beans & Plantain",
+     "slug": "beans-and-plantain",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Moi Moi",
+     "slug": "moi-moi",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Akara",
+     "slug": "akara",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Yam Porridge",
+     "slug": "yam-porridge",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Fried/Boiled Yam",
+     "slug": "fried-boiled-yam",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Yam & Egg",
+     "slug": "yam-and-egg",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Fried Plantain (Dodo)",
+     "slug": "fried-plantain-dodo",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Boli & Fish",
+     "slug": "boli-and-fish",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Asaro",
+     "slug": "asaro",
+     "kind": "FOOD",
+     "sort_order": 100,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Noodles & Pasta",
+   "slug": "noodles-and-pasta",
+   "kind": "FOOD",
+   "sort_order": 70,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Indomie & Noodles",
+     "slug": "indomie-and-noodles",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Stir-fry Noodles",
+     "slug": "stir-fry-noodles",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Spaghetti (Jollof/Stew)",
+     "slug": "spaghetti-jollof-stew",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Pasta (Italian)",
+     "slug": "pasta-italian",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Chinese Noodles",
+     "slug": "chinese-noodles",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Mac & Cheese",
+     "slug": "mac-and-cheese",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Grills & BBQ",
+   "slug": "grills-and-bbq",
+   "kind": "FOOD",
+   "sort_order": 80,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Suya",
+     "slug": "suya",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Asun",
+     "slug": "asun",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Grilled Chicken",
+     "slug": "grilled-chicken",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Grilled Fish (Catfish/Tilapia)",
+     "slug": "grilled-fish-catfish-tilapia",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Barbecue Ribs",
+     "slug": "barbecue-ribs",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Kebab & Shawarma Skewers",
+     "slug": "kebab-and-shawarma-skewers",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Peppered Snail",
+     "slug": "peppered-snail",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Grilled Turkey",
+     "slug": "grilled-turkey",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Roasted Plantain & Fish",
+     "slug": "roasted-plantain-and-fish",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Meat, Chicken & Fish",
+   "slug": "meat-chicken-and-fish",
+   "kind": "FOOD",
+   "sort_order": 90,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Chicken Dishes",
+     "slug": "chicken-dishes",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Beef Dishes",
+     "slug": "beef-dishes",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Goat Meat",
+     "slug": "goat-meat",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Turkey",
+     "slug": "turkey",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Pork",
+     "slug": "pork",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Lamb",
+     "slug": "lamb",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Fish & Seafood",
+     "slug": "fish-and-seafood",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Shrimp & Prawns",
+     "slug": "shrimp-and-prawns",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Snails",
+     "slug": "snails",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Peppered Meats",
+     "slug": "peppered-meats",
+     "kind": "FOOD",
+     "sort_order": 100,
+     "is_active": true
+    },
+    {
+     "name": "Stews & Sauces",
+     "slug": "stews-and-sauces",
+     "kind": "FOOD",
+     "sort_order": 110,
+     "is_active": true
+    },
+    {
+     "name": "Curries",
+     "slug": "curries",
+     "kind": "FOOD",
+     "sort_order": 120,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Burgers, Sandwiches & Wraps",
+   "slug": "burgers-sandwiches-and-wraps",
+   "kind": "FOOD",
+   "sort_order": 100,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Beef Burgers",
+     "slug": "beef-burgers",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Chicken Burgers",
+     "slug": "chicken-burgers",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Veggie Burgers",
+     "slug": "veggie-burgers",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Sandwiches & Subs",
+     "slug": "sandwiches-and-subs",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Shawarma",
+     "slug": "shawarma",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Wraps & Rolls",
+     "slug": "wraps-and-rolls",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Hot Dogs",
+     "slug": "hot-dogs",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Burger Combos",
+     "slug": "burger-combos",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Pizza & Italian",
+   "slug": "pizza-and-italian",
+   "kind": "FOOD",
+   "sort_order": 110,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Classic Pizza",
+     "slug": "classic-pizza",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Specialty Pizza",
+     "slug": "specialty-pizza",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Vegetarian Pizza",
+     "slug": "vegetarian-pizza",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Calzone",
+     "slug": "calzone",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Lasagna",
+     "slug": "lasagna",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Garlic Bread",
+     "slug": "garlic-bread",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Italian Pasta",
+     "slug": "italian-pasta",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Fast Food & Fried Chicken",
+   "slug": "fast-food-and-fried-chicken",
+   "kind": "FOOD",
+   "sort_order": 120,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Fried Chicken",
+     "slug": "fried-chicken",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Chicken & Chips",
+     "slug": "chicken-and-chips",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Fries & Wedges",
+     "slug": "fries-and-wedges",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Nuggets & Strips",
+     "slug": "nuggets-and-strips",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Fish & Chips",
+     "slug": "fish-and-chips",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Hot Wings",
+     "slug": "hot-wings",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Meat Pies & Sausage Rolls",
+     "slug": "meat-pies-and-sausage-rolls",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Asian & Oriental",
+   "slug": "asian-and-oriental",
+   "kind": "FOOD",
+   "sort_order": 130,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Chinese",
+     "slug": "chinese",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Sushi & Japanese",
+     "slug": "sushi-and-japanese",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Thai",
+     "slug": "thai",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Indian & Curry",
+     "slug": "indian-and-curry",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Korean",
+     "slug": "korean",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Dim Sum",
+     "slug": "dim-sum",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Fried Rice (Chinese)",
+     "slug": "fried-rice-chinese",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Sweet & Sour",
+     "slug": "sweet-and-sour",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Hot Pot",
+     "slug": "hot-pot",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Lebanese, Turkish & Mediterranean",
+   "slug": "lebanese-turkish-and-mediterranean",
+   "kind": "FOOD",
+   "sort_order": 140,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Shawarma Plates",
+     "slug": "shawarma-plates",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Falafel & Hummus",
+     "slug": "falafel-and-hummus",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Kebabs",
+     "slug": "kebabs",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Mezze Platters",
+     "slug": "mezze-platters",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Pita & Wraps",
+     "slug": "pita-and-wraps",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Grilled Meats",
+     "slug": "grilled-meats",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Salads & Sides",
+   "slug": "salads-and-sides",
+   "kind": "FOOD",
+   "sort_order": 150,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Garden Salad",
+     "slug": "garden-salad",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Coleslaw",
+     "slug": "coleslaw",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Caesar Salad",
+     "slug": "caesar-salad",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Chicken Salad",
+     "slug": "chicken-salad",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Fruit Salad",
+     "slug": "fruit-salad",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Nigerian Salad",
+     "slug": "nigerian-salad",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Side Rice",
+     "slug": "side-rice",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Side Plantain",
+     "slug": "side-plantain",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Side Fries",
+     "slug": "side-fries",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Extra Protein",
+     "slug": "extra-protein",
+     "kind": "FOOD",
+     "sort_order": 100,
+     "is_active": true
+    },
+    {
+     "name": "Extra Sauce",
+     "slug": "extra-sauce",
+     "kind": "FOOD",
+     "sort_order": 110,
+     "is_active": true
+    },
+    {
+     "name": "Sauces & Dips",
+     "slug": "sauces-and-dips",
+     "kind": "FOOD",
+     "sort_order": 120,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Sharing Platters",
+   "slug": "sharing-platters",
+   "kind": "FOOD",
+   "sort_order": 160,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Mixed Grill Platter",
+     "slug": "mixed-grill-platter",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Seafood Platter",
+     "slug": "seafood-platter",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Small Chops Platter",
+     "slug": "small-chops-platter",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Pepper Soup Platter",
+     "slug": "pepper-soup-platter",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Party Platter",
+     "slug": "party-platter",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Tapas & Finger Foods",
+     "slug": "tapas-and-finger-foods",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Street Food & Snacks",
+   "slug": "street-food-and-snacks",
+   "kind": "FOOD",
+   "sort_order": 170,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Puff Puff",
+     "slug": "puff-puff",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Chin Chin",
+     "slug": "chin-chin",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Buns",
+     "slug": "buns",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Gizdodo",
+     "slug": "gizdodo",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Corn (Roasted/Boiled)",
+     "slug": "corn-roasted-boiled",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Roasted Yam & Fish",
+     "slug": "roasted-yam-and-fish",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Plantain Chips",
+     "slug": "plantain-chips",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Popcorn",
+     "slug": "popcorn",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Kilishi",
+     "slug": "kilishi",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Gala & Pies",
+     "slug": "gala-and-pies",
+     "kind": "FOOD",
+     "sort_order": 100,
+     "is_active": true
+    },
+    {
+     "name": "Shawarma Rolls",
+     "slug": "shawarma-rolls",
+     "kind": "FOOD",
+     "sort_order": 110,
+     "is_active": true
+    },
+    {
+     "name": "Nkwobi",
+     "slug": "nkwobi",
+     "kind": "FOOD",
+     "sort_order": 120,
+     "is_active": true
+    },
+    {
+     "name": "Isi Ewu",
+     "slug": "isi-ewu",
+     "kind": "FOOD",
+     "sort_order": 130,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Bakery & Pastries",
+   "slug": "bakery-and-pastries",
+   "kind": "FOOD",
+   "sort_order": 180,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Bread & Rolls",
+     "slug": "bread-and-rolls",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Pies & Pastries",
+     "slug": "pies-and-pastries",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Doughnuts",
+     "slug": "doughnuts",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Cakes & Slices",
+     "slug": "cakes-and-slices",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Cupcakes & Muffins",
+     "slug": "cupcakes-and-muffins",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Cookies",
+     "slug": "cookies",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Croissants",
+     "slug": "croissants",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Birthday & Custom Cakes",
+     "slug": "birthday-and-custom-cakes",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Desserts",
+   "slug": "desserts",
+   "kind": "FOOD",
+   "sort_order": 190,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Ice Cream",
+     "slug": "ice-cream",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Cakes",
+     "slug": "cakes",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Pies & Tarts",
+     "slug": "pies-and-tarts",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Puddings & Custard",
+     "slug": "puddings-and-custard",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Waffles & Crepes",
+     "slug": "waffles-and-crepes",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Brownies",
+     "slug": "brownies",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Yogurt & Parfait",
+     "slug": "yogurt-and-parfait",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Milkshake Desserts",
+     "slug": "milkshake-desserts",
+     "kind": "FOOD",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Fruit Platters",
+     "slug": "fruit-platters",
+     "kind": "FOOD",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Cheesecake",
+     "slug": "cheesecake",
+     "kind": "FOOD",
+     "sort_order": 100,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Healthy, Vegan & Vegetarian",
+   "slug": "healthy-vegan-and-vegetarian",
+   "kind": "FOOD",
+   "sort_order": 200,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Vegan Meals",
+     "slug": "vegan-meals",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Vegetarian Meals",
+     "slug": "vegetarian-meals",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Salad Bowls",
+     "slug": "salad-bowls",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Smoothie Bowls",
+     "slug": "smoothie-bowls",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Low-carb",
+     "slug": "low-carb",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Gluten-free",
+     "slug": "gluten-free",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Diabetic-friendly",
+     "slug": "diabetic-friendly",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Kids Menu",
+   "slug": "kids-menu",
+   "kind": "FOOD",
+   "sort_order": 210,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Kids Meals",
+     "slug": "kids-meals",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Kids Snacks",
+     "slug": "kids-snacks",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Kids Drinks",
+     "slug": "kids-drinks",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Seafood",
+   "slug": "seafood",
+   "kind": "FOOD",
+   "sort_order": 220,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Fish Dishes",
+     "slug": "fish-dishes",
+     "kind": "FOOD",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Shrimp & Prawns",
+     "slug": "seafood-shrimp-and-prawns",
+     "kind": "FOOD",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Crab & Lobster",
+     "slug": "crab-and-lobster",
+     "kind": "FOOD",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Peppered Fish",
+     "slug": "peppered-fish",
+     "kind": "FOOD",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Seafood Rice",
+     "slug": "seafood-rice",
+     "kind": "FOOD",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Seafood Soup",
+     "slug": "seafood-soup",
+     "kind": "FOOD",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Calamari",
+     "slug": "calamari",
+     "kind": "FOOD",
+     "sort_order": 70,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Groceries & Add-ons",
+   "slug": "groceries-and-add-ons",
+   "kind": "OTHER",
+   "sort_order": 230,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Extras & Toppings",
+     "slug": "extras-and-toppings",
+     "kind": "OTHER",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Packaging",
+     "slug": "packaging",
+     "kind": "OTHER",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Condiments",
+     "slug": "condiments",
+     "kind": "OTHER",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Eggs",
+     "slug": "eggs",
+     "kind": "OTHER",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Bread",
+     "slug": "bread",
+     "kind": "OTHER",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Provisions",
+     "slug": "provisions",
+     "kind": "OTHER",
+     "sort_order": 60,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Soft Drinks",
+   "slug": "soft-drinks",
+   "kind": "DRINK",
+   "sort_order": 240,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Carbonated Drinks",
+     "slug": "carbonated-drinks",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Energy Drinks",
+     "slug": "energy-drinks",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Bottled Water",
+     "slug": "bottled-water",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Sparkling Water",
+     "slug": "sparkling-water",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Malt Drinks",
+     "slug": "malt-drinks",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Mixers & Tonic",
+     "slug": "mixers-and-tonic",
+     "kind": "DRINK",
+     "sort_order": 60,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Juices & Smoothies",
+   "slug": "juices-and-smoothies",
+   "kind": "DRINK",
+   "sort_order": 250,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Fresh Juice",
+     "slug": "fresh-juice",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Packaged Juice",
+     "slug": "packaged-juice",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Smoothies",
+     "slug": "smoothies",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Zobo",
+     "slug": "zobo",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Kunu",
+     "slug": "kunu",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Tiger Nut (Kunun Aya)",
+     "slug": "tiger-nut-kunun-aya",
+     "kind": "DRINK",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Fura da Nono",
+     "slug": "fura-da-nono",
+     "kind": "DRINK",
+     "sort_order": 70,
+     "is_active": true
+    },
+    {
+     "name": "Ginger Drinks",
+     "slug": "ginger-drinks",
+     "kind": "DRINK",
+     "sort_order": 80,
+     "is_active": true
+    },
+    {
+     "name": "Parfait Drinks",
+     "slug": "parfait-drinks",
+     "kind": "DRINK",
+     "sort_order": 90,
+     "is_active": true
+    },
+    {
+     "name": "Milkshakes",
+     "slug": "milkshakes",
+     "kind": "DRINK",
+     "sort_order": 100,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Hot Beverages",
+   "slug": "hot-beverages",
+   "kind": "DRINK",
+   "sort_order": 260,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Coffee",
+     "slug": "coffee",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Tea",
+     "slug": "tea",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Hot Chocolate",
+     "slug": "hot-chocolate",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Milk Drinks",
+     "slug": "milk-drinks",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Ginger/Herbal Tea",
+     "slug": "ginger-herbal-tea",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Cold Beverages & Mocktails",
+   "slug": "cold-beverages-and-mocktails",
+   "kind": "DRINK",
+   "sort_order": 270,
+   "is_active": true,
+   "children": [
+    {
+     "name": "Iced Coffee",
+     "slug": "iced-coffee",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": true
+    },
+    {
+     "name": "Iced Tea",
+     "slug": "iced-tea",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": true
+    },
+    {
+     "name": "Mocktails",
+     "slug": "mocktails",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": true
+    },
+    {
+     "name": "Chapman",
+     "slug": "chapman",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": true
+    },
+    {
+     "name": "Slush & Frozen Drinks",
+     "slug": "slush-and-frozen-drinks",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": true
+    },
+    {
+     "name": "Lemonade",
+     "slug": "lemonade",
+     "kind": "DRINK",
+     "sort_order": 60,
+     "is_active": true
+    },
+    {
+     "name": "Cold Brew",
+     "slug": "cold-brew",
+     "kind": "DRINK",
+     "sort_order": 70,
+     "is_active": true
+    }
+   ]
+  },
+  {
+   "name": "Beer & Ciders",
+   "slug": "beer-and-ciders",
+   "kind": "DRINK",
+   "sort_order": 280,
+   "is_active": false,
+   "children": [
+    {
+     "name": "Lager",
+     "slug": "lager",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": false
+    },
+    {
+     "name": "Stout",
+     "slug": "stout",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": false
+    },
+    {
+     "name": "Premium Beer",
+     "slug": "premium-beer",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": false
+    },
+    {
+     "name": "Craft Beer",
+     "slug": "craft-beer",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": false
+    },
+    {
+     "name": "Cider",
+     "slug": "cider",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": false
+    },
+    {
+     "name": "Non-alcoholic Beer",
+     "slug": "non-alcoholic-beer",
+     "kind": "DRINK",
+     "sort_order": 60,
+     "is_active": false
+    }
+   ]
+  },
+  {
+   "name": "Wine & Champagne",
+   "slug": "wine-and-champagne",
+   "kind": "DRINK",
+   "sort_order": 290,
+   "is_active": false,
+   "children": [
+    {
+     "name": "Red Wine",
+     "slug": "red-wine",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": false
+    },
+    {
+     "name": "White Wine",
+     "slug": "white-wine",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": false
+    },
+    {
+     "name": "Rose",
+     "slug": "rose",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": false
+    },
+    {
+     "name": "Sparkling & Champagne",
+     "slug": "sparkling-and-champagne",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": false
+    },
+    {
+     "name": "Wine by the Glass",
+     "slug": "wine-by-the-glass",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": false
+    },
+    {
+     "name": "Palm Wine",
+     "slug": "palm-wine",
+     "kind": "DRINK",
+     "sort_order": 60,
+     "is_active": false
+    }
+   ]
+  },
+  {
+   "name": "Spirits & Cocktails",
+   "slug": "spirits-and-cocktails",
+   "kind": "DRINK",
+   "sort_order": 300,
+   "is_active": false,
+   "children": [
+    {
+     "name": "Whisky",
+     "slug": "whisky",
+     "kind": "DRINK",
+     "sort_order": 10,
+     "is_active": false
+    },
+    {
+     "name": "Cognac & Brandy",
+     "slug": "cognac-and-brandy",
+     "kind": "DRINK",
+     "sort_order": 20,
+     "is_active": false
+    },
+    {
+     "name": "Vodka",
+     "slug": "vodka",
+     "kind": "DRINK",
+     "sort_order": 30,
+     "is_active": false
+    },
+    {
+     "name": "Gin",
+     "slug": "gin",
+     "kind": "DRINK",
+     "sort_order": 40,
+     "is_active": false
+    },
+    {
+     "name": "Rum",
+     "slug": "rum",
+     "kind": "DRINK",
+     "sort_order": 50,
+     "is_active": false
+    },
+    {
+     "name": "Tequila",
+     "slug": "tequila",
+     "kind": "DRINK",
+     "sort_order": 60,
+     "is_active": false
+    },
+    {
+     "name": "Liqueurs",
+     "slug": "liqueurs",
+     "kind": "DRINK",
+     "sort_order": 70,
+     "is_active": false
+    },
+    {
+     "name": "Cocktails",
+     "slug": "cocktails",
+     "kind": "DRINK",
+     "sort_order": 80,
+     "is_active": false
+    },
+    {
+     "name": "Shots",
+     "slug": "shots",
+     "kind": "DRINK",
+     "sort_order": 90,
+     "is_active": false
+    },
+    {
+     "name": "Bottle Service",
+     "slug": "bottle-service",
+     "kind": "DRINK",
+     "sort_order": 100,
+     "is_active": false
+    }
+   ]
+  }
+ ]
+}
