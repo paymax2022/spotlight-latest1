@@ -212,3 +212,71 @@ func TestLiveDB_DuplicateEvent_VisibilityGate(t *testing.T) {
 		t.Fatalf("bad owner copy: %+v", own)
 	}
 }
+
+// seedFreeTier inserts a zero-price tier so Purchase needs no funded wallet/escrow.
+func seedFreeTier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, eventID string) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity) VALUES ($1,$2,'Free',0,100)`,
+		id, eventID); err != nil {
+		t.Fatalf("seed tier: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM event_tickets WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(bg, `DELETE FROM event_orders WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(bg, `DELETE FROM event_ticket_tiers WHERE event_id=$1`, eventID)
+	})
+	return id
+}
+
+func TestLiveDB_PauseBlocksPurchase(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	buyer := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedFreeTier(t, ctx, pool, ev)
+
+	idem1 := "idem-" + uuid.New().String()
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", idem1); err != nil {
+		t.Fatalf("purchase while LIVE: %v", err)
+	}
+	if err := svc.Pause(ctx, owner, ev); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	idem2 := "idem-" + uuid.New().String()
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", idem2); !errors.Is(err, top5events.ErrNotPurchasable) {
+		t.Fatalf("want ErrNotPurchasable, got %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM event_orders WHERE idempotency_key=$1`, idem2).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("order rows for blocked purchase = %d err=%v", n, err)
+	}
+	// Replay of the already-placed order still resolves while paused.
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", idem1); err != nil {
+		t.Fatalf("replay while paused should succeed: %v", err)
+	}
+}
+
+func TestLiveDB_ResumeRestoresPurchase(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	buyer := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedFreeTier(t, ctx, pool, ev)
+
+	if err := svc.Pause(ctx, owner, ev); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if err := svc.Resume(ctx, owner, ev); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", "idem-"+uuid.New().String()); err != nil {
+		t.Fatalf("purchase after Resume: %v", err)
+	}
+}

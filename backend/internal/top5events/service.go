@@ -384,8 +384,11 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if err != nil {
 		return nil, err
 	}
+	// Placed AFTER the orderByIdem replay above (a replay of an already-placed
+	// order must still resolve even if the event is now paused) and BEFORE any
+	// new order is reserved/inserted below.
 	if ev.State != EventLive {
-		return nil, fmt.Errorf("events: event not on sale (state %s)", ev.State)
+		return nil, fmt.Errorf("%w (state %s)", ErrNotPurchasable, ev.State)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -1358,6 +1361,7 @@ var (
 	ErrNotFound          = errors.New("events: not found")
 	ErrForbidden         = errors.New("events: forbidden")
 	ErrSoldOut           = errors.New("events: tier sold out")
+	ErrNotPurchasable    = errors.New("events: event is not on sale")
 	ErrInsufficientFloat = errors.New("events: insufficient event-wallet balance")
 	ErrKYCRequired       = errors.New("events: vendor must complete KYC before payout (NL-10)")
 )

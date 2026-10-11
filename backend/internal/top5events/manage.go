@@ -81,6 +81,23 @@ func (s *Service) authorizeManage(ctx context.Context, callerID, eventID string)
 	return false, nil
 }
 
+// Pause suspends sales on a LIVE event (LIVE -> PAUSED). Owner or MANAGER.
+func (s *Service) Pause(ctx context.Context, callerID, eventID string) error {
+	if _, err := s.authorizeManage(ctx, callerID, eventID); err != nil {
+		return err
+	}
+	// ownerCheck=nil: authorizeManage already authorized (a MANAGER is not the organiser).
+	return s.transition(ctx, eventID, EventLive, EventPaused, nil, "events.pause")
+}
+
+// Resume re-opens sales on a PAUSED event (PAUSED -> LIVE). Owner or MANAGER.
+func (s *Service) Resume(ctx context.Context, callerID, eventID string) error {
+	if _, err := s.authorizeManage(ctx, callerID, eventID); err != nil {
+		return err
+	}
+	return s.transition(ctx, eventID, EventPaused, EventLive, nil, "events.resume")
+}
+
 // EventPatch carries optional edits; nil fields are left unchanged.
 type EventPatch struct {
 	Title       *string    `json:"title,omitempty"`
