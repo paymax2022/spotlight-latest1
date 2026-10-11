@@ -54,3 +54,21 @@ Not yet verified — requires Quidax sandbox credentials, which I do not have. R
 
 ## Recommended next step
 Owner answers ASK items 1, 2, 4, 6 at minimum (they change the schema and money flow). Phase 1 (provider abstraction, mock, Quidax adapter, migrations, reconciler) can start in parallel with the rest, behind `CRYPTO_TRADING_ENABLED=false`.
+
+## Owner decisions (answers to ASK items)
+
+1. **NGN to Quidax funding: per-user virtual account, not prefunded float.** Settlement risk is borne by the user making the transaction. Settlement is Quidax charge plus platform commission. Required flow for a buy:
+   a. create NGN-to-crypto purchase; b. get conversion quote and display fees; c. receive and verify NGN payment; d. execute conversion through the provider; e. verify the `trade.completed` webhook (see note below); f. record balanced ledger entries; g. mark crypto balance available; h. notify user.
+2. **Custody: one Quidax sub-account per user is accepted by compliance.**
+3. **Ledger holds: use a `crypto_clearing` ledger account** (no lien primitive is added to the ledger).
+4. **Money format:** NGN accounting stays in integer kobo. `shopspring/decimal` is added for financial computation. Crypto uses atomic-unit accounting. All conversions go through one central package, `backend/internal/money`, which owns precision, conversion and rounding.
+5. **Legal:** Quidax's legal cover is being used. Production enablement still requires the owner's sign-off on SEC/CBN/NDPA; this is recorded as a gate, not a code change.
+
+### Items the owner's answers introduce (to verify, not assume)
+- The event name `trade.completed` does not appear in the spec's Quidax event list (`swap_transaction.completed` / `failed`, `order.done`). The sandbox checklist must confirm the real event name before step (e) is wired. Until then the code uses the names in spec §4.
+- Step (b) quoting with fees requires the commission to be an explicit ledger leg; the fee model (ASK 8) is still open.
+
+## Implemented in Phase 1 (this branch)
+- `backend/internal/money`: kobo and decimal conversion, checked int64 arithmetic, rounding modes (down for receives, up for pays, nearest for display), asset precision loaded from market config, and a `Validate` that never rounds silently.
+- `backend/internal/cryptoprov`: capability interfaces (market, swap, withdrawal, webhook) with `As[T]`, the error taxonomy (`IsDefinitive` is true only for 4xx; 5xx and timeouts are ambiguous and must go to `needs_review`), a registry, a deterministic mock with idempotent confirm and withdraw and injectable faults, the Quidax webhook signature verifier (constant time, replay window, raw and compacted body), and the swap state machine (terminal states never regress).
+- Not yet built: the Quidax HTTP adapter (needs sandbox credentials), migrations, ledger posting, the buy pipeline, reconciler, and any route wiring. Everything remains behind `CRYPTO_TRADING_ENABLED=false`.
