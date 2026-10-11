@@ -492,6 +492,7 @@ func httpRig(t *testing.T) (*rig, *gin.Engine) {
 	g.Use(func(c *gin.Context) { // minimal stand-in for RequireAuthContext
 		if u := c.GetHeader("X-Test-User"); u != "" {
 			c.Set("user_id", u)
+			c.Set("user_email", "buyer@gmail.com")
 		}
 	})
 	r.e.RegisterRoutes(g.Group("/m"))

@@ -601,6 +601,7 @@ paths:
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable' }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/car-hire/paystack/{reference}/status:
     get:
@@ -709,7 +710,7 @@ paths:
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
-        '422': { description: Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED) }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored.; or Prohibited-items acknowledgement missing (PROHIBITED_ACK_REQUIRED)" }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/parcels/paystack/{reference}/status:
     get:
@@ -988,6 +989,7 @@ paths:
         '401': { description: Not authenticated }
         '404': { description: 'service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'idempotency_conflict, or authorization_unavailable (the checkout URL was never persisted and Paystack will not initialize the reference twice: start a new checkout; a payment already made still confirms automatically)' }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/towing/paystack/{reference}/status:
     get:
@@ -1162,6 +1164,7 @@ paths:
         '403': { description: Not your job }
         '404': { description: 'job/bid not found, or service_disabled - the service flag is off (new checkouts refused; status/confirm/refund for money already collected stay live)' }
         '409': { description: 'job not open / already funded / bid not available, idempotency_conflict, or authorization_unavailable (start a new checkout; a payment already made still confirms automatically)' }
+        '422': { description: "email_required - neither the account email nor `email` in the body is a usable address (Paystack refuses .internal/.local/.test/.invalid/.example). Ask the user for an email and retry with it in `email`. Nothing is quoted or stored." }
         '429': { description: Per-user rate limit on checkout creation (rate_limited) }
   /mobility/movers/paystack/{reference}/status:
     get:
