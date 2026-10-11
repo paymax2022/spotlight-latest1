@@ -47,12 +47,13 @@ export interface NotificationPrefs {
   orderStatus: boolean;
   boostExpiry: boolean;
   promotional: boolean;
+  newListing: boolean;
   userId?: string;
   updatedAt?: string;
 }
 
 export type NotificationPrefsPatch = Partial<
-  Pick<NotificationPrefs, 'newOffer' | 'priceDrop' | 'orderStatus' | 'boostExpiry' | 'promotional'>
+  Pick<NotificationPrefs, 'newOffer' | 'priceDrop' | 'orderStatus' | 'boostExpiry' | 'promotional' | 'newListing'>
 >;
 
 /** A curated verified-safe meetup location (§27). */
@@ -102,6 +103,7 @@ let mockPrefs: NotificationPrefs = {
   orderStatus: true,
   boostExpiry: true,
   promotional: false,
+  newListing: true,
   updatedAt: new Date().toISOString(),
 };
 
@@ -213,6 +215,7 @@ export type MktNotificationType =
   | 'new_offer' // a buyer made/updated an offer (NT-002)
   | 'new_message' // a new chat message (NT-002)
   | 'price_drop' // a saved-search or watched listing dropped in price (NT-003)
+  | 'new_listing' // a seller you follow posted a new listing
   | 'saved_search' // new results for a saved search (NT-003)
   | 'boost_expiry' // a boost is ending / has ended
   | 'review'; // a buyer reviewed you
@@ -268,6 +271,7 @@ const SERVER_TYPE_TO_CLIENT: Record<string, MktNotificationType> = {
   offer_declined: 'new_offer',
   offer_countered: 'new_offer',
   price_dropped: 'price_drop',
+  new_listing: 'new_listing',
   listing_ending_soon: 'listing_status',
   low_stock: 'listing_status',
   boost_expiring: 'boost_expiry',

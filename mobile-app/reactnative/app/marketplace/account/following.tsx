@@ -1,4 +1,4 @@
-// inline. Following keeps a seller one tap away; new-listing alerts are not sent yet.
+// inline. Following keeps a seller one tap away and sends a new-listing alert (inbox) when they post.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,7 +33,7 @@ export default function FollowingScreen() {
         <View style={styles.centre}>
           <Store size={40} color={MarketColors.muted} />
           <Text style={styles.emptyTitle}>You’re not following anyone yet</Text>
-          <Text style={styles.muted}>Tap Follow on a seller’s profile or on a listing to keep them here for quick access.</Text>
+          <Text style={styles.muted}>Tap Follow on a seller’s profile or on a listing to keep them here and get an alert when they post something new.</Text>
         </View>
       ) : (
         <FlatList
