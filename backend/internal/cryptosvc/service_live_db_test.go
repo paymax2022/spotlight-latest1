@@ -23,7 +23,7 @@ func newLiveService(t *testing.T, r *liveRig) (*Service, *cryptoprov.Mock, *PGSt
 		t.Fatal(err)
 	}
 	store := NewPGStore(r.pool)
-	locker := NewPGSwapLocker(r.pool)
+	locker := lockLocker(t)
 	settler := NewSettler(r.led).WithLocker(locker)
 	ing := NewIngest(reg, store).WithSettler(settler)
 	svc := NewService(ServiceConfig{

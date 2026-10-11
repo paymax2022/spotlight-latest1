@@ -38,8 +38,10 @@ shared transaction: the order of the two writes decides which failure loses mone
   detached context, and if it still fails the id goes into the review reason.
 - **Only an allowlist of provider answers proves "not executed":** 400, 404, 422, 429, 444. 401/403/408/409/425,
   every 5xx and every transport failure are ambiguous and keep the hold.
-- **The locker is mandatory** (no locker, no trading). `PGSwapLocker` pins one connection per held lock; give it
-  its own pool sized well above concurrent confirms to avoid starvation.
+- **The locker is mandatory** (no locker, no trading). `PGSwapLocker` pins one connection per held lock; it MUST run on its own pool
+  (`NewPGSwapLockerPool`, at least ~2x concurrent confirms). CI proved this: with the locker on the shared 4-connection
+  pool, 8 concurrent confirms deadlocked until the test timeout. The live tests now use a small shared pool plus a
+  dedicated lock pool, which reproduces the hang if the wiring regresses.
 - The trade gate also runs when resuming a claimed swap that has not reached the provider; if it refuses there,
   any hold already posted is released and the swap fails (nothing reached the provider, so it is safe).
 - **Must exist before this is enabled:** a stamped swap with no provider swap id (process died after the stamp, or a

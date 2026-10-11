@@ -16,8 +16,28 @@ import (
 // lock connection while waiting for a query connection and stall the service.
 type PGSwapLocker struct{ pool *pgxpool.Pool }
 
-// NewPGSwapLocker wraps a pool.
+// NewPGSwapLocker wraps a pool. The pool MUST be a dedicated lock pool, never the one the
+// store and ledger use (see the sizing note above); use NewPGSwapLockerPool to create one.
 func NewPGSwapLocker(pool *pgxpool.Pool) *PGSwapLocker { return &PGSwapLocker{pool: pool} }
+
+// NewPGSwapLockerPool opens a dedicated connection pool for locks and returns the locker and
+// a close func. maxConns must comfortably exceed the number of concurrent Confirm calls times
+// two (a Confirm holds its own lock and the settler's nested lock at the same time).
+func NewPGSwapLockerPool(ctx context.Context, dsn string, maxConns int32) (*PGSwapLocker, func(), error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cryptosvc: lock pool config: %w", err)
+	}
+	if maxConns < 4 {
+		return nil, nil, fmt.Errorf("cryptosvc: lock pool needs at least 4 connections, got %d", maxConns)
+	}
+	cfg.MaxConns = maxConns
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cryptosvc: open lock pool: %w", err)
+	}
+	return &PGSwapLocker{pool: pool}, pool.Close, nil
+}
 
 var _ SwapLocker = (*PGSwapLocker)(nil)
 

@@ -7,6 +7,7 @@ package cryptosvc
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 
@@ -29,6 +30,19 @@ type liveRig struct {
 	wallet   *ledger.Account
 	clearing *ledger.Account
 	revenue  *ledger.Account
+}
+
+// lockLocker returns a PGSwapLocker over its OWN pool, as production must wire it: sharing the
+// store/ledger pool deadlocks when concurrent callers each pin a lock connection.
+func lockLocker(t *testing.T) *PGSwapLocker {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	l, closeFn, err := NewPGSwapLockerPool(context.Background(), dsn, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeFn)
+	return l
 }
 
 func newLiveRig(t *testing.T, tier int, fundKobo int64) *liveRig {
@@ -192,7 +206,7 @@ func TestLive_ReplayWithADifferentAmountFailsClosed(t *testing.T) {
 
 func TestLive_CompleteAndFailRacingPostExactlyOneOutcome(t *testing.T) {
 	r := newLiveRig(t, 1, 5_000_000) // 4 holds of 1,007,500 stay under the tier-1 daily cap
-	r.s.WithLocker(NewPGSwapLocker(r.pool))
+	r.s.WithLocker(lockLocker(t))
 	for i := 0; i < 4; i++ {
 		in := liveBuy(r.user)
 		before := r.snap(t)
