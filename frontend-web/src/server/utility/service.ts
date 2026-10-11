@@ -66,7 +66,7 @@ const AMBIGUOUS_ATTEMPT_STATUSES: ReadonlySet<UtilityProviderAttemptRow['status'
 ]);
 
 /**
- * ADR-PR<pr> — card-paid bills reach the ledger. With this on, a verified
+ * ADR-PR697 — card-paid bills reach the ledger. With this on, a verified
  * Paystack charge is collected into the wallet (`utility:<tx>:CARD_COLLECT`) and
  * then spent through the same wallet debit a wallet-sourced bill uses, so the
  * admin Transactions page (ledger_entries only) shows it and every refund path

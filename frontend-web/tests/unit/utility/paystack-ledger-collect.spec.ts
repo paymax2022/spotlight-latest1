@@ -1,4 +1,4 @@
-// Card-paid utility bills must reach the ledger (ADR-PR<pr> — card-paid utility
+// Card-paid utility bills must reach the ledger (ADR-PR697 — card-paid utility
 // bills are collected into the wallet, then spent). Before this, a verified
 // Paystack charge (paymentSource: 'paystack') posted NOTHING: the admin
 // Transactions page (ledger_entries only) never showed it, and every refund path
