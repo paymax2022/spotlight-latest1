@@ -67,7 +67,7 @@ export default function OrganiserDashboard() {
               <View key={e.id} style={styles.card}>
                 <View style={styles.cardHead}>
                   <Text style={styles.cardTitle} numberOfLines={1}>{e.title}</Text>
-                  <Text style={[styles.status, { color: meta.color }]}>{e.state}</Text>
+                  <Text style={[styles.status, { color: meta.color }]}>{meta.label}</Text>
                 </View>
                 <View style={styles.statsRow}>
                   <Stat label="Sold" value={`${stats.tickets_sold}${stats.tickets_total ? `/${stats.tickets_total}` : ''}`} />
@@ -134,7 +134,11 @@ function EventActions({ stats }: { stats: OrganiserEventStats }) {
           text: 'Cancel event', style: 'destructive',
           onPress: () => cancel.mutate(
             { reason: 'Cancelled by organiser', idemKey: cancelKey.current as string },
-            { onSuccess: () => { cancelKey.current = null; }, onError: fail('Couldn\'t cancel event') },
+            { onSuccess: () => { cancelKey.current = null; }, onError: (err) => {
+                // A definite server answer (HTTP status) ends this intent; only a network failure keeps the key for replay.
+                if ((err as { response?: { status?: number } })?.response?.status) cancelKey.current = null;
+                fail('Couldn\'t cancel event')(err);
+              } },
           ),
         },
       ],

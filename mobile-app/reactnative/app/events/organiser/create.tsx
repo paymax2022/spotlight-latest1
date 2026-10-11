@@ -141,7 +141,7 @@ export default function CreateEvent() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title={isEdit ? 'Edit event' : 'Create event'} subtitle={`Step ${step + 1} of ${totalSteps}`} onBack={() => (step === 0 ? goBack('/events') : setStep((s) => s - 1))} />
+      <ScreenHeader title={isEdit ? 'Edit event' : 'Create event'} subtitle={`Step ${step + 1} of ${totalSteps}`} onBack={() => (step === 0 ? goBack(isEdit ? '/events/organiser/dashboard' : '/events') : setStep((s) => s - 1))} />
       <View style={styles.progress}>
         {Array.from({ length: totalSteps }).map((_, i) => (
           <View key={i} style={[styles.bar, i <= step && styles.barActive]} />

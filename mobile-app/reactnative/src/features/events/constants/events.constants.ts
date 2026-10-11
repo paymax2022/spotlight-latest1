@@ -118,6 +118,8 @@ export const EVENT_STATE_BADGE: Record<string, { label: string; color: string; b
   SUBMITTED: { label: 'Pending',   color: EventColors.warnText, bg: EventColors.warnBg },
   DRAFT:     { label: 'Draft',     color: EventColors.warnText, bg: EventColors.warnBg },
   CLOSED:    { label: 'Ended',     color: EventColors.muted,    bg: EventColors.surfaceAlt },
+  PAUSED:    { label: 'Paused',    color: EventColors.warnText, bg: EventColors.warnBg },
+  CANCELLED: { label: 'Cancelled', color: EventColors.muted,    bg: EventColors.surfaceAlt },
   SUSPENDED: { label: 'Suspended', color: EventColors.danger,   bg: EventColors.dangerBg },
 };
 
