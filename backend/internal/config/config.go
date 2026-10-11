@@ -219,9 +219,10 @@ type Config struct {
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
 	// structurally valid card token for a known membership id.
-	AssocCardSigningSecret string
-	FeatureEventsEnabled   bool
-	FeatureEstateEnabled   bool
+	AssocCardSigningSecret     string
+	FeatureEventsEnabled       bool
+	FeatureEventsEditLifecycle bool // organiser edit/duplicate/pause/resume/cancel routes
+	FeatureEstateEnabled       bool
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never
@@ -887,6 +888,7 @@ func Load() Config {
 		FeatureAssociationsEnabled:                   getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
 		AssocCardSigningSecret:                       getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
 		FeatureEventsEnabled:                         getEnvBool("FEATURE_EVENTS_ENABLED", false),
+		FeatureEventsEditLifecycle:                   getEnvBool("FEATURE_EVENTS_EDIT_LIFECYCLE", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
