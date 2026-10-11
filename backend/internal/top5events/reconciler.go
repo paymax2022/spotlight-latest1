@@ -43,6 +43,13 @@ func StartPendingOrderReconciler(ctx context.Context, svc *Service, interval, ol
 		if finalized > 0 || swept > 0 {
 			log.Printf("[top5events] pending-order sweep: finalized=%d swept=%d", finalized, swept)
 		}
+		// Re-drive cancelled events whose refund sweep did not finish (same
+		// ticket-derived idempotency keys as Cancel, so this never double-refunds).
+		if n, cerr := svc.ReconcileCancelledEvents(cctx); cerr != nil {
+			log.Printf("[top5events] cancelled-event refund sweep error: %v", cerr)
+		} else if n > 0 {
+			log.Printf("[top5events] cancelled-event refund sweep: events=%d", n)
+		}
 	}
 	go func() {
 		run()

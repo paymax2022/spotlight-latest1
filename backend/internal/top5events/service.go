@@ -109,6 +109,9 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	e.OrganiserID = organiserID
 	e.State = EventDraft
 	e.CreatedAt = time.Now()
+	if e.FeeBps <= 0 {
+		e.FeeBps = 1000 // platform default: 10% (the Cancel refund keeps this as the non-refundable fee)
+	}
 	// organizer_id (legacy, NOT NULL, no default) is populated alongside the
 	// new organiser_id with the SAME value — see
 	// 20270228000000_events_ticket_legacy_columns_nullable.sql for the full

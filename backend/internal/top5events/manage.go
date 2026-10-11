@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/internal/finance/ledger"
 )
 
 // ErrEditLocked is returned when an edit is refused by the tiered-lock rules
@@ -252,4 +254,201 @@ func (s *Service) DuplicateEvent(ctx context.Context, callerID, eventID string) 
 	}
 	s.log(callerID, "events.duplicate", newID, map[string]any{"source_event_id": eventID})
 	return s.GetEvent(ctx, newID)
+}
+
+// ErrEventClosed is returned when Cancel is attempted on a CLOSED (finished) event.
+var ErrEventClosed = errors.New("events: event is closed and cannot be cancelled")
+
+// cancelTicket is one not-yet-refunded ticket of a cancelled event, joined to
+// its order for the payer.
+type cancelTicket struct {
+	id           string
+	buyerID      string // order.buyer_id (the payer, NOT the ticket's current owner)
+	pricePaid    int64
+	credentialID *string
+}
+
+// Cancel cancels an event and refunds every buyer 90/10 (the event's fee_bps is
+// retained as the platform fee). OWNER-ONLY: unlike edit/pause, a MANAGER may
+// not cancel.
+//
+// Idempotent and resumable: an already-CANCELLED event is not an error, the
+// refund sweep simply re-runs. Per-ticket ledger keys are derived from the
+// ticket id (never the caller's idemKey) so a retry, a concurrent Cancel or the
+// reconciler converge on exactly one refund per ticket. idemKey satisfies the
+// handler-layer Idempotency-Key contract and is recorded in the audit log.
+func (s *Service) Cancel(ctx context.Context, ownerID, eventID, reason, idemKey string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("events: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var organiser, state string
+	if err := tx.QueryRow(ctx, `SELECT organiser_id, state FROM events WHERE id=$1 FOR UPDATE`, eventID).Scan(&organiser, &state); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("events: fetch: %w", err)
+	}
+	if organiser != ownerID {
+		return ErrForbidden
+	}
+	switch EventState(state) {
+	case EventClosed:
+		return ErrEventClosed
+	case EventCancelled:
+		// Resume: fall through to the refund sweep without rewriting cancelled_at/reason.
+	default:
+		if _, err := tx.Exec(ctx,
+			`UPDATE events SET state='CANCELLED', cancelled_at=now(), cancel_reason=$2 WHERE id=$1`,
+			eventID, reason); err != nil {
+			return fmt.Errorf("events: cancel: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("events: commit: %w", err)
+	}
+	if EventState(state) != EventCancelled {
+		s.log(ownerID, "events.cancel", eventID, map[string]any{"from": state, "reason": reason, "idempotency_key": idemKey})
+	}
+
+	ev, err := s.GetEvent(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	return s.refundCancelledEvent(ctx, ev)
+}
+
+// refundCancelledEvent refunds every not-yet-REFUNDED ticket of a CANCELLED
+// event. A per-ticket failure does not stop the sweep (one bad ticket must not
+// strand the others); the joined error is returned so the caller/reconciler
+// retries, and every step is idempotent.
+func (s *Service) refundCancelledEvent(ctx context.Context, ev *Event) error {
+	rows, err := s.db.Query(ctx, `
+		SELECT t.id, COALESCE(o.buyer_id::text,''), t.price_paid_kobo, t.credential_id::text
+		FROM event_tickets t LEFT JOIN event_orders o ON o.id = t.order_id
+		WHERE t.event_id=$1 AND t.state <> 'REFUNDED'
+		ORDER BY t.created_at, t.id`, ev.ID)
+	if err != nil {
+		return fmt.Errorf("events: list tickets to refund: %w", err)
+	}
+	var todo []cancelTicket
+	for rows.Next() {
+		var ct cancelTicket
+		if err := rows.Scan(&ct.id, &ct.buyerID, &ct.pricePaid, &ct.credentialID); err != nil {
+			rows.Close()
+			return fmt.Errorf("events: scan ticket: %w", err)
+		}
+		todo = append(todo, ct)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("events: list tickets to refund: %w", err)
+	}
+	var errs []error
+	for _, ct := range todo {
+		if err := s.cancelRefundOneTicket(ctx, ev, ct.id, ct.buyerID, ct.pricePaid, ct.credentialID); err != nil {
+			errs = append(errs, fmt.Errorf("ticket %s: %w", ct.id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// cancelRefundOneTicket refunds one ticket of a cancelled event. A paid ticket
+// (pricePaid > 0) returns pricePaid - fee to the PAYER (the order's buyer, not
+// the ticket's current owner, who may be a gift recipient) out of escrow and
+// moves fee escrow -> platform revenue, where fee = pricePaid*FeeBps/10000
+// (integer; refund+fee == pricePaid exactly). A comp ticket (pricePaid == 0)
+// moves no money.
+//
+// Ledger idempotency keys are derived from the ticket id only, so every retry
+// and the reconciler converge on one posting. Crash-safe ordering mirrors
+// SettleVendor: money legs FIRST, then revoke the credential, then mark the
+// order and finally the ticket REFUNDED (the ticket flip is the "done" marker
+// the sweep selects on).
+func (s *Service) cancelRefundOneTicket(ctx context.Context, ev *Event, ticketID, buyerID string, pricePaidKobo int64, credentialID *string) error {
+	if pricePaidKobo > 0 {
+		if buyerID == "" {
+			return errors.New("events: paid ticket has no order/payer to refund")
+		}
+		fee := pricePaidKobo * int64(ev.FeeBps) / 10000
+		refund := pricePaidKobo - fee
+		escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+		if err != nil {
+			return err
+		}
+		if refund > 0 {
+			if err := s.led.Credit(ctx, buyerID, "evt-cancel-refund:"+ticketID, "evt-cancel:"+ticketID+":refund", escrowAcc.ID, refund); !alreadyApplied(err) {
+				return fmt.Errorf("events: cancel refund credit: %w", err)
+			}
+		}
+		if fee > 0 {
+			revAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+			if err != nil {
+				return err
+			}
+			if err := s.led.PostJournal(ctx, ledger.JournalEntry{
+				Reference: "evt-cancel-fee:" + ticketID, IdempotencyKey: "evt-cancel:" + ticketID + ":fee",
+				AmountKobo: fee, DebitAccountID: escrowAcc.ID, CreditAccountID: revAcc.ID,
+			}); !alreadyApplied(err) {
+				return fmt.Errorf("events: cancel fee posting: %w", err)
+			}
+		}
+	}
+	if credentialID != nil {
+		_ = s.cred.Revoke(ctx, *credentialID) // already revoked/used on a retry is fine
+	}
+	if _, err := s.db.Exec(ctx,
+		`UPDATE event_orders SET status='REFUNDED' WHERE status='PAID' AND id=(SELECT order_id FROM event_tickets WHERE id=$1)`, ticketID); err != nil {
+		return fmt.Errorf("events: mark order refunded: %w", err)
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE event_tickets SET state='REFUNDED' WHERE id=$1 AND state <> 'REFUNDED'`, ticketID); err != nil {
+		return fmt.Errorf("events: mark ticket refunded: %w", err)
+	}
+	s.log(buyerID, "events.cancel.refund", ticketID, map[string]any{"event": ev.ID, "paid": pricePaidKobo})
+	return nil
+}
+
+// ReconcileCancelledEvents re-drives the refund sweep for CANCELLED events that
+// still have non-REFUNDED tickets (a Cancel that crashed or partially failed).
+// It reuses the same ticket-derived idempotency keys, so it can overlap Cancel
+// or another instance without double-refunding. Returns the events swept clean.
+func (s *Service) ReconcileCancelledEvents(ctx context.Context) (int, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT e.id FROM events e
+		WHERE e.state='CANCELLED'
+		  AND EXISTS (SELECT 1 FROM event_tickets t WHERE t.event_id=e.id AND t.state <> 'REFUNDED')
+		ORDER BY e.cancelled_at NULLS FIRST LIMIT 50`)
+	if err != nil {
+		return 0, fmt.Errorf("events: list cancelled events: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	var errs []error
+	n := 0
+	for _, id := range ids {
+		ev, err := s.GetEvent(ctx, id)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := s.refundCancelledEvent(ctx, ev); err != nil {
+			errs = append(errs, fmt.Errorf("event %s: %w", id, err))
+			continue
+		}
+		n++
+	}
+	return n, errors.Join(errs...)
 }
