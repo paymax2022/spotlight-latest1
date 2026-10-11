@@ -684,7 +684,7 @@ paths:
       description: Only with FEATURE_RESTAURANT_DISCOUNTS on. Requires menu rights.
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       responses:
-        '200': { description: Discounts, newest first }
+        '200': { description: 'Discounts, newest first' }
         '403': { description: Not the restaurant owner or staff with menu rights }
     post:
       tags: [restaurant]
