@@ -57,6 +57,7 @@ Two guards, each pinned by a test:
   stuck threshold); review before enabling the flag in production.
 - A retained collect-only row is labelled `reversed` although no reversal
   entry exists; the event `paystack_collected_funds_retained` distinguishes it.
-- The daily-limit counter was not verified against the collect credit.
+- The daily-limit check (`debit_wallet_atomic`) sums `type = 'DEBIT'` only, so the
+  collect credit is not counted; the spend is, which is the intended behaviour.
 - Other card-only modules with the same gap (contest votes, school fees, Open
   Mic votes, application fee, registration fee) are separate changes.
