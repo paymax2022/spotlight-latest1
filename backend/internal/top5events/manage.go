@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -182,6 +183,21 @@ func (s *Service) UpdateEvent(ctx context.Context, callerID, eventID string, pat
 func (s *Service) DuplicateEvent(ctx context.Context, callerID, eventID string) (*Event, error) {
 	if callerID == "" {
 		return nil, errors.New("events: caller required")
+	}
+	// Visibility gate: owner/manager, or the source is publicly discoverable
+	// (same states ListEvents exposes to strangers). Else a stranger could
+	// copy, and thus read, someone's private draft.
+	if _, err := s.authorizeManage(ctx, callerID, eventID); err != nil {
+		if !errors.Is(err, ErrForbidden) {
+			return nil, err
+		}
+		src, gerr := s.GetEvent(ctx, eventID)
+		if gerr != nil {
+			return nil, gerr
+		}
+		if !slices.Contains(publiclyVisibleStates, string(src.State)) {
+			return nil, ErrForbidden
+		}
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

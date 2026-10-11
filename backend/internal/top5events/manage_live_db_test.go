@@ -169,3 +169,46 @@ func TestLiveDB_DuplicateEvent(t *testing.T) {
 		t.Fatalf("tiers=%d sold=%d promos=%d used=%d tickets=%d", tiers, soldSum, promos, usedSum, tickets)
 	}
 }
+
+func TestLiveDB_DuplicateEvent_VisibilityGate(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	stranger := seedTicketTokenUser(t, ctx, pool)
+	countCopies := func(uid string) int {
+		var n int
+		_ = pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE organiser_id=$1`, uid).Scan(&n)
+		return n
+	}
+	cleanup := func(id string) {
+		t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, id) })
+	}
+
+	draft := seedManageEvent(t, ctx, pool, owner, "DRAFT")
+	if _, err := svc.DuplicateEvent(ctx, stranger, draft); !errors.Is(err, top5events.ErrForbidden) {
+		t.Fatalf("stranger on DRAFT: want ErrForbidden, got %v", err)
+	}
+	if n := countCopies(stranger); n != 0 {
+		t.Fatalf("forbidden duplicate created %d events", n)
+	}
+
+	live := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	got, err := svc.DuplicateEvent(ctx, stranger, live)
+	if err != nil {
+		t.Fatalf("stranger on LIVE: %v", err)
+	}
+	cleanup(got.ID)
+	if got.State != top5events.EventDraft || got.OrganiserID != stranger {
+		t.Fatalf("bad copy: %+v", got)
+	}
+
+	own, err := svc.DuplicateEvent(ctx, owner, draft)
+	if err != nil {
+		t.Fatalf("owner on own DRAFT: %v", err)
+	}
+	cleanup(own.ID)
+	if own.OrganiserID != owner {
+		t.Fatalf("bad owner copy: %+v", own)
+	}
+}
