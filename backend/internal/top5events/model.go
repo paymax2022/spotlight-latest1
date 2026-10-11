@@ -26,6 +26,8 @@ const (
 	EventLive      EventState = "LIVE"
 	EventClosed    EventState = "CLOSED"
 	EventSuspended EventState = "SUSPENDED"
+	EventPaused    EventState = "PAUSED"
+	EventCancelled EventState = "CANCELLED"
 )
 
 // Event is an organiser-owned ticketed gathering. The organiser is a *capability*
