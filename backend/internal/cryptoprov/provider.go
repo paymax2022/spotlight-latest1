@@ -38,25 +38,66 @@ type MarketProvider interface {
 	Ticker(ctx context.Context, market string) (Ticker, error)
 }
 
+// AccountProvider creates the provider-side account (one per user, custodial).
+type AccountProvider interface {
+	CreateAccount(ctx context.Context, u UserRef) (AccountRef, error)
+}
+
+// WalletProvider reads balances and issues deposit addresses for an account.
+type WalletProvider interface {
+	Wallets(ctx context.Context, accountID string) ([]Wallet, error)
+	CreateDepositAddress(ctx context.Context, accountID, currency, network string) (DepositAddress, error)
+}
+
 // SwapProvider converts one asset to another. A quote is valid only for a short
-// window; ConfirmSwap executes it and must be idempotent per quote id.
+// window; ConfirmSwap executes it and must be idempotent per quote id. Every call is
+// scoped to the account that owns the quote.
 type SwapProvider interface {
 	QuoteSwap(ctx context.Context, req SwapQuoteRequest) (SwapQuote, error)
-	ConfirmSwap(ctx context.Context, quoteID string) (Swap, error)
-	GetSwap(ctx context.Context, swapID string) (Swap, error)
+	ConfirmSwap(ctx context.Context, accountID, quoteID string) (Swap, error)
+	GetSwap(ctx context.Context, accountID, swapID string) (Swap, error)
 }
 
 // WithdrawalProvider moves crypto out of custody. The reference is the caller's
 // deterministic idempotency reference; the provider is expected to honour it.
 type WithdrawalProvider interface {
 	Withdraw(ctx context.Context, req WithdrawRequest) (Withdrawal, error)
-	GetWithdrawal(ctx context.Context, id string) (Withdrawal, error)
+	GetWithdrawal(ctx context.Context, accountID, id string) (Withdrawal, error)
 }
 
 // WebhookProvider authenticates and parses inbound provider events.
 type WebhookProvider interface {
 	VerifyWebhook(headers map[string]string, body []byte) error
 	ParseWebhook(body []byte) (Event, error)
+}
+
+// UserRef identifies the platform user a provider account is created for. Only the
+// fields the provider needs; never carries KYC documents.
+type UserRef struct {
+	UserID    string
+	Email     string
+	FirstName string
+	LastName  string
+}
+
+// AccountRef is the provider-side account.
+type AccountRef struct {
+	ID string
+}
+
+// Wallet is one currency balance on a provider account.
+type Wallet struct {
+	Currency string
+	Balance  decimal.Decimal
+	Locked   decimal.Decimal
+}
+
+// DepositAddress is where a user sends crypto. Tag is the memo/tag some networks require.
+type DepositAddress struct {
+	Currency string
+	Network  string
+	Address  string
+	Tag      string
 }
 
 // Ticker is a market price snapshot.
@@ -136,6 +177,10 @@ type Event struct {
 	Key  string
 	Type string
 	Ref  string
+	// Raw is the original data object. It is for diagnostics and re-query hints only:
+	// the service must re-read the provider for the authoritative state and never
+	// release value on a webhook payload alone.
+	Raw []byte
 }
 
 // As returns p as the capability interface T, or ErrUnsupported when p does not
