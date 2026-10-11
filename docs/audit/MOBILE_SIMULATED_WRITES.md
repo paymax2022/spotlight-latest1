@@ -86,6 +86,38 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   add a tiers + content read to the backend, then flip and convert the 7 writes. This is a money
   module (tips, subscriptions, payouts) — have `ledger-auditor` review.
 
+### Batch 4 (2026-10-11) — visitor; social deferred
+- **visitor** (`src/features/visitor/{constants,api}`) — served by frontend-web route handlers
+  (`app/api/v1/visitor/**`). **No automated test suite exists** for them. Verified by mapping every
+  client call to a handler: **all 40 calls (method + path) have a matching route file**, every
+  handler does real Supabase work, and the nine tables they query (`visitor_access_codes`,
+  `visitor_gate_events`, `gate_sessions`, `visitor_blacklist`, `visitor_incidents`,
+  `visitor_notifications`, `estate_residents`, `estates`, `user_profiles`) exist in
+  `supabase/migrations`. The two stub handlers (`codes/:id/share` is intentionally client-rendered;
+  `gate/vehicles/scan` is a stub ANPR route) are not among the 40 calls. No feature flag gates the
+  handlers and there is no `visitor` module-visibility key. 20 mutations converted
+  (createAccessCode, revoke/extend, logShare, syncPendingLogs, approve/denyEntry,
+  recordArrival/Exit, checkOutVisit, createWalkIn, submitHandover, mark(All)NotificationsRead,
+  add/removeBlacklist, submitIncident, createEventGuestCodes, submitProofOfPayment, submitAppeal).
+  `EXPO_PUBLIC_VISITOR_USE_MOCK` is also pinned `true` in `playwright.config.ts` (the visitor push
+  bridge runs app-wide).
+  - **Pre-existing gap found (not changed here): the hard-ban payment restriction is enforced
+    only in the UI.** The fixture `createAccessCode` used to fail closed on
+    `restriction.state === 'hard_ban'` (VM-108/VM-301), but in live mode the only check is the
+    create screen disabling the button (`app/visitor/create.tsx`). Server-side,
+    `POST /api/v1/visitor/codes` validates residency, name and window but never reads
+    `payment_standing`, so a hard-banned resident can still create codes by calling the API.
+    `GET /restriction` shows the data is there. Needs a server-side check in the handler.
+- **social — NOT flipped; the read side is partly missing.** All writes have live routes
+  (`internal/social/handler.go`), and since the client comments were written the backend added
+  `GET /activity`, `GET /splits` (list), `GET /pools` (list) and `GET /requests` — the client still
+  returns `[]` for activity, splits and pools behind stale "MISSING BACKEND ENDPOINT" comments.
+  Still genuinely missing: a contacts directory, cashtag search, an escrow orders/trades list and a
+  spray-target read (`escrow.ts` / `spray.ts`). Flipping now would blank those screens. To finish:
+  wire the four existing list reads, add the missing endpoints (or drop the screens), then flip and
+  convert the writes. It is a money module (send/request, splits, pools, escrow, spray) — have
+  `ledger-auditor` review.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -113,7 +145,7 @@ creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, documents, d
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
-social, spotlightwealth, stays, stocks, tasks, transfers, vendors, visitor, plus
+social (see Batch 4 — blocked), spotlightwealth, stays, stocks, tasks, transfers, vendors, plus
 `src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
 (An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
 sub-folders and missed modules whose flag lives in `api.ts` at the feature root.)
