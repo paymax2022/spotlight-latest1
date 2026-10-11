@@ -65,7 +65,7 @@ func TestValidate_StagingPassesWhenRealAndConfigured(t *testing.T) {
 	c.FeatureMapsEnabled, c.FeatureTransportEnabled, c.MapsGoogleKey = true, true, "AIza-real"
 	c.FeatureWalletEnabled, c.FeatureBankTransfersEnabled, c.PaystackSecretKey = true, true, "sk_test_fixture"
 	c.FeatureAcademyEnabled, c.RailsMode = true, "live"
-	c.FeatureCryptoEnabled, c.CryptoProvider, c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = true, "quidax", "qk_real", "https://app.quidax.io/api/v1"
+	c.FeatureCryptoEnabled, c.CryptoProvider, c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = true, "quidax", "qk_real", "https://openapi.quidax.io/exchange-open-api/api/v1"
 	if err := c.Validate(); err != nil {
 		t.Fatalf("fully configured staging must pass: %v", err)
 	}
