@@ -82,7 +82,7 @@
     "expo-status-bar": "~3.0.9",
     "expo-updates": "~29.0.20",
     "html2canvas": "^1.4.1",
-    "lucide-react-native": "^1.52.0",
+    "lucide-react-native": "^1.53.0",
     "react": "19.1.4",
     "react-dom": "19.1.4",
     "react-hook-form": "^7.89.0",
