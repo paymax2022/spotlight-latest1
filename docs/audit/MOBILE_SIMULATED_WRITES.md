@@ -49,6 +49,16 @@ All three verified clean: `node --stack-size=10000 ./node_modules/typescript/bin
 exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — see
 `local-tsc-stack-crash` — checked explicitly, not inferred from exit code alone).
 
+### Batch 2 (2026-10-11) — loyalty
+- **loyalty** (`src/features/loyalty/{constants,api,black}.ts`) — all 7 member routes present
+  (`/me` in `internal/loyalty/service.go`; `/points/{balance,catalog,redeem}` in
+  `internal/points/service.go`; `/black/{me,perks,redeem}` in `internal/loyalty/black.go`);
+  `go test ./internal/loyalty ./internal/points` green; the live-DB redeem suites ran green in
+  `main`'s last completed `integration-verify` (anti-skip canary passed). 2 mutations converted:
+  `redeem` (points) and `redeemPerk` (Black). **Deliberately not converted:** `upgradeToBlack` —
+  enrolment is admin-only (`BlackHandler.AdminEnroll`), there is no member endpoint, and it
+  already refuses in live mode. Single flag (`FEATURE_LOYALTY_ENABLED`), no two-flag split.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -66,12 +76,23 @@ as the reference pattern.
   split does not affect them — but check both the route-gating flag AND the module-visibility key
   for each module below before declaring one "live end-to-end."
 
-### Still pending — not investigated this pass
-creators, connect, election, events, health, crypto, fx (fx.api/fxAccount/fxCards/fxKyc — 4
-files), visitor, loyalty, social, referral, investsettings, mobility (bus/mobility/event/towing/
-parcel/carhire/scheduled/logistics/movers — 9 files, one module), admin (mobile-side, distinct
-from frontend-admin), stays, crowdfunding (crowdfunding/investment/csr/crowdfundingExtras — 4
-files), marketplace, investonboarding, investai, realtor, stocks, spotlightwealth.
+### Done by other sessions (already `false` on `main`)
+kycverify, property, restaurantmerchant, stayshotelier.
+
+### Still pending — full list from a fresh scan of `main` (2026-10-11)
+`grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
+academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, announcements, arena, connect,
+creators, crowdfunding (4 files), crypto, documents, dues, election, emergencies, estateadmin,
+estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
+invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
+one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,
+social, spotlightwealth, stays, stocks, tasks, transfers, vendors, visitor, plus
+`src/api/doctor.client.ts` and `src/api/telemedicine.api.ts`.
+(An earlier version of this list had ~26 names: it only scanned `constants/` and `api/`
+sub-folders and missed modules whose flag lives in `api.ts` at the feature root.)
+
+Treat the money-touching ones (finance, transfers, fx, crypto, stocks, invest) with extra care and
+have `ledger-auditor` look at them.
 
 Notes for whoever picks these up:
 - **connect** is not a small module — 25+ sub-feature `api.ts` files (discovery, gamification,
@@ -84,6 +105,17 @@ Notes for whoever picks these up:
   frontend-admin's build-arg-gated fixture opt-in pattern, `f4d25e612`).
 - **mobility**: each sub-file ORs its own flag with `EXPO_PUBLIC_MOBILITY_USE_MOCK` — check
   whether flipping the shared parent flag alone is enough or each needs its own default touched.
+- **e2e specs depend on the mock default.** `tests/e2e/modules/<module>.spec.ts` render the built-in
+  fixtures with no endpoint mocks, and e2e is not run in CI, so flipping a default breaks them
+  silently. When you flip a module, add `EXPO_PUBLIC_<MODULE>_USE_MOCK: 'true'` to the
+  `webServer.env` block in `playwright.config.ts` (savings/learn/meetings/loyalty are pinned there)
+  and update the spec's header comment. Run the module's spec before committing — under heavy
+  machine load raise `expect.timeout` (default 10 s) with a throwaway `-c` config.
+- **The mobile web bundle does not build on a fresh `npm ci` of `main`** (found 2026-10-11):
+  `react-native-view-shot@6.1.1` (added for the association membership card) needs
+  `html2canvas-pro@^2` on web, but `package.json` lists `html2canvas` instead. Until that is fixed,
+  `npm ci && npm run web` fails to bundle; `npm install --no-save html2canvas-pro@^2` works around
+  it locally. Playwright also needs `npx playwright install chromium` when its version moves.
 - General process for each: (1) confirm the backend endpoints exist and pass their own suite (Go
   `internal/<pkg>` unit tests, `backend/tests/<pkg>` live-DB suite with
   `TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres`, or — where the

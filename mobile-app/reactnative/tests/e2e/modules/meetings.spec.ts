@@ -4,7 +4,7 @@ import { mockAmbientRequests } from '../helpers/common';
 
 /**
  * Meetings hub (estate meetings). The feature ships an in-app mock layer
- * (EXPO_PUBLIC_MEETINGS_USE_MOCK defaults true), so the list renders with no
+ * (EXPO_PUBLIC_MEETINGS_USE_MOCK is pinned true in playwright.config.ts), so the list renders with no
  * endpoint mocks — items come from seedMeetings in meetings.mock.ts
  * (Q3 General Meeting, Security Committee Sync, 2026 Budget Review).
  */

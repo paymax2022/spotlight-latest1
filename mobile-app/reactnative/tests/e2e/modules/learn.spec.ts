@@ -4,7 +4,7 @@ import { mockAmbientRequests } from '../helpers/common';
 
 /**
  * Learn hub (Invest · Learn Center). The feature ships an in-app mock layer
- * (EXPO_PUBLIC_LEARN_USE_MOCK defaults true), so paths render with no endpoint
+ * (EXPO_PUBLIC_LEARN_USE_MOCK is pinned true in playwright.config.ts), so paths render with no endpoint
  * mocks — titles come from learn.mock.ts (Investing basics, Crypto
  * fundamentals, Spotlight Wealth, …).
  */
