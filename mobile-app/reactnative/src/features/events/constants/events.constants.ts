@@ -7,6 +7,12 @@ import { Colors } from '@/constants/tokens';
 export const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_EVENT_USE_MOCK, true);
 
+// Organiser edit/pause/resume/cancel/duplicate screens. OFF unless explicitly
+// 'true' — mirrors the server's FEATURE_EVENTS_EDIT_LIFECYCLE gate (routes are
+// unmounted there when off). Intentionally NOT mock-defaulted: these are writes.
+export const EVENTS_EDIT_LIFECYCLE_ENABLED =
+  process.env.EXPO_PUBLIC_EVENTS_EDIT_LIFECYCLE?.trim().toLowerCase() === 'true';
+
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed
 // with the shared axios client's baseURL (EXPO_PUBLIC_API_BASE_URL) in api.ts.

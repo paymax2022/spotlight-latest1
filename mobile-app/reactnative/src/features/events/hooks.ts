@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
+import type { EventPatch, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
@@ -144,5 +144,58 @@ export function useCloseEventWallet(walletId: string) {
 export function useValidateScan() {
   return useMutation({
     mutationFn: ({ token, gate }: { token: GateToken; gate: Gate }) => api.validateScan(token, gate),
+  });
+}
+
+// ── Organiser lifecycle mutations ────────────────────────────────────────────
+function useInvalidateOrganiserEvent() {
+  const qc = useQueryClient();
+  return (id?: string) => {
+    qc.invalidateQueries({ queryKey: KEYS.organiser });
+    qc.invalidateQueries({ queryKey: ['events', 'list'] });
+    if (id) qc.invalidateQueries({ queryKey: KEYS.event(id) });
+  };
+}
+
+export function useUpdateEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (patch: EventPatch) => api.updateEvent(id, patch),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+export function useDuplicateEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.duplicateEvent(id),
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function usePauseEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.pauseEvent(id),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+export function useResumeEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.resumeEvent(id),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+// idemKey is supplied by the caller (one per user intent) so a retry of the
+// same cancel replays instead of double-refunding.
+export function useCancelEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ reason, idemKey }: { reason: string; idemKey: string }) =>
+      api.cancelEvent(id, reason, idemKey),
+    onSuccess: () => invalidate(id),
   });
 }
