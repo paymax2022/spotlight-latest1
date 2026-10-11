@@ -12,25 +12,27 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { useContests } from '@/features/voting/hooks/useContests';
 import ContestCard from '@/features/voting/components/ContestCard';
-import type { ContestStatus } from '@/features/voting/types/voting.types';
+import SelectField from '@/components/SelectField';
+import {
+  CONTEST_FILTER_OPTIONS,
+  DEFAULT_CONTEST_FILTER,
+  contestFilterApiStatus,
+  contestFilterFromLabel,
+  contestFilterLabel,
+  filterContestsByStatus,
+  type ContestFilter,
+} from '@/features/voting/utils/contestFilter';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
-const STATUS_FILTERS: { label: string; value: ContestStatus | 'ALL' }[] = [
-  { label: 'All', value: 'ALL' },
-  { label: 'Live', value: 'LIVE' },
-  { label: 'Upcoming', value: 'UPCOMING' },
-  { label: 'Closed', value: 'CLOSED' },
-];
-
 export default function ContestListScreen() {
-  const [statusFilter, setStatusFilter] = useState<ContestStatus | 'ALL'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<ContestFilter>(DEFAULT_CONTEST_FILTER);
   const [search, setSearch] = useState('');
 
   const { data, isLoading, isError, refetch, isRefetching } = useContests(
-    statusFilter !== 'ALL' ? { status: statusFilter } : undefined,
+    { status: contestFilterApiStatus(statusFilter) },
   );
 
-  const filtered = (data ?? []).filter((c) =>
+  const filtered = filterContestsByStatus(data ?? [], statusFilter).filter((c) =>
     search.trim() === '' || c.title.toLowerCase().includes(search.toLowerCase()) || c.category.toLowerCase().includes(search.toLowerCase()),
   );
 
@@ -62,19 +64,14 @@ export default function ContestListScreen() {
         )}
       </View>
 
-      {/* Status filters */}
-      <View style={styles.filtersRow}>
-        {STATUS_FILTERS.map((f) => (
-          <Pressable
-            key={f.value}
-            onPress={() => setStatusFilter(f.value)}
-            style={[styles.filterChip, statusFilter === f.value && styles.filterChipActive]}
-          >
-            <Text style={[styles.filterLabel, statusFilter === f.value && styles.filterLabelActive]}>
-              {f.label}
-            </Text>
-          </Pressable>
-        ))}
+      {/* Status filter dropdown: Active (default) / Closed */}
+      <View style={styles.filterWrap}>
+        <SelectField
+          value={contestFilterLabel(statusFilter)}
+          options={CONTEST_FILTER_OPTIONS}
+          onChange={(label) => setStatusFilter(contestFilterFromLabel(label))}
+          searchable={false}
+        />
       </View>
 
       {isLoading ? (
@@ -107,7 +104,9 @@ export default function ContestListScreen() {
           refreshing={isRefetching}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No contests found</Text>
+              <Text style={styles.emptyTitle}>
+                {statusFilter === 'closed' ? 'No closed contests yet' : 'No active contests right now'}
+              </Text>
               <Text style={styles.emptySub}>
                 {search ? 'Try a different search.' : 'Check back soon for new Spotlight competitions.'}
               </Text>
@@ -136,7 +135,7 @@ const styles = StyleSheet.create({
     marginBottom:     Spacing.sm,
   },
   searchInput: { flex: 1, ...Typography.bodyMd, color: Colors.onSurface, padding: 0 },
-  filtersRow: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
+  filterWrap: { paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   filterChip: {
     paddingVertical: 7,
     paddingHorizontal: Spacing.md,

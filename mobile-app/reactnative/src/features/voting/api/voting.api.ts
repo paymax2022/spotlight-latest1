@@ -78,7 +78,10 @@ export async function getContests(params?: {
   if (USE_MOCK) {
     let list = [...MOCK_CONTESTS];
     if (params?.category) list = list.filter((c) => c.category === params.category);
-    if (params?.status)   list = list.filter((c) => c.status === params.status);
+    if (params?.status) {
+      const want = params.status === 'active' ? 'LIVE' : params.status === 'closed' ? 'CLOSED' : params.status;
+      list = list.filter((c) => c.status === want);
+    }
     return list;
   }
   const res = await api.get(`${CONNECT_VOTING_BASE}/contests`, { params });

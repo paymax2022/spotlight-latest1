@@ -34,6 +34,9 @@ export default function ContestCard({ contest, onPress, style }: Props) {
         <View style={styles.badgePos}>
           <ContestStatusBadge status={contest.status} size="sm" />
         </View>
+        {contest.logoImage ? (
+          <Image source={{ uri: contest.logoImage }} style={styles.logo} resizeMode="cover" accessibilityLabel={`${contest.title} logo`} />
+        ) : null}
         {contest.sponsorName && (
           <View style={styles.sponsorPill}>
             <Text style={styles.sponsorText}>by {contest.sponsorName}</Text>
@@ -97,6 +100,14 @@ const styles = StyleSheet.create({
   image:       { width: '100%', height: '100%' },
   imagePlaceholder: { width: '100%', height: '100%', backgroundColor: Colors.surfaceContainerHigh },
   badgePos:    { position: 'absolute', top: Spacing.sm, left: Spacing.sm },
+  logo: {
+    position:        'absolute', bottom: Spacing.sm, left: Spacing.sm,
+    width:           44, height: 44,
+    borderRadius:    Radius.lg,
+    borderWidth:     2,
+    borderColor:     Colors.white,
+    backgroundColor: Colors.surfaceContainerLowest,
+  },
   sponsorPill: {
     position:        'absolute', bottom: Spacing.sm, right: Spacing.sm,
     backgroundColor: 'rgba(0,0,0,0.55)',

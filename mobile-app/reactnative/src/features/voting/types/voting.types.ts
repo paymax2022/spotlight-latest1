@@ -32,6 +32,8 @@ export interface Contest {
   category: string;
   status: ContestStatus;
   bannerImage?: string;
+  /** Contest logo (admin-uploaded), drawn over the banner. */
+  logoImage?: string;
   contestantCount: number;
   /**
    * Total votes for the contest. May be `null` when the admin has hidden vote
