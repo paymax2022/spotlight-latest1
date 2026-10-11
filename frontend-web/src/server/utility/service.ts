@@ -1496,6 +1496,11 @@ export async function reverseUtilityTransaction(transaction: UtilityTransactionR
   // failure branch uses), not a reversal of something that never happened.
   if (legs.compensationPosted) {
     await addEvent(transaction.id, 'admin_reversal_skipped', `Compensation already posted for this transaction; skipping duplicate money leg. Reason: ${reason}`);
+  } else if (transaction.payment_source === 'paystack' && legs.collectPosted && !legs.debitPosted) {
+    // Card-ledger mode: the charge was collected into the wallet and the spend
+    // never posted, so the customer already holds their money. Crediting again
+    // would pay them twice for one card charge.
+    await addEvent(transaction.id, 'admin_reversal_skipped', `Card funds were collected into the wallet and never spent; nothing to refund. Reason: ${reason}`);
   } else if (transaction.payment_source === 'wallet') {
     await reverseWalletDebit(transaction.user_id, {
       amountKobo: transaction.retail_amount_kobo,

@@ -248,6 +248,23 @@ export async function verifyUtilityPaystackPayment(reference: string, userId?: s
     // validation failed on every attempt (see the sandbox fix in
     // adapters/vtpass.ts) and left money stuck with zero trace of it.
     const message = err instanceof ApiError ? err.message : 'Utility payment could not be completed.';
+    // payUtility may have thrown AFTER it created the transaction row (card
+    // ledger mode collects into the wallet, then spends — the spend can be
+    // refused). Once a row exists payUtility's own settle path owns the money:
+    // it either refunded, or deliberately kept the collected funds in the
+    // wallet. A second refund here would pay the customer twice.
+    const { data: existingTx } = await supabase
+      .from('utility_transactions')
+      .select('id')
+      .eq('idempotency_key', `utility:paystack:${reference}`)
+      .maybeSingle();
+    if (existingTx) {
+      await supabase
+        .from('utility_paystack_intents')
+        .update({ status: 'failed', failure_reason: message, transaction_id: (existingTx as { id: string }).id, updated_at: new Date().toISOString() })
+        .eq('id', intent.id);
+      throw new ApiError(message, 400);
+    }
     await creditWallet(String(intent.user_id), {
       amountKobo: Number(intent.retail_amount_kobo),
       reference,
