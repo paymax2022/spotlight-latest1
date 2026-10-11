@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import {
   createFullContest, updateFullContest, deleteFullContest, getFullContest, setContestStatus,
-  listAdminContests, uploadContestBanner,
+  listAdminContests, uploadContestBanner, uploadContestLogo,
   listContestStages, createContestStage, deleteContestStage, advanceStageSurvivors,
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
   type AdminContest, type ContestStage, type AdvanceStageResult,
@@ -97,7 +97,7 @@ function initialForm(): FormState {
     legalAdultAge: 18, supportsVoting: false, supportsAuditionScheduling: false,
     supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
-    rulesText: '', bannerImageUrl: '',
+    rulesText: '', bannerImageUrl: '', logoUrl: '',
   };
 }
 
@@ -117,6 +117,8 @@ function CreateCompetitionContent() {
   const [publishing, setPublishing] = useState(false);
   const [bannerUploading, setBannerUploading] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const [toast, setToast] = useState('');
 
   const [recent, setRecent] = useState<AdminContest[]>([]);
@@ -217,6 +219,7 @@ function CreateCompetitionContent() {
         auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
         rulesText: c.rulesText ?? '',
         bannerImageUrl: c.bannerImageUrl ?? '',
+        logoUrl: c.logoUrl ?? '',
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -613,6 +616,62 @@ function CreateCompetitionContent() {
                 onClick={() => setForm((f) => ({ ...f, bannerImageUrl: '' }))}
               >
                 Remove banner
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Contest logo</label>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={logoUploading}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              // Cleared so re-picking the same file after a failure still fires.
+              e.target.value = '';
+              if (!file) return;
+              setLogoUploading(true);
+              setLogoError(null);
+              try {
+                const url = await uploadContestLogo(file);
+                setForm((f) => ({ ...f, logoUrl: url }));
+              } catch (err) {
+                setLogoError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setLogoUploading(false);
+              }
+            }}
+            style={{ display: 'block', fontSize: 13 }}
+          />
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: colors.muted }}>
+            JPG, PNG or WebP, up to 8MB. A square image works best. Shown beside the contest name
+            on the mobile app and the website; leave empty to show no logo. The image uploads
+            immediately — you still need to save the contest for it to take effect.
+          </p>
+          {logoUploading && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: colors.muted }}>Uploading…</p>
+          )}
+          {logoError && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: colors.danger }}>{logoError}</p>
+          )}
+          {form.logoUrl ? (
+            <div style={{ marginTop: 8 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={form.logoUrl}
+                alt="Contest logo preview"
+                style={{ display: 'block', width: 96, height: 96, objectFit: 'contain', borderRadius: 8, border: `1px solid ${colors.border}` }}
+              />
+              <Button
+                sm
+                variant="danger"
+                type="button"
+                style={{ marginTop: 6 }}
+                onClick={() => setForm((f) => ({ ...f, logoUrl: '' }))}
+              >
+                Remove logo
               </Button>
             </div>
           ) : null}
