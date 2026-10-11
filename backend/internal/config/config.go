@@ -810,9 +810,9 @@ func Load() Config {
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
 		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
-		CryptoQuidaxTestBaseURL: getEnv("QUIDAX_TEST_BASE_URL", "https://app.quidax.io/api/v1"),
+		CryptoQuidaxTestBaseURL: getEnv("QUIDAX_TEST_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
-		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://app.quidax.io/api/v1"),
+		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 
 		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
 		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
