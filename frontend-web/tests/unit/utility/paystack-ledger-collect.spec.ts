@@ -350,16 +350,16 @@ describe('payUtility — card-paid bills reach the ledger (flag ON)', () => {
     expect(collect.reference).not.toBe(PAYMENT_REF);
   });
 
-  it('vend fails: collect, spend, then ONE refund — the customer ends with exactly their money back', async () => {
+  it('vend fails: collect and spend only — the refund is REQUESTED for admin approval, never auto-credited', async () => {
     adapterThatVends('failed');
     const { transaction } = await payUtility(USER_ID, inputFor('paystack', 'idem-ledger-3'));
 
-    expect(creditKeys()).toEqual([
-      `utility:${transaction.id}:CARD_COLLECT`,
-      `utility:${transaction.id}:PAYSTACK_REFUND`,
-    ]);
+    // Owner rule (ADR-PR697 follow-up): payment received => vend, else a refund
+    // an admin approves by hand. No PAYSTACK_REFUND here; the row waits as failed.
+    // The approval path itself is pinned in paystack-vend-or-refund.spec.ts.
+    expect(creditKeys()).toEqual([`utility:${transaction.id}:CARD_COLLECT`]);
     expect(debitWallet).toHaveBeenCalledTimes(1);
-    expect(transaction.status).toBe('reversed');
+    expect(transaction.status).toBe('failed');
   });
 
   it('spend refused (tier/limit): the collected funds stay in the wallet and NO second credit is paid', async () => {

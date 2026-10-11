@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -1414,6 +1415,58 @@ func retainCollectedFunds(paymentSource string, legs *moneyLegs) bool {
 	return paymentSource == paymentSourcePaystack && legs.collectPosted && !legs.debitPosted
 }
 
+// stuckPaystackAction is what the stuck sweeper does for a paystack row whose
+// vend never completed.
+type stuckPaystackAction int
+
+const (
+	// actionAutoRefund credits the wallet automatically (legacy, flag-off rows).
+	actionAutoRefund stuckPaystackAction = iota
+	// actionRetainFunds converges the status; the money is already in the wallet.
+	actionRetainFunds
+	// actionRequestRefund records a refund request for an admin to approve.
+	actionRequestRefund
+)
+
+// cardLedgerEnabled mirrors the TS plane's FEATURE_UTILITY_CARD_LEDGER switch. It
+// must be set on BOTH services for the planes to agree; the ledger evidence in
+// decideStuckPaystack keeps an already-collected row correct either way.
+func cardLedgerEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FEATURE_UTILITY_CARD_LEDGER")))
+	return v == "1" || v == "true"
+}
+
+// decideStuckPaystack applies the owner rule — payment received => vend, else a
+// refund an admin approves by hand — to a paystack row. Collect-only means the
+// customer already holds the money (retain). A collect with a posted spend, or any
+// not-yet-collected row while the card ledger is on, is paid-but-undelivered:
+// request a refund instead of crediting automatically. Only a legacy flag-off row
+// keeps the automatic refund.
+func decideStuckPaystack(legs *moneyLegs, cardLedgerOn bool) stuckPaystackAction {
+	switch {
+	case legs.collectPosted && !legs.debitPosted:
+		return actionRetainFunds
+	case legs.collectPosted || cardLedgerOn:
+		return actionRequestRefund
+	default:
+		return actionAutoRefund
+	}
+}
+
+// refundRequestMetadata is the JSON merged into the row's metadata so the admin
+// queue (and the TS plane's approval path) can see a pending request.
+func refundRequestMetadata(amountKobo int64, basis string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{
+		"refund_request": map[string]any{
+			"state":        "pending_admin",
+			"basis":        basis,
+			"amount_kobo":  amountKobo,
+			"requested_at": time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+	return b
+}
+
 // transactionMoneyLegs probes ledger_entries for every money leg this
 // transaction could have, under BOTH writer conventions: the TS journal writes
 // verbatim keys (utility:<tx>:DEBIT, :REVERSAL_DEBIT, :PAYSTACK_REFUND,
@@ -1546,11 +1599,12 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 		return nil, err
 	}
 	newStatus := string(StatusFailed)
+	var metadataMerge json.RawMessage
 	switch {
 	case legs.compensationPosted:
 		// Another path already returned the money — converge the status only.
 		newStatus = string(StatusReversed)
-	case retainCollectedFunds(claimed.PaymentSource, legs):
+	case claimed.PaymentSource == paymentSourcePaystack && decideStuckPaystack(legs, cardLedgerEnabled()) == actionRetainFunds:
 		// Card-ledger mode: the money is already in the wallet and the spend never
 		// posted — converge the status, post nothing.
 		newStatus = string(StatusReversed)
@@ -1560,6 +1614,13 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 		if s.postStuckReversal(ctx, claimed) {
 			newStatus = string(StatusReversed)
 		}
+	case claimed.PaymentSource == paymentSourcePaystack && decideStuckPaystack(legs, cardLedgerEnabled()) == actionRequestRefund:
+		// Payment received, service not delivered: a refund is REQUESTED for an
+		// admin to approve; nothing is credited here and the row stays 'failed'.
+		metadataMerge = refundRequestMetadata(claimed.RetailAmountKobo, "stuck_recovery")
+		s.event(ctx, t.ID, "refund_requested",
+			"Payment was received but the service was not delivered — refund awaiting admin approval.", nil)
+		log.Printf("[utilitybills] refund approval needed for %s (%d kobo): card payment received, not delivered", t.ID, claimed.RetailAmountKobo)
 	case claimed.PaymentSource == paymentSourcePaystack:
 		if s.postPaystackRefund(ctx, claimed) {
 			newStatus = string(StatusReversed)
@@ -1574,6 +1635,7 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
 		Status:        ptrx.Of(newStatus),
 		FailureReason: ptrx.Of(reason),
+		MetadataMerge: metadataMerge,
 	})
 	if uerr != nil {
 		return nil, uerr

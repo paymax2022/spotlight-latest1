@@ -363,7 +363,7 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
     expect(fake._intent.intent.status).toBe('failed');
   });
 
-  it('collect itself fails: the customer is refunded once, never by two different keys', async () => {
+  it('collect itself fails: NO automatic credit under any key — a refund is requested for admin approval', async () => {
     const fake = makeFake();
     vi.mocked(createAdminClient).mockReturnValue(fake as any);
     wireWalletToLedger(fake);
@@ -375,11 +375,13 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
 
     await expect(verifyUtilityPaystackPayment(REFERENCE)).rejects.toThrow();
 
-    // Exactly one refund, under the transaction-owned key. Zero would strand the
-    // captured money; a VALIDATION_REFUND on top would pay it twice.
+    // Owner rule: payment received, service not delivered => a refund REQUEST an
+    // admin approves, not an automatic credit. Neither PAYSTACK_REFUND nor
+    // VALIDATION_REFUND may post (that would pay the customer before approval, and
+    // two different keys would pay them twice). The pending request itself is
+    // pinned in paystack-vend-or-refund.spec.ts.
     const posted = creditKeys().filter((k) => !/:CARD_COLLECT$/.test(k));
-    expect(posted).toHaveLength(1);
-    expect(posted[0]).toMatch(/:PAYSTACK_REFUND$/);
+    expect(posted).toHaveLength(0);
   });
 
   it('the existence probe errors: do NOT refund blind — a row may exist and own the money', async () => {

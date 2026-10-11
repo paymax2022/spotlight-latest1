@@ -79,6 +79,75 @@ function cardLedgerEnabled(): boolean {
 }
 
 /**
+ * Owner rule for card-paid bills: payment received => vend; otherwise a refund is
+ * REQUESTED and an admin approves it by hand — nothing is auto-credited. Applies
+ * whenever the card ledger is on, and to any row that already carries a collect
+ * leg (so a row written flag-on is still handled after the flag is flipped).
+ */
+function cardRefundNeedsApproval(paymentSource: string, legs?: { collectPosted: boolean }): boolean {
+  return paymentSource === 'paystack' && (cardLedgerEnabled() || legs?.collectPosted === true);
+}
+
+/**
+ * A card-ledger writer must give up well inside the 10-minute stuck-sweep age. A
+ * writer that was frozen past this (paused pod, lost CPU) may have been claimed
+ * by the sweeper while it slept, so it must not post another money leg.
+ */
+const CARD_WRITER_MAX_AGE_MS = 5 * 60 * 1000;
+
+/**
+ * Takes the writer's version-checked turn on its own row: a no-op write that
+ * only succeeds while the row is still 'initiated' at the version this writer
+ * owns. A settlement claim flips the status and bumps updated_at, so a claimed
+ * row refuses the touch — and the writer must then post nothing further.
+ * Returns the new owned version, or null when the row was claimed.
+ */
+async function touchOwnedUtilityRow(transactionId: string, version: string): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('utility_transactions')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', transactionId)
+    .eq('status', 'initiated')
+    .eq('updated_at', version)
+    .select('updated_at');
+  const row = (data ?? [])[0] as { updated_at: string } | undefined;
+  return row ? row.updated_at : null;
+}
+
+/**
+ * Records a pending refund request for a card-paid bill that was paid for but
+ * not delivered. No money moves here: the customer is made whole only when an
+ * admin approves (reverseUtilityTransaction posts exactly one refund).
+ */
+async function requestCardRefund(
+  transaction: UtilityTransactionRow,
+  reason: string,
+  basis: 'provider_failed' | 'stuck_recovery',
+) {
+  const supabase = createAdminClient();
+  const request = {
+    state: 'pending_admin',
+    basis,
+    amount_kobo: transaction.retail_amount_kobo,
+    requested_at: new Date().toISOString(),
+  };
+  // Guarded on 'failed' so a row an admin already reversed is never overwritten.
+  await supabase.from('utility_transactions').update({
+    status: 'failed',
+    failure_reason: reason,
+    metadata: { ...(transaction.metadata ?? {}), refund_request: request },
+    updated_at: new Date().toISOString(),
+  }).eq('id', transaction.id).eq('status', 'failed');
+  await addEvent(transaction.id, 'refund_requested', 'Payment was received but the service was not delivered — refund awaiting admin approval.', { refund_request: request });
+  queueUtilityAdminAlert({
+    title: 'Utility refund needs approval',
+    message: `${transaction.receipt_number ?? transaction.id}: card payment of ${transaction.retail_amount_kobo} kobo was received but the service was not delivered. Approve the refund to credit the customer.`,
+    audience: 'finance',
+  });
+}
+
+/**
  * AUD-BILL-005 — probe the ledger for this transaction's money legs.
  *
  * BOTH writer conventions must be recognised: this plane posts the wallet leg
@@ -246,6 +315,7 @@ async function settleFailedUtilityTransaction(
 
   const legs = await lookupUtilityMoneyLegs(claimed);
   let compensated = false;
+  let refundRequested = false;
   if (legs.compensationPosted) {
     // Money was already returned (by payUtility's failure branch, an earlier
     // sweep, a Go-plane reversal, or the paystack validation refund) — this
@@ -293,6 +363,11 @@ async function settleFailedUtilityTransaction(
     // would pay them twice for one card charge.
     compensated = true;
     await addEvent(claimed.id, 'paystack_collected_funds_retained', 'Card funds were collected into the wallet and the spend never posted; nothing further to refund.');
+  } else if (cardRefundNeedsApproval(claimed.payment_source, legs)) {
+    // Payment was received and not delivered: request a refund for an admin to
+    // approve instead of crediting automatically. No money moves here.
+    refundRequested = true;
+    await requestCardRefund(claimed, reason, 'stuck_recovery');
   } else {
     // 'paystack' transactions only exist because the charge verified before
     // payUtility ran — the money was captured, so refund it to the wallet. The
@@ -341,9 +416,12 @@ async function settleFailedUtilityTransaction(
     failure_reason: reason,
     updated_at: new Date().toISOString(),
   }).eq('id', transaction.id);
-  await addEvent(transaction.id, compensated ? 'auto_reversed' : 'failed_no_debit', reason);
+  await addEvent(transaction.id, compensated ? 'auto_reversed' : refundRequested ? 'failed_refund_pending' : 'failed_no_debit', reason);
   const updated = await reloadUtilityTransaction(transaction);
-  await notifyUtilityTransactionStatus(updated, reason);
+  await notifyUtilityTransactionStatus(
+    updated,
+    refundRequested ? 'Your payment could not be completed. A refund has been requested and is awaiting approval.' : reason,
+  );
   return updated;
 }
 
@@ -1102,8 +1180,42 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
   }
 
   if (paymentSource === 'wallet' || (paymentSource === 'paystack' && cardLedgerEnabled())) {
+    // Card path: this writer may post a money leg only while it provably still
+    // owns the row. Taking the row (a version-checked touch) right before the
+    // collect and again right before the spend means a sweeper claim — or a
+    // stall long enough for one — can never be followed by a late leg, which
+    // was the ADR-PR697 residual (collect, stall, sweeper retains, spend lands:
+    // +X -X, no vend, no refund). Local clock so DB clock skew cannot matter.
+    let ownedAtMs = Date.now();
+    const takeTurn = async (leg: 'collect' | 'spend'): Promise<UtilityTransactionRow | null> => {
+      if (Date.now() - ownedAtMs > CARD_WRITER_MAX_AGE_MS) {
+        await addEvent(transactionId, 'writer_stale_yield', `Card writer stalled past ${CARD_WRITER_MAX_AGE_MS / 1000}s before the ${leg} — yielding without posting.`);
+        queueUtilityAdminAlert({
+          title: 'Utility card writer yielded after a stall',
+          message: `${receipt} stalled before its ${leg}; no further money leg was posted. Funds already collected stay in the wallet; the sweeper decides the rest.`,
+          audience: 'support',
+        });
+        return reloadUtilityTransaction(inserted as UtilityTransactionRow);
+      }
+      const next = await touchOwnedUtilityRow(transactionId, ownedVersion);
+      if (!next) {
+        await addEvent(transactionId, 'writer_outraced', `A settlement claim landed before the ${leg} — the writer yields without posting.`);
+        queueUtilityAdminAlert({
+          title: 'Utility card writer lost its row before a money leg',
+          message: `${receipt} was claimed for settlement before the ${leg}; the writer posted nothing further. Verify the claim winner's outcome.`,
+          audience: 'support',
+        });
+        return reloadUtilityTransaction(inserted as UtilityTransactionRow);
+      }
+      ownedVersion = next;
+      ownedAtMs = Date.now();
+      return null;
+    };
+
     try {
       if (paymentSource === 'paystack') {
+        const lost = await takeTurn('collect');
+        if (lost) return { alreadyProcessed: false, transaction: lost };
         // Collect the verified card charge into the wallet first. The ledger
         // `reference` is the receipt, NOT the Paystack payment_reference:
         // lookupUtilityMoneyLegs reads any CREDIT carrying that reference as an
@@ -1122,6 +1234,8 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
           },
         });
         await addEvent(transactionId, 'card_collected', 'Card payment collected into the wallet.');
+        const lostBeforeSpend = await takeTurn('spend');
+        if (lostBeforeSpend) return { alreadyProcessed: false, transaction: lostBeforeSpend };
       }
       await debitWallet(userId, {
         amountKobo: pricing.retailAmountKobo,
@@ -1266,6 +1380,7 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     .eq('updated_at', ownedVersion)
     .select('id');
   const settleWon = (settled ?? []).length > 0;
+  let refundRequested = false;
   await addEvent(transactionId, `provider_${providerResult.status}`, providerResult.message, {
     provider_id: fulfilledRoute.provider.id,
     raw: providerResult.raw ?? {},
@@ -1297,6 +1412,15 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
       });
       await addEvent(transactionId, 'wallet_reversed', 'Wallet debit reversed after provider failure.');
+    } else if (cardRefundNeedsApproval(paymentSource)) {
+      // Payment received, service not delivered: REQUEST a refund for an admin to
+      // approve — no automatic credit. The row stays 'failed' until approval.
+      refundRequested = true;
+      await requestCardRefund(
+        { ...(inserted as UtilityTransactionRow), retail_amount_kobo: pricing.retailAmountKobo },
+        providerResult.message ?? 'Provider failed transaction.',
+        'provider_failed',
+      );
     } else {
       // The money for a 'paystack' source already left the customer's card/bank —
       // there is no wallet debit to reverse. It was captured by Paystack, so the
@@ -1319,7 +1443,9 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
       });
       await addEvent(transactionId, 'paystack_refunded', 'Paystack payment refunded to wallet after provider failure.');
     }
-    await supabase.from('utility_transactions').update({ status: 'reversed', updated_at: new Date().toISOString() }).eq('id', transactionId);
+    if (!refundRequested) {
+      await supabase.from('utility_transactions').update({ status: 'reversed', updated_at: new Date().toISOString() }).eq('id', transactionId);
+    }
   }
 
   const { data: finalRow } = await supabase.from('utility_transactions').select('*').eq('id', transactionId).maybeSingle();
@@ -1332,7 +1458,10 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     await recordUtilityCommissionEarning({ transaction, pricing, commission });
   }
 
-  await notifyUtilityTransactionStatus(transaction, providerResult.message);
+  await notifyUtilityTransactionStatus(
+    transaction,
+    refundRequested ? 'Your payment could not be completed. A refund has been requested and is awaiting approval.' : providerResult.message,
+  );
   if (transaction.status === 'provider_pending') {
     queueUtilityAdminAlert({
       title: 'Utility transaction pending confirmation',
@@ -1526,9 +1655,14 @@ export async function reverseUtilityTransaction(transaction: UtilityTransactionR
     });
   }
   const supabase = createAdminClient();
+  const pendingRequest = (transaction.metadata as { refund_request?: { state?: string } } | null)?.refund_request;
   await supabase.from('utility_transactions').update({
     status: 'reversed',
     failure_reason: reason,
+    // An approved refund request is closed on the row so the admin queue can filter on it.
+    ...(pendingRequest?.state === 'pending_admin'
+      ? { metadata: { ...(transaction.metadata ?? {}), refund_request: { ...pendingRequest, state: 'approved', approved_at: new Date().toISOString() } } }
+      : {}),
     updated_at: new Date().toISOString(),
   }).eq('id', transaction.id);
   await addEvent(transaction.id, 'admin_reversed', reason);
