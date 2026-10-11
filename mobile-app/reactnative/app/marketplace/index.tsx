@@ -17,6 +17,7 @@ import type { Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
 import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
 import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
+import { HomeMenuButton } from '@/components/HomeMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
 import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
@@ -80,6 +81,8 @@ export default function MarketplaceHome() {
           <Menu size={24} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.headerTitle}>Marketplace</Text>
+        <View style={{ flex: 1 }} />
+        <HomeMenuButton />
       </View>
 
       <Pressable onPress={() => router.push('/marketplace/search' as never)} accessibilityRole="button" accessibilityLabel="Search marketplace">
