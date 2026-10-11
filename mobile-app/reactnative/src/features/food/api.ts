@@ -331,7 +331,7 @@ export async function initiateFoodOrderPaystack(
     await delay(600);
     return {
       restaurantId: req.restaurantId,
-      reference: `foodorder:${req.idempotencyKey}`,
+      reference: `foodorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: 0,
     };

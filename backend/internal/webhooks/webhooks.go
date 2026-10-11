@@ -160,7 +160,7 @@ type FeesChargeConfirmer interface {
 const FeesReferencePrefix = "feespay:"
 
 // RestaurantOrderConfirmer is the confirm-and-place entry point for
-// Paystack-funded food orders ("foodorder:" prefix). Impl is
+// Paystack-funded food orders ("foodorder-" prefix). Impl is
 // *restaurant/paystackcheckout.Service.OnChargeSuccess, injected via
 // SetRestaurantOrderConfirmer; same nil ⇒ no-op seam contract as
 // FeesChargeConfirmer.
@@ -169,8 +169,9 @@ type RestaurantOrderConfirmer interface {
 }
 
 // RestaurantOrderReferencePrefix is the reference prefix restaurant Paystack
-// checkout intents use (paystackcheckout.referenceFor → "foodorder:"+idempotencyKey).
-const RestaurantOrderReferencePrefix = "foodorder:"
+// checkout intents use (paystackcheckout.referenceFor → "foodorder-"+idempotencyKey). "-" not ":" —
+// Paystack rejects a ":" in a transaction reference.
+const RestaurantOrderReferencePrefix = "foodorder-"
 
 // RideOrderConfirmer is the confirm-and-book entry point for Paystack-funded
 // ride-hailing checkouts ("rideorder:" prefix). Impl is
@@ -328,7 +329,7 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		return err
 	}
 
-	// Restaurant food-order checkout ("foodorder:" prefix) → confirm-and-place
+	// Restaurant food-order checkout ("foodorder-" prefix) → confirm-and-place
 	// path (verify → cross-check → PlaceOrderPaystackFunded → refund-on-failure).
 	if strings.HasPrefix(d.Reference, RestaurantOrderReferencePrefix) {
 		if h.restaurantConfirmer == nil {

@@ -37,7 +37,7 @@ import (
 // resolve by that key). Includes the reserved prefixes of the not-yet-built
 // services (docs/adr/ADR-PR522-mobility-card-direct.md).
 var reservedIdempotencyPrefixes = []string{
-	"parcelorder:", "rideorder:", "foodorder:", "duespay:", "feespay:",
+	"parcelorder:", "rideorder:", "foodorder:", "foodorder-", "duespay:", "feespay:",
 	"towingorder:", "moversorder:", "carhireorder:", "busorder:", "eventorder:",
 }
 
