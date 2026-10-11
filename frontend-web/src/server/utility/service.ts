@@ -66,6 +66,19 @@ const AMBIGUOUS_ATTEMPT_STATUSES: ReadonlySet<UtilityProviderAttemptRow['status'
 ]);
 
 /**
+ * ADR-PR<pr> — card-paid bills reach the ledger. With this on, a verified
+ * Paystack charge is collected into the wallet (`utility:<tx>:CARD_COLLECT`) and
+ * then spent through the same wallet debit a wallet-sourced bill uses, so the
+ * admin Transactions page (ledger_entries only) shows it and every refund path
+ * credits money the ledger has actually received. Off (default) = today's
+ * behaviour: a Paystack-sourced bill posts nothing.
+ */
+function cardLedgerEnabled(): boolean {
+  const v = (process.env.FEATURE_UTILITY_CARD_LEDGER ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true';
+}
+
+/**
  * AUD-BILL-005 — probe the ledger for this transaction's money legs.
  *
  * BOTH writer conventions must be recognised: this plane posts the wallet leg
@@ -83,7 +96,7 @@ const AMBIGUOUS_ATTEMPT_STATUSES: ReadonlySet<UtilityProviderAttemptRow['status'
  */
 async function lookupUtilityMoneyLegs(
   transaction: UtilityTransactionRow,
-): Promise<{ debitPosted: boolean; compensationPosted: boolean }> {
+): Promise<{ debitPosted: boolean; compensationPosted: boolean; collectPosted: boolean }> {
   const supabase = createAdminClient();
   const key = transaction.idempotency_key;
   const debitKeys = [
@@ -91,6 +104,9 @@ async function lookupUtilityMoneyLegs(
     `${key}:debit:debit`,
     `${key}:debit:credit`,
   ];
+  // The card-collect credit (cardLedgerEnabled) is NOT a compensation: it is the
+  // inflow the spend draws on, and it must never read as "refund already posted".
+  const collectKeys = [`utility:${transaction.id}:CARD_COLLECT`];
   const compensationKeys = [
     `utility:${transaction.id}:REVERSAL_DEBIT`,
     `utility:${transaction.id}:PAYSTACK_REFUND`,
@@ -107,11 +123,12 @@ async function lookupUtilityMoneyLegs(
   const { data: legs, error } = await supabase
     .from('ledger_entries')
     .select('idempotency_key')
-    .in('idempotency_key', [...debitKeys, ...compensationKeys]);
+    .in('idempotency_key', [...debitKeys, ...compensationKeys, ...collectKeys]);
   if (error) throw new ApiError('Failed to inspect utility ledger legs.', 500);
 
   const posted = new Set(((legs ?? []) as Array<{ idempotency_key: string }>).map((leg) => leg.idempotency_key));
   const debitPosted = debitKeys.some((k) => posted.has(k));
+  const collectPosted = collectKeys.some((k) => posted.has(k));
   let compensationPosted = compensationKeys.some((k) => posted.has(k));
 
   if (!compensationPosted && transaction.payment_source === 'paystack') {
@@ -127,7 +144,7 @@ async function lookupUtilityMoneyLegs(
     }
   }
 
-  return { debitPosted, compensationPosted };
+  return { debitPosted, compensationPosted, collectPosted };
 }
 
 // AUD-BILL-005 — how long a just-'failed' row must age before an ADMIN
@@ -269,6 +286,13 @@ async function settleFailedUtilityTransaction(
         audience: 'support',
       });
     }
+  } else if (legs.collectPosted && !legs.debitPosted) {
+    // Card-ledger mode: the captured money was already collected INTO the wallet
+    // and the spend never posted (refused, or the writer died between the two).
+    // The customer's money is sitting in their wallet — a refund credit here
+    // would pay them twice for one card charge.
+    compensated = true;
+    await addEvent(claimed.id, 'paystack_collected_funds_retained', 'Card funds were collected into the wallet and the spend never posted; nothing further to refund.');
   } else {
     // 'paystack' transactions only exist because the charge verified before
     // payUtility ran — the money was captured, so refund it to the wallet. The
@@ -1071,8 +1095,34 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
   // claimed row refuses these writes instead of being resurrected.
   let ownedVersion = (inserted as UtilityTransactionRow).updated_at;
 
-  if (paymentSource === 'wallet') {
+  if (paymentSource === 'paystack') {
+    await addEvent(transactionId, 'paystack_verified', 'Paystack payment verified for utility payment.', {
+      payment_reference: input.metadata?.payment_reference,
+    });
+  }
+
+  if (paymentSource === 'wallet' || (paymentSource === 'paystack' && cardLedgerEnabled())) {
     try {
+      if (paymentSource === 'paystack') {
+        // Collect the verified card charge into the wallet first. The ledger
+        // `reference` is the receipt, NOT the Paystack payment_reference:
+        // lookupUtilityMoneyLegs reads any CREDIT carrying that reference as an
+        // already-posted refund, which would suppress a real one.
+        await creditWallet(userId, {
+          amountKobo: pricing.retailAmountKobo,
+          reference: receipt,
+          idempotencyKey: `utility:${transactionId}:CARD_COLLECT`,
+          description: `Card payment collected for utility ${receipt}`,
+          metadata: {
+            utility_transaction_id: transactionId,
+            category,
+            biller: biller.code,
+            payment_reference: input.metadata?.payment_reference,
+            original_payment_source: 'paystack',
+          },
+        });
+        await addEvent(transactionId, 'card_collected', 'Card payment collected into the wallet.');
+      }
       await debitWallet(userId, {
         amountKobo: pricing.retailAmountKobo,
         reference: receipt,
@@ -1125,10 +1175,6 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     }
     ownedVersion = debitedRow.updated_at;
     await addEvent(transactionId, 'wallet_debited', 'Wallet debited for utility payment.');
-  } else {
-    await addEvent(transactionId, 'paystack_verified', 'Paystack payment verified for utility payment.', {
-      payment_reference: input.metadata?.payment_reference,
-    });
   }
 
   let providerResult: UtilityPurchaseResult | null = null;

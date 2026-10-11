@@ -256,6 +256,7 @@ function makeFakeSupabase(opts: { ledgerKeys?: string[]; transactions?: Record<s
   return {
     from: vi.fn((table: string) => builderFor(table)),
     _transactionsById: transactionsById,
+    _ledgerKeys: ledgerKeys,
   };
 }
 
@@ -303,8 +304,16 @@ describe('payUtility — card-paid bills reach the ledger (flag ON)', () => {
     fakeSupabase = makeFakeSupabase();
     vi.mocked(createAdminClient).mockReturnValue(fakeSupabase as any);
     vi.mocked(resolveUtilityCommission).mockResolvedValue({ service: null, subtype: '', config: null });
-    vi.mocked(creditWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 500_000 } as any);
-    vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 500_000 } as any);
+    // The wallet service writes a ledger_entries row per posted leg; model that so
+    // lookupUtilityMoneyLegs (which probes ledger_entries by key) sees what posted.
+    vi.mocked(creditWallet).mockImplementation(async (_u: string, input: any) => {
+      fakeSupabase._ledgerKeys.add(input.idempotencyKey);
+      return { alreadyProcessed: false, amountKobo: 500_000 } as any;
+    });
+    vi.mocked(debitWallet).mockImplementation(async (_u: string, input: any) => {
+      fakeSupabase._ledgerKeys.add(input.idempotencyKey);
+      return { alreadyProcessed: false, amountKobo: 500_000 } as any;
+    });
     vi.mocked(reverseWalletDebit).mockResolvedValue({ alreadyProcessed: false, amountKobo: 500_000 } as any);
   });
 
