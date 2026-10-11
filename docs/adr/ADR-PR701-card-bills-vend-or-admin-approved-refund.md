@@ -1,86 +1,96 @@
-# ADR-PR701 — Card-paid utility bills: vend, or an admin-approved refund
+# ADR-PR701 — Card-paid utility bills: vend, retry for 30 minutes, then refund
 
 - **Status:** Proposed (flag `FEATURE_UTILITY_CARD_LEDGER`, default off)
 - **Amends:** [ADR-PR697](ADR-PR697-card-paid-utility-bills-reach-ledger.md) (resolves its "Known residual")
-- **Decision owner:** product/finance (recorded 2026-10-12)
+- **Decision owner:** product/finance (recorded 2026-10-12; supersedes an earlier same-day
+  "admin approves every refund" draft of this ADR)
 
 ## Context
 
 ADR-PR697 books a card-paid bill as collect (`CARD_COLLECT` credit) then spend
-(`DEBIT`), then vends. It left one residual (ledger-auditor MEDIUM): the writer
-posts the collect and stalls; the stuck sweeper (>= 10 min) claims the row, sees
-collect-without-debit and *retains* the funds; the writer resumes, its spend posts,
-and its status write loses the CAS. Net `+X -X`: **no vend and no refund**, with an
-alert only. A guard between collect and spend that merely shrinks the window moves
-the failure to claims that land before the collect, where the sweeper refunds and
-the writer then collects: `2x`.
+(`DEBIT`), then vends. It left one residual (ledger-auditor MEDIUM): the writer posts
+the collect and stalls; the stuck sweeper (>= 10 min) claims the row, sees
+collect-without-debit and *retains* the funds; the writer resumes, its spend posts and
+its status write loses the CAS. Net `+X -X`: **no vend and no refund**, alert only. A
+guard that merely shrinks the window moves the failure to claims landing before the
+collect, where the sweeper refunds and the writer then collects: `2x`.
 
-Separately, every failed vend on a card-paid bill auto-credited the wallet, so a
-refund happened without anyone confirming the vend had really failed.
+Separately, a failed vend on a card-paid bill refunded instantly, with no second
+attempt, even though a provider failure is often transient.
 
-## Decision
+## Decision (owner rule)
 
-The owner rule: **if payment is received, ensure the service is vended; otherwise
-initiate a refund that an admin approves manually.**
+**If payment succeeded but the value was not vended and that is confirmed: a cron retries
+the vend; after 30 minutes of vending failure the customer is refunded to their wallet;
+a customer without an active wallet has the funds held with admin and is emailed to
+activate the wallet.**
 
-1. **No automatic refund on a card-paid row.** A failed vend, a stuck-sweeper
-   recovery, or a failed collect leaves the row `failed` with
-   `metadata.refund_request = {state: pending_admin, basis, amount_kobo,
-   requested_at}`, a `refund_requested` event and a `finance` alert. No money moves.
-   Approval is the existing admin reversal: it posts exactly one
-   `ADMIN_REVERSAL_PAYSTACK_REFUND`, marks the request `approved`, and a second
-   approval is refused. The decision applies whenever the flag is on *or* the row
-   already carries a collect leg, so rows written flag-on stay correct if the flag
-   is later flipped.
-2. **The writer takes its row before it moves money.** A version-checked touch
-   (`touchOwnedUtilityRow`: `status = initiated AND updated_at = <owned version>`)
-   runs immediately before the collect and immediately before the spend. If it fails
-   the writer posts nothing further (`writer_outraced`). A local-clock age check
-   (5 min, half the sweep age, immune to DB clock skew) makes a writer that was
-   frozen past a safe age yield too (`writer_stale_yield`).
-   - Claimed before the collect: nothing posted. No `2x`.
-   - Claimed between collect and spend: the collect stands, the spend is refused,
-     the sweeper retains the funds (the customer holds the money). No `0x`.
-3. **Collect-only rows retain the funds** exactly as before: the customer already
-   holds the money, so no refund request is needed.
-4. **The Go sweeper applies the same decision** (`decideStuckPaystack`) from ledger
-   evidence plus `FEATURE_UTILITY_CARD_LEDGER`, recording the request with a new
-   metadata merge on `UpdateTransaction` that preserves `payment_reference` (the
-   proof of capture the approval path requires).
+1. **Open a retry window.** A *confirmed* failed vend (every route returned a definitive
+   failure) or a stuck-sweeper recovery with no provider attempt on a card-paid row leaves
+   the row `failed` with `metadata.vend_retry = {state: retrying, first_failed_at,
+   attempts, last_attempt_at, last_error, basis}`. No money moves. (`utility_transactions.status`
+   has a CHECK constraint, so the state lives in metadata rather than a new status.)
+2. **Retry.** `POST /api/internal/utility/workers/retry-failed-vends` (worker secret,
+   scheduled by `.github/workflows/utility-vend-retry.yml` every 5 minutes, dormant until
+   enabled) re-runs the vend with a *new* provider request key per attempt, at most once
+   per 5 minutes, only while a spend is posted to vend with. Success completes the bill
+   (token, commission, notification); `pending` hands off to the normal provider_pending
+   requery; a failure counts the attempt.
+3. **Refund at 30 minutes** (`first_failed_at` + 30 min). Active wallet: reverse the spend
+   to the wallet (`utility:<tx>:REVERSAL_DEBIT`, or `PAYSTACK_REFUND` when the charge was
+   captured but never booked), mark the row `reversed`, notify in-app and by email.
+4. **Hold when the wallet is not active.** The credit is not posted. The row becomes
+   `vend_retry.state = held` (funds stay in provider clearing / with the processor, i.e. with
+   admin), finance is alerted, and the customer is emailed and notified to activate. Each
+   worker run re-checks; once active, the funds are released as the same refund, once.
+5. **Never retry or refund a vend that may have happened.** Any ambiguous attempt
+   (timeout/error), a thrown retry error, or an unreadable retry clock sends the row to
+   `manual_review` with a support alert. A human reconciles it.
+6. **Close the writer race.** The writer takes a version-checked claim on its row
+   (`touchOwnedUtilityRow`) immediately before the collect and again before the spend, and
+   yields (`writer_outraced` / `writer_stale_yield`, 5-minute local-clock age) so a late leg
+   cannot follow a sweeper claim. Claimed before the collect: nothing posted. Claimed
+   between collect and spend: the collect stands, the spend is refused, the funds are
+   retained (the customer holds the money).
+7. **Go sweeper parity.** `decideStuckPaystack` (ledger evidence + flag) opens the same
+   window through a metadata merge that preserves `payment_reference`.
+8. **Admin override remains.** The existing reversal can settle any retrying/held/manual row
+   by hand, exactly once, and closes the retry state so the worker leaves it alone.
+9. **Flag off is unchanged** (immediate automatic refund). A row already in the retry state
+   keeps resolving after the flag is turned off, so no customer is stranded.
+
+## "Active wallet" (definition used; confirm)
+
+Wallets are ledger accounts created on first credit; there is no activation state in the
+schema. So "active" is defined on the customer's *account*: `platform_users.status = 'active'`
+and not deleted. `pending`, `locked`, `suspended` and deleted accounts are inactive. A customer
+with no `platform_users` row cannot be proven inactive and is treated as active, so a data gap
+never withholds a refund. A lookup *error* skips the row for that cycle rather than deciding
+blind. The definition is one function (`hasActiveWallet`) if the product means something else
+(e.g. KYC tier or a provisioned virtual account).
 
 ## Consequences
 
-- A customer whose card-paid bill fails now waits for admin approval to be made
-  whole (the notification says so). This is the product decision.
-- **The flag must be set on both services (frontend-web and backend).** A mismatch
-  is safe but inconsistent: the Go sweeper still keys on ledger evidence, so a row
-  with a collect leg is handled correctly either way; only a never-collected row
-  differs (Go auto-refunds when its flag is off).
-- Residual: a writer frozen for longer than the sweep age *between* its last
-  version check and the ledger call can still land one late leg. The window is the
-  gap between two adjacent awaits; it is alerted (`writer_outraced` /
-  `writer_stale_yield`) rather than silently retained.
-- Admins find requests by `failed` status plus the finance alert; there is no
-  dedicated queue screen yet. If the marker cannot be written the row is still
-  `failed` and finance is alerted (`refund_request_unrecorded`); an admin can approve
-  it without the marker.
-- Wallet-sourced bills are unchanged.
+- A customer whose vend fails waits up to 30 minutes (retrying) before the refund.
+- **`FEATURE_UTILITY_CARD_LEDGER` must be set on both the frontend-web and backend services**,
+  and `UTILITY_WORKER_SECRET` / the repo variables for the new workflow must be configured.
+  A flag mismatch is safe: the Go sweeper keys on ledger evidence, so a collected row is handled
+  either way; only a never-collected row differs.
+- Held refunds are found by the finance alert and `vend_retry.state = held`; there is no
+  dedicated admin screen yet. The "held" email is sent once; there is no reminder cadence.
+- Wallet-sourced bills keep their immediate reversal (stricter for the customer).
 
-## Known residuals (independent ledger review, none blocking)
+## Known residuals (independent ledger review of the first draft; none blocking)
 
-- **Late ledger call (LOW).** The version check runs before each post, so the exposure
-  is a ledger call that itself hangs >= 10 minutes: a late spend after the sweeper
-  retained the funds nets `+X -X` (alert `writer_outraced`); a late collect after a
-  request was filed is safe if the admin approves afterwards (approval sees
-  collect-only and skips) but `2X` if the admin approves *before* the collect lands.
-  Bounding the ledger call with a timeout is a follow-up.
+- **Late ledger call (LOW).** A ledger call that itself hangs >= 10 minutes can land one late
+  leg after a claim (alerted). Bounding the call with a timeout is a follow-up.
 - **Vend after a claim (LOW, pre-existing).** A writer stalled > 10 minutes between
-  `wallet_debited` and its first provider attempt can be claimed as authoritative
-  (no attempts) and then vend. `provider_outcome_after_claim` alerts; an admin must
-  read it before approving a refund request on that row.
-- **Label (LOW).** Retained collect-only rows are marked `reversed` although nothing
-  was reversed; the `paystack_collected_funds_retained` event is the truth. A writer
-  that yielded on a stall leaves `initiated` until the next sweep.
-- Test gaps noted by the review: Go `settleFailedTransaction` end to end (only the
-  decision function and the metadata merge are tested), a TS-written request approved
-  after a Go sweep, and a flag toggled mid-flight.
+  `wallet_debited` and its first provider attempt can be claimed and then vend;
+  `provider_outcome_after_claim` alerts. The retry worker raises the same alert if a retry
+  vend lands after an admin settled the row.
+- **Label (LOW).** Retained collect-only rows are marked `reversed` though nothing was
+  reversed; the `paystack_collected_funds_retained` event is the truth.
+- Test gaps: Go `settleFailedTransaction` end to end, a TS-written window resolved after a
+  Go sweep, and a flag toggled mid-flight. The worker's `metadata->vend_retry->>state in
+  (retrying,held)` selection is unit-tested against a fake and was verified once by hand against
+  real PostgREST (it returned exactly the retrying row); it is not in CI.

@@ -1,6 +1,6 @@
 package utilitybills
 
-// LIVE-DB: recording a pending refund request merges INTO the row's metadata. It
+// LIVE-DB: opening the vend-retry window merges INTO the row's metadata. It
 // must keep the captured payment_reference — that reference is the PROOF a card
 // charge exists, and the admin approval path refuses to credit a paystack row
 // without it, so a clobbering write would strand the customer's refund.
@@ -17,7 +17,7 @@ import (
 	ptrx "spotlight/backend/go-common/ptr"
 )
 
-func TestLiveDB_UpdateTransaction_MetadataMergeKeepsPaymentReference(t *testing.T) {
+func TestLiveDB_UpdateTransaction_VendRetryMergeKeepsPaymentReference(t *testing.T) {
 	ctx := context.Background()
 	pool := livePoolUtilitybills(t)
 	repo := NewRepository(pool)
@@ -63,7 +63,7 @@ func TestLiveDB_UpdateTransaction_MetadataMergeKeepsPaymentReference(t *testing.
 
 	updated, err := repo.UpdateTransaction(ctx, row.ID, TransactionPatch{
 		FailureReason: ptrx.Of("stuck"),
-		MetadataMerge: refundRequestMetadata(100_000, "stuck_recovery"),
+		MetadataMerge: vendRetryMetadata("stuck_recovery", "stuck"),
 	})
 	if err != nil {
 		t.Fatalf("update with metadata merge: %v", err)
@@ -79,16 +79,15 @@ func TestLiveDB_UpdateTransaction_MetadataMergeKeepsPaymentReference(t *testing.
 	if string(md["note"]) != `"keep"` {
 		t.Fatalf("existing metadata keys must survive the merge: %s", updated.Metadata)
 	}
-	var rr struct {
-		State      string `json:"state"`
-		Basis      string `json:"basis"`
-		AmountKobo int64  `json:"amount_kobo"`
+	var vr struct {
+		State string `json:"state"`
+		Basis string `json:"basis"`
 	}
-	if err := json.Unmarshal(md["refund_request"], &rr); err != nil {
-		t.Fatalf("refund_request missing: %v (%s)", err, updated.Metadata)
+	if err := json.Unmarshal(md["vend_retry"], &vr); err != nil {
+		t.Fatalf("vend_retry missing: %v (%s)", err, updated.Metadata)
 	}
-	if rr.State != "pending_admin" || rr.Basis != "stuck_recovery" || rr.AmountKobo != 100_000 {
-		t.Fatalf("refund_request = %+v", rr)
+	if vr.State != "retrying" || vr.Basis != "stuck_recovery" {
+		t.Fatalf("vend_retry = %+v", vr)
 	}
 
 	// A patch WITHOUT a merge leaves metadata exactly as it was.

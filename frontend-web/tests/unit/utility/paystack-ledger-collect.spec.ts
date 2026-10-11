@@ -350,13 +350,14 @@ describe('payUtility — card-paid bills reach the ledger (flag ON)', () => {
     expect(collect.reference).not.toBe(PAYMENT_REF);
   });
 
-  it('vend fails: collect and spend only — the refund is REQUESTED for admin approval, never auto-credited', async () => {
+  it('vend fails: collect and spend only — the retry window opens, nothing is credited yet', async () => {
     adapterThatVends('failed');
     const { transaction } = await payUtility(USER_ID, inputFor('paystack', 'idem-ledger-3'));
 
-    // Owner rule (ADR-PR697 follow-up): payment received => vend, else a refund
-    // an admin approves by hand. No PAYSTACK_REFUND here; the row waits as failed.
-    // The approval path itself is pinned in paystack-vend-or-refund.spec.ts.
+    // Owner rule (ADR-PR701): payment received => vend; a failed vend is retried by
+    // a cron and refunded to the wallet 30 minutes after it first failed. No
+    // PAYSTACK_REFUND at failure time; the row waits as failed in the retry state.
+    // The retry, refund and hold paths are pinned in vend-retry-flow.spec.ts.
     expect(creditKeys()).toEqual([`utility:${transaction.id}:CARD_COLLECT`]);
     expect(debitWallet).toHaveBeenCalledTimes(1);
     expect(transaction.status).toBe('failed');

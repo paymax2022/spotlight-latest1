@@ -363,7 +363,7 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
     expect(fake._intent.intent.status).toBe('failed');
   });
 
-  it('collect itself fails: NO automatic credit under any key — a refund is requested for admin approval', async () => {
+  it('collect itself fails: NO immediate credit under any key — the retry window opens', async () => {
     const fake = makeFake();
     vi.mocked(createAdminClient).mockReturnValue(fake as any);
     wireWalletToLedger(fake);
@@ -375,11 +375,11 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
 
     await expect(verifyUtilityPaystackPayment(REFERENCE)).rejects.toThrow();
 
-    // Owner rule: payment received, service not delivered => a refund REQUEST an
-    // admin approves, not an automatic credit. Neither PAYSTACK_REFUND nor
-    // VALIDATION_REFUND may post (that would pay the customer before approval, and
-    // two different keys would pay them twice). The pending request itself is
-    // pinned in paystack-vend-or-refund.spec.ts.
+    // Owner rule (ADR-PR701): payment received, service not delivered => the retry
+    // window opens, and the refund (if vending keeps failing) comes from the worker
+    // 30 minutes later. Neither PAYSTACK_REFUND nor VALIDATION_REFUND may post now:
+    // two different keys would pay the customer twice. The worker's refund is pinned
+    // in vend-retry-flow.spec.ts.
     const posted = creditKeys().filter((k) => !/:CARD_COLLECT$/.test(k));
     expect(posted).toHaveLength(0);
   });

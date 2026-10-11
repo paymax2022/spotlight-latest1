@@ -3,6 +3,7 @@ package utilitybills
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // ADR-PR697: the TS plane may collect a card charge into the wallet
@@ -30,8 +31,9 @@ func TestRetainCollectedFunds(t *testing.T) {
 	}
 }
 
-// Owner rule (ADR-PR697 follow-up): a card-paid bill that was paid for but not
-// delivered gets a refund REQUEST an admin approves — never an automatic credit.
+// Owner rule (ADR-PR701): a card-paid bill that was paid for but not delivered
+// opens a vend-retry window — a cron retries the vend and refunds the wallet 30
+// minutes after it first failed — never an immediate credit.
 // stuckPaystackAction is the sweeper's decision for a paystack row, keyed on the
 // ledger evidence plus the card-ledger flag, so the Go plane agrees with the TS
 // plane on every shape.
@@ -44,9 +46,9 @@ func TestStuckPaystackAction(t *testing.T) {
 	}{
 		{"collect only: funds already in the wallet", moneyLegs{collectPosted: true}, true, actionRetainFunds},
 		{"collect only, flag off afterwards: still retained", moneyLegs{collectPosted: true}, false, actionRetainFunds},
-		{"collect + spend, no vend: request a refund", moneyLegs{collectPosted: true, debitPosted: true}, true, actionRequestRefund},
-		{"collect + spend, flag since turned off: evidence still wins", moneyLegs{collectPosted: true, debitPosted: true}, false, actionRequestRefund},
-		{"flag on, writer died before the collect: request a refund", moneyLegs{}, true, actionRequestRefund},
+		{"collect + spend, no vend: open the vend-retry window", moneyLegs{collectPosted: true, debitPosted: true}, true, actionStartVendRetry},
+		{"collect + spend, flag since turned off: evidence still wins", moneyLegs{collectPosted: true, debitPosted: true}, false, actionStartVendRetry},
+		{"flag on, writer died before the collect: open the vend-retry window", moneyLegs{}, true, actionStartVendRetry},
 		{"flag off, legacy row with no collect: automatic refund as before", moneyLegs{}, false, actionAutoRefund},
 		{"flag off, legacy row, compensation not posted: automatic refund as before", moneyLegs{debitPosted: false}, false, actionAutoRefund},
 	}
@@ -74,19 +76,29 @@ func TestCardLedgerEnabledReadsTheSharedFlag(t *testing.T) {
 	}
 }
 
-func TestRefundRequestPatchMetadata(t *testing.T) {
-	raw := refundRequestMetadata(500_000, "stuck_recovery")
+func TestVendRetryPatchMetadata(t *testing.T) {
+	before := time.Now().UTC().Add(-time.Second)
+	raw := vendRetryMetadata("stuck_recovery", "no provider fulfilment")
 	var got struct {
-		RefundRequest struct {
-			State      string `json:"state"`
-			Basis      string `json:"basis"`
-			AmountKobo int64  `json:"amount_kobo"`
-		} `json:"refund_request"`
+		VendRetry struct {
+			State         string `json:"state"`
+			Basis         string `json:"basis"`
+			Attempts      int    `json:"attempts"`
+			FirstFailedAt string `json:"first_failed_at"`
+			LastError     string `json:"last_error"`
+		} `json:"vend_retry"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.RefundRequest.State != "pending_admin" || got.RefundRequest.Basis != "stuck_recovery" || got.RefundRequest.AmountKobo != 500_000 {
+	v := got.VendRetry
+	if v.State != "retrying" || v.Basis != "stuck_recovery" || v.Attempts != 0 || v.LastError != "no provider fulfilment" {
 		t.Fatalf("metadata = %+v", got)
+	}
+	// The 30-minute clock starts here, so it must be a real, current RFC3339 time
+	// — the TS worker fails closed (manual review) on an unreadable one.
+	ts, err := time.Parse(time.RFC3339, v.FirstFailedAt)
+	if err != nil || ts.Before(before) {
+		t.Fatalf("first_failed_at = %q (%v) must be a current RFC3339 time", v.FirstFailedAt, err)
 	}
 }
