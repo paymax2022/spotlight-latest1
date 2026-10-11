@@ -18,6 +18,8 @@ func TestEditability(t *testing.T) {
 		{"live sold", EventLive, true, true, false},
 		{"closed", EventClosed, false, false, false},
 		{"closed sold", EventClosed, true, false, false},
+		{"suspended", EventSuspended, false, false, false},
+		{"suspended sold", EventSuspended, true, false, false},
 		{"cancelled", EventCancelled, false, false, false},
 		{"cancelled sold", EventCancelled, true, false, false},
 	}

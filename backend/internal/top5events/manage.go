@@ -12,6 +12,8 @@ type editDecision struct {
 // or a DRAFT event. CLOSED and CANCELLED block everything.
 func editability(state EventState, anyTicketSold bool) editDecision {
 	switch state {
+	case EventSuspended:
+		return editDecision{Reason: "event suspended"}
 	case EventClosed, EventCancelled:
 		return editDecision{Reason: "event is " + string(state) + " and can no longer be edited"}
 	}
