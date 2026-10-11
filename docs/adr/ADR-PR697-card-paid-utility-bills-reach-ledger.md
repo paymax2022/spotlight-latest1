@@ -51,10 +51,19 @@ Two guards, each pinned by a test:
   bill is refused at the spend and their money stays in the wallet. This is a
   product decision to make before enabling.
 - Historical card payments are not backfilled.
-- Known residual (ledger-auditor MEDIUM): a sweep claim landing between the
-  collect and the spend retains the funds, and the live writer's spend can still
-  post afterwards (it yields with a `writer_outraced` alert). Rare (10-minute
-  stuck threshold); review before enabling the flag in production.
+- Known residual (ledger-auditor MEDIUM, 0x outcome): the writer posts the
+  collect then stalls >=10 minutes; the stuck sweep claims the row, sees
+  collect-without-debit and retains the funds; the writer resumes, its spend
+  posts, its status CAS fails (`writer_outraced`). Net: +X -X, no vend, no
+  refund, alert only. A CAS touch between collect and spend would shrink the
+  window to milliseconds but moves the failure to claims that land before the
+  collect (2x), so it is deliberately not included; decide before enabling the
+  flag in production.
+- The `VALIDATION_REFUND` suppression applies whenever a transaction row exists,
+  flag on or off. A throw after insert with ambiguous provider evidence now waits
+  for the sweeper / manual reconciliation instead of being refunded at once.
+- A replay after a refused spend marks the intent `completed` pointing at a
+  `reversed` row (funds are in the wallet); cosmetic, not addressed here.
 - A retained collect-only row is labelled `reversed` although no reversal
   entry exists; the event `paystack_collected_funds_retained` distinguishes it.
 - The daily-limit check (`debit_wallet_atomic`) sums `type = 'DEBIT'` only, so the
