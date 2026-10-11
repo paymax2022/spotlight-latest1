@@ -123,6 +123,7 @@ export async function persistContestDefinition(
       vote_price: 0,
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
+      logo_url: def.logoUrl?.trim() || '',
       contest_config: def as unknown as Record<string, unknown>,
     })
     .select('id')
@@ -160,6 +161,7 @@ export async function updateContestDefinition(
       age_min: def.legalAdultAge,
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
+      logo_url: def.logoUrl?.trim() || '',
       contest_config: def as unknown as Record<string, unknown>,
     }, { count: 'exact' })
     .eq('slug', currentSlug);
@@ -232,7 +234,7 @@ export function isContestStatus(value: unknown): value is ContestStatus {
 export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, contest_config, created_at')
+    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, logo_url, contest_config, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
@@ -242,7 +244,11 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
     const cfg = (row.contest_config ?? null) as ContestRegistrationDefinition | null;
     // The id lives on the row, never in contest_config — carry it onto the
     // definition so the admin table can link to per-contest routes.
-    if (cfg && typeof cfg === 'object' && cfg.slug) return { ...cfg, id, status };
+    // A snapshot written before the logo existed has no logoUrl; the column is
+    // the source of truth for it, so fall back to that rather than show none.
+    if (cfg && typeof cfg === 'object' && cfg.slug) {
+      return { ...cfg, id, status, logoUrl: cfg.logoUrl || String(row.logo_url ?? '') };
+    }
     return {
       id,
       status,
@@ -265,6 +271,7 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
       categoryQuestionSet: 'other',
       rulesText: String(row.rules_text ?? ''),
       bannerImageUrl: String(row.banner_image_url ?? ''),
+      logoUrl: String(row.logo_url ?? ''),
     } as PersistedContest;
   }).filter((c) => c.slug);
 }

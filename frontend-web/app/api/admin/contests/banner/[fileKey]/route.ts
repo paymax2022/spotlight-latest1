@@ -9,13 +9,16 @@ import { readLocalUpload, contentTypeForKey } from '@/src/lib/storage/local-uplo
  * contests in the mobile app, none of whom are admins — gating it behind the
  * upload permission would mean only the admin who uploaded it ever saw it.
  *
- * Only `contests/banners/` keys are served, so this cannot be turned into a
- * reader for the private registration documents that share the same bucket.
+ * Only `contests/banners/` and `contests/logos/` keys are served (the contest
+ * logo shares this pipeline), so this cannot be turned into a reader for the
+ * private registration documents that share the same bucket.
  */
+const PUBLIC_PREFIXES = ['contests/banners/', 'contests/logos/'];
+
 function decodeBannerKey(raw: string): string | null {
   try {
     const decoded = Buffer.from(decodeURIComponent(raw), 'base64url').toString('utf8');
-    if (!decoded.startsWith('contests/banners/') || decoded.includes('..')) return null;
+    if (!PUBLIC_PREFIXES.some((p) => decoded.startsWith(p)) || decoded.includes('..')) return null;
     return decoded;
   } catch {
     return null;
