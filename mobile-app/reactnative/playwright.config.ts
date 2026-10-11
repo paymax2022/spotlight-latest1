@@ -31,6 +31,13 @@ export default defineConfig({
           // backend that 401s the fake session. Pin mock mode so a dev's local
           // .env can't change what the tests run against.
           EXPO_PUBLIC_TRANSFERS_USE_MOCK: 'true',
+          // These modules default to the live backend now (their endpoints exist),
+          // but their specs render the built-in fixtures with no endpoint mocks.
+          // Pin fixture mode here, for the same reason as transfers above.
+          EXPO_PUBLIC_SAVINGS_USE_MOCK: 'true',
+          EXPO_PUBLIC_LEARN_USE_MOCK: 'true',
+          EXPO_PUBLIC_MEETINGS_USE_MOCK: 'true',
+          EXPO_PUBLIC_LOYALTY_USE_MOCK: 'true',
         },
       },
   projects: [
