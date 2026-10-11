@@ -1401,6 +1401,17 @@ var ambiguousAttemptStatuses = map[string]bool{
 type moneyLegs struct {
 	debitPosted        bool
 	compensationPosted bool
+	// collectPosted: the TS plane collected a verified card charge into the wallet
+	// (utility:<tx>:CARD_COLLECT, ADR-PR697). It is the inflow the spend draws on,
+	// not a compensation.
+	collectPosted bool
+}
+
+// retainCollectedFunds reports whether a paystack row's captured money is
+// already sitting in the member's wallet: the card charge was collected but the
+// spend never posted. Refunding it again would pay the member twice.
+func retainCollectedFunds(paymentSource string, legs *moneyLegs) bool {
+	return paymentSource == paymentSourcePaystack && legs.collectPosted && !legs.debitPosted
 }
 
 // transactionMoneyLegs probes ledger_entries for every money leg this
@@ -1457,7 +1468,11 @@ func (s *Service) transactionMoneyLegs(ctx context.Context, t *TransactionRow) (
 			comp = ok
 		}
 	}
-	return &moneyLegs{debitPosted: debit, compensationPosted: comp}, nil
+	collect, err := exists([]string{"utility:" + t.ID + ":CARD_COLLECT"})
+	if err != nil {
+		return nil, err
+	}
+	return &moneyLegs{debitPosted: debit, compensationPosted: comp, collectPosted: collect}, nil
 }
 
 func paymentRefFromMetadata(raw json.RawMessage) string {
@@ -1535,6 +1550,12 @@ func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow
 	case legs.compensationPosted:
 		// Another path already returned the money — converge the status only.
 		newStatus = string(StatusReversed)
+	case retainCollectedFunds(claimed.PaymentSource, legs):
+		// Card-ledger mode: the money is already in the wallet and the spend never
+		// posted — converge the status, post nothing.
+		newStatus = string(StatusReversed)
+		s.event(ctx, t.ID, "paystack_collected_funds_retained",
+			"Card funds were collected into the wallet and the spend never posted; nothing further to refund.", nil)
 	case claimed.PaymentSource == paymentSourceWallet && legs.debitPosted:
 		if s.postStuckReversal(ctx, claimed) {
 			newStatus = string(StatusReversed)
