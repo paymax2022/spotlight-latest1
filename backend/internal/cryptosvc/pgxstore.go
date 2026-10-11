@@ -45,12 +45,15 @@ func (s *PGStore) SwapByProviderID(ctx context.Context, provider, providerSwapID
 		r        SwapRecord
 		state    string
 		received *string
+		side     string
 	)
 	err := s.pool.QueryRow(ctx,
-		`SELECT id::text, user_id::text, provider, provider_account_id, provider_swap_id, status, received_amount::text
+		`SELECT id::text, user_id::text, provider, provider_account_id, provider_swap_id, status, received_amount::text,
+		        side, ngn_kobo, fee_bps, fee_kobo
 		   FROM public.crypto_swaps WHERE provider = $1 AND provider_swap_id = $2`,
 		provider, providerSwapID).
-		Scan(&r.ID, &r.UserID, &r.Provider, &r.ProviderAccountID, &r.ProviderSwapID, &state, &received)
+		Scan(&r.ID, &r.UserID, &r.Provider, &r.ProviderAccountID, &r.ProviderSwapID, &state, &received,
+			&side, &r.NGNKobo, &r.FeeBps, &r.FeeKobo)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SwapRecord{}, false, nil
 	}
@@ -58,6 +61,7 @@ func (s *PGStore) SwapByProviderID(ctx context.Context, provider, providerSwapID
 		return SwapRecord{}, false, err
 	}
 	r.State = cryptoprov.SwapState(state)
+	r.Side = Side(side)
 	if received != nil {
 		d, derr := decimal.NewFromString(*received)
 		if derr != nil {
