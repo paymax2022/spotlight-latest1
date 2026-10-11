@@ -499,7 +499,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	for _, input := range req.Items {
 		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
-		const qMI = `SELECT id, restaurant_id, name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
+		const qMI = `SELECT id, restaurant_id, name, price_kobo, ` + availableNow + ` AS is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
 			return nil, fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, input.MenuItemID, restID)
 		}
