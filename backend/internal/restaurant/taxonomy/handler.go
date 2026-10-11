@@ -38,6 +38,9 @@ func Register(admin, owner *gin.RouterGroup, h *Handler, guard func(permission s
 	ad.GET("/cuisines", h.AdminListCuisines)
 	ad.POST("/cuisines", h.AdminCreateCuisine)
 	ad.PATCH("/cuisines/:id", h.AdminUpdateCuisine)
+	ad.POST("/backfill", h.AdminBackfill)
+	ad.GET("/needs-review", h.AdminNeedsReview)
+	ad.PATCH("/needs-review/remap", h.AdminRemap)
 
 	ow := owner.Group("/menu-taxonomy")
 	ow.GET("/categories", h.ListCategories)
@@ -227,4 +230,53 @@ func (h *Handler) AdminUpdateCuisine(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": cu})
+}
+
+// AdminBackfill maps legacy item categories. dry_run defaults to true, so the first
+// call only reports what a real run would do.
+func (h *Handler) AdminBackfill(c *gin.Context) {
+	dry := true
+	if v := c.Query("dry_run"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "dry_run must be true or false"})
+			return
+		}
+		dry = parsed
+	}
+	rep, err := Backfill(c.Request.Context(), h.svc.db, dry)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rep})
+}
+
+func (h *Handler) AdminNeedsReview(c *gin.Context) {
+	groups, err := NeedsReview(c.Request.Context(), h.svc.db)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": groups})
+}
+
+type remapBody struct {
+	Label         string  `json:"label" binding:"required"`
+	CategoryID    string  `json:"category_id" binding:"required"`
+	SubcategoryID *string `json:"subcategory_id"`
+}
+
+func (h *Handler) AdminRemap(c *gin.Context) {
+	var b remapBody
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	n, err := RemapLabel(c.Request.Context(), h.svc.db, ginutil.UserID(c), b.Label, b.CategoryID, b.SubcategoryID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"remapped": n}})
 }

@@ -15999,6 +15999,34 @@ paths:
       responses:
         '200': { description: Updated }
         '404': { description: Not found }
+  /api/restaurant/admin/menu-taxonomy/backfill:
+    post:
+      operationId: adminBackfillMenuCategories
+      summary: Map legacy item categories onto the taxonomy. dry_run defaults to true.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: dry_run, in: query, required: false, schema: { type: boolean, default: true } }
+      responses:
+        '200': { description: 'Groups, with counts of mapped and unmapped items. A dry run writes nothing.' }
+  /api/restaurant/admin/menu-taxonomy/needs-review:
+    get:
+      operationId: adminMenuNeedsReview
+      summary: Labels whose items still have no taxonomy category
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Groups of label and item count, largest first' }
+  /api/restaurant/admin/menu-taxonomy/needs-review/remap:
+    patch:
+      operationId: adminRemapMenuLabel
+      summary: Point every unmapped item with a label at one category, in one call
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Count of items changed' }
+        '404': { description: 'Category does not exist or is inactive' }
+        '422': { description: 'Category is not top-level, or the sub-category does not belong to it' }
   /api/restaurant/menu-taxonomy/categories:
     get:
       operationId: ownerListMenuTaxonomy
