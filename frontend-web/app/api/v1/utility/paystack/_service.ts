@@ -253,11 +253,18 @@ export async function verifyUtilityPaystackPayment(reference: string, userId?: s
     // refused). Once a row exists payUtility's own settle path owns the money:
     // it either refunded, or deliberately kept the collected funds in the
     // wallet. A second refund here would pay the customer twice.
-    const { data: existingTx } = await supabase
+    const { data: existingTx, error: probeError } = await supabase
       .from('utility_transactions')
       .select('id')
       .eq('idempotency_key', `utility:paystack:${reference}`)
       .maybeSingle();
+    if (probeError) {
+      // A failed read is not "no row". Refunding blind could pay the customer
+      // twice if payUtility already settled. Leave the intent as it is: verify is
+      // idempotent, so a retry (or the stale-intent sweep) resolves it safely.
+      console.error('[utility] could not check for an existing transaction before refunding:', probeError);
+      throw new ApiError('Could not confirm the payment state. Please retry in a moment.', 503);
+    }
     if (existingTx) {
       await supabase
         .from('utility_paystack_intents')

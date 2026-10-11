@@ -375,9 +375,33 @@ describe('verifyUtilityPaystackPayment + payUtility (flag ON) — one card charg
 
     await expect(verifyUtilityPaystackPayment(REFERENCE)).rejects.toThrow();
 
+    // Exactly one refund, under the transaction-owned key. Zero would strand the
+    // captured money; a VALIDATION_REFUND on top would pay it twice.
     const posted = creditKeys().filter((k) => !/:CARD_COLLECT$/.test(k));
-    expect(posted.filter((k) => /VALIDATION_REFUND$/.test(k))).toHaveLength(0);
-    expect(posted.length).toBeLessThanOrEqual(1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatch(/:PAYSTACK_REFUND$/);
+  });
+
+  it('the existence probe errors: do NOT refund blind — a row may exist and own the money', async () => {
+    const fake = makeFake({ biller_id: 'no-such-biller' });
+    const realFrom = fake.from;
+    fake.from = vi.fn((table: string) => {
+      if (table !== 'utility_transactions') return realFrom(table);
+      const failing: any = {
+        select: vi.fn(() => failing),
+        eq: vi.fn(() => failing),
+        maybeSingle: vi.fn(async () => ({ data: null, error: { message: 'connection reset' } })),
+      };
+      return failing;
+    }) as any;
+    vi.mocked(createAdminClient).mockReturnValue(fake as any);
+    wireWalletToLedger(fake);
+
+    await expect(verifyUtilityPaystackPayment(REFERENCE)).rejects.toThrow();
+
+    // A transient read error must not read as "no row": that would post
+    // VALIDATION_REFUND on top of whatever payUtility already settled.
+    expect(creditWallet).not.toHaveBeenCalled();
   });
 
   it('validation fails BEFORE any row exists: still refunded exactly once (unchanged)', async () => {
