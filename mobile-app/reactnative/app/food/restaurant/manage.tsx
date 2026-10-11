@@ -16,7 +16,7 @@ import AddressAutocompleteInput, { type SelectedAddress } from '@/components/Add
 import {
   useMyStores, useStoreDetail, useCreateStore, useUpdateStore, useSetAvailability,
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
-  useMenuTaxonomy, useCreateTaxonomyItem,
+  useMenuTaxonomy, useCreateTaxonomyItem, useUpdateItem,
 } from '@/features/restaurantmerchant/hooks';
 import type { MerchantMenuCategory, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
 import {
@@ -509,6 +509,12 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
   const createCat = useCreateCategory(storeId);
   const deleteCat = useDeleteCategory(storeId);
   const deleteItem = useDeleteItem(storeId);
+  const updateItem = useUpdateItem(storeId);
+
+  const setStock = (itemId: string, name: string, inStock: boolean) =>
+    updateItem.mutate({ itemId, patch: { isAvailable: inStock } }, {
+      onError: (e) => alertAsync({ title: `Could not update ${name}`, message: (e as Error).message }),
+    });
 
   const addCategory = () => {
     if (!newCat.trim()) return;
@@ -549,7 +555,15 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
             <View key={it.id} style={styles.itemRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{it.name}</Text>
-                <Text style={styles.muted}>{naira(it.priceKobo)}{it.isAvailable ? '' : ' · unavailable'}</Text>
+                <Text style={styles.muted}>{naira(it.priceKobo)}{it.isAvailable ? '' : ' · out of stock'}</Text>
+              </View>
+              <View style={{ alignItems: 'center', gap: 2 }}>
+                <Switch
+                  value={it.isAvailable}
+                  onValueChange={(v) => setStock(it.id, it.name, v)}
+                  accessibilityLabel={`${it.name} in stock`}
+                />
+                <Text style={styles.muted}>{it.isAvailable ? 'In stock' : 'Out'}</Text>
               </View>
               <Pressable onPress={() => confirmDeleteItem(it.id, it.name)} hitSlop={8}>
                 <Trash2 size={16} color={Colors.outline} />

@@ -676,6 +676,27 @@ paths:
         '404': { description: The taxonomy category does not exist or is inactive }
         '409': { description: An item with this name already exists in that category }
         '422': { description: 'Placement is invalid, or the price is not more than zero' }
+  /{id}/menu/items/availability/bulk:
+    patch:
+      tags: [restaurant]
+      summary: Mark many items in or out of stock at once
+      description: >-
+        Only items that belong to this restaurant change; other ids are ignored. Up to
+        200 ids per call. A manual change clears any timed restock.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, is_available]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid }, maxItems: 200 }
+                is_available: { type: boolean }
+      responses:
+        '200': { description: 'Count of items updated', content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { updated: { type: integer } } } } } } } }
+        '400': { description: Malformed body }
+        '403': { description: Not the restaurant owner or staff with menu rights }
   /{id}/menu/items/{itemId}:
     patch:
       tags: [restaurant]
@@ -692,8 +713,11 @@ paths:
               properties:
                 price_kobo: { $ref: '#/components/schemas/Money' }
                 available: { type: boolean }
+                is_available: { type: boolean }
+                unavailable_until: { type: string, format: date-time, description: 'With is_available false: back on its own at this time. Must be in the future. Ignored when is_available is true.' }
       responses:
         '200': { description: Updated item, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
+        '400': { description: 'unavailable_until is not RFC 3339, or is in the past' }
         '401': { description: Not authenticated }
         '403': { description: Not the restaurant owner }
         '404': { description: Item not found }
