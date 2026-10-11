@@ -166,3 +166,20 @@ export function useDeleteItem(id: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
   });
 }
+
+export function useMenuTaxonomy() {
+  return useQuery({
+    queryKey: [KEY, 'taxonomy'],
+    queryFn: merchant.getMenuTaxonomy,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useCreateTaxonomyItem(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: import('./taxonomy').TaxonomyItemPayload) => merchant.createTaxonomyItem(id, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
+  });
+}
