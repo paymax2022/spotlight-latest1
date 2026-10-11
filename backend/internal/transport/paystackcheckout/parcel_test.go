@@ -133,7 +133,10 @@ func TestParcelRoutes_CoexistWithWalletParcelRoutes(t *testing.T) {
 	r.e.Register(NewParcelDomain(f))
 
 	g := gin.New()
-	g.Use(func(c *gin.Context) { c.Set("user_id", c.GetHeader("X-Test-User")) })
+	g.Use(func(c *gin.Context) {
+		c.Set("user_id", c.GetHeader("X-Test-User"))
+		c.Set("user_email", "buyer@gmail.com")
+	})
 	mob := g.Group("/mobility")
 	hit := ""
 	mob.POST("/parcels", func(c *gin.Context) { hit = "book" })

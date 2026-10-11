@@ -134,7 +134,10 @@ func TestTowingRoutes_CoexistWithWalletTowingRoutes(t *testing.T) {
 	r.e.Register(NewTowingDomain(f))
 
 	g := gin.New()
-	g.Use(func(c *gin.Context) { c.Set("user_id", c.GetHeader("X-Test-User")) })
+	g.Use(func(c *gin.Context) {
+		c.Set("user_id", c.GetHeader("X-Test-User"))
+		c.Set("user_email", "buyer@gmail.com")
+	})
 	mob := g.Group("/mobility")
 	hit := ""
 	mob.POST("/towing/estimate", func(c *gin.Context) { hit = "estimate" })

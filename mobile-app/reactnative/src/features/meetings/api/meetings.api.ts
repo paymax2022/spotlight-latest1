@@ -18,6 +18,13 @@ const minutes: Record<string, MeetingMinutes> = JSON.parse(JSON.stringify(seedMi
 const latency = (ms = 350) => new Promise((r) => setTimeout(r, ms));
 const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? generateIdempotencyKey() } });
 
+// Every write below has a real live route handler (frontend-web/app/api/v1/estate/
+// meetings/**, real Supabase queries), so fixture mode refuses loudly instead of
+// reporting a meeting/RSVP that was never persisted — mirrors frontend-admin's
+// crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_MEETINGS_USE_MOCK=false to send this against the live backend.`);
+
 export class MeetingApiError extends Error {
   code: string;
   constructor(code: string, message: string) {
@@ -48,43 +55,13 @@ export async function getMeeting(id: string): Promise<Meeting> {
 }
 
 export async function createMeeting(input: CreateMeetingInput): Promise<Meeting> {
-  if (USE_MOCK) {
-    await latency(500);
-    if (!input.title.trim()) throw new MeetingApiError('VALIDATION', 'Meeting title is required.');
-    const m: Meeting = {
-      id: `mtg_${Date.now()}`,
-      estateId: 'est_amber_court',
-      title: input.title.trim(),
-      agenda: input.agenda?.trim() || undefined,
-      mode: input.mode,
-      location: input.location?.trim() || undefined,
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
-      status: 'scheduled',
-      createdBy: 'res_demo',
-      createdByName: 'You',
-      createdAt: new Date().toISOString(),
-      myRsvp: 'yes',
-      rsvpCounts: { yes: 1, no: 0, maybe: 0 },
-    };
-    meetings = [m, ...meetings];
-    return { ...m };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Scheduling a meeting');
   const { data } = await api.post<Meeting>(B, input, idem(input.idempotencyKey));
   return data;
 }
 
 export async function rsvpMeeting(input: RsvpInput): Promise<Meeting> {
-  if (USE_MOCK) {
-    await latency(300);
-    const m = meetings.find((x) => x.id === input.meetingId);
-    if (!m) throw new MeetingApiError('NOT_FOUND', 'Meeting not found.');
-    // Adjust counts: remove previous response, add the new one.
-    if (m.myRsvp) m.rsvpCounts[m.myRsvp] = Math.max(0, m.rsvpCounts[m.myRsvp] - 1);
-    m.myRsvp = input.response;
-    m.rsvpCounts[input.response] += 1;
-    return { ...m };
-  }
+  if (USE_MOCK) throw notInFixtureMode('RSVPing to a meeting');
   const { data } = await api.post<Meeting>(`${B}/${input.meetingId}/rsvp`, { response: input.response }, idem(input.idempotencyKey));
   return data;
 }

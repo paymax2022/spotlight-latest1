@@ -15918,6 +15918,131 @@ paths:
         '400': { description: Missing Idempotency-Key header }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Verified KYC tier below the withdrawal floor }
+  /api/restaurant/admin/menu-taxonomy/categories:
+    get:
+      operationId: adminListMenuTaxonomy
+      summary: Full menu taxonomy tree, including inactive rows and usage counts
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Tree of categories with sub-categories }
+        '403': { description: Missing restaurant.manage }
+    post:
+      operationId: adminCreateMenuCategory
+      summary: Create a top-level category or a sub-category (slug derived from name)
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+        '409': { description: Name or slug already exists under this parent }
+        '422': { description: 'Invalid kind, or a third level was requested' }
+  /api/restaurant/admin/menu-taxonomy/categories/reorder:
+    patch:
+      operationId: adminReorderMenuCategories
+      summary: Set sort_order for many categories in one transaction
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Reordered }
+        '404': { description: A category id does not exist }
+  /api/restaurant/admin/menu-taxonomy/categories/{id}:
+    patch:
+      operationId: adminUpdateMenuCategory
+      summary: Rename, change kind or icon, or activate/deactivate. Slug never changes.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+    delete:
+      operationId: adminDeleteMenuCategory
+      summary: Delete a custom category with no children and no items. Default rows are refused.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found }
+        '409': { description: 'Default row (use deactivate) or in use (body.count gives the dependants)' }
+  /api/restaurant/admin/menu-taxonomy/categories/seed-defaults:
+    post:
+      operationId: adminSeedMenuDefaults
+      summary: Insert any missing default categories and cuisines. Never overwrites an existing row.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Counts of inserted, skipped and duplicate rows' }
+  /api/restaurant/admin/menu-taxonomy/cuisines:
+    get:
+      operationId: adminListCuisines
+      summary: All cuisines, including inactive
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Cuisines }
+    post:
+      operationId: adminCreateCuisine
+      summary: Create a cuisine
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+        '409': { description: Slug already exists }
+  /api/restaurant/admin/menu-taxonomy/cuisines/{id}:
+    patch:
+      operationId: adminUpdateCuisine
+      summary: Rename, reorder, or activate/deactivate. Cuisines are never deleted.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+  /api/restaurant/admin/menu-taxonomy/backfill:
+    post:
+      operationId: adminBackfillMenuCategories
+      summary: Map legacy item categories onto the taxonomy. dry_run defaults to true.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: dry_run, in: query, required: false, schema: { type: boolean, default: true } }
+      responses:
+        '200': { description: 'Groups, with counts of mapped and unmapped items. A dry run writes nothing.' }
+  /api/restaurant/admin/menu-taxonomy/needs-review:
+    get:
+      operationId: adminMenuNeedsReview
+      summary: Labels whose items still have no taxonomy category
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Groups of label and item count, largest first' }
+  /api/restaurant/admin/menu-taxonomy/needs-review/remap:
+    patch:
+      operationId: adminRemapMenuLabel
+      summary: Point every unmapped item with a label at one category, in one call
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Count of items changed' }
+        '404': { description: 'Category does not exist or is inactive' }
+        '422': { description: 'Category is not top-level, or the sub-category does not belong to it' }
+  /api/restaurant/menu-taxonomy/categories:
+    get:
+      operationId: ownerListMenuTaxonomy
+      summary: Active category tree, read-only for owners
+      tags: [Restaurant]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Active tree }
+  /api/restaurant/menu-taxonomy/cuisines:
+    get:
+      operationId: ownerListCuisines
+      summary: Active cuisines, read-only
+      tags: [Restaurant]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Active cuisines }
   /api/v1/referrals/me/dashboard:
     get:
       operationId: getMyReferralDashboard

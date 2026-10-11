@@ -1,0 +1,205 @@
+{
+ "version": 1,
+ "cuisines": [
+  {
+   "name": "Nigerian",
+   "slug": "nigerian",
+   "sort_order": 10
+  },
+  {
+   "name": "West African",
+   "slug": "west-african",
+   "sort_order": 20
+  },
+  {
+   "name": "African",
+   "slug": "african",
+   "sort_order": 30
+  },
+  {
+   "name": "Yoruba",
+   "slug": "yoruba",
+   "sort_order": 40
+  },
+  {
+   "name": "Igbo",
+   "slug": "igbo",
+   "sort_order": 50
+  },
+  {
+   "name": "Hausa/Northern",
+   "slug": "hausa-northern",
+   "sort_order": 60
+  },
+  {
+   "name": "Calabar/South-South",
+   "slug": "calabar-south-south",
+   "sort_order": 70
+  },
+  {
+   "name": "Continental",
+   "slug": "continental",
+   "sort_order": 80
+  },
+  {
+   "name": "American",
+   "slug": "american",
+   "sort_order": 90
+  },
+  {
+   "name": "Fast Food",
+   "slug": "fast-food",
+   "sort_order": 100
+  },
+  {
+   "name": "Chinese",
+   "slug": "chinese",
+   "sort_order": 110
+  },
+  {
+   "name": "Indian",
+   "slug": "indian",
+   "sort_order": 120
+  },
+  {
+   "name": "Italian",
+   "slug": "italian",
+   "sort_order": 130
+  },
+  {
+   "name": "Lebanese",
+   "slug": "lebanese",
+   "sort_order": 140
+  },
+  {
+   "name": "Turkish",
+   "slug": "turkish",
+   "sort_order": 150
+  },
+  {
+   "name": "Japanese/Sushi",
+   "slug": "japanese-sushi",
+   "sort_order": 160
+  },
+  {
+   "name": "Thai",
+   "slug": "thai",
+   "sort_order": 170
+  },
+  {
+   "name": "Korean",
+   "slug": "korean",
+   "sort_order": 180
+  },
+  {
+   "name": "Mexican/Tex-Mex",
+   "slug": "mexican-tex-mex",
+   "sort_order": 190
+  },
+  {
+   "name": "Mediterranean",
+   "slug": "mediterranean",
+   "sort_order": 200
+  },
+  {
+   "name": "British",
+   "slug": "british",
+   "sort_order": 210
+  },
+  {
+   "name": "French",
+   "slug": "french",
+   "sort_order": 220
+  },
+  {
+   "name": "Caribbean",
+   "slug": "caribbean",
+   "sort_order": 230
+  },
+  {
+   "name": "BBQ & Grills",
+   "slug": "bbq-and-grills",
+   "sort_order": 240
+  },
+  {
+   "name": "Seafood",
+   "slug": "seafood",
+   "sort_order": 250
+  },
+  {
+   "name": "Street Food",
+   "slug": "street-food",
+   "sort_order": 260
+  },
+  {
+   "name": "Bakery & Pastry",
+   "slug": "bakery-and-pastry",
+   "sort_order": 270
+  },
+  {
+   "name": "Cafe & Coffee",
+   "slug": "cafe-and-coffee",
+   "sort_order": 280
+  },
+  {
+   "name": "Desserts & Ice Cream",
+   "slug": "desserts-and-ice-cream",
+   "sort_order": 290
+  },
+  {
+   "name": "Juice Bar & Smoothies",
+   "slug": "juice-bar-and-smoothies",
+   "sort_order": 300
+  },
+  {
+   "name": "Bar & Lounge",
+   "slug": "bar-and-lounge",
+   "sort_order": 310
+  },
+  {
+   "name": "Healthy",
+   "slug": "healthy",
+   "sort_order": 320
+  },
+  {
+   "name": "Vegan & Vegetarian",
+   "slug": "vegan-and-vegetarian",
+   "sort_order": 330
+  },
+  {
+   "name": "Kids Friendly",
+   "slug": "kids-friendly",
+   "sort_order": 340
+  },
+  {
+   "name": "Halal",
+   "slug": "halal",
+   "sort_order": 350
+  },
+  {
+   "name": "Soups & Swallows",
+   "slug": "soups-and-swallows",
+   "sort_order": 360
+  },
+  {
+   "name": "Pizza",
+   "slug": "pizza",
+   "sort_order": 370
+  },
+  {
+   "name": "Burgers",
+   "slug": "burgers",
+   "sort_order": 380
+  },
+  {
+   "name": "Chicken & Wings",
+   "slug": "chicken-and-wings",
+   "sort_order": 390
+  },
+  {
+   "name": "Shawarma",
+   "slug": "shawarma",
+   "sort_order": 400
+  }
+ ]
+}

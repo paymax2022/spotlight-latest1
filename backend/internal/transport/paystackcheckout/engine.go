@@ -38,6 +38,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/platform/billingemail"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/transport"
 )
@@ -891,7 +892,11 @@ func (h *EngineHandler) initiate(c *gin.Context, d Domain) {
 	}
 	// Idempotency-Key is the HEADER only (money-path rule); a body key is
 	// ignored by freezeRequest.
-	out, err := h.e.Initiate(c.Request.Context(), d.Name(), u, raw, ginutil.IdempotencyKey(c), gw.Email, gw.CallbackURL)
+	email, ok := billingemail.Require(c, gw.Email)
+	if !ok {
+		return
+	}
+	out, err := h.e.Initiate(c.Request.Context(), d.Name(), u, raw, ginutil.IdempotencyKey(c), email, gw.CallbackURL)
 	if err != nil {
 		h.fail(c, err)
 		return
