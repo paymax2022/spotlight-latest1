@@ -119,7 +119,7 @@ func TestClientImplementsEveryCapability(t *testing.T) {
 // ---- market ----------------------------------------------------------------
 
 func TestTickerPathAuthAndExactDecimal(t *testing.T) {
-	srv, calls, _ := server(t, jsonReply(200, `{"status":"success","data":{"ticker":{"last":"90000000.123456789012345678"}}}`))
+	srv, calls, _ := server(t, jsonReply(200, `{"status":"success","data":{"btcngn":{"ticker":{"last":90000000.123456789012345678},"at":1791736915000}}}`))
 	c := newClient(t, srv.URL, nil)
 	tk, err := c.Ticker(context.Background(), "BTCNGN")
 	if err != nil {
@@ -157,7 +157,7 @@ func TestTickerRejectsNonPositiveOrMalformedPrice(t *testing.T) {
 func TestGetRetriesRateLimitThenSucceeds(t *testing.T) {
 	for _, code := range []int{429, 444} {
 		sl := &slept{}
-		srv, _, n := server(t, jsonReply(code, `{"message":"slow down"}`), jsonReply(code, `{}`), jsonReply(200, `{"data":{"ticker":{"last":"10"}}}`))
+		srv, _, n := server(t, jsonReply(code, `{"message":"slow down"}`), jsonReply(code, `{}`), jsonReply(200, `{"data":{"btcngn":{"ticker":{"last":10}}}}`))
 		if _, err := newClient(t, srv.URL, sl).Ticker(context.Background(), "btcngn"); err != nil {
 			t.Fatalf("HTTP %d: %v", code, err)
 		}
@@ -183,7 +183,7 @@ func TestGetRateLimitGivesUpAndIsClassifiedRateLimited(t *testing.T) {
 
 func TestGetRetriesServerErrorButPostDoesNot(t *testing.T) {
 	// GET: idempotent, so a 5xx is retried.
-	srv, _, n := server(t, jsonReply(502, `{}`), jsonReply(200, `{"data":{"ticker":{"last":"10"}}}`))
+	srv, _, n := server(t, jsonReply(502, `{}`), jsonReply(200, `{"data":{"btcngn":{"ticker":{"last":10}}}}`))
 	if _, err := newClient(t, srv.URL, &slept{}).Ticker(context.Background(), "btcngn"); err != nil {
 		t.Fatalf("GET after 502: %v", err)
 	}
@@ -603,5 +603,52 @@ func TestRateBudgetDisabledAndDefault(t *testing.T) {
 	d, _ := New(Config{SecretKey: "k"})
 	if d.budget == nil || d.budget.perMinute >= 300 {
 		t.Fatalf("default budget must be below Quidax's 300/min limit, got %+v", d.budget)
+	}
+}
+
+// ---- facts observed against the real sandbox (2026-10-11) -------------------
+
+func TestTickerAcceptsTheRealSandboxShape(t *testing.T) {
+	// data.<market>.ticker.last is a JSON number with 16 decimals; some fields are strings.
+	srv, _, _ := server(t, jsonReply(200, `{"status":"success","message":"Successful","data":{"usdtngn":{"ticker":{"high":"1367","last":1363.5000000000000000,"buy":1363.5},"at":1791736915000}}}`))
+	tk, err := newClient(t, srv.URL, nil).Ticker(context.Background(), "USDTNGN")
+	if err != nil || !tk.Last.Equal(dec("1363.5")) {
+		t.Fatalf("ticker = %+v, %v", tk, err)
+	}
+}
+
+func TestHTTP200WithErrorStatusIsADefinitiveRefusal(t *testing.T) {
+	// Quidax answers some refusals with HTTP 200 and {"status":"error","data":{"code","message"}}.
+	body := `{"status":"error","message":"This feature is currently disabled for you.","data":{"code":"140017","message":"This feature is currently disabled for you."}}`
+	srv, _, n := server(t, jsonReply(200, body))
+	_, err := newClient(t, srv.URL, &slept{}).Withdraw(context.Background(), cryptoprov.WithdrawRequest{
+		AccountID: "a", Currency: "usdt", Network: "trc20", Address: "TX", Amount: dec("1"), Reference: "r",
+	})
+	var api *cryptoprov.APIError
+	if !errors.As(err, &api) || api.Code != "140017" || !strings.Contains(api.Message, "disabled") {
+		t.Fatalf("err = %#v", err)
+	}
+	if !cryptoprov.IsDefinitive(err) {
+		t.Fatal("a status:error refusal did not execute and must be definitive")
+	}
+	if atomic.LoadInt32(n) != 1 {
+		t.Fatalf("refusal was retried: %d", *n)
+	}
+}
+
+func TestErrorCodeAndMessageAreReadFromTheDataObject(t *testing.T) {
+	srv, _, _ := server(t, jsonReply(404, `{"status":"error","message":"Swap transaction not found.","data":{"code":"E0605","message":"Swap transaction not found."}}`))
+	_, err := newClient(t, srv.URL, nil).GetSwap(context.Background(), "a", "sw")
+	var api *cryptoprov.APIError
+	if !errors.As(err, &api) || api.Code != "E0605" || api.Status != 404 {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestQuoteExpiryWithMillisecondsParses(t *testing.T) {
+	srv, _, _ := server(t, jsonReply(200, `{"status":"success","data":{"id":"62e8","confirmed":false,"from_currency":"USDT","to_currency":"NGN","quoted_price":"1349.86","from_amount":"1.0","to_amount":"1349.86","expires_at":"2026-10-11T16:42:12.916Z"}}`))
+	q, err := newClient(t, srv.URL, nil).QuoteSwap(context.Background(), cryptoprov.SwapQuoteRequest{AccountID: "me", From: "usdt", To: "ngn", FromAmount: dec("1")})
+	if err != nil || q.From != "USDT" || !q.ExpiresAt.Equal(time.Date(2026, 10, 11, 16, 42, 12, 916_000_000, time.UTC)) {
+		t.Fatalf("quote = %+v, %v", q, err)
 	}
 }

@@ -215,6 +215,12 @@ func (c *Client) do(ctx context.Context, method, path, query string, body any) (
 			if err := json.Unmarshal(raw, &env); err != nil {
 				return nil, fmt.Errorf("quidax: %s %s: malformed response", method, path)
 			}
+			// Quidax answers some refusals with HTTP 200 and status "error". The action
+			// did not execute, so surface it as a definitive client-side refusal.
+			if strings.EqualFold(env.Status, "error") {
+				ae := apiError(http.StatusUnprocessableEntity, raw)
+				return nil, ae
+			}
 			return env.Data, nil
 		}
 
@@ -244,6 +250,7 @@ func apiError(status int, raw []byte) *cryptoprov.APIError {
 		Message string `json:"message"`
 		Code    string `json:"code"`
 		Data    struct {
+			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"data"`
 	}
@@ -251,6 +258,9 @@ func apiError(status int, raw []byte) *cryptoprov.APIError {
 	msg := env.Message
 	if msg == "" {
 		msg = env.Data.Message
+	}
+	if env.Code == "" {
+		env.Code = env.Data.Code
 	}
 	if len(msg) > 300 {
 		msg = msg[:300]
@@ -289,15 +299,21 @@ func (c *Client) Ticker(ctx context.Context, market string) (cryptoprov.Ticker, 
 	if err != nil {
 		return cryptoprov.Ticker{}, err
 	}
-	var d struct {
+	// Observed shape: data.<market>.ticker.last, where last is a JSON number. json.Number
+	// keeps the exact digits so the price is never routed through a float.
+	var d map[string]struct {
 		Ticker struct {
-			Last string `json:"last"`
+			Last json.Number `json:"last"`
 		} `json:"ticker"`
 	}
 	if err := json.Unmarshal(data, &d); err != nil {
 		return cryptoprov.Ticker{}, errors.New("quidax: malformed ticker")
 	}
-	last, err := parseDecimal(d.Ticker.Last)
+	entry, ok := d[m]
+	if !ok {
+		return cryptoprov.Ticker{}, errors.New("quidax: ticker missing for market")
+	}
+	last, err := parseDecimal(entry.Ticker.Last.String())
 	if err != nil || !last.IsPositive() {
 		return cryptoprov.Ticker{}, errors.New("quidax: ticker price missing or not positive")
 	}
