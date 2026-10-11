@@ -64,6 +64,16 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	}
 
 	const qi = `SELECT ` + menuItemCols + ` FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
+	var live []PriceDiscount
+	var taxonomy map[string][2]string
+	if s.discountsOn {
+		if live, err = loadLiveDiscounts(ctx, s.db, restaurantID, time.Now()); err != nil {
+			return nil, err
+		}
+		if taxonomy, err = itemTaxonomy(ctx, s.db, restaurantID); err != nil {
+			return nil, err
+		}
+	}
 	irows, err := s.db.Query(ctx, qi, restaurantID)
 	if err != nil {
 		return nil, err
@@ -74,6 +84,11 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		var catID *string
 		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
 			return nil, err
+		}
+		if s.discountsOn {
+			tx := taxonomy[it.ID]
+			p := PriceItem(it.PriceKobo, it.ID, tx[0], tx[1], live, time.Now())
+			it.Price = &p
 		}
 		if catID != nil {
 			it.CategoryID = *catID

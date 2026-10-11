@@ -75,6 +75,9 @@ type MenuItem struct {
 	// restaurant's default when none is set. PrepTimeOverride is the override alone.
 	PrepMinutes      int  `json:"prep_minutes"`
 	PrepTimeOverride *int `json:"prep_time_override,omitempty"`
+	// Price is the price a customer sees, with the best live discount applied. Present
+	// only when restaurant discounts are on.
+	Price *ItemPrice `json:"price,omitempty"`
 }
 
 // OrderStatus tracks a delivery order through its lifecycle.

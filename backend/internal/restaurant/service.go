@@ -127,6 +127,7 @@ var (
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db            *pgxpool.Pool
+	discountsOn   bool // FEATURE_RESTAURANT_DISCOUNTS: menu reads show discounted prices
 	settlement    *settlement.Service
 	ledger        *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
 	geocoder      AddressGeocoder

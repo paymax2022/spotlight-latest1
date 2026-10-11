@@ -677,6 +677,71 @@ paths:
         '404': { description: The taxonomy category does not exist or is inactive }
         '409': { description: An item with this name already exists in that category }
         '422': { description: 'Placement is invalid, or the price is not more than zero' }
+  /{id}/discounts:
+    get:
+      tags: [restaurant]
+      summary: List the restaurant's discounts (owner view)
+      description: Only with FEATURE_RESTAURANT_DISCOUNTS on. Requires menu rights.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses:
+        '200': { description: Discounts, newest first }
+        '403': { description: Not the restaurant owner or staff with menu rights }
+    post:
+      tags: [restaurant]
+      summary: Create a discount on items, categories, or the whole restaurant
+      description: >-
+        PERCENT is 1 to 90. FIXED is kobo, more than zero. The end must be after the
+        start. ITEM scope needs item_ids on this restaurant's menu. CATEGORY scope needs
+        taxonomy_category_ids that exist and are active. A live discount is applied to
+        the price the customer sees; only the best one applies, and discounts do not stack.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind, value, scope, starts_at, ends_at]
+              properties:
+                name: { type: string, maxLength: 80 }
+                kind: { type: string, enum: [PERCENT, FIXED] }
+                value: { type: integer, format: int64 }
+                scope: { type: string, enum: [ITEM, CATEGORY, RESTAURANT] }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                max_discount_kobo: { type: integer, format: int64, description: 'PERCENT only: cap on the saving' }
+                item_ids: { type: array, items: { type: string, format: uuid } }
+                taxonomy_category_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '201': { description: Created }
+        '404': { description: A category does not exist or is inactive }
+        '422': { description: 'Invalid rule, or an item does not belong to this restaurant' }
+  /{id}/discounts/{discountId}:
+    patch:
+      tags: [restaurant]
+      summary: Pause or resume a discount
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { name: discountId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_active]
+              properties:
+                is_active: { type: boolean }
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+    delete:
+      tags: [restaurant]
+      summary: Delete a discount. Orders keep the discount amount they recorded.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { name: discountId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found }
   /{id}/menu/items/availability/bulk:
     patch:
       tags: [restaurant]

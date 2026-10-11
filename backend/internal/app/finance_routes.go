@@ -1659,6 +1659,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restaurantRT.Start(ctx)
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
 
+		restaurantSvc = restaurantSvc.WithDiscounts(cfg.FeatureRestaurantDiscounts)
 		restaurantHandler := restaurant.NewHandler(restaurantSvc).WithRealtime(restaurantHub)
 		restGroup := finance.Group("/restaurant")
 
@@ -1731,6 +1732,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			restGroup.POST("/:id/menu/items", restaurantHandler.CreateItem)
 		}
 		restGroup.PATCH("/:id/menu/items/availability/bulk", restaurantHandler.BulkSetAvailability)
+		if cfg.FeatureRestaurantDiscounts {
+			restGroup.GET("/:id/discounts", restaurantHandler.ListDiscounts)
+			restGroup.POST("/:id/discounts", restaurantHandler.CreateDiscount)
+			restGroup.PATCH("/:id/discounts/:discountId", restaurantHandler.SetDiscountActive)
+			restGroup.DELETE("/:id/discounts/:discountId", restaurantHandler.DeleteDiscount)
+		}
 		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
 		restGroup.DELETE("/:id/menu/items/:itemId", restaurantHandler.DeleteItem)
 
