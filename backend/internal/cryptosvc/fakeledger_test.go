@@ -23,7 +23,8 @@ type fakeLedger struct {
 	// duplicateFirst makes the Redis-style fast path return ErrDuplicate for a key
 	// that is already durably posted, without verifying identity (the real service does).
 	duplicateOnReplay bool
-	failKey           string // return this error for a journal with this base key
+	claimOnly         map[string]bool // keys the cache "claimed" but never posted: answer ErrDuplicate
+	failKey           string          // return this error for a journal with this base key
 	failErr           error
 }
 
@@ -94,6 +95,9 @@ func (f *fakeLedger) post(j ledger.JournalEntry, gated bool) error {
 	}
 	if j.AmountKobo <= 0 {
 		return fmt.Errorf("ledger: amount must be positive kobo, got %d", j.AmountKobo)
+	}
+	if f.claimOnly[j.IdempotencyKey] {
+		return ledger.ErrDuplicate
 	}
 	d, hasD := f.entries[j.IdempotencyKey+":debit"]
 	c, hasC := f.entries[j.IdempotencyKey+":credit"]

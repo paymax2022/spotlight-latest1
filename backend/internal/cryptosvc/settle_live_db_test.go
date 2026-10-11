@@ -163,7 +163,7 @@ func TestLive_ConcurrentHoldsForOneSwapPostOnce(t *testing.T) {
 
 func TestLive_SellPaysNetAndConserves(t *testing.T) {
 	r := newLiveRig(t, 1, 0)
-	in := SwapLedgerInput{SwapID: "live-" + uuid.NewString(), UserID: r.user, Side: SideSell, FeeBps: 75}
+	in := SwapLedgerInput{SwapID: "live-" + uuid.NewString(), UserID: r.user, Side: SideSell, FeeBps: 75, NGNKobo: 1_000_000}
 	before := r.snap(t)
 	recv := decimal.RequireFromString("10000") // 1,000,000 kobo
 	for i := 0; i < 2; i++ {
@@ -187,5 +187,32 @@ func TestLive_ReplayWithADifferentAmountFailsClosed(t *testing.T) {
 	tampered.NGNKobo, tampered.FeeKobo = 2_000_000, 15_000
 	if err := r.s.HoldBuy(r.ctx, tampered); err == nil {
 		t.Fatal("a different journal under the same swap key was accepted")
+	}
+}
+
+func TestLive_CompleteAndFailRacingPostExactlyOneOutcome(t *testing.T) {
+	r := newLiveRig(t, 1, 5_000_000) // 4 holds of 1,007,500 stay under the tier-1 daily cap
+	r.s.WithLocker(NewPGSwapLocker(r.pool))
+	for i := 0; i < 4; i++ {
+		in := liveBuy(r.user)
+		before := r.snap(t)
+		if err := r.s.HoldBuy(r.ctx, in); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = r.s.CompleteBuy(r.ctx, in) }()
+		go func() { defer wg.Done(); _ = r.s.FailBuy(r.ctx, in) }()
+		wg.Wait()
+		after := r.snap(t)
+		d := snap{after.w - before.w, after.c - before.c, after.rev - before.rev}
+		completed := snap{-1_007_500, 1_000_000, 7_500}
+		refunded := snap{0, 0, 0}
+		if d != completed && d != refunded {
+			t.Fatalf("iteration %d: contradictory outcome %+v (want exactly completed or refunded)", i, d)
+		}
+		if d.w+d.c+d.rev != 0 {
+			t.Fatalf("iteration %d: value not conserved: %+v", i, d)
+		}
 	}
 }

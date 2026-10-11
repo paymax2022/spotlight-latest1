@@ -28,9 +28,28 @@ ledger.
 - **Ordering:** the ingest runs the settler before the swap state transition; both are idempotent, so a
   crash between them converges on the provider's retry. An unknown swap `side` fails closed.
 
+## Hardening from the independent ledger audit (no blockers)
+- `HoldBuy` accepts only `side=buy`. A swap row whose side is `swap` (the column default) but which has
+  an NGN hold is refused with `ErrSettlementConflict` on both completion and failure, so a buy row
+  inserted without a side can no longer finish with the NGN stranded in clearing.
+- Completion and release for one swap are mutually exclusive under a per-swap lock (`SwapLocker`;
+  `PGSwapLocker` = Postgres session advisory lock). Production wiring must set it. Without it a webhook
+  racing a reconciler or a human resolving `needs_review` could post both the fee and the release.
+- Permanent settlement errors (`ErrPermanent`: replay mismatch, settled-the-other-way, no hold,
+  unrepresentable or uncovered proceeds, out-of-band payout) park the swap in `needs_review` instead of
+  retrying forever; transient errors still retry.
+- A sell payout must fall within a slippage band of the quote (default 5%, `WithSlippageBps`); outside it
+  goes to `needs_review`.
+- A cache-claimed key with no durable legs (`ErrClaimedNotPosted`) is a retryable condition, not a mismatch.
+- Release replay verification now checks entry type and reference as well as account and amount.
+
 ## Consequences
 - Clearing is negative after sells until treasury settles with the provider. That is visible by design;
   an alert threshold and a three-way reconciliation report are the next slice's job.
-- The settler is not wired to any route: `HoldBuy` has no caller until the buy pipeline exists.
+- The settler is not wired to any route: `HoldBuy` has no caller until the buy pipeline exists. That
+  pipeline must hold BEFORE the provider confirm (and before the row can receive webhooks): a `HoldBuy`
+  that lands after the swap is already terminal would never be released.
+- The tier daily-debit guard counts the hold's DEBIT entry, so a refunded buy still uses cap for the day
+  (not yet verified against the guard; revisit if it bites).
 - The owner's alternative funding path (user pays a Quidax virtual account directly, ledger records only
   the fee) is not built and needs a deposit-webhook slice first.

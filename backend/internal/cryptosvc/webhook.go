@@ -159,9 +159,18 @@ func (i *Ingest) apply(ctx context.Context, rec SwapRecord, target cryptoprov.Sw
 			serr = i.settler.Fail(ctx, rec)
 		}
 		if serr != nil {
+			if errors.Is(serr, ErrPermanent) {
+				// Retrying can never fix this; leave it for a human instead of looping.
+				return i.apply0(ctx, rec, cryptoprov.SwapStateNeedsReview, decimal.Zero, "settlement refused: "+serr.Error())
+			}
 			return "", fmt.Errorf("cryptosvc: settle swap %s: %w", rec.ID, serr)
 		}
 	}
+	return i.apply0(ctx, rec, target, received, reason)
+}
+
+// apply0 walks the swap to target with conditional transitions (no settlement).
+func (i *Ingest) apply0(ctx context.Context, rec SwapRecord, target cryptoprov.SwapState, received decimal.Decimal, reason string) (Outcome, error) {
 	if rec.State == cryptoprov.SwapStateConfirming && target != cryptoprov.SwapStateNeedsReview {
 		applied, err := i.step(ctx, rec, cryptoprov.SwapStateProcessing, decimal.Zero, "")
 		if err != nil {

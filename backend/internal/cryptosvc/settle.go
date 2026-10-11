@@ -42,14 +42,33 @@ type SwapLedgerInput struct {
 
 // ErrReplayMismatch means a ledger key already holds a DIFFERENT journal than the one
 // we meant to post. Existence of a key never proves our own posting landed.
-var ErrReplayMismatch = errors.New("cryptosvc: ledger key holds a different journal")
+var ErrReplayMismatch = fmt.Errorf("%w: ledger key holds a different journal", ErrPermanent)
 
 // ErrSettlementConflict means the swap is already settled the other way (for
 // example a completion arriving for a swap whose hold was released).
-var ErrSettlementConflict = errors.New("cryptosvc: swap already settled the other way")
+var ErrSettlementConflict = fmt.Errorf("%w: swap already settled the other way", ErrPermanent)
 
 // ErrNoHold means a completion arrived for a buy whose NGN hold was never posted.
-var ErrNoHold = errors.New("cryptosvc: no NGN hold exists for this swap")
+var ErrNoHold = fmt.Errorf("%w: no NGN hold exists for this swap", ErrPermanent)
+
+// ErrPermanent marks a settlement error that retrying can never fix. The webhook path
+// parks such a swap in needs_review for a human instead of retrying forever.
+var ErrPermanent = errors.New("cryptosvc: permanent settlement error")
+
+// ErrClaimedNotPosted means the cache layer claimed a ledger key whose legs are not
+// durable yet (the first attempt failed after claiming). It heals on retry.
+var ErrClaimedNotPosted = errors.New("cryptosvc: ledger key claimed but not posted yet; retry")
+
+// SwapLocker serialises settlement for one swap across processes. CompleteBuy and
+// FailBuy each check-then-post; without a shared lock two racing resolvers (a webhook
+// and a reconciler or a human resolving needs_review) could both pass their checks and
+// post contradictory outcomes. fn runs while the lock is held.
+type SwapLocker interface {
+	WithSwapLock(ctx context.Context, swapID string, fn func(ctx context.Context) error) error
+}
+
+// DefaultSlippageBps bounds a sell payout against the quoted proceeds (5%).
+const DefaultSlippageBps = 500
 
 // Settler posts the NGN legs of crypto swaps to the finance ledger (ADR-PR709).
 //
@@ -62,10 +81,28 @@ var ErrNoHold = errors.New("cryptosvc: no NGN hold exists for this swap")
 // Every journal has a deterministic key (crypto:swap:<id>:<leg>) and every replay is
 // identity-verified, never trusted on key existence. Callers post ledger first and
 // move swap state last, so a crash converges on retry.
-type Settler struct{ led Ledger }
+type Settler struct {
+	led         Ledger
+	locker      SwapLocker
+	slippageBps int
+}
 
 // NewSettler builds a settler over a ledger.
-func NewSettler(led Ledger) *Settler { return &Settler{led: led} }
+func NewSettler(led Ledger) *Settler { return &Settler{led: led, slippageBps: DefaultSlippageBps} }
+
+// WithLocker makes completion and release mutually exclusive per swap. Production
+// wiring MUST set it (see PGSwapLocker); tests of single-threaded paths may omit it.
+func (s *Settler) WithLocker(l SwapLocker) *Settler { s.locker = l; return s }
+
+// WithSlippageBps overrides the allowed sell-payout deviation from the quote.
+func (s *Settler) WithSlippageBps(bps int) *Settler { s.slippageBps = bps; return s }
+
+func (s *Settler) locked(ctx context.Context, swapID string, fn func(ctx context.Context) error) error {
+	if s.locker == nil {
+		return fn(ctx)
+	}
+	return s.locker.WithSwapLock(ctx, swapID, fn)
+}
 
 func swapRef(id string) string      { return "crypto:swap:" + id }
 func swapKey(id, leg string) string { return "crypto:swap:" + id + ":" + leg }
@@ -143,7 +180,8 @@ func (s *Settler) post(ctx context.Context, j ledger.JournalEntry, gatedWalletKe
 		return verr
 	}
 	if !same {
-		return fmt.Errorf("%w: %s", ErrReplayMismatch, j.IdempotencyKey)
+		// Neither leg is durable: the key was only claimed by a failed earlier attempt.
+		return fmt.Errorf("%w: %s", ErrClaimedNotPosted, j.IdempotencyKey)
 	}
 	return nil
 }
@@ -171,6 +209,9 @@ func (s *Settler) feeJournal(in SwapLedgerInput, a accounts, amount int64) ledge
 // HoldBuy debits the user's wallet (principal + fee, tier-gated, balance-checked under
 // the wallet lock) into clearing. Call it when the buy is confirmed with the provider.
 func (s *Settler) HoldBuy(ctx context.Context, in SwapLedgerInput) error {
+	if in.Side != SideBuy {
+		return fmt.Errorf("cryptosvc: HoldBuy needs side %q, got %q", SideBuy, in.Side)
+	}
 	if err := in.validate(); err != nil {
 		return err
 	}
@@ -199,7 +240,10 @@ func (s *Settler) releasePosted(ctx context.Context, in SwapLedgerInput, a accou
 	if !dok && !cok {
 		return false, nil
 	}
-	if dok && cok && d.AccountID == a.wallet.ID && d.AmountKobo == total && c.AccountID == a.clearing.ID && c.AmountKobo == total {
+	ref := swapRef(in.SwapID)
+	if dok && cok &&
+		d.AccountID == a.wallet.ID && d.Type == ledger.EntryReversalDebit && d.AmountKobo == total && d.Reference == ref &&
+		c.AccountID == a.clearing.ID && c.Type == ledger.EntryReversalCredit && c.AmountKobo == total && c.Reference == ref {
 		return true, nil
 	}
 	return false, fmt.Errorf("%w: %s", ErrReplayMismatch, key)
@@ -211,6 +255,10 @@ func (s *Settler) CompleteBuy(ctx context.Context, in SwapLedgerInput) error {
 	if err := in.validate(); err != nil {
 		return err
 	}
+	return s.locked(ctx, in.SwapID, func(ctx context.Context) error { return s.completeBuy(ctx, in) })
+}
+
+func (s *Settler) completeBuy(ctx context.Context, in SwapLedgerInput) error {
 	a, err := s.accounts(ctx, in.UserID)
 	if err != nil {
 		return err
@@ -246,6 +294,10 @@ func (s *Settler) FailBuy(ctx context.Context, in SwapLedgerInput) error {
 	if err := in.validate(); err != nil {
 		return err
 	}
+	return s.locked(ctx, in.SwapID, func(ctx context.Context) error { return s.failBuy(ctx, in) })
+}
+
+func (s *Settler) failBuy(ctx context.Context, in SwapLedgerInput) error {
 	a, err := s.accounts(ctx, in.UserID)
 	if err != nil {
 		return err
@@ -298,37 +350,63 @@ func (s *Settler) CompleteSell(ctx context.Context, in SwapLedgerInput, received
 		return errors.New("cryptosvc: swap id and user id are required")
 	}
 	if !received.IsPositive() {
-		return errors.New("cryptosvc: sell proceeds must be positive")
+		return fmt.Errorf("%w: sell proceeds must be positive", ErrPermanent)
 	}
 	scaled := received.Mul(decimal.NewFromInt(100))
 	if !scaled.IsInteger() || scaled.GreaterThan(decimal.NewFromInt(1<<62)) {
-		return errors.New("cryptosvc: sell proceeds are not a whole number of kobo")
+		return fmt.Errorf("%w: sell proceeds are not a whole number of kobo", ErrPermanent)
 	}
 	gross := scaled.IntPart()
+	if in.NGNKobo <= 0 {
+		return fmt.Errorf("%w: a sell needs its quoted NGN to bound the payout", ErrPermanent)
+	}
+	// The provider's number is authoritative, but never unbounded: a payout far from the
+	// quote is a provider bug or a bad read and goes to a human.
+	diff := gross - in.NGNKobo
+	if diff < 0 {
+		diff = -diff
+	}
+	if decimal.NewFromInt(diff).Mul(decimal.NewFromInt(10_000)).GreaterThan(decimal.NewFromInt(in.NGNKobo).Mul(decimal.NewFromInt(int64(s.slippageBps)))) {
+		return fmt.Errorf("%w: proceeds %d kobo are outside the %d bps band around the quoted %d", ErrPermanent, gross, s.slippageBps, in.NGNKobo)
+	}
 	fee, err := FeeKobo(gross, in.FeeBps)
 	if err != nil {
 		return err
 	}
 	net := gross - fee
 	if net <= 0 {
-		return errors.New("cryptosvc: sell proceeds do not cover the fee")
+		return fmt.Errorf("%w: sell proceeds do not cover the fee", ErrPermanent)
 	}
 	a, err := s.accounts(ctx, in.UserID)
 	if err != nil {
 		return err
 	}
-	payout := ledger.JournalEntry{
-		Reference: swapRef(in.SwapID), IdempotencyKey: swapKey(in.SwapID, "payout"), AmountKobo: net,
-		DebitAccountID: a.clearing.ID, CreditAccountID: a.wallet.ID,
-		Description: "crypto sell: proceeds paid to wallet",
-	}
-	if err := s.post(ctx, payout, ""); err != nil {
+	return s.locked(ctx, in.SwapID, func(ctx context.Context) error {
+		payout := ledger.JournalEntry{
+			Reference: swapRef(in.SwapID), IdempotencyKey: swapKey(in.SwapID, "payout"), AmountKobo: net,
+			DebitAccountID: a.clearing.ID, CreditAccountID: a.wallet.ID,
+			Description: "crypto sell: proceeds paid to wallet",
+		}
+		if err := s.post(ctx, payout, ""); err != nil {
+			return err
+		}
+		if fee == 0 {
+			return nil
+		}
+		return s.post(ctx, s.feeJournal(SwapLedgerInput{SwapID: in.SwapID}, a, fee), "")
+	})
+}
+
+// requireNoHold guards the no-NGN-leg side: a swap row that says "no NGN legs" but has
+// a hold in the ledger is a data error (for example a buy inserted without a side, which
+// defaults to 'swap'). Skipping it would strand the user's NGN in clearing.
+func (s *Settler) requireNoHold(ctx context.Context, rec SwapRecord) error {
+	if _, found, err := s.led.EntryByKey(ctx, swapKey(rec.ID, "hold")+":debit"); err != nil {
 		return err
+	} else if found {
+		return fmt.Errorf("%w: swap %s has side %q but an NGN hold exists", ErrSettlementConflict, rec.ID, rec.Side)
 	}
-	if fee == 0 {
-		return nil
-	}
-	return s.post(ctx, s.feeJournal(SwapLedgerInput{SwapID: in.SwapID}, a, fee), "")
+	return nil
 }
 
 func inputOf(rec SwapRecord) SwapLedgerInput {
@@ -344,7 +422,7 @@ func (s *Settler) Complete(ctx context.Context, rec SwapRecord, received decimal
 	case SideSell:
 		return s.CompleteSell(ctx, inputOf(rec), received)
 	case SideSwap:
-		return nil
+		return s.requireNoHold(ctx, rec)
 	}
 	return fmt.Errorf("cryptosvc: swap %s has unknown side %q: refusing to skip its ledger legs", rec.ID, rec.Side)
 }
@@ -354,8 +432,10 @@ func (s *Settler) Fail(ctx context.Context, rec SwapRecord) error {
 	switch rec.Side {
 	case SideBuy:
 		return s.FailBuy(ctx, inputOf(rec))
-	case SideSell, SideSwap:
+	case SideSell:
 		return nil
+	case SideSwap:
+		return s.requireNoHold(ctx, rec)
 	}
 	return fmt.Errorf("cryptosvc: swap %s has unknown side %q: refusing to skip its ledger legs", rec.ID, rec.Side)
 }

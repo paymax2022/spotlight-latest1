@@ -180,7 +180,7 @@ func TestACompletionAfterARefundIsRefused(t *testing.T) {
 }
 
 func sell(gross string) (SwapLedgerInput, decimal.Decimal) {
-	return SwapLedgerInput{SwapID: "s2", UserID: user, Side: SideSell, FeeBps: 75}, decimal.RequireFromString(gross)
+	return SwapLedgerInput{SwapID: "s2", UserID: user, Side: SideSell, FeeBps: 75, NGNKobo: 1_000_000}, decimal.RequireFromString(gross)
 }
 
 func TestSellPaysTheWalletNetOfFeeFromClearing(t *testing.T) {
@@ -260,7 +260,7 @@ func TestDispatchByCompletedAndFailedForEachSide(t *testing.T) {
 		t.Fatalf("buy completion did not settle: revenue=%d", l.bal(revenueK))
 	}
 	// A sell failing posts nothing: no NGN ever moved.
-	sl := SwapRecord{ID: "s9", UserID: user, Side: SideSell, FeeBps: 75}
+	sl := SwapRecord{ID: "s9", UserID: user, Side: SideSell, FeeBps: 75, NGNKobo: 1_000_000}
 	if err := s.Fail(ctx, sl); err != nil {
 		t.Fatal(err)
 	}
