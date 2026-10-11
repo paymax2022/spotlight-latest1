@@ -505,6 +505,11 @@ type Config struct {
 	// order/dispute/boost state machines (internal/marketplace). No flag, no money path.
 	FeatureMarketplaceEnabled bool
 
+	// FeatureMarketplaceAlertsEnabled turns on the marketplace alert producers (new
+	// listing from a followed seller; saved-item price drop below the saved price).
+	// DEFAULT OFF. Best-effort, bounded fan-out after the listing write commits.
+	FeatureMarketplaceAlertsEnabled bool
+
 	// ElasticsearchURL is the marketplace search read-model cluster base URL
 	// (e.g. "http://elasticsearch:9200"). When empty, GET /v1/marketplace/search
 	// returns 501 SEARCH_NOT_WIRED (graceful degradation, never a panic) — the rest
@@ -964,6 +969,7 @@ func Load() Config {
 		FeatureStaysEnabled:                getEnvBool("FEATURE_STAYS_ENABLED", false),
 		FeaturePlacementEnabled:            getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
 		FeatureMarketplaceEnabled:          getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
+		FeatureMarketplaceAlertsEnabled:    getEnvBool("FEATURE_MARKETPLACE_ALERTS_ENABLED", false),
 		ElasticsearchURL:                   getEnv("ELASTICSEARCH_URL", ""),
 		RunWorkersInProcess:                getEnvBool("RUN_WORKERS_INPROCESS", false),
 		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
