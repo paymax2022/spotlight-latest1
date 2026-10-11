@@ -5,6 +5,7 @@
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
+import { unwrapList } from './unwrap';
 import type {
   Zone,
   Campaign,
@@ -43,7 +44,7 @@ export async function listZones(): Promise<Zone[]> {
     await delay();
     return mockListZones();
   }
-  return unwrap<Zone[]>(await api.get(`${BASE}/zones`));
+  return unwrapList<Zone>(await api.get(`${BASE}/zones`));
 }
 
 /** Items the signed-in merchant can promote. Mock-only for now (no endpoint). */
@@ -57,7 +58,7 @@ export async function listCampaigns(): Promise<Campaign[]> {
     await delay();
     return mockListCampaigns();
   }
-  return unwrap<Campaign[]>(await api.get(`${BASE}/campaigns`));
+  return unwrapList<Campaign>(await api.get(`${BASE}/campaigns`));
 }
 
 export async function getCampaign(id: string): Promise<Campaign> {
