@@ -103,8 +103,9 @@ export default function TowingHomeScreen() {
       onCard: async () => {
         await paystackCheckout.start({
           domain: 'towing',
-          initialize: async () => {
+          initialize: async ({ email }) => {
             const r = await towingAPI.initiateTowingPaystack({
+              email, // typed at checkout after the server answered email_required; else the registered email is used
               serviceType, issue, vehicleType,
               pickup: pickupPlace, dest: destPlace,
               idempotencyKey: newIdempotencyKey('towing-paystack'),

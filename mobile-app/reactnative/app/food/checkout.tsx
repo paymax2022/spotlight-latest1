@@ -248,8 +248,9 @@ export default function CheckoutScreen() {
       onCard: async () => {
         await paystackCheckout.start({
           domain: 'food_order',
-          initialize: async () => {
+          initialize: async ({ email }) => {
             const r = await initiateFoodOrderPaystack({
+              email, // typed at checkout after the server answered email_required; else the registered email is used
               restaurantId: restaurantId || '',
               items: aggregated.map((l) => ({
                 itemId: l.itemId,

@@ -262,8 +262,9 @@ export default function EstimateScreen() {
             onCard: async () => {
               await paystackCheckout.start({
                 domain: 'ride',
-                initialize: async () => {
+                initialize: async ({ email }) => {
                   const r = await mobAPI.initiateRidePaystack({
+                    email, // typed at checkout after the server answered email_required; else the registered email is used
                     pickup,
                     dest,
                     serviceType,
