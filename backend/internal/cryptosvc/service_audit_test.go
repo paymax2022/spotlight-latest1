@@ -163,3 +163,27 @@ func TestGateIsRecheckedWhenResumingAClaimedSwap(t *testing.T) {
 		t.Fatalf("wallet=%d confirms=%d", r.led.bal(walletK), r.prov.confirms)
 	}
 }
+
+// Re-audit: a gate that trips AFTER the hold was posted must not strand the hold.
+func TestGateRefusalOnResumeReleasesAnAlreadyPostedHold(t *testing.T) {
+	r := newSvcRig(t)
+	r.led.fund(user, 2_000_000)
+	q := r.quote(t, "k", 1_000_000)
+	ctx := context.Background()
+	_, _ = r.store.TransitionSwap(ctx, q.ID, cryptoprov.SwapStateQuoted, cryptoprov.SwapStateConfirming, decimal.Zero, "")
+	_ = r.svc.cfg.Settler.HoldBuy(ctx, SwapLedgerInput{SwapID: q.ID, UserID: user, Side: SideBuy, NGNKobo: 1_000_000, FeeKobo: 7_500})
+	r.svc.cfg.Gate = okGate{err: errors.New("frozen")}
+
+	if _, err := r.svc.Confirm(ctx, user, q.ID); err == nil {
+		t.Fatal("expected the gate refusal")
+	}
+	if r.prov.confirms != 0 {
+		t.Fatal("provider called for a gated user")
+	}
+	if r.led.bal(walletK) != 2_000_000 || r.led.bal(clearK) != 0 {
+		t.Fatalf("hold stranded: wallet=%d clearing=%d", r.led.bal(walletK), r.led.bal(clearK))
+	}
+	if st := r.state(t, q.ID); st != cryptoprov.SwapStateFailed {
+		t.Fatalf("state = %s, want failed", st)
+	}
+}

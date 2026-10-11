@@ -40,7 +40,12 @@ shared transaction: the order of the two writes decides which failure loses mone
   every 5xx and every transport failure are ambiguous and keep the hold.
 - **The locker is mandatory** (no locker, no trading). `PGSwapLocker` pins one connection per held lock; give it
   its own pool sized well above concurrent confirms to avoid starvation.
-- The trade gate also runs when resuming a claimed swap that has not reached the provider.
+- The trade gate also runs when resuming a claimed swap that has not reached the provider; if it refuses there,
+  any hold already posted is released and the swap fails (nothing reached the provider, so it is safe).
+- **Must exist before this is enabled:** a stamped swap with no provider swap id (process died after the stamp, or a
+  swallowed write error) is parked in `needs_review` with the hold kept. That is safe but the user's NGN stays held
+  until a provider lookup by quote id (reconciler) or an admin hold-release action resolves it. Neither is built;
+  the feature flag must stay off until one is.
 
 ## Consequences
 - A `confirming` swap with a hold and no provider id is the crash window; the reconciler (next slice)

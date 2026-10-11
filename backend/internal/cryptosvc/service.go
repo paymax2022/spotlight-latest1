@@ -303,8 +303,17 @@ func (s *Service) Confirm(ctx context.Context, userID, swapID string) (SwapRecor
 		}
 		if rec.ProviderSwapID == "" && !rec.ExecuteAttempted {
 			// Not yet at the provider: a user frozen or de-tiered since the claim stops here.
-			if err := s.gate(ctx, userID); err != nil {
-				return err
+			if gerr := s.gate(ctx, userID); gerr != nil {
+				// Nothing has reached the provider, so any hold already posted is safe to
+				// release; otherwise a user frozen mid-confirm would be stranded.
+				in := SwapLedgerInput{SwapID: rec.ID, UserID: rec.UserID, Side: SideBuy, NGNKobo: rec.NGNKobo, FeeKobo: rec.FeeKobo, FeeBps: rec.FeeBps}
+				if ferr := s.cfg.Settler.FailBuy(ctx, in); ferr != nil {
+					return errors.Join(gerr, ferr)
+				}
+				if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "trade gate refused before execution: "+gerr.Error()); terr != nil {
+					return errors.Join(gerr, terr)
+				}
+				return gerr
 			}
 		}
 		out, err = s.execute(ctx, rec)
