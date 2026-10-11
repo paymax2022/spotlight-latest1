@@ -67,7 +67,7 @@ type Row = Record<string, any>;
 type EventHook = (eventType: string, tx: Map<string, Row>) => void;
 
 /** Fake Supabase admin client — same query shapes as the sibling specs, plus an event hook. */
-function makeFakeSupabase(opts: { transactions?: Row[]; onEvent?: EventHook } = {}) {
+function makeFakeSupabase(opts: { transactions?: Row[]; onEvent?: EventHook; dropRefundRequestWrite?: boolean } = {}) {
   const txs = new Map<string, Row>();
   for (const r of opts.transactions ?? []) txs.set(r.id, { ...r });
   const ledgerKeys = new Set<string>();
@@ -109,6 +109,7 @@ function makeFakeSupabase(opts: { transactions?: Row[]; onEvent?: EventHook } = 
     };
     const applyUpdate = () => {
       if (table !== 'utility_transactions' || !s.update) return [];
+      if (opts.dropRefundRequestWrite && s.update.metadata?.refund_request) { s.update = undefined; return []; }
       const touched: Row[] = [];
       for (const [id, row] of txs) {
         if (matches(row, s.f, s.ins, s.lts)) {
@@ -337,5 +338,45 @@ describe('flag OFF keeps today\'s automatic refund (nothing changes until the fl
     const { transaction } = await payUtility(USER_ID, input('idem-off-1'));
     expect(creditKeys()).toEqual([`utility:${transaction.id}:PAYSTACK_REFUND`]);
     expect(transaction.status).toBe('reversed');
+  });
+});
+
+describe('review fixes: the immediate settle and an unrecorded request', () => {
+  it('collect posts then the spend is refused: the row is closed NOW, not left initiated for the sweeper', async () => {
+    wire(makeFakeSupabase());
+    adapter('successful');
+    vi.mocked(debitWallet).mockRejectedValue(new Error('Daily limit exceeded.'));
+    await expect(payUtility(USER_ID, input('idem-fix-1'))).rejects.toThrow();
+
+    const row = [...fake.txs.values()][0];
+    // Funds stay in the wallet (collect-only) and the row is settled immediately.
+    expect(creditKeys()).toHaveLength(1);
+    expect(row.status).not.toBe('initiated');
+    expect(fake.events.map((e) => e.event_type)).toContain('paystack_collected_funds_retained');
+  });
+
+  it('the collect itself throws: a refund request is filed immediately, no credit, row not left initiated', async () => {
+    wire(makeFakeSupabase());
+    adapter('successful');
+    vi.mocked(creditWallet).mockRejectedValue(new Error('ledger unavailable'));
+    await expect(payUtility(USER_ID, input('idem-fix-2'))).rejects.toThrow();
+
+    const row = [...fake.txs.values()][0];
+    expect(row.status).toBe('failed');
+    expect(row.metadata?.refund_request?.state).toBe('pending_admin');
+    expect(debitWallet).not.toHaveBeenCalled();
+  });
+
+  it('a refund request that could not be written is loud: dedicated event + alert, never silent', async () => {
+    wire(makeFakeSupabase({ dropRefundRequestWrite: true }));
+    adapter('failed');
+    await payUtility(USER_ID, input('idem-fix-3'));
+
+    expect(fake.events.map((e) => e.event_type)).toContain('refund_request_unrecorded');
+    expect(vi.mocked(queueUtilityAdminAlert)).toHaveBeenCalledWith(
+      expect.objectContaining({ audience: 'finance', title: expect.stringMatching(/could not be recorded/i) }),
+    );
+    // Still no automatic credit.
+    expect(creditKeys().filter((k) => !/:CARD_COLLECT$/.test(k))).toHaveLength(0);
   });
 });

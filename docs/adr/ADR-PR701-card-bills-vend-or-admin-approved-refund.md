@@ -61,5 +61,26 @@ initiate a refund that an admin approves manually.**
   gap between two adjacent awaits; it is alerted (`writer_outraced` /
   `writer_stale_yield`) rather than silently retained.
 - Admins find requests by `failed` status plus the finance alert; there is no
-  dedicated queue screen yet.
+  dedicated queue screen yet. If the marker cannot be written the row is still
+  `failed` and finance is alerted (`refund_request_unrecorded`); an admin can approve
+  it without the marker.
 - Wallet-sourced bills are unchanged.
+
+## Known residuals (independent ledger review, none blocking)
+
+- **Late ledger call (LOW).** The version check runs before each post, so the exposure
+  is a ledger call that itself hangs >= 10 minutes: a late spend after the sweeper
+  retained the funds nets `+X -X` (alert `writer_outraced`); a late collect after a
+  request was filed is safe if the admin approves afterwards (approval sees
+  collect-only and skips) but `2X` if the admin approves *before* the collect lands.
+  Bounding the ledger call with a timeout is a follow-up.
+- **Vend after a claim (LOW, pre-existing).** A writer stalled > 10 minutes between
+  `wallet_debited` and its first provider attempt can be claimed as authoritative
+  (no attempts) and then vend. `provider_outcome_after_claim` alerts; an admin must
+  read it before approving a refund request on that row.
+- **Label (LOW).** Retained collect-only rows are marked `reversed` although nothing
+  was reversed; the `paystack_collected_funds_retained` event is the truth. A writer
+  that yielded on a stall leaves `initiated` until the next sweep.
+- Test gaps noted by the review: Go `settleFailedTransaction` end to end (only the
+  decision function and the metadata merge are tested), a TS-written request approved
+  after a Go sweep, and a flag toggled mid-flight.

@@ -133,12 +133,24 @@ async function requestCardRefund(
     requested_at: new Date().toISOString(),
   };
   // Guarded on 'failed' so a row an admin already reversed is never overwritten.
-  await supabase.from('utility_transactions').update({
+  const { data: written, error: writeError } = await supabase.from('utility_transactions').update({
     status: 'failed',
     failure_reason: reason,
     metadata: { ...(transaction.metadata ?? {}), refund_request: request },
     updated_at: new Date().toISOString(),
-  }).eq('id', transaction.id).eq('status', 'failed');
+  }).eq('id', transaction.id).eq('status', 'failed').select('id');
+  if (writeError || (written ?? []).length === 0) {
+    // The customer is owed a refund but the marker did not land. Never silent:
+    // credit is still withheld (an admin can approve the 'failed' row without the
+    // marker), so finance must be told to look.
+    await addEvent(transaction.id, 'refund_request_unrecorded', 'A refund is owed but the pending-request marker could not be saved — approve it manually.', { refund_request: request, error: writeError?.message ?? 'no row matched' });
+    queueUtilityAdminAlert({
+      title: 'Utility refund request could not be recorded',
+      message: `${transaction.receipt_number ?? transaction.id}: ${transaction.retail_amount_kobo} kobo is owed to the customer but the pending-request marker was not saved. Find the row by status 'failed' and approve the refund manually.`,
+      audience: 'finance',
+    });
+    return;
+  }
   await addEvent(transaction.id, 'refund_requested', 'Payment was received but the service was not delivered — refund awaiting admin approval.', { refund_request: request });
   queueUtilityAdminAlert({
     title: 'Utility refund needs approval',
@@ -1257,7 +1269,11 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
       // caller is owed.
       const reason = debitError instanceof Error ? debitError.message : 'Wallet debit failed.';
       try {
-        await settleFailedUtilityTransaction(inserted as UtilityTransactionRow, reason, { authoritative: true });
+        // The card path's turn-taking touches bump updated_at, so settle the CURRENT
+        // row: the claim CASes on updated_at, and the stale insert-time row would
+        // match nothing and leave the row 'initiated' until the 10-minute sweep.
+        const current = await reloadUtilityTransaction(inserted as UtilityTransactionRow);
+        await settleFailedUtilityTransaction(current, reason, { authoritative: true });
       } catch (settleError) {
         console.error('[utility] settle after wallet-debit failure threw:', settleError);
       }
