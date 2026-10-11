@@ -267,6 +267,40 @@ func TestLiveDB_CancelManagerForbidden(t *testing.T) {
 	}
 }
 
+func TestLiveDB_CancelRefundsPayerNotOwner(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	led := cancelLedger(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	buyer := seedTicketTokenUser(t, ctx, pool)
+	recipient := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	setFee1000(t, ctx, pool, ev)
+	tier := seedPricedTier(t, ctx, pool, ev, 100000)
+	fundBuyer(t, ctx, pool, led, buyer, 100000)
+	tk, err := svc.Purchase(ctx, buyer, ev, tier, "", "idem-"+uuid.New().String())
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	// Simulate a gift/transfer: ticket owner differs from the order's payer.
+	if _, err := pool.Exec(ctx, `UPDATE event_tickets SET owner_id=$2 WHERE id=$1`, tk.ID, recipient); err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	buyerBefore := buyerBalance(t, ctx, led, buyer)
+	recipBefore := buyerBalance(t, ctx, led, recipient)
+
+	if err := svc.Cancel(ctx, owner, ev, "gifted", "idem-"+uuid.New().String()); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if got := buyerBalance(t, ctx, led, buyer) - buyerBefore; got != 90000 {
+		t.Fatalf("payer delta = %d, want 90000", got)
+	}
+	if got := buyerBalance(t, ctx, led, recipient) - recipBefore; got != 0 {
+		t.Fatalf("ticket owner delta = %d, want 0", got)
+	}
+}
+
 func TestLiveDB_CreateEventDefaultsFee1000(t *testing.T) {
 	ctx := context.Background()
 	pool := ticketTokenPool(t)

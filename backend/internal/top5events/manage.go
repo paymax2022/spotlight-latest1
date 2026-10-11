@@ -374,6 +374,10 @@ func (s *Service) cancelRefundOneTicket(ctx context.Context, ev *Event, ticketID
 		}
 		fee := pricePaidKobo * int64(ev.FeeBps) / 10000
 		refund := pricePaidKobo - fee
+		// Fail closed: post nothing unless the split is consistent.
+		if refund < 0 || fee < 0 || refund+fee != pricePaidKobo {
+			return fmt.Errorf("events: inconsistent cancel split (price=%d fee=%d refund=%d)", pricePaidKobo, fee, refund)
+		}
 		escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 		if err != nil {
 			return err
@@ -397,7 +401,22 @@ func (s *Service) cancelRefundOneTicket(ctx context.Context, ev *Event, ticketID
 		}
 	}
 	if credentialID != nil {
-		_ = s.cred.Revoke(ctx, *credentialID) // already revoked/used on a retry is fine
+		// credential.Revoke cannot distinguish "already terminal" from a real
+		// failure (both are generic errors), so read the state first: a missing or
+		// non-ACTIVE credential (REVOKED/USED/EXPIRED) is already dead and fine.
+		// Any other Revoke error aborts BEFORE the ticket is marked REFUNDED, so
+		// the sweep retries instead of leaving a refunded ticket with a live QR.
+		var cstate string
+		err := s.db.QueryRow(ctx, `SELECT state FROM credentials WHERE id=$1`, *credentialID).Scan(&cstate)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return fmt.Errorf("events: credential state: %w", err)
+		case cstate == "ACTIVE":
+			if err := s.cred.Revoke(ctx, *credentialID); err != nil {
+				return fmt.Errorf("events: revoke credential: %w", err)
+			}
+		}
 	}
 	if _, err := s.db.Exec(ctx,
 		`UPDATE event_orders SET status='REFUNDED' WHERE status='PAID' AND id=(SELECT order_id FROM event_tickets WHERE id=$1)`, ticketID); err != nil {
@@ -419,7 +438,7 @@ func (s *Service) ReconcileCancelledEvents(ctx context.Context) (int, error) {
 		SELECT e.id FROM events e
 		WHERE e.state='CANCELLED'
 		  AND EXISTS (SELECT 1 FROM event_tickets t WHERE t.event_id=e.id AND t.state <> 'REFUNDED')
-		ORDER BY e.cancelled_at NULLS FIRST LIMIT 50`)
+		ORDER BY random() LIMIT 50`) // random: a permanently failing event must not starve newer ones
 	if err != nil {
 		return 0, fmt.Errorf("events: list cancelled events: %w", err)
 	}
