@@ -30,6 +30,9 @@ type memStore struct {
 	onTransition func(id string, from cryptoprov.SwapState)
 }
 
+// newUUID returns a deterministic, valid UUID per counter (the handlers reject non-UUID swap ids).
+func newUUID(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
+
 func newMemStore() *memStore {
 	return &memStore{events: map[string]WebhookEvent{}, swaps: map[string]*SwapRecord{}, accounts: map[string]string{}}
 }
@@ -44,7 +47,7 @@ func (s *memStore) InsertSwap(_ context.Context, n NewSwap) (SwapRecord, bool, e
 	}
 	s.nextID++
 	r := &SwapRecord{
-		ID: fmt.Sprintf("swap-%d", s.nextID), UserID: n.UserID, Provider: n.Provider, ProviderAccountID: n.ProviderAccountID,
+		ID: newUUID(s.nextID), UserID: n.UserID, Provider: n.Provider, ProviderAccountID: n.ProviderAccountID,
 		State: cryptoprov.SwapStateQuoted, Side: n.Side, NGNKobo: n.NGNKobo, FeeBps: n.FeeBps, FeeKobo: n.FeeKobo,
 		ProviderQuoteID: n.ProviderQuoteID, IdempotencyKey: n.IdempotencyKey, UpdatedAt: time.Now(), FromCurrency: n.FromCurrency, ToCurrency: n.ToCurrency,
 		FromAmount: n.FromAmount, QuotedToAmount: n.QuotedToAmount, QuotedPrice: n.QuotedPrice, ExpiresAt: n.ExpiresAt,

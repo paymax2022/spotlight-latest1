@@ -27,6 +27,7 @@ import (
 	cfinvestment "spotlight/backend/internal/crowdfunding/investment"
 	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
 	"spotlight/backend/internal/crypto"
+	"spotlight/backend/internal/cryptosvc"
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/estate"
 	estatepaystackcheckout "spotlight/backend/internal/estate/paystackcheckout"
@@ -3248,6 +3249,31 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
 		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+
+		// Provider-driven swap pipeline (quote -> confirm -> webhook/reconciler settle). Its own
+		// flag, and it fails closed: any missing piece skips the routes instead of mounting a
+		// half-wired money path.
+		if cfg.FeatureCryptoSwapsEnabled {
+			quidaxKey, quidaxBase := cfg.CryptoQuidaxTestKey, cfg.CryptoQuidaxTestBaseURL
+			if cfg.IsProd() {
+				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
+			}
+			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
+				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
+				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
+				LockPoolConns:     cfg.CryptoLockPoolConns,
+				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				Fees:              cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+			if werr != nil {
+				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
+			} else {
+				swapMember := cryptoV1.Group("/crypto")
+				swapMember.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermTrade))
+				cryptosvc.RegisterRoutes(swapMember, r.Group("/api/v1/webhooks"), wired.Deps)
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, reconciler running)")
+			}
+		}
 	} else {
 		log.Println("[crypto] FEATURE_CRYPTO_ENABLED is false — skipping routes")
 	}

@@ -449,8 +449,8 @@ const (
 	// behalf (ADR-PR709). A buy parks wallet NGN here until the provider confirms; a sell
 	// draws it down to pay the wallet. Admitted by the ledger_accounts CHECK widened in
 	// migration 20271028000000. Auto-created on first GetOrCreateStandingAccount.
-	AccountCryptoClearing AccountType = "crypto_clearing"
-	AccountTradingFeeIncome    AccountType = "trading_fee_income"
+	AccountCryptoClearing   AccountType = "crypto_clearing"
+	AccountTradingFeeIncome AccountType = "trading_fee_income"
 )
 
 // Account is a logical wallet / standing account in the ledger.

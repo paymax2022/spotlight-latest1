@@ -24,15 +24,15 @@ func NewPGSwapLocker(pool *pgxpool.Pool) *PGSwapLocker { return &PGSwapLocker{po
 // NewPGSwapLockerPool opens a dedicated connection pool for locks and returns the locker and
 // a close func. maxConns must comfortably exceed the number of concurrent Confirm calls times
 // two (a Confirm holds its own lock and the settler's nested lock at the same time).
-func NewPGSwapLockerPool(ctx context.Context, dsn string, maxConns int32) (*PGSwapLocker, func(), error) {
+func NewPGSwapLockerPool(ctx context.Context, dsn string, maxConns int) (*PGSwapLocker, func(), error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cryptosvc: lock pool config: %w", err)
 	}
-	if maxConns < 4 {
-		return nil, nil, fmt.Errorf("cryptosvc: lock pool needs at least 4 connections, got %d", maxConns)
+	if maxConns < 4 || maxConns > 500 {
+		return nil, nil, fmt.Errorf("cryptosvc: lock pool size must be between 4 and 500, got %d", maxConns)
 	}
-	cfg.MaxConns = maxConns
+	cfg.MaxConns = int32(maxConns)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cryptosvc: open lock pool: %w", err)

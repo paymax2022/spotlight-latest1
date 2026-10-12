@@ -1,0 +1,155 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Crypto Swaps API
+  version: 1.0.0
+  description: >
+    Provider-driven crypto buy (NGN to crypto) swaps over the Quidax adapter: quote, confirm
+    (second factor), read, plus the provider webhook. Behind FEATURE_CRYPTO_ENABLED and
+    FEATURE_CRYPTO_SWAPS_ENABLED (default off). ADR-PR708, ADR-PR709, ADR-PR710, ADR-PR716.
+
+    Conventions:
+      - NGN amounts are integers in kobo. Never floats. Crypto amounts are decimal STRINGS.
+      - Quote requires an Idempotency-Key; the same key with a different body is 409.
+      - Confirm requires the user's transaction PIN in the body. A missing PIN is 400 and is
+        never verified (it must not count toward the PIN lockout).
+      - Confirm moves the NGN into a ledger hold BEFORE the provider executes; the final
+        settlement arrives by webhook or reconciler and is visible by polling GET.
+      - Another user's swap is always 404. Provider ids and internal fields are never returned.
+      - Auth: Bearer JWT (Supabase). Member routes need the crypto.trade permission.
+
+servers:
+  - url: /api/v1
+    description: Crypto swap routes (Go backend)
+
+tags:
+  - name: Swaps
+  - name: Webhooks
+
+paths:
+  /crypto/swaps/quote:
+    post:
+      tags: [Swaps]
+      summary: Price a buy and persist the quote
+      operationId: quoteCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset, ngn_kobo]
+              additionalProperties: false
+              properties:
+                asset: { type: string, example: USDT }
+                ngn_kobo: { type: integer, format: int64, minimum: 1, description: NGN to spend, in kobo (fee is added on top) }
+      responses:
+        '201': { $ref: '#/components/responses/Swap' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { description: Idempotency-Key reused with a different request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '500': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/{id}/confirm:
+    post:
+      tags: [Swaps]
+      summary: Confirm a quoted swap (second factor required)
+      operationId: confirmCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SwapId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              additionalProperties: false
+              properties:
+                pin: { type: string, description: The user's transaction PIN }
+      responses:
+        '200': { $ref: '#/components/responses/Swap' }
+        '202':
+          description: The provider outcome is unknown; the swap is parked for review with the NGN held.
+          content: { application/json: { schema: { $ref: '#/components/schemas/SwapEnvelope' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { description: pin_not_set, pin_invalid or trading_not_allowed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '410': { description: quote_expired, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: insufficient_funds or limit_exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '500': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/{id}:
+    get:
+      tags: [Swaps]
+      summary: Read one of your swaps
+      operationId: getCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SwapId'
+      responses:
+        '200': { $ref: '#/components/responses/Swap' }
+        '404': { $ref: '#/components/responses/Error' }
+  /webhooks/crypto/{provider}:
+    post:
+      tags: [Webhooks]
+      summary: Provider event delivery (signature-authenticated, no session)
+      operationId: cryptoProviderWebhook
+      security: []
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, example: quidax } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        '200': { description: Processed, or an already-processed duplicate }
+        '401': { description: Bad signature }
+        '404': { description: Unknown provider }
+        '413': { description: Body over 1 MiB }
+        '500': { description: Processing failed; the provider should redeliver }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1 } }
+    SwapId: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Swap:
+      description: A swap
+      content: { application/json: { schema: { $ref: '#/components/schemas/SwapEnvelope' } } }
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, const: false }
+        error: { type: string, description: Stable machine code (never provider or database text) }
+    SwapEnvelope:
+      type: object
+      required: [success, swap]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        swap: { $ref: '#/components/schemas/Swap' }
+    Swap:
+      type: object
+      required: [id, status, side, asset, ngn_kobo, fee_kobo, fee_bps, total_kobo, quoted_amount, price]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [quoted, confirming, processing, completed, failed, expired, needs_review] }
+        side: { type: string, enum: [buy] }
+        asset: { type: string }
+        ngn_kobo: { type: integer, format: int64 }
+        fee_kobo: { type: integer, format: int64 }
+        fee_bps: { type: integer }
+        total_kobo: { type: integer, format: int64, description: ngn_kobo + fee_kobo, the amount held from the wallet }
+        quoted_amount: { type: string, description: Decimal string of crypto quoted }
+        received_amount: { type: string, description: Decimal string, present once the provider confirms }
+        price: { type: string, description: Decimal string }
+        expires_at: { type: string, format: date-time }
