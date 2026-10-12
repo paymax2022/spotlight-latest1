@@ -21,6 +21,7 @@
     "test:restaurant-taxonomy": "node --experimental-strip-types --test \"src/features/restaurantmerchant/__tests__/*.test.ts\"",
     "test:merchant": "node --experimental-strip-types --test \"src/features/merchant/lib/__tests__/*.test.ts\"",
     "test:billing-email": "node --experimental-strip-types --test \"src/features/payments/__tests__/*.test.ts\"",
+    "test:vet-pet": "node --experimental-strip-types --test \"src/features/health/vet/__tests__/*.test.ts\"",
     "test:mobility": "node --experimental-strip-types --test \"src/features/mobility/utils/__tests__/*.test.ts\"",
     "test:referral-home": "node --experimental-strip-types --test \"src/features/referral/home/__tests__/*.test.ts\"",
     "test:insurance": "node --experimental-strip-types --test \"src/features/insurance/__tests__/*.test.ts\"",
