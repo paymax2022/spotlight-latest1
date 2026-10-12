@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,16 +76,26 @@ func (s *Service) AddVehicle(ctx context.Context, userID string, req VehicleRequ
 	if capacity <= 0 {
 		capacity = 4
 	}
-	v := &Vehicle{ID: uuid.New().String(), DriverID: driverID, PlateNumber: req.PlateNumber, Category: category, Capacity: capacity}
+	vt := req.VehicleType
+	if vt == "" {
+		vt = "car"
+	}
+	if vt != "car" && vt != "motorcycle" && vt != "bicycle" {
+		return nil, codedErr(http.StatusBadRequest, CodeInvalidState, "unsupported vehicle_type: "+vt)
+	}
+	if (vt == "car" || vt == "motorcycle") && strings.TrimSpace(req.PlateNumber) == "" {
+		return nil, codedErr(http.StatusBadRequest, CodeInvalidState, "plate_number is required for a "+vt)
+	}
+	v := &Vehicle{ID: uuid.New().String(), DriverID: driverID, PlateNumber: req.PlateNumber, Category: category, Capacity: capacity, VehicleType: vt}
 	var year *int
 	if req.Year > 0 {
 		year = &req.Year
 	}
 	if err := s.db.QueryRow(ctx, `
-		INSERT INTO vehicles (id, driver_id, plate_number, make, model, year, color, category, capacity)
-		VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULLIF($7,''),$8,$9)
+		INSERT INTO vehicles (id, driver_id, plate_number, make, model, year, color, category, capacity, vehicle_type)
+		VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,NULLIF($7,''),$8,$9,$10)
 		RETURNING created_at, updated_at`,
-		v.ID, driverID, req.PlateNumber, req.Make, req.Model, year, req.Color, category, capacity).
+		v.ID, driverID, req.PlateNumber, req.Make, req.Model, year, req.Color, category, capacity, vt).
 		Scan(&v.CreatedAt, &v.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -110,12 +121,19 @@ func (s *Service) DriverMeFull(ctx context.Context, userID string) (map[string]a
 	var id, name, vreg, vtype, status, vstatus string
 	var rating float64
 	var phone, email, photo *string
+	var serviceInterests, coverageAreas []string
 	if err := s.db.QueryRow(ctx, `
-		SELECT id, name, vehicle_reg, vehicle_type, status, rating, verification_status, phone, email, photo_url
+		SELECT id, name, vehicle_reg, vehicle_type, status, rating, verification_status, phone, email, photo_url, service_interests, coverage_areas
 		FROM drivers WHERE user_id=$1`, userID).Scan(
-		&id, &name, &vreg, &vtype, &status, &rating, &vstatus, &phone, &email, &photo,
+		&id, &name, &vreg, &vtype, &status, &rating, &vstatus, &phone, &email, &photo, &serviceInterests, &coverageAreas,
 	); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "driver not found")
+	}
+	if serviceInterests == nil {
+		serviceInterests = []string{}
+	}
+	if coverageAreas == nil {
+		coverageAreas = []string{}
 	}
 	docs, _ := s.listDocuments(ctx, id)
 	vehicles, _ := s.listVehicles(ctx, id)
@@ -123,6 +141,7 @@ func (s *Service) DriverMeFull(ctx context.Context, userID string) (map[string]a
 		"id": id, "name": name, "vehicle_reg": vreg, "vehicle_type": vtype,
 		"status": status, "rating": rating, "verification_status": vstatus,
 		"phone": phone, "email": email, "photo_url": photo,
+		"service_interests": serviceInterests, "coverage_areas": coverageAreas,
 		"documents": docs, "vehicles": vehicles,
 	}, nil
 }
@@ -146,8 +165,8 @@ func (s *Service) listDocuments(ctx context.Context, driverID string) ([]DriverD
 
 func (s *Service) listVehicles(ctx context.Context, driverID string) ([]Vehicle, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, driver_id, plate_number, make, model, year, color, category, capacity,
-		       inspection_status, insurance_status, status, created_at, updated_at
+		SELECT id, driver_id, COALESCE(plate_number,''), make, model, year, color, category, capacity,
+		       inspection_status, insurance_status, status, created_at, updated_at, vehicle_type
 		FROM vehicles WHERE driver_id=$1 ORDER BY created_at`, driverID)
 	if err != nil {
 		return nil, err
@@ -157,7 +176,7 @@ func (s *Service) listVehicles(ctx context.Context, driverID string) ([]Vehicle,
 	for rows.Next() {
 		var v Vehicle
 		if err := rows.Scan(&v.ID, &v.DriverID, &v.PlateNumber, &v.Make, &v.Model, &v.Year, &v.Color,
-			&v.Category, &v.Capacity, &v.InspectionStatus, &v.InsuranceStatus, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.Category, &v.Capacity, &v.InspectionStatus, &v.InsuranceStatus, &v.Status, &v.CreatedAt, &v.UpdatedAt, &v.VehicleType); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
