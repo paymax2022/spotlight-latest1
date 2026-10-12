@@ -21,6 +21,7 @@ import {
   swapStage,
   mapSwapError,
   cryptoSwapsEnabled,
+  isPreHoldTerminal,
 } from '../swapPipeline.ts';
 
 // A representative raw swap exactly as the Go backend serialises it.
@@ -160,6 +161,23 @@ test('mapSwapError handles a thrown Error with no response', () => {
   const m = mapSwapError(new Error('Network Error'));
   assert.equal(typeof m.message, 'string');
   assert.ok(m.message.length > 0);
+});
+
+// ---- isPreHoldTerminal ----------------------------------------------------
+
+test('isPreHoldTerminal is true ONLY for definite no-funds-moved rejections', () => {
+  // Confirm places the ledger hold, so only a rejection the server raises
+  // BEFORE the hold means "no money moved". These three qualify.
+  assert.equal(isPreHoldTerminal('insufficient_funds'), true);
+  assert.equal(isPreHoldTerminal('limit_exceeded'), true);
+  assert.equal(isPreHoldTerminal('trading_not_allowed'), true);
+});
+
+test('isPreHoldTerminal is false for ambiguous / post-hold / unknown codes', () => {
+  // These must NOT be treated as "no funds moved": the hold may already exist.
+  for (const code of ['internal', 'provider_error', '', 'quote_expired', 'pin_invalid', undefined]) {
+    assert.equal(isPreHoldTerminal(code as string), false, `code ${String(code)} must not be pre-hold-terminal`);
+  }
 });
 
 // ---- cryptoSwapsEnabled ---------------------------------------------------

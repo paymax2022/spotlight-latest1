@@ -10,8 +10,13 @@ import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 
 export default function BuyFailedScreen() {
-  const p = useLocalSearchParams<{ symbol: string; basis: string; amount: string; reason: string; kind: string }>();
+  const p = useLocalSearchParams<{ symbol: string; basis: string; amount: string; reason: string; kind: string; funds?: string }>();
   const expired = p.kind === 'quote_expired';
+  // 'released' = the confirm placed a hold that is now being reversed; anything
+  // else = the order never moved money (legacy path and pre-hold rejections).
+  const fundsNote = p.funds === 'released'
+    ? 'Any funds held for this order are being released back to your wallet.'
+    : 'No funds were debited. Your balances are unchanged.';
 
   const retry = () =>
     router.replace({ pathname: '/crypto/buy/review', params: { symbol: p.symbol, basis: p.basis, amount: p.amount } });
@@ -24,7 +29,7 @@ export default function BuyFailedScreen() {
         </View>
         <Text style={styles.title}>{expired ? 'Quote expired' : 'Order failed'}</Text>
         <Text style={styles.sub}>{p.reason}</Text>
-        <Text style={styles.note}>No funds were debited. Your balances are unchanged.</Text>
+        <Text style={styles.note}>{fundsNote}</Text>
       </View>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>

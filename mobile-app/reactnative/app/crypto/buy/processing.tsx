@@ -50,14 +50,19 @@ function SwapBuyProcessing() {
         params: { symbol: s.asset, fiat: String(s.totalKobo), txId: s.id },
       });
     } else {
+      // Reached only after a successful confirm, so the NGN was held; a terminal
+      // failure here means the hold is being reversed — never "no funds moved".
       router.replace({
         pathname: '/crypto/buy/failed',
         params: {
           symbol: s.asset,
+          // Seed a retry with the same NGN spend (the quote itself is gone).
+          basis: 'fiat', amount: String(s.ngnKobo),
           reason: s.status === 'expired'
-            ? 'The quote expired before your order was filled. Please get a fresh quote.'
-            : 'The order could not be completed. Any held funds have been released.',
+            ? 'The order could not be filled in time. Any funds held have been released.'
+            : 'The order could not be completed. Any funds held have been released.',
           kind: s.status === 'expired' ? 'quote_expired' : 'error',
+          funds: 'released',
         },
       });
     }

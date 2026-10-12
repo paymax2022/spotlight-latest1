@@ -136,6 +136,19 @@ export function mapSwapError(err: unknown): MappedSwapError {
 }
 
 /**
+ * Codes the server can only raise BEFORE it places the ledger hold, so they are
+ * the only confirm failures that definitively mean "no funds moved". Any other
+ * error (5xx, timeout, dropped response, provider failure) may have already held
+ * the NGN and must never be presented to the user as a clean failure.
+ */
+const PRE_HOLD_TERMINAL_CODES = new Set(['insufficient_funds', 'limit_exceeded', 'trading_not_allowed']);
+
+/** True only for a confirm rejection that is guaranteed to pre-date the hold. */
+export function isPreHoldTerminal(code: string | undefined): boolean {
+  return typeof code === 'string' && PRE_HOLD_TERMINAL_CODES.has(code);
+}
+
+/**
  * Whether the client should drive the BUY flow through the new provider swap
  * pipeline. Off unless EXPO_PUBLIC_CRYPTO_SWAPS is explicitly "true" — the Go
  * backend independently gates the routes behind FEATURE_CRYPTO_SWAPS_ENABLED.

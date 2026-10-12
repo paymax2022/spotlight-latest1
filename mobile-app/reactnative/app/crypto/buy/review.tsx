@@ -18,7 +18,7 @@ import { QuoteCountdown } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
 import { useAsset, useQuoteSwap, useConfirmSwap } from '@/features/crypto/hooks/useCrypto';
 import { buildQuote, formatCrypto, formatFiat, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
-import { cryptoSwapsEnabled } from '@/features/crypto/utils/swapPipeline';
+import { cryptoSwapsEnabled, isPreHoldTerminal } from '@/features/crypto/utils/swapPipeline';
 import type { AmountBasis, CryptoAsset, CryptoQuote, CryptoSwap } from '@/features/crypto/types/crypto.types';
 
 export default function BuyReviewScreen() {
@@ -52,6 +52,7 @@ function SwapBuyReview() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState<string | undefined>();
   const [quoteError, setQuoteError] = useState<string | undefined>();
+  const [confirmError, setConfirmError] = useState<string | undefined>();
 
   const requestQuote = useCallback(() => {
     if (!asset.data) return;
@@ -101,13 +102,16 @@ function SwapBuyReview() {
   const confirming = confirmMut.isPending;
 
   const confirm = () => {
+    if (confirmMut.isPending) return; // guard a double-tap before the button disables
     if (expired) { requestQuote(); return; }
     if (pin.length < 4) { setPinError('Enter your 4-digit transaction PIN.'); return; }
     setPinError(undefined);
+    setConfirmError(undefined);
     confirmMut.mutate(
       { id: s.id, pin },
       {
         onSuccess: (result) => {
+          // Confirmed (200 settled/processing or 202 needs_review) — poll to terminal.
           router.push({ pathname: '/crypto/buy/processing', params: { swapId: result.id } });
         },
         onError: (err: unknown) => {
@@ -120,15 +124,22 @@ function SwapBuyReview() {
             setPinError(e.message ?? 'That PIN was not accepted.');
             return;
           }
-          // Everything else (funds, limits, provider) → the failure screen.
-          router.push({
-            pathname: '/crypto/buy/failed',
-            params: {
-              symbol: a.symbol, basis, amount: String(amount),
-              reason: e.message ?? 'The order could not be completed. No funds were debited.',
-              kind: 'error',
-            },
-          });
+          // A DEFINITE pre-hold rejection → no money moved, so the failure screen.
+          if (isPreHoldTerminal(e.cryptoType)) {
+            router.push({
+              pathname: '/crypto/buy/failed',
+              params: {
+                symbol: a.symbol, basis, amount: String(amount),
+                reason: e.message ?? 'The order could not be completed.',
+                kind: 'error', funds: 'untouched',
+              },
+            });
+            return;
+          }
+          // Ambiguous (5xx / timeout / dropped response): the hold may already
+          // exist. Never claim failure — stay and let the user retry; confirm is
+          // idempotent by swap id, so a retry cannot charge twice.
+          setConfirmError("We couldn't confirm your order just now. Please try again — you won't be charged twice.");
         },
       },
     );
@@ -184,6 +195,7 @@ function SwapBuyReview() {
       </ScrollView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
+        {confirmError ? <Text style={styles.confirmError}>{confirmError}</Text> : null}
         {expired ? (
           <PrimaryButton label="Quote expired — refresh" onPress={() => requestQuote()} loading={quoteMut.isPending} />
         ) : (
@@ -338,4 +350,5 @@ const styles = StyleSheet.create({
   pinTitle: { ...Typography.titleMd, color: Colors.onSurface },
   pinHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: Spacing.md, lineHeight: 18 },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md, paddingTop: Spacing.sm },
+  confirmError: { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginBottom: Spacing.sm },
 });
