@@ -274,14 +274,19 @@ func (s *Service) Fail(ctx context.Context, userID string, actorID *string) erro
 // ID-number data-match. The values originate from the KYC provider's response,
 // NEVER from user input — the KYC form no longer collects name/DOB.
 //
-// Semantics (additive, no migration — these columns already exist):
-//   - first_name / last_name: overwritten with the verified value when present
-//     (the provider's legal name is authoritative); left as-is when the verified
-//     value is empty.
-//   - full_name: set ONLY when the profile has none yet — a verified legal name
-//     must not silently replace a display name the user chose.
-//   - date_of_birth: set to the verified ISO date when present; left as-is
-//     otherwise.
+// Semantics — FIRST-WRITE-WINS (additive, no migration; these columns already
+// exist). Each field is set ONLY when the profile has no value yet:
+//   - first_name / last_name / full_name: set only when currently blank.
+//   - date_of_birth: set only when currently NULL.
+//
+// First-write-wins is deliberate and security-relevant, not just courtesy: the
+// KYC flow does not (and cannot, post-form-change) prove the submitted NIN/BVN
+// belongs to the caller, so an unconstrained overwrite would let an attacker
+// repeatedly swap a victim's provider-returned name onto their own (readable)
+// profile and read it back — a NIN→identity oracle. Writing only into blank
+// fields removes the repeatable-overwrite oracle (a populated profile is
+// immutable here) and preserves the legitimate case: a new user verifying their
+// own ID fills their empty profile. See ADR-PR722-kyc-verified-identity.
 //
 // Object-level authz is the caller's responsibility: userID must be the
 // authenticated owner (the kycverify gateway derives it from the session, never
@@ -298,10 +303,10 @@ func (s *Service) SaveVerifiedIdentity(ctx context.Context, userID, fullName, fi
 	}
 	const update = `
 		UPDATE user_profiles
-		SET first_name    = COALESCE(NULLIF($2, ''), first_name),
-		    last_name     = COALESCE(NULLIF($3, ''), last_name),
-		    full_name     = CASE WHEN COALESCE(full_name, '') = '' AND $4 <> '' THEN $4 ELSE full_name END,
-		    date_of_birth = COALESCE(NULLIF($5, '')::date, date_of_birth),
+		SET first_name    = CASE WHEN COALESCE(first_name, '') = '' AND $2 <> '' THEN $2 ELSE first_name END,
+		    last_name     = CASE WHEN COALESCE(last_name, '')  = '' AND $3 <> '' THEN $3 ELSE last_name END,
+		    full_name     = CASE WHEN COALESCE(full_name, '')  = '' AND $4 <> '' THEN $4 ELSE full_name END,
+		    date_of_birth = CASE WHEN date_of_birth IS NULL     AND $5 <> '' THEN $5::date ELSE date_of_birth END,
 		    updated_at    = NOW()
 		WHERE id = $1`
 	if _, err := s.db.Exec(ctx, update, userID, firstName, lastName, fullName, dobISO); err != nil {
