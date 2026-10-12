@@ -3,6 +3,7 @@ package cryptosvc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -62,4 +63,38 @@ func (l *PGSwapLocker) WithSwapLock(ctx context.Context, swapID string, fn func(
 		}
 	}()
 	return fn(ctx)
+}
+
+// PGLeader elects one reconciler across replicas with a non-blocking Postgres session
+// advisory lock held on a dedicated connection until released.
+type PGLeader struct{ pool *pgxpool.Pool }
+
+// NewPGLeader wraps a lock pool (the same dedicated pool the swap locker uses is fine).
+func NewPGLeader(pool *pgxpool.Pool) *PGLeader { return &PGLeader{pool: pool} }
+
+var _ LeaderLock = (*PGLeader)(nil)
+
+// TryLead returns ok=false when another replica holds the lock.
+func (l *PGLeader) TryLead(ctx context.Context) (func(), bool, error) {
+	conn, err := l.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("cryptosvc: acquire leader connection: %w", err)
+	}
+	var got bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext('cryptoswap:reconciler'))`).Scan(&got); err != nil {
+		conn.Release()
+		return nil, false, fmt.Errorf("cryptosvc: leader lock: %w", err)
+	}
+	if !got {
+		conn.Release()
+		return func() {}, false, nil
+	}
+	return func() {
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, uerr := conn.Exec(uctx, `SELECT pg_advisory_unlock(hashtext('cryptoswap:reconciler'))`); uerr != nil {
+			conn.Conn().Close(uctx) // dropping the session releases its locks
+		}
+		conn.Release()
+	}, true, nil
 }
