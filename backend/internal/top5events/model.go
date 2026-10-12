@@ -97,6 +97,12 @@ type PromoCode struct {
 	MaxUses    int    `json:"max_uses"`    // 0 => unlimited
 	Used       int    `json:"used"`
 	Active     bool   `json:"active"`
+
+	TierID        *string    `json:"tier_id"`
+	AmountOffKobo *int64     `json:"amount_off_kobo"`
+	StartsAt      *time.Time `json:"starts_at"`
+	EndsAt        *time.Time `json:"ends_at"`
+	PerUserLimit  int        `json:"per_user_limit"`
 }
 
 // TicketState is the per-ticket lifecycle.

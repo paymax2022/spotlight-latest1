@@ -143,3 +143,186 @@ func TestLiveDB_UpdateTier_StrangerForbidden(t *testing.T) {
 		t.Fatalf("want ErrForbidden, got %v", err)
 	}
 }
+
+// ---------- Promo create + edit (Phase 2 Task 3) ----------
+
+func i64p(v int64) *int64 { return &v }
+func intp(v int) *int     { return &v }
+
+func cleanupPromos(t *testing.T, pool *pgxpool.Pool, eventID string) {
+	t.Helper()
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM event_promo_codes WHERE event_id=$1`, eventID) })
+}
+
+func seedUsedPromo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, eventID string, used, maxUses int) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, used, active)
+		 VALUES ($1,$2,$3,1,10,$4,$5,true)`, id, eventID, "P"+id[:8], maxUses, used); err != nil {
+		t.Fatalf("seed promo: %v", err)
+	}
+	cleanupPromos(t, pool, eventID)
+	return id
+}
+
+func TestLiveDB_Promo_CreatePercentOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	cleanupPromos(t, pool, ev)
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+	s := time.Now().UTC().Truncate(time.Second)
+	e := s.Add(time.Hour)
+	got, err := svc.AddPromo(ctx, owner, ev, top5events.PromoCode{Code: "PCT", PercentOff: 20, TierID: &tier, StartsAt: &s, EndsAt: &e, PerUserLimit: 2})
+	if err != nil {
+		t.Fatalf("AddPromo: %v", err)
+	}
+	var pct, pul int
+	var amt *int64
+	var tid *string
+	if err := pool.QueryRow(ctx, `SELECT percent_off, amount_off_kobo, tier_id::text, per_user_limit FROM event_promo_codes WHERE id=$1`, got.ID).Scan(&pct, &amt, &tid, &pul); err != nil {
+		t.Fatal(err)
+	}
+	if pct != 20 || amt != nil || tid == nil || *tid != tier || pul != 2 {
+		t.Fatalf("not persisted: %d %v %v %d", pct, amt, tid, pul)
+	}
+}
+
+func TestLiveDB_Promo_CreateAmountOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	cleanupPromos(t, pool, ev)
+	got, err := svc.AddPromo(ctx, owner, ev, top5events.PromoCode{Code: "AMT", AmountOffKobo: i64p(500)})
+	if err != nil {
+		t.Fatalf("AddPromo: %v", err)
+	}
+	var amt *int64
+	if err := pool.QueryRow(ctx, `SELECT amount_off_kobo FROM event_promo_codes WHERE id=$1`, got.ID).Scan(&amt); err != nil || amt == nil || *amt != 500 {
+		t.Fatalf("amount not persisted: %v %v", amt, err)
+	}
+}
+
+func TestLiveDB_Promo_CreateBothRejected(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	cleanupPromos(t, pool, ev)
+	if _, err := svc.AddPromo(ctx, owner, ev, top5events.PromoCode{Code: "BOTH", PercentOff: 10, AmountOffKobo: i64p(500)}); err == nil {
+		t.Fatal("want error for both percent and amount")
+	}
+}
+
+func TestLiveDB_Promo_CreateNeitherRejected(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	cleanupPromos(t, pool, ev)
+	if _, err := svc.AddPromo(ctx, owner, ev, top5events.PromoCode{Code: "NONE"}); err == nil {
+		t.Fatal("want error for neither percent nor amount")
+	}
+}
+
+func TestLiveDB_Promo_CreateTierScopeForeignEventRejected(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	other := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	cleanupPromos(t, pool, ev)
+	foreign := seedTier(t, ctx, pool, other, 1000, 10, 0)
+	if _, err := svc.AddPromo(ctx, owner, ev, top5events.PromoCode{Code: "FOR", PercentOff: 10, TierID: &foreign}); err == nil {
+		t.Fatal("want error for tier on a different event")
+	}
+}
+
+func TestLiveDB_Promo_UpdateValueAfterUseLocked(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	promo := seedUsedPromo(t, ctx, pool, ev, 1, 5)
+	if _, err := svc.UpdatePromo(ctx, owner, ev, promo, top5events.PromoPatch{PercentOff: intp(50)}); !errors.Is(err, top5events.ErrPromoLocked) {
+		t.Fatalf("percent: want ErrPromoLocked, got %v", err)
+	}
+	if _, err := svc.UpdatePromo(ctx, owner, ev, promo, top5events.PromoPatch{AmountOffKobo: i64p(100)}); !errors.Is(err, top5events.ErrPromoLocked) {
+		t.Fatalf("amount: want ErrPromoLocked, got %v", err)
+	}
+	var pct int
+	_ = pool.QueryRow(ctx, `SELECT percent_off FROM event_promo_codes WHERE id=$1`, promo).Scan(&pct)
+	if pct != 10 {
+		t.Fatalf("locked write leaked: %d", pct)
+	}
+}
+
+func TestLiveDB_Promo_UpdateDeactivateAfterUseOk(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	promo := seedUsedPromo(t, ctx, pool, ev, 1, 5)
+	off := false
+	got, err := svc.UpdatePromo(ctx, owner, ev, promo, top5events.PromoPatch{Active: &off})
+	if err != nil || got.Active {
+		t.Fatalf("deactivate: %v %+v", err, got)
+	}
+}
+
+func TestLiveDB_Promo_UpdateRaiseMaxUsesAfterUseOk(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	promo := seedUsedPromo(t, ctx, pool, ev, 1, 5)
+	got, err := svc.UpdatePromo(ctx, owner, ev, promo, top5events.PromoPatch{MaxUses: intp(50)})
+	if err != nil || got.MaxUses != 50 {
+		t.Fatalf("raise: %v %+v", err, got)
+	}
+	if _, err := svc.UpdatePromo(ctx, owner, ev, promo, top5events.PromoPatch{MaxUses: intp(2)}); !errors.Is(err, top5events.ErrPromoLocked) {
+		t.Fatalf("lower: want ErrPromoLocked, got %v", err)
+	}
+}
+
+func TestLiveDB_Promo_UpdateManagerAllowed(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	mgr := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	promo := seedUsedPromo(t, ctx, pool, ev, 0, 5)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO event_team_members (event_id, user_id, role, granted_by) VALUES ($1,$2,'MANAGER',$3)`, ev, mgr, owner); err != nil {
+		t.Fatalf("seed team: %v", err)
+	}
+	got, err := svc.UpdatePromo(ctx, mgr, ev, promo, top5events.PromoPatch{AmountOffKobo: i64p(300)})
+	if err != nil || got.AmountOffKobo == nil || *got.AmountOffKobo != 300 || got.PercentOff != 0 {
+		t.Fatalf("manager UpdatePromo: %v %+v", err, got)
+	}
+}
+
+func TestLiveDB_Promo_UpdateStrangerForbidden(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	stranger := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	promo := seedUsedPromo(t, ctx, pool, ev, 0, 5)
+	if _, err := svc.UpdatePromo(ctx, stranger, ev, promo, top5events.PromoPatch{MaxUses: intp(9)}); !errors.Is(err, top5events.ErrForbidden) {
+		t.Fatalf("want ErrForbidden, got %v", err)
+	}
+}

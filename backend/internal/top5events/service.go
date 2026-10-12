@@ -347,11 +347,26 @@ func (s *Service) AddTier(ctx context.Context, organiserID, eventID string, t Ti
 // AddPromo creates a versioned promo code (organiser-only). A re-add of the same
 // code supersedes by version (config-driven, history preserved).
 func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p PromoCode) (*PromoCode, error) {
-	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+	if _, err := s.authorizeManage(ctx, organiserID, eventID); err != nil {
 		return nil, err
 	}
-	if p.PercentOff < 0 || p.PercentOff > 100 {
-		return nil, errors.New("events: percent_off out of range")
+	if err := validatePromoValue(p.PercentOff, p.AmountOffKobo); err != nil {
+		return nil, err
+	}
+	if p.PerUserLimit < 0 {
+		return nil, errors.New("events: per_user_limit must be non-negative")
+	}
+	if p.StartsAt != nil && p.EndsAt != nil && !p.StartsAt.Before(*p.EndsAt) {
+		return nil, ErrInvalidWindow
+	}
+	if p.TierID != nil {
+		var ok bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_ticket_tiers WHERE id=$1 AND event_id=$2)`, *p.TierID, eventID).Scan(&ok); err != nil {
+			return nil, fmt.Errorf("events: tier lookup: %w", err)
+		}
+		if !ok {
+			return nil, errors.New("events: promo tier does not belong to this event")
+		}
 	}
 	var maxVer int
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(MAX(version),0) FROM event_promo_codes WHERE event_id=$1 AND code=$2`, eventID, p.Code).Scan(&maxVer)
@@ -361,11 +376,27 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 	p.Active = true
 	// Deactivate prior versions of this code.
 	_, _ = s.db.Exec(ctx, `UPDATE event_promo_codes SET active=false WHERE event_id=$1 AND code=$2`, eventID, p.Code)
-	const ins = `INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, active) VALUES ($1,$2,$3,$4,$5,$6,true)`
-	if _, err := s.db.Exec(ctx, ins, p.ID, p.EventID, p.Code, p.Version, p.PercentOff, p.MaxUses); err != nil {
+	const ins = `INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, active, tier_id, amount_off_kobo, starts_at, ends_at, per_user_limit)
+		VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11)`
+	if _, err := s.db.Exec(ctx, ins, p.ID, p.EventID, p.Code, p.Version, p.PercentOff, p.MaxUses,
+		p.TierID, p.AmountOffKobo, p.StartsAt, p.EndsAt, p.PerUserLimit); err != nil {
 		return nil, fmt.Errorf("events: insert promo: %w", err)
 	}
 	return &p, nil
+}
+
+// validatePromoValue enforces exactly one of percent_off (1..100) or amount_off_kobo (>=0).
+func validatePromoValue(percent int, amount *int64) error {
+	if percent < 0 || percent > 100 {
+		return errors.New("events: percent_off out of range")
+	}
+	if amount != nil && *amount < 0 {
+		return errors.New("events: amount_off_kobo must be non-negative")
+	}
+	if (percent > 0) == (amount != nil) {
+		return errors.New("events: promo needs exactly one of percent_off or amount_off_kobo")
+	}
+	return nil
 }
 
 // ---------- Order + issuance via credential ----------
@@ -1369,6 +1400,7 @@ var (
 	ErrNotFound          = errors.New("events: not found")
 	ErrForbidden         = errors.New("events: forbidden")
 	ErrTierLocked        = errors.New("events: tier field locked by existing sales")
+	ErrPromoLocked       = errors.New("events: promo field locked by existing redemptions")
 	ErrInvalidWindow     = errors.New("events: sales_start_at must be before sales_end_at")
 	ErrSoldOut           = errors.New("events: tier sold out")
 	ErrNotPurchasable    = errors.New("events: event is not on sale")
