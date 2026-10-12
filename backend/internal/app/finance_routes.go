@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -1057,6 +1058,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				Threshold: cfg.KYCFacialMatchThreshold,
 			},
 			FacialThreshold: cfg.KYCFacialMatchThreshold,
+			// NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE, default off). The
+			// phone source is wired whenever the gate is on so a nil source can
+			// never make the gate fail open.
+			OwnershipGate:      cfg.FeatureKYCOwnershipGate,
+			AccountPhoneSource: kycAccountPhoneSource{pool: pool},
 		})
 		kvHandler := kycverify.NewHandler(kvSvc)
 
@@ -3426,6 +3432,30 @@ func (e kycTierElevator) ElevateTier(ctx context.Context, userID string, newTier
 	}
 	_, err := e.svc.Approve(ctx, userID, newTier, actorID)
 	return err
+}
+
+// kycAccountPhoneSource adapts the pgx pool to the kycverify.AccountPhoneSource
+// port used by the NIN/BVN ownership gate. It reads the caller's account phone
+// and verified flag straight from user_profiles (the same columns sign-in and
+// wallet recipient-resolution use); a missing row yields an empty, unverified
+// phone, which the gate treats as a hard block (fail-closed).
+type kycAccountPhoneSource struct{ pool *pgxpool.Pool }
+
+func (s kycAccountPhoneSource) VerifiedPhone(ctx context.Context, userID string) (string, bool, error) {
+	if s.pool == nil || userID == "" {
+		return "", false, nil
+	}
+	const q = `SELECT COALESCE(phone, ''), COALESCE(phone_verified, false) FROM user_profiles WHERE id = $1`
+	var phone string
+	var verified bool
+	switch err := s.pool.QueryRow(ctx, q, userID).Scan(&phone, &verified); {
+	case err == nil:
+		return phone, verified, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", false, nil // no profile → nothing to match → fail-closed block
+	default:
+		return "", false, err
+	}
 }
 
 // restaurantOrderConfirmer adapts *paystackcheckout.Service to

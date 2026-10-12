@@ -161,6 +161,13 @@ type Config struct {
 	KYCPIIEncKey string
 	// Facial-match confidence gate (default 70): below → REVIEW, not silent fail.
 	KYCFacialMatchThreshold int
+	// FEATURE_KYC_OWNERSHIP_GATE (default OFF): when on, a PASSED NIN/BVN/vNIN
+	// ID-number check is only honoured if the ID's registered phone matches the
+	// account's verified phone — binding the submitted ID to the caller. Closes
+	// the "any valid NIN → Tier 1" gap and the NIN→identity disclosure oracle
+	// (ADR-PR722). Phone-less ID types (passport/DL/PVC) are exempt. No effect
+	// unless FEATURE_KYC_VERIFY_ENABLED is also on.
+	FeatureKYCOwnershipGate bool
 
 	// ── Arena competition engine (ADR-014) ───────────────────────────────────
 	// Config-driven competition module (Naija Driver = instance #1). Merit ledger
@@ -868,6 +875,7 @@ func Load() Config {
 		YouverifyWebhookSecret:  getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
 		KYCPIIEncKey:            getEnv("KYC_PII_ENC_KEY", ""),
 		KYCFacialMatchThreshold: getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
+		FeatureKYCOwnershipGate: getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
 
 		// ── Arena competition engine (ADR-014) ──
 		FeatureArenaEnabled:       getEnvBool("FEATURE_ARENA_ENABLED", false),
@@ -1207,6 +1215,12 @@ func (c Config) Validate() error {
 				problems = append(problems, "KYC_PII_ENC_KEY must be base64 of exactly 32 bytes (AES-256)")
 			}
 		}
+	}
+
+	// The NIN/BVN ownership gate only runs inside the KYC verification gateway, so
+	// enabling it without the gateway is a silent no-op — surface the misconfig.
+	if c.FeatureKYCOwnershipGate && !c.FeatureKYCVerifyEnabled {
+		problems = append(problems, "FEATURE_KYC_OWNERSHIP_GATE=true has no effect unless FEATURE_KYC_VERIFY_ENABLED=true")
 	}
 
 	// Arena (ADR-014): merit entries must be signable — require at least one valid

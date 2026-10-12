@@ -37,6 +37,21 @@ type Service struct {
 
 	seed          RoutingSeed // env seed, folded with DB rules per run
 	facialDefault int
+
+	// NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE). When ownershipGate is
+	// true, a PASSED ID-number check is only honoured if the ID's registered
+	// phone matches the account's verified phone (read via accountPhone). See
+	// ownership.go.
+	ownershipGate bool
+	accountPhone  AccountPhoneSource
+}
+
+// AccountPhoneSource returns a user's account phone and whether it is verified,
+// for the NIN/BVN ownership gate. kycverify depends only on this narrow port —
+// never on the kyc package or a concrete profile type — mirroring TierElevator.
+// It is satisfied by a thin adapter over user_profiles, wired in finance_routes.go.
+type AccountPhoneSource interface {
+	VerifiedPhone(ctx context.Context, userID string) (phone string, verified bool, err error)
 }
 
 // Deps bundles the KYC verification service dependencies.
@@ -48,6 +63,12 @@ type Deps struct {
 	Seed     RoutingSeed
 	// FacialThreshold seeds the default facial gate when a routing rule omits it.
 	FacialThreshold int
+	// OwnershipGate enables the NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE,
+	// default off). When true, AccountPhoneSource MUST be wired — a nil source with
+	// the gate on fails CLOSED (blocks), never open.
+	OwnershipGate bool
+	// AccountPhoneSource reads the caller's verified account phone for the gate.
+	AccountPhoneSource AccountPhoneSource
 }
 
 // NewService builds the KYC verification service.
@@ -62,6 +83,8 @@ func NewService(d Deps) *Service {
 		orch:          NewOrchestrator(d.Pool, repo, d.Elevator),
 		seed:          d.Seed,
 		facialDefault: d.FacialThreshold,
+		ownershipGate: d.OwnershipGate,
+		accountPhone:  d.AccountPhoneSource,
 	}
 }
 
@@ -212,6 +235,32 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 			return nil, perr
 		}
 		rawRef = ref
+	}
+
+	// NIN/BVN OWNERSHIP GATE (FEATURE_KYC_OWNERSHIP_GATE). A PASSED ID-number
+	// data-match proves the ID is real, not that the caller owns it. Before the
+	// status is written — upstream of both tier elevation (Recompute) and any
+	// identity persistence — require the ID's registered phone to match the
+	// account's verified phone. A mismatch / indeterminate state downgrades the
+	// result to FAILED with a user-facing reason (masked last-4 hint on a
+	// mismatch). Exempt ID types and non-PASS results are untouched. A read error
+	// fails CLOSED (we never let a PASS stand when ownership could not be checked).
+	if s.ownershipGate && ct == provider.KycIDNumber &&
+		gr.Result.Status == provider.KycPassed && isPhoneBearingIDType(req.IDType) {
+		phone, verified := "", false
+		if s.accountPhone != nil {
+			p, v, perr := s.accountPhone.VerifiedPhone(ctx, userID)
+			if perr != nil {
+				return nil, fmt.Errorf("kycverify: ownership gate phone lookup user=%s: %w", userID, perr)
+			}
+			phone, verified = p, v
+		}
+		before := gr.Result.Status
+		gr.Result = applyOwnershipGate(gr.Result, req.IDType, phone, verified)
+		if gr.Result.Status != before {
+			s.audit(ctx, "kycverify.ownership.blocked", userID, stored.ID,
+				fmt.Sprintf("type=%s id_type=%s", ct, req.IDType))
+		}
 	}
 
 	if err := applyCheckTransition(stored.Status, gr.Result.Status); err != nil {
