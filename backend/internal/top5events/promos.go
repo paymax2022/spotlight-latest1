@@ -52,8 +52,15 @@ func (s *Service) UpdatePromo(ctx context.Context, callerID, eventID, promoID st
 		return nil, fmt.Errorf("events: fetch promo: %w", err)
 	}
 
+	// A code is part of the (event_id, code, version) supersede identity; editing it
+	// could leave two active rows sharing a code. Change a code by deactivating this
+	// promo and creating a new one.
+	if patch.Code != nil && *patch.Code != cur.Code {
+		return nil, fmt.Errorf("%w: code cannot be edited; deactivate and create a new promo", ErrPromoLocked)
+	}
+
 	if cur.Used > 0 {
-		if patch.Code != nil || patch.PercentOff != nil || patch.AmountOffKobo != nil || patch.TierID != nil ||
+		if patch.PercentOff != nil || patch.AmountOffKobo != nil || patch.TierID != nil ||
 			patch.StartsAt != nil || patch.EndsAt != nil || patch.PerUserLimit != nil {
 			return nil, fmt.Errorf("%w: only active and a higher max_uses can change after use", ErrPromoLocked)
 		}
@@ -118,9 +125,6 @@ func (s *Service) UpdatePromo(ctx context.Context, callerID, eventID, promoID st
 		args = append(args, v)
 		sets = append(sets, fmt.Sprintf("%s=$%d", col, len(args)))
 		changed[col] = v
-	}
-	if patch.Code != nil {
-		add("code", *patch.Code)
 	}
 	if valueChanged {
 		add("percent_off", pct)

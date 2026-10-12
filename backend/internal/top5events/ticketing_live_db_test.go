@@ -266,6 +266,26 @@ func TestLiveDB_Promo_UpdateValueAfterUseLocked(t *testing.T) {
 	}
 }
 
+func TestLiveDB_Promo_UpdateCodeRejected(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	promo := seedUsedPromo(t, ctx, pool, ev, 0, 5)
+	var before string
+	_ = pool.QueryRow(ctx, `SELECT code FROM event_promo_codes WHERE id=$1`, promo).Scan(&before)
+	if _, err := svc.UpdatePromo(ctx, owner, ev, promo, top5events.PromoPatch{Code: strp("NEWCODE"), MaxUses: intp(9)}); !errors.Is(err, top5events.ErrPromoLocked) {
+		t.Fatalf("want ErrPromoLocked, got %v", err)
+	}
+	var after string
+	var mu int
+	_ = pool.QueryRow(ctx, `SELECT code, max_uses FROM event_promo_codes WHERE id=$1`, promo).Scan(&after, &mu)
+	if after != before || mu != 5 {
+		t.Fatalf("write leaked: code %q->%q max_uses %d", before, after, mu)
+	}
+}
+
 func TestLiveDB_Promo_UpdateDeactivateAfterUseOk(t *testing.T) {
 	ctx := context.Background()
 	pool := ticketTokenPool(t)

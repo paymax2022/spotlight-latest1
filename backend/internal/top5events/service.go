@@ -353,8 +353,8 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 	if err := validatePromoValue(p.PercentOff, p.AmountOffKobo); err != nil {
 		return nil, err
 	}
-	if p.PerUserLimit < 0 {
-		return nil, errors.New("events: per_user_limit must be non-negative")
+	if p.PerUserLimit < 0 || p.MaxUses < 0 {
+		return nil, errors.New("events: per_user_limit and max_uses must be non-negative")
 	}
 	if p.StartsAt != nil && p.EndsAt != nil && !p.StartsAt.Before(*p.EndsAt) {
 		return nil, ErrInvalidWindow
