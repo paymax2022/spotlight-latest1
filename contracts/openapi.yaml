@@ -8593,7 +8593,7 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/PromoCode' }
-        '400': { description: Invalid body, discount, or window }
+        '400': { description: "Invalid body, discount, or window" }
         '403': { description: Caller is not the organiser }
         '404': { description: Event or promo not found }
         '409': { description: Promo is locked (already used) }
