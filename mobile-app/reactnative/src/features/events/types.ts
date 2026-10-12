@@ -146,8 +146,8 @@ export interface TierPatch {
   sales_end_at?: string | null;
 }
 
+// `code` is deliberately absent: the server rejects code edits (create sets it).
 export interface PromoPatch {
-  code?: string;
   percent_off?: number;
   amount_off_kobo?: number;
   tier_id?: string | null;
@@ -178,6 +178,18 @@ export interface AddTierInput {
   invite_only?:    boolean;
   sales_start_at?: string | null;
   sales_end_at?:   string | null;
+}
+
+// POST /events/:id/promos — exactly one of percent_off / amount_off_kobo (server rejects both/neither).
+export interface CreatePromoInput {
+  code: string;
+  percent_off?: number;
+  amount_off_kobo?: number;
+  tier_id?: string;
+  starts_at?: string;
+  ends_at?: string;
+  per_user_limit?: number;
+  max_uses?: number;
 }
 
 export interface PurchaseTicketInput {

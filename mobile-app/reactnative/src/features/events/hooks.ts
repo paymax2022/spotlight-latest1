@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { EventPatch, TierPatch, PromoPatch, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
+import type { EventPatch, TierPatch, PromoPatch, CreatePromoInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
@@ -213,6 +213,22 @@ export function useUpdatePromo(eventId: string) {
   const invalidate = useInvalidateOrganiserEvent();
   return useMutation({
     mutationFn: ({ promoId, patch }: { promoId: string; patch: PromoPatch }) => api.updatePromo(eventId, promoId, patch),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useAddTier(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (input: AddTierInput) => api.addTicketTier(eventId, input),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useCreatePromo(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (input: CreatePromoInput) => api.createPromo(eventId, input),
     onSuccess: () => invalidate(eventId),
   });
 }

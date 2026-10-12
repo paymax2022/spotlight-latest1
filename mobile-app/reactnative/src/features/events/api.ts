@@ -24,6 +24,7 @@ import type {
   EventPatch,
   TierPatch,
   PromoPatch,
+  CreatePromoInput,
   PromoCode,
 } from './types';
 
@@ -404,6 +405,11 @@ export async function updateTier(eventId: string, tierId: string, patch: TierPat
 export async function updatePromo(eventId: string, promoId: string, patch: PromoPatch): Promise<PromoCode> {
   if (USE_MOCK) throw notInFixtureMode('Editing a promo code');
   return unwrap(await api.patch(`${API_BASE}/${eventId}/promos/${promoId}`, patch));
+}
+
+export async function createPromo(eventId: string, input: CreatePromoInput): Promise<PromoCode> {
+  if (USE_MOCK) throw notInFixtureMode('Creating a promo code');
+  return unwrap(await api.post(`${API_BASE}/${eventId}/promos`, input));
 }
 
 // Closed-loop top-up: debits main wallet (via PaymentSheet) → credits event wallet.
