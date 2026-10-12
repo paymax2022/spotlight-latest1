@@ -12,9 +12,12 @@ import { useAsset } from '@/features/crypto/hooks/useCrypto';
 import { formatCrypto, formatFiat } from '@/features/crypto/utils/cryptoFormatters';
 
 export default function BuySuccessScreen() {
-  const p = useLocalSearchParams<{ reference: string; symbol: string; crypto: string; fiat: string; txId: string }>();
+  const p = useLocalSearchParams<{ reference: string; symbol: string; crypto?: string; cryptoText?: string; fiat: string; txId: string }>();
   const asset = useAsset(p.symbol);
   const decimals = asset.data?.decimals ?? 8;
+  // The swap pipeline passes a ready-formatted decimal string; the legacy path
+  // passes integer minor units to format here.
+  const cryptoLabel = p.cryptoText ?? formatCrypto(Number(p.crypto), p.symbol, decimals);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -24,7 +27,7 @@ export default function BuySuccessScreen() {
         </View>
         <Text style={styles.title}>Order complete 🎉</Text>
         <Text style={styles.sub}>
-          You bought {formatCrypto(Number(p.crypto), p.symbol, decimals)} for {formatFiat(Number(p.fiat), 'NGN')}. It's now in your crypto portfolio.
+          You bought {cryptoLabel} for {formatFiat(Number(p.fiat), 'NGN')}. It's now in your crypto portfolio.
         </Text>
 
         <View style={styles.refCard}>

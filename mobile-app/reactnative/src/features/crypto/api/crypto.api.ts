@@ -6,6 +6,7 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { buildQuote, buildSwapQuote } from '../utils/cryptoFormatters';
+import { swapQuoteBody, normalizeSwap, mapSwapError } from '../utils/swapPipeline';
 import {
   MOCK_ASSETS,
   MOCK_POSITIONS,
@@ -22,6 +23,7 @@ import type {
   CryptoOrder,
   CryptoPortfolio,
   CryptoQuote,
+  CryptoSwap,
   CryptoTransactionDetail,
   CryptoTransactionSummary,
   FiatCurrency,
@@ -199,6 +201,115 @@ export async function executeSell(quote: CryptoQuote, idempotencyKey: string): P
   } catch (err) {
     throw toCryptoError(err);
   }
+}
+
+// ─── Provider-driven BUY swap pipeline (backend/internal/cryptosvc) ──────────
+// NGN→crypto buy over the Quidax adapter: quote → confirm (PIN second factor) →
+// poll. The server prices + holds the NGN; the client only renders authoritative
+// numbers and forwards the PIN on confirm. Behind EXPO_PUBLIC_CRYPTO_SWAPS on the
+// client and FEATURE_CRYPTO_SWAPS_ENABLED on the backend. See swapPipeline.ts.
+
+/** The swap pipeline wraps its payload as { success, swap } (no nested data). */
+function extractSwap(res: { data?: unknown }): CryptoSwap {
+  const body = res?.data as { swap?: unknown } | undefined;
+  return normalizeSwap(body?.swap);
+}
+
+/** Mock swap store so the quote→confirm→poll lifecycle is coherent in dev. */
+const MOCK_SWAPS = new Map<string, CryptoSwap>();
+
+function mockUuid(): string {
+  const h = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
+  return `${h()}${h()}-${h()}-${h()}-${h()}-${h()}${h()}${h()}`;
+}
+
+/** Price a buy and persist the quote. Requires an Idempotency-Key. */
+export async function quoteSwap(asset: string, ngnKobo: number, idempotencyKey: string): Promise<CryptoSwap> {
+  const body = swapQuoteBody(asset, ngnKobo); // fails closed on a non-integer/zero/negative kobo amount
+  if (USE_MOCK) {
+    await delay(380);
+    const a = MOCK_ASSETS.find((x) => x.symbol === body.asset || x.id === body.asset);
+    const pricePerWhole = a?.price.amount ?? 100_000_000; // kobo per 1 coin
+    const decimals = a?.decimals ?? 8;
+    const feeKobo = Math.round((body.ngn_kobo * 90) / 10_000); // 0.90% illustrative
+    const swap: CryptoSwap = {
+      id: mockUuid(),
+      status: 'quoted',
+      side: 'buy',
+      asset: a?.symbol ?? body.asset,
+      ngnKobo: body.ngn_kobo,
+      feeKobo,
+      feeBps: 90,
+      totalKobo: body.ngn_kobo + feeKobo,
+      quotedAmount: (body.ngn_kobo / pricePerWhole).toFixed(decimals),
+      price: (pricePerWhole / 100).toFixed(2),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    MOCK_SWAPS.set(swap.id, swap);
+    return swap;
+  }
+  try {
+    const res = await api.post('/api/v1/crypto/swaps/quote', body, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+    });
+    return extractSwap(res);
+  } catch (err) {
+    throw mapSwapErrorToThrowable(err);
+  }
+}
+
+/** Confirm a quoted swap with the user's transaction PIN (second factor). */
+export async function confirmSwap(id: string, pin: string): Promise<CryptoSwap> {
+  if (USE_MOCK) {
+    await delay(900);
+    const existing = MOCK_SWAPS.get(id);
+    if (!existing) throw mockSwapError('not_found');
+    if (existing.expiresAt && new Date(existing.expiresAt).getTime() < Date.now()) {
+      throw mockSwapError('quote_expired');
+    }
+    const settled: CryptoSwap = { ...existing, status: 'completed', receivedAmount: existing.quotedAmount };
+    MOCK_SWAPS.set(id, settled);
+    return settled;
+  }
+  try {
+    // The PIN rides only in the JSON body; it is never placed in a URL, header,
+    // query string or log. Both 200 (settled/processing) and 202 (needs_review)
+    // return { success, swap } — swap.status distinguishes them.
+    const res = await api.post(`/api/v1/crypto/swaps/${id}/confirm`, { pin });
+    return extractSwap(res);
+  } catch (err) {
+    throw mapSwapErrorToThrowable(err);
+  }
+}
+
+/** Read one of the caller's swaps (poll for the terminal status). */
+export async function getSwap(id: string): Promise<CryptoSwap> {
+  if (USE_MOCK) {
+    await delay(260);
+    const existing = MOCK_SWAPS.get(id);
+    if (!existing) throw mockSwapError('not_found');
+    return existing;
+  }
+  try {
+    const res = await api.get(`/api/v1/crypto/swaps/${id}`);
+    return extractSwap(res);
+  } catch (err) {
+    throw mapSwapErrorToThrowable(err);
+  }
+}
+
+/** Turn a swap-pipeline axios error into an Error carrying message + cryptoType. */
+function mapSwapErrorToThrowable(err: unknown): Error {
+  const { message, cryptoType } = mapSwapError(err);
+  const out = new Error(message) as Error & { cryptoType?: string };
+  out.cryptoType = cryptoType;
+  return out;
+}
+
+/** A mock error shaped like the pipeline's { success:false, error } envelope. */
+function mockSwapError(code: string): Error {
+  const err = { response: { data: { success: false, error: code } } };
+  return mapSwapErrorToThrowable(err);
 }
 
 // the pre-trade estimate and POST /crypto/swap for the atomic two-leg order
