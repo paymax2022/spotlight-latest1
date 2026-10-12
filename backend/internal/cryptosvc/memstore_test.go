@@ -105,6 +105,15 @@ func (s *memStore) ListByState(_ context.Context, state cryptoprov.SwapState, li
 	return out, nil
 }
 
+func (s *memStore) SwapByIDAny(_ context.Context, id string) (SwapRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.swaps[id]; r != nil {
+		return *r, true, nil
+	}
+	return SwapRecord{}, false, nil
+}
+
 // age pretends a swap's last write was d ago relative to now.
 func (s *memStore) age(id string, now time.Time, d time.Duration) {
 	s.mu.Lock()
