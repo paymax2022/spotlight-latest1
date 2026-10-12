@@ -5,9 +5,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as crypto from '../api/crypto.api';
 import { newIdempotencyKey } from '../utils/cryptoFormatters';
+import { swapStage } from '../utils/swapPipeline';
 import type {
   ChartRange,
   CryptoQuote,
+  CryptoSwap,
   NewAddressDraft,
   NewPriceAlertDraft,
   QuoteRequest,
@@ -70,6 +72,43 @@ export function useExecuteSell() {
       qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
       qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
+    },
+  });
+}
+
+// ─── Provider-driven BUY swap pipeline (quote → confirm → poll) ──────────────
+
+/** Price + persist a buy quote on the server (Idempotency-Key attached). */
+export function useQuoteSwap() {
+  return useMutation({
+    mutationFn: ({ asset, ngnKobo }: { asset: string; ngnKobo: number }) =>
+      crypto.quoteSwap(asset, ngnKobo, newIdempotencyKey('swap-buy')),
+  });
+}
+
+/** Confirm a quoted swap with the transaction PIN; refresh money views on success. */
+export function useConfirmSwap() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pin }: { id: string; pin: string }) => crypto.confirmSwap(id, pin),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'portfolio'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'positions'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
+    },
+  });
+}
+
+/** Poll a single swap until it reaches a terminal (or needs-review) state. */
+export function useSwap(id?: string) {
+  return useQuery({
+    queryKey: [KEY, 'swap', id],
+    queryFn: () => crypto.getSwap(id as string),
+    enabled: Boolean(id),
+    // Keep polling only while the swap is still settling; stop once terminal.
+    refetchInterval: (query) => {
+      const data = query.state.data as CryptoSwap | undefined;
+      return data && swapStage(data.status) === 'pending' ? 2500 : false;
     },
   });
 }

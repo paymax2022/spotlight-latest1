@@ -7,11 +7,96 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
-import { useAsset, useExecuteBuy } from '@/features/crypto/hooks/useCrypto';
-import { buildQuote } from '@/features/crypto/utils/cryptoFormatters';
+import { useAsset, useExecuteBuy, useSwap } from '@/features/crypto/hooks/useCrypto';
+import { buildQuote, formatFiat } from '@/features/crypto/utils/cryptoFormatters';
+import { cryptoSwapsEnabled, swapStage } from '@/features/crypto/utils/swapPipeline';
 import type { AmountBasis } from '@/features/crypto/types/crypto.types';
 
 export default function BuyProcessingScreen() {
+  // A swapId param means the swap was already confirmed on the review screen and
+  // we only poll for its terminal state; otherwise run the legacy execute path.
+  const params = useLocalSearchParams<{ swapId?: string }>();
+  return cryptoSwapsEnabled() && params.swapId ? <SwapBuyProcessing /> : <LegacyBuyProcessing />;
+}
+
+// ─── New pipeline: poll the already-confirmed swap to its terminal state ─────
+
+function SwapBuyProcessing() {
+  const params = useLocalSearchParams<{ swapId: string }>();
+  const swapQuery = useSwap(params.swapId);
+  const routed = useRef(false);
+
+  useEffect(() => {
+    if (routed.current || !swapQuery.data) return;
+    const s = swapQuery.data;
+    const stage = swapStage(s.status);
+    if (stage === 'pending') return; // keep polling
+
+    routed.current = true;
+    if (stage === 'done') {
+      router.replace({
+        pathname: '/crypto/buy/success',
+        params: {
+          reference: s.id.slice(0, 8).toUpperCase(),
+          symbol: s.asset,
+          cryptoText: `${s.receivedAmount ?? s.quotedAmount} ${s.asset}`,
+          fiat: String(s.totalKobo),
+          txId: s.id,
+        },
+      });
+    } else if (stage === 'review') {
+      router.replace({
+        pathname: '/crypto/buy/pending',
+        params: { symbol: s.asset, fiat: String(s.totalKobo), txId: s.id },
+      });
+    } else {
+      router.replace({
+        pathname: '/crypto/buy/failed',
+        params: {
+          symbol: s.asset,
+          reason: s.status === 'expired'
+            ? 'The quote expired before your order was filled. Please get a fresh quote.'
+            : 'The order could not be completed. Any held funds have been released.',
+          kind: s.status === 'expired' ? 'quote_expired' : 'error',
+        },
+      });
+    }
+  }, [swapQuery.data]);
+
+  // A persistent read failure (after react-query's retries) — let the user re-check.
+  if (swapQuery.isError && !swapQuery.data) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StateView
+          kind="error"
+          title="Still working on it"
+          message="We couldn't read your order status just now. Your funds are safe — try checking again."
+          actionLabel="Check status"
+          onAction={() => swapQuery.refetch()}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.center}>
+        <View style={styles.ring}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </View>
+        <Text style={styles.title}>Completing your order…</Text>
+        <Text style={styles.sub}>
+          Your {swapQuery.data ? formatFiat(swapQuery.data.totalKobo, 'NGN') : 'payment'} is held while the exchange
+          settles. This usually takes a moment — please don't close the app.
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+// ─── Legacy execute path (unchanged) ────────────────────────────────────────
+
+function LegacyBuyProcessing() {
   const params = useLocalSearchParams<{ symbol: string; basis: string; amount: string; expiresAt: string }>();
   const asset = useAsset(params.symbol);
   const buy = useExecuteBuy();

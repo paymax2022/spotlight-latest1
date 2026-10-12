@@ -58,6 +58,7 @@ export default function CryptoLayout() {
       <Stack.Screen name="buy/review" />
       <Stack.Screen name="buy/processing" options={{ gestureEnabled: false }} />
       <Stack.Screen name="buy/success" options={{ gestureEnabled: false, animation: 'fade' }} />
+      <Stack.Screen name="buy/pending" options={{ gestureEnabled: false, animation: 'fade' }} />
       <Stack.Screen name="buy/failed" options={{ gestureEnabled: false, animation: 'fade' }} />
 
       {/* Sell flow: entry → review (PIN) → processing → result */}

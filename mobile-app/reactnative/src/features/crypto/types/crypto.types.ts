@@ -166,6 +166,40 @@ export interface CryptoOrder {
   createdAt: string;
 }
 
+// ─── Provider-driven BUY swap pipeline (backend/internal/cryptosvc) ──────────
+// A server-persisted NGN→crypto buy: quote → confirm (PIN) → poll. Distinct from
+// the legacy atomic /crypto/swap crypto-to-crypto order above. NGN is integer
+// kobo; crypto amounts are decimal STRINGS carried verbatim (never a float).
+// Mirrors contracts/crypto-swaps.openapi.yaml (ADR-PR708/709/710/716/719).
+
+export type SwapStatus =
+  | 'quoted'
+  | 'confirming'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'needs_review';
+
+/** The UX bucket a SwapStatus collapses to for the processing/terminal screens. */
+export type SwapStage = 'pending' | 'done' | 'failed' | 'review';
+
+/** A provider-driven buy swap — the client view of cryptosvc's Swap. */
+export interface CryptoSwap {
+  id: string;                  // UUID
+  status: SwapStatus;
+  side: 'buy';
+  asset: string;               // 'USDT'
+  ngnKobo: number;             // NGN to spend, integer kobo (fee added on top)
+  feeKobo: number;             // platform fee, integer kobo
+  feeBps: number;              // fee basis points, for transparency copy
+  totalKobo: number;           // ngnKobo + feeKobo — the amount held from the wallet
+  quotedAmount: string;        // decimal string of crypto quoted
+  receivedAmount?: string;     // decimal string, present once the provider confirms
+  price: string;               // decimal string, NGN per 1 unit
+  expiresAt?: string;          // ISO — the quote-lock countdown derives from this
+}
+
 /** Unified history row (docs/crypto/screens.md → crypto orders / transactions). */
 export interface CryptoTransactionSummary {
   id: string;
