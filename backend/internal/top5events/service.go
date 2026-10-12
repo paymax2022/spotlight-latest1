@@ -109,6 +109,9 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	e.OrganiserID = organiserID
 	e.State = EventDraft
 	e.CreatedAt = time.Now()
+	if e.FeeBps <= 0 {
+		e.FeeBps = 1000 // platform default: 10% (the Cancel refund keeps this as the non-refundable fee)
+	}
 	// organizer_id (legacy, NOT NULL, no default) is populated alongside the
 	// new organiser_id with the SAME value — see
 	// 20270228000000_events_ticket_legacy_columns_nullable.sql for the full
@@ -384,8 +387,11 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if err != nil {
 		return nil, err
 	}
+	// Placed AFTER the orderByIdem replay above (a replay of an already-placed
+	// order must still resolve even if the event is now paused) and BEFORE any
+	// new order is reserved/inserted below.
 	if ev.State != EventLive {
-		return nil, fmt.Errorf("events: event not on sale (state %s)", ev.State)
+		return nil, fmt.Errorf("%w (state %s)", ErrNotPurchasable, ev.State)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -1358,6 +1364,7 @@ var (
 	ErrNotFound          = errors.New("events: not found")
 	ErrForbidden         = errors.New("events: forbidden")
 	ErrSoldOut           = errors.New("events: tier sold out")
+	ErrNotPurchasable    = errors.New("events: event is not on sale")
 	ErrInsufficientFloat = errors.New("events: insufficient event-wallet balance")
 	ErrKYCRequired       = errors.New("events: vendor must complete KYC before payout (NL-10)")
 )
