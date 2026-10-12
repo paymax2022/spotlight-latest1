@@ -1,4 +1,4 @@
-# ADR-PR727: Crypto swap review queue + state-gated resolution for parked needs_review swaps
+# ADR-PR727: Crypto swap review queue — read-only admin surface for parked needs_review swaps, resolution deferred
 
 Status: accepted (flag-off)
 
@@ -13,27 +13,17 @@ The need is "ops must be able to see held money fast". Actually *resolving* a pa
 separate, money-mutating decision — and the safe set of actions depends on the swap's state.
 
 ## Decision
-- **A read-only review queue** (`GET /admin/crypto/swaps/review`): `Store.ListByState` →
-  `Service.ListByState` → a `crypto.admin` handler, oldest-parked first. It mutates nothing, so it
-  needs no ledger posting or tier gate — a `SELECT`. It surfaces `held_kobo`, the asset, age and
-  `has_provider_id` so ops can see held money and tell the dangerous rows apart.
-- **State-gated resolution, never a manual settle** (`POST /admin/crypto/swaps/{id}/resolve`,
-  `Service.AdminResolve`). The resolution set depends on provider state and is enforced server-side:
-  - parked **with** a `provider_swap_id` → `retry` only: re-poll the provider via the existing
-    `Ingest.ResolveSwap`, which settles the crypto or releases the hold itself. `release` is refused
-    (`ErrReleaseUnsafe`) — a blind release could pay the user back *and* still deliver the crypto.
-  - parked **without** a `provider_swap_id` → `release` only: the provider outcome is unknown, so
-    reverse the NGN hold back to the wallet (`Settler.FailBuy`) and move the swap to `failed`.
-    `retry` is refused (`ErrNothingToRetry`) — there is nothing to poll.
-  There is deliberately **no manual settle/capture**: we never credit crypto we cannot prove was
-  bought. The member view hides `provider_swap_id`; the admin view exposes it, gated by `crypto.admin`.
-- **Idempotent and locked.** The whole decision runs under a per-swap `"resolve:"+id` lock (a
-  different key from the settler's own `swapID` lock, so no re-entrancy). `FailBuy` is itself
-  idempotent (no-op without a live hold or when already released; refused once the fee is recognised),
-  and the `needs_review → failed` transition is conditional, so a repeat release cannot double-credit —
-  a second attempt simply finds the swap no longer parked (`ErrNotParked`). An `Idempotency-Key` header
-  is required per the money-path iron rule, and a non-empty operator note is required for the audit
-  trail (`crypto.swap.admin_release` / `crypto.swap.admin_retry`).
+- **Ship a read-only surface first (this PR); defer resolution to a follow-up.** Round 1 is a
+  review *queue* only. It mutates nothing, so it needs no ledger posting, no idempotency key and
+  no tier gate — it is a `SELECT`. This gets ops visibility of held money without the risk of a
+  money-path endpoint, and keeps the PR small.
+- **Resolution is state-dependent, so it is not inventable here.** A swap parked *with* a
+  `provider_swap_id` can be re-polled/retried (the existing `Service.Resolve`/`Ingest` path). A
+  swap parked *without* one has an **unknown provider outcome**: we cannot prove the provider
+  executed, so the only safe human action is to **release** the hold back to the user — a manual
+  "settle/capture" there would credit crypto we cannot confirm was bought. That is a money-path
+  policy call for a follow-up PR (tests-first + ledger-auditor review). The view surfaces
+  `has_provider_id` so the dangerous rows are distinguishable now.
 - **A second admin group on the same prefix, not an extension of the legacy module.** The two
   swap tables are disjoint, so the queue is served by `cryptosvc.RegisterAdminRoutes` mounting
   `GET /api/v1/admin/crypto/swaps/review` under the same `/api/v1/admin/crypto` prefix as the
@@ -54,9 +44,7 @@ separate, money-mutating decision — and the safe set of actions depends on the
   `is_admin()` and a `(status, updated_at)` partial index covering `needs_review`.
 
 ## Known and deferred
-- **Fixture mode refuses resolve.** The frontend-admin service (`USE_MOCK`) refuses to simulate a
-  resolve rather than report a money movement it did not perform (per ADMIN_SIMULATED_WRITES.md);
-  the live backend is the only path that mutates money.
-- **Retry re-poll is bounded by the provider.** If the provider is unreachable, retry surfaces the
-  provider error and leaves the swap parked (no state change) — correct, but a repeatedly stuck
-  provider still needs manual attention; alerting remains the reconciler's log sink for now.
+- **No resolution yet.** Ops can see parked money but not act on it from the dashboard. Follow-up:
+  `POST /admin/crypto/swaps/{id}/resolve` with a `release | retry` decision (settle only if a
+  later policy call permits it for provider-id-bearing swaps), mandatory note + Idempotency-Key,
+  audit event, mirroring the withdrawals/addresses decision UIs.

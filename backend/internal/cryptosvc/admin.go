@@ -100,14 +100,15 @@ type resolveBody struct {
 // resolve POST /admin/crypto/swaps/:id/resolve — apply a human decision to a swap parked in
 // needs_review. An Idempotency-Key header and a non-empty note are mandatory (iron-rule money
 // path + audit trail). The decision is release or retry; which one is safe depends on whether
-// the swap has a provider swap id (enforced in Service.AdminResolve).
+// the swap has a provider swap id (enforced in Service.AdminResolve). See ADR-PR728.
 func (h *adminHandler) resolve(c *gin.Context) {
 	id := c.Param("id")
 	if !validSwapID(id) {
 		fail(c, http.StatusNotFound, "swap_not_found")
 		return
 	}
-	if key := c.GetHeader("Idempotency-Key"); !idemKeyRe.MatchString(key) {
+	idemKey := c.GetHeader("Idempotency-Key")
+	if !idemKeyRe.MatchString(idemKey) {
 		fail(c, http.StatusBadRequest, "idempotency_key_required")
 		return
 	}
@@ -127,7 +128,7 @@ func (h *adminHandler) resolve(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "bad_decision")
 		return
 	}
-	rec, err := h.d.Service.AdminResolve(c.Request.Context(), "admin:"+ginutil.UserID(c), id, decision, note)
+	rec, err := h.d.Service.AdminResolve(c.Request.Context(), "admin:"+ginutil.UserID(c), idemKey, id, decision, note)
 	if err != nil {
 		h.writeResolveErr(c, err)
 		return

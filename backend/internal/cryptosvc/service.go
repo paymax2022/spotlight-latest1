@@ -507,15 +507,16 @@ var (
 )
 
 // AdminResolve resolves a swap parked in needs_review. It is the ONLY human resolution path and
-// never settles crypto we cannot prove was bought:
+// never settles crypto we cannot prove was bought (see ADR-PR728):
 //   - retry   (provider swap id present): re-poll the provider and apply the authoritative outcome,
 //     which itself settles or releases through the normal ingest path.
 //   - release (no provider swap id): reverse the NGN hold back to the user's wallet and fail the swap.
 //
-// actor identifies the operator for the audit trail; note is the mandatory operator reason. The whole
-// decision runs under a per-swap lock, and both the ledger release (FailBuy) and the state transition
-// are idempotent, so a repeated resolve is a no-op rather than a double credit.
-func (s *Service) AdminResolve(ctx context.Context, actor, swapID string, decision ResolveDecision, note string) (SwapRecord, error) {
+// actor identifies the operator for the audit trail; idemKey is the request's Idempotency-Key,
+// recorded on the audit event; note is the mandatory operator reason. The whole decision runs
+// under a per-swap lock, and both the ledger release (FailBuy) and the state transition are
+// idempotent, so a repeated resolve is a no-op rather than a double credit.
+func (s *Service) AdminResolve(ctx context.Context, actor, idemKey, swapID string, decision ResolveDecision, note string) (SwapRecord, error) {
 	var out SwapRecord
 	err := s.locked(ctx, "resolve:"+swapID, func(ctx context.Context) error {
 		rec, ok, err := s.cfg.Store.SwapByIDAny(ctx, swapID)
@@ -537,10 +538,11 @@ func (s *Service) AdminResolve(ctx context.Context, actor, swapID string, decisi
 			if s.cfg.Ingest == nil {
 				return errors.New("cryptosvc: ingest not configured")
 			}
-			s.audit(ctx, actor, "crypto.swap.admin_retry", rec.ID, note, nil)
+			// Re-poll first; only audit a retry that actually reached the provider.
 			if _, err := s.cfg.Ingest.ResolveSwap(ctx, s.cfg.Provider, rec); err != nil {
 				return err
 			}
+			s.audit(ctx, actor, "crypto.swap.admin_retry", rec.ID, note, map[string]any{"idempotency_key": idemKey})
 		case DecisionRelease:
 			if rec.ProviderSwapID != "" {
 				return ErrReleaseUnsafe
@@ -549,17 +551,28 @@ func (s *Service) AdminResolve(ctx context.Context, actor, swapID string, decisi
 			if err := s.cfg.Settler.FailBuy(ctx, in); err != nil {
 				return err
 			}
-			if err := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "admin release: "+note); err != nil {
-				return err
+			// Conditional transition: audit the release only when THIS call moved the swap, so a
+			// lost race never writes a release event it did not perform.
+			applied, terr := s.cfg.Store.TransitionSwap(ctx, rec.ID, cryptoprov.SwapStateNeedsReview, cryptoprov.SwapStateFailed, decimal.Zero, "admin release: "+note)
+			if terr != nil {
+				return terr
 			}
-			s.audit(ctx, actor, "crypto.swap.admin_release", rec.ID, note, map[string]any{"released_kobo": rec.NGNKobo + rec.FeeKobo})
+			if applied {
+				s.audit(ctx, actor, "crypto.swap.admin_release", rec.ID, note, map[string]any{"released_kobo": rec.NGNKobo + rec.FeeKobo, "idempotency_key": idemKey})
+			}
 		default:
 			return ErrUnknownDecision
 		}
 		return nil
 	})
-	if fresh, ok, rerr := s.cfg.Store.SwapByIDAny(ctx, swapID); rerr == nil && ok {
-		out = fresh
+	if err == nil {
+		// Return the post-mutation view; a reload failure after a successful mutation is surfaced
+		// rather than returning a stale needs_review record.
+		if fresh, ok, rerr := s.cfg.Store.SwapByIDAny(ctx, swapID); rerr != nil {
+			return out, rerr
+		} else if ok {
+			out = fresh
+		}
 	}
 	return out, err
 }

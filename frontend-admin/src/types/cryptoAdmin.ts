@@ -140,7 +140,7 @@ export interface CryptoReviewSwap {
 // POST /admin/crypto/swaps/:id/resolve body. State-dependent, enforced server-side:
 //  - 'retry'   is valid only when has_provider_id (re-poll the provider).
 //  - 'release' is valid only when NOT has_provider_id (reverse the hold to the user).
-// There is deliberately no manual settle — see ADR-PR727.
+// There is deliberately no manual settle — see ADR-PR728.
 export interface CryptoSwapResolveRequest {
   decision: 'release' | 'retry';
   note: string;
