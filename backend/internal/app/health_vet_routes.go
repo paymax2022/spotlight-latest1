@@ -105,6 +105,8 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg := member.Group("/health/vet")
 	vg.POST("/pets", h.CreatePet)                            // owner; seeds PET vault record (HL-8)
 	vg.GET("/pets", h.ListPets)                              // owner reads own pets (HL-8)
+	vg.GET("/pets/:id", h.GetPet)                            // owner reads one own pet
+	vg.PUT("/pets/:id", h.UpdatePet)                         // owner edits one own pet
 	vg.POST("/pets/:id/vaccinations", h.ScheduleVaccination) // reminder via scheduler
 	vg.GET("/vets", h.DiscoverVets)                          // map/list discovery (HL-2, PostGIS)
 	vg.POST("/services", h.UpsertService)                    // verified vet owner; fee governance

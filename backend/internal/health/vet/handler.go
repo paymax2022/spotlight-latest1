@@ -106,6 +106,11 @@ func (h *Handler) CreatePet(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "Idempotency-Key required")
 		return
 	}
+	// Rules run here as well as in the service so bad input never reaches a write.
+	if err := NormalizePetInput(&req.Pet, PetToday(time.Now())); err != nil {
+		failErr(c, http.StatusUnprocessableEntity, err)
+		return
+	}
 	out, err := h.svc.CreatePet(c.Request.Context(), id, req.Pet)
 	if err != nil {
 		status := http.StatusUnprocessableEntity
@@ -134,6 +139,62 @@ func (h *Handler) ListPets(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pets": pets})
+}
+
+// GetPet — GET /pets/:id  (owner reads one of their own pets)
+func (h *Handler) GetPet(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	petID, ok := uuidPathID(c, "id")
+	if !ok {
+		return
+	}
+	pet, err := h.svc.GetPet(c.Request.Context(), id, petID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrPetNotFound) {
+			status = http.StatusNotFound
+		}
+		failErr(c, status, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "pet": pet})
+}
+
+// UpdatePet — PUT /pets/:id  (owner edits one of their own pets). Replaces the
+// editable fields; the pet's identity and idempotency key are not changed.
+func (h *Handler) UpdatePet(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	petID, ok := uuidPathID(c, "id")
+	if !ok {
+		return
+	}
+	var req Pet
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := NormalizePetInput(&req, PetToday(time.Now())); err != nil {
+		failErr(c, http.StatusUnprocessableEntity, err)
+		return
+	}
+	pet, err := h.svc.UpdatePet(c.Request.Context(), id, petID, req)
+	if err != nil {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, ErrPetNotFound) {
+			status = http.StatusNotFound
+		}
+		failErr(c, status, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "pet": pet})
 }
 
 // DiscoverVets — GET /vets?lat=&lng=&radius_m=  (map/list discovery, HL-2)

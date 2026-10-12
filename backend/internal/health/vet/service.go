@@ -176,20 +176,70 @@ var ErrIdemConflict = errors.New("vet: idempotency key already used")
 // one to another owner's row would let a caller read a stranger's pet by
 // replaying their key (mirrors restaurant findOrderByIdempotencyKey).
 func (s *Service) petByIdem(ctx context.Context, ownerID, idemKey string) (*Pet, error) {
-	var p Pet
-	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
-	                  COALESCE(idempotency_key,''), created_at
-	           FROM pets WHERE owner_user_id=$1 AND idempotency_key=$2`
-	err := s.db.QueryRow(ctx, q, ownerID, idemKey).Scan(
-		&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex,
-		&p.BirthDate, &p.WeightKg, &p.Notes, &p.IdempotencyKey, &p.CreatedAt)
+	p, err := scanPet(s.db.QueryRow(ctx, petSelect+` WHERE owner_user_id=$1 AND idempotency_key=$2`, ownerID, idemKey))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
+	return p, err
+}
+
+// petSelect is the one column list every pet read uses. birth_date is cast to
+// text (see ListPets): pgx cannot scan a binary `date` into *string.
+const petSelect = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
+	                  COALESCE(idempotency_key,''), created_at
+	           FROM pets`
+
+// ErrPetNotFound is the uniform answer for a missing pet AND one the caller does
+// not own, so a pet id is not an existence oracle.
+var ErrPetNotFound = errors.New("vet: pet not found")
+
+func scanPet(row pgx.Row) (*Pet, error) {
+	var p Pet
+	if err := row.Scan(&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex,
+		&p.BirthDate, &p.WeightKg, &p.Notes, &p.IdempotencyKey, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
+}
+
+// GetPet returns one of the caller's pets (object-level authZ; HL-8).
+func (s *Service) GetPet(ctx context.Context, ownerID, petID string) (*Pet, error) {
+	if ownerID == "" {
+		return nil, errors.New("vet: unauthenticated")
+	}
+	p, err := scanPet(s.db.QueryRow(ctx, petSelect+` WHERE id=$1::uuid AND owner_user_id=$2`, petID, ownerID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrPetNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vet: get pet: %w", err)
+	}
+	return p, nil
+}
+
+// UpdatePet rewrites the caller's pet. Owner-scoped in the WHERE clause, so a
+// stranger's id matches no row and reads as ErrPetNotFound.
+func (s *Service) UpdatePet(ctx context.Context, ownerID, petID string, p Pet) (*Pet, error) {
+	if ownerID == "" {
+		return nil, errors.New("vet: unauthenticated")
+	}
+	if err := NormalizePetInput(&p, PetToday(time.Now())); err != nil {
+		return nil, err
+	}
+	const q = `UPDATE pets SET name=$3, species=$4, breed=$5, sex=$6, birth_date=$7::date,
+	                  weight_kg=$8, notes=$9, updated_at=now()
+	           WHERE id=$1::uuid AND owner_user_id=$2
+	           RETURNING id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
+	                     COALESCE(idempotency_key,''), created_at`
+	out, err := scanPet(s.db.QueryRow(ctx, q, petID, ownerID, p.Name, p.Species, p.Breed, p.Sex, p.BirthDate, p.WeightKg, p.Notes))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrPetNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vet: update pet: %w", err)
+	}
+	s.audited(ownerID, "", "health.vet.pet.update", petID, nil, map[string]any{"species": out.Species})
+	return out, nil
 }
 
 // CreatePet writes an owner-scoped pet profile. The owner is the data-subject
@@ -204,11 +254,8 @@ func (s *Service) CreatePet(ctx context.Context, ownerID string, p Pet) (*Pet, e
 	if strings.TrimSpace(p.IdempotencyKey) == "" {
 		return nil, ErrPetMissingIdem
 	}
-	if strings.TrimSpace(p.Name) == "" {
-		return nil, errors.New("vet: pet name required")
-	}
-	if strings.TrimSpace(p.Species) == "" {
-		return nil, errors.New("vet: pet species required")
+	if err := NormalizePetInput(&p, PetToday(time.Now())); err != nil {
+		return nil, err
 	}
 	// Replay: return the original pet for this (owner, key) — no second row and
 	// no second vault seed. Runs before the insert so a settled replay never
