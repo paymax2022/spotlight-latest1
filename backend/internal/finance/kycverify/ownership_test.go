@@ -136,6 +136,27 @@ func TestOwnershipGate_NonPassUntouched(t *testing.T) {
 	}
 }
 
+// The masked last-4 hint is disclosed ONLY on a mismatch (where the caller has
+// already proven a verified phone of their own). Both BLOCK paths — no verified
+// account phone, and a record with no phone — must return a generic reason with
+// NO digits at all, so a caller who has proven no phone can never read back any
+// record phone digits. Locks the residual-disclosure boundary (see ADR-PR726).
+func TestOwnershipGate_BlockPathsRevealNoDigits(t *testing.T) {
+	// No verified account phone: record has a phone, but the caller proved none.
+	noAccount := applyOwnershipGate(passResult(map[string]string{"phone_number": "08159491618"}), "nin", "08159491618", false)
+	// No record phone: a phone-bearing ID whose record carries no phone.
+	noRecord := applyOwnershipGate(passResult(map[string]string{"first_name": "AMAKA"}), "nin", "08159491618", true)
+
+	for name, got := range map[string]provider.KycCheckResult{"no-account-phone": noAccount, "no-record-phone": noRecord} {
+		if got.Status != provider.KycFailed {
+			t.Fatalf("%s: expected FAILED, got %s", name, got.Status)
+		}
+		if strings.ContainsAny(got.Reason, "0123456789") {
+			t.Fatalf("%s: block reason must contain NO digits, got %q", name, got.Reason)
+		}
+	}
+}
+
 // maskPhone keeps the last 4 digits and masks every preceding digit, so an
 // 11-digit local number shows as 7 bullets + 4 digits.
 func TestMaskPhone(t *testing.T) {

@@ -81,10 +81,18 @@ is pure and unit-tested.
   submits a real-but-not-theirs NIN learns (a) the ID is valid and (b) the last 4
   digits of its registered phone. This is far less than the full name/DOB the
   gate prevents from leaking, and it requires an authenticated account + KYC
-  session + recorded consent. If the last-4 signal is later judged too strong,
-  the mismatch and no-account-phone cases can be collapsed to one generic reason
-  with no code-shape change. A security review of the diff returned no finding at
-  confidence ≥ 8.
+  session + recorded consent.
+  - **The digit hint is confined to the mismatch path, by construction.** It only
+    fires when the account HAS a verified phone that differs from the record —
+    i.e. the caller has already proven a phone of their own. The two *block*
+    paths disclose **no record digits**: a caller with no verified account phone
+    (`msgOwnershipNoAccountPhone`) or a record with no phone
+    (`msgOwnershipNoRecordPhone`) gets a generic, digit-free reason. So a caller
+    who has not proven any phone can never read back record digits. This invariant
+    is locked by a regression test (`TestOwnershipGate_BlockPathsRevealNoDigits`).
+  - If the last-4 signal is later judged too strong, the mismatch case can be
+    collapsed to the same generic reason with no code-shape change. A security
+    review of the diff returned no finding at confidence ≥ 8.
 - Depends on the account having a **verified phone**. Accounts without one
   (see the historical `user_profiles.phone` backfill gap) are hard-blocked until
   they verify a phone — intended under this flag.
