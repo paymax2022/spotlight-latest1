@@ -12,7 +12,7 @@ import type {
   CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
   CryptoWithdrawal, CryptoWithdrawalDecisionRequest,
   CryptoSwapOrder, CryptoAddress, CryptoAddressDecisionRequest,
-  CryptoReconRow, CryptoReconSummary, CryptoReviewSwap,
+  CryptoReconRow, CryptoReconSummary, CryptoReviewSwap, CryptoSwapResolveRequest,
 } from '@/types/cryptoAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
@@ -225,6 +225,24 @@ export async function adminListReviewSwaps(limit = 50, offset = 0): Promise<Cryp
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Review queue fetch failed'));
   const body = await res.json();
   return body?.swaps ?? [];
+}
+
+// POST /admin/crypto/swaps/:id/resolve — apply a human decision to a parked swap. This is a
+// MONEY-PATH mutation (release reverses the NGN hold; retry re-polls the provider), so the
+// decision validity is enforced server-side and fixture mode refuses loudly rather than
+// reporting a release it did not perform (see adminConfigAsset / ADMIN_SIMULATED_WRITES.md).
+export async function adminResolveReviewSwap(id: string, input: CryptoSwapResolveRequest): Promise<CryptoReviewSwap> {
+  if (!input.note || !input.note.trim()) throw new Error('An operator note is required to resolve a swap.');
+  if (input.decision !== 'release' && input.decision !== 'retry') throw new Error('decision must be release or retry.');
+  if (USE_MOCK) throw new Error(`Resolving a parked swap ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${base()}/swaps/${encodeURIComponent(id)}/resolve`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:swap-resolve', id) },
+    body: JSON.stringify({ decision: input.decision, note: input.note.trim() }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Swap resolve failed'));
+  const body = await res.json();
+  return body?.swap ?? body;
 }
 
 // GET /admin/crypto/addresses — whitelisted withdrawal destinations pending or
