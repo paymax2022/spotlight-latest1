@@ -23,6 +23,9 @@ type Service struct {
 	// the DB-backed viewer; tests override it to exercise Swipe's routing/guards
 	// (direction → kind, self-swipe, invalid direction) without a live database.
 	viewerFn func(ctx context.Context, userID string) (string, *float64, *float64, error)
+	// presigner signs stored R2 object keys into viewable URLs for public profile
+	// photos. nil / unconfigured → stored values pass through unchanged.
+	presigner mediaSigner
 }
 
 // NewService builds the discovery service.
