@@ -17,7 +17,7 @@ import type { VerificationCheck } from '@/features/kycverify/types';
 /**
  * K6 — ID verifying. Runs POST /checks/id-number (with Idempotency-Key), shows a
  * progress spinner, then:
- *   PASSED → show matched name/DOB, continue to next required step
+ *   PASSED → confirm the match (matched PII is withheld server-side), continue
  *   PENDING/REVIEW → K11 (pending review, polled)
  *   FAILED → K13 (failed, retry)
  */
@@ -41,9 +41,6 @@ export default function KycIdVerifyingScreen() {
         sessionId: draft.sessionId,
         idType: draft.idType,
         idNumber: draft.idNumber,
-        firstName: draft.firstName || undefined,
-        lastName: draft.lastName || undefined,
-        dob: draft.dob || undefined,
       },
       {
         onSuccess: (check) => {

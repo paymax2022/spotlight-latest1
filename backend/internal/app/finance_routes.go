@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -27,6 +28,7 @@ import (
 	cfinvestment "spotlight/backend/internal/crowdfunding/investment"
 	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
 	"spotlight/backend/internal/crypto"
+	"spotlight/backend/internal/cryptosvc"
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/estate"
 	estatepaystackcheckout "spotlight/backend/internal/estate/paystackcheckout"
@@ -1056,6 +1058,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				Threshold: cfg.KYCFacialMatchThreshold,
 			},
 			FacialThreshold: cfg.KYCFacialMatchThreshold,
+			// NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE, default off). The
+			// phone source is wired whenever the gate is on so a nil source can
+			// never make the gate fail open.
+			OwnershipGate:      cfg.FeatureKYCOwnershipGate,
+			AccountPhoneSource: kycAccountPhoneSource{pool: pool},
+			// Persist the provider-verified legal name + DOB onto user_profiles on a
+			// PASSED ID-number check (sourced from the provider, never the user).
+			// *kyc.Service satisfies kycverify.IdentitySink via SaveVerifiedIdentity.
+			IdentitySink: kycSvc,
 		})
 		kvHandler := kycverify.NewHandler(kvSvc)
 
@@ -3248,6 +3259,31 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
 		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+
+		// Provider-driven swap pipeline (quote -> confirm -> webhook/reconciler settle). Its own
+		// flag, and it fails closed: any missing piece skips the routes instead of mounting a
+		// half-wired money path.
+		if cfg.FeatureCryptoSwapsEnabled {
+			quidaxKey, quidaxBase := cfg.CryptoQuidaxTestKey, cfg.CryptoQuidaxTestBaseURL
+			if cfg.IsProd() {
+				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
+			}
+			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
+				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
+				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
+				LockPoolConns:     cfg.CryptoLockPoolConns,
+				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				Fees:              cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+			if werr != nil {
+				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
+			} else {
+				swapMember := cryptoV1.Group("/crypto")
+				swapMember.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermTrade))
+				cryptosvc.RegisterRoutes(swapMember, r.Group("/api/v1/webhooks"), wired.Deps)
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, reconciler running)")
+			}
+		}
 	} else {
 		log.Println("[crypto] FEATURE_CRYPTO_ENABLED is false — skipping routes")
 	}
@@ -3400,6 +3436,30 @@ func (e kycTierElevator) ElevateTier(ctx context.Context, userID string, newTier
 	}
 	_, err := e.svc.Approve(ctx, userID, newTier, actorID)
 	return err
+}
+
+// kycAccountPhoneSource adapts the pgx pool to the kycverify.AccountPhoneSource
+// port used by the NIN/BVN ownership gate. It reads the caller's account phone
+// and verified flag straight from user_profiles (the same columns sign-in and
+// wallet recipient-resolution use); a missing row yields an empty, unverified
+// phone, which the gate treats as a hard block (fail-closed).
+type kycAccountPhoneSource struct{ pool *pgxpool.Pool }
+
+func (s kycAccountPhoneSource) VerifiedPhone(ctx context.Context, userID string) (string, bool, error) {
+	if s.pool == nil || userID == "" {
+		return "", false, nil
+	}
+	const q = `SELECT COALESCE(phone, ''), COALESCE(phone_verified, false) FROM user_profiles WHERE id = $1`
+	var phone string
+	var verified bool
+	switch err := s.pool.QueryRow(ctx, q, userID).Scan(&phone, &verified); {
+	case err == nil:
+		return phone, verified, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", false, nil // no profile → nothing to match → fail-closed block
+	default:
+		return "", false, err
+	}
 }
 
 // restaurantOrderConfirmer adapts *paystackcheckout.Service to

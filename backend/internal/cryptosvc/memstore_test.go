@@ -3,7 +3,9 @@ package cryptosvc
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -17,6 +19,8 @@ type memStore struct {
 	swaps       map[string]*SwapRecord // by our id
 	accounts    map[string]string
 	nextID      int
+	touchTo     time.Time                      // what TouchSwap writes (tests set it to the fake 'now')
+	afterStale  func()                         // runs after StaleSwaps returned its list (simulates a concurrent writer)
 	failTo      map[cryptoprov.SwapState]error // fail every transition INTO this state
 	failSetPSID error                          // fail SetProviderSwapID
 	failInsert  error
@@ -25,6 +29,9 @@ type memStore struct {
 	// onTransition lets a test simulate a racing writer just before the update.
 	onTransition func(id string, from cryptoprov.SwapState)
 }
+
+// newUUID returns a deterministic, valid UUID per counter (the handlers reject non-UUID swap ids).
+func newUUID(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
 
 func newMemStore() *memStore {
 	return &memStore{events: map[string]WebhookEvent{}, swaps: map[string]*SwapRecord{}, accounts: map[string]string{}}
@@ -40,13 +47,53 @@ func (s *memStore) InsertSwap(_ context.Context, n NewSwap) (SwapRecord, bool, e
 	}
 	s.nextID++
 	r := &SwapRecord{
-		ID: fmt.Sprintf("swap-%d", s.nextID), UserID: n.UserID, Provider: n.Provider, ProviderAccountID: n.ProviderAccountID,
+		ID: newUUID(s.nextID), UserID: n.UserID, Provider: n.Provider, ProviderAccountID: n.ProviderAccountID,
 		State: cryptoprov.SwapStateQuoted, Side: n.Side, NGNKobo: n.NGNKobo, FeeBps: n.FeeBps, FeeKobo: n.FeeKobo,
-		ProviderQuoteID: n.ProviderQuoteID, IdempotencyKey: n.IdempotencyKey, FromCurrency: n.FromCurrency, ToCurrency: n.ToCurrency,
+		ProviderQuoteID: n.ProviderQuoteID, IdempotencyKey: n.IdempotencyKey, UpdatedAt: time.Now(), FromCurrency: n.FromCurrency, ToCurrency: n.ToCurrency,
 		FromAmount: n.FromAmount, QuotedToAmount: n.QuotedToAmount, QuotedPrice: n.QuotedPrice, ExpiresAt: n.ExpiresAt,
 	}
 	s.swaps[r.ID] = r
 	return *r, true, nil
+}
+
+func (s *memStore) StaleSwaps(_ context.Context, state cryptoprov.SwapState, olderThan time.Time, limit int) ([]SwapRecord, error) {
+	out := s.staleLocked(state, olderThan, limit)
+	if s.afterStale != nil {
+		s.afterStale() // after the lock is released: simulates a concurrent writer
+	}
+	return out, nil
+}
+
+func (s *memStore) staleLocked(state cryptoprov.SwapState, olderThan time.Time, limit int) []SwapRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []SwapRecord
+	for _, r := range s.swaps {
+		if r.State == state && r.UpdatedAt.Before(olderThan) {
+			out = append(out, *r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.Before(out[j].UpdatedAt) }) // oldest first, like the SQL
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// age pretends a swap's last write was d ago relative to now.
+func (s *memStore) age(id string, now time.Time, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.swaps[id].UpdatedAt = now.Add(-d)
+}
+
+func (s *memStore) TouchSwap(_ context.Context, id string, state cryptoprov.SwapState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.swaps[id]; r != nil && r.State == state {
+		r.UpdatedAt = s.touchTo
+	}
+	return nil
 }
 
 func (s *memStore) SwapByIdempotencyKey(_ context.Context, userID, key string) (SwapRecord, bool, error) {

@@ -42,6 +42,26 @@ type Ingest struct {
 	store   Store
 	now     func() time.Time
 	settler SwapSettler
+	audit   Auditor
+}
+
+// WithAuditor records completed and failed settlements.
+func (i *Ingest) WithAuditor(a Auditor) *Ingest { i.audit = a; return i }
+
+func (i *Ingest) auditSettled(ctx context.Context, rec SwapRecord, target cryptoprov.SwapState) {
+	if i.audit == nil {
+		return
+	}
+	action := ""
+	switch target {
+	case cryptoprov.SwapStateCompleted:
+		action = "crypto.swap.completed"
+	case cryptoprov.SwapStateFailed:
+		action = "crypto.swap.failed"
+	default:
+		return
+	}
+	i.audit.Audit(ctx, AuditEvent{Actor: "system:provider", Action: action, EntityID: rec.ID, Detail: map[string]any{"user_id": rec.UserID, "ngn_kobo": rec.NGNKobo, "fee_kobo": rec.FeeKobo}})
 }
 
 // WithSettler enables ledger settlement on completed and failed swaps. Without it the
@@ -184,7 +204,11 @@ func (i *Ingest) apply(ctx context.Context, rec SwapRecord, target cryptoprov.Sw
 			return "", fmt.Errorf("cryptosvc: settle swap %s: %w", rec.ID, serr)
 		}
 	}
-	return i.apply0(ctx, rec, target, received, reason)
+	out, err := i.apply0(ctx, rec, target, received, reason)
+	if err == nil && out == OutcomeApplied {
+		i.auditSettled(ctx, rec, target)
+	}
+	return out, err
 }
 
 // apply0 walks the swap to target with conditional transitions (no settlement).

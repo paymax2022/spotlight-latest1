@@ -161,6 +161,13 @@ type Config struct {
 	KYCPIIEncKey string
 	// Facial-match confidence gate (default 70): below → REVIEW, not silent fail.
 	KYCFacialMatchThreshold int
+	// FEATURE_KYC_OWNERSHIP_GATE (default OFF): when on, a PASSED NIN/BVN/vNIN
+	// ID-number check is only honoured if the ID's registered phone matches the
+	// account's verified phone — binding the submitted ID to the caller. Closes
+	// the "any valid NIN → Tier 1" gap and the NIN→identity disclosure oracle
+	// (ADR-PR722). Phone-less ID types (passport/DL/PVC) are exempt. No effect
+	// unless FEATURE_KYC_VERIFY_ENABLED is also on.
+	FeatureKYCOwnershipGate bool
 
 	// ── Arena competition engine (ADR-014) ───────────────────────────────────
 	// Config-driven competition module (Naija Driver = instance #1). Merit ledger
@@ -421,6 +428,18 @@ type Config struct {
 	// Crypto buy/sell module. DEFAULT OFF. Gates the /api/v1/crypto[/admin] surface
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
+
+	// Crypto swap pipeline (quote/confirm/webhook/reconciler over the provider adapter,
+	// ADR-PR708..716). DEFAULT OFF and additionally requires FEATURE_CRYPTO_ENABLED, a real
+	// Quidax key and webhook secret. Mounted at /api/v1/crypto/swaps and
+	// /api/v1/webhooks/crypto/:provider.
+	FeatureCryptoSwapsEnabled bool
+	// CryptoWebhookSecret verifies Quidax webhook signatures (QUIDAX_WEBHOOK_SECRET).
+	CryptoWebhookSecret string
+	// CryptoLockPoolConns sizes the DEDICATED advisory-lock pool (>= 2x concurrent confirms + 3).
+	CryptoLockPoolConns int
+	// CryptoReconcileSeconds is the reconciler interval.
+	CryptoReconcileSeconds int
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
 	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
@@ -858,6 +877,7 @@ func Load() Config {
 		YouverifyWebhookSecret:  getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
 		KYCPIIEncKey:            getEnv("KYC_PII_ENC_KEY", ""),
 		KYCFacialMatchThreshold: getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
+		FeatureKYCOwnershipGate: getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
 
 		// ── Arena competition engine (ADR-014) ──
 		FeatureArenaEnabled:       getEnvBool("FEATURE_ARENA_ENABLED", false),
@@ -958,6 +978,10 @@ func Load() Config {
 		FeaturePropertyRolesEnabled:                  getEnvBool("FEATURE_PROPERTY_ROLES_ENABLED", false),
 		FeatureFractionalREEnabled:                   getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                         getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureCryptoSwapsEnabled:                    getEnvBool("FEATURE_CRYPTO_SWAPS_ENABLED", false),
+		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
+		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
+		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
@@ -1196,6 +1220,12 @@ func (c Config) Validate() error {
 		}
 	}
 
+	// The NIN/BVN ownership gate only runs inside the KYC verification gateway, so
+	// enabling it without the gateway is a silent no-op — surface the misconfig.
+	if c.FeatureKYCOwnershipGate && !c.FeatureKYCVerifyEnabled {
+		problems = append(problems, "FEATURE_KYC_OWNERSHIP_GATE=true has no effect unless FEATURE_KYC_VERIFY_ENABLED=true")
+	}
+
 	// Arena (ADR-014): merit entries must be signable — require at least one valid
 	// Ed25519 signing seed (base64 32 bytes) when enabled. Any provided seed must
 	// be well-formed.
@@ -1279,6 +1309,17 @@ func (c Config) Validate() error {
 			}
 			if !strings.EqualFold(strings.TrimSpace(c.CryptoProvider), "quidax") || isPlaceholder(key) || strings.TrimSpace(base) == "" {
 				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
+			}
+		}
+		if c.FeatureCryptoSwapsEnabled {
+			if !c.FeatureCryptoEnabled {
+				strict = append(strict, "FEATURE_CRYPTO_SWAPS_ENABLED=true requires FEATURE_CRYPTO_ENABLED=true")
+			}
+			if isPlaceholder(c.CryptoWebhookSecret) {
+				strict = append(strict, "QUIDAX_WEBHOOK_SECRET is required when FEATURE_CRYPTO_SWAPS_ENABLED=true (every webhook would be rejected and swaps would never settle)")
+			}
+			if c.CryptoLockPoolConns < 4 || c.CryptoLockPoolConns > 500 {
+				strict = append(strict, "CRYPTO_LOCK_POOL_CONNS must be between 4 and 500 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)

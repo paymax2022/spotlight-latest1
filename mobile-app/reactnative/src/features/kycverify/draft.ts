@@ -14,12 +14,10 @@ export interface KycVerifyDraft {
   /** Consent recorded this attempt — gate for every check (K3). */
   consentGiven: boolean;
 
-  // Identity (K4/K5)
+  // Identity (K4/K5). Name + DOB are NOT collected — the provider returns the
+  // verified legal name/DOB from the NIN/BVN lookup and the backend persists them.
   idType: IdType;
   idNumber: string;
-  firstName: string;
-  lastName: string;
-  dob: string;
 
   // Biometrics (K7) — base64 stub captures for sandbox.
   selfieB64: string | null;
@@ -45,9 +43,6 @@ function empty(): KycVerifyDraft {
     consentGiven: false,
     idType: 'BVN',
     idNumber: '',
-    firstName: '',
-    lastName: '',
-    dob: '',
     selfieB64: null,
     docType: 'NATIONAL_ID',
     docFrontB64: null,
