@@ -8,7 +8,7 @@ import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { getSpecialties, getDoctors, DEMO_SPECIALTIES, DEMO_DOCTORS } from '@/api/telemedicine.api';
+import { getSpecialties, getDoctors } from '@/api/telemedicine.api';
 import { TeleHeader, SpecialtyChip, DoctorCard } from '@/features/telemedicine/components';
 
 type SortKey = 'rating' | 'price' | 'availability';
@@ -25,7 +25,6 @@ export default function FindDoctorScreen() {
   const { data: specialties = [] } = useQuery({
     queryKey: ['tele-specialties'],
     queryFn:  getSpecialties,
-    placeholderData: DEMO_SPECIALTIES,
   });
 
   // Rating / experience / availability are applied by the SERVER (min_rating,
@@ -41,7 +40,6 @@ export default function FindDoctorScreen() {
       minExperience: minExperience || undefined,
       availableNow: availableNow || undefined,
     }),
-    placeholderData: DEMO_DOCTORS,
   });
 
   const filtered = useMemo(() => {
