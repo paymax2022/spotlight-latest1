@@ -80,6 +80,11 @@ type TicketTier struct {
 	Capacity  int    `json:"capacity"`
 	Sold      int    `json:"sold"`
 	Active    bool   `json:"active"`
+
+	Description  string     `json:"description"`
+	SalesStartAt *time.Time `json:"sales_start_at"`
+	SalesEndAt   *time.Time `json:"sales_end_at"`
+	InviteOnly   bool       `json:"invite_only"`
 }
 
 // PromoCode is a versioned discount applied at checkout.
@@ -92,6 +97,12 @@ type PromoCode struct {
 	MaxUses    int    `json:"max_uses"`    // 0 => unlimited
 	Used       int    `json:"used"`
 	Active     bool   `json:"active"`
+
+	TierID        *string    `json:"tier_id"`
+	AmountOffKobo *int64     `json:"amount_off_kobo"`
+	StartsAt      *time.Time `json:"starts_at"`
+	EndsAt        *time.Time `json:"ends_at"`
+	PerUserLimit  int        `json:"per_user_limit"`
 }
 
 // TicketState is the per-ticket lifecycle.

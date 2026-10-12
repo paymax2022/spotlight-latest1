@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { EventPatch, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
+import type { EventPatch, TierPatch, PromoPatch, CreatePromoInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
@@ -197,5 +197,38 @@ export function useCancelEvent(id: string) {
     mutationFn: ({ reason, idemKey }: { reason: string; idemKey: string }) =>
       api.cancelEvent(id, reason, idemKey),
     onSuccess: () => invalidate(id),
+  });
+}
+
+// ── Tier/promo management (FEATURE_EVENTS_TICKETING_DEPTH) ───────────────────
+export function useUpdateTier(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ tierId, patch }: { tierId: string; patch: TierPatch }) => api.updateTier(eventId, tierId, patch),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useUpdatePromo(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ promoId, patch }: { promoId: string; patch: PromoPatch }) => api.updatePromo(eventId, promoId, patch),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useAddTier(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (input: AddTierInput) => api.addTicketTier(eventId, input),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useCreatePromo(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (input: CreatePromoInput) => api.createPromo(eventId, input),
+    onSuccess: () => invalidate(eventId),
   });
 }

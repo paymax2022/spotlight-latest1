@@ -1819,6 +1819,37 @@ components:
         capacity: { type: integer, description: "0 = unlimited" }
         sold: { type: integer }
         active: { type: boolean }
+        description: { type: string, nullable: true }
+        sales_start_at: { type: string, format: date-time, nullable: true }
+        sales_end_at: { type: string, format: date-time, nullable: true }
+        invite_only: { type: boolean }
+
+    TierPatch:
+      description: Partial organiser edit of a tier (PATCH /events/{id}/tiers/{tierId}); every field optional, snake_case.
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        price_kobo: { type: integer, format: int64, minimum: 0 }
+        capacity: { type: integer, minimum: 0, description: "0 = unlimited" }
+        active: { type: boolean }
+        invite_only: { type: boolean }
+        sales_start_at: { type: string, format: date-time }
+        sales_end_at: { type: string, format: date-time }
+
+    PromoPatch:
+      description: Partial organiser edit of a promo (PATCH /events/{id}/promos/{promoId}); every field optional, snake_case.
+      type: object
+      properties:
+        code: { type: string }
+        percent_off: { type: integer, minimum: 0, maximum: 100 }
+        amount_off_kobo: { type: integer, format: int64, minimum: 0 }
+        tier_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        per_user_limit: { type: integer, minimum: 0 }
+        max_uses: { type: integer, minimum: 0, description: "0 = unlimited" }
+        active: { type: boolean }
 
     PromoCode:
       type: object
@@ -1831,6 +1862,11 @@ components:
         max_uses: { type: integer, description: "0 = unlimited" }
         used: { type: integer }
         active: { type: boolean }
+        tier_id: { type: string, format: uuid, nullable: true }
+        amount_off_kobo: { type: integer, format: int64 }
+        starts_at: { type: string, format: date-time, nullable: true }
+        ends_at: { type: string, format: date-time, nullable: true }
+        per_user_limit: { type: integer, description: "0 = unlimited" }
 
     EventOrder:
       type: object
@@ -8452,6 +8488,10 @@ paths:
                 name: { type: string }
                 price_kobo: { type: integer, format: int64, minimum: 0 }
                 capacity: { type: integer, minimum: 0, description: "0 = unlimited" }
+                description: { type: string }
+                sales_start_at: { type: string, format: date-time }
+                sales_end_at: { type: string, format: date-time }
+                invite_only: { type: boolean }
       responses:
         '200':
           description: Tier created
@@ -8463,6 +8503,35 @@ paths:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/TicketTier' }
         '404': { description: Event not found }
+
+  /events/{id}/tiers/{tierId}:
+    patch:
+      operationId: patchTicketTier
+      summary: Organiser partially edits a ticket tier; price/capacity are locked once tickets are sold
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: tierId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TierPatch' }
+      responses:
+        '200':
+          description: The updated tier
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/TicketTier' }
+        '400': { description: Invalid body or invalid sales window (sales_end_at must be after sales_start_at) }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or tier not found }
+        '409': { description: Tier is locked (price/capacity cannot change after sales) }
 
   /events/{id}/promos:
     post:
@@ -8483,6 +8552,11 @@ paths:
                 code: { type: string }
                 percent_off: { type: integer, minimum: 0, maximum: 100 }
                 max_uses: { type: integer, minimum: 0, description: "0 = unlimited" }
+                tier_id: { type: string, format: uuid, description: "Scope the promo to one tier of this event" }
+                amount_off_kobo: { type: integer, format: int64, minimum: 0, description: "Fixed-amount discount in kobo" }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                per_user_limit: { type: integer, minimum: 0, description: "0 = unlimited" }
       responses:
         '200':
           description: Promo code created (new version if code already existed)
@@ -8494,6 +8568,36 @@ paths:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/PromoCode' }
         '404': { description: Event not found }
+
+  /events/{id}/promos/{promoId}:
+    patch:
+      operationId: patchPromoCode
+      summary: Organiser partially edits a promo code; locked once the promo has been used
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: promoId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoPatch' }
+      responses:
+        '200':
+          description: The updated promo code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/PromoCode' }
+        '400': { description: "Invalid body, discount, or window" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or promo not found }
+        '409': { description: Promo is locked (already used) }
+        '422': { description: Promo not applicable (e.g. tier_id does not belong to this event) }
 
   /events/{id}/vendors:
     get:
