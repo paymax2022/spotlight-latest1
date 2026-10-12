@@ -231,7 +231,7 @@ type Config struct {
 	FeatureEventsEditLifecycle bool // organiser edit/duplicate/pause/resume/cancel routes
 	// FeatureEventsTicketingDepth (FEATURE_EVENTS_TICKETING_DEPTH) exposes tier/promo edit routes.
 	FeatureEventsTicketingDepth bool
-	FeatureEstateEnabled       bool
+	FeatureEstateEnabled        bool
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never

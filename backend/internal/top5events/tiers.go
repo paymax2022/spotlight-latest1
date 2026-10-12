@@ -49,7 +49,7 @@ func (s *Service) UpdateTier(ctx context.Context, callerID, eventID, tierID stri
 
 	if patch.PriceKobo != nil {
 		if *patch.PriceKobo < 0 {
-			return nil, errors.New("events: tier price must be non-negative")
+			return nil, fmt.Errorf("%w: events: tier price must be non-negative", ErrValidation)
 		}
 		if *patch.PriceKobo != cur.PriceKobo && cur.Sold > 0 {
 			return nil, fmt.Errorf("%w: price cannot change after tickets are sold", ErrTierLocked)

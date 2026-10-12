@@ -30,7 +30,7 @@ func ticketingStatus(err error) int {
 	case errors.Is(err, ErrTierLocked), errors.Is(err, ErrPromoLocked),
 		errors.Is(err, ErrInviteOnly), errors.Is(err, ErrTierNotOnSale):
 		return http.StatusConflict
-	case errors.Is(err, ErrInvalidWindow):
+	case errors.Is(err, ErrInvalidWindow), errors.Is(err, ErrValidation):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrPromoNotApplicable):
 		return http.StatusUnprocessableEntity

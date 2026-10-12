@@ -327,7 +327,7 @@ func (s *Service) AddTier(ctx context.Context, organiserID, eventID string, t Ti
 		return nil, err
 	}
 	if t.PriceKobo < 0 || t.Capacity < 0 {
-		return nil, errors.New("events: tier price/capacity must be non-negative")
+		return nil, fmt.Errorf("%w: events: tier price/capacity must be non-negative", ErrValidation)
 	}
 	if t.SalesStartAt != nil && t.SalesEndAt != nil && !t.SalesStartAt.Before(*t.SalesEndAt) {
 		return nil, ErrInvalidWindow
@@ -354,7 +354,7 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 		return nil, err
 	}
 	if p.PerUserLimit < 0 || p.MaxUses < 0 {
-		return nil, errors.New("events: per_user_limit and max_uses must be non-negative")
+		return nil, fmt.Errorf("%w: events: per_user_limit and max_uses must be non-negative", ErrValidation)
 	}
 	if p.StartsAt != nil && p.EndsAt != nil && !p.StartsAt.Before(*p.EndsAt) {
 		return nil, ErrInvalidWindow
@@ -365,7 +365,7 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 			return nil, fmt.Errorf("events: tier lookup: %w", err)
 		}
 		if !ok {
-			return nil, errors.New("events: promo tier does not belong to this event")
+			return nil, fmt.Errorf("%w: events: promo tier does not belong to this event", ErrValidation)
 		}
 	}
 	var maxVer int
@@ -391,7 +391,7 @@ func validatePromoValue(percent int, amount *int64) error {
 		return errors.New("events: percent_off out of range")
 	}
 	if amount != nil && *amount < 0 {
-		return errors.New("events: amount_off_kobo must be non-negative")
+		return fmt.Errorf("%w: events: amount_off_kobo must be non-negative", ErrValidation)
 	}
 	if (percent > 0) == (amount != nil) {
 		return errors.New("events: promo needs exactly one of percent_off or amount_off_kobo")
@@ -1451,6 +1451,7 @@ var (
 	ErrTierLocked         = errors.New("events: tier field locked by existing sales")
 	ErrPromoLocked        = errors.New("events: promo field locked by existing redemptions")
 	ErrInvalidWindow      = errors.New("events: sales_start_at must be before sales_end_at")
+	ErrValidation         = errors.New("events: invalid request")
 	ErrSoldOut            = errors.New("events: tier sold out")
 	ErrNotPurchasable     = errors.New("events: event is not on sale")
 	ErrInviteOnly         = errors.New("events: tier is invite-only")

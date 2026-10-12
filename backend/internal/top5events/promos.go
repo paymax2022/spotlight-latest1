@@ -93,10 +93,10 @@ func (s *Service) UpdatePromo(ctx context.Context, callerID, eventID, promoID st
 		}
 	}
 	if patch.PerUserLimit != nil && *patch.PerUserLimit < 0 {
-		return nil, errors.New("events: per_user_limit must be non-negative")
+		return nil, fmt.Errorf("%w: events: per_user_limit must be non-negative", ErrValidation)
 	}
 	if patch.MaxUses != nil && *patch.MaxUses < 0 {
-		return nil, errors.New("events: max_uses must be non-negative")
+		return nil, fmt.Errorf("%w: events: max_uses must be non-negative", ErrValidation)
 	}
 	start, end := cur.StartsAt, cur.EndsAt
 	if patch.StartsAt != nil {
@@ -114,7 +114,7 @@ func (s *Service) UpdatePromo(ctx context.Context, callerID, eventID, promoID st
 			return nil, fmt.Errorf("events: tier lookup: %w", err)
 		}
 		if !ok {
-			return nil, errors.New("events: promo tier does not belong to this event")
+			return nil, fmt.Errorf("%w: events: promo tier does not belong to this event", ErrValidation)
 		}
 	}
 
