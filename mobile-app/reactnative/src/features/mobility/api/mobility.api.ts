@@ -5,7 +5,7 @@
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { SERVICE_INTERESTS, resolveOnboardingOptions } from '../deliveryOnboarding';
+import { SERVICE_INTERESTS, resolveOnboardingOptions, pickStringArray } from '../deliveryOnboarding';
 import type { Option, OnboardingOptions } from '../deliveryOnboarding';
 import type {
   MobilityHome,
@@ -482,8 +482,8 @@ function normalizeDriverProfile(raw: Partial<DriverProfile> & Record<string, any
     documents: raw.documents ?? [],
     vehicle: raw.vehicle ?? vehicles[0] ?? null,
     rating: raw.rating ?? 0,
-    serviceInterests: Array.isArray(raw.serviceInterests) ? raw.serviceInterests : [],
-    coverageAreas: Array.isArray(raw.coverageAreas) ? raw.coverageAreas : [],
+    serviceInterests: pickStringArray(raw, 'serviceInterests', 'service_interests'),
+    coverageAreas: pickStringArray(raw, 'coverageAreas', 'coverage_areas'),
   };
 }
 

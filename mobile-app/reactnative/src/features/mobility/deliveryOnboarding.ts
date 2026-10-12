@@ -60,6 +60,19 @@ export function canContinueServicesStep(interests: string[], areas: string[]): b
   return interests.length > 0 && areas.length > 0;
 }
 
+// Read a string[] from a raw API object under any of the given keys. The Go
+// /driver/me response is snake_case and the mobility axios client does not
+// camelize, so a camelCase-only read would silently miss service_interests /
+// coverage_areas. Returns [] when absent.
+export function pickStringArray(raw: Record<string, unknown> | null | undefined, ...keys: string[]): string[] {
+  if (!raw) return [];
+  for (const k of keys) {
+    const v = raw[k];
+    if (Array.isArray(v)) return v as string[];
+  }
+  return [];
+}
+
 export interface OnboardingOptions {
   services: ServiceOption[];
   coverageAreas: Option[];

@@ -5,6 +5,7 @@ import {
   requiredDocumentsFor,
   canContinueServicesStep,
   resolveOnboardingOptions,
+  pickStringArray,
   SERVICE_INTERESTS,
   COVERAGE_FALLBACK,
 } from '../deliveryOnboarding.ts';
@@ -38,4 +39,11 @@ test('onboarding options fall back to the built-in lists when the fetch fails', 
   });
   assert.deepEqual(r.services, SERVICE_INTERESTS);
   assert.deepEqual(r.coverageAreas, COVERAGE_FALLBACK);
+});
+
+test('pickStringArray reads snake_case or camelCase, else empty', () => {
+  assert.deepEqual(pickStringArray({ service_interests: ['rides'] }, 'serviceInterests', 'service_interests'), ['rides']);
+  assert.deepEqual(pickStringArray({ serviceInterests: ['movers'] }, 'serviceInterests', 'service_interests'), ['movers']);
+  assert.deepEqual(pickStringArray({}, 'serviceInterests', 'service_interests'), []);
+  assert.deepEqual(pickStringArray(undefined, 'serviceInterests'), []);
 });
