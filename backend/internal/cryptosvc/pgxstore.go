@@ -130,6 +130,15 @@ func (s *PGStore) ListByState(ctx context.Context, state cryptoprov.SwapState, l
 	return out, rows.Err()
 }
 
+// SwapByIDAny reads a swap by id with no user scoping, for the admin resolution path.
+func (s *PGStore) SwapByIDAny(ctx context.Context, id string) (SwapRecord, bool, error) {
+	r, err := scanSwap(s.pool.QueryRow(ctx, `SELECT `+swapCols+` FROM public.crypto_swaps WHERE id = $1::uuid`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SwapRecord{}, false, nil
+	}
+	return r, err == nil, err
+}
+
 func (s *PGStore) TouchSwap(ctx context.Context, id string, state cryptoprov.SwapState) error {
 	_, err := s.pool.Exec(ctx, `UPDATE public.crypto_swaps SET updated_at = now() WHERE id = $1::uuid AND status = $2`, id, string(state))
 	return err

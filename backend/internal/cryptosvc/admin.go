@@ -1,12 +1,15 @@
 package cryptosvc
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/cryptoprov"
 )
 
@@ -61,12 +64,13 @@ const (
 	reviewMaxLimit     = 200
 )
 
-// RegisterAdminRoutes mounts the read-only crypto swap admin surface on admin, which the
-// caller has already authenticated and guarded with the crypto.admin permission. Round 1
-// exposes only the needs_review queue; decision controls follow.
+// RegisterAdminRoutes mounts the crypto swap admin surface on admin, which the caller has
+// already authenticated and guarded with the crypto.admin permission: the needs_review queue
+// and the resolve decision control.
 func RegisterAdminRoutes(admin *gin.RouterGroup, d HandlerDeps) {
 	h := &adminHandler{d: d, now: time.Now}
 	admin.GET("/swaps/review", h.reviewQueue)
+	admin.POST("/swaps/:id/resolve", h.resolve)
 }
 
 // reviewQueue GET /admin/crypto/swaps/review?limit=&offset= — swaps parked in needs_review,
@@ -85,6 +89,69 @@ func (h *adminHandler) reviewQueue(c *gin.Context) {
 		out = append(out, adminViewOf(r, now))
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "swaps": out, "count": len(out)})
+}
+
+// resolveBody is the operator's decision for a parked swap.
+type resolveBody struct {
+	Decision string `json:"decision"`
+	Note     string `json:"note"`
+}
+
+// resolve POST /admin/crypto/swaps/:id/resolve — apply a human decision to a swap parked in
+// needs_review. An Idempotency-Key header and a non-empty note are mandatory (iron-rule money
+// path + audit trail). The decision is release or retry; which one is safe depends on whether
+// the swap has a provider swap id (enforced in Service.AdminResolve).
+func (h *adminHandler) resolve(c *gin.Context) {
+	id := c.Param("id")
+	if !validSwapID(id) {
+		fail(c, http.StatusNotFound, "swap_not_found")
+		return
+	}
+	if key := c.GetHeader("Idempotency-Key"); !idemKeyRe.MatchString(key) {
+		fail(c, http.StatusBadRequest, "idempotency_key_required")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBytes)
+	var body resolveBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		fail(c, http.StatusBadRequest, "bad_request")
+		return
+	}
+	note := strings.TrimSpace(body.Note)
+	if note == "" {
+		fail(c, http.StatusBadRequest, "note_required")
+		return
+	}
+	decision := ResolveDecision(body.Decision)
+	if decision != DecisionRelease && decision != DecisionRetry {
+		fail(c, http.StatusBadRequest, "bad_decision")
+		return
+	}
+	rec, err := h.d.Service.AdminResolve(c.Request.Context(), "admin:"+ginutil.UserID(c), id, decision, note)
+	if err != nil {
+		h.writeResolveErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "swap": adminViewOf(rec, h.now())})
+}
+
+func (h *adminHandler) writeResolveErr(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrSwapNotFound):
+		fail(c, http.StatusNotFound, "swap_not_found")
+	case errors.Is(err, ErrNotParked):
+		fail(c, http.StatusConflict, "not_parked")
+	case errors.Is(err, ErrNothingToRetry):
+		fail(c, http.StatusUnprocessableEntity, "nothing_to_retry")
+	case errors.Is(err, ErrReleaseUnsafe):
+		fail(c, http.StatusUnprocessableEntity, "release_unsafe")
+	case errors.Is(err, ErrSettlementConflict):
+		fail(c, http.StatusConflict, "settlement_conflict")
+	case errors.Is(err, ErrUnknownDecision):
+		fail(c, http.StatusBadRequest, "bad_decision")
+	default:
+		fail(c, http.StatusInternalServerError, "resolve_failed")
+	}
 }
 
 // boundedQuery reads an integer query param, falling back to def when absent or unparseable
