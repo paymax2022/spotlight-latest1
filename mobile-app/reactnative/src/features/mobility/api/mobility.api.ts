@@ -482,6 +482,8 @@ function normalizeDriverProfile(raw: Partial<DriverProfile> & Record<string, any
     documents: raw.documents ?? [],
     vehicle: raw.vehicle ?? vehicles[0] ?? null,
     rating: raw.rating ?? 0,
+    serviceInterests: Array.isArray(raw.serviceInterests) ? raw.serviceInterests : [],
+    coverageAreas: Array.isArray(raw.coverageAreas) ? raw.coverageAreas : [],
   };
 }
 
