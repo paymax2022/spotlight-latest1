@@ -155,28 +155,47 @@ func TestSwipe_NoProfileFailsClosed(t *testing.T) {
 }
 
 // cardFrom must NEVER leak coordinates — the ProfileCard has no lat/lng fields, and
-// the mapping copies only privacy-safe attributes. This locks the privacy invariant
+// the mapping copies only privacy-safe attributes. It also surfaces the enrichment
+// (photos/age/headline/bio) the deck renders, with photos ALWAYS a list (never nil)
+// so the mobile client's `.map`/`[0]` can never crash. This locks both invariants
 // for the mobile stack contract.
 func TestCardFromDropsRawCoordinates(t *testing.T) {
-	name := "Ada"
-	c := Candidate{
-		ProfileID:     "p1",
-		DisplayName:   &name,
-		Verified:      true,
-		IntentTags:    []string{"hiking"},
-		DistanceLabel: "within 25 km",
+	name, head, bio := "Ada", "Engineer · Lagos", "Hi there"
+	age := 29
+	lat, lng := 6.5, 3.4 // must never surface on the card
+	rc := rawCandidate{
+		profileID:   "p1",
+		displayName: &name,
+		verified:    true,
+		intentTags:  []string{"hiking"},
+		headline:    &head,
+		bio:         &bio,
+		age:         &age,
+		geoLat:      &lat,
+		geoLng:      &lng,
 	}
-	card := cardFrom(c)
+	card := cardFrom(rc, "within 25 km", []string{"https://cdn/a.jpg", "https://cdn/b.jpg"})
 	if card.ProfileID != "p1" || card.DistanceLabel != "within 25 km" {
 		t.Fatalf("card mapping lost fields: %+v", card)
 	}
 	if card.IntentTags == nil {
 		t.Fatal("intentTags must never be nil (stable JSON array)")
 	}
+	if card.Age == nil || *card.Age != 29 || card.Headline == nil || *card.Headline != head || card.Bio == nil || *card.Bio != bio {
+		t.Fatalf("enrichment not carried onto card: %+v", card)
+	}
+	if len(card.Photos) != 2 || card.Photos[0] != "https://cdn/a.jpg" {
+		t.Fatalf("photos not carried: %+v", card.Photos)
+	}
 	// There is no field on ProfileCard that could carry a raw coordinate — assert the
 	// distance is a coarse bucket label, never a decimal.
 	if strings.ContainsAny(card.DistanceLabel, ".") {
 		t.Fatalf("distance label leaked a precise value: %q", card.DistanceLabel)
+	}
+
+	// A nil photo slice must normalise to an empty (non-nil) list.
+	if got := cardFrom(rc, "", nil); got.Photos == nil {
+		t.Fatal("photos must be an empty list, not nil")
 	}
 }
 
