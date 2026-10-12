@@ -132,6 +132,7 @@ paths:
             manual "settle/capture": we never credit crypto we cannot prove was bought.
         An Idempotency-Key and a non-empty operator note are required. Idempotent — a repeat is a
         no-op (the swap is no longer parked). crypto.admin; flag-gated by FEATURE_CRYPTO_SWAPS_ENABLED.
+        ADR-PR728.
       operationId: resolveCryptoSwap
       security: [{ bearerAuth: [] }]
       parameters:

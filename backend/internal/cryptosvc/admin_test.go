@@ -222,7 +222,7 @@ func TestAdminResolveReleaseReversesHoldAndFailsSwap(t *testing.T) {
 	r.svc.cfg.Audit = sink
 	id := parkRealSwap(t, r)
 
-	out, err := r.svc.AdminResolve(context.Background(), "admin:op-1", id, DecisionRelease, "provider never executed")
+	out, err := r.svc.AdminResolve(context.Background(), "admin:op-1", "idem-k", id, DecisionRelease, "provider never executed")
 	if err != nil {
 		t.Fatalf("release err = %v", err)
 	}
@@ -240,12 +240,12 @@ func TestAdminResolveReleaseReversesHoldAndFailsSwap(t *testing.T) {
 func TestAdminResolveReleaseCannotDoubleCredit(t *testing.T) {
 	r := newSvcRig(t)
 	id := parkRealSwap(t, r)
-	if _, err := r.svc.AdminResolve(context.Background(), "admin:op-1", id, DecisionRelease, "release"); err != nil {
+	if _, err := r.svc.AdminResolve(context.Background(), "admin:op-1", "idem-k", id, DecisionRelease, "release"); err != nil {
 		t.Fatalf("first release err = %v", err)
 	}
 	// The swap is now failed, so a second release is rejected as not-parked — the wallet is
 	// never credited twice.
-	if _, err := r.svc.AdminResolve(context.Background(), "admin:op-1", id, DecisionRelease, "release again"); !errors.Is(err, ErrNotParked) {
+	if _, err := r.svc.AdminResolve(context.Background(), "admin:op-1", "idem-k", id, DecisionRelease, "release again"); !errors.Is(err, ErrNotParked) {
 		t.Fatalf("second release err = %v, want ErrNotParked", err)
 	}
 	if r.led.bal(walletK) != 2_000_000 {
@@ -261,7 +261,7 @@ func TestAdminResolveReleaseRefusedWhenProviderIDPresent(t *testing.T) {
 		ProviderSwapID: "qdx_executed", State: cryptoprov.SwapStateNeedsReview, Side: SideBuy,
 		ToCurrency: "USDT", NGNKobo: 1_000_000, FeeKobo: 7_500,
 	})
-	_, err := r.svc.AdminResolve(context.Background(), "admin:op", "55555555-5555-5555-5555-555555555555", DecisionRelease, "try to release")
+	_, err := r.svc.AdminResolve(context.Background(), "admin:op", "idem-k", "55555555-5555-5555-5555-555555555555", DecisionRelease, "try to release")
 	if !errors.Is(err, ErrReleaseUnsafe) {
 		t.Fatalf("err = %v, want ErrReleaseUnsafe", err)
 	}
@@ -273,7 +273,7 @@ func TestAdminResolveReleaseRefusedWhenProviderIDPresent(t *testing.T) {
 func TestAdminResolveRetryRequiresProviderID(t *testing.T) {
 	r := newSvcRig(t)
 	id := parkRealSwap(t, r) // parked with NO provider id
-	_, err := r.svc.AdminResolve(context.Background(), "admin:op", id, DecisionRetry, "poll provider")
+	_, err := r.svc.AdminResolve(context.Background(), "admin:op", "idem-k", id, DecisionRetry, "poll provider")
 	if !errors.Is(err, ErrNothingToRetry) {
 		t.Fatalf("err = %v, want ErrNothingToRetry", err)
 	}
@@ -288,7 +288,7 @@ func TestAdminResolveRetryDelegatesToProvider(t *testing.T) {
 	})
 	// The mock has no such provider swap, so the re-poll errors — but through the provider, not
 	// a guard. That proves retry delegated to ResolveSwap rather than short-circuiting.
-	_, err := r.svc.AdminResolve(context.Background(), "admin:op", "66666666-6666-6666-6666-666666666666", DecisionRetry, "poll")
+	_, err := r.svc.AdminResolve(context.Background(), "admin:op", "idem-k", "66666666-6666-6666-6666-666666666666", DecisionRetry, "poll")
 	if err == nil || errors.Is(err, ErrNothingToRetry) || errors.Is(err, ErrReleaseUnsafe) {
 		t.Fatalf("retry did not delegate to the provider: err = %v", err)
 	}
@@ -300,11 +300,11 @@ func TestAdminResolveRetryDelegatesToProvider(t *testing.T) {
 
 func TestAdminResolveNotFoundAndNotParked(t *testing.T) {
 	r := newSvcRig(t)
-	if _, err := r.svc.AdminResolve(context.Background(), "admin:op", "77777777-7777-7777-7777-777777777777", DecisionRelease, "n"); !errors.Is(err, ErrSwapNotFound) {
+	if _, err := r.svc.AdminResolve(context.Background(), "admin:op", "idem-k", "77777777-7777-7777-7777-777777777777", DecisionRelease, "n"); !errors.Is(err, ErrSwapNotFound) {
 		t.Fatalf("unknown id err = %v, want ErrSwapNotFound", err)
 	}
 	r.store.addSwap(SwapRecord{ID: "88888888-8888-8888-8888-888888888888", UserID: user, State: cryptoprov.SwapStateCompleted, Side: SideBuy, ToCurrency: "BTC", NGNKobo: 1})
-	if _, err := r.svc.AdminResolve(context.Background(), "admin:op", "88888888-8888-8888-8888-888888888888", DecisionRelease, "n"); !errors.Is(err, ErrNotParked) {
+	if _, err := r.svc.AdminResolve(context.Background(), "admin:op", "idem-k", "88888888-8888-8888-8888-888888888888", DecisionRelease, "n"); !errors.Is(err, ErrNotParked) {
 		t.Fatalf("completed swap err = %v, want ErrNotParked", err)
 	}
 }
