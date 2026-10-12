@@ -81,6 +81,12 @@ then compare).
   `Description` and key namespace make it self-identifying to auditors and
   reconciliation. Zero-fee buys are rare (small amounts / 0-bps overrides), so the row
   volume is negligible.
+- **Reconciliation caveat:** the marker nets to zero on the clearing **balance** and is
+  invisible to balances and user-facing views, but any admin/reporting query that sums
+  **gross debit (or credit) volume** on the clearing account — rather than the net
+  balance — would double-count `hold.AmountKobo` per zero-fee completed buy. Such queries
+  should exclude the `crypto:swap:*:complete` key namespace (or filter the marker's
+  `Description`). Flagged for whoever owns clearing reconciliation.
 
 ## Alternatives rejected
 
