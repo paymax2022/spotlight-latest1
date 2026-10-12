@@ -18,7 +18,8 @@ import (
 //
 // Round 1 is read-only — it surfaces parked money so ops can SEE it. The settle/release/retry
 // decision controls are a follow-up (the resolution set is state-dependent: a swap with no
-// provider swap id has an unknown provider outcome and must never be blindly settled).
+// provider swap id has an unknown provider outcome and must never be blindly settled). See
+// ADR-PR727.
 type AdminReviewSwap struct {
 	ID             string `json:"id"`
 	UserID         string `json:"user_id"`
