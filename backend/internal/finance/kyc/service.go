@@ -269,6 +269,47 @@ func (s *Service) Fail(ctx context.Context, userID string, actorID *string) erro
 	return tx.Commit(ctx)
 }
 
+// SaveVerifiedIdentity persists a provider-verified legal identity (full name,
+// first/last name, ISO date of birth) onto the user's profile after a PASSED
+// ID-number data-match. The values originate from the KYC provider's response,
+// NEVER from user input — the KYC form no longer collects name/DOB.
+//
+// Semantics (additive, no migration — these columns already exist):
+//   - first_name / last_name: overwritten with the verified value when present
+//     (the provider's legal name is authoritative); left as-is when the verified
+//     value is empty.
+//   - full_name: set ONLY when the profile has none yet — a verified legal name
+//     must not silently replace a display name the user chose.
+//   - date_of_birth: set to the verified ISO date when present; left as-is
+//     otherwise.
+//
+// Object-level authz is the caller's responsibility: userID must be the
+// authenticated owner (the kycverify gateway derives it from the session, never
+// the request body). An empty userID is rejected before any DB access, and an
+// all-empty identity is a silent no-op (we never blank a profile).
+//
+// PII: name/DOB are never logged here.
+func (s *Service) SaveVerifiedIdentity(ctx context.Context, userID, fullName, firstName, lastName, dobISO string) error {
+	if userID == "" {
+		return errors.New("kyc: SaveVerifiedIdentity: empty user id")
+	}
+	if fullName == "" && firstName == "" && lastName == "" && dobISO == "" {
+		return nil // nothing the provider confirmed — no-op, never blank the profile
+	}
+	const update = `
+		UPDATE user_profiles
+		SET first_name    = COALESCE(NULLIF($2, ''), first_name),
+		    last_name     = COALESCE(NULLIF($3, ''), last_name),
+		    full_name     = CASE WHEN COALESCE(full_name, '') = '' AND $4 <> '' THEN $4 ELSE full_name END,
+		    date_of_birth = COALESCE(NULLIF($5, '')::date, date_of_birth),
+		    updated_at    = NOW()
+		WHERE id = $1`
+	if _, err := s.db.Exec(ctx, update, userID, firstName, lastName, fullName, dobISO); err != nil {
+		return fmt.Errorf("kyc: save verified identity user=%s: %w", userID, err)
+	}
+	return nil
+}
+
 // hashIfPresent returns a deterministic argon2id hash of the value if non-nil.
 // Uses a SHA-256-derived salt so the same input always produces the same hash,
 // allowing lookups by hash. argon2id params: time=1, memory=64MiB, threads=4, keyLen=32.

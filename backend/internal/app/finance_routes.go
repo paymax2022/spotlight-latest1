@@ -1057,6 +1057,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				Threshold: cfg.KYCFacialMatchThreshold,
 			},
 			FacialThreshold: cfg.KYCFacialMatchThreshold,
+			// Persist the provider-verified legal name + DOB onto user_profiles on a
+			// PASSED ID-number check (sourced from the provider, never the user).
+			// *kyc.Service satisfies kycverify.IdentitySink via SaveVerifiedIdentity.
+			IdentitySink: kycSvc,
 		})
 		kvHandler := kycverify.NewHandler(kvSvc)
 

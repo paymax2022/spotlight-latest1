@@ -10,22 +10,23 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
-import DatePickerField from '@/components/DatePickerField';
 import { ID_NUMBER_HELP } from '@/features/kycverify/constants';
 import { kycVerifyDraft } from '@/features/kycverify/draft';
 
 /**
  * K5 — ID number entry. Inline validation (length for BVN/NIN) + a "why we need
  * this" helper. Saves to draft (save-as-you-go), then runs the check on K6.
+ *
+ * We do NOT collect the holder's name or date of birth: the provider (Dojah)
+ * returns the authoritative legal name + DOB from the NIN/BVN lookup, and the
+ * backend persists those. Asking the user to type them was redundant and let a
+ * typo diverge from the verified record.
  */
 export default function KycIdNumberScreen() {
   const draft = kycVerifyDraft.current;
   const help = ID_NUMBER_HELP[draft.idType];
 
   const [idNumber, setIdNumber] = useState(draft.idNumber);
-  const [firstName, setFirstName] = useState(draft.firstName);
-  const [lastName, setLastName] = useState(draft.lastName);
-  const [dob, setDob] = useState(draft.dob);
 
   const digitsOnly = draft.idType === 'BVN' || draft.idType === 'NIN';
   const cleaned = idNumber.trim();
@@ -39,13 +40,10 @@ export default function KycIdNumberScreen() {
         : 'Enter a valid ID number.'
       : undefined;
 
-  const ready = lengthOk && !!dob;
+  const ready = lengthOk;
 
   const next = () => {
     kycVerifyDraft.current.idNumber = cleaned;
-    kycVerifyDraft.current.firstName = firstName.trim();
-    kycVerifyDraft.current.lastName = lastName.trim();
-    kycVerifyDraft.current.dob = dob;
     router.push('/kyc-verify/id-verifying');
   };
 
@@ -70,10 +68,12 @@ export default function KycIdNumberScreen() {
             <Text style={styles.whyText}>{help.why}</Text>
           </View>
 
-          <Text style={styles.section}>Your details (as on the ID)</Text>
-          <TextInputField label="First name" value={firstName} onChangeText={setFirstName} placeholder="First name" autoCapitalize="words" />
-          <TextInputField label="Last name" value={lastName} onChangeText={setLastName} placeholder="Last name" autoCapitalize="words" />
-          <DatePickerField label="Date of birth" value={dob} onChange={setDob} />
+          <View style={styles.whyBox}>
+            <Info size={16} color={Colors.secondary} strokeWidth={2} />
+            <Text style={styles.whyText}>
+              We'll confirm your name and date of birth directly from the national registry — no need to type them.
+            </Text>
+          </View>
         </ScrollView>
 
         <SafeAreaView edges={['bottom']} style={styles.footer}>
@@ -93,6 +93,5 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.md,
   },
   whyText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, flex: 1, lineHeight: 18 },
-  section: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.sm },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md, paddingTop: Spacing.sm },
 });
