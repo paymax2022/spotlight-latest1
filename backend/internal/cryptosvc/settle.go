@@ -206,6 +206,40 @@ func (s *Settler) feeJournal(in SwapLedgerInput, a accounts, amount int64) ledge
 	}
 }
 
+// completionMarkerJournal records that a zero-fee buy completed, so completion is
+// detectable at the ledger independent of the fee (ADR-PR<pr#>). A fee-bearing buy
+// already leaves the :fee leg; a zero-fee completion moves no money and would otherwise
+// be indistinguishable from a live hold. The marker debits and credits the SAME clearing
+// account: it is net-zero on every account (principal stays parked, as for a fee-bearing
+// completion) yet carries a positive amount the ledger accepts and a deterministic key a
+// racing FailBuy reads under the swap lock. It is NOT an economic entry — the Description
+// says so — and it leaves the fee>0 path's journals byte-for-byte unchanged.
+func (s *Settler) completionMarkerJournal(in SwapLedgerInput, a accounts, amount int64) ledger.JournalEntry {
+	return ledger.JournalEntry{
+		Reference: swapRef(in.SwapID), IdempotencyKey: swapKey(in.SwapID, "complete"), AmountKobo: amount,
+		DebitAccountID: a.clearing.ID, CreditAccountID: a.clearing.ID,
+		Description: "crypto zero-fee buy completion marker (no money moves; records settlement)",
+	}
+}
+
+// completionPosted reports whether the buy has a durable completion trace in the ledger,
+// independent of the caller-supplied fee: a recognised fee leg (:fee) for a fee-bearing
+// buy, or the zero-fee completion marker (:complete). This is read, not in.FeeKobo,
+// because a wrong or floored FeeKobo must never let a completed buy be reversed.
+func (s *Settler) completionPosted(ctx context.Context, swapID string) (bool, error) {
+	if _, found, err := s.led.EntryByKey(ctx, swapKey(swapID, "fee")+":credit"); err != nil {
+		return false, err
+	} else if found {
+		return true, nil
+	}
+	if _, found, err := s.led.EntryByKey(ctx, swapKey(swapID, "complete")+":debit"); err != nil {
+		return false, err
+	} else if found {
+		return true, nil
+	}
+	return false, nil
+}
+
 // HoldBuy debits the user's wallet (principal + fee, tier-gated, balance-checked under
 // the wallet lock) into clearing. Call it when the buy is confirmed with the provider.
 func (s *Settler) HoldBuy(ctx context.Context, in SwapLedgerInput) error {
@@ -306,14 +340,18 @@ func (s *Settler) completeBuy(ctx context.Context, in SwapLedgerInput) error {
 		return fmt.Errorf("%w: hold was released", ErrSettlementConflict)
 	}
 	if in.FeeKobo == 0 {
-		return nil
+		// A zero-fee completion moves no money, so post a net-zero completion marker:
+		// without it the ledger is identical to a live hold and a later FailBuy would
+		// refund crypto already delivered (ADR-PR<pr#>).
+		return s.post(ctx, s.completionMarkerJournal(in, a, hold.AmountKobo), "")
 	}
 	return s.post(ctx, s.feeJournal(in, a, in.FeeKobo), "")
 }
 
 // FailBuy reverses the whole hold to the wallet. With no hold it is a no-op (nothing
-// was ever taken, so nothing may be given back); after the fee was recognised it is
-// refused.
+// was ever taken, so nothing may be given back); once the buy has completed — a fee
+// recognised, or, for a zero-fee buy, a completion marker posted — it is refused,
+// regardless of the caller-supplied fee.
 func (s *Settler) FailBuy(ctx context.Context, in SwapLedgerInput) error {
 	if err := in.validate(); err != nil {
 		return err
@@ -344,12 +382,14 @@ func (s *Settler) failBuy(ctx context.Context, in SwapLedgerInput) error {
 	if released {
 		return nil
 	}
-	if in.FeeKobo > 0 {
-		if _, found, ferr := s.led.EntryByKey(ctx, swapKey(in.SwapID, "fee")+":credit"); ferr != nil {
-			return ferr
-		} else if found {
-			return fmt.Errorf("%w: fee already recognised", ErrSettlementConflict)
-		}
+	// A completed buy must never be reversed. Completion leaves a ledger trace that does
+	// not depend on the caller-supplied fee — a recognised fee leg, or, for a zero-fee
+	// buy, the completion marker — and a zero-fee completion is otherwise indistinguishable
+	// from a live hold, so reversing here would refund crypto already delivered (ADR-PR<pr#>).
+	if completed, cerr := s.completionPosted(ctx, in.SwapID); cerr != nil {
+		return cerr
+	} else if completed {
+		return fmt.Errorf("%w: buy already completed", ErrSettlementConflict)
 	}
 	err = s.led.PostReversal(ctx, a.wallet.ID, a.clearing.ID, hold.AmountKobo, swapRef(in.SwapID), swapKey(in.SwapID, "release"))
 	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {

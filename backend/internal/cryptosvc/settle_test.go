@@ -179,6 +179,57 @@ func TestACompletionAfterARefundIsRefused(t *testing.T) {
 	}
 }
 
+func TestACompletedZeroFeeBuyCanNeverBeReleased(t *testing.T) {
+	// A zero-fee completion moves no money, so completeBuy would otherwise leave the
+	// ledger in exactly the state of a still-held, unsettled buy (hold present, nothing
+	// released, no fee leg). Without a completion trace FailBuy cannot tell the two apart
+	// and would refund NGN for crypto already delivered — a double spend. FeeKobo==0 is
+	// reachable: floor(ngn*bps/10000) floors to 0 on small amounts, and a 0-bps override.
+	s, l := newSettler(t)
+	l.fund(user, 1_000_000)
+	ctx := context.Background()
+	if err := s.HoldBuy(ctx, buy(1_000_000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteBuy(ctx, buy(1_000_000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FailBuy(ctx, buy(1_000_000, 0)); err == nil {
+		t.Fatal("a completed zero-fee buy was refunded (double spend)")
+	}
+	if l.bal(walletK) != 0 {
+		t.Fatalf("wallet = %d: a completed zero-fee buy was credited back", l.bal(walletK))
+	}
+	if l.bal(clearK) != 1_000_000 {
+		t.Fatalf("clearing = %d: the principal must stay parked for a delivered buy", l.bal(clearK))
+	}
+}
+
+func TestZeroFeeCompletionMarkerIsIdempotent(t *testing.T) {
+	// Replaying a zero-fee completion must post the marker exactly once and stay a no-op,
+	// and the marker must move no money (principal stays parked, nothing recognised).
+	s, l := newSettler(t)
+	l.fund(user, 1_000_000)
+	ctx := context.Background()
+	if err := s.HoldBuy(ctx, buy(1_000_000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := s.CompleteBuy(ctx, buy(1_000_000, 0)); err != nil {
+			t.Fatalf("replay %d: %v", i, err)
+		}
+	}
+	if l.bal(walletK) != 0 || l.bal(clearK) != 1_000_000 || l.bal(revenueK) != 0 {
+		t.Fatalf("wallet=%d clearing=%d revenue=%d", l.bal(walletK), l.bal(clearK), l.bal(revenueK))
+	}
+	if l.total() != 1_000_000 {
+		t.Fatalf("the completion marker created or destroyed money: total=%d", l.total())
+	}
+	if err := s.FailBuy(ctx, buy(1_000_000, 0)); err == nil {
+		t.Fatal("a completed zero-fee buy was refunded after replays")
+	}
+}
+
 func sell(gross string) (SwapLedgerInput, decimal.Decimal) {
 	return SwapLedgerInput{SwapID: "s2", UserID: user, Side: SideSell, FeeBps: 75, NGNKobo: 1_000_000}, decimal.RequireFromString(gross)
 }
