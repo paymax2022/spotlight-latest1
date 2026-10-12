@@ -30,6 +30,31 @@ type SwapRecord struct {
 	NGNKobo int64 // buy: NGN principal paid; sell: quoted gross proceeds
 	FeeBps  int
 	FeeKobo int64 // buy: platform fee charged on top of NGNKobo
+
+	// Quote data the confirm step needs.
+	ProviderQuoteID string
+	IdempotencyKey  string
+	FromCurrency    string
+	ToCurrency      string
+	FromAmount      decimal.Decimal
+	QuotedToAmount  decimal.Decimal
+	QuotedPrice     decimal.Decimal
+	ExpiresAt       time.Time
+	// ExecuteAttempted is set (once) immediately before the provider is asked to execute.
+	// A confirming swap with this set and no provider swap id has an UNKNOWN outcome and is
+	// never executed or refunded blindly.
+	ExecuteAttempted bool
+}
+
+// NewSwap is a freshly quoted swap to persist.
+type NewSwap struct {
+	UserID, Provider, ProviderAccountID, ProviderQuoteID, IdempotencyKey string
+	FromCurrency, ToCurrency                                             string
+	Side                                                                 Side
+	FromAmount, QuotedToAmount, QuotedPrice                              decimal.Decimal
+	NGNKobo, FeeKobo                                                     int64
+	FeeBps                                                               int
+	ExpiresAt                                                            time.Time
 }
 
 // WebhookEvent is one received delivery. Key is the provider's stable dedupe key.
@@ -54,6 +79,22 @@ type Store interface {
 	// TransitionSwap moves from -> to only if the row is still in from. applied is
 	// false when another writer (user request, reconciler) won the race.
 	TransitionSwap(ctx context.Context, id string, from, to cryptoprov.SwapState, received decimal.Decimal, reason string) (applied bool, err error)
+
+	// InsertSwap persists a quoted swap. A repeat of (user, idempotency key) returns the
+	// existing row with created=false instead of a second quote.
+	InsertSwap(ctx context.Context, n NewSwap) (rec SwapRecord, created bool, err error)
+	// SwapByIdempotencyKey finds the user's swap for a quote idempotency key.
+	SwapByIdempotencyKey(ctx context.Context, userID, key string) (SwapRecord, bool, error)
+	// SwapByID reads a swap owned by userID; another user's id is simply not found.
+	SwapByID(ctx context.Context, userID, id string) (SwapRecord, bool, error)
+	// MarkExecuteAttempt records that the provider call is about to be made. first is true
+	// only for the call that set it.
+	MarkExecuteAttempt(ctx context.Context, id string) (first bool, err error)
+	// SetProviderSwapID records the provider's swap id once; it never overwrites a different id.
+	SetProviderSwapID(ctx context.Context, id, providerSwapID string) (bool, error)
+	// ProviderAccount / SaveProviderAccount manage the user's custodial sub-account.
+	ProviderAccount(ctx context.Context, userID, provider string) (string, bool, error)
+	SaveProviderAccount(ctx context.Context, userID, provider, accountID string) error
 }
 
 var (

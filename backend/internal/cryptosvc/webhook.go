@@ -119,11 +119,29 @@ func (i *Ingest) process(ctx context.Context, p cryptoprov.Provider, providerNam
 	if rec.State.IsTerminal() {
 		return OutcomeAlreadyFinal, nil
 	}
+	return i.resolve(ctx, p, providerName, rec)
+}
+
+// ResolveSwap re-reads the provider's authoritative state for one swap and applies it
+// (settling the ledger, then moving state). Shared by the webhook path, the confirm
+// step and the future reconciler.
+func (i *Ingest) ResolveSwap(ctx context.Context, providerName string, rec SwapRecord) (Outcome, error) {
+	p, err := i.reg.Get(providerName)
+	if err != nil {
+		return "", ErrUnknownProvider
+	}
+	if rec.State.IsTerminal() {
+		return OutcomeAlreadyFinal, nil
+	}
+	return i.resolve(ctx, p, providerName, rec)
+}
+
+func (i *Ingest) resolve(ctx context.Context, p cryptoprov.Provider, providerName string, rec SwapRecord) (Outcome, error) {
 	sp, err := cryptoprov.As[cryptoprov.SwapProvider](p)
 	if err != nil {
 		return "", fmt.Errorf("cryptosvc: provider %q cannot be re-queried: %w", providerName, err)
 	}
-	sw, err := sp.GetSwap(ctx, rec.ProviderAccountID, ev.Ref)
+	sw, err := sp.GetSwap(ctx, rec.ProviderAccountID, rec.ProviderSwapID)
 	if err != nil {
 		return "", fmt.Errorf("cryptosvc: re-query swap: %w", err)
 	}

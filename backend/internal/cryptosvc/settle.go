@@ -223,7 +223,31 @@ func (s *Settler) HoldBuy(ctx context.Context, in SwapLedgerInput) error {
 	if err != nil {
 		return err
 	}
+	// A hold replay is success only while the hold is live. Once it was released the user
+	// has been made whole, and re-holding here would let a resumed confirm go on to execute
+	// at the provider with the NGN already refunded.
+	if released, rerr := s.releasePosted(ctx, in, a, j.AmountKobo); rerr != nil {
+		return rerr
+	} else if released {
+		return fmt.Errorf("%w: hold already released", ErrSettlementConflict)
+	}
 	return s.post(ctx, j, in.UserID)
+}
+
+// IsReleased reports whether the swap's NGN hold has already been reversed to the wallet.
+func (s *Settler) IsReleased(ctx context.Context, in SwapLedgerInput) (bool, error) {
+	if err := in.validate(); err != nil {
+		return false, err
+	}
+	a, err := s.accounts(ctx, in.UserID)
+	if err != nil {
+		return false, err
+	}
+	j, err := s.holdJournal(in, a)
+	if err != nil {
+		return false, err
+	}
+	return s.releasePosted(ctx, in, a, j.AmountKobo)
 }
 
 // releasePosted reports whether the hold was already reversed, verifying identity.

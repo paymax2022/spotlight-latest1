@@ -22,7 +22,14 @@ func livePool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL — skipping crypto webhook live-DB test")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately small, like a CI runner: it keeps the pool-starvation regression visible
+	// (a locker sharing this pool deadlocks under 8 concurrent confirms).
+	cfg.MaxConns = 4
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
