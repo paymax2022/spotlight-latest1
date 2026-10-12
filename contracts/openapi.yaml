@@ -1775,12 +1775,23 @@ components:
         venue: { type: string, nullable: true }
         state:
           type: string
-          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, CLOSED, SUSPENDED]
+          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED]
         category: { type: string, nullable: true, description: "Discovery filter, e.g. music/tech/sports/comedy/faith" }
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
         fee_bps: { type: integer, description: "Platform fee in basis points on vendor settlement (0-10000)" }
         created_at: { type: string, format: date-time }
+
+    EventPatch:
+      description: Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
+      type: object
+      properties:
+        title: { type: string }
+        description: { type: string }
+        venue: { type: string }
+        category: { type: string }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
 
     EventSummary:
       description: Lightweight discovery-feed projection returned by GET /events.
@@ -1791,7 +1802,7 @@ components:
         venue: { type: string, nullable: true }
         state:
           type: string
-          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, CLOSED, SUSPENDED]
+          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED]
         category: { type: string, nullable: true }
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
@@ -8191,7 +8202,7 @@ paths:
           description: Optional category filter (e.g. music, tech, sports, comedy, faith)
         - name: state
           in: query
-          schema: { type: string, enum: [DRAFT, SUBMITTED, APPROVED, LIVE, CLOSED, SUSPENDED] }
+          schema: { type: string, enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED] }
           description: Optional state filter. Non-public states are only honoured for the caller's own organised events.
         - name: limit
           in: query
@@ -8261,6 +8272,118 @@ paths:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Event' }
         '404': { description: "Event not found, or in a non-public state and the caller is not the organiser (existence is never leaked)" }
+
+    patch:
+      operationId: patchEvent
+      summary: Organiser partially edits an event (title/description/venue/category/times); locked once edits are disallowed
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventPatch' }
+      responses:
+        '200':
+          description: The updated event
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/Event' }
+        '400': { description: Invalid body or invalid times (ends_at must be after starts_at) }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is edit-locked in its current state }
+
+  /events/{id}/duplicate:
+    post:
+      operationId: duplicateEvent
+      summary: Organiser duplicates an event into a new DRAFT (owner, or any publicly visible event)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201':
+          description: New event summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventSummary' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
+  /events/{id}/pause:
+    post:
+      operationId: pauseEvent
+      summary: Organiser pauses ticket sales (LIVE -> PAUSED)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: State transitioned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is not in a state that allows this transition }
+
+  /events/{id}/resume:
+    post:
+      operationId: resumeEvent
+      summary: Organiser resumes ticket sales (PAUSED -> LIVE)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: State transitioned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is not in a state that allows this transition }
+
+  /events/{id}/cancel:
+    post:
+      operationId: cancelEvent
+      summary: Organiser cancels the event; buyers refunded 90/10 via reversing ledger entries (idempotent)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '202':
+          description: Cancellation accepted; refunds processed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '400': { description: "Missing Idempotency-Key or invalid body" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is already closed or cancelled }
 
   /events/{id}/submit:
     post:

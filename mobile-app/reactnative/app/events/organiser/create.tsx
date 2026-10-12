@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Plus, Trash2 } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -12,9 +12,10 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
-import { useCreateEvent } from '@/features/events/hooks';
+import { useCreateEvent, useEvent, useUpdateEvent } from '@/features/events/hooks';
+import { lifecycleErrorMessage } from '@/features/events/api';
 import { EventColors, EVENT_CATEGORIES } from '@/features/events/constants/events.constants';
-import type { CreateEventInput, EventCategory } from '@/features/events/types';
+import type { CreateEventInput, EventCategory, EventPatch } from '@/features/events/types';
 import { sanitizeMoneyInput } from '@/utils/money';
 
 // field config to a control. Adding a field/step = editing this schema only.
@@ -41,7 +42,15 @@ const STEPS: StepSchema[] = [
 ];
 
 export default function CreateEvent() {
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const editId = typeof id === 'string' && id ? id : '';
+  const isEdit = !!editId;
   const create = useCreateEvent();
+  const update = useUpdateEvent(editId);
+  const existing = useEvent(editId);
+  const loaded = existing.data;
+  // Hard-time fields lock once any ticket has sold (the backend rejects the edit).
+  const timeLocked = !!loaded && loaded.tiers.some((t) => t.sold > 0);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>({
     title: '', category: 'music', description: '', venue: '',
@@ -51,8 +60,20 @@ export default function CreateEvent() {
   const [tiers, setTiers] = useState<TierDraft[]>([{ name: 'Regular', price: '5000', qty: '500' }]);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const isTierStep = step === STEPS.length;
-  const totalSteps = STEPS.length + 1; // schema steps + tiers step
+  // Edit mode has no tiers step (tier editing is out of scope for PATCH).
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (!isEdit || !loaded || prefilled) return;
+    setForm({
+      title: loaded.title, category: loaded.category, description: loaded.description, venue: loaded.venue,
+      startsAtISO: loaded.starts_at, endsAtISO: loaded.ends_at,
+    });
+    setPrefilled(true);
+  }, [isEdit, loaded, prefilled]);
+
+  const isTierStep = !isEdit && step === STEPS.length;
+  const lastSchemaStep = isEdit && step === STEPS.length - 1;
+  const totalSteps = isEdit ? STEPS.length : STEPS.length + 1; // schema steps (+ tiers step when creating)
 
   const set = (k: keyof FormState, v: any) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -74,6 +95,27 @@ export default function CreateEvent() {
 
   const next = async () => {
     if (!validateStep()) return;
+    if (isEdit) {
+      if (!lastSchemaStep) { setStep((s) => s + 1); return; }
+      if (!loaded) return;
+      const patch: EventPatch = {};
+      if (form.title !== loaded.title) patch.title = form.title;
+      if (form.description !== loaded.description) patch.description = form.description;
+      if (form.venue !== loaded.venue) patch.venue = form.venue;
+      if (form.category !== loaded.category) patch.category = form.category;
+      if (!timeLocked) {
+        if (form.startsAtISO !== loaded.starts_at) patch.starts_at = form.startsAtISO;
+        if (form.endsAtISO !== loaded.ends_at) patch.ends_at = form.endsAtISO;
+      }
+      if (Object.keys(patch).length === 0) { goBack('/events/organiser/dashboard'); return; }
+      try {
+        await update.mutateAsync(patch);
+        router.replace('/events/organiser/dashboard');
+      } catch (err) {
+        Alert.alert('Couldn\'t save changes', lifecycleErrorMessage(err));
+      }
+      return;
+    }
     if (!isTierStep) { setStep((s) => s + 1); return; }
     // Submit — backend TicketTier.capacity is a required int (no "unlimited"
     // sentinel), so a blank quantity defaults to a large cap instead of null.
@@ -87,13 +129,19 @@ export default function CreateEvent() {
     router.replace('/events/organiser/dashboard');
   };
 
-  if (create.isPending) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Create event" /><StateView kind="loading" message="Creating your event…" /></SafeAreaView>;
+  if (isEdit && existing.isLoading) {
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Edit event" /><StateView kind="loading" message="Loading event…" /></SafeAreaView>;
+  }
+  if (isEdit && (existing.isError || !loaded)) {
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Edit event" onBack={() => goBack('/events/organiser/dashboard')} /><StateView kind="error" title="Couldn't load event" message="Please try again." actionLabel="Retry" onAction={() => existing.refetch()} /></SafeAreaView>;
+  }
+  if (create.isPending || update.isPending) {
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title={isEdit ? 'Edit event' : 'Create event'} /><StateView kind="loading" message={isEdit ? 'Saving changes…' : 'Creating your event…'} /></SafeAreaView>;
   }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Create event" subtitle={`Step ${step + 1} of ${totalSteps}`} onBack={() => (step === 0 ? goBack('/events') : setStep((s) => s - 1))} />
+      <ScreenHeader title={isEdit ? 'Edit event' : 'Create event'} subtitle={`Step ${step + 1} of ${totalSteps}`} onBack={() => (step === 0 ? goBack(isEdit ? '/events/organiser/dashboard' : '/events') : setStep((s) => s - 1))} />
       <View style={styles.progress}>
         {Array.from({ length: totalSteps }).map((_, i) => (
           <View key={i} style={[styles.bar, i <= step && styles.barActive]} />
@@ -135,6 +183,27 @@ export default function CreateEvent() {
                 />
               );
             })}
+            {isEdit && lastSchemaStep ? (
+              <>
+                <TextInputField
+                  label="Starts (ISO date-time)"
+                  value={form.startsAtISO}
+                  onChangeText={(v) => set('startsAtISO', v)}
+                  editable={!timeLocked}
+                  autoCapitalize="none"
+                />
+                <TextInputField
+                  label="Ends (ISO date-time)"
+                  value={form.endsAtISO}
+                  onChangeText={(v) => set('endsAtISO', v)}
+                  editable={!timeLocked}
+                  autoCapitalize="none"
+                />
+                {timeLocked ? (
+                  <Text style={styles.lockNote}>Start and end times are locked because tickets have already been sold.</Text>
+                ) : null}
+              </>
+            ) : null}
           </>
         ) : (
           <>
@@ -167,7 +236,7 @@ export default function CreateEvent() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label={isTierStep ? 'Create event' : 'Continue'} onPress={next} />
+        <PrimaryButton label={isEdit ? (lastSchemaStep ? 'Save changes' : 'Continue') : isTierStep ? 'Create event' : 'Continue'} onPress={next} />
       </View>
     </SafeAreaView>
   );
@@ -195,6 +264,7 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.lg },
   checkbox: { width: 24, height: 24, borderRadius: Radius.sm, borderWidth: 1.5, borderColor: Colors.outline, alignItems: 'center', justifyContent: 'center' },
   checkboxOn: { backgroundColor: EventColors.brand, borderColor: EventColors.brand },
+  lockNote: { ...Typography.caption, color: EventColors.muted, marginBottom: Spacing.md },
   toggleText: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
 });

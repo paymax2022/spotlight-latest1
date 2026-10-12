@@ -5,7 +5,7 @@
 
 // Event lifecycle: DRAFT -> SUBMITTED -> APPROVED -> LIVE -> CLOSED
 // APPROVED <-> SUSPENDED is admin-only.
-export type EventState = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'LIVE' | 'CLOSED' | 'SUSPENDED';
+export type EventState = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'LIVE' | 'CLOSED' | 'SUSPENDED' | 'PAUSED' | 'CANCELLED';
 
 export type EventCategory = 'music' | 'tech' | 'sports' | 'comedy' | 'faith';
 
@@ -47,6 +47,21 @@ export interface EventDetail {
   category:      EventCategory;
   created_at:    string;
   tiers:         TicketTier[];
+}
+
+// PATCH /api/finance/events/:id — every field optional; omitted = unchanged.
+export interface EventPatch {
+  title?:       string;
+  description?: string;
+  venue?:       string;
+  category?:    EventCategory;
+  starts_at?:   string;
+  ends_at?:     string;
+}
+
+// POST /api/finance/events/:id/cancel body (202 Accepted; refunds run async).
+export interface CancelEventRequest {
+  reason: string;
 }
 
 // Ticket lifecycle: ISSUED -> TRANSFERRED -> USED | ISSUED -> USED | ISSUED -> REFUNDED

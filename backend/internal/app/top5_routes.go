@@ -230,6 +230,9 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 
 	handler := top5events.NewHandler(svc)
 	handler.Register(member, admin, guard)
+	if cfg.FeatureEventsEditLifecycle {
+		handler.RegisterLifecycle(member)
+	}
 
 	// Money-path durability: sweep ticket checkouts left PENDING by a crash between
 	// reservation and payment, charging/ticketing buyers who can pay and expiring

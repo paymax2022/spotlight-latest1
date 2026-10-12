@@ -1,4 +1,5 @@
 import { api } from '@/api/client';
+import { getErrorMessage } from '@/utils/errorMapper';
 import { USE_MOCK, API_BASE } from './constants/events.constants';
 import type {
   EventSummary,
@@ -20,7 +21,23 @@ import type {
   TopUpSource,
   GateToken,
   Gate,
+  EventPatch,
 } from './types';
+
+// Organiser lifecycle writes have a live endpoint and nothing a fixture could
+// honestly add, so fixture mode refuses loudly instead of reporting a write it
+// did not perform (same pattern as the association module, election #698).
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_EVENT_USE_MOCK=false to send this against the live backend.`);
+
+// User-facing text for a failed lifecycle write. The fixture-mode refusal above
+// is a developer string; users get a plain message instead of the env-var hint.
+export function lifecycleErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.includes('unavailable in fixture mode')) {
+    return 'This action isn\'t available right now. Please try again later.';
+  }
+  return getErrorMessage(err);
+}
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
@@ -43,7 +60,7 @@ function pickList<T>(res: { data?: unknown }, key: string): T[] {
 }
 
 // Every money mutation carries an Idempotency-Key (NL-9).
-function idempotencyKey(): string {
+export function idempotencyKey(): string {
   return `evt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -345,6 +362,34 @@ export async function goLiveEvent(eventId: string): Promise<EventDetail> {
 export async function closeEvent(eventId: string): Promise<EventDetail> {
   if (USE_MOCK) { await delay(); return getEvent(eventId); }
   return unwrap(await api.post(`${API_BASE}/${eventId}/close`, {}));
+}
+
+// ── Organiser lifecycle (FEATURE_EVENTS_EDIT_LIFECYCLE) — writes, no mock fallback ──
+export async function updateEvent(id: string, patch: EventPatch): Promise<EventDetail> {
+  if (USE_MOCK) throw notInFixtureMode('Editing an event');
+  return unwrap(await api.patch(`${API_BASE}/${id}`, patch));
+}
+
+export async function duplicateEvent(id: string): Promise<EventDetail> {
+  if (USE_MOCK) throw notInFixtureMode('Duplicating an event');
+  return unwrap(await api.post(`${API_BASE}/${id}/duplicate`, {}));
+}
+
+export async function pauseEvent(id: string): Promise<EventDetail> {
+  if (USE_MOCK) throw notInFixtureMode('Pausing an event');
+  return unwrap(await api.post(`${API_BASE}/${id}/pause`, {}));
+}
+
+export async function resumeEvent(id: string): Promise<EventDetail> {
+  if (USE_MOCK) throw notInFixtureMode('Resuming an event');
+  return unwrap(await api.post(`${API_BASE}/${id}/resume`, {}));
+}
+
+// Cancel refunds buyers, so it is a money mutation: the caller supplies the
+// Idempotency-Key (generate once per user intent, reuse on retry).
+export async function cancelEvent(id: string, reason: string, idemKey: string): Promise<unknown> {
+  if (USE_MOCK) throw notInFixtureMode('Cancelling an event');
+  return unwrap(await api.post(`${API_BASE}/${id}/cancel`, { reason }, { headers: { 'Idempotency-Key': idemKey } }));
 }
 
 // Closed-loop top-up: debits main wallet (via PaymentSheet) → credits event wallet.
