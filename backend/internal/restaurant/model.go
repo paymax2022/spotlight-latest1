@@ -71,6 +71,10 @@ type MenuItem struct {
 	ImageURL     *string  `json:"image_url,omitempty"`
 	IsAvailable  bool     `json:"is_available"`
 	DietaryTags  []string `json:"dietary_tags,omitempty"`
+	// PrepMinutes is how long this item takes to make: its own override, or the
+	// restaurant's default when none is set. PrepTimeOverride is the override alone.
+	PrepMinutes      int  `json:"prep_minutes"`
+	PrepTimeOverride *int `json:"prep_time_override,omitempty"`
 }
 
 // OrderStatus tracks a delivery order through its lifecycle.

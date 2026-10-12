@@ -595,7 +595,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
 }
 
 function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCategory[] }) {
-  const [draft, setDraft] = useState<ItemDraft>({ categoryId: null, subcategoryId: null, name: '', priceNaira: '' });
+  const [draft, setDraft] = useState<ItemDraft>({ categoryId: null, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '' });
   const [errors, setErrors] = useState<ItemDraftErrors>({});
   const createItem = useCreateTaxonomyItem(storeId);
   const subs = subcategoriesFor(tree, draft.categoryId);
@@ -608,7 +608,7 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
     }
     setErrors({});
     createItem.mutate(r.payload, {
-      onSuccess: () => setDraft((d) => ({ ...d, subcategoryId: null, name: '', priceNaira: '' })),
+      onSuccess: () => setDraft((d) => ({ ...d, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '' })),
       onError: (e) => alertAsync({ title: 'Could not add the item', message: (e as Error).message }),
     });
   };
@@ -657,6 +657,10 @@ function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCat
         placeholder="Price in naira, e.g. 2500" keyboardType="decimal-pad"
         placeholderTextColor={Colors.outline} style={styles.input} />
       {errors.price ? <Text style={styles.errorText}>{errors.price}</Text> : null}
+      <TextInput value={draft.prepMinutes ?? ''} onChangeText={(prepMinutes) => setDraft((d) => ({ ...d, prepMinutes }))}
+        placeholder="Prep time in minutes (optional, 5 to 180)" keyboardType="number-pad"
+        placeholderTextColor={Colors.outline} style={styles.input} />
+      {errors.prep ? <Text style={styles.errorText}>{errors.prep}</Text> : null}
 
       <PrimaryButton label="Add item" onPress={submit} loading={createItem.isPending} />
     </View>

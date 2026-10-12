@@ -403,15 +403,18 @@ type orderPricing struct {
 	breakdown           *DeliveryFeeBreakdown
 	distanceMeters      *float64
 	etaMinutes          *float64
-	surgeKobo           int64
-	serviceFeeKobo      int64
-	tipKobo             int64
-	discountKobo        int64
-	promoID             *string
-	promoFunder         *string
-	packageCount        int
-	packagingKobo       int64
-	total               int64
+	// maxPrepMinutes is the slowest item in the cart: a multi-item order is ready when
+	// its slowest item is, so the estimate folds in that one, not the sum.
+	maxPrepMinutes int
+	surgeKobo      int64
+	serviceFeeKobo int64
+	tipKobo        int64
+	discountKobo   int64
+	promoID        *string
+	promoFunder    *string
+	packageCount   int
+	packagingKobo  int64
+	total          int64
 }
 
 // priceOrder computes orderPricing for a cart against CURRENT DB state
@@ -496,15 +499,22 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 
 	var itemsWithRest []itemWithRest
 	var subtotal int64
+	var maxPrepMinutes int
 	for _, input := range req.Items {
 		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
-		const qMI = `SELECT id, restaurant_id, name, price_kobo, ` + availableNow + ` AS is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
-		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
+		const qMI = `SELECT id, restaurant_id, name, price_kobo, ` + availableNow + ` AS is_available,
+		             COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes
+		             FROM menu_items WHERE id=$1 AND restaurant_id=$2`
+		var prep int
+		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable, &prep); err != nil {
 			return nil, fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("%w (%s)", ErrMenuItemUnavailable, mi.Name)
+		}
+		if prep > maxPrepMinutes {
+			maxPrepMinutes = prep
 		}
 		// Sanity-bound the line before it is multiplied. Quantity was only bounded below
 		// (>= 1), and the pricing that follows multiplies before it divides — see
@@ -680,6 +690,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		breakdown:           breakdown,
 		distanceMeters:      distanceMeters,
 		etaMinutes:          etaMinutes,
+		maxPrepMinutes:      maxPrepMinutes,
 		surgeKobo:           surgeKobo,
 		serviceFeeKobo:      serviceFeeKobo,
 		tipKobo:             tipKobo,
@@ -775,6 +786,10 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	breakdown := pricing.breakdown
 	distanceMeters := pricing.distanceMeters
 	etaMinutes := pricing.etaMinutes
+	if etaMinutes != nil && pricing.maxPrepMinutes > 0 {
+		folded := totalEtaMinutes(pricing.maxPrepMinutes, *etaMinutes)
+		etaMinutes = &folded
+	}
 	surgeKobo := pricing.surgeKobo
 	serviceFeeKobo := pricing.serviceFeeKobo
 	tipKobo := pricing.tipKobo
