@@ -26,7 +26,7 @@ type WireConfig struct {
 	WebhookSecret string
 	// DatabaseURL opens the dedicated lock pool (a direct or session-mode connection).
 	DatabaseURL       string
-	LockPoolConns     int32
+	LockPoolConns     int
 	ReconcileInterval time.Duration
 	Fees              FeeSchedule
 	MinTier           tiers.Tier

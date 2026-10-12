@@ -55,3 +55,11 @@ func TestTransfersStepUpNeverScoresAnEmptyPin(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestLockPoolSizeIsBounded(t *testing.T) {
+	for _, n := range []int{-1, 0, 3, 501, 5_000_000_000} {
+		if _, _, err := NewPGSwapLockerPool(context.Background(), "postgres://x", n); err == nil {
+			t.Errorf("pool size %d accepted", n)
+		}
+	}
+}

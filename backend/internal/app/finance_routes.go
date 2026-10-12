@@ -3258,18 +3258,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			if cfg.IsProd() {
 				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
 			}
-			// Bound the env-derived pool size before narrowing it to int32.
-			lockConns := cfg.CryptoLockPoolConns
-			if lockConns < 4 {
-				lockConns = 4
-			}
-			if lockConns > 500 {
-				lockConns = 500
-			}
 			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
 				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
 				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
-				LockPoolConns:     int32(lockConns),
+				LockPoolConns:     cfg.CryptoLockPoolConns,
 				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
 				Fees:              cryptosvc.DefaultFeeSchedule(),
 			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
