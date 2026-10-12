@@ -95,6 +95,10 @@ type Store interface {
 	SwapByIdempotencyKey(ctx context.Context, userID, key string) (SwapRecord, bool, error)
 	// SwapByID reads a swap owned by userID; another user's id is simply not found.
 	SwapByID(ctx context.Context, userID, id string) (SwapRecord, bool, error)
+	// ListByState returns swaps in state across all users, oldest parked first
+	// (updated_at asc), paginated by limit/offset (the caller bounds them). It backs
+	// the admin review queue; it is read-only and must not lock rows.
+	ListByState(ctx context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error)
 	// MarkExecuteAttempt records that the provider call is about to be made. first is true
 	// only for the call that set it.
 	MarkExecuteAttempt(ctx context.Context, id string) (first bool, err error)

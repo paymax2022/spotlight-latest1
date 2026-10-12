@@ -109,6 +109,27 @@ func (s *PGStore) StaleSwaps(ctx context.Context, state cryptoprov.SwapState, ol
 	return out, rows.Err()
 }
 
+// ListByState backs the admin needs_review queue: all swaps in state, oldest parked
+// first (updated_at asc, id as a stable tiebreak), paginated. Read-only; no row locks.
+func (s *PGStore) ListByState(ctx context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+swapCols+` FROM public.crypto_swaps WHERE status = $1 ORDER BY updated_at, id LIMIT $2 OFFSET $3`,
+		string(state), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SwapRecord
+	for rows.Next() {
+		r, err := scanSwap(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *PGStore) TouchSwap(ctx context.Context, id string, state cryptoprov.SwapState) error {
 	_, err := s.pool.Exec(ctx, `UPDATE public.crypto_swaps SET updated_at = now() WHERE id = $1::uuid AND status = $2`, id, string(state))
 	return err

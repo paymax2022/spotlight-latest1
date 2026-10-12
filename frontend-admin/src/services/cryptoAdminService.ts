@@ -12,7 +12,7 @@ import type {
   CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
   CryptoWithdrawal, CryptoWithdrawalDecisionRequest,
   CryptoSwapOrder, CryptoAddress, CryptoAddressDecisionRequest,
-  CryptoReconRow, CryptoReconSummary,
+  CryptoReconRow, CryptoReconSummary, CryptoReviewSwap,
 } from '@/types/cryptoAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
@@ -202,6 +202,27 @@ export async function adminListSwaps(limit = 50, offset = 0): Promise<CryptoSwap
   if (USE_MOCK) return delay([...MOCK_SWAPS]);
   const res = await fetch(`${base()}/swaps?limit=${limit}&offset=${offset}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Swaps fetch failed'));
+  const body = await res.json();
+  return body?.swaps ?? [];
+}
+
+// GET /admin/crypto/swaps/review — swaps parked in needs_review by the NEW swap
+// pipeline (backend/internal/cryptosvc, table crypto_swaps), with the user's NGN still
+// held. DISTINCT from adminListSwaps above, which reads the LEGACY crypto_swap_orders.
+// Read-only this round: it surfaces held money so ops can see it; settle/release/retry
+// decision controls are a follow-up. Flag-gated server-side by FEATURE_CRYPTO_SWAPS_ENABLED
+// — when the flag is off the route is not mounted (404) and this returns [].
+
+const MOCK_REVIEW_SWAPS: CryptoReviewSwap[] = [
+  { id: '7b1e9d2a-0000-4000-8000-000000000001', user_id: 'usr_7f2a', status: 'needs_review', asset: 'USDT', ngn_kobo: 1_000_000, fee_kobo: 7_500, held_kobo: 1_007_500, provider: 'quidax', provider_swap_id: 'qdx_swp_5501', has_provider_id: true, updated_at: iso(90), age_seconds: 90 * 60 },
+  { id: '3c2d4e5f-0000-4000-8000-000000000002', user_id: 'usr_2b9e', status: 'needs_review', asset: 'BTC', ngn_kobo: 5_000_000, fee_kobo: 37_500, held_kobo: 5_037_500, provider: 'quidax', has_provider_id: false, updated_at: iso(240), age_seconds: 240 * 60 },
+];
+
+export async function adminListReviewSwaps(limit = 50, offset = 0): Promise<CryptoReviewSwap[]> {
+  if (USE_MOCK) return delay([...MOCK_REVIEW_SWAPS]);
+  const res = await fetch(`${base()}/swaps/review?limit=${limit}&offset=${offset}`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404) return []; // flag off / pipeline not mounted — no parked swaps to show
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Review queue fetch failed'));
   const body = await res.json();
   return body?.swaps ?? [];
 }

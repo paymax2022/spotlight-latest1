@@ -474,6 +474,13 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 }
 
 // Resolve re-reads the provider and applies the authoritative state (settling the ledger).
+// ListByState returns swaps in state for the admin review surface. It is read-only: it
+// delegates straight to the store and reloads or mutates nothing. The caller bounds
+// limit/offset.
+func (s *Service) ListByState(ctx context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error) {
+	return s.cfg.Store.ListByState(ctx, state, limit, offset)
+}
+
 func (s *Service) Resolve(ctx context.Context, userID, swapID string) (SwapRecord, error) {
 	rec, err := s.reload(ctx, userID, swapID)
 	if err != nil {
