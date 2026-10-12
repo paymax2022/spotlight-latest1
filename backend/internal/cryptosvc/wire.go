@@ -89,17 +89,26 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	}
 	store := NewPGStore(d.Pool)
 	settler := NewSettler(d.Ledger).WithLocker(locker)
-	ingest := NewIngest(reg, store).WithSettler(settler)
+	auditor := &PGAuditor{Pool: d.Pool}
+	ingest := NewIngest(reg, store).WithSettler(settler).WithAuditor(auditor)
 	svc := NewService(ServiceConfig{
 		Registry: reg, Provider: client.Name(), Store: store, Settler: settler, Ingest: ingest,
 		Fees: cfg.Fees, Users: &PGUserDirectory{Pool: d.Pool},
 		Gate:   &TierTradeGate{Pool: d.Pool, Tiers: d.Tiers, MinTier: cfg.MinTier},
-		Locker: locker,
+		Locker: locker, Audit: auditor,
 	})
+
+	// The reconciler's leader lock lives on its OWN tiny pool: a flood of confirms can then never
+	// starve leader election or the reconciler's own lock connection.
+	leaderLocker, closeLeader, err := NewPGSwapLockerPool(ctx, cfg.DatabaseURL, 4)
+	if err != nil {
+		closeLocks()
+		return nil, err
+	}
 
 	rctx, cancel := context.WithCancel(ctx)
 	rec := NewReconciler(ReconcilerConfig{
-		Service: svc, Leader: NewPGLeader(locker.pool),
+		Service: svc, Leader: NewPGLeader(leaderLocker.pool),
 		Alert: func(kind, msg string) { log.Printf("[crypto][ALERT] %s: %s", kind, msg) },
 		ClearingBalance: func(c context.Context) (int64, error) {
 			acct, err := d.Ledger.GetOrCreateStandingAccount(c, ledger.AccountCryptoClearing)
@@ -113,6 +122,6 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 
 	return &Wired{
 		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}},
-		Close: func() { cancel(); closeLocks() },
+		Close: func() { cancel(); closeLeader(); closeLocks() },
 	}, nil
 }

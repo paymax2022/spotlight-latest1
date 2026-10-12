@@ -49,14 +49,23 @@ type ServiceConfig struct {
 	Now    func() time.Time
 	// MinQuoteLife is the least remaining validity a quote must have to be offered.
 	MinQuoteLife time.Duration
+	// Audit records money-relevant actions (nil = none; production wiring sets it).
+	Audit Auditor
 }
+
+// MaxQuoteKobo caps a single quote (10 bn NGN) so an absurd amount never reaches the provider
+// or overflows principal + fee arithmetic. Tier limits still apply at the hold.
+const MaxQuoteKobo int64 = 1_000_000_000_000
 
 // Service is the buy (NGN -> crypto) pipeline: quote, then confirm.
 //
 // Confirm order is load-bearing (ADR-PR710): claim quoted->confirming, post the NGN hold
 // to the ledger, and only THEN ask the provider to execute. A provider execution can never
 // happen without the user's money already parked, and a hold with no execution is released.
-type Service struct{ cfg ServiceConfig }
+type Service struct {
+	cfg    ServiceConfig
+	inproc keyedGate
+}
 
 // NewService builds the pipeline.
 func NewService(cfg ServiceConfig) *Service {
@@ -67,6 +76,13 @@ func NewService(cfg ServiceConfig) *Service {
 		cfg.MinQuoteLife = 5 * time.Second
 	}
 	return &Service{cfg: cfg}
+}
+
+func (s *Service) audit(ctx context.Context, actor, action, swapID, reason string, detail map[string]any) {
+	if s.cfg.Audit == nil {
+		return
+	}
+	s.cfg.Audit.Audit(ctx, AuditEvent{Actor: actor, Action: action, EntityID: swapID, Reason: reason, Detail: detail})
 }
 
 // QuoteRequest asks for a buy quote: spend NGNKobo to buy Asset.
@@ -82,6 +98,13 @@ func (s *Service) locked(ctx context.Context, key string, fn func(context.Contex
 		// Without it, concurrent confirms and first quotes can double-act. Fail closed.
 		return errors.New("cryptosvc: no locker configured; refusing to run")
 	}
+	// Queue identical requests in memory first: each caller blocked on the distributed lock
+	// would otherwise pin one pooled connection, so one user could exhaust the lock pool.
+	release, err := s.inproc.acquire(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.cfg.Locker.WithSwapLock(ctx, key, fn)
 }
 
@@ -150,6 +173,8 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 		return SwapRecord{}, errors.New("cryptosvc: a crypto asset is required")
 	case req.NGNKobo <= 0:
 		return SwapRecord{}, errors.New("cryptosvc: NGN amount must be positive kobo")
+	case req.NGNKobo > MaxQuoteKobo:
+		return SwapRecord{}, errors.New("cryptosvc: NGN amount is above the per-quote maximum")
 	}
 	if err := s.gate(ctx, req.UserID); err != nil {
 		return SwapRecord{}, err
@@ -208,6 +233,9 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 	}
 	if !created && !sameQuote(rec, req, asset) { // lost a race to a concurrent request with this key
 		return SwapRecord{}, ErrIdempotencyConflict
+	}
+	if created {
+		s.audit(ctx, req.UserID, "crypto.swap.quote", rec.ID, "", map[string]any{"asset": asset, "ngn_kobo": rec.NGNKobo, "fee_kobo": rec.FeeKobo, "fee_bps": rec.FeeBps})
 	}
 	return rec, nil
 }
@@ -350,6 +378,7 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "hold refused: "+err.Error()); terr != nil { // nothing was taken
 				return rec, errors.Join(err, terr)
 			}
+			s.audit(ctx, rec.UserID, "crypto.swap.failed", rec.ID, "hold refused", nil)
 		case errors.Is(err, ErrPermanent):
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "hold refused permanently: "+err.Error()); terr != nil {
 				return rec, errors.Join(err, terr)
@@ -357,6 +386,7 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 		}
 		return rec, err // other errors are transient: stay confirming, the caller retries
 	}
+	s.audit(ctx, rec.UserID, "crypto.swap.hold", rec.ID, "", map[string]any{"held_kobo": rec.NGNKobo + rec.FeeKobo})
 
 	if rec.ProviderSwapID == "" {
 		// Stamp the attempt BEFORE the call. If a previous attempt already did, its outcome is
@@ -370,6 +400,7 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "a previous provider call has an unknown outcome"); terr != nil {
 				return rec, errors.Join(ErrOutcomeUnknown, terr)
 			}
+			s.audit(ctx, rec.UserID, "crypto.swap.parked", rec.ID, "previous provider call has an unknown outcome", map[string]any{"held_kobo": rec.NGNKobo + rec.FeeKobo})
 			return rec, ErrOutcomeUnknown
 		}
 
@@ -392,12 +423,14 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 				if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateFailed, "provider refused: "+cerr.Error()); terr != nil {
 					return rec, errors.Join(cerr, terr)
 				}
+				s.audit(ctx, rec.UserID, "crypto.swap.released", rec.ID, "provider refused", map[string]any{"released_kobo": rec.NGNKobo + rec.FeeKobo})
 				return rec, cerr
 			}
 			// Unknown outcome: the swap may have executed. Keep the hold and park it.
 			if terr := s.mustTo(ctx, rec, cryptoprov.SwapStateNeedsReview, "provider outcome unknown: "+cerr.Error()); terr != nil {
 				return rec, errors.Join(cerr, terr)
 			}
+			s.audit(ctx, rec.UserID, "crypto.swap.parked", rec.ID, "provider outcome unknown", map[string]any{"held_kobo": rec.NGNKobo + rec.FeeKobo})
 			return rec, cerr
 		}
 		if sw.ID == "" {
@@ -423,6 +456,7 @@ func (s *Service) execute(ctx context.Context, rec SwapRecord) (SwapRecord, erro
 			return rec, fmt.Errorf("%s: %w", reason, serr)
 		}
 		rec.ProviderSwapID = sw.ID
+		s.audit(ctx, rec.UserID, "crypto.swap.executed", rec.ID, "", nil)
 	}
 
 	if applied, err := s.cfg.Store.TransitionSwap(ctx, rec.ID, cryptoprov.SwapStateConfirming, cryptoprov.SwapStateProcessing, decimal.Zero, ""); err != nil {

@@ -6,9 +6,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/cryptoprov"
@@ -43,6 +45,13 @@ const (
 	maxJSONBytes    = 64 << 10
 	maxWebhookBytes = 1 << 20
 )
+
+// idemKeyRe bounds the Idempotency-Key: it is stored and used as a lookup key.
+var idemKeyRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,255}$`)
+
+// validSwapID reports whether id can be a swap id; anything else is a plain 404 (no database
+// round trip, no cast error, and above all no PIN spent against it).
+func validSwapID(id string) bool { _, err := uuid.Parse(id); return err == nil }
 
 // SwapView is the client-facing swap. Provider ids, the provider account and the
 // idempotency key are internal and never leave the server. NGN is integer kobo; crypto
@@ -106,12 +115,16 @@ func (h *handler) quote(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !idemKeyRe.MatchString(key) {
+		fail(c, http.StatusBadRequest, "invalid_idempotency_key")
+		return
+	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBytes)
 	var req struct {
 		Asset   string `json:"asset"`
 		NGNKobo int64  `json:"ngn_kobo"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Asset) == "" || req.NGNKobo <= 0 {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Asset) == "" || req.NGNKobo <= 0 || req.NGNKobo > MaxQuoteKobo {
 		fail(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -127,6 +140,10 @@ func (h *handler) confirm(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
 		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !validSwapID(c.Param("id")) {
+		fail(c, http.StatusNotFound, "not_found")
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBytes)
@@ -160,6 +177,7 @@ func (h *handler) confirm(c *gin.Context) {
 	}
 	if err := h.d.StepUp.VerifyPin(ctx, uid, req.Pin); err != nil {
 		if errors.Is(err, ErrStepUpRejected) {
+			h.d.Service.audit(ctx, uid, "crypto.swap.pin_rejected", c.Param("id"), "transaction PIN rejected", nil)
 			fail(c, http.StatusForbidden, "pin_invalid")
 			return
 		}
@@ -186,6 +204,10 @@ func (h *handler) get(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
 		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !validSwapID(c.Param("id")) {
+		fail(c, http.StatusNotFound, "not_found")
 		return
 	}
 	sw, err := h.d.Service.reload(c.Request.Context(), uid, c.Param("id"))
