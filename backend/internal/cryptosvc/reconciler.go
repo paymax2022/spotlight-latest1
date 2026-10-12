@@ -32,6 +32,7 @@ type ReconcilerConfig struct {
 	ConfirmingAfter time.Duration // a confirming swap this stale has no live Confirm behind it (default 2m)
 	QuotedGrace     time.Duration // expire a quote this long after its expiry (default 1m)
 	Batch           int           // swaps per state per pass (default 50)
+	HandleTimeout   time.Duration // cap on repairing one swap, so a hung one cannot stall the pass (default 30s)
 }
 
 // ReconcileResult counts what one pass did.
@@ -64,13 +65,19 @@ func NewReconciler(cfg ReconcilerConfig) *Reconciler {
 	if cfg.Batch <= 0 {
 		cfg.Batch = 50
 	}
+	if cfg.HandleTimeout <= 0 {
+		cfg.HandleTimeout = 30 * time.Second
+	}
 	return &Reconciler{cfg: cfg}
 }
 
+// alert never lets a faulty sink abort a pass.
 func (r *Reconciler) alert(kind, msg string) {
-	if r.cfg.Alert != nil {
-		r.cfg.Alert(kind, msg)
+	if r.cfg.Alert == nil {
+		return
 	}
+	defer func() { _ = recover() }()
+	r.cfg.Alert(kind, msg)
 }
 
 // RunOnce does one pass. Safe to call from several replicas: only the leader works.
@@ -109,10 +116,19 @@ func (r *Reconciler) RunOnce(ctx context.Context) (ReconcileResult, error) {
 			if ctx.Err() != nil {
 				return res, ctx.Err()
 			}
-			if err := r.handle(ctx, rec, q.state, q.cutoff, &res); err != nil {
+			hctx, cancel := context.WithTimeout(ctx, r.cfg.HandleTimeout)
+			err := r.handle(hctx, rec, q.state, q.cutoff, &res)
+			cancel()
+			if err != nil {
 				res.Errors++
 				r.alert("reconcile_error", fmt.Sprintf("swap %s (%s): %v", rec.ID, q.state, err))
 			}
+			// A swap that is still in this state after a pass (provider still pending, a repair
+			// that errored, a timeout) goes to the back of the age-ordered queue so it cannot
+			// starve newer stale swaps. Conditional on the state: a swap that moved is untouched.
+			tctx, tcancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			_ = svc.cfg.Store.TouchSwap(tctx, rec.ID, q.state)
+			tcancel()
 		}
 	}
 

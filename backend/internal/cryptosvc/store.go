@@ -88,6 +88,9 @@ type Store interface {
 	// StaleSwaps returns up to limit swaps in state whose last write is older than olderThan,
 	// oldest first. It is the reconciler's work queue; it must not lock rows.
 	StaleSwaps(ctx context.Context, state cryptoprov.SwapState, olderThan time.Time, limit int) ([]SwapRecord, error)
+	// TouchSwap bumps updated_at only while the swap is still in state, so a pass that
+	// changed nothing rotates a stuck swap to the back of the age-ordered work queue.
+	TouchSwap(ctx context.Context, id string, state cryptoprov.SwapState) error
 	// SwapByIdempotencyKey finds the user's swap for a quote idempotency key.
 	SwapByIdempotencyKey(ctx context.Context, userID, key string) (SwapRecord, bool, error)
 	// SwapByID reads a swap owned by userID; another user's id is simply not found.

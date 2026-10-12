@@ -260,3 +260,99 @@ func TestReconcilerSkipsASwapTouchedAfterItWasQueued(t *testing.T) {
 		t.Fatalf("the reconciler acted on a swap that was no longer stale: %+v", res)
 	}
 }
+
+// Audit: a swap the provider still reports pending must rotate, not starve newer stale swaps.
+func TestAPendingSwapDoesNotStarveNewerOnes(t *testing.T) {
+	r := newReconRig(t)
+	r.rec.cfg.Batch = 1
+	r.store.touchTo = r.now
+	a := r.confirmed(t, "a") // provider keeps it pending
+	b := r.confirmed(t, "b")
+	_ = r.prov.CompleteSwap(b.ProviderSwapID, cryptoprov.SwapCompleted)
+	r.store.age(a.ID, r.now, 10*time.Minute) // older, so it is listed first
+	r.store.age(b.ID, r.now, 5*time.Minute)
+
+	r.run(t) // pass 1 sees only A (still pending)
+	if res := r.run(t); res.Resolved != 1 || r.state(t, b.ID) != cryptoprov.SwapStateCompleted {
+		t.Fatalf("B starved behind A: %+v state=%s", res, r.state(t, b.ID))
+	}
+}
+
+// Audit: one hung swap must not stall the whole pass.
+type blockingLocker struct{ memLocker }
+
+func (b *blockingLocker) WithSwapLock(ctx context.Context, id string, fn func(context.Context) error) error {
+	if id == "confirm:"+hungID {
+		<-ctx.Done() // a Confirm that never lets go
+		return ctx.Err()
+	}
+	return b.memLocker.WithSwapLock(ctx, id, fn)
+}
+
+var hungID string
+
+func TestAHungSwapTimesOutAndTheRestOfThePassContinues(t *testing.T) {
+	r := newReconRig(t)
+	r.touchAll()
+	a := r.confirmed(t, "a")
+	b := r.confirmed(t, "b")
+	_ = r.prov.CompleteSwap(a.ProviderSwapID, cryptoprov.SwapCompleted)
+	_ = r.prov.CompleteSwap(b.ProviderSwapID, cryptoprov.SwapCompleted)
+	r.store.age(a.ID, r.now, 10*time.Minute)
+	r.store.age(b.ID, r.now, 5*time.Minute)
+	hungID = a.ID
+	r.svc.cfg.Locker = &blockingLocker{}
+	r.rec.cfg.HandleTimeout = 50 * time.Millisecond
+	res := r.run(t)
+	if res.Errors != 1 || res.Resolved != 1 || r.state(t, b.ID) != cryptoprov.SwapStateCompleted {
+		t.Fatalf("res=%+v: a hung swap stalled the pass", res)
+	}
+}
+
+func (r *reconRig) touchAll() { r.store.touchTo = r.now }
+
+// The key safety property: the reconciler waits behind a live Confirm and then sees it moved on.
+func TestReconcilerWaitsBehindALiveConfirmThenSkips(t *testing.T) {
+	r := newReconRig(t)
+	r.touchAll()
+	q := r.quote(t, "k", 1_000_000)
+	ctx := context.Background()
+	_, _ = r.store.TransitionSwap(ctx, q.ID, cryptoprov.SwapStateQuoted, cryptoprov.SwapStateConfirming, decimal.Zero, "")
+	_ = r.svc.cfg.Settler.HoldBuy(ctx, SwapLedgerInput{SwapID: q.ID, UserID: user, Side: SideBuy, NGNKobo: 1_000_000, FeeKobo: 7_500})
+	r.store.age(q.ID, r.now, 5*time.Minute) // looks abandoned...
+
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() { // ...but a live Confirm owns it
+		_ = r.svc.cfg.Locker.WithSwapLock(ctx, "confirm:"+q.ID, func(context.Context) error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	done := make(chan ReconcileResult, 1)
+	go func() { res, _ := r.rec.RunOnce(ctx); done <- res }()
+	select {
+	case <-done:
+		t.Fatal("the reconciler acted while a Confirm held the swap lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+	// The live Confirm finishes: it reaches the provider and bumps the row.
+	_, _ = r.store.MarkExecuteAttempt(ctx, q.ID)
+	_, _ = r.store.SetProviderSwapID(ctx, q.ID, "sw_live")
+	r.store.age(q.ID, r.now, time.Second)
+	close(release)
+	res := <-done
+	if res.Released != 0 || r.led.bal(clearK) != 1_007_500 {
+		t.Fatalf("released a hold under a live Confirm: %+v clearing=%d", res, r.led.bal(clearK))
+	}
+}
+
+func TestAPanickingAlertSinkDoesNotKillThePass(t *testing.T) {
+	r := newReconRig(t)
+	r.rec.cfg.Alert = func(string, string) { panic("sink exploded") }
+	r.rec.cfg.ClearingBalance = func(context.Context) (int64, error) { return -5, nil }
+	if _, err := r.rec.RunOnce(context.Background()); err != nil {
+		t.Fatalf("a panicking alert sink aborted the pass: %v", err)
+	}
+}

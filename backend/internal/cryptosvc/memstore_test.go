@@ -3,6 +3,7 @@ package cryptosvc
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type memStore struct {
 	swaps       map[string]*SwapRecord // by our id
 	accounts    map[string]string
 	nextID      int
+	touchTo     time.Time                      // what TouchSwap writes (tests set it to the fake 'now')
 	afterStale  func()                         // runs after StaleSwaps returned its list (simulates a concurrent writer)
 	failTo      map[cryptoprov.SwapState]error // fail every transition INTO this state
 	failSetPSID error                          // fail SetProviderSwapID
@@ -68,6 +70,7 @@ func (s *memStore) staleLocked(state cryptoprov.SwapState, olderThan time.Time, 
 			out = append(out, *r)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.Before(out[j].UpdatedAt) }) // oldest first, like the SQL
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -79,6 +82,15 @@ func (s *memStore) age(id string, now time.Time, d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.swaps[id].UpdatedAt = now.Add(-d)
+}
+
+func (s *memStore) TouchSwap(_ context.Context, id string, state cryptoprov.SwapState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.swaps[id]; r != nil && r.State == state {
+		r.UpdatedAt = s.touchTo
+	}
+	return nil
 }
 
 func (s *memStore) SwapByIdempotencyKey(_ context.Context, userID, key string) (SwapRecord, bool, error) {

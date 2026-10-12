@@ -109,6 +109,11 @@ func (s *PGStore) StaleSwaps(ctx context.Context, state cryptoprov.SwapState, ol
 	return out, rows.Err()
 }
 
+func (s *PGStore) TouchSwap(ctx context.Context, id string, state cryptoprov.SwapState) error {
+	_, err := s.pool.Exec(ctx, `UPDATE public.crypto_swaps SET updated_at = now() WHERE id = $1::uuid AND status = $2`, id, string(state))
+	return err
+}
+
 func (s *PGStore) SwapByIdempotencyKey(ctx context.Context, userID, key string) (SwapRecord, bool, error) {
 	r, err := scanSwap(s.pool.QueryRow(ctx,
 		`SELECT `+swapCols+` FROM public.crypto_swaps WHERE user_id = $1::uuid AND idempotency_key = $2`, userID, key))
