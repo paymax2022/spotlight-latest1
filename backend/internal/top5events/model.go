@@ -80,6 +80,11 @@ type TicketTier struct {
 	Capacity  int    `json:"capacity"`
 	Sold      int    `json:"sold"`
 	Active    bool   `json:"active"`
+
+	Description  string     `json:"description"`
+	SalesStartAt *time.Time `json:"sales_start_at"`
+	SalesEndAt   *time.Time `json:"sales_end_at"`
+	InviteOnly   bool       `json:"invite_only"`
 }
 
 // PromoCode is a versioned discount applied at checkout.

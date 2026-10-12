@@ -323,17 +323,22 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 
 // AddTier creates an inventory tier (organiser-only).
 func (s *Service) AddTier(ctx context.Context, organiserID, eventID string, t TicketTier) (*TicketTier, error) {
-	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+	if _, err := s.authorizeManage(ctx, organiserID, eventID); err != nil {
 		return nil, err
 	}
 	if t.PriceKobo < 0 || t.Capacity < 0 {
 		return nil, errors.New("events: tier price/capacity must be non-negative")
 	}
+	if t.SalesStartAt != nil && t.SalesEndAt != nil && !t.SalesStartAt.Before(*t.SalesEndAt) {
+		return nil, ErrInvalidWindow
+	}
 	t.ID = uuid.New().String()
 	t.EventID = eventID
 	t.Active = true
-	const ins = `INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, active) VALUES ($1,$2,$3,$4,$5,true)`
-	if _, err := s.db.Exec(ctx, ins, t.ID, t.EventID, t.Name, t.PriceKobo, t.Capacity); err != nil {
+	const ins = `INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, active, description, sales_start_at, sales_end_at, invite_only)
+		VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,$9)`
+	if _, err := s.db.Exec(ctx, ins, t.ID, t.EventID, t.Name, t.PriceKobo, t.Capacity,
+		t.Description, t.SalesStartAt, t.SalesEndAt, t.InviteOnly); err != nil {
 		return nil, fmt.Errorf("events: insert tier: %w", err)
 	}
 	return &t, nil
@@ -1363,6 +1368,8 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 var (
 	ErrNotFound          = errors.New("events: not found")
 	ErrForbidden         = errors.New("events: forbidden")
+	ErrTierLocked        = errors.New("events: tier field locked by existing sales")
+	ErrInvalidWindow     = errors.New("events: sales_start_at must be before sales_end_at")
 	ErrSoldOut           = errors.New("events: tier sold out")
 	ErrNotPurchasable    = errors.New("events: event is not on sale")
 	ErrInsufficientFloat = errors.New("events: insufficient event-wallet balance")
