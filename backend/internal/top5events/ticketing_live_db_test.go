@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/top5events"
 )
 
@@ -151,7 +152,9 @@ func intp(v int) *int     { return &v }
 
 func cleanupPromos(t *testing.T, pool *pgxpool.Pool, eventID string) {
 	t.Helper()
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM event_promo_codes WHERE event_id=$1`, eventID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM event_promo_codes WHERE event_id=$1`, eventID)
+	})
 }
 
 func seedUsedPromo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, eventID string, used, maxUses int) string {
@@ -344,5 +347,151 @@ func TestLiveDB_Promo_UpdateStrangerForbidden(t *testing.T) {
 	promo := seedUsedPromo(t, ctx, pool, ev, 0, 5)
 	if _, err := svc.UpdatePromo(ctx, stranger, ev, promo, top5events.PromoPatch{MaxUses: intp(9)}); !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("want ErrForbidden, got %v", err)
+	}
+}
+
+// ---- Purchase-time enforcement (Phase 2, Task 4) ----
+
+func purchaseFixture(t *testing.T, price int64) (ctx context.Context, pool *pgxpool.Pool, svc *top5events.Service, buyer, ev, tier string) {
+	t.Helper()
+	ctx = context.Background()
+	pool = ticketTokenPool(t)
+	svc = ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	buyer = seedTicketTokenUser(t, ctx, pool)
+	ev = seedManageEvent(t, ctx, pool, owner, "LIVE")
+	setFee1000(t, ctx, pool, ev)
+	tier = seedPricedTier(t, ctx, pool, ev, price)
+	fundBuyer(t, ctx, pool, cancelLedger(pool), buyer, price*5)
+	return
+}
+
+func seedRichPromo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ev string, tierID *string, pct int, amt *int64, perUser int) (id, code string) {
+	t.Helper()
+	id = uuid.New().String()
+	code = "R" + id[:8]
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, amount_off_kobo, tier_id, per_user_limit, max_uses, used, active)
+		 VALUES ($1,$2,$3,1,$4,$5,$6,$7,0,0,true)`, id, ev, code, pct, amt, tierID, perUser); err != nil {
+		t.Fatalf("seed rich promo: %v", err)
+	}
+	cleanupPromos(t, pool, ev)
+	return
+}
+
+func setTierWindow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tier string, start, end *time.Time, invite bool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `UPDATE event_ticket_tiers SET sales_start_at=$2, sales_end_at=$3, invite_only=$4 WHERE id=$1`, tier, start, end, invite); err != nil {
+		t.Fatalf("set window: %v", err)
+	}
+}
+
+func newIdem() string { return "idem-" + uuid.New().String() }
+
+func TestLiveDB_Purchase_BeforeWindowRejected(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	s := time.Now().Add(time.Hour)
+	setTierWindow(t, ctx, pool, tier, &s, nil, false)
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", newIdem()); !errors.Is(err, top5events.ErrTierNotOnSale) {
+		t.Fatalf("err = %v, want ErrTierNotOnSale", err)
+	}
+}
+
+func TestLiveDB_Purchase_WithinWindowOk(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	s, e := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	setTierWindow(t, ctx, pool, tier, &s, &e, false)
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", newIdem()); err != nil {
+		t.Fatalf("within window: %v", err)
+	}
+}
+
+func TestLiveDB_Purchase_AfterWindowRejected(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	e := time.Now().Add(-time.Minute)
+	setTierWindow(t, ctx, pool, tier, nil, &e, false)
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", newIdem()); !errors.Is(err, top5events.ErrTierNotOnSale) {
+		t.Fatalf("err = %v, want ErrTierNotOnSale", err)
+	}
+}
+
+func TestLiveDB_Purchase_InviteOnlyRejected(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	setTierWindow(t, ctx, pool, tier, nil, nil, true)
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, "", newIdem()); !errors.Is(err, top5events.ErrInviteOnly) {
+		t.Fatalf("err = %v, want ErrInviteOnly", err)
+	}
+}
+
+func TestLiveDB_Purchase_AmountOffDiscount(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	led := cancelLedger(pool)
+	_, code := seedRichPromo(t, ctx, pool, ev, nil, 0, i64p(300), 0)
+	escBefore := standingBalance(t, ctx, led, ledger.AccountEscrow)
+	tk, err := svc.Purchase(ctx, buyer, ev, tier, code, newIdem())
+	if err != nil {
+		t.Fatalf("Purchase: %v", err)
+	}
+	if tk.PricePaidKobo != 700 {
+		t.Fatalf("paid = %d, want 700", tk.PricePaidKobo)
+	}
+	if got := standingBalance(t, ctx, led, ledger.AccountEscrow) - escBefore; got != 700 {
+		t.Fatalf("escrow delta = %d, want 700", got)
+	}
+	// Amount larger than price floors at 0.
+	_, big := seedRichPromo(t, ctx, pool, ev, nil, 0, i64p(5000), 0)
+	tk2, err := svc.Purchase(ctx, buyer, ev, tier, big, newIdem())
+	if err != nil {
+		t.Fatalf("Purchase floor: %v", err)
+	}
+	if tk2.PricePaidKobo != 0 {
+		t.Fatalf("floored paid = %d, want 0", tk2.PricePaidKobo)
+	}
+}
+
+func TestLiveDB_Purchase_PerUserLimit(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	other := seedTicketTokenUser(t, ctx, pool)
+	fundBuyer(t, ctx, pool, cancelLedger(pool), other, 5000)
+	_, code := seedRichPromo(t, ctx, pool, ev, nil, 10, nil, 1)
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, code, newIdem()); err != nil {
+		t.Fatalf("first use: %v", err)
+	}
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, code, newIdem()); !errors.Is(err, top5events.ErrPromoNotApplicable) {
+		t.Fatalf("second use err = %v, want ErrPromoNotApplicable", err)
+	}
+	if _, err := svc.Purchase(ctx, other, ev, tier, code, newIdem()); err != nil {
+		t.Fatalf("different buyer: %v", err)
+	}
+}
+
+func TestLiveDB_Purchase_TierScopedWrongTierRejected(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	otherTier := seedPricedTier(t, ctx, pool, ev, 1000)
+	_, code := seedRichPromo(t, ctx, pool, ev, &otherTier, 10, nil, 0)
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, code, newIdem()); !errors.Is(err, top5events.ErrPromoNotApplicable) {
+		t.Fatalf("err = %v, want ErrPromoNotApplicable", err)
+	}
+	if _, err := svc.Purchase(ctx, buyer, ev, otherTier, code, newIdem()); err != nil {
+		t.Fatalf("matching tier: %v", err)
+	}
+}
+
+func TestLiveDB_Purchase_RedemptionWrittenOnce(t *testing.T) {
+	ctx, pool, svc, buyer, ev, tier := purchaseFixture(t, 1000)
+	pid, code := seedRichPromo(t, ctx, pool, ev, nil, 10, nil, 0)
+	key := newIdem()
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, code, key); err != nil {
+		t.Fatalf("Purchase: %v", err)
+	}
+	if _, err := svc.Purchase(ctx, buyer, ev, tier, code, key); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	var n, used int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM event_promo_redemptions WHERE promo_id=$1 AND user_id=$2), (SELECT used FROM event_promo_codes WHERE id=$1)`, pid, buyer).Scan(&n, &used); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || used != 1 {
+		t.Fatalf("redemptions=%d used=%d, want 1/1", n, used)
 	}
 }

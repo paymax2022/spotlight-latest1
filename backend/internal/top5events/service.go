@@ -438,8 +438,9 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 
 	var price int64
 	var capacity, sold int
-	var active bool
-	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active); err != nil {
+	var active, inviteOnly bool
+	var salesStart, salesEnd *time.Time
+	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active, sales_start_at, sales_end_at, invite_only FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active, &salesStart, &salesEnd, &inviteOnly); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -448,20 +449,63 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if !active {
 		return nil, errors.New("events: tier inactive")
 	}
+	now := time.Now()
+	if inviteOnly {
+		return nil, ErrInviteOnly
+	}
+	if (salesStart != nil && now.Before(*salesStart)) || (salesEnd != nil && now.After(*salesEnd)) {
+		return nil, ErrTierNotOnSale
+	}
 	if capacity > 0 && sold >= capacity {
 		return nil, ErrSoldOut
 	}
 
 	payable := price
+	var appliedPromoID string
 	if promo != "" {
 		var pid string
-		var pct, maxUses, used int
-		if err := tx.QueryRow(ctx, `SELECT id, percent_off, max_uses, used FROM event_promo_codes WHERE event_id=$1 AND code=$2 AND active=true FOR UPDATE`, eventID, promo).Scan(&pid, &pct, &maxUses, &used); err == nil {
-			if maxUses == 0 || used < maxUses {
-				payable = price - (price*int64(pct))/100
-				_, _ = tx.Exec(ctx, `UPDATE event_promo_codes SET used=used+1 WHERE id=$1`, pid)
+		var pct, maxUses, used, perUser int
+		var promoTier *string
+		var amountOff *int64
+		var startsAt, endsAt *time.Time
+		err := tx.QueryRow(ctx, `SELECT id, percent_off, max_uses, used, tier_id::text, amount_off_kobo, starts_at, ends_at, per_user_limit FROM event_promo_codes WHERE event_id=$1 AND code=$2 AND active=true FOR UPDATE`, eventID, promo).
+			Scan(&pid, &pct, &maxUses, &used, &promoTier, &amountOff, &startsAt, &endsAt, &perUser)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("%w: unknown or inactive code", ErrPromoNotApplicable)
+			}
+			return nil, fmt.Errorf("events: lock promo: %w", err)
+		}
+		if maxUses > 0 && used >= maxUses {
+			return nil, fmt.Errorf("%w: code exhausted", ErrPromoNotApplicable)
+		}
+		if (startsAt != nil && now.Before(*startsAt)) || (endsAt != nil && now.After(*endsAt)) {
+			return nil, fmt.Errorf("%w: outside validity window", ErrPromoNotApplicable)
+		}
+		if promoTier != nil && *promoTier != tierID {
+			return nil, fmt.Errorf("%w: code is for a different tier", ErrPromoNotApplicable)
+		}
+		if perUser > 0 {
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM event_promo_redemptions WHERE promo_id=$1 AND user_id=$2`, pid, buyerID).Scan(&n); err != nil {
+				return nil, fmt.Errorf("events: promo per-user count: %w", err)
+			}
+			if n >= perUser {
+				return nil, fmt.Errorf("%w: per-user limit reached", ErrPromoNotApplicable)
 			}
 		}
+		if amountOff != nil {
+			payable = price - *amountOff
+			if payable < 0 {
+				payable = 0
+			}
+		} else {
+			payable = price - (price*int64(pct))/100
+		}
+		if _, err := tx.Exec(ctx, `UPDATE event_promo_codes SET used=used+1 WHERE id=$1`, pid); err != nil {
+			return nil, fmt.Errorf("events: bump promo: %w", err)
+		}
+		appliedPromoID = pid
 	}
 
 	// Reserve inventory before money moves (a debit can never outrun capacity) and
@@ -477,6 +521,11 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	const insOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,'PENDING',$6)`
 	if _, err := tx.Exec(ctx, insOrder, orderID, eventID, buyerID, tierID, payable, idemKey); err != nil {
 		return nil, fmt.Errorf("events: insert order: %w", err)
+	}
+	if appliedPromoID != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO event_promo_redemptions (id, promo_id, user_id, order_id) VALUES ($1,$2,$3,$4) ON CONFLICT (promo_id, order_id) DO NOTHING`, uuid.New().String(), appliedPromoID, buyerID, orderID); err != nil {
+			return nil, fmt.Errorf("events: record promo redemption: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("events: commit reservation: %w", err)
@@ -1397,13 +1446,16 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var (
-	ErrNotFound          = errors.New("events: not found")
-	ErrForbidden         = errors.New("events: forbidden")
-	ErrTierLocked        = errors.New("events: tier field locked by existing sales")
-	ErrPromoLocked       = errors.New("events: promo field locked by existing redemptions")
-	ErrInvalidWindow     = errors.New("events: sales_start_at must be before sales_end_at")
-	ErrSoldOut           = errors.New("events: tier sold out")
-	ErrNotPurchasable    = errors.New("events: event is not on sale")
-	ErrInsufficientFloat = errors.New("events: insufficient event-wallet balance")
-	ErrKYCRequired       = errors.New("events: vendor must complete KYC before payout (NL-10)")
+	ErrNotFound           = errors.New("events: not found")
+	ErrForbidden          = errors.New("events: forbidden")
+	ErrTierLocked         = errors.New("events: tier field locked by existing sales")
+	ErrPromoLocked        = errors.New("events: promo field locked by existing redemptions")
+	ErrInvalidWindow      = errors.New("events: sales_start_at must be before sales_end_at")
+	ErrSoldOut            = errors.New("events: tier sold out")
+	ErrNotPurchasable     = errors.New("events: event is not on sale")
+	ErrInviteOnly         = errors.New("events: tier is invite-only")
+	ErrTierNotOnSale      = errors.New("events: tier is outside its sales window")
+	ErrPromoNotApplicable = errors.New("events: promo code not applicable")
+	ErrInsufficientFloat  = errors.New("events: insufficient event-wallet balance")
+	ErrKYCRequired        = errors.New("events: vendor must complete KYC before payout (NL-10)")
 )
