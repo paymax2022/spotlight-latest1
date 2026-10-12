@@ -207,7 +207,7 @@ func (s *Settler) feeJournal(in SwapLedgerInput, a accounts, amount int64) ledge
 }
 
 // completionMarkerJournal records that a zero-fee buy completed, so completion is
-// detectable at the ledger independent of the fee (ADR-PR<pr#>). A fee-bearing buy
+// detectable at the ledger independent of the fee (ADR-PR730). A fee-bearing buy
 // already leaves the :fee leg; a zero-fee completion moves no money and would otherwise
 // be indistinguishable from a live hold. The marker debits and credits the SAME clearing
 // account: it is net-zero on every account (principal stays parked, as for a fee-bearing
@@ -342,7 +342,7 @@ func (s *Settler) completeBuy(ctx context.Context, in SwapLedgerInput) error {
 	if in.FeeKobo == 0 {
 		// A zero-fee completion moves no money, so post a net-zero completion marker:
 		// without it the ledger is identical to a live hold and a later FailBuy would
-		// refund crypto already delivered (ADR-PR<pr#>).
+		// refund crypto already delivered (ADR-PR730).
 		return s.post(ctx, s.completionMarkerJournal(in, a, hold.AmountKobo), "")
 	}
 	return s.post(ctx, s.feeJournal(in, a, in.FeeKobo), "")
@@ -385,7 +385,7 @@ func (s *Settler) failBuy(ctx context.Context, in SwapLedgerInput) error {
 	// A completed buy must never be reversed. Completion leaves a ledger trace that does
 	// not depend on the caller-supplied fee — a recognised fee leg, or, for a zero-fee
 	// buy, the completion marker — and a zero-fee completion is otherwise indistinguishable
-	// from a live hold, so reversing here would refund crypto already delivered (ADR-PR<pr#>).
+	// from a live hold, so reversing here would refund crypto already delivered (ADR-PR730).
 	if completed, cerr := s.completionPosted(ctx, in.SwapID); cerr != nil {
 		return cerr
 	} else if completed {
