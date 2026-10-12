@@ -18,6 +18,9 @@ export interface TicketTier {
   capacity:   number;
   sold:       number;
   active:     boolean;
+  invite_only?:    boolean;
+  sales_start_at?: string | null;   // ISO
+  sales_end_at?:   string | null;   // ISO
 }
 
 // List/discovery summary — GET /api/finance/events.
@@ -124,6 +127,35 @@ export interface PromoCode {
   max_uses:    number;
   used:        number;
   active:      boolean;
+  amount_off_kobo?: number;
+  tier_id?:         string | null;
+  starts_at?:       string | null;  // ISO
+  ends_at?:         string | null;  // ISO
+  per_user_limit?:  number;
+}
+
+// PATCH bodies — every field optional (snake_case wire shape).
+export interface TierPatch {
+  name?: string;
+  description?: string;
+  price_kobo?: number;
+  capacity?: number;
+  active?: boolean;
+  invite_only?: boolean;
+  sales_start_at?: string | null;
+  sales_end_at?: string | null;
+}
+
+export interface PromoPatch {
+  code?: string;
+  percent_off?: number;
+  amount_off_kobo?: number;
+  tier_id?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  per_user_limit?: number;
+  max_uses?: number;
+  active?: boolean;
 }
 
 export interface CreateEventInput {
@@ -142,6 +174,10 @@ export interface AddTierInput {
   name:       string;
   price_kobo: number;
   capacity:   number;
+  description?:    string;
+  invite_only?:    boolean;
+  sales_start_at?: string | null;
+  sales_end_at?:   string | null;
 }
 
 export interface PurchaseTicketInput {

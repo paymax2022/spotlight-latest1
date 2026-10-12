@@ -22,6 +22,9 @@ import type {
   GateToken,
   Gate,
   EventPatch,
+  TierPatch,
+  PromoPatch,
+  PromoCode,
 } from './types';
 
 // Organiser lifecycle writes have a live endpoint and nothing a fixture could
@@ -390,6 +393,17 @@ export async function resumeEvent(id: string): Promise<EventDetail> {
 export async function cancelEvent(id: string, reason: string, idemKey: string): Promise<unknown> {
   if (USE_MOCK) throw notInFixtureMode('Cancelling an event');
   return unwrap(await api.post(`${API_BASE}/${id}/cancel`, { reason }, { headers: { 'Idempotency-Key': idemKey } }));
+}
+
+// ── Tier/promo management (FEATURE_EVENTS_TICKETING_DEPTH) — writes, no mock fallback ──
+export async function updateTier(eventId: string, tierId: string, patch: TierPatch): Promise<TicketTier> {
+  if (USE_MOCK) throw notInFixtureMode('Editing a ticket tier');
+  return unwrap(await api.patch(`${API_BASE}/${eventId}/tiers/${tierId}`, patch));
+}
+
+export async function updatePromo(eventId: string, promoId: string, patch: PromoPatch): Promise<PromoCode> {
+  if (USE_MOCK) throw notInFixtureMode('Editing a promo code');
+  return unwrap(await api.patch(`${API_BASE}/${eventId}/promos/${promoId}`, patch));
 }
 
 // Closed-loop top-up: debits main wallet (via PaymentSheet) → credits event wallet.
