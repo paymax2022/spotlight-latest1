@@ -42,6 +42,7 @@ func TestValidate_SwapsNeedTheirOwnSecretsOutsideDev(t *testing.T) {
 		"no webhook secret": func(c *Config) { c.CryptoWebhookSecret = "" },
 		"placeholder":       func(c *Config) { c.CryptoWebhookSecret = "CHANGE_ME" },
 		"tiny lock pool":    func(c *Config) { c.CryptoLockPoolConns = 2 },
+		"huge lock pool":    func(c *Config) { c.CryptoLockPoolConns = 5_000_000_000 },
 		"crypto off":        func(c *Config) { c.FeatureCryptoEnabled = false },
 	} {
 		c := good()

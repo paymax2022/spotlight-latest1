@@ -1301,8 +1301,8 @@ func (c Config) Validate() error {
 			if isPlaceholder(c.CryptoWebhookSecret) {
 				strict = append(strict, "QUIDAX_WEBHOOK_SECRET is required when FEATURE_CRYPTO_SWAPS_ENABLED=true (every webhook would be rejected and swaps would never settle)")
 			}
-			if c.CryptoLockPoolConns < 4 {
-				strict = append(strict, "CRYPTO_LOCK_POOL_CONNS must be at least 4 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			if c.CryptoLockPoolConns < 4 || c.CryptoLockPoolConns > 500 {
+				strict = append(strict, "CRYPTO_LOCK_POOL_CONNS must be between 4 and 500 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)
