@@ -5,6 +5,7 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK } from './constants';
+import { idNumberRequestBody, type IdNumberCheckInput } from './idNumberRequest';
 import type {
   VerificationSession,
   VerificationCheck,
@@ -88,35 +89,26 @@ export async function postConsent(scope: ConsentScope, version: string): Promise
   return { ok: true };
 }
 
-export interface IdNumberCheckInput {
-  sessionId: string;
-  idType: IdType;
-  idNumber: string;
-  firstName?: string;
-  lastName?: string;
-  dob?: string;
-}
+// IdNumberCheckInput is defined in the alias-free ./idNumberRequest module (so
+// the request shape is unit-testable without the axios client) and re-exported
+// here for callers that import it from the api surface.
+export type { IdNumberCheckInput };
 
-/** POST /checks/id-number — data match against government records. */
+/**
+ * POST /checks/id-number — data match against government records. The request
+ * carries ONLY the session + ID number: the provider (Dojah) returns the
+ * verified legal name + DOB, which the backend persists — the client never
+ * collects or sends them.
+ */
 export async function checkIdNumber(input: IdNumberCheckInput): Promise<VerificationCheck> {
   if (USE_MOCK) {
     await mockDelay();
-    const name = [input.firstName, input.lastName].filter(Boolean).join(' ') || 'Verified Holder';
-    return mockPassedCheck('id-number', { name, dob: input.dob ?? '1990-01-01' });
+    // The real server withholds matched PII; the mock mirrors that by not
+    // echoing a name/DOB (the verifying screen shows "Details confirmed").
+    return mockPassedCheck('id-number');
   }
   return unwrap<VerificationCheck>(
-    await api.post(
-      `${BASE}/checks/id-number`,
-      {
-        session_id: input.sessionId,
-        id_type: input.idType,
-        id_number: input.idNumber,
-        first_name: input.firstName,
-        last_name: input.lastName,
-        dob: input.dob,
-      },
-      idem(),
-    ),
+    await api.post(`${BASE}/checks/id-number`, idNumberRequestBody(input), idem()),
   );
 }
 

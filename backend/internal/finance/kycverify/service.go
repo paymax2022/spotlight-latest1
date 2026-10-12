@@ -44,6 +44,8 @@ type Service struct {
 	// ownership.go.
 	ownershipGate bool
 	accountPhone  AccountPhoneSource
+
+	identitySink IdentitySink // optional; persists verified name/DOB on a PASSED ID-number check
 }
 
 // AccountPhoneSource returns a user's account phone and whether it is verified,
@@ -52,6 +54,15 @@ type Service struct {
 // It is satisfied by a thin adapter over user_profiles, wired in finance_routes.go.
 type AccountPhoneSource interface {
 	VerifiedPhone(ctx context.Context, userID string) (phone string, verified bool, err error)
+}
+
+// IdentitySink persists a provider-verified legal identity (full name, first/last
+// name, ISO date of birth) to the user's profile after a PASSED ID-number
+// data-match. kycverify depends only on this narrow port — never on the kyc
+// package — mirroring TierElevator. It is satisfied by *kyc.Service, wired in
+// finance_routes.go. A nil sink skips persistence (degraded/dev configuration).
+type IdentitySink interface {
+	SaveVerifiedIdentity(ctx context.Context, userID, fullName, firstName, lastName, dobISO string) error
 }
 
 // Deps bundles the KYC verification service dependencies.
@@ -69,6 +80,10 @@ type Deps struct {
 	OwnershipGate bool
 	// AccountPhoneSource reads the caller's verified account phone for the gate.
 	AccountPhoneSource AccountPhoneSource
+	// IdentitySink persists the provider-verified name/DOB on a PASSED ID-number
+	// check. Optional: nil skips persistence (the verification + tier grant still
+	// stand).
+	IdentitySink IdentitySink
 }
 
 // NewService builds the KYC verification service.
@@ -85,6 +100,7 @@ func NewService(d Deps) *Service {
 		facialDefault: d.FacialThreshold,
 		ownershipGate: d.OwnershipGate,
 		accountPhone:  d.AccountPhoneSource,
+		identitySink:  d.IdentitySink,
 	}
 }
 
@@ -279,6 +295,20 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	}
 	s.audit(ctx, "kycverify.check.completed", userID, stored.ID,
 		fmt.Sprintf("type=%s provider=%s status=%s", ct, gr.Provider, stored.Status))
+
+	// Persist the provider-verified legal identity (name + DOB) on a PASSED
+	// ID-number data-match — SOURCED FROM THE PROVIDER RESPONSE, never from user
+	// input (the KYC form no longer collects name/DOB). Best-effort and
+	// non-fatal: a storage hiccup must not fail an otherwise-successful
+	// verification, and the value self-heals on the next PASSED check. The PII
+	// itself is never logged.
+	if ct == provider.KycIDNumber && stored.Status == provider.KycPassed && s.identitySink != nil {
+		if vi, ok := ExtractVerifiedIdentity(gr.Result.ExtractedFields); ok {
+			if serr := s.identitySink.SaveVerifiedIdentity(ctx, userID, vi.FullName, vi.FirstName, vi.LastName, vi.DOB); serr != nil {
+				log.Printf("kycverify: persist verified identity user=%s check=%s: %v", userID, stored.ID, serr)
+			}
+		}
+	}
 
 	if _, err := s.orch.Recompute(ctx, sessionID); err != nil {
 		// The check itself is persisted; surface the orchestration error so the
