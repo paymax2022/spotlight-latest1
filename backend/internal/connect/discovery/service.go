@@ -53,6 +53,11 @@ type rawCandidate struct {
 	intentTags  []string
 	geoLat      *float64
 	geoLng      *float64
+	// Card-enrichment fields (swipe deck / likes-you / nearby). age is derived from
+	// dob in SQL — the raw dob is NEVER selected or returned (privacy invariant).
+	headline *string
+	bio      *string
+	age      *int
 }
 
 // viewer resolves the caller's profile id + approximate geo for distance calc.
@@ -75,7 +80,10 @@ func (s *Service) candidateQuery(ctx context.Context, viewerProfile, viewerUserI
 	const q = `
 		SELECT p.id, p.display_name, p.city, p.geo_lat, p.geo_lng,
 		       COALESCE(v.status IN ('l0_passed','l1_passed'), false) AS verified,
-		       pm.intent_tags
+		       pm.intent_tags,
+		       p.headline, p.bio,
+		       CASE WHEN p.dob IS NULL THEN NULL
+		            ELSE date_part('year', age(p.dob))::int END AS age
 		FROM connect_profile_modes pm
 		JOIN connect_profiles p ON p.id = pm.profile_id
 		LEFT JOIN connect_verification v ON v.user_id = p.user_id
@@ -117,7 +125,8 @@ func scanCandidates(rows pgx.Rows) ([]rawCandidate, error) {
 	var out []rawCandidate
 	for rows.Next() {
 		var rc rawCandidate
-		if err := rows.Scan(&rc.profileID, &rc.displayName, &rc.city, &rc.geoLat, &rc.geoLng, &rc.verified, &rc.intentTags); err != nil {
+		if err := rows.Scan(&rc.profileID, &rc.displayName, &rc.city, &rc.geoLat, &rc.geoLng, &rc.verified, &rc.intentTags,
+			&rc.headline, &rc.bio, &rc.age); err != nil {
 			return nil, err
 		}
 		out = append(out, rc)
@@ -215,21 +224,29 @@ func (s *Service) Search(ctx context.Context, userID string, f SearchFilters) ([
 // toCandidate builds the wire candidate, bucketing distance for privacy.
 func (s *Service) toCandidate(rc rawCandidate, vlat, vlng *float64, buckets []int) Candidate {
 	c := Candidate{
-		ProfileID:   rc.profileID,
-		DisplayName: rc.displayName,
-		City:        rc.city,
-		Verified:    rc.verified,
-		IntentTags:  rc.intentTags,
+		ProfileID:     rc.profileID,
+		DisplayName:   rc.displayName,
+		City:          rc.city,
+		Verified:      rc.verified,
+		IntentTags:    rc.intentTags,
+		DistanceLabel: distanceLabelFor(rc, vlat, vlng, buckets),
 	}
 	if c.IntentTags == nil {
 		c.IntentTags = []string{}
 	}
-	if vlat != nil && vlng != nil && rc.geoLat != nil && rc.geoLng != nil {
-		d := haversineKm(*vlat, *vlng, *rc.geoLat, *rc.geoLng)
-		bucket, within := bucketKm(d, buckets)
-		c.DistanceLabel = distanceLabel(bucket, within)
-	}
 	return c
+}
+
+// distanceLabelFor computes the privacy-preserving, bucketed distance label for a
+// candidate relative to the viewer. It returns "" when either side lacks geo so the
+// exact distance is never derivable and raw coordinates never leave the service.
+func distanceLabelFor(rc rawCandidate, vlat, vlng *float64, buckets []int) string {
+	if vlat == nil || vlng == nil || rc.geoLat == nil || rc.geoLng == nil {
+		return ""
+	}
+	d := haversineKm(*vlat, *vlng, *rc.geoLat, *rc.geoLng)
+	bucket, within := bucketKm(d, buckets)
+	return distanceLabel(bucket, within)
 }
 
 func (s *Service) viewerIntents(ctx context.Context, viewerProfile, mode string) ([]string, error) {
