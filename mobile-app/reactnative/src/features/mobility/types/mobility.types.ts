@@ -285,6 +285,7 @@ export interface OnboardingSubmitDraft {
 
 export interface VehicleDraft {
   plateNumber: string;
+  vehicleType?: 'car' | 'motorcycle' | 'bicycle';
   make: string;
   model: string;
   year: number;
