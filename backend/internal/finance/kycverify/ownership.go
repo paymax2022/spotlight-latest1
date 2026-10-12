@@ -17,7 +17,7 @@ import (
 // check is only honoured when the phone registered to the ID matches the
 // account's own verified phone. It is applied UPSTREAM of the check-status write
 // in RunCheck, so a block stops BOTH tier elevation and identity persistence in
-// one place.
+// one place. See ADR-PR726.
 //
 // All logic here is pure (no DB, no network) and unit-tested; the single DB read
 // (the account's verified phone) happens in RunCheck and is passed in.
