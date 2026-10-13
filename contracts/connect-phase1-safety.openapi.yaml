@@ -339,6 +339,34 @@ paths:
                   data: { $ref: '#/components/schemas/AIResponse' }
 
   # ── Admin moderation (RBAC-gated) ───────────────────────────────────────────
+  /moderation:
+    get:
+      summary: 'Admin: moderation case list (console view)'
+      description: >
+        RBAC: connect.moderation.view. Read-only projection of flagged messages and the latest
+        moderation decision against each (open: none or flagged; investigating: escalated;
+        dismissed: cleared; actioned: warned, restricted or removed). Never returns message
+        content: only reason codes, the sender id and an evidence pointer.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, open, investigating, actioned, dismissed], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: CaseSummary[], has_more}' }
+        '400': { description: invalid status }
+        '403': { description: forbidden }
+  /moderation/{id}:
+    get:
+      summary: 'Admin: moderation case detail (console view)'
+      description: >
+        RBAC: connect.moderation.view. id is a flagged message id. History is the decision trail,
+        oldest first. ai_confidence is always 0 (not stored; never invented) and severity is
+        "unrated". evidence_ref is a pointer (message:<id>), never the content.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'OK: {success, data: CaseDetail}' }
+        '404': { description: not found, or not a flagged message }
+        '403': { description: forbidden }
   /moderation/conversations:
     get:
       summary: List flagged conversations
