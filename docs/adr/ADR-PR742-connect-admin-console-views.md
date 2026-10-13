@@ -23,6 +23,17 @@ span permissions (gift volume is money; the dashboard is an operations view).
 - **Safe inputs.** Search terms are capped and their LIKE wildcards escaped; `status` is an allowlist; ids must be UUIDs (404 otherwise);
   `limit` defaults to 100, max 200, with `has_more`.
 
+## Review follow-ups (no blockers)
+- **Money fields need the money permission everywhere.** `wallet_balance_kobo` (list and detail) and the lifetime gift totals are
+  null unless the caller also holds `connect.gifting.view`, exactly like the dashboard tiles; a missing checker or a permission error
+  withholds them. A moderator (who holds `connect.users.view`) can still see who a user is, never what they hold or spent.
+- **Status filter in SQL.** The derived status is computed in SQL (a `CASE` that mirrors `userStatus`), so the filter and `has_more`
+  are exact over the whole directory instead of over a 1000-row window; a live test pins SQL and Go together.
+- **One verification row per user:** the join takes the latest row, because the reconcile migration may leave duplicates.
+- **Balance is the NGN wallet** (`currency = 'NGN'`). Today the schema allows one `user_wallet` per user, so a mixed-currency sum
+  cannot occur; the filter is defensive and untested for that reason.
+- Known and deferred: `ILIKE '%x%'` on display name is unindexed (term capped at 64 chars; admin-only); no cursor for `has_more`.
+
 ## Consequences
 - DAU/MAU are login-based because Connect keeps no activity log; revisit when one exists.
 - Status filtering is applied after the status is derived, over a bounded window (1000 rows) when a non-`all` status is requested, so

@@ -70,10 +70,11 @@ func get(t *testing.T, pool *pgxpool.Pool, perm PermissionChecker, path string) 
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("user_id", "admin-1"); c.Next() })
 	h := NewHandler(NewService(pool), perm)
 	r.GET("/users", h.ListUsers)
 	r.GET("/users/:id", h.GetUser)
-	r.GET("/dashboard", func(c *gin.Context) { c.Set("user_id", "admin-1"); h.Dashboard(c) })
+	r.GET("/dashboard", h.Dashboard)
 	r.GET("/finance", h.Finance)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
@@ -252,5 +253,28 @@ func TestLive_FinanceSummaryHasNullsForUndefinedTilesAndIntegerKobo(t *testing.T
 	}
 	if err := json.Unmarshal([]byte(raw), &f); err != nil || f.Data.GiftVolume30dKobo < 0 || f.Data.PendingPayoutsKobo < 0 {
 		t.Fatalf("finance = %+v %v", f.Data, err)
+	}
+}
+
+// Review: balances and lifetime gift totals are money; a caller with only connect.users.view must not see them.
+func TestLive_UserMoneyFieldsAreWithheldWithoutTheGiftingPermission(t *testing.T) {
+	pool, ctx := liveDB(t)
+	name := "ConsoleMoney" + uuid.NewString()[:6]
+	u := seedUser(t, ctx, pool, name, "active")
+	for permName, p := range map[string]PermissionChecker{"no checker": nil, "denied": fakePerm{ok: false}, "error": fakePerm{err: context.Canceled}} {
+		_, raw := get(t, pool, p, "/users?s="+name)
+		if !strings.Contains(raw, `"wallet_balance_kobo":null`) {
+			t.Errorf("%s: list balance must be null: %s", permName, raw)
+		}
+		_, raw = get(t, pool, p, "/users/"+u)
+		for _, f := range []string{"wallet_balance_kobo", "lifetime_gift_sent_kobo", "lifetime_gift_received_kobo"} {
+			if !strings.Contains(raw, `"`+f+`":null`) {
+				t.Errorf("%s: detail %s must be null: %s", permName, f, raw)
+			}
+		}
+	}
+	_, raw := get(t, pool, fakePerm{ok: true}, "/users/"+u)
+	if strings.Contains(raw, `"wallet_balance_kobo":null`) || strings.Contains(raw, `"lifetime_gift_sent_kobo":null`) {
+		t.Fatalf("a permitted caller must see numbers: %s", raw)
 	}
 }

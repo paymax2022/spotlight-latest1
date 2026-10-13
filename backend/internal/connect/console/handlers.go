@@ -28,12 +28,22 @@ type Handler struct {
 // NewHandler wires the handler. perm gates the money tiles on the dashboard; nil means "never".
 func NewHandler(svc *Service, perm PermissionChecker) *Handler { return &Handler{svc: svc, perm: perm} }
 
+// canSeeMoney reports whether the caller may see balances and gift totals (connect.gifting.view).
+// A missing checker or a permission error means no (fail closed).
+func (h *Handler) canSeeMoney(c *gin.Context) bool {
+	if h.perm == nil {
+		return false
+	}
+	ok, err := h.perm.CheckPermission(ginutil.UserID(c), "connect.gifting.view", "", "")
+	return err == nil && ok
+}
+
 func internalErr(c *gin.Context, what string, err error) {
 	log.Printf("[connect-console] %s: %v", what, err) // server-side only: the response is opaque
 	c.JSON(http.StatusInternalServerError, gin.H{"success": false, keyError: "internal"})
 }
 
-// ListUsers — GET /api/connect/admin/users?s=&status=&limit=   (RBAC connect.users.view)
+// ListUsers — GET /api/connect/admin/users?s=&status=&limit=   (RBAC connect.users.view; balances need connect.gifting.view)
 func (h *Handler) ListUsers(c *gin.Context) {
 	status, ok := parseUserStatus(c.Query("status"))
 	if !ok {
@@ -44,6 +54,11 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	if err != nil {
 		internalErr(c, "list users", err)
 		return
+	}
+	if !h.canSeeMoney(c) {
+		for i := range list {
+			list[i].WalletBalanceKob = nil
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": list, "has_more": more})
 }
@@ -63,18 +78,15 @@ func (h *Handler) GetUser(c *gin.Context) {
 		internalErr(c, "get user", err)
 		return
 	}
+	if !h.canSeeMoney(c) {
+		u.WalletBalanceKob, u.LifetimeGiftSentKobo, u.LifetimeGiftReceivedKob = nil, nil, nil
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": u})
 }
 
 // Dashboard — GET /api/connect/admin/dashboard   (route RBAC connect.cases.view; money tiles also need connect.gifting.view)
 func (h *Handler) Dashboard(c *gin.Context) {
-	money := false
-	if h.perm != nil {
-		if ok, err := h.perm.CheckPermission(ginutil.UserID(c), "connect.gifting.view", "", ""); err == nil && ok {
-			money = true
-		}
-	}
-	d, err := h.svc.GetDashboard(c.Request.Context(), money)
+	d, err := h.svc.GetDashboard(c.Request.Context(), h.canSeeMoney(c))
 	if err != nil {
 		internalErr(c, "dashboard", err)
 		return

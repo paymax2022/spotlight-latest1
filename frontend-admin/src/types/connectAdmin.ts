@@ -63,7 +63,7 @@ export interface ConnectUserSummary {
   region: string;
   verification: ConnectVerificationBadge;
   flags: string[];
-  wallet_balance_kobo: number;  // money in kobo
+  wallet_balance_kobo: number | null;  // money in kobo; null without connect.gifting.view
   created_at: string;
   last_active_at: string;
 }
@@ -73,8 +73,8 @@ export interface ConnectUserDetail extends ConnectUserSummary {
   email_masked: string;         // PII masked — never raw
   phone_masked: string;
   modes: string[];              // dating | friendship | professional | creator | event
-  lifetime_gift_sent_kobo: number;
-  lifetime_gift_received_kobo: number;
+  lifetime_gift_sent_kobo: number | null;   // null without connect.gifting.view
+  lifetime_gift_received_kobo: number | null;
   bvn_status: 'verified' | 'pending' | 'failed' | 'none';
   nin_status: 'verified' | 'pending' | 'failed' | 'none';
   devices: ConnectUserDevice[];

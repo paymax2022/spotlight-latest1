@@ -37,7 +37,7 @@ type UserSummary struct {
 	Region           string   `json:"region"`
 	Verification     string   `json:"verification"`
 	Flags            []string `json:"flags"`
-	WalletBalanceKob int64    `json:"wallet_balance_kobo"`
+	WalletBalanceKob *int64   `json:"wallet_balance_kobo"` // null without connect.gifting.view
 	CreatedAt        string   `json:"created_at"`
 	LastActiveAt     string   `json:"last_active_at"`
 }
@@ -49,8 +49,8 @@ type UserDetail struct {
 	EmailMasked             string        `json:"email_masked"`
 	PhoneMasked             string        `json:"phone_masked"`
 	Modes                   []string      `json:"modes"`
-	LifetimeGiftSentKobo    int64         `json:"lifetime_gift_sent_kobo"`
-	LifetimeGiftReceivedKob int64         `json:"lifetime_gift_received_kobo"`
+	LifetimeGiftSentKobo    *int64        `json:"lifetime_gift_sent_kobo"` // null without connect.gifting.view
+	LifetimeGiftReceivedKob *int64        `json:"lifetime_gift_received_kobo"`
 	BVNStatus               string        `json:"bvn_status"`
 	NINStatus               string        `json:"nin_status"`
 	Devices                 []interface{} `json:"devices"`
@@ -193,7 +193,7 @@ func summaryOf(r userRow) UserSummary {
 		Status:       userStatus(str(r.Restriction), str(r.PlatformStatus)),
 		Region:       str(r.City),
 		Verification: connectverification.BadgeFor(str(r.VerLevel), r.VerDocType, str(r.VerStatus)),
-		Flags:        flags, WalletBalanceKob: r.WalletKobo,
+		Flags:        flags, WalletBalanceKob: &r.WalletKobo,
 		CreatedAt:    r.CreatedAt.UTC().Format(time.RFC3339),
 		LastActiveAt: last.UTC().Format(time.RFC3339),
 	}
@@ -206,7 +206,7 @@ func detailOf(r userRow) UserDetail {
 	}
 	return UserDetail{
 		UserSummary: summaryOf(r), EmailMasked: maskEmail(str(r.Email)), PhoneMasked: maskPhone(str(r.Phone)),
-		Modes: modes, LifetimeGiftSentKobo: r.GiftSent, LifetimeGiftReceivedKob: r.GiftRecvd,
+		Modes: modes, LifetimeGiftSentKobo: &r.GiftSent, LifetimeGiftReceivedKob: &r.GiftRecvd,
 		BVNStatus: idStatus(r.HasBVN), NINStatus: idStatus(r.HasNIN),
 		Devices: []interface{}{}, TierHistory: []interface{}{}, OpenCases: r.OpenCases,
 	}
@@ -216,10 +216,8 @@ func detailOf(r userRow) UserDetail {
 const userSelect = `SELECT p.user_id::text, p.display_name, p.city, p.created_at,
 	COALESCE(up.kyc_tier, 0)::int, pu.status, pu.last_login_at,
 	v.status, v.level, v.doc_type,
-	(SELECT r.type FROM connect_account_restrictions r
-	  WHERE r.user_id = p.user_id AND r.active AND (r.expires_at IS NULL OR r.expires_at > now())
-	  ORDER BY (r.type = 'banned') DESC, r.created_at DESC LIMIT 1),
-	COALESCE((SELECT SUM(w.available_kobo) FROM wallet_balance w WHERE w.user_id = p.user_id AND w.account_type = 'user_wallet'), 0)::bigint,
+	rs.type,
+	COALESCE((SELECT SUM(w.available_kobo) FROM wallet_balance w WHERE w.user_id = p.user_id AND w.account_type = 'user_wallet' AND w.currency = 'NGN'), 0)::bigint,
 	(SELECT count(*) FROM connect_cases c WHERE c.subject_id = p.user_id AND c.status IN ('open','investigating'))::int,
 	EXISTS (SELECT 1 FROM connect_underage_flags f WHERE f.user_id = p.user_id AND f.status = 'queued'),
 	pu.email, pu.phone, (up.bvn_hash IS NOT NULL), (up.nin_hash IS NOT NULL),
@@ -229,7 +227,15 @@ const userSelect = `SELECT p.user_id::text, p.display_name, p.city, p.created_at
 	FROM connect_profiles p
 	LEFT JOIN user_profiles up ON up.id = p.user_id
 	LEFT JOIN platform_users pu ON pu.id = p.user_id
-	LEFT JOIN connect_verification v ON v.user_id = p.user_id
+	LEFT JOIN LATERAL (
+	  SELECT status, level, doc_type FROM connect_verification
+	   WHERE user_id = p.user_id ORDER BY updated_at DESC, id DESC LIMIT 1
+	) v ON true
+	LEFT JOIN LATERAL (
+	  SELECT r.type FROM connect_account_restrictions r
+	   WHERE r.user_id = p.user_id AND r.active AND (r.expires_at IS NULL OR r.expires_at > now())
+	   ORDER BY (r.type = 'banned') DESC, r.created_at DESC LIMIT 1
+	) rs ON true
 	WHERE p.deleted_at IS NULL AND pu.status IS DISTINCT FROM 'deleted'`
 
 func scanUser(row pgx.Row) (userRow, error) {
@@ -240,39 +246,40 @@ func scanUser(row pgx.Row) (userRow, error) {
 	return r, err
 }
 
+// statusSQL mirrors userStatus (ban > suspension > lockout > pending > active) so the filter is applied
+// in SQL, over the whole directory, instead of over a window. A live test pins the two together.
+const statusSQL = `CASE
+	WHEN rs.type = 'banned' THEN 'banned'
+	WHEN rs.type = 'suspended' OR pu.status = 'suspended' THEN 'suspended'
+	WHEN pu.status = 'locked' THEN 'restricted'
+	WHEN pu.status = 'pending' THEN 'pending'
+	ELSE 'active' END`
+
 // ListUsers returns a page of users (newest first), filtered by search and status, plus has_more.
-// The status filter is applied after the derived status is computed, in Go, over an over-fetch bounded
-// by the SQL limit, so it stays correct for the ban/suspension precedence.
 func (s *Service) ListUsers(ctx context.Context, search, status string, limit int) ([]UserSummary, bool, error) {
-	fetch := limit + 1
-	if status != "all" {
-		fetch = 1000 // status is derived from several tables; scan a bounded window then filter
-	}
 	rows, err := s.db.Query(ctx, userSelect+`
 		AND ($1 = '' OR p.display_name ILIKE $1 ESCAPE '\')
-		ORDER BY p.created_at DESC LIMIT $2`, search, fetch)
+		AND ($2 = 'all' OR `+statusSQL+` = $2)
+		ORDER BY p.created_at DESC, p.id DESC LIMIT $3`, search, status, limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("connect: list users: %w", err)
 	}
 	defer rows.Close()
 	out := make([]UserSummary, 0, limit)
-	more := false
 	for rows.Next() {
 		r, err := scanUser(rows)
 		if err != nil {
 			return nil, false, err
 		}
-		u := summaryOf(r)
-		if status != "all" && u.Status != status {
-			continue
-		}
-		if len(out) == limit {
-			more = true
-			break
-		}
-		out = append(out, u)
+		out = append(out, summaryOf(r))
 	}
-	return out, more, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
 }
 
 // GetUser returns one user's detail, or ErrUserNotFound.
