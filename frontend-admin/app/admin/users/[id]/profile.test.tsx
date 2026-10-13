@@ -41,11 +41,18 @@ const mockGetWalletTransactions = vi.fn()
 vi.mock('@/services/userFinanceService', () => ({
   getWalletBalance: (...args: unknown[]) => mockGetWalletBalance(...args),
   getWalletTransactions: (...args: unknown[]) => mockGetWalletTransactions(...args),
+  getUserKyc: (...args: unknown[]) => mockGetUserKyc(...args),
+  approveKycCase: (...args: unknown[]) => mockApproveKycCase(...args),
+  rejectKycCase: (...args: unknown[]) => mockRejectKycCase(...args),
 }))
+const mockGetUserKyc = vi.fn()
+const mockApproveKycCase = vi.fn()
+const mockRejectKycCase = vi.fn()
 
 import AdminUserProfilePage from './page'
 import RolesPanel from './RolesPanel'
 import { WalletPanel } from './WalletPanel'
+import { KycPanel } from './KycPanel'
 import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
@@ -74,6 +81,11 @@ describe('AdminUserProfilePage', () => {
   beforeEach(() => {
     mockGetAdminUser.mockClear()
     getAdminUserImpl = async () => null
+    mockGetUserRoles.mockResolvedValue([])
+    mockListRoles.mockResolvedValue([])
+    mockGetWalletBalance.mockResolvedValue({ balanceKobo: 0 })
+    mockGetWalletTransactions.mockResolvedValue([])
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'none', openCaseId: null })
   })
   afterEach(() => cleanup())
 
@@ -274,6 +286,104 @@ describe('WalletPanel', () => {
     mockGetWalletBalance.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
     mockGetWalletTransactions.mockResolvedValue([])
     render(<WalletPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
+    expect(panel().queryAllByRole('button').length).toBe(0)
+  })
+})
+
+describe('KycPanel', () => {
+  const panel = () => within(screen.getByTestId('kyc-panel'))
+
+  beforeEach(() => {
+    mockGetUserKyc.mockReset()
+    mockApproveKycCase.mockReset()
+    mockRejectKycCase.mockReset()
+  })
+  afterEach(() => cleanup())
+
+  it('shows tier and status, and no decision buttons when there is no open case', async () => {
+    mockGetUserKyc.mockResolvedValue({ tier: 1, status: 'verified', openCaseId: null })
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByTestId('kyc-status').textContent).toBe('verified'))
+    expect(mockGetUserKyc).toHaveBeenCalledWith('u1')
+    expect(panel().getByTestId('kyc-tier').textContent).toBe('1')
+    expect(panel().queryByText('Approve')).toBeNull()
+    expect(panel().queryByText('Reject')).toBeNull()
+    expect(mockApproveKycCase).not.toHaveBeenCalled()
+  })
+
+  it('approves the open case then refetches', async () => {
+    mockGetUserKyc.mockResolvedValueOnce({ tier: 0, status: 'pending', openCaseId: 'c9' })
+    mockApproveKycCase.mockResolvedValue(true)
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Approve')).toBeTruthy())
+    mockGetUserKyc.mockResolvedValue({ tier: 1, status: 'verified', openCaseId: null })
+    fireEvent.click(panel().getByText('Approve'))
+    await waitFor(() => expect(panel().getByTestId('kyc-status').textContent).toBe('verified'))
+    expect(mockApproveKycCase).toHaveBeenCalledWith('c9')
+    expect(mockGetUserKyc).toHaveBeenCalledTimes(2)
+    expect(panel().queryByText('Approve')).toBeNull()
+  })
+
+  it('rejects with an inline reason then refetches', async () => {
+    mockGetUserKyc.mockResolvedValueOnce({ tier: 0, status: 'pending', openCaseId: 'c9' })
+    mockRejectKycCase.mockResolvedValue(true)
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Reject')).toBeTruthy())
+    fireEvent.click(panel().getByText('Reject'))
+    fireEvent.change(panel().getByLabelText('Rejection reason'), { target: { value: 'blurry ID' } })
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'rejected', openCaseId: null })
+    fireEvent.click(panel().getByText('Confirm reject'))
+    await waitFor(() => expect(panel().getByTestId('kyc-status').textContent).toBe('rejected'))
+    expect(mockRejectKycCase).toHaveBeenCalledWith('c9', 'blurry ID')
+    expect(mockGetUserKyc).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not call reject without a reason', async () => {
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'pending', openCaseId: 'c9' })
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Reject')).toBeTruthy())
+    fireEvent.click(panel().getByText('Reject'))
+    fireEvent.click(panel().getByText('Confirm reject'))
+    expect(mockRejectKycCase).not.toHaveBeenCalled()
+  })
+
+  it('shows an inline error and no success when approve returns false', async () => {
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'pending', openCaseId: 'c9' })
+    mockApproveKycCase.mockResolvedValue(false)
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Approve')).toBeTruthy())
+    fireEvent.click(panel().getByText('Approve'))
+    await waitFor(() => expect(panel().getByText('Approve failed')).toBeTruthy())
+    expect(mockGetUserKyc).toHaveBeenCalledTimes(1)
+    expect(panel().getByTestId('kyc-status').textContent).toBe('pending')
+  })
+
+  it('shows an inline error when reject returns false', async () => {
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'pending', openCaseId: 'c9' })
+    mockRejectKycCase.mockResolvedValue(false)
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Reject')).toBeTruthy())
+    fireEvent.click(panel().getByText('Reject'))
+    fireEvent.change(panel().getByLabelText('Rejection reason'), { target: { value: 'bad' } })
+    fireEvent.click(panel().getByText('Confirm reject'))
+    await waitFor(() => expect(panel().getByText('Reject failed')).toBeTruthy())
+    expect(mockGetUserKyc).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows an inline error and Retry refetches', async () => {
+    mockGetUserKyc.mockRejectedValueOnce(new Error('boom'))
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('boom')).toBeTruthy())
+    mockGetUserKyc.mockResolvedValue({ tier: 2, status: 'verified', openCaseId: null })
+    fireEvent.click(panel().getByText('Retry'))
+    await waitFor(() => expect(panel().getByTestId('kyc-tier').textContent).toBe('2'))
+    expect(mockGetUserKyc).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the permission placeholder on 403 with no Retry', async () => {
+    mockGetUserKyc.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    render(<KycPanel userId="u1" />)
     await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
     expect(panel().queryAllByRole('button').length).toBe(0)
   })
