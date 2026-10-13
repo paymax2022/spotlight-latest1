@@ -3,7 +3,7 @@
  * Mocks usersService so no network calls are made.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 // Behaviour is swapped through a plain variable; configuring the rejection with
 // mockRejectedValue/mockImplementation on the vi.fn failed the test with the
@@ -36,8 +36,16 @@ vi.mock('@/services/rbacAdminService', () => ({
   listRoles: (...args: unknown[]) => mockListRoles(...args),
 }))
 
+const mockGetWalletBalance = vi.fn()
+const mockGetWalletTransactions = vi.fn()
+vi.mock('@/services/userFinanceService', () => ({
+  getWalletBalance: (...args: unknown[]) => mockGetWalletBalance(...args),
+  getWalletTransactions: (...args: unknown[]) => mockGetWalletTransactions(...args),
+}))
+
 import AdminUserProfilePage from './page'
 import RolesPanel from './RolesPanel'
+import { WalletPanel } from './WalletPanel'
 import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
@@ -210,5 +218,63 @@ describe('RolesPanel', () => {
     await waitFor(() => expect(screen.getByText(/Removing role failed/)).toBeTruthy())
     expect(mockGetUserRoles).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Administrator')).toBeTruthy()
+  })
+})
+
+describe('WalletPanel', () => {
+  const txs = [
+    { id: 't1', type: 'credit', amount_kobo: 150000, reference: 'ref-aaa', created_at: '2025-01-02T10:00:00Z' },
+    { id: 't2', type: 'debit', amount_kobo: 2550, reference: 'ref-bbb', created_at: '2025-01-03T10:00:00Z' },
+  ]
+  const panel = () => within(screen.getByTestId('wallet-panel'))
+
+  beforeEach(() => {
+    mockGetWalletBalance.mockReset()
+    mockGetWalletTransactions.mockReset()
+  })
+  afterEach(() => cleanup())
+
+  it('shows the balance in naira and a row per transaction', async () => {
+    mockGetWalletBalance.mockResolvedValue({ balanceKobo: 150000 })
+    mockGetWalletTransactions.mockResolvedValue(txs)
+    render(<WalletPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByTestId('wallet-balance').textContent).toBe('₦1,500.00'))
+    expect(mockGetWalletBalance).toHaveBeenCalledWith('u1')
+    expect(mockGetWalletTransactions).toHaveBeenCalledWith('u1')
+    expect(panel().getByText('ref-aaa')).toBeTruthy()
+    expect(panel().getByText('ref-bbb')).toBeTruthy()
+    expect(panel().getByText('₦25.50')).toBeTruthy()
+    expect(panel().getAllByRole('row').length).toBe(3) // header + 2
+    for (const h of ['Type', 'Amount (₦)', 'Reference', 'Date']) expect(panel().getByText(h)).toBeTruthy()
+    expect(panel().queryAllByRole('button').length).toBe(0)
+    expect(panel().queryAllByRole('textbox').length).toBe(0)
+  })
+
+  it('shows an empty label but still the balance when there are no transactions', async () => {
+    mockGetWalletBalance.mockResolvedValue({ balanceKobo: 50 })
+    mockGetWalletTransactions.mockResolvedValue([])
+    render(<WalletPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('No transactions')).toBeTruthy())
+    expect(panel().getByTestId('wallet-balance').textContent).toBe('₦0.50')
+  })
+
+  it('shows an inline error and Retry refetches', async () => {
+    mockGetWalletBalance.mockRejectedValueOnce(new Error('boom'))
+    mockGetWalletTransactions.mockResolvedValue([])
+    render(<WalletPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('boom')).toBeTruthy())
+    expect(panel().getAllByRole('button').length).toBe(1)
+    mockGetWalletBalance.mockResolvedValue({ balanceKobo: 150000 })
+    fireEvent.click(panel().getByText('Retry'))
+    await waitFor(() => expect(panel().getByTestId('wallet-balance').textContent).toBe('₦1,500.00'))
+    expect(mockGetWalletBalance).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the permission placeholder on 403 with no Retry', async () => {
+    mockGetWalletBalance.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    mockGetWalletTransactions.mockResolvedValue([])
+    render(<WalletPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
+    expect(panel().queryAllByRole('button').length).toBe(0)
   })
 })
