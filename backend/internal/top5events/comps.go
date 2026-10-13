@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/credential"
 )
 
@@ -37,10 +38,10 @@ const (
 // event_orders.idempotency_key and skip issuance.
 func (s *Service) IssueComp(ctx context.Context, callerID, eventID, tierID string, recipientHandles []string, note, idemKey string) ([]Ticket, error) {
 	if idemKey == "" {
-		return nil, errors.New("events: idempotency key required")
+		return nil, fmt.Errorf("%w: events: idempotency key required", ErrValidation)
 	}
 	if len(recipientHandles) == 0 {
-		return nil, errors.New("events: at least one recipient required")
+		return nil, fmt.Errorf("%w: events: at least one recipient required", ErrValidation)
 	}
 	if _, err := s.authorizeManage(ctx, callerID, eventID); err != nil {
 		return nil, err
@@ -52,6 +53,11 @@ func (s *Service) IssueComp(ctx context.Context, callerID, eventID, tierID strin
 	for _, h := range recipientHandles {
 		uid, err := s.tags.Resolve(ctx, h)
 		if err != nil {
+			// An unresolvable handle is bad client input, not a server fault:
+			// surface it as a 400 (naming the handle) rather than a generic 500.
+			if errors.Is(err, cashtag.ErrNotFound) {
+				return nil, fmt.Errorf("%w: events: unknown recipient %q", ErrValidation, h)
+			}
 			return nil, fmt.Errorf("events: resolve recipient: %w", err)
 		}
 		if !seen[uid] {

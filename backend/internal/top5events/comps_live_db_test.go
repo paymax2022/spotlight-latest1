@@ -224,6 +224,26 @@ func TestLiveDB_IssueComp_ManagerAllowed(t *testing.T) {
 	}
 }
 
+// An unresolvable recipient handle is client input, so IssueComp returns
+// ErrValidation (→400), not a generic 500, and issues nothing.
+func TestLiveDB_IssueComp_UnknownRecipientValidation(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+	_, err := svc.IssueComp(ctx, owner, ev, tier, []string{"@definitely_no_such_handle_xyz"}, "", newIdem())
+	if !errors.Is(err, top5events.ErrValidation) {
+		t.Fatalf("want ErrValidation for unknown handle, got %v", err)
+	}
+	var sold int
+	_ = pool.QueryRow(ctx, `SELECT sold FROM event_ticket_tiers WHERE id=$1`, tier).Scan(&sold)
+	if sold != 0 {
+		t.Fatalf("issued despite unknown recipient: sold=%d", sold)
+	}
+}
+
 func TestLiveDB_IssueComp_TerminalStateRejected(t *testing.T) {
 	for _, state := range []string{"CANCELLED", "CLOSED"} {
 		t.Run(state, func(t *testing.T) {
