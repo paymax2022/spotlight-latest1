@@ -1,7 +1,7 @@
 package transport_test
 
 // LIVE-DB schema test for the delivery-provider onboarding migration
-// (20271036000000): drivers gains service_interests/coverage_areas text[]
+// (20271037000000): drivers gains service_interests/coverage_areas text[]
 // defaulting to '{}', vehicles gains vehicle_type (CHECK car|motorcycle|bicycle,
 // default car), and vehicles.plate_number becomes nullable so a bicycle courier
 // has no plate. Skipped unless TEST_DATABASE_URL is set.
