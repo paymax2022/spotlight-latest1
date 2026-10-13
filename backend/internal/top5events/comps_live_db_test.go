@@ -170,6 +170,39 @@ func TestLiveDB_IssueComp_Idempotent(t *testing.T) {
 	}
 }
 
+// Reusing the same client idemKey against a different event (same recipient)
+// must issue a distinct, fresh ticket — not return the first event's ticket and
+// not silently skip. The stored key is scoped to event+tier.
+func TestLiveDB_IssueComp_IdemKeyScopedToEvent(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	_, handle := seedHandleUser(t, ctx, pool)
+	evA := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tierA := seedTier(t, ctx, pool, evA, 1000, 10, 0)
+	evB := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tierB := seedTier(t, ctx, pool, evB, 1000, 10, 0)
+	idem := newIdem()
+	a, err := svc.IssueComp(ctx, owner, evA, tierA, []string{handle}, "", idem)
+	if err != nil || len(a) != 1 {
+		t.Fatalf("event A: %v %d", err, len(a))
+	}
+	b, err := svc.IssueComp(ctx, owner, evB, tierB, []string{handle}, "", idem)
+	if err != nil || len(b) != 1 {
+		t.Fatalf("event B (reused idemKey): %v %d", err, len(b))
+	}
+	if a[0].ID == b[0].ID {
+		t.Fatalf("reused idemKey leaked event A's ticket into event B: %s", a[0].ID)
+	}
+	var soldB, tkB int
+	_ = pool.QueryRow(ctx, `SELECT sold FROM event_ticket_tiers WHERE id=$1`, tierB).Scan(&soldB)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_tickets WHERE event_id=$1`, evB).Scan(&tkB)
+	if soldB != 1 || tkB != 1 {
+		t.Fatalf("event B not issued cleanly: sold=%d tickets=%d want 1/1", soldB, tkB)
+	}
+}
+
 func TestLiveDB_IssueComp_ManagerAllowed(t *testing.T) {
 	ctx := context.Background()
 	pool := ticketTokenPool(t)
