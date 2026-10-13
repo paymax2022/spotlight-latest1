@@ -3,7 +3,7 @@
  * Mocks usersService so no network calls are made.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 // Behaviour is swapped through a plain variable; configuring the rejection with
 // mockRejectedValue/mockImplementation on the vi.fn failed the test with the
@@ -18,9 +18,27 @@ vi.mock('@/services/usersService', () => ({
   unlockAdminUser: vi.fn(),
   unsuspendAdminUser: vi.fn(),
   updateAdminUser: vi.fn(),
+  getUserRoles: (...args: unknown[]) => mockGetUserRoles(...args),
+  assignUserRole: (...args: unknown[]) => mockAssignUserRole(...args),
+  removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
+  AdminUsersRequestError: class extends Error {
+    constructor(public readonly status: number, message: string) {
+      super(message)
+    }
+  },
+}))
+
+const mockGetUserRoles = vi.fn()
+const mockAssignUserRole = vi.fn()
+const mockRemoveUserRole = vi.fn()
+const mockListRoles = vi.fn()
+vi.mock('@/services/rbacAdminService', () => ({
+  listRoles: (...args: unknown[]) => mockListRoles(...args),
 }))
 
 import AdminUserProfilePage from './page'
+import RolesPanel from './RolesPanel'
+import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
   id: 'u1',
@@ -74,5 +92,88 @@ describe('AdminUserProfilePage', () => {
     await waitFor(() => expect(screen.getByText(/HTTP 403/)).toBeTruthy())
     expect(screen.getByText('Retry')).toBeTruthy()
     expect(screen.queryByText('User not found.')).toBeNull()
+  })
+})
+
+describe('RolesPanel', () => {
+  const catalog = [
+    { id: 'r-admin', slug: 'admin', name: 'Administrator' },
+    { id: 'r-mod', slug: 'moderator', name: 'Moderator' },
+    { id: 'r-fin', slug: 'finance', name: 'Finance' },
+  ]
+  beforeEach(() => {
+    mockGetUserRoles.mockReset()
+    mockAssignUserRole.mockReset()
+    mockRemoveUserRole.mockReset()
+    mockListRoles.mockReset()
+    mockListRoles.mockResolvedValue(catalog)
+  })
+  afterEach(() => cleanup())
+
+  it('shows a chip with the catalog name per current role', async () => {
+    mockGetUserRoles.mockResolvedValue(['admin', 'moderator'])
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Administrator')).toBeTruthy())
+    expect(screen.getByText('Moderator')).toBeTruthy()
+    expect(mockGetUserRoles).toHaveBeenCalledWith('u1')
+  })
+
+  it('shows an empty label, not an error, when the user has no roles', async () => {
+    mockGetUserRoles.mockResolvedValue([])
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('No roles assigned')).toBeTruthy())
+    expect(screen.queryByText('Retry')).toBeNull()
+  })
+
+  it('shows an inline error with Retry that refetches', async () => {
+    mockGetUserRoles.mockRejectedValueOnce(new AdminUsersRequestError(500, 'boom'))
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText(/boom/)).toBeTruthy())
+    mockGetUserRoles.mockResolvedValueOnce(['admin'])
+    fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(screen.getByText('Administrator')).toBeTruthy())
+  })
+
+  it('shows a permission placeholder with no Retry on 403', async () => {
+    mockGetUserRoles.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText(/don't have permission to view this/)).toBeTruthy())
+    expect(screen.queryByText('Retry')).toBeNull()
+  })
+
+  it('remove calls removeUserRole with the resolved id (not slug) then refetches', async () => {
+    mockGetUserRoles.mockResolvedValueOnce(['admin']).mockResolvedValue([])
+    mockRemoveUserRole.mockResolvedValue(true)
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Administrator')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('Remove Administrator'))
+    await waitFor(() => expect(mockRemoveUserRole).toHaveBeenCalledWith('u1', 'r-admin'))
+    await waitFor(() => expect(mockGetUserRoles).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByText('No roles assigned')).toBeTruthy())
+  })
+
+  it('assign calls assignUserRole with the role id then refetches', async () => {
+    mockGetUserRoles.mockResolvedValueOnce(['admin']).mockResolvedValue(['admin', 'finance'])
+    mockAssignUserRole.mockResolvedValue(true)
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Administrator')).toBeTruthy())
+    const select = screen.getByLabelText('Assign role') as HTMLSelectElement
+    // roles already held are not offered
+    expect(Array.from(select.options).map((o) => o.value)).not.toContain('r-admin')
+    fireEvent.change(select, { target: { value: 'r-fin' } })
+    fireEvent.click(screen.getByText('Assign'))
+    await waitFor(() => expect(mockAssignUserRole).toHaveBeenCalledWith('u1', 'r-fin'))
+    await waitFor(() => expect(mockGetUserRoles).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByText('Finance')).toBeTruthy())
+  })
+
+  it('surfaces an assign failure inline', async () => {
+    mockGetUserRoles.mockResolvedValue([])
+    mockAssignUserRole.mockRejectedValue(new AdminUsersRequestError(403, 'Assigning role failed (HTTP 403)'))
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('No roles assigned')).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('Assign role'), { target: { value: 'r-fin' } })
+    fireEvent.click(screen.getByText('Assign'))
+    await waitFor(() => expect(screen.getByText(/HTTP 403/)).toBeTruthy())
   })
 })

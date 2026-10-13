@@ -11,6 +11,7 @@ import {
   unsuspendAdminUser,
   updateAdminUser,
 } from '@/services/usersService';
+import RolesPanel from './RolesPanel';
 import { useToasts, ToastStack } from '@/components/rbac';
 import { Page, PageHeader, Card, Button, Input, Badge, colors } from '@/components/ui/vuexy';
 
@@ -191,6 +192,10 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
             </div>
           </div>
         </Card>
+      </div>
+
+      <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+        <RolesPanel userId={id} />
       </div>
     </Page>
   );
