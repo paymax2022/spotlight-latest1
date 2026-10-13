@@ -31,6 +31,9 @@ func liveDB(t *testing.T) (*pgxpool.Pool, context.Context) {
 	return pool, ctx
 }
 
+// testAdminID is a syntactically valid admin user id (audit rows store it as a uuid).
+const testAdminID = "00000000-0000-4000-8000-0000000000ad"
+
 type fakePerm struct {
 	ok  bool
 	err error
@@ -70,12 +73,14 @@ func get(t *testing.T, pool *pgxpool.Pool, perm PermissionChecker, path string) 
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", "admin-1"); c.Next() })
+	r.Use(func(c *gin.Context) { c.Set("user_id", testAdminID); c.Next() })
 	h := NewHandler(NewService(pool), perm)
 	r.GET("/users", h.ListUsers)
 	r.GET("/users/:id", h.GetUser)
 	r.GET("/dashboard", h.Dashboard)
 	r.GET("/finance", h.Finance)
+	r.GET("/underage", h.Underage)
+	r.GET("/media-review", h.MediaReview)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	return w.Code, w.Body.String()
@@ -276,5 +281,176 @@ func TestLive_UserMoneyFieldsAreWithheldWithoutTheGiftingPermission(t *testing.T
 	_, raw := get(t, pool, fakePerm{ok: true}, "/users/"+u)
 	if strings.Contains(raw, `"wallet_balance_kobo":null`) || strings.Contains(raw, `"lifetime_gift_sent_kobo":null`) {
 		t.Fatalf("a permitted caller must see numbers: %s", raw)
+	}
+}
+
+func TestLive_UnderageQueueMapsStatusAndMasksTheDOB(t *testing.T) {
+	pool, ctx := liveDB(t)
+	u := seedUser(t, ctx, pool, "Minor"+uuid.NewString()[:6], "active")
+	var flagID string
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_underage_flags (user_id, reason, dob, status) VALUES ($1::uuid, 'under_18_at_age_gate', '2009-03-14', 'queued') RETURNING id::text`, u).Scan(&flagID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_underage_flags WHERE user_id = $1::uuid`, u)
+	})
+
+	code, raw := get(t, pool, nil, "/underage?limit=200")
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, raw)
+	}
+	for _, leak := range []string{"2009-03-14", "2009", "03-14"} {
+		if strings.Contains(raw, leak) {
+			t.Fatalf("response leaks the date of birth (%q)", leak)
+		}
+	}
+	var l struct {
+		Data []UnderageFlag `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &l)
+	var got *UnderageFlag
+	for i := range l.Data {
+		if l.Data[i].ID == flagID {
+			got = &l.Data[i]
+		}
+	}
+	if got == nil || got.Status != "open" || got.Signal != "dob_under_18" || got.DeclaredDOBMsk != "20••-••-14" || got.UserID != u || got.CaseID != nil {
+		t.Fatalf("flag = %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE connect_underage_flags SET status = 'banned' WHERE id = $1::uuid`, flagID); err != nil {
+		t.Fatal(err)
+	}
+	_, banned := get(t, pool, nil, "/underage?status=confirmed_minor&limit=200")
+	_, open := get(t, pool, nil, "/underage?status=open&limit=200")
+	if !strings.Contains(banned, flagID) || strings.Contains(open, flagID) {
+		t.Fatal("status mapping/filter wrong after the ban")
+	}
+	if code, _ := get(t, pool, nil, "/underage?status=bogus"); code != http.StatusBadRequest {
+		t.Fatalf("bad status -> %d", code)
+	}
+}
+
+func TestLive_MediaReviewListsMetadataOnlyAndPendingFirst(t *testing.T) {
+	pool, ctx := liveDB(t)
+	name := "Media" + uuid.NewString()[:6]
+	u := seedUser(t, ctx, pool, name, "active")
+	var profileID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM connect_profiles WHERE user_id = $1::uuid`, u).Scan(&profileID); err != nil {
+		t.Fatal(err)
+	}
+	var approvedID, pendingID string
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_profile_media (profile_id, url, kind, moderation_status, sort_order) VALUES ($1::uuid, 'r2://secret-media-key-1', 'clip', 'approved', 5) RETURNING id::text`, profileID).Scan(&approvedID); err != nil {
+		t.Fatalf("cannot seed connect_profile_media: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_profile_media (profile_id, url, kind, moderation_status, sort_order) VALUES ($1::uuid, 'r2://secret-media-key-2', 'photo', 'pending', 0) RETURNING id::text`, profileID).Scan(&pendingID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_profile_media WHERE profile_id = $1::uuid`, profileID)
+	})
+
+	code, raw := get(t, pool, nil, "/media-review?limit=200")
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if strings.Contains(raw, "secret-media-key") || strings.Contains(raw, "r2://") || strings.Contains(raw, `"url"`) {
+		t.Fatal("the media URL leaked")
+	}
+	var l struct {
+		Data []MediaReviewItem `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &l)
+	idx := map[string]int{}
+	for i, it := range l.Data {
+		idx[it.ID] = i
+		if it.ID == pendingID && (it.State != "pending" || it.MediaKind != "profile_photo" || it.Handle != name || it.UserID != u) {
+			t.Fatalf("pending item = %+v", it)
+		}
+		if it.ID == approvedID && (it.State != "approved" || it.MediaKind != "gallery") {
+			t.Fatalf("approved item = %+v", it)
+		}
+	}
+	if _, ok := idx[pendingID]; !ok {
+		t.Fatal("pending item missing")
+	}
+	if idx[pendingID] > idx[approvedID] {
+		t.Fatal("pending items must sort before approved ones")
+	}
+	_, only := get(t, pool, nil, "/media-review?state=approved&limit=200")
+	if !strings.Contains(only, approvedID) || strings.Contains(only, pendingID) {
+		t.Fatal("state filter wrong")
+	}
+	if code, _ := get(t, pool, nil, "/media-review?state=bogus"); code != http.StatusBadRequest {
+		t.Fatalf("bad state -> %d", code)
+	}
+}
+
+// Review: reads of the child-safety queues are audited (who looked, which filter, how many rows).
+func TestLive_UnderageAndMediaReadsAreAudited(t *testing.T) {
+	pool, ctx := liveDB(t)
+	// connect_audit_log.actor_id references auth.users, as it does for every real admin.
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1::uuid, 'console-audit-admin@seed.test') ON CONFLICT DO NOTHING`, testAdminID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1::uuid`, testAdminID) })
+	_, _ = pool.Exec(ctx, `DELETE FROM connect_audit_log WHERE actor_id = $1::uuid`, testAdminID)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_audit_log WHERE actor_id = $1::uuid`, testAdminID)
+	})
+	get(t, pool, nil, "/underage?status=open")
+	get(t, pool, nil, "/media-review?state=pending")
+	for _, action := range []string{"connect.underage.list", "connect.media_review.list"} {
+		var n int
+		var detail string
+		if err := pool.QueryRow(ctx, `SELECT count(*), COALESCE(max(new_value::text), '') FROM connect_audit_log WHERE actor_id = $1::uuid AND action = $2`, testAdminID, action).Scan(&n, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 || !strings.Contains(detail, `"rows"`) {
+			t.Errorf("%s: audit rows=%d detail=%q", action, n, detail)
+		}
+	}
+	// A rejected request is not a read and is not audited.
+	get(t, pool, nil, "/underage?status=bogus")
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM connect_audit_log WHERE actor_id = $1::uuid AND action = 'connect.underage.list'`, testAdminID).Scan(&n)
+	if n != 1 {
+		t.Errorf("a 400 was audited as a read: %d rows", n)
+	}
+}
+
+// Review: a soft-deleted profile's name is never shown on a flag, and its media is never queued.
+func TestLive_DeletedProfilesAreNotNamedAndTheirMediaIsExcluded(t *testing.T) {
+	pool, ctx := liveDB(t)
+	name := "Gone" + uuid.NewString()[:6]
+	u := seedUser(t, ctx, pool, name, "active")
+	var profileID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM connect_profiles WHERE user_id = $1::uuid`, u).Scan(&profileID); err != nil {
+		t.Fatal(err)
+	}
+	var flagID, mediaID string
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_underage_flags (user_id, reason, dob, status) VALUES ($1::uuid, 'under_18_at_age_gate', '2010-01-02', 'queued') RETURNING id::text`, u).Scan(&flagID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_profile_media (profile_id, url, kind, moderation_status, sort_order) VALUES ($1::uuid, 'r2://gone', 'photo', 'pending', 0) RETURNING id::text`, profileID).Scan(&mediaID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM connect_underage_flags WHERE user_id = $1::uuid`, u)
+		_, _ = pool.Exec(c, `DELETE FROM connect_profile_media WHERE profile_id = $1::uuid`, profileID)
+	})
+	if _, err := pool.Exec(ctx, `UPDATE connect_profiles SET deleted_at = now() WHERE id = $1::uuid`, profileID); err != nil {
+		t.Fatal(err)
+	}
+	_, raw := get(t, pool, nil, "/underage?limit=200")
+	if strings.Contains(raw, name) {
+		t.Fatal("a deleted profile's display name appears on the flag")
+	}
+	if !strings.Contains(raw, flagID) {
+		t.Fatal("the flag itself must still be listed (a deleted account can still be a suspected minor)")
+	}
+	_, raw = get(t, pool, nil, "/media-review?limit=200")
+	if strings.Contains(raw, mediaID) {
+		t.Fatal("a deleted profile's media is still queued")
 	}
 }
