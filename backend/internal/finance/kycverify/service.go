@@ -891,3 +891,9 @@ func GateFacial(match bool, confidence float64, threshold int) provider.KycCheck
 	}
 	return provider.KycFailed
 }
+
+// OpenReviewCaseID returns the id of the user's current open review case (their
+// latest NEEDS_REVIEW verification session), if any. Read-only.
+func (s *Service) OpenReviewCaseID(ctx context.Context, userID string) (string, bool, error) {
+	return s.repo.LatestReviewSessionID(ctx, userID)
+}
