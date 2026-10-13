@@ -398,6 +398,36 @@ paths:
       responses:
         '200': { description: 'OK: {success, data: FinanceSummary}' }
         '403': { description: forbidden }
+  /underage#admin:
+    get:
+      summary: 'Admin: underage flag queue (read-only, RBAC connect.underage.review)'
+      description: >
+        Served at GET /api/connect/admin/underage. Open flags first, then newest. status maps the stored
+        value (queued: open; banned: confirmed_minor; cleared: cleared). declared_dob_masked keeps only the
+        century and the day of month ("20••-••-14"); the date of birth is never returned. case_id is always
+        null (flags are not linked to cases). signal is dob_under_18 for the age-gate reason and report
+        otherwise.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, open, confirmed_minor, cleared], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: UnderageFlag[], has_more}' }
+        '400': { description: invalid status }
+        '403': { description: forbidden }
+  /media-review#admin:
+    get:
+      summary: 'Admin: media moderation queue (read-only, RBAC connect.moderation.view)'
+      description: >
+        Served at GET /api/connect/admin/media-review. Pending first, then newest. Metadata only: the media
+        URL is never returned. ai_reason_codes is [] and ai_confidence is 0 because neither is stored.
+        media_kind is profile_photo for the first photo, otherwise gallery.
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [all, pending, approved, rejected], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: MediaReviewItem[], has_more}' }
+        '400': { description: invalid state }
+        '403': { description: forbidden }
   /identity#admin:
     get:
       summary: 'Admin: verification review queue (read-only, RBAC connect.verification.view)'

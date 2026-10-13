@@ -76,6 +76,8 @@ func get(t *testing.T, pool *pgxpool.Pool, perm PermissionChecker, path string) 
 	r.GET("/users/:id", h.GetUser)
 	r.GET("/dashboard", h.Dashboard)
 	r.GET("/finance", h.Finance)
+	r.GET("/underage", h.Underage)
+	r.GET("/media-review", h.MediaReview)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	return w.Code, w.Body.String()
@@ -276,5 +278,106 @@ func TestLive_UserMoneyFieldsAreWithheldWithoutTheGiftingPermission(t *testing.T
 	_, raw := get(t, pool, fakePerm{ok: true}, "/users/"+u)
 	if strings.Contains(raw, `"wallet_balance_kobo":null`) || strings.Contains(raw, `"lifetime_gift_sent_kobo":null`) {
 		t.Fatalf("a permitted caller must see numbers: %s", raw)
+	}
+}
+
+func TestLive_UnderageQueueMapsStatusAndMasksTheDOB(t *testing.T) {
+	pool, ctx := liveDB(t)
+	u := seedUser(t, ctx, pool, "Minor"+uuid.NewString()[:6], "active")
+	var flagID string
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_underage_flags (user_id, reason, dob, status) VALUES ($1::uuid, 'under_18_at_age_gate', '2009-03-14', 'queued') RETURNING id::text`, u).Scan(&flagID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_underage_flags WHERE user_id = $1::uuid`, u)
+	})
+
+	code, raw := get(t, pool, nil, "/underage?limit=200")
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, raw)
+	}
+	for _, leak := range []string{"2009-03-14", "2009", "03-14"} {
+		if strings.Contains(raw, leak) {
+			t.Fatalf("response leaks the date of birth (%q)", leak)
+		}
+	}
+	var l struct {
+		Data []UnderageFlag `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &l)
+	var got *UnderageFlag
+	for i := range l.Data {
+		if l.Data[i].ID == flagID {
+			got = &l.Data[i]
+		}
+	}
+	if got == nil || got.Status != "open" || got.Signal != "dob_under_18" || got.DeclaredDOBMsk != "20••-••-14" || got.UserID != u || got.CaseID != nil {
+		t.Fatalf("flag = %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE connect_underage_flags SET status = 'banned' WHERE id = $1::uuid`, flagID); err != nil {
+		t.Fatal(err)
+	}
+	_, banned := get(t, pool, nil, "/underage?status=confirmed_minor&limit=200")
+	_, open := get(t, pool, nil, "/underage?status=open&limit=200")
+	if !strings.Contains(banned, flagID) || strings.Contains(open, flagID) {
+		t.Fatal("status mapping/filter wrong after the ban")
+	}
+	if code, _ := get(t, pool, nil, "/underage?status=bogus"); code != http.StatusBadRequest {
+		t.Fatalf("bad status -> %d", code)
+	}
+}
+
+func TestLive_MediaReviewListsMetadataOnlyAndPendingFirst(t *testing.T) {
+	pool, ctx := liveDB(t)
+	name := "Media" + uuid.NewString()[:6]
+	u := seedUser(t, ctx, pool, name, "active")
+	var profileID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM connect_profiles WHERE user_id = $1::uuid`, u).Scan(&profileID); err != nil {
+		t.Fatal(err)
+	}
+	var approvedID, pendingID string
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_profile_media (profile_id, url, kind, moderation_status, sort_order) VALUES ($1::uuid, 'r2://secret-media-key-1', 'clip', 'approved', 5) RETURNING id::text`, profileID).Scan(&approvedID); err != nil {
+		t.Skipf("cannot seed connect_profile_media: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO connect_profile_media (profile_id, url, kind, moderation_status, sort_order) VALUES ($1::uuid, 'r2://secret-media-key-2', 'photo', 'pending', 0) RETURNING id::text`, profileID).Scan(&pendingID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_profile_media WHERE profile_id = $1::uuid`, profileID)
+	})
+
+	code, raw := get(t, pool, nil, "/media-review?limit=200")
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if strings.Contains(raw, "secret-media-key") || strings.Contains(raw, "r2://") || strings.Contains(raw, `"url"`) {
+		t.Fatal("the media URL leaked")
+	}
+	var l struct {
+		Data []MediaReviewItem `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &l)
+	idx := map[string]int{}
+	for i, it := range l.Data {
+		idx[it.ID] = i
+		if it.ID == pendingID && (it.State != "pending" || it.MediaKind != "profile_photo" || it.Handle != name || it.UserID != u) {
+			t.Fatalf("pending item = %+v", it)
+		}
+		if it.ID == approvedID && (it.State != "approved" || it.MediaKind != "gallery") {
+			t.Fatalf("approved item = %+v", it)
+		}
+	}
+	if _, ok := idx[pendingID]; !ok {
+		t.Fatal("pending item missing")
+	}
+	if idx[pendingID] > idx[approvedID] {
+		t.Fatal("pending items must sort before approved ones")
+	}
+	_, only := get(t, pool, nil, "/media-review?state=approved&limit=200")
+	if !strings.Contains(only, approvedID) || strings.Contains(only, pendingID) {
+		t.Fatal("state filter wrong")
+	}
+	if code, _ := get(t, pool, nil, "/media-review?state=bogus"); code != http.StatusBadRequest {
+		t.Fatalf("bad state -> %d", code)
 	}
 }

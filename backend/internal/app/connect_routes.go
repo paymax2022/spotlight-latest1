@@ -168,6 +168,13 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	adminCg.GET("/dashboard",
 		middleware.RequirePermission(rbac, "connect.cases.view"),
 		consoleH.Dashboard)
+	// Safety queues (read-only; masked). Underage has no .view permission: .review is the only one that exists.
+	adminCg.GET("/underage",
+		middleware.RequirePermission(rbac, "connect.underage.review"),
+		consoleH.Underage)
+	adminCg.GET("/media-review",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		consoleH.MediaReview)
 	// Money summary: both money permissions are required.
 	adminCg.GET("/finance",
 		middleware.RequirePermission(rbac, "connect.gifting.view"),
