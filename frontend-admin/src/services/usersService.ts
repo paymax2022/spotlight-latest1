@@ -44,14 +44,39 @@ async function statusAction(id: string, action: 'suspend' | 'unsuspend' | 'lock'
   return Boolean(res.ok && payload?.success);
 }
 
+/**
+ * Reads must not turn a failure into "no data": an empty list is
+ * indistinguishable from a real empty result, so a 401/403/5xx or a network
+ * error used to render as "No users" with nothing to act on. Throw instead,
+ * carrying the HTTP status and the backend's own message so the caller can say
+ * what happened (the page's catch already shows a toast and an error state).
+ */
+export class AdminUsersRequestError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'AdminUsersRequestError';
+  }
+}
+
+async function readOrThrow(res: Response, what: string): Promise<Record<string, unknown>> {
+  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || payload?.success === false) {
+    const detail = typeof payload?.error === 'string' && payload.error ? `: ${payload.error}` : '';
+    throw new AdminUsersRequestError(res.status, `${what} failed (HTTP ${res.status})${detail}`);
+  }
+  return payload;
+}
+
 export async function listAdminUsers(filters: AdminUserFilters): Promise<AdminUser[]> {
   const qs = toQuery(filters);
   const res = await fetch(`${adminApiBase()}/admin/users${qs ? `?${qs}` : ''}`, {
     cache: 'no-store',
     headers: authHeaders(),
   });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok || !payload?.success || !Array.isArray(payload?.users)) return [];
+  const payload = await readOrThrow(res, 'Loading users');
+  if (!Array.isArray(payload.users)) {
+    throw new AdminUsersRequestError(res.status, 'Loading users failed: unexpected response shape');
+  }
   return payload.users as AdminUser[];
 }
 
@@ -60,9 +85,10 @@ export async function getAdminUser(id: string): Promise<AdminUser | null> {
     cache: 'no-store',
     headers: authHeaders(),
   });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok || !payload?.success || !payload?.user) return null;
-  return payload.user as AdminUser;
+  // A missing user is a normal answer, not a failure.
+  if (res.status === 404) return null;
+  const payload = await readOrThrow(res, 'Loading user');
+  return (payload.user as AdminUser | undefined) ?? null;
 }
 
 export async function updateAdminUser(id: string, patch: Record<string, unknown>): Promise<AdminUser | null> {

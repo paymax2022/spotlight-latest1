@@ -88,10 +88,11 @@ export default function AdminUsersPage() {
       const rows = await listAdminUsers(filters);
       setUsers(rows);
       setPage(1);
-    } catch {
+    } catch (err) {
       setErrored(true);
       setUsers([]);
-      toast.error('Failed to load users. Check your permissions and try again.');
+      const detail = err instanceof Error ? err.message : '';
+      toast.error(`Failed to load users${detail ? ` - ${detail}` : ''}. Check your permissions and try again.`);
     } finally {
       setLoading(false);
     }
@@ -108,8 +109,12 @@ export default function AdminUsersPage() {
         setSelected(null);
         return;
       }
-      const row = await getAdminUser(selectedId);
-      setSelected(row);
+      try {
+        setSelected(await getAdminUser(selectedId));
+      } catch (err) {
+        setSelected(null);
+        toast.error(err instanceof Error ? err.message : 'Loading user failed.');
+      }
     };
     void run();
   }, [selectedId]);
@@ -195,8 +200,13 @@ export default function AdminUsersPage() {
         return;
       }
       toast.success(`User ${label.toLowerCase()} succeeded.`);
-      const refreshed = await getAdminUser(selected.id);
-      setSelected(refreshed);
+      // The action already succeeded; a failed refresh must not be reported as
+      // a failed action.
+      try {
+        setSelected(await getAdminUser(selected.id));
+      } catch {
+        toast.error('The change was applied but the profile could not be reloaded.');
+      }
       await load(applied);
     } catch {
       toast.error(`${label} failed due to a network or server error.`);
