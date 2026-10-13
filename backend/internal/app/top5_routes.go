@@ -236,6 +236,8 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	if cfg.RedisURL != "" {
 		if aClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
 			svc.SetNotifier(eventAnnounceNotifier{n: notifications.NewService(aClient)})
+		} else {
+			log.Printf("[top5events] announce notifier not wired — queue client init failed: %v", qerr)
 		}
 	}
 

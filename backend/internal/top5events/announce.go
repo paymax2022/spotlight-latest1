@@ -31,9 +31,18 @@ const announceChannel = "push,in_app"
 // recipient_count with no second send. Sending is best-effort: a failed send is
 // logged and skipped and never aborts the batch or fails the call.
 // Recipients are scoped strictly by event_id.
+//
+// Delivery is AT-MOST-ONCE by design. The history row is committed (the claim)
+// before any send, so a process crash between claim and send — or a total queue
+// outage (Redis down / nil notifier) — leaves a recorded row whose idemKey a
+// retry will short-circuit, meaning those holders are never (re)notified. The
+// returned recipient_count is the distinct-holder count at claim time and does
+// NOT reflect per-send success. This is acceptable for best-effort push/in-app
+// notices; a guaranteed-delivery redesign (a sent_at marker + replay re-send
+// when NULL) is a tracked follow-up, not done here.
 func (s *Service) Announce(ctx context.Context, callerID, eventID, subject, body, idemKey string) (int, error) {
 	if idemKey == "" {
-		return 0, errors.New("events: idempotency key required")
+		return 0, fmt.Errorf("%w: events: idempotency key required", ErrValidation)
 	}
 	subject = strings.TrimSpace(subject)
 	body = strings.TrimSpace(body)
@@ -99,8 +108,12 @@ func (s *Service) Announce(ctx context.Context, callerID, eventID, subject, body
 		if title == "" {
 			title = "Event update"
 		}
+		// The slot is already claimed, so these sends must run to completion even
+		// if the caller's request context is cancelled mid-batch (a client
+		// disconnect would otherwise silently drop the rest of the fan-out).
+		sendCtx := context.WithoutCancel(ctx)
 		for _, uid := range holders {
-			if serr := s.notifier.Send(ctx, uid, title, body); serr != nil {
+			if serr := s.notifier.Send(sendCtx, uid, title, body); serr != nil {
 				log.Printf("[top5events] announce send (event=%s user=%s) failed, continuing: %v", eventID, uid, serr)
 			}
 		}
