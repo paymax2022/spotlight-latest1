@@ -25,7 +25,14 @@ func liveSvc(t *testing.T) (*connectverification.StatusService, *pgxpool.Pool, c
 		t.Skip("no TEST_DATABASE_URL — skipping connect verification live-DB test")
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Explicit size: the default is max(4, cores), so a CI runner could not hand out the 8
+	// connections the concurrency test holds at once and the test would wait forever.
+	cfg.MaxConns = 16
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
