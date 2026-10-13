@@ -156,8 +156,12 @@ func (s *StatusService) SubmitSelfie(ctx context.Context, req LivenessRequest) (
 	err = tx.QueryRow(ctx, sel, req.UserID).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		current = StatusNone
-		const ins = `INSERT INTO connect_verification (user_id, level, status) VALUES ($1,'l0','none')
-			ON CONFLICT (user_id) DO NOTHING`
+		// NOT EXISTS instead of ON CONFLICT (user_id): the unique index is created by a reconciling
+		// migration only when no user already has duplicate rows, so this must work without it.
+		// With the index present a concurrent first submit still cannot create a second row.
+		const ins = `INSERT INTO connect_verification (user_id, level, status)
+			SELECT $1::uuid, 'l0', 'none'
+			WHERE NOT EXISTS (SELECT 1 FROM connect_verification WHERE user_id = $1::uuid)`
 		if _, err := tx.Exec(ctx, ins, req.UserID); err != nil {
 			return nil, fmt.Errorf("connect: init verification: %w", err)
 		}
