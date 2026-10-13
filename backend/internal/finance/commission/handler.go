@@ -283,6 +283,30 @@ func RegisterCommission(member *gin.RouterGroup, admin *gin.RouterGroup, pool *p
 	grp.POST("/calculate", guard(PermRead), h.Calculate)
 	grp.GET("/report", guard(PermRead), h.Report)
 	grp.GET("/earnings", guard(PermRead), h.ListEarnings)
+	grp.GET("/referral-summary", guard(PermRead), h.ReferralSummary)
 
 	log.Println("[commission] routes registered at /api/finance/commission — config / calculate / report / earnings")
+}
+
+// ReferralSummary handles GET /finance/commission/referral-summary?from&to.
+// Referral commission is what the 20% split paid out of Spotlight's revenue, so
+// profit = total Spotlight revenue − summary.earnedKobo.
+func (h *Handler) ReferralSummary(c *gin.Context) {
+	from, to, err := parseRange(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	ctx := c.Request.Context()
+	summary, err := h.svc.ReferralSummary(ctx, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	rewards, err := h.svc.ReferralRewards(ctx, from, to, 50)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "summary": summary, "rewards": rewards, "from": from, "to": to})
 }
