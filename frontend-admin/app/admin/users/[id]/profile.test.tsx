@@ -19,6 +19,8 @@ vi.mock('@/services/usersService', () => ({
   unsuspendAdminUser: vi.fn(),
   updateAdminUser: vi.fn(),
   getUserRoles: (...args: unknown[]) => mockGetUserRoles(...args),
+  getLoginActivity: (...args: unknown[]) => mockGetLoginActivity(...args),
+  getSecurityEvents: (...args: unknown[]) => mockGetSecurityEvents(...args),
   assignUserRole: (...args: unknown[]) => mockAssignUserRole(...args),
   removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
   AdminUsersRequestError: class extends Error {
@@ -29,6 +31,8 @@ vi.mock('@/services/usersService', () => ({
 }))
 
 const mockGetUserRoles = vi.fn()
+const mockGetLoginActivity = vi.fn()
+const mockGetSecurityEvents = vi.fn()
 const mockAssignUserRole = vi.fn()
 const mockRemoveUserRole = vi.fn()
 const mockListRoles = vi.fn()
@@ -53,6 +57,7 @@ import AdminUserProfilePage from './page'
 import RolesPanel from './RolesPanel'
 import { WalletPanel } from './WalletPanel'
 import { KycPanel } from './KycPanel'
+import { ActivityPanel } from './ActivityPanel'
 import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
@@ -86,6 +91,8 @@ describe('AdminUserProfilePage', () => {
     mockGetWalletBalance.mockResolvedValue({ balanceKobo: 0 })
     mockGetWalletTransactions.mockResolvedValue([])
     mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'none', openCaseId: null })
+    mockGetLoginActivity.mockResolvedValue([])
+    mockGetSecurityEvents.mockResolvedValue([])
   })
   afterEach(() => cleanup())
 
@@ -386,5 +393,83 @@ describe('KycPanel', () => {
     render(<KycPanel userId="u1" />)
     await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
     expect(panel().queryAllByRole('button').length).toBe(0)
+  })
+})
+
+describe('ActivityPanel', () => {
+  const panel = () => within(screen.getByTestId('activity-panel'))
+
+  beforeEach(() => {
+    mockGetLoginActivity.mockReset()
+    mockGetSecurityEvents.mockReset()
+  })
+  afterEach(() => cleanup())
+
+  it('renders a row per login entry and per security entry, preserving order', async () => {
+    mockGetLoginActivity.mockResolvedValue([
+      { id: 'l1', email: 'new@example.com', status: 'success', ip_address: '10.0.0.1', created_at: '2026-10-02T10:00:00Z' },
+      { id: 'l2', email: 'old@example.com', status: 'failed', failure_reason: 'bad password', ip_address: '10.0.0.2', created_at: '2026-10-01T10:00:00Z' },
+    ])
+    mockGetSecurityEvents.mockResolvedValue([
+      { id: 's1', action: 'role.assign', severity: 'high', created_at: '2026-10-02T09:00:00Z' },
+      { type: 'failed_login', id: 's2', status: 'failed', ip_address: '10.0.0.9', created_at: '2026-10-01T09:00:00Z' },
+    ])
+    render(<ActivityPanel userId="u1" />)
+    await waitFor(() => expect(panel().getAllByTestId('login-activity-row').length).toBe(2))
+    expect(mockGetLoginActivity).toHaveBeenCalledWith('u1')
+    expect(mockGetSecurityEvents).toHaveBeenCalledWith('u1')
+    const logins = panel().getAllByTestId('login-activity-row')
+    expect(logins[0].textContent).toContain('new@example.com')
+    expect(logins[0].textContent).toContain('10.0.0.1')
+    expect(logins[1].textContent).toContain('old@example.com')
+    expect(logins[1].textContent).toContain('bad password')
+    const events = panel().getAllByTestId('security-event-row')
+    expect(events.length).toBe(2)
+    expect(events[0].textContent).toContain('role.assign')
+    expect(events[0].textContent).toContain('high')
+    expect(events[1].textContent).toContain('failed_login')
+    expect(events[1].textContent).toContain('10.0.0.9')
+  })
+
+  it('shows each empty label independently', async () => {
+    mockGetLoginActivity.mockResolvedValue([])
+    mockGetSecurityEvents.mockResolvedValue([{ id: 's1', action: 'x.y', created_at: '2026-10-02T09:00:00Z' }])
+    render(<ActivityPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('No login activity')).toBeTruthy())
+    expect(panel().queryByText('No security events')).toBeNull()
+    expect(panel().getAllByTestId('security-event-row').length).toBe(1)
+    cleanup()
+    mockGetLoginActivity.mockResolvedValue([{ id: 'l1', status: 'success' }])
+    mockGetSecurityEvents.mockResolvedValue([])
+    render(<ActivityPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('No security events')).toBeTruthy())
+    expect(panel().queryByText('No login activity')).toBeNull()
+  })
+
+  it('shows an inline error and Retry refetches', async () => {
+    mockGetLoginActivity.mockRejectedValueOnce(new Error('boom'))
+    mockGetSecurityEvents.mockResolvedValue([])
+    render(<ActivityPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('boom')).toBeTruthy())
+    mockGetLoginActivity.mockResolvedValue([{ id: 'l1', email: 'a@b.c', status: 'success' }])
+    fireEvent.click(panel().getByText('Retry'))
+    await waitFor(() => expect(panel().getAllByTestId('login-activity-row').length).toBe(1))
+    expect(mockGetLoginActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the permission placeholder on 403 with no Retry', async () => {
+    mockGetLoginActivity.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    mockGetSecurityEvents.mockResolvedValue([])
+    render(<ActivityPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
+    expect(panel().queryAllByRole('button').length).toBe(0)
+  })
+
+  it('renders rows missing most fields without throwing', async () => {
+    mockGetLoginActivity.mockResolvedValue([{}, { status: 42, created_at: 'not-a-date', ip_address: null }])
+    mockGetSecurityEvents.mockResolvedValue([{}, { type: { a: 1 }, severity: undefined }])
+    render(<ActivityPanel userId="u1" />)
+    await waitFor(() => expect(panel().getAllByTestId('login-activity-row').length).toBe(2))
+    expect(panel().getAllByTestId('security-event-row').length).toBe(2)
   })
 })
