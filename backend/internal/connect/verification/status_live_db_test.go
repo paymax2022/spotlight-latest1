@@ -100,3 +100,44 @@ func TestLive_StatusIsReadableForAUserWhoNeverSubmitted(t *testing.T) {
 		t.Fatalf("rec = %+v, %v", rec, err)
 	}
 }
+
+// Review finding: two concurrent FIRST submits for one user must both succeed and leave exactly
+// one row (NOT EXISTS alone races under READ COMMITTED; the loser used to fail with 23505).
+func TestLive_ConcurrentFirstSubmitsCreateOneRowAndAllSucceed(t *testing.T) {
+	svc, pool, ctx := liveSvc(t)
+	u := seedUser(t, ctx, pool)
+	const n = 8
+	// Warm the pool so the goroutines really overlap instead of queueing on connection setup.
+	var conns []*pgxpool.Conn
+	for i := 0; i < n; i++ {
+		c, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+	}
+	for _, c := range conns {
+		c.Release()
+	}
+	errs := make(chan error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		go func() {
+			<-start
+			_, err := svc.SubmitSelfie(ctx, connectverification.LivenessRequest{
+				UserID: u, RequestedLevel: connectverification.LevelL1, SelfieRef: "r2://selfie/" + u,
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent first submit failed: %v", err)
+		}
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM connect_verification WHERE user_id = $1::uuid`, u).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("rows = %d, %v", rows, err)
+	}
+}
