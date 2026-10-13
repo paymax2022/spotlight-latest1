@@ -26,6 +26,9 @@ import type {
   PromoPatch,
   CreatePromoInput,
   PromoCode,
+  IssueCompInput,
+  AnnounceInput,
+  AnnounceResult,
 } from './types';
 
 // Organiser lifecycle writes have a live endpoint and nothing a fixture could
@@ -394,6 +397,40 @@ export async function resumeEvent(id: string): Promise<EventDetail> {
 export async function cancelEvent(id: string, reason: string, idemKey: string): Promise<unknown> {
   if (USE_MOCK) throw notInFixtureMode('Cancelling an event');
   return unwrap(await api.post(`${API_BASE}/${id}/cancel`, { reason }, { headers: { 'Idempotency-Key': idemKey } }));
+}
+
+// ── Comps / attendee CSV / announcements ───────────────────────────────────
+// Comps are zero-price ticket issuance and announcements fan out to every
+// holder: both are writes, so the caller supplies the Idempotency-Key (one per
+// user intent, reused on retry) and fixture mode refuses instead of faking.
+export async function issueComp(eventId: string, input: IssueCompInput, idemKey: string): Promise<Ticket[]> {
+  if (USE_MOCK) throw notInFixtureMode('Issuing a comp ticket');
+  const body = { tier_id: input.tier_id, recipients: input.recipients, note: input.note };
+  return unwrap(await api.post(`${API_BASE}/${eventId}/comps`, body, { headers: { 'Idempotency-Key': idemKey } }));
+}
+
+export async function announce(eventId: string, input: AnnounceInput, idemKey: string): Promise<AnnounceResult> {
+  if (USE_MOCK) throw notInFixtureMode('Sending an announcement');
+  const body = { subject: input.subject, body: input.body };
+  return unwrap(await api.post(`${API_BASE}/${eventId}/announcements`, body, { headers: { 'Idempotency-Key': idemKey } }));
+}
+
+// GET /:id/attendees?format=csv — a read returning raw text/csv, NOT a JSON
+// envelope, so it is returned as-is (no unwrap). Fixture mode returns a small
+// fixture, like the other reads.
+export async function fetchAttendeesCsv(eventId: string): Promise<string> {
+  if (USE_MOCK) {
+    await delay();
+    const rows = MOCK_ATTENDEES.map((a) => [a.name, a.cashtag, a.tier_name, a.ticket_id, a.state, a.checked_in ? 'yes' : 'no'].join(','));
+    return ['name,cashtag,tier,ticket_id,state,checked_in', ...rows].join('\n');
+  }
+  const res = await api.get(`${API_BASE}/${eventId}/attendees`, {
+    params: { format: 'csv' },
+    responseType: 'text',
+    headers: { Accept: 'text/csv' },
+    transformResponse: (d: unknown) => d,
+  });
+  return typeof res.data === 'string' ? res.data : String(res.data ?? '');
 }
 
 // ── Tier/promo management (FEATURE_EVENTS_TICKETING_DEPTH) — writes, no mock fallback ──
