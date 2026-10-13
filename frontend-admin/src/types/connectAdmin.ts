@@ -40,8 +40,8 @@ export interface ConnectDashboard {
   mau: number;
   matches_today: number;
   live_sessions: number;
-  gift_volume_today_kobo: number;   // money in kobo
-  gift_volume_30d_kobo: number;
+  gift_volume_today_kobo: number | null;   // money in kobo; null without the gifting permission
+  gift_volume_30d_kobo: number | null;
   open_cases: number;
   aml_alerts_open: number;
   payouts_pending: number;
@@ -63,7 +63,7 @@ export interface ConnectUserSummary {
   region: string;
   verification: ConnectVerificationBadge;
   flags: string[];
-  wallet_balance_kobo: number;  // money in kobo
+  wallet_balance_kobo: number | null;  // money in kobo; null without connect.gifting.view
   created_at: string;
   last_active_at: string;
 }
@@ -73,8 +73,8 @@ export interface ConnectUserDetail extends ConnectUserSummary {
   email_masked: string;         // PII masked — never raw
   phone_masked: string;
   modes: string[];              // dating | friendship | professional | creator | event
-  lifetime_gift_sent_kobo: number;
-  lifetime_gift_received_kobo: number;
+  lifetime_gift_sent_kobo: number | null;   // null without connect.gifting.view
+  lifetime_gift_received_kobo: number | null;
   bvn_status: 'verified' | 'pending' | 'failed' | 'none';
   nin_status: 'verified' | 'pending' | 'failed' | 'none';
   devices: ConnectUserDevice[];
@@ -144,10 +144,10 @@ export interface ConnectFinanceSummary {
   gift_volume_30d_kobo: number;
   paid_vote_volume_30d_kobo: number;
   payout_volume_30d_kobo: number;
-  take_rate_30d_kobo: number;
-  float_balance_kobo: number;
-  ledger_debits_kobo: number;
-  ledger_credits_kobo: number;
+  take_rate_30d_kobo: number | null;      // null: no agreed definition yet
+  float_balance_kobo: number | null;
+  ledger_debits_kobo: number | null;
+  ledger_credits_kobo: number | null;
   pending_payouts_kobo: number;
 }
 export interface GiftTransaction {
