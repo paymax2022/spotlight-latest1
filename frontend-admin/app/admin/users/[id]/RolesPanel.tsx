@@ -55,6 +55,7 @@ export default function RolesPanel({ userId }: { userId: string }) {
       }),
     [slugs, catalog],
   );
+  const catalogMissing = catalog.length === 0 && slugs.length > 0;
   const available = useMemo(() => catalog.filter((r) => !slugs.includes(r.slug)), [catalog, slugs]);
 
   const run = async (fn: () => Promise<boolean>, failMsg: string) => {
@@ -103,6 +104,7 @@ export default function RolesPanel({ userId }: { userId: string }) {
                   type="button"
                   aria-label={`Remove ${h.name}`}
                   disabled={busy || !h.id}
+                  title={h.id ? undefined : 'Role catalog unavailable'}
                   onClick={() => h.id && void run(() => removeUserRole(userId, h.id as string), 'Removing role failed. Check permissions.')}
                   style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'inherit', padding: 0, fontSize: 12 }}
                 >
@@ -134,6 +136,9 @@ export default function RolesPanel({ userId }: { userId: string }) {
             Assign
           </Button>
         </div>
+        {catalogMissing ? (
+          <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>Role catalog unavailable — management disabled</p>
+        ) : null}
         {actionError ? <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>{actionError}</p> : null}
       </div>
     );

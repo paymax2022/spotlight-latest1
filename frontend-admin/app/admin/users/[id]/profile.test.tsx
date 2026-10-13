@@ -176,4 +176,39 @@ describe('RolesPanel', () => {
     fireEvent.click(screen.getByText('Assign'))
     await waitFor(() => expect(screen.getByText(/HTTP 403/)).toBeTruthy())
   })
+
+  it('explains a missing catalog and disables removal', async () => {
+    mockListRoles.mockResolvedValue([])
+    mockGetUserRoles.mockResolvedValue(['admin'])
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('admin')).toBeTruthy())
+    expect(screen.getByText(/Role catalog unavailable/)).toBeTruthy()
+    const x = screen.getByLabelText('Remove admin') as HTMLButtonElement
+    expect(x.disabled).toBe(true)
+    fireEvent.click(x)
+    expect(mockRemoveUserRole).not.toHaveBeenCalled()
+  })
+
+  it('shows an inline error when assign resolves false (real failure signal)', async () => {
+    mockGetUserRoles.mockResolvedValue([])
+    mockAssignUserRole.mockResolvedValue(false)
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('No roles assigned')).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('Assign role'), { target: { value: 'r-fin' } })
+    fireEvent.click(screen.getByText('Assign'))
+    await waitFor(() => expect(screen.getByText(/Assigning role failed/)).toBeTruthy())
+    expect(mockGetUserRoles).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Finance')).toBeNull()
+  })
+
+  it('shows an inline error when remove resolves false and keeps the chip', async () => {
+    mockGetUserRoles.mockResolvedValue(['admin'])
+    mockRemoveUserRole.mockResolvedValue(false)
+    render(<RolesPanel userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Administrator')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('Remove Administrator'))
+    await waitFor(() => expect(screen.getByText(/Removing role failed/)).toBeTruthy())
+    expect(mockGetUserRoles).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Administrator')).toBeTruthy()
+  })
 })
