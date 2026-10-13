@@ -35,7 +35,7 @@ func TestMapReviewRowMasksAndNeverExposesInternals(t *testing.T) {
 	created := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 	r := reviewRow{
 		ID: "11111111-1111-4111-8111-111111111111", UserID: "22222222-2222-4222-8222-222222222222",
-		Handle: ptr("ada"), Level: "l1", DocType: ptr("NIN"), DocHash: ptr("deadbeefcafe0123456789abcdef9f3a"),
+		Handle: ptr("ada"), Level: "l1", DocType: ptr("NIN"), DocHash: ptr("deadbeefcafe0123456789abcdef0123456789abcdef0123456789abcdef9f3a"),
 		Status: "l1_passed", CreatedAt: created,
 	}
 	got, ok := mapReviewRow(r)
@@ -110,5 +110,44 @@ func TestReviewHandlerRejectsABadStateBeforeTouchingTheDatabase(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/identity?state=bogus", nil))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d", w.Code)
+	}
+}
+
+// Review: the mask suffix is derived only from a well-formed HMAC-SHA256 hex digest (64 hex chars);
+// anything else (legacy or malformed values) yields no suffix at all.
+func TestMaskRefOnlyUsesAWellFormedHMAC(t *testing.T) {
+	good := strings.Repeat("a", 60) + "9f3a"
+	if got := maskRef("nin", &good); got != "NIN ••••9f3a" {
+		t.Fatalf("good hash -> %q", got)
+	}
+	for name, h := range map[string]string{
+		"short hex":   "abcd9f3a",
+		"plaintext":   "1234567890123456",
+		"non-hex":     strings.Repeat("z", 64),
+		"63 chars":    strings.Repeat("a", 63),
+		"65 chars":    strings.Repeat("a", 65),
+		"empty":       "",
+		"hex-looking": "0123456789",
+	} {
+		h := h
+		if got := maskRef("nin", &h); got != "NIN ••••" {
+			t.Errorf("%s -> %q: a malformed value must yield no suffix", name, got)
+		}
+	}
+}
+
+func TestTrimToLimitReportsHasMore(t *testing.T) {
+	rows := []IdentityReview{{ID: "1"}, {ID: "2"}, {ID: "3"}}
+	got, more := trimToLimit(rows, 2)
+	if len(got) != 2 || !more {
+		t.Fatalf("got %d more=%v", len(got), more)
+	}
+	got, more = trimToLimit(rows, 3)
+	if len(got) != 3 || more {
+		t.Fatalf("exact fit: got %d more=%v", len(got), more)
+	}
+	got, more = trimToLimit(nil, 5)
+	if got == nil || len(got) != 0 || more {
+		t.Fatalf("empty must be a non-nil empty slice, got %v more=%v", got, more)
 	}
 }

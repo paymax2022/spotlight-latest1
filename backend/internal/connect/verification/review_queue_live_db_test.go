@@ -45,6 +45,18 @@ func seedVerification(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sta
 	return id, user
 }
 
+func queueGETFull(t *testing.T, pool *pgxpool.Pool, query string) (int, map[string]any) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/identity", connectverification.NewReviewQueue(pool).Handler)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/identity"+query, nil))
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	return w.Code, body
+}
+
 func queueGET(t *testing.T, pool *pgxpool.Pool, query string) (int, string, []map[string]any) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -70,7 +82,7 @@ func find(rows []map[string]any, id string) map[string]any {
 
 func TestLive_ReviewQueueMapsFiltersAndNeverLeaks(t *testing.T) {
 	_, pool, ctx := liveSvc(t)
-	hash := "0123456789abcdef0123456789abcd9f3a"
+	hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab9f3a" // 64 hex: a well-formed HMAC
 	pendingID, _ := seedVerification(t, ctx, pool, "pending", "NIN", hash, true)
 	passedID, _ := seedVerification(t, ctx, pool, "l1_passed", "", "", false)
 	failedID, _ := seedVerification(t, ctx, pool, "failed", "passport", "", false)
@@ -134,5 +146,18 @@ func TestLive_ReviewQueueOrdersPendingFirstAndHonoursLimit(t *testing.T) {
 	}
 	if code, _, _ := queueGET(t, pool, "?state=bogus"); code != http.StatusBadRequest {
 		t.Fatalf("bad state -> %d", code)
+	}
+}
+
+func TestLive_ReviewQueueSignalsWhenTheBacklogExceedsTheLimit(t *testing.T) {
+	_, pool, ctx := liveSvc(t)
+	seedVerification(t, ctx, pool, "pending", "", "", false)
+	seedVerification(t, ctx, pool, "pending", "", "", false)
+	_, body := queueGETFull(t, pool, "?state=pending&limit=1")
+	if body["has_more"] != true {
+		t.Fatalf("a truncated backlog must say so: %v", body)
+	}
+	if rows, _ := body["data"].([]any); len(rows) != 1 {
+		t.Fatalf("rows = %d", len(rows))
 	}
 }

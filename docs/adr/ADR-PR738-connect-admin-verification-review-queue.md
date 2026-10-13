@@ -23,6 +23,14 @@ vocabularies (ADR-PR735) and which stores no handle, liveness score or masked do
   provider and should work even where selfie verification is disabled.
 - **Bounded:** invalid `state` is a 400 before any query; `limit` defaults to 100 and is capped at 200.
 
+## Review follow-ups (no blockers)
+- **No silent truncation:** the query fetches `limit + 1` rows and the response carries `has_more`, so a backlog larger
+  than one page is visible to the reviewer. (There is still no cursor; paging is a follow-up.)
+- **Mask suffix only from a well-formed digest:** a suffix is emitted only when `doc_hash` is a 64-character hex
+  HMAC-SHA256; any other value (legacy or malformed) yields no suffix at all.
+- **Known gap:** no automated test pins the `RequirePermission` guard on this route (the route table is built inside
+  a large wiring function); it is the same one-line guard as `/config`, `/cases` and `/audit`.
+
 ## Consequences
 - `failed` (a provider check) and `rejected` (a human decision) both show as "rejected"; separating them needs a column
   the table does not have.

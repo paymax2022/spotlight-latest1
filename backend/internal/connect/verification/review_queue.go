@@ -133,12 +133,26 @@ func maskRef(docType string, hash *string) string {
 		label = strings.ToUpper(strings.ReplaceAll(docType, "_", " "))
 	}
 	suffix := ""
-	if hash != nil && len(*hash) >= 4 {
-		if tail := (*hash)[len(*hash)-4:]; isHex(tail) {
-			suffix = strings.ToLower(tail)
+	if hash != nil {
+		// Only a well-formed HMAC-SHA256 digest (64 hex chars) may contribute a suffix; any
+		// other value (legacy, malformed) must never leak even four characters.
+		if h := *hash; len(h) == 64 && isHex(h) {
+			suffix = strings.ToLower(h[len(h)-4:])
 		}
 	}
 	return label + " ••••" + suffix
+}
+
+// trimToLimit cuts the over-fetched (limit+1) result back to limit and reports whether rows
+// were left behind, so a backlog larger than the page is never silently truncated.
+func trimToLimit(rows []IdentityReview, limit int) ([]IdentityReview, bool) {
+	if rows == nil {
+		return []IdentityReview{}, false
+	}
+	if len(rows) > limit {
+		return rows[:limit], true
+	}
+	return rows, false
 }
 
 func mapReviewRow(r reviewRow) (IdentityReview, bool) {
@@ -184,6 +198,7 @@ func (q *ReviewQueue) Handler(c *gin.Context) {
 		return
 	}
 	statuses := reviewStatuses[state]
+	limit := parseReviewLimit(c.Query("limit"))
 	out := []IdentityReview{} // never null
 	if len(statuses) > 0 {
 		rows, err := q.db.Query(c.Request.Context(), `
@@ -196,7 +211,7 @@ func (q *ReviewQueue) Handler(c *gin.Context) {
 			  ) p ON true
 			 WHERE v.status = ANY($1)
 			 ORDER BY (v.status = 'pending') DESC, v.created_at DESC
-			 LIMIT $2`, statuses, parseReviewLimit(c.Query("limit")))
+			 LIMIT $2`, statuses, limit+1) // one extra row tells us whether more remain
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, keyError: "internal"})
 			return
@@ -217,5 +232,6 @@ func (q *ReviewQueue) Handler(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": out})
+	out, hasMore := trimToLimit(out, limit)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": out, "has_more": hasMore})
 }

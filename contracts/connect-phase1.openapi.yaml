@@ -371,7 +371,7 @@ paths:
           in: query
           schema: { type: integer, default: 100, minimum: 1, maximum: 200 }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { type: array, items: { $ref: '#/components/schemas/IdentityReview' } } } } } } }
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { type: array, items: { $ref: '#/components/schemas/IdentityReview' } }, has_more: { type: boolean, description: true when more rows exist than limit } } } } } }
         '400': { description: invalid state }
         '401': { description: unauthenticated }
         '403': { description: forbidden }
