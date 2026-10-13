@@ -1837,6 +1837,17 @@ components:
         sales_start_at: { type: string, format: date-time }
         sales_end_at: { type: string, format: date-time }
 
+    EventTeamMember:
+      description: A per-event team-role grant (snake_case).
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        handle: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [MANAGER, FINANCE] }
+        granted_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
     PromoPatch:
       description: Partial organiser edit of a promo (PATCH /events/{id}/promos/{promoId}); every field optional, snake_case.
       type: object
@@ -8598,6 +8609,83 @@ paths:
         '404': { description: Event or promo not found }
         '409': { description: Promo is locked (already used) }
         '422': { description: Promo not applicable (e.g. tier_id does not belong to this event) }
+
+  /events/{id}/team:
+    post:
+      operationId: addEventTeamMember
+      summary: Organiser grants a team role to a user (owner only)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_handle, role]
+              properties:
+                user_handle: { type: string, description: "Handle of the user to grant the role to" }
+                role:
+                  type: string
+                  enum: [MANAGER, FINANCE]
+                  description: "Currently only MANAGER is accepted; FINANCE is reserved and not yet active (returns 400)"
+      responses:
+        '201':
+          description: The granted team member
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventTeamMember' }
+        '400': { description: "Invalid body, role not available, unknown handle, or granting the organiser" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+    get:
+      operationId: listEventTeam
+      summary: Organiser lists the event's team members (owner only)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The event's team members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventTeamMember' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
+  /events/{id}/team/{userId}:
+    delete:
+      operationId: removeEventTeamMember
+      summary: Organiser revokes a team member (owner only)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Team member revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or team member not found }
 
   /events/{id}/vendors:
     get:
