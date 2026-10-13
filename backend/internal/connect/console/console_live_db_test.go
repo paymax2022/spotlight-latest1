@@ -598,3 +598,31 @@ func TestLive_ContestTalliesEntrantsAndMoneyGating(t *testing.T) {
 	}
 	_ = idle
 }
+
+// Review: a poll contest accepts free-form labels, so the entrant list must be capped and say so.
+func TestLive_ContestEntrantsAreCappedAndFlaggedWhenTruncated(t *testing.T) {
+	pool, ctx := liveDB(t)
+	id := seedContest(t, ctx, pool, "VoteCap"+uuid.NewString()[:6], "open", "2020-01-01T00:00:00Z", "")
+	voter := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, voter, voter+"@seed.test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1::uuid`, voter) })
+	if _, err := pool.Exec(ctx, `INSERT INTO connect_votes (contest_id, voter_id, option_ref, paid, quantity, amount_kobo)
+		SELECT $1::uuid, $2::uuid, 'label-' || g, false, 1, 0 FROM generate_series(1, $3) g`, id, voter, maxEntrants+25); err != nil {
+		t.Fatal(err)
+	}
+	_, raw := get(t, pool, fakePerm{ok: true}, "/voting/"+id)
+	var d struct {
+		Data ContestDetail `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Data.Entrants) != maxEntrants || !d.Data.EntrantsTruncated {
+		t.Fatalf("entrants = %d truncated=%v, want %d and true", len(d.Data.Entrants), d.Data.EntrantsTruncated, maxEntrants)
+	}
+	if d.Data.FreeVotes != int64(maxEntrants+25) {
+		t.Fatalf("totals must still count every vote: free=%d", d.Data.FreeVotes)
+	}
+}

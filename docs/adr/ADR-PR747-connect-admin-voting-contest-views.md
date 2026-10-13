@@ -21,6 +21,16 @@ contest tables (`connect_contests`, `connect_votes`). The owner chose **Connect 
   `tally_kobo` are null unless the caller also holds `connect.gifting.view` (a missing checker or an error withholds them).
 - **Bounded and safe:** `status` allowlisted (400), ids must be UUIDs (404), limit default 100 max 200, `has_more`.
 
+## Review follow-ups (no blockers)
+- **Entrants are capped at 500** (with `entrants_truncated`): a poll contest accepts free-form labels, so distinct options are unbounded;
+  totals still count every vote. The roster query is capped the same way. A live test seeds 525 labels.
+- **Close boundary matches the vote service:** a contest is closed only strictly after `closes_at`, exactly like `votingOpen`, so the
+  console never says "live" for a contest that rejects votes (or the reverse) at the boundary.
+- **Known and deferred:** the per-contest vote aggregation is not covered by an index (fine at current volumes; add a rollup/counter
+  table if contests reach millions of votes); the detail reads are three queries without a shared snapshot, so totals and entrant rows can
+  differ by in-flight votes; vote counts are visible without the money permission, so a holder of `connect.moderation.view` who knows the
+  public unit price can derive revenue (accepted); an `opens_at` after `closes_at` shows as scheduled/closed, never live.
+
 ## Consequences
 - A contest whose votes include free-form labels shows them as entrants; a phantom option that a roster contest should have rejected
   (see `checkRosterTarget`) would show up here, which is useful for audit.

@@ -450,8 +450,9 @@ paths:
       summary: 'Admin: Connect contest detail (read-only, RBAC connect.moderation.view)'
       description: >
         Served at GET /api/connect/admin/voting/{id}. entrants lists every roster contestant (even with no votes)
-        plus any voted option that is not on the roster (a plain-poll label), ordered by total votes. tally_kobo
-        and paid_vote_volume_kobo are null without connect.gifting.view. flags is always [].
+        plus any voted option that is not on the roster (a plain-poll label), ordered by total votes, capped at 500
+        with entrants_truncated=true when there are more. tally_kobo and paid_vote_volume_kobo are null without
+        connect.gifting.view. flags is always [].
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:

@@ -44,8 +44,10 @@ type ContestEntrant struct {
 type ContestDetail struct {
 	ContestSummary
 	Entrants []ContestEntrant `json:"entrants"`
-	Flags    []interface{}    `json:"flags"`
-	Notes    *string          `json:"notes"`
+	// EntrantsTruncated is true when the contest has more than maxEntrants distinct options; totals still count every vote.
+	EntrantsTruncated bool          `json:"entrants_truncated"`
+	Flags             []interface{} `json:"flags"`
+	Notes             *string       `json:"notes"`
 }
 
 type contestRow struct {
@@ -55,6 +57,9 @@ type contestRow struct {
 	PaidKobo          int64
 	OpensAt, ClosesAt *time.Time
 }
+
+// maxEntrants bounds the entrant list: a poll contest accepts free-form labels, so distinct options are unbounded.
+const maxEntrants = 500
 
 type rosterEntry struct{ ID, Name string }
 type tally struct{ Paid, Free, Kobo int64 }
@@ -72,7 +77,7 @@ func parseContestStatus(s string) (string, bool) {
 // the open/close window. 'finalized' has no stored equivalent and never matches.
 const contestStatusSQL = `CASE
 	WHEN c.status = 'draft' THEN 'scheduled'
-	WHEN c.status = 'closed' OR (c.closes_at IS NOT NULL AND c.closes_at <= now()) THEN 'closed'
+	WHEN c.status = 'closed' OR (c.closes_at IS NOT NULL AND c.closes_at < now()) THEN 'closed'
 	WHEN c.opens_at IS NULL OR c.opens_at <= now() THEN 'live'
 	ELSE 'scheduled' END`
 
@@ -175,7 +180,8 @@ func (s *Service) GetContest(ctx context.Context, id string) (*ContestDetail, er
 	tallies := map[string]tally{}
 	trows, err := s.db.Query(ctx, `SELECT option_ref, COALESCE(SUM(quantity) FILTER (WHERE paid), 0)::bigint,
 		COALESCE(SUM(quantity) FILTER (WHERE NOT paid), 0)::bigint, COALESCE(SUM(amount_kobo) FILTER (WHERE paid), 0)::bigint
-		FROM connect_votes WHERE contest_id = $1::uuid GROUP BY option_ref`, id)
+		FROM connect_votes WHERE contest_id = $1::uuid GROUP BY option_ref
+		ORDER BY SUM(quantity) DESC, option_ref LIMIT $2`, id, maxEntrants+1)
 	if err != nil {
 		return nil, fmt.Errorf("connect: contest tallies: %w", err)
 	}
@@ -191,7 +197,7 @@ func (s *Service) GetContest(ctx context.Context, id string) (*ContestDetail, er
 	if err := trows.Err(); err != nil {
 		return nil, err
 	}
-	rrows, err := s.db.Query(ctx, `SELECT id::text, name FROM contestants WHERE connect_contest_id = $1::uuid`, id)
+	rrows, err := s.db.Query(ctx, `SELECT id::text, name FROM contestants WHERE connect_contest_id = $1::uuid ORDER BY id LIMIT $2`, id, maxEntrants+1)
 	if err != nil {
 		return nil, fmt.Errorf("connect: contest roster: %w", err)
 	}
@@ -207,7 +213,12 @@ func (s *Service) GetContest(ctx context.Context, id string) (*ContestDetail, er
 	if err := rrows.Err(); err != nil {
 		return nil, err
 	}
-	return &ContestDetail{ContestSummary: contestSummaryOf(r), Entrants: mergeEntrants(roster, tallies), Flags: []interface{}{}}, nil
+	entrants := mergeEntrants(roster, tallies)
+	truncated := len(entrants) > maxEntrants
+	if truncated {
+		entrants = entrants[:maxEntrants]
+	}
+	return &ContestDetail{ContestSummary: contestSummaryOf(r), Entrants: entrants, EntrantsTruncated: truncated, Flags: []interface{}{}}, nil
 }
 
 // Contests — GET /api/connect/admin/voting?status=&limit=   (RBAC connect.moderation.view; money needs connect.gifting.view)
