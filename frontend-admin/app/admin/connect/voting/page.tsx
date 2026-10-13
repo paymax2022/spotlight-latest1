@@ -53,7 +53,7 @@ export default function ConnectVotingPage() {
                   <td style={td()}>{c.paid_votes.toLocaleString('en-NG')}</td>
                   <td style={td()}>{c.free_votes.toLocaleString('en-NG')}</td>
                   <td style={td()}>{formatNaira(c.paid_vote_volume_kobo)}</td>
-                  <td style={td()}><span style={{ fontWeight: 700, color: c.integrity_score >= 80 ? colors.success : c.integrity_score >= 60 ? colors.warning : colors.danger }}>{c.integrity_score}</span></td>
+                  <td style={td()}>{c.integrity_score === null ? <span style={{ color: colors.muted }}>—</span> : <span style={{ fontWeight: 700, color: c.integrity_score >= 80 ? colors.success : c.integrity_score >= 60 ? colors.warning : colors.danger }}>{c.integrity_score}</span>}</td>
                   <td style={td()}>{c.flags_open ? <Badge status="high" label={`${c.flags_open} open`} /> : <span style={{ color: colors.muted }}>—</span>}</td>
                   <td style={{ ...td(), textAlign: 'right' }}><Link href={`/admin/connect/voting/${c.id}`} style={{ color: colors.info, textDecoration: 'none', fontWeight: 600 }}>Open →</Link></td>
                 </tr>

@@ -79,6 +79,8 @@ func get(t *testing.T, pool *pgxpool.Pool, perm PermissionChecker, path string) 
 	r.GET("/users/:id", h.GetUser)
 	r.GET("/dashboard", h.Dashboard)
 	r.GET("/finance", h.Finance)
+	r.GET("/voting", h.Contests)
+	r.GET("/voting/:id", h.Contest)
 	r.GET("/underage", h.Underage)
 	r.GET("/media-review", h.MediaReview)
 	w := httptest.NewRecorder()
@@ -392,7 +394,9 @@ func TestLive_UnderageAndMediaReadsAreAudited(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1::uuid, 'console-audit-admin@seed.test') ON CONFLICT DO NOTHING`, testAdminID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1::uuid`, testAdminID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1::uuid`, testAdminID)
+	})
 	_, _ = pool.Exec(ctx, `DELETE FROM connect_audit_log WHERE actor_id = $1::uuid`, testAdminID)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_audit_log WHERE actor_id = $1::uuid`, testAdminID)
@@ -452,5 +456,173 @@ func TestLive_DeletedProfilesAreNotNamedAndTheirMediaIsExcluded(t *testing.T) {
 	_, raw = get(t, pool, nil, "/media-review?limit=200")
 	if strings.Contains(raw, mediaID) {
 		t.Fatal("a deleted profile's media is still queued")
+	}
+}
+
+func seedContest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, title, status, opens, closes string) string {
+	t.Helper()
+	var id string
+	q := `INSERT INTO connect_contests (title, status, opens_at, closes_at) VALUES ($1, $2, NULLIF($3,'')::timestamptz, NULLIF($4,'')::timestamptz) RETURNING id::text`
+	if err := pool.QueryRow(ctx, q, title, status, opens, closes).Scan(&id); err != nil {
+		t.Fatalf("seed contest: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM contestants WHERE connect_contest_id = $1::uuid`, id)
+		_, _ = pool.Exec(c, `DELETE FROM connect_contests WHERE id = $1::uuid`, id) // cascades votes
+	})
+	return id
+}
+
+func TestLive_ContestStatusIsDerivedFromTheWindow(t *testing.T) {
+	pool, ctx := liveDB(t)
+	tag := "VoteStat" + uuid.NewString()[:6]
+	draft := seedContest(t, ctx, pool, tag+"-draft", "draft", "", "")
+	live := seedContest(t, ctx, pool, tag+"-live", "open", "2020-01-01T00:00:00Z", "2099-01-01T00:00:00Z")
+	soon := seedContest(t, ctx, pool, tag+"-soon", "open", "2099-01-01T00:00:00Z", "")
+	over := seedContest(t, ctx, pool, tag+"-over", "open", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z")
+	closed := seedContest(t, ctx, pool, tag+"-closed", "closed", "", "")
+	want := map[string]string{draft: "scheduled", live: "live", soon: "scheduled", over: "closed", closed: "closed"}
+	_, raw := get(t, pool, fakePerm{ok: true}, "/voting?limit=200")
+	var l struct {
+		Data []ContestSummary `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &l)
+	got := map[string]string{}
+	for _, c := range l.Data {
+		got[c.ID] = c.Status
+		if c.IntegrityScore != nil || c.FlagsOpen != nil {
+			t.Errorf("integrity must be null: %+v", c)
+		}
+	}
+	for id, st := range want {
+		if got[id] != st {
+			t.Errorf("contest %s status %q want %q", id, got[id], st)
+		}
+	}
+	for status, ids := range map[string][]string{"live": {live}, "scheduled": {draft, soon}, "closed": {over, closed}} {
+		_, only := get(t, pool, fakePerm{ok: true}, "/voting?status="+status+"&limit=200")
+		for _, id := range ids {
+			if !strings.Contains(only, id) {
+				t.Errorf("status=%s filter missing %s", status, id)
+			}
+		}
+		for _, other := range []string{live, draft, over} {
+			in := false
+			for _, id := range ids {
+				in = in || id == other
+			}
+			if !in && strings.Contains(only, other) {
+				t.Errorf("status=%s returned %s", status, other)
+			}
+		}
+	}
+	_, fin := get(t, pool, nil, "/voting?status=finalized&limit=200")
+	if strings.Contains(fin, tag) {
+		t.Fatal("finalized has no stored equivalent and must list nothing of ours")
+	}
+	if code, _ := get(t, pool, nil, "/voting?status=bogus"); code != http.StatusBadRequest {
+		t.Fatalf("bad status -> %d", code)
+	}
+}
+
+func TestLive_ContestTalliesEntrantsAndMoneyGating(t *testing.T) {
+	pool, ctx := liveDB(t)
+	id := seedContest(t, ctx, pool, "VoteTally"+uuid.NewString()[:6], "open", "2020-01-01T00:00:00Z", "")
+	var contestantID string
+	if err := pool.QueryRow(ctx, `INSERT INTO contestants (name, connect_contest_id) VALUES ('Ada Roster', $1::uuid) RETURNING id::text`, id).Scan(&contestantID); err != nil {
+		t.Fatalf("seed contestant: %v", err)
+	}
+	var idle string
+	if err := pool.QueryRow(ctx, `INSERT INTO contestants (name, connect_contest_id) VALUES ('Idle Roster', $1::uuid) RETURNING id::text`, id).Scan(&idle); err != nil {
+		t.Fatal(err)
+	}
+	voter := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, voter, voter+"@seed.test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1::uuid`, voter) })
+	for _, v := range []struct {
+		ref       string
+		paid      bool
+		qty, kobo int
+	}{{contestantID, true, 3, 30000}, {contestantID, false, 2, 0}, {"poll-label", true, 1, 10000}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO connect_votes (contest_id, voter_id, option_ref, paid, quantity, amount_kobo) VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)`,
+			id, voter, v.ref, v.paid, v.qty, v.kobo); err != nil {
+			t.Fatalf("seed vote: %v", err)
+		}
+	}
+
+	_, raw := get(t, pool, fakePerm{ok: true}, "/voting/"+id)
+	var d struct {
+		Data ContestDetail `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &d)
+	c := d.Data
+	if c.PaidVotes != 4 || c.FreeVotes != 2 || c.PaidVoteVolumeKobo == nil || *c.PaidVoteVolumeKobo != 40000 {
+		t.Fatalf("totals = %+v", c.ContestSummary)
+	}
+	names := map[string]ContestEntrant{}
+	for _, e := range c.Entrants {
+		names[e.Name] = e
+	}
+	if names["Ada Roster"].PaidVotes != 3 || names["Ada Roster"].FreeVotes != 2 || names["Ada Roster"].TallyKobo == nil || *names["Ada Roster"].TallyKobo != 30000 {
+		t.Fatalf("roster entrant = %+v", names["Ada Roster"])
+	}
+	if _, ok := names["Idle Roster"]; !ok {
+		t.Fatal("a roster contestant with no votes must still be listed")
+	}
+	if _, ok := names["poll-label"]; !ok {
+		t.Fatal("an off-roster option must still be listed")
+	}
+	if c.Entrants[0].Name != "Ada Roster" {
+		t.Fatalf("entrants must be ordered by votes: %+v", c.Entrants)
+	}
+	if c.Flags == nil || len(c.Flags) != 0 {
+		t.Fatalf("flags must be []: %v", c.Flags)
+	}
+	// Without the gifting permission every money figure is withheld.
+	for name, p := range map[string]PermissionChecker{"none": nil, "denied": fakePerm{ok: false}, "error": fakePerm{err: context.Canceled}} {
+		_, raw := get(t, pool, p, "/voting/"+id)
+		if !strings.Contains(raw, `"paid_vote_volume_kobo":null`) || strings.Contains(raw, `"tally_kobo":30000`) || strings.Contains(raw, `"tally_kobo":10000`) {
+			t.Errorf("%s: money not withheld: %s", name, raw)
+		}
+		if !strings.Contains(raw, `"paid_votes":4`) {
+			t.Errorf("%s: vote counts are not money and must remain: %s", name, raw)
+		}
+	}
+	for _, bad := range []string{"not-a-uuid", uuid.NewString()} {
+		if code, _ := get(t, pool, nil, "/voting/"+bad); code != http.StatusNotFound {
+			t.Errorf("%s -> %d", bad, code)
+		}
+	}
+	_ = idle
+}
+
+// Review: a poll contest accepts free-form labels, so the entrant list must be capped and say so.
+func TestLive_ContestEntrantsAreCappedAndFlaggedWhenTruncated(t *testing.T) {
+	pool, ctx := liveDB(t)
+	id := seedContest(t, ctx, pool, "VoteCap"+uuid.NewString()[:6], "open", "2020-01-01T00:00:00Z", "")
+	voter := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, voter, voter+"@seed.test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1::uuid`, voter) })
+	if _, err := pool.Exec(ctx, `INSERT INTO connect_votes (contest_id, voter_id, option_ref, paid, quantity, amount_kobo)
+		SELECT $1::uuid, $2::uuid, 'label-' || g, false, 1, 0 FROM generate_series(1, $3) g`, id, voter, maxEntrants+25); err != nil {
+		t.Fatal(err)
+	}
+	_, raw := get(t, pool, fakePerm{ok: true}, "/voting/"+id)
+	var d struct {
+		Data ContestDetail `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Data.Entrants) != maxEntrants || !d.Data.EntrantsTruncated {
+		t.Fatalf("entrants = %d truncated=%v, want %d and true", len(d.Data.Entrants), d.Data.EntrantsTruncated, maxEntrants)
+	}
+	if d.Data.FreeVotes != int64(maxEntrants+25) {
+		t.Fatalf("totals must still count every vote: free=%d", d.Data.FreeVotes)
 	}
 }

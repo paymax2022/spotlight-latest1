@@ -23,7 +23,7 @@ export default function ConnectVotingDetailPage({ params }: { params: Promise<{ 
     <Page>
       <Link href="/admin/connect/voting" style={{ color: colors.info, textDecoration: 'none', fontSize: '0.85rem' }}>← Voting integrity</Link>
       <div style={{ height: 8 }} />
-      <PageHeader title={c.title} subtitle={`${c.status} · integrity ${c.integrity_score}/100`} />
+      <PageHeader title={c.title} subtitle={`${c.status} · ${c.integrity_score === null ? 'integrity not scored yet' : `integrity ${c.integrity_score}/100`}`} />
 
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
         <Badge status={c.status === 'live' ? 'investigating' : c.status === 'finalized' ? 'resolved' : 'normal'} label={c.status} />

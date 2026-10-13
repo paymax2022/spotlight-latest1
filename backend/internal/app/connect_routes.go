@@ -175,6 +175,14 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	adminCg.GET("/media-review",
 		middleware.RequirePermission(rbac, "connect.moderation.view"),
 		consoleH.MediaReview)
+	// Contest tallies (read-only). Vote counts need only moderation visibility; the paid-volume and per-entrant
+	// money figures are withheld unless the caller also holds connect.gifting.view (checked in the handler).
+	adminCg.GET("/voting",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		consoleH.Contests)
+	adminCg.GET("/voting/:id",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		consoleH.Contest)
 	// Money summary: both money permissions are required.
 	adminCg.GET("/finance",
 		middleware.RequirePermission(rbac, "connect.gifting.view"),
