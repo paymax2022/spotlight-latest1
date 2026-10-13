@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AdminUsersRequestError, assignUserRole, getUserRoles, removeUserRole } from '@/services/usersService';
-import { listRoles, type Role } from '@/services/rbacAdminService';
+import { listRoles } from '@/services/rbacAdminService';
+import type { Role } from '@/types/rbac';
 import { Card, Button, colors } from '@/components/ui/vuexy';
 
 type Held = { slug: string; id: string | null; name: string };
