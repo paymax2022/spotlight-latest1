@@ -148,6 +148,11 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	adminCg.GET("/audit",
 		middleware.RequirePermission(rbac, "connect.audit.view"),
 		safetyHandler.ListAudit)
+	// Verification review queue (read-only, masked): the admin console's /admin/connect/identity.
+	// Registered here, not with the verification service, because it needs no pepper/provider.
+	adminCg.GET("/identity",
+		middleware.RequirePermission(rbac, "connect.verification.view"),
+		connectverification.NewReviewQueue(pool).Handler)
 
 	// member already has connectAuth() applied; adminCg too. Each register fn
 	// adds per-route RBAC on its admin endpoints.

@@ -29,6 +29,19 @@ components:
       schema: { type: string }
       description: Recommended on POST /likes; uniqueness is also enforced in the DB.
   schemas:
+    IdentityReview:
+      type: object
+      required: [id, user_id, handle, doc_type, badge_target, state, doc_ref_masked, submitted_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        handle: { type: string, description: Profile display name, or "user <first 8 of id>" when the user has no profile }
+        doc_type: { type: string, enum: [selfie_liveness, national_id, passport, drivers_license, bvn, nin] }
+        badge_target: { type: string, enum: [unverified, selfie, bvn, nin, id, full] }
+        state: { type: string, enum: [pending, approved, rejected, resubmit] }
+        doc_ref_masked: { type: string, example: 'NIN ••••9f3a' }
+        submitted_at: { type: string, format: date-time }
+        liveness_score: { type: number, nullable: true, description: Always null today; scores are not stored }
     Profile:
       type: object
       properties:
@@ -337,4 +350,28 @@ paths:
       description: Served at GET /api/connect/admin/verification/status.
       responses:
         '200': { description: OK }
+        '403': { description: forbidden }
+  /identity#admin:
+    get:
+      summary: 'Admin: verification review queue (read-only, RBAC connect.verification.view)'
+      description: >
+        Served at GET /api/connect/admin/identity. Read-only, masked: the document hash and the
+        evidence pointer are never returned, only a masked reference (label plus the last four
+        characters of the non-reversible HMAC). The table holds two status vocabularies
+        (ADR-PR735); this view maps them to the console states: pending; approved
+        (l0_passed, l1_passed, approved); rejected (failed, rejected); resubmit (expired).
+        in_review has no stored equivalent and is always an empty list. Rows that were never
+        submitted ('none') are excluded. Pending rows sort first, then newest. liveness_score is
+        null because scores are not stored.
+      parameters:
+        - name: state
+          in: query
+          schema: { type: string, enum: [all, pending, in_review, approved, rejected, resubmit], default: all }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, minimum: 1, maximum: 200 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { type: array, items: { $ref: '#/components/schemas/IdentityReview' } } } } } } }
+        '400': { description: invalid state }
+        '401': { description: unauthenticated }
         '403': { description: forbidden }
