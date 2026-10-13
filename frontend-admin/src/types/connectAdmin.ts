@@ -214,11 +214,11 @@ export interface VotingContestSummary {
   status: VotingContestStatus;
   paid_votes: number;
   free_votes: number;
-  paid_vote_volume_kobo: number;  // money in kobo
-  integrity_score: number;        // 0..100
-  flags_open: number;
-  starts_at: string;
-  ends_at: string;
+  paid_vote_volume_kobo: number | null;  // money in kobo; null without connect.gifting.view
+  integrity_score: number | null;        // 0..100; null: no integrity scoring exists yet
+  flags_open: number | null;             // null: no integrity-flag store yet
+  starts_at: string | null;
+  ends_at: string | null;
 }
 export interface VotingIntegrityFlag {
   id: string;
@@ -230,7 +230,7 @@ export interface VotingIntegrityFlag {
   created_at: string;
 }
 export interface VotingContestDetail extends VotingContestSummary {
-  entrants: { id: string; name: string; paid_votes: number; free_votes: number; tally_kobo: number }[];
+  entrants: { id: string; name: string; paid_votes: number; free_votes: number; tally_kobo: number | null }[];
   flags: VotingIntegrityFlag[];
   notes?: string | null;
 }

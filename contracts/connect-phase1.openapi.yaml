@@ -428,6 +428,35 @@ paths:
         '200': { description: 'OK: {success, data: MediaReviewItem[], has_more}' }
         '400': { description: invalid state }
         '403': { description: forbidden }
+  /voting#admin:
+    get:
+      summary: 'Admin: Connect contest list (read-only, RBAC connect.moderation.view)'
+      description: >
+        Served at GET /api/connect/admin/voting. Connect contests (connect_contests / connect_votes), newest
+        first. status is derived from the stored status and the open/close window: draft is scheduled; closed or
+        past closes_at is closed; open and started is live; open with a future opens_at is scheduled. finalized
+        has no stored equivalent and always lists nothing. paid_votes and free_votes are vote quantities.
+        paid_vote_volume_kobo is null unless the caller also holds connect.gifting.view. integrity_score and
+        flags_open are always null (nothing stores them).
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, scheduled, live, closed, finalized], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: ContestSummary[], has_more}' }
+        '400': { description: invalid status }
+        '403': { description: forbidden }
+  /voting/{id}#admin:
+    get:
+      summary: 'Admin: Connect contest detail (read-only, RBAC connect.moderation.view)'
+      description: >
+        Served at GET /api/connect/admin/voting/{id}. entrants lists every roster contestant (even with no votes)
+        plus any voted option that is not on the roster (a plain-poll label), ordered by total votes. tally_kobo
+        and paid_vote_volume_kobo are null without connect.gifting.view. flags is always [].
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'OK: {success, data: ContestDetail}' }
+        '404': { description: not found, or not a uuid }
   /identity#admin:
     get:
       summary: 'Admin: verification review queue (read-only, RBAC connect.verification.view)'
