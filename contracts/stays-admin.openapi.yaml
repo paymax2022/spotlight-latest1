@@ -72,7 +72,7 @@ paths:
         0 can be told apart from a measured zero.
       responses:
         '200':
-          description: Dashboard (wrapped as {"data": ...})
+          description: 'Dashboard, wrapped in a data envelope'
           content:
             application/json:
               schema:
