@@ -301,6 +301,21 @@ export interface EventVendorDisplay {
   items:    VendorMenuItem[];
 }
 
+// Per-event team member (contracts/openapi.yaml EventTeamMember).
+export interface TeamMember {
+  user_id:    string;
+  handle:     string;
+  name:       string;
+  role:       'MANAGER' | 'FINANCE';
+  granted_by: string;
+  created_at: string;
+}
+
+export interface AddTeamMemberInput {
+  user_handle: string;
+  role:        string;
+}
+
 // POST /events/{id}/comps — recipients are handles or cashtags.
 export interface IssueCompInput {
   tier_id:    string;

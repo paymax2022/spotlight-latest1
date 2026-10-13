@@ -263,6 +263,9 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	if cfg.FeatureEventsTicketingDepth {
 		handler.RegisterTicketing(member)
 	}
+	if cfg.FeatureEventsTeamRoles {
+		handler.RegisterTeam(member)
+	}
 	if cfg.FeatureEventsComps {
 		handler.RegisterComps(member)
 	}

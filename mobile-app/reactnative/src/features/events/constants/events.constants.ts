@@ -18,6 +18,11 @@ export const EVENTS_EDIT_LIFECYCLE_ENABLED =
 export const EVENTS_TICKETING_DEPTH_ENABLED =
   process.env.EXPO_PUBLIC_EVENTS_TICKETING_DEPTH?.trim().toLowerCase() === 'true';
 
+// Per-event team management (grant/revoke MANAGER). OFF unless explicitly
+// 'true' — mirrors the server's FEATURE_EVENTS_TEAM_ROLES gate.
+export const EVENTS_TEAM_ROLES_ENABLED =
+  process.env.EXPO_PUBLIC_EVENTS_TEAM_ROLES?.trim().toLowerCase() === 'true';
+
 // Complimentary tickets, attendee CSV export, organiser announcements. OFF unless
 // explicitly 'true' — mirrors the server's comps/attendees gate. Writes, so
 // intentionally NOT mock-defaulted.

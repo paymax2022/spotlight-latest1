@@ -231,6 +231,8 @@ type Config struct {
 	FeatureEventsEditLifecycle bool // organiser edit/duplicate/pause/resume/cancel routes
 	// FeatureEventsTicketingDepth (FEATURE_EVENTS_TICKETING_DEPTH) exposes tier/promo edit routes.
 	FeatureEventsTicketingDepth bool
+	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
+	FeatureEventsTeamRoles bool
 	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
 	FeatureEventsComps   bool
 	FeatureEstateEnabled bool
@@ -918,6 +920,7 @@ func Load() Config {
 		FeatureEventsEnabled:                         getEnvBool("FEATURE_EVENTS_ENABLED", false),
 		FeatureEventsEditLifecycle:                   getEnvBool("FEATURE_EVENTS_EDIT_LIFECYCLE", false),
 		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
+		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
 		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),

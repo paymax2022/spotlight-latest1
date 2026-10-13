@@ -26,6 +26,8 @@ import type {
   PromoPatch,
   CreatePromoInput,
   PromoCode,
+  TeamMember,
+  AddTeamMemberInput,
   IssueCompInput,
   AnnounceInput,
   AnnounceResult,
@@ -455,6 +457,26 @@ export async function updatePromo(eventId: string, promoId: string, patch: Promo
 export async function createPromo(eventId: string, input: CreatePromoInput): Promise<PromoCode> {
   if (USE_MOCK) throw notInFixtureMode('Creating a promo code');
   return unwrap(await api.post(`${API_BASE}/${eventId}/promos`, input));
+}
+
+// ── Team roles (FEATURE_EVENTS_TEAM_ROLES) — not money, so no Idempotency-Key ──
+const MOCK_TEAM: TeamMember[] = [
+  { user_id: 'u_mgr1', handle: 'ada_events', name: 'Ada Obi', role: 'MANAGER', granted_by: 'u_me', created_at: daysAgo(3) },
+];
+
+export async function listTeam(eventId: string): Promise<TeamMember[]> {
+  if (USE_MOCK) { await delay(); return MOCK_TEAM; }
+  return pickList(await api.get(`${API_BASE}/${eventId}/team`), 'team');
+}
+
+export async function addTeamMember(eventId: string, input: AddTeamMemberInput): Promise<TeamMember> {
+  if (USE_MOCK) throw notInFixtureMode('Granting a team role');
+  return unwrap(await api.post(`${API_BASE}/${eventId}/team`, { user_handle: input.user_handle, role: input.role }));
+}
+
+export async function removeTeamMember(eventId: string, userId: string): Promise<void> {
+  if (USE_MOCK) throw notInFixtureMode('Removing a team member');
+  await api.delete(`${API_BASE}/${eventId}/team/${userId}`);
 }
 
 // Closed-loop top-up: debits main wallet (via PaymentSheet) → credits event wallet.
