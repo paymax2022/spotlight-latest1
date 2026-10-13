@@ -8735,6 +8735,119 @@ paths:
                   data: { $ref: '#/components/schemas/Vendor' }
         '404': { description: Event not found }
 
+  /events/{id}/comps:
+    post:
+      operationId: issueEventComps
+      summary: Organiser issues complimentary tickets to recipients (handles or cashtags)
+      description: >-
+        Issues zero-price comp tickets from the given tier to each recipient.
+        Recipients are handles or cashtags. Replays with the same
+        Idempotency-Key return the original result.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tier_id, recipients]
+              properties:
+                tier_id: { type: string, format: uuid }
+                recipients:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+                  description: "Recipient handles or cashtags"
+                note: { type: string, description: "Optional message shown to recipients" }
+      responses:
+        '201':
+          description: Comp tickets issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Ticket' }
+        '400': { description: "Missing Idempotency-Key, invalid body, or unresolvable recipient" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or tier not found }
+        '409': { description: "Tier is sold out, or the event is closed or cancelled" }
+
+  /events/{id}/attendees:
+    get:
+      operationId: listEventAttendees
+      summary: Organiser lists event attendees as JSON or CSV
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: format
+          in: query
+          required: false
+          description: "Response format; json is the default"
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        '200':
+          description: Attendee list (JSON by default or a CSV download when format=csv)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+            text/csv:
+              schema: { type: string }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
+  /events/{id}/announcements:
+    post:
+      operationId: sendEventAnnouncement
+      summary: Organiser sends an announcement to all ticket holders
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                subject: { type: string, description: "Optional; defaults to \"Event update\" when empty" }
+                body: { type: string }
+      responses:
+        '202':
+          description: Announcement accepted for delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      recipient_count: { type: integer, minimum: 0 }
+        '400': { description: "Missing Idempotency-Key or invalid body" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
   /events/{id}/purchase:
     post:
       operationId: purchaseEventTicket
