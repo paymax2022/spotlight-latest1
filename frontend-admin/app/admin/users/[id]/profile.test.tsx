@@ -198,7 +198,7 @@ describe('RolesPanel', () => {
     fireEvent.click(screen.getByText('Assign'))
     await waitFor(() => expect(screen.getByText(/Assigning role failed/)).toBeTruthy())
     expect(mockGetUserRoles).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('Finance')).toBeNull()
+    expect(screen.getByText('No roles assigned')).toBeTruthy()
   })
 
   it('shows an inline error when remove resolves false and keeps the chip', async () => {
