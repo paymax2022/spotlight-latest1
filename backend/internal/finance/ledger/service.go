@@ -445,7 +445,12 @@ const (
 	// row required (the type is admitted by the ledger_accounts CHECK widened in
 	// migration 20261029000000).
 	AccountTradingFundClearing AccountType = "trading_fund_clearing"
-	AccountTradingFeeIncome    AccountType = "trading_fee_income"
+	// AccountCryptoClearing — mirrors the NGN held at the crypto provider on users'
+	// behalf (ADR-PR709). A buy parks wallet NGN here until the provider confirms; a sell
+	// draws it down to pay the wallet. Admitted by the ledger_accounts CHECK widened in
+	// migration 20271028000000. Auto-created on first GetOrCreateStandingAccount.
+	AccountCryptoClearing   AccountType = "crypto_clearing"
+	AccountTradingFeeIncome AccountType = "trading_fee_income"
 )
 
 // Account is a logical wallet / standing account in the ledger.

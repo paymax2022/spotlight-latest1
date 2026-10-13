@@ -42,6 +42,7 @@ const (
 	EventOrderStatusUpdate Event = "order.status_update"
 	EventDisputeOpened     Event = "dispute.opened"
 	EventDisputeResolved   Event = "dispute.resolved"
+	EventAnnouncement      Event = "events.announcement"
 	// EventAppointmentReminder and EventVaccinationReminder are fired by the
 	// durable scheduler poller, not the health modules themselves (see
 	// app/health_reminder_jobs.go).

@@ -5,7 +5,7 @@
 
 // Event lifecycle: DRAFT -> SUBMITTED -> APPROVED -> LIVE -> CLOSED
 // APPROVED <-> SUSPENDED is admin-only.
-export type EventState = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'LIVE' | 'CLOSED' | 'SUSPENDED';
+export type EventState = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'LIVE' | 'CLOSED' | 'SUSPENDED' | 'PAUSED' | 'CANCELLED';
 
 export type EventCategory = 'music' | 'tech' | 'sports' | 'comedy' | 'faith';
 
@@ -18,6 +18,9 @@ export interface TicketTier {
   capacity:   number;
   sold:       number;
   active:     boolean;
+  invite_only?:    boolean;
+  sales_start_at?: string | null;   // ISO
+  sales_end_at?:   string | null;   // ISO
 }
 
 // List/discovery summary — GET /api/finance/events.
@@ -47,6 +50,21 @@ export interface EventDetail {
   category:      EventCategory;
   created_at:    string;
   tiers:         TicketTier[];
+}
+
+// PATCH /api/finance/events/:id — every field optional; omitted = unchanged.
+export interface EventPatch {
+  title?:       string;
+  description?: string;
+  venue?:       string;
+  category?:    EventCategory;
+  starts_at?:   string;
+  ends_at?:     string;
+}
+
+// POST /api/finance/events/:id/cancel body (202 Accepted; refunds run async).
+export interface CancelEventRequest {
+  reason: string;
 }
 
 // Ticket lifecycle: ISSUED -> TRANSFERRED -> USED | ISSUED -> USED | ISSUED -> REFUNDED
@@ -109,6 +127,35 @@ export interface PromoCode {
   max_uses:    number;
   used:        number;
   active:      boolean;
+  amount_off_kobo?: number;
+  tier_id?:         string | null;
+  starts_at?:       string | null;  // ISO
+  ends_at?:         string | null;  // ISO
+  per_user_limit?:  number;
+}
+
+// PATCH bodies — every field optional (snake_case wire shape).
+export interface TierPatch {
+  name?: string;
+  description?: string;
+  price_kobo?: number;
+  capacity?: number;
+  active?: boolean;
+  invite_only?: boolean;
+  sales_start_at?: string | null;
+  sales_end_at?: string | null;
+}
+
+// `code` is deliberately absent: the server rejects code edits (create sets it).
+export interface PromoPatch {
+  percent_off?: number;
+  amount_off_kobo?: number;
+  tier_id?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  per_user_limit?: number;
+  max_uses?: number;
+  active?: boolean;
 }
 
 export interface CreateEventInput {
@@ -127,6 +174,22 @@ export interface AddTierInput {
   name:       string;
   price_kobo: number;
   capacity:   number;
+  description?:    string;
+  invite_only?:    boolean;
+  sales_start_at?: string | null;
+  sales_end_at?:   string | null;
+}
+
+// POST /events/:id/promos — exactly one of percent_off / amount_off_kobo (server rejects both/neither).
+export interface CreatePromoInput {
+  code: string;
+  percent_off?: number;
+  amount_off_kobo?: number;
+  tier_id?: string;
+  starts_at?: string;
+  ends_at?: string;
+  per_user_limit?: number;
+  max_uses?: number;
 }
 
 export interface PurchaseTicketInput {
@@ -236,4 +299,36 @@ export interface EventVendorDisplay {
   category: string;
   emoji:    string;
   items:    VendorMenuItem[];
+}
+
+// Per-event team member (contracts/openapi.yaml EventTeamMember).
+export interface TeamMember {
+  user_id:    string;
+  handle:     string;
+  name:       string;
+  role:       'MANAGER' | 'FINANCE';
+  granted_by: string;
+  created_at: string;
+}
+
+export interface AddTeamMemberInput {
+  user_handle: string;
+  role:        string;
+}
+
+// POST /events/{id}/comps — recipients are handles or cashtags.
+export interface IssueCompInput {
+  tier_id:    string;
+  recipients: string[];
+  note?:      string;
+}
+
+// POST /events/{id}/announcements — contract requires both subject and body.
+export interface AnnounceInput {
+  subject: string;
+  body:    string;
+}
+
+export interface AnnounceResult {
+  recipient_count: number;
 }

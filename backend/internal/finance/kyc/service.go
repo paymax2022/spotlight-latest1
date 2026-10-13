@@ -269,6 +269,52 @@ func (s *Service) Fail(ctx context.Context, userID string, actorID *string) erro
 	return tx.Commit(ctx)
 }
 
+// SaveVerifiedIdentity persists a provider-verified legal identity (full name,
+// first/last name, ISO date of birth) onto the user's profile after a PASSED
+// ID-number data-match. The values originate from the KYC provider's response,
+// NEVER from user input — the KYC form no longer collects name/DOB.
+//
+// Semantics — FIRST-WRITE-WINS (additive, no migration; these columns already
+// exist). Each field is set ONLY when the profile has no value yet:
+//   - first_name / last_name / full_name: set only when currently blank.
+//   - date_of_birth: set only when currently NULL.
+//
+// First-write-wins is deliberate and security-relevant, not just courtesy: the
+// KYC flow does not (and cannot, post-form-change) prove the submitted NIN/BVN
+// belongs to the caller, so an unconstrained overwrite would let an attacker
+// repeatedly swap a victim's provider-returned name onto their own (readable)
+// profile and read it back — a NIN→identity oracle. Writing only into blank
+// fields removes the repeatable-overwrite oracle (a populated profile is
+// immutable here) and preserves the legitimate case: a new user verifying their
+// own ID fills their empty profile. See ADR-PR722-kyc-verified-identity.
+//
+// Object-level authz is the caller's responsibility: userID must be the
+// authenticated owner (the kycverify gateway derives it from the session, never
+// the request body). An empty userID is rejected before any DB access, and an
+// all-empty identity is a silent no-op (we never blank a profile).
+//
+// PII: name/DOB are never logged here.
+func (s *Service) SaveVerifiedIdentity(ctx context.Context, userID, fullName, firstName, lastName, dobISO string) error {
+	if userID == "" {
+		return errors.New("kyc: SaveVerifiedIdentity: empty user id")
+	}
+	if fullName == "" && firstName == "" && lastName == "" && dobISO == "" {
+		return nil // nothing the provider confirmed — no-op, never blank the profile
+	}
+	const update = `
+		UPDATE user_profiles
+		SET first_name    = CASE WHEN COALESCE(first_name, '') = '' AND $2 <> '' THEN $2 ELSE first_name END,
+		    last_name     = CASE WHEN COALESCE(last_name, '')  = '' AND $3 <> '' THEN $3 ELSE last_name END,
+		    full_name     = CASE WHEN COALESCE(full_name, '')  = '' AND $4 <> '' THEN $4 ELSE full_name END,
+		    date_of_birth = CASE WHEN date_of_birth IS NULL     AND $5 <> '' THEN $5::date ELSE date_of_birth END,
+		    updated_at    = NOW()
+		WHERE id = $1`
+	if _, err := s.db.Exec(ctx, update, userID, firstName, lastName, fullName, dobISO); err != nil {
+		return fmt.Errorf("kyc: save verified identity user=%s: %w", userID, err)
+	}
+	return nil
+}
+
 // hashIfPresent returns a deterministic argon2id hash of the value if non-nil.
 // Uses a SHA-256-derived salt so the same input always produces the same hash,
 // allowing lookups by hash. argon2id params: time=1, memory=64MiB, threads=4, keyLen=32.

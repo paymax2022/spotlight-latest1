@@ -246,6 +246,8 @@ export function mapMenuItem(input: unknown): MenuItem {
 
     // which is the packing rule already applied elsewhere.
     foodType: undefined,
+
+    prepMinutes: num(pick(raw, 'prepMinutes', 'prep_minutes')) > 0 ? num(pick(raw, 'prepMinutes', 'prep_minutes')) : undefined,
   };
 }
 

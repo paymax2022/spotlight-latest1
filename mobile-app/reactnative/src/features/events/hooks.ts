@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
+import type { EventPatch, TierPatch, PromoPatch, CreatePromoInput, IssueCompInput, AnnounceInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate, AddTeamMemberInput } from './types';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
@@ -16,6 +16,7 @@ export const KEYS = {
   venue:     (id: string) => ['events', 'venue', id] as const,
   organiser: ['events', 'organiser'] as const,
   attendees: (id: string) => ['events', 'attendees', id] as const,
+  team:      (id: string) => ['events', 'team', id] as const,
 };
 
 export const useEvents = (params?: { category?: string; state?: string }) =>
@@ -144,5 +145,133 @@ export function useCloseEventWallet(walletId: string) {
 export function useValidateScan() {
   return useMutation({
     mutationFn: ({ token, gate }: { token: GateToken; gate: Gate }) => api.validateScan(token, gate),
+  });
+}
+
+// ── Organiser lifecycle mutations ────────────────────────────────────────────
+function useInvalidateOrganiserEvent() {
+  const qc = useQueryClient();
+  return (id?: string) => {
+    qc.invalidateQueries({ queryKey: KEYS.organiser });
+    qc.invalidateQueries({ queryKey: ['events', 'list'] });
+    if (id) qc.invalidateQueries({ queryKey: KEYS.event(id) });
+  };
+}
+
+export function useUpdateEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (patch: EventPatch) => api.updateEvent(id, patch),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+export function useDuplicateEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.duplicateEvent(id),
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function usePauseEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.pauseEvent(id),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+export function useResumeEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: () => api.resumeEvent(id),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+// idemKey is supplied by the caller (one per user intent) so a retry of the
+// same cancel replays instead of double-refunding.
+export function useCancelEvent(id: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ reason, idemKey }: { reason: string; idemKey: string }) =>
+      api.cancelEvent(id, reason, idemKey),
+    onSuccess: () => invalidate(id),
+  });
+}
+
+// ── Comps / announcements ────────────────────────────────────────────────────
+// idemKey is supplied by the caller (one per user intent) so a retry replays
+// instead of double-issuing / double-sending.
+export function useIssueComp(eventId: string) {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ input, idemKey }: { input: IssueCompInput; idemKey: string }) =>
+      api.issueComp(eventId, input, idemKey),
+    onSuccess: () => {
+      invalidate(eventId);
+      qc.invalidateQueries({ queryKey: KEYS.attendees(eventId) });
+    },
+  });
+}
+
+export function useAnnounce(eventId: string) {
+  return useMutation({
+    mutationFn: ({ input, idemKey }: { input: AnnounceInput; idemKey: string }) =>
+      api.announce(eventId, input, idemKey),
+  });
+}
+
+// ── Tier/promo management (FEATURE_EVENTS_TICKETING_DEPTH) ───────────────────
+export function useUpdateTier(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ tierId, patch }: { tierId: string; patch: TierPatch }) => api.updateTier(eventId, tierId, patch),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useUpdatePromo(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: ({ promoId, patch }: { promoId: string; patch: PromoPatch }) => api.updatePromo(eventId, promoId, patch),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export const useTeam = (eventId: string) =>
+  useQuery({ queryKey: KEYS.team(eventId), queryFn: () => api.listTeam(eventId), enabled: !!eventId });
+
+export function useAddTeamMember(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AddTeamMemberInput) => api.addTeamMember(eventId, input),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEYS.team(eventId) }); },
+  });
+}
+
+export function useRemoveTeamMember(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.removeTeamMember(eventId, userId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEYS.team(eventId) }); },
+  });
+}
+
+export function useAddTier(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (input: AddTierInput) => api.addTicketTier(eventId, input),
+    onSuccess: () => invalidate(eventId),
+  });
+}
+
+export function useCreatePromo(eventId: string) {
+  const invalidate = useInvalidateOrganiserEvent();
+  return useMutation({
+    mutationFn: (input: CreatePromoInput) => api.createPromo(eventId, input),
+    onSuccess: () => invalidate(eventId),
   });
 }

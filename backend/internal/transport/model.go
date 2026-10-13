@@ -169,6 +169,7 @@ type Vehicle struct {
 	ID               string    `json:"id"`
 	DriverID         string    `json:"driverId"`
 	PlateNumber      string    `json:"plateNumber"`
+	VehicleType      string    `json:"vehicleType"`
 	Make             *string   `json:"make,omitempty"`
 	Model            *string   `json:"model,omitempty"`
 	Year             *int      `json:"year,omitempty"`
@@ -372,13 +373,14 @@ type DocumentRequest struct {
 
 // VehicleRequest is POST /driver/vehicle.
 type VehicleRequest struct {
-	PlateNumber string `json:"plate_number" binding:"required"`
+	PlateNumber string `json:"plate_number"`
 	Make        string `json:"make"`
 	Model       string `json:"model"`
 	Year        int    `json:"year"`
 	Color       string `json:"color"`
 	Category    string `json:"category"`
 	Capacity    int    `json:"capacity"`
+	VehicleType string `json:"vehicle_type"`
 }
 
 // DriverStatusRequest is PATCH /driver/status.
