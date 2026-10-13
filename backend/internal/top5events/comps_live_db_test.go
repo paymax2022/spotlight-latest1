@@ -274,7 +274,7 @@ func TestLiveDB_AttendeesCSV(t *testing.T) {
 	svc := ticketTokenService(pool)
 	owner := seedTicketTokenUser(t, ctx, pool)
 	r1, h1 := seedHandleUser(t, ctx, pool)
-	r2, h2 := seedHandleUser(t, ctx, pool)
+	_, h2 := seedHandleUser(t, ctx, pool)
 	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
 	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
 
@@ -292,7 +292,6 @@ func TestLiveDB_AttendeesCSV(t *testing.T) {
 	if _, err := svc.IssueComp(ctx, owner, ev, tier, []string{h2}, "", newIdem()); err != nil {
 		t.Fatalf("comp2: %v", err)
 	}
-	_ = r2
 	if _, err := pool.Exec(ctx, `UPDATE event_tickets SET checked_in_at=now() WHERE id=$1`, t1[0].ID); err != nil {
 		t.Fatalf("check in: %v", err)
 	}

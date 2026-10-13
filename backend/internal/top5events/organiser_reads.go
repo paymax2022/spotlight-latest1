@@ -147,7 +147,10 @@ func (s *Service) AttendeesCSV(ctx context.Context, callerID, eventID string) ([
 		if a.CheckedInAt != nil {
 			at = *a.CheckedInAt
 		}
-		if err := w.Write([]string{a.Name, a.Cashtag, a.TierName, a.TicketID, a.State, strconv.FormatBool(a.CheckedIn), at}); err != nil {
+		// Sanitize user-controlled free-text cells against spreadsheet formula
+		// injection (a cell beginning =,+,-,@ executes when opened in Excel/Sheets).
+		// ticket_id/state/checked_in/timestamp are machine-controlled and left as-is.
+		if err := w.Write([]string{csvSafe(a.Name), csvSafe(a.Cashtag), csvSafe(a.TierName), a.TicketID, a.State, strconv.FormatBool(a.CheckedIn), at}); err != nil {
 			return nil, err
 		}
 	}
@@ -156,6 +159,20 @@ func (s *Service) AttendeesCSV(ctx context.Context, callerID, eventID string) ([
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// csvSafe neutralizes spreadsheet formula injection by prefixing a leading
+// formula-trigger character (= + - @, and the tab/CR control chars some parsers
+// treat as leaders) with an apostrophe, which spreadsheet apps render as text.
+func csvSafe(v string) string {
+	if v == "" {
+		return v
+	}
+	switch v[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + v
+	}
+	return v
 }
 
 // VendorsForEvent lists an event's registered vendors — identity only
