@@ -3,7 +3,7 @@
  * Mocks the usersService so no network calls are made.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // Mock the service module before importing the component
 const mockListAdminUsers = vi.fn()
@@ -88,5 +88,21 @@ describe('AdminUsersPage', () => {
       expect(screen.getByText(/Total: 2/)).toBeTruthy()
     })
     expect(screen.getByText(/Suspended: 1/)).toBeTruthy()
+  })
+
+  it('has a Profile column whose link opens the detail inspector', async () => {
+    mockListAdminUsers.mockResolvedValue([makeUser()])
+    mockGetAdminUser.mockResolvedValue(makeUser())
+    render(<AdminUsersPage />)
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy()
+    })
+    // New column header
+    expect(screen.getByRole('columnheader', { name: 'Profile' })).toBeTruthy()
+    // The per-row link opens the Selected User details (First Name input populated)
+    fireEvent.click(screen.getByRole('button', { name: /view profile/i }))
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Ada')).toBeTruthy()
+    })
   })
 })
