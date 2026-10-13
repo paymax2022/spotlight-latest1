@@ -8690,7 +8690,7 @@ paths:
         '400': { description: "Missing Idempotency-Key, invalid body, or unresolvable recipient" }
         '403': { description: Caller is not the organiser }
         '404': { description: Event or tier not found }
-        '409': { description: "Tier is sold out" }
+        '409': { description: "Tier is sold out, or the event is closed or cancelled" }
 
   /events/{id}/attendees:
     get:
@@ -8739,9 +8739,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [subject, body]
+              required: [body]
               properties:
-                subject: { type: string }
+                subject: { type: string, description: "Optional; defaults to \"Event update\" when empty" }
                 body: { type: string }
       responses:
         '202':
