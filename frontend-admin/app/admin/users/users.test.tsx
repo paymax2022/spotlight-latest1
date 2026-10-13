@@ -90,17 +90,25 @@ describe('AdminUsersPage', () => {
     expect(screen.getByText(/Suspended: 1/)).toBeTruthy()
   })
 
-  it('has a Profile column whose link opens the detail inspector', async () => {
+  it('has a Profile column whose link goes to the user profile page', async () => {
+    mockListAdminUsers.mockResolvedValue([makeUser()])
+    render(<AdminUsersPage />)
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy()
+    })
+    expect(screen.getByRole('columnheader', { name: 'Profile' })).toBeTruthy()
+    const link = screen.getByRole('link', { name: /view profile/i })
+    expect(link.getAttribute('href')).toBe('/admin/users/u1')
+  })
+
+  it('still opens the side panel when a row is clicked', async () => {
     mockListAdminUsers.mockResolvedValue([makeUser()])
     mockGetAdminUser.mockResolvedValue(makeUser())
     render(<AdminUsersPage />)
     await waitFor(() => {
       expect(screen.getByText('Ada Lovelace')).toBeTruthy()
     })
-    // New column header
-    expect(screen.getByRole('columnheader', { name: 'Profile' })).toBeTruthy()
-    // The per-row link opens the Selected User details (First Name input populated)
-    fireEvent.click(screen.getByRole('button', { name: /view profile/i }))
+    fireEvent.click(screen.getByText('Ada Lovelace'))
     await waitFor(() => {
       expect(screen.getByDisplayValue('Ada')).toBeTruthy()
     })

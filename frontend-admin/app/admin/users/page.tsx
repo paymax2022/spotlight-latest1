@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import Link from 'next/link';
 import type { AdminUser, AdminUserFilters } from '@/types/users';
 import {
   getAdminUser,
@@ -67,16 +68,6 @@ export default function AdminUsersPage() {
   const [selectedId, setSelectedId] = useState('');
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [saving, setSaving] = useState(false);
-  const detailRef = useRef<HTMLDivElement>(null);
-
-  const openProfile = (id: string) => {
-    setSelectedId(id);
-    try {
-      detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch {
-      // scrollIntoView is unavailable in some webviews/jsdom; selection already happened.
-    }
-  };
   const [sort, setSort] = useState<SortState<SortKey>>({ key: 'name', dir: 'asc' });
   const [page, setPage] = useState(1);
   const { toasts, toast, dismiss } = useToasts();
@@ -273,7 +264,13 @@ export default function AdminUsersPage() {
                     <td style={tdCell}>{u.userType || '—'}</td>
                     <td style={tdCell}>{u.status ? <Badge text={u.status} color={statusColor(u.status)} /> : '—'}</td>
                     <td style={tdCell}>
-                      <Button variant="outline" sm onClick={(e) => { e.stopPropagation(); openProfile(u.id); }}>View profile</Button>
+                      <Link
+                        href={`/admin/users/${encodeURIComponent(u.id)}`}
+                        className="vx-btn vx-btn--outline vx-btn--sm"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View profile
+                      </Link>
                     </td>
                   </tr>
                 ))
@@ -285,7 +282,7 @@ export default function AdminUsersPage() {
           </div>
         </Card>
 
-        <div ref={detailRef}>
+        <div>
         <Card title="Selected User">
           {!selected ? <p style={{ color: colors.muted, fontSize: 13, marginTop: 12 }}>Select a user to inspect/update.</p> : null}
           {selected ? (
