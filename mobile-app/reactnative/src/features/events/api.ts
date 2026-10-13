@@ -428,7 +428,15 @@ export async function fetchAttendeesCsv(eventId: string): Promise<string> {
     params: { format: 'csv' },
     responseType: 'text',
     headers: { Accept: 'text/csv' },
-    transformResponse: (d: unknown) => d,
+    // Keep the 2xx body raw (it is CSV, not JSON). On an error status the body is
+    // the Go JSON error envelope, so parse it back so the client interceptor can
+    // surface {error|message} instead of a generic axios message.
+    transformResponse: (d: unknown, _headers?: unknown, status?: number) => {
+      if (typeof d === 'string' && typeof status === 'number' && status >= 400) {
+        try { return JSON.parse(d); } catch { return d; }
+      }
+      return d;
+    },
   });
   return typeof res.data === 'string' ? res.data : String(res.data ?? '');
 }
