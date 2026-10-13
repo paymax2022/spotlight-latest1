@@ -5,7 +5,9 @@ package top5events_test
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -263,5 +265,93 @@ func TestLiveDB_IssueComp_StrangerForbidden(t *testing.T) {
 	_ = pool.QueryRow(ctx, `SELECT sold FROM event_ticket_tiers WHERE id=$1`, tier).Scan(&sold)
 	if sold != 0 {
 		t.Fatalf("sold=%d", sold)
+	}
+}
+
+func TestLiveDB_AttendeesCSV(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	r1, h1 := seedHandleUser(t, ctx, pool)
+	r2, h2 := seedHandleUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+
+	// A name containing a comma and a quote proves the csv writer quotes/escapes.
+	trickyName := `Doe, John "JD"`
+	tag, err := pool.Exec(ctx, `UPDATE user_profiles SET full_name=$2 WHERE id=$1`, r1, trickyName)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("seed profile name: err=%v rows=%d", err, tag.RowsAffected())
+	}
+
+	t1, err := svc.IssueComp(ctx, owner, ev, tier, []string{h1}, "", newIdem())
+	if err != nil || len(t1) != 1 {
+		t.Fatalf("comp1: %v", err)
+	}
+	if _, err := svc.IssueComp(ctx, owner, ev, tier, []string{h2}, "", newIdem()); err != nil {
+		t.Fatalf("comp2: %v", err)
+	}
+	_ = r2
+	if _, err := pool.Exec(ctx, `UPDATE event_tickets SET checked_in_at=now() WHERE id=$1`, t1[0].ID); err != nil {
+		t.Fatalf("check in: %v", err)
+	}
+
+	raw, err := svc.AttendeesCSV(ctx, owner, ev)
+	if err != nil {
+		t.Fatalf("AttendeesCSV: %v", err)
+	}
+	recs, err := csv.NewReader(strings.NewReader(string(raw))).ReadAll()
+	if err != nil {
+		t.Fatalf("parse csv: %v", err)
+	}
+	wantHdr := []string{"name", "cashtag", "tier_name", "ticket_id", "state", "checked_in", "checked_in_at"}
+	if len(recs) != 3 {
+		t.Fatalf("rows=%d want 3 (header+2): %q", len(recs), raw)
+	}
+	for i, h := range wantHdr {
+		if recs[0][i] != h {
+			t.Fatalf("header=%v want %v", recs[0], wantHdr)
+		}
+	}
+	var sawChecked, sawUnchecked bool
+	for _, r := range recs[1:] {
+		switch r[3] {
+		case t1[0].ID:
+			sawChecked = true
+			if r[0] != trickyName || r[1] != h1 || r[5] != "true" || r[6] == "" {
+				t.Fatalf("checked-in row bad: %q", r)
+			}
+		default:
+			sawUnchecked = true
+			if r[1] != h2 || r[5] != "false" || r[6] != "" {
+				t.Fatalf("unchecked row bad: %q", r)
+			}
+		}
+	}
+	if !sawChecked || !sawUnchecked {
+		t.Fatalf("missing rows: %q", raw)
+	}
+}
+
+func TestLiveDB_AttendeesCSV_NonManagerForbidden(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	steward := seedTicketTokenUser(t, ctx, pool)
+	stranger := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	if _, err := pool.Exec(ctx, `INSERT INTO event_stewards (event_id, user_id, added_by) VALUES ($1,$2,$3)`, ev, steward, owner); err != nil {
+		t.Fatalf("seed steward: %v", err)
+	}
+	// Sanity: the steward may view the roster, but must not export it.
+	if _, err := svc.AttendeesForEvent(ctx, steward, ev); err != nil {
+		t.Fatalf("steward roster: %v", err)
+	}
+	for name, caller := range map[string]string{"steward": steward, "stranger": stranger} {
+		if _, err := svc.AttendeesCSV(ctx, caller, ev); !errors.Is(err, top5events.ErrForbidden) {
+			t.Fatalf("%s: want ErrForbidden, got %v", name, err)
+		}
 	}
 }
