@@ -4,19 +4,30 @@ BEGIN;
 
 ALTER TABLE public.event_orders
   ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'PAID';
-ALTER TABLE public.event_orders
-  DROP CONSTRAINT IF EXISTS event_orders_kind_check;
-ALTER TABLE public.event_orders
-  ADD CONSTRAINT event_orders_kind_check CHECK (kind IN ('PAID','COMP'));
+-- Add the CHECK only if absent (idempotent without a DROP — additive-only chain).
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'event_orders_kind_check' AND conrelid = 'public.event_orders'::regclass
+  ) THEN
+    ALTER TABLE public.event_orders
+      ADD CONSTRAINT event_orders_kind_check CHECK (kind IN ('PAID','COMP'));
+  END IF;
+END $$;
 
 ALTER TABLE public.event_tickets
   ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'PAID',
   ADD COLUMN IF NOT EXISTS issued_by uuid NULL REFERENCES auth.users(id),
   ADD COLUMN IF NOT EXISTS comp_note text NULL;
-ALTER TABLE public.event_tickets
-  DROP CONSTRAINT IF EXISTS event_tickets_kind_check;
-ALTER TABLE public.event_tickets
-  ADD CONSTRAINT event_tickets_kind_check CHECK (kind IN ('PAID','COMP'));
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'event_tickets_kind_check' AND conrelid = 'public.event_tickets'::regclass
+  ) THEN
+    ALTER TABLE public.event_tickets
+      ADD CONSTRAINT event_tickets_kind_check CHECK (kind IN ('PAID','COMP'));
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.event_announcements (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
