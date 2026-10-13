@@ -355,3 +355,191 @@ func TestLiveDB_AttendeesCSV_NonManagerForbidden(t *testing.T) {
 		}
 	}
 }
+
+// ---- Announce (Phase 3) ----
+
+type fakeSend struct{ user, title, body string }
+
+type fakeNotifier struct {
+	calls  []fakeSend
+	failOn map[string]bool
+}
+
+func (f *fakeNotifier) Send(_ context.Context, userID, title, body string) error {
+	f.calls = append(f.calls, fakeSend{userID, title, body})
+	if f.failOn[userID] {
+		return errors.New("boom")
+	}
+	return nil
+}
+
+func announceRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ev string) (n, recipients int) {
+	t.Helper()
+	if err := pool.QueryRow(ctx, `SELECT count(*), COALESCE(max(recipient_count),0) FROM event_announcements WHERE event_id=$1`, ev).Scan(&n, &recipients); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func TestLiveDB_Announce_ScopedDistinctHolders(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	fn := &fakeNotifier{}
+	svc.SetNotifier(fn)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	u1, h1 := seedHandleUser(t, ctx, pool)
+	u2, h2 := seedHandleUser(t, ctx, pool)
+	u3, h3 := seedHandleUser(t, ctx, pool)
+	evA := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tierA := seedTier(t, ctx, pool, evA, 1000, 10, 0)
+	evB := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tierB := seedTier(t, ctx, pool, evB, 1000, 10, 0)
+	// u1 holds TWO tickets on A (duplicate holder); u2 one; u3 only on B.
+	for _, h := range []string{h1, h1, h2} {
+		if _, err := svc.IssueComp(ctx, owner, evA, tierA, []string{h}, "", newIdem()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.IssueComp(ctx, owner, evB, tierB, []string{h3}, "", newIdem()); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.Announce(ctx, owner, evA, "Doors", "Doors open at 7", newIdem())
+	if err != nil || n != 2 {
+		t.Fatalf("Announce: n=%d err=%v", n, err)
+	}
+	got := map[string]int{}
+	for _, c := range fn.calls {
+		got[c.user]++
+		if c.title != "Doors" || c.body != "Doors open at 7" {
+			t.Fatalf("bad payload %+v", c)
+		}
+	}
+	if len(got) != 2 || got[u1] != 1 || got[u2] != 1 || got[u3] != 0 {
+		t.Fatalf("recipients wrong (want u1,u2 once, never u3): %v", got)
+	}
+	if rows, rc := announceRows(t, ctx, pool, evA); rows != 1 || rc != 2 {
+		t.Fatalf("rows=%d recipient_count=%d", rows, rc)
+	}
+	if rows, _ := announceRows(t, ctx, pool, evB); rows != 0 {
+		t.Fatalf("event B got an announcement row")
+	}
+}
+
+func TestLiveDB_Announce_Forbidden(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	fn := &fakeNotifier{}
+	svc.SetNotifier(fn)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	stranger := seedTicketTokenUser(t, ctx, pool)
+	_, h := seedHandleUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+	if _, err := svc.IssueComp(ctx, owner, ev, tier, []string{h}, "", newIdem()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Announce(ctx, stranger, ev, "x", "y", newIdem()); !errors.Is(err, top5events.ErrForbidden) {
+		t.Fatalf("want ErrForbidden, got %v", err)
+	}
+	if len(fn.calls) != 0 {
+		t.Fatalf("sent despite forbidden")
+	}
+	if rows, _ := announceRows(t, ctx, pool, ev); rows != 0 {
+		t.Fatalf("recorded despite forbidden")
+	}
+}
+
+func TestLiveDB_Announce_EmptyBodyAndNoKey(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	if _, err := svc.Announce(ctx, owner, ev, "s", "  ", newIdem()); !errors.Is(err, top5events.ErrValidation) {
+		t.Fatalf("empty body: want ErrValidation, got %v", err)
+	}
+	if _, err := svc.Announce(ctx, owner, ev, "s", "b", ""); err == nil {
+		t.Fatalf("missing idempotency key must error")
+	}
+}
+
+func TestLiveDB_Announce_NilNotifierStillRecords(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool) // no notifier wired
+	owner := seedTicketTokenUser(t, ctx, pool)
+	_, h1 := seedHandleUser(t, ctx, pool)
+	_, h2 := seedHandleUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+	if _, err := svc.IssueComp(ctx, owner, ev, tier, []string{h1, h2}, "", newIdem()); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.Announce(ctx, owner, ev, "", "hello", newIdem())
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if rows, rc := announceRows(t, ctx, pool, ev); rows != 1 || rc != 2 {
+		t.Fatalf("rows=%d rc=%d", rows, rc)
+	}
+}
+
+func TestLiveDB_Announce_IdempotentReplay(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	fn := &fakeNotifier{}
+	svc.SetNotifier(fn)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	_, h1 := seedHandleUser(t, ctx, pool)
+	_, h2 := seedHandleUser(t, ctx, pool)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+	if _, err := svc.IssueComp(ctx, owner, ev, tier, []string{h1, h2}, "", newIdem()); err != nil {
+		t.Fatal(err)
+	}
+	idem := newIdem()
+	first, err := svc.Announce(ctx, owner, ev, "s", "b", idem)
+	if err != nil || first != 2 {
+		t.Fatalf("first: %d %v", first, err)
+	}
+	second, err := svc.Announce(ctx, owner, ev, "s", "b", idem)
+	if err != nil || second != 2 {
+		t.Fatalf("replay: %d %v", second, err)
+	}
+	if len(fn.calls) != 2 {
+		t.Fatalf("replay re-sent: %d calls", len(fn.calls))
+	}
+	if rows, _ := announceRows(t, ctx, pool, ev); rows != 1 {
+		t.Fatalf("replay wrote a 2nd row: %d", rows)
+	}
+}
+
+func TestLiveDB_Announce_SendFailureDoesNotAbortBatch(t *testing.T) {
+	ctx := context.Background()
+	pool := ticketTokenPool(t)
+	svc := ticketTokenService(pool)
+	owner := seedTicketTokenUser(t, ctx, pool)
+	u1, h1 := seedHandleUser(t, ctx, pool)
+	_, h2 := seedHandleUser(t, ctx, pool)
+	_, h3 := seedHandleUser(t, ctx, pool)
+	fn := &fakeNotifier{failOn: map[string]bool{u1: true}}
+	svc.SetNotifier(fn)
+	ev := seedManageEvent(t, ctx, pool, owner, "LIVE")
+	tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+	if _, err := svc.IssueComp(ctx, owner, ev, tier, []string{h1, h2, h3}, "", newIdem()); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.Announce(ctx, owner, ev, "s", "b", newIdem())
+	if err != nil || n != 3 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if len(fn.calls) != 3 {
+		t.Fatalf("a failing send aborted the batch: %d calls", len(fn.calls))
+	}
+	if rows, rc := announceRows(t, ctx, pool, ev); rows != 1 || rc != 3 {
+		t.Fatalf("rows=%d rc=%d", rows, rc)
+	}
+}

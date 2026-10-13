@@ -16,7 +16,9 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/loyalty"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/p2pmarket"
+	"spotlight/backend/internal/platform/queue"
 	"spotlight/backend/internal/platform/realtime"
 	"spotlight/backend/internal/points"
 	"spotlight/backend/internal/savings"
@@ -170,6 +172,20 @@ func adminGroupTop5(r *gin.Engine, basePath string, authMW gin.HandlerFunc) *gin
 	return g
 }
 
+// eventAnnounceNotifier adapts the notifications service to top5events'
+// NotificationSender seam (push + in-app).
+type eventAnnounceNotifier struct{ n *notifications.Service }
+
+func (a eventAnnounceNotifier) Send(ctx context.Context, userID, title, body string) error {
+	return a.n.Send(ctx, notifications.Notification{
+		UserID:   userID,
+		Event:    notifications.EventAnnouncement,
+		Title:    title,
+		Body:     body,
+		Channels: []notifications.Channel{notifications.ChannelPush, notifications.ChannelInApp},
+	})
+}
+
 // RegisterEvents wires the Top-5 Phase-2 Event Ticketing + cashless Event Wallet
 // module onto the finance member group + an events admin group. Mirrors the
 // Register-aggregator pattern from top5_p1_routes.go (RegisterSavings/SocialPay);
@@ -213,6 +229,15 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	// (/api/v1/realtime/stream) per client regardless of which module fires.
 	// Nil-safe: ScanTicket's publish is a no-op if this is nil.
 	svc.SetRealtime(rtHub)
+
+	// Organiser announcements ride the shared asynq notifications queue. Only
+	// wired when Redis is configured; otherwise the notifier stays nil and
+	// Announce still records history (nil-safe).
+	if cfg.RedisURL != "" {
+		if aClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+			svc.SetNotifier(eventAnnounceNotifier{n: notifications.NewService(aClient)})
+		}
+	}
 
 	// Commission recording for ticket-sale profit. Ledger-less recorder — the
 	// checkout debit already posts into escrow, so RecordFor appends the earning
