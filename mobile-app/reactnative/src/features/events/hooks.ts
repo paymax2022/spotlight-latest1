@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { EventPatch, TierPatch, PromoPatch, CreatePromoInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
+import type { EventPatch, TierPatch, PromoPatch, CreatePromoInput, AddTierInput, CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate, AddTeamMemberInput } from './types';
 
 // Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
 // the exact same query keys on a push, rather than duplicating the shape.
@@ -16,6 +16,7 @@ export const KEYS = {
   venue:     (id: string) => ['events', 'venue', id] as const,
   organiser: ['events', 'organiser'] as const,
   attendees: (id: string) => ['events', 'attendees', id] as const,
+  team:      (id: string) => ['events', 'team', id] as const,
 };
 
 export const useEvents = (params?: { category?: string; state?: string }) =>
@@ -214,6 +215,25 @@ export function useUpdatePromo(eventId: string) {
   return useMutation({
     mutationFn: ({ promoId, patch }: { promoId: string; patch: PromoPatch }) => api.updatePromo(eventId, promoId, patch),
     onSuccess: () => invalidate(eventId),
+  });
+}
+
+export const useTeam = (eventId: string) =>
+  useQuery({ queryKey: KEYS.team(eventId), queryFn: () => api.listTeam(eventId), enabled: !!eventId });
+
+export function useAddTeamMember(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AddTeamMemberInput) => api.addTeamMember(eventId, input),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEYS.team(eventId) }); },
+  });
+}
+
+export function useRemoveTeamMember(eventId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.removeTeamMember(eventId, userId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEYS.team(eventId) }); },
   });
 }
 

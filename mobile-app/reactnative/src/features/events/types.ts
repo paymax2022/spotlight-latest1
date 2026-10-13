@@ -300,3 +300,18 @@ export interface EventVendorDisplay {
   emoji:    string;
   items:    VendorMenuItem[];
 }
+
+// Per-event team member (contracts/openapi.yaml EventTeamMember).
+export interface TeamMember {
+  user_id:    string;
+  handle:     string;
+  name:       string;
+  role:       'MANAGER' | 'FINANCE';
+  granted_by: string;
+  created_at: string;
+}
+
+export interface AddTeamMemberInput {
+  user_handle: string;
+  role:        string;
+}

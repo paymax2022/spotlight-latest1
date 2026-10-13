@@ -18,6 +18,11 @@ export const EVENTS_EDIT_LIFECYCLE_ENABLED =
 export const EVENTS_TICKETING_DEPTH_ENABLED =
   process.env.EXPO_PUBLIC_EVENTS_TICKETING_DEPTH?.trim().toLowerCase() === 'true';
 
+// Per-event team management (grant/revoke MANAGER). OFF unless explicitly
+// 'true' — mirrors the server's FEATURE_EVENTS_TEAM_ROLES gate.
+export const EVENTS_TEAM_ROLES_ENABLED =
+  process.env.EXPO_PUBLIC_EVENTS_TEAM_ROLES?.trim().toLowerCase() === 'true';
+
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed
 // with the shared axios client's baseURL (EXPO_PUBLIC_API_BASE_URL) in api.ts.
