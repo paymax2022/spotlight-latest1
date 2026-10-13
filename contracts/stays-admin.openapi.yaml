@@ -55,3 +55,83 @@ paths:
         '200': { description: ok }
         '400': { description: Unknown status }
         '404': { description: Property not found }
+  /api/stays/admin/dashboard:
+    get:
+      summary: Stays operations dashboard (RBAC stays.admin.reservation)
+      description: >
+        Read-only aggregates for the admin console. Money is integer kobo, NGN only.
+        Windows are Lagos calendar days: "today" is the current Lagos day and the 30-day
+        window is today and the 29 days before it. A booking is a reservation in state
+        CONFIRMED or COMPLETED. gmv = gross_amount_kobo; net revenue = markup + commission
+        on those bookings; commission_30d_kobo is the net of ACCRUAL and REVERSAL commission
+        entries. conversion = bookings / reservations created in the window (VOID excluded).
+        refunds_pending = payment intents still `held` on a reservation that ended
+        cancelled, failed or void. paid_unconfirmed = reservations stuck in PAYMENT_HELD or
+        BOOKING for over 15 minutes with a held or charged payment intent.
+        Metrics with no source table are returned as 0 and named in unavailable_metrics, so a
+        0 can be told apart from a measured zero.
+      responses:
+        '200':
+          description: Dashboard (wrapped as {"data": ...})
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/StaysDashboard' }
+        '401': { description: Not authenticated }
+        '403': { description: Missing stays.admin.reservation }
+components:
+  schemas:
+    StaysDashboard:
+      type: object
+      required: [gmv_today_kobo, gmv_30d_kobo, bookings_today, bookings_30d, take_rate, conversion, net_revenue_30d_kobo, commission_30d_kobo, reconciliation_breaks_open, reconciliation_break_value_kobo, refunds_pending, paid_unconfirmed, mapping_conflicts_open, moderation_pending, avg_booking_value_kobo, supplier_mix, gmv_trend, activity, unavailable_metrics]
+      properties:
+        gmv_today_kobo: { type: integer, format: int64 }
+        gmv_30d_kobo: { type: integer, format: int64 }
+        bookings_today: { type: integer }
+        bookings_30d: { type: integer }
+        take_rate: { type: number, description: "0..1, net revenue / GMV (0 when GMV is 0)" }
+        conversion: { type: number, description: "0..1" }
+        net_revenue_30d_kobo: { type: integer, format: int64 }
+        commission_30d_kobo: { type: integer, format: int64 }
+        reconciliation_breaks_open: { type: integer }
+        reconciliation_break_value_kobo: { type: integer, format: int64 }
+        refunds_pending: { type: integer }
+        paid_unconfirmed: { type: integer }
+        mapping_conflicts_open: { type: integer }
+        moderation_pending: { type: integer }
+        avg_booking_value_kobo: { type: integer, format: int64 }
+        supplier_mix:
+          type: array
+          items:
+            type: object
+            properties:
+              supplier: { type: string }
+              rail: { type: string, enum: [BEDBANK, DIRECT] }
+              bookings: { type: integer }
+              gmv_kobo: { type: integer, format: int64 }
+              share_pct: { type: number, description: "0..1 of 30-day GMV" }
+        gmv_trend:
+          type: array
+          description: One entry per Lagos day, oldest first, 30 entries, zero-filled.
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              gmv_kobo: { type: integer, format: int64 }
+              net_kobo: { type: integer, format: int64 }
+        activity:
+          type: array
+          description: Newest first, max 15.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              kind: { type: string, enum: [booking_confirmed, book_failed, refund_issued, mapping_conflict] }
+              label: { type: string }
+              ref: { type: string, nullable: true }
+              created_at: { type: string, format: date-time }
+        unavailable_metrics:
+          type: array
+          items: { type: string }
