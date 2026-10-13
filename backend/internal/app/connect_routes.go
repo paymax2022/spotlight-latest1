@@ -334,6 +334,13 @@ func registerConnectSafetyRoutes(member *gin.RouterGroup, admin *gin.RouterGroup
 	// Guardrailed AI assistant (Phase 5).
 	member.POST("/ai/assist", trustHandler.AIGenerate)
 
+	// Console case views (read-only projection of flagged messages + decisions; never message content).
+	admin.GET("/moderation",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		modHandler.ListCases)
+	admin.GET("/moderation/:id",
+		middleware.RequirePermission(rbac, "connect.moderation.view"),
+		modHandler.GetCase)
 	admin.GET("/moderation/conversations",
 		middleware.RequirePermission(rbac, "connect.moderation.view"),
 		modHandler.ListFlaggedConversations)
