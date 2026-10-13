@@ -196,8 +196,20 @@ export function useDriverOnboarding() {
     mutationFn: (draft: VehicleDraft) => mob.addDriverVehicle(draft),
     onSuccess: invalidate,
   });
+  const setServiceProfile = useMutation({
+    mutationFn: (input: { interests: string[]; areas: string[] }) => mob.setDriverServiceProfile(input.interests, input.areas),
+    onSuccess: invalidate,
+  });
 
-  return { submit, uploadDoc, uploadDocFile, addVehicle };
+  return { submit, uploadDoc, uploadDocFile, addVehicle, setServiceProfile };
+}
+
+export function useDriverOnboardingOptions() {
+  return useQuery({
+    queryKey: [KEY, 'driver', 'onboarding-options'],
+    queryFn: mob.getDriverOnboardingOptions,
+    staleTime: 5 * 60_000,
+  });
 }
 
 export function useDriverRequests(options?: { poll?: boolean; enabled?: boolean }) {

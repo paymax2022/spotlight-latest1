@@ -2253,6 +2253,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		drv.POST("/documents", transportHandler.AddDocument)
 		drv.POST("/documents/presign", transportHandler.PresignDriverDocument)
 		drv.POST("/vehicle", transportHandler.AddVehicle)
+		drv.PUT("/service-profile", transportHandler.SetServiceProfile)
+		drv.GET("/onboarding-options", transportHandler.OnboardingOptions)
 		drv.GET("/me", transportHandler.DriverMe)
 		drv.PATCH("/status", transportHandler.DriverStatus)
 		drv.GET("/requests", transportHandler.DriverRequests)
