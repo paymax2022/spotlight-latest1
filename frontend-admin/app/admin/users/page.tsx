@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { AdminUser, AdminUserFilters } from '@/types/users';
 import {
   getAdminUser,
@@ -67,6 +67,16 @@ export default function AdminUsersPage() {
   const [selectedId, setSelectedId] = useState('');
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [saving, setSaving] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+
+  const openProfile = (id: string) => {
+    setSelectedId(id);
+    try {
+      detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {
+      // scrollIntoView is unavailable in some webviews/jsdom; selection already happened.
+    }
+  };
   const [sort, setSort] = useState<SortState<SortKey>>({ key: 'name', dir: 'asc' });
   const [page, setPage] = useState(1);
   const { toasts, toast, dismiss } = useToasts();
@@ -231,15 +241,16 @@ export default function AdminUsersPage() {
                 <th style={thCell}><SortHeaderButton label="Email" active={sort?.key === 'email'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('email')} /></th>
                 <th style={thCell}><SortHeaderButton label="Type" active={sort?.key === 'userType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('userType')} /></th>
                 <th style={thCell}><SortHeaderButton label="Status" active={sort?.key === 'status'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('status')} /></th>
+                <th style={thCell}>Profile</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>Loading…</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>Loading…</td></tr>
               ) : errored ? (
-                <tr><td style={tdCell} colSpan={4}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
+                <tr><td style={tdCell} colSpan={5}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
               ) : slice.length === 0 ? (
-                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>No users match the current filters.</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>No users match the current filters.</td></tr>
               ) : (
                 slice.map((u) => (
                   <tr
@@ -251,6 +262,9 @@ export default function AdminUsersPage() {
                     <td style={{ ...tdCell, color: colors.muted }}>{u.email}</td>
                     <td style={tdCell}>{u.userType || '—'}</td>
                     <td style={tdCell}>{u.status ? <Badge text={u.status} color={statusColor(u.status)} /> : '—'}</td>
+                    <td style={tdCell}>
+                      <Button variant="outline" sm onClick={(e) => { e.stopPropagation(); openProfile(u.id); }}>View profile</Button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -261,6 +275,7 @@ export default function AdminUsersPage() {
           </div>
         </Card>
 
+        <div ref={detailRef}>
         <Card title="Selected User">
           {!selected ? <p style={{ color: colors.muted, fontSize: 13, marginTop: 12 }}>Select a user to inspect/update.</p> : null}
           {selected ? (
@@ -294,6 +309,7 @@ export default function AdminUsersPage() {
             </div>
           ) : null}
         </Card>
+        </div>
       </div>
     </Page>
   );
