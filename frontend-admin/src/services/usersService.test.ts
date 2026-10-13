@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { apiRoot } from '@/config/env';
 import {
   AdminUsersRequestError,
   assignUserRole,
@@ -49,6 +50,8 @@ describe('usersService read errors', () => {
   });
 });
 
+const full = (path: string) => `${apiRoot()}${path}`;
+
 function lastCall() {
   const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
   return { url: String(url), init: (init ?? {}) as RequestInit };
@@ -64,7 +67,7 @@ describe('usersService profile reads', () => {
     respond(200, body);
     await expect(fn('u1')).resolves.toEqual(expected);
     const { url, init } = lastCall();
-    expect(url.endsWith(path)).toBe(true);
+    expect(url).toBe(full(path));
     expect(init.method ?? 'GET').toBe('GET');
   });
   it.each(cases)('%s throws AdminUsersRequestError(403) on forbidden', async (_n, fn, _p, _b, _e) => {
@@ -80,7 +83,7 @@ describe('usersService role writes', () => {
     respond(200, { success: true });
     await expect(assignUserRole('u1', 'r1')).resolves.toBe(true);
     const { url, init } = lastCall();
-    expect(url.endsWith('/api/admin/users/u1/roles')).toBe(true);
+    expect(url).toBe(full('/api/admin/users/u1/roles'));
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({ roleId: 'r1' });
   });
@@ -92,7 +95,7 @@ describe('usersService role writes', () => {
     respond(200, { success: true });
     await expect(removeUserRole('u1', 'r1')).resolves.toBe(true);
     const { url, init } = lastCall();
-    expect(url.endsWith('/api/admin/users/u1/roles/r1')).toBe(true);
+    expect(url).toBe(full('/api/admin/users/u1/roles/r1'));
     expect(init.method).toBe('DELETE');
   });
   it('removeUserRole returns false on failure', async () => {

@@ -1,3 +1,4 @@
+import { apiRoot } from '@/config/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminUsersRequestError } from './usersService';
 import {
@@ -16,6 +17,7 @@ function lastCall() {
   return { url: String(url), init: (init ?? {}) as RequestInit };
 }
 afterEach(() => vi.unstubAllGlobals());
+const full = (path: string) => `${apiRoot()}${path}`;
 
 const tx = { id: 't1', type: 'credit', amount_kobo: 500, reference: 'r', created_at: '2026-01-01' };
 const reads: Array<[string, (id: string) => Promise<unknown>, string, unknown, unknown]> = [
@@ -29,7 +31,7 @@ describe('userFinanceService reads', () => {
     respond(200, body);
     await expect(fn('u1')).resolves.toEqual(expected);
     const { url, init } = lastCall();
-    expect(url.endsWith(path)).toBe(true);
+    expect(url).toBe(full(path));
     expect(init.method ?? 'GET').toBe('GET');
   });
   it.each(reads)('%s: throws AdminUsersRequestError(403)', async (_n, fn) => {
@@ -46,25 +48,25 @@ describe('userFinanceService reads', () => {
 
 describe('userFinanceService KYC decisions', () => {
   it('approveKycCase POSTs with an idempotency key', async () => {
-    respond(200, { success: true });
+    respond(200, { status: 'APPROVED' });
     await expect(approveKycCase('c1')).resolves.toBe(true);
     const { url, init } = lastCall();
-    expect(url.endsWith('/api/finance/admin/kyc/cases/c1/approve')).toBe(true);
+    expect(url).toBe(full('/api/finance/admin/kyc/cases/c1/approve'));
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['Idempotency-Key']).toBeTruthy();
   });
   it('rejectKycCase POSTs { reason }', async () => {
-    respond(200, { success: true });
+    respond(200, { status: 'REJECTED' });
     await expect(rejectKycCase('c1', 'blurry')).resolves.toBe(true);
     const { url, init } = lastCall();
-    expect(url.endsWith('/api/finance/admin/kyc/cases/c1/reject')).toBe(true);
+    expect(url).toBe(full('/api/finance/admin/kyc/cases/c1/reject'));
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({ reason: 'blurry' });
   });
   it('returns false when the backend refuses', async () => {
-    respond(403, { success: false });
+    respond(403, { error: 'forbidden' });
     await expect(approveKycCase('c1')).resolves.toBe(false);
-    respond(200, { success: false });
+    respond(500, { error: 'boom' });
     await expect(rejectKycCase('c1', 'x')).resolves.toBe(false);
   });
 });

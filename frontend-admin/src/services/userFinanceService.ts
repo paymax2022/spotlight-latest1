@@ -58,8 +58,9 @@ async function decide(caseId: string, action: 'approve' | 'reject', body?: unkno
     headers: { ...authHeaders(), 'Idempotency-Key': operationKey('kyc', action, caseId) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  const payload = await res.json().catch(() => ({}));
-  return Boolean(res.ok && payload?.success);
+  // The Go kycverify handlers reply 200 {"status": "<SessionStatus>"} with no
+  // `success` field, so success is the HTTP status alone.
+  return res.ok;
 }
 
 export async function approveKycCase(caseId: string): Promise<boolean> {
