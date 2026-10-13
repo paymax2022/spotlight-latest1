@@ -189,6 +189,31 @@ func TestLiveDB_IssueComp_ManagerAllowed(t *testing.T) {
 	}
 }
 
+func TestLiveDB_IssueComp_TerminalStateRejected(t *testing.T) {
+	for _, state := range []string{"CANCELLED", "CLOSED"} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			pool := ticketTokenPool(t)
+			svc := ticketTokenService(pool)
+			owner := seedTicketTokenUser(t, ctx, pool)
+			_, handle := seedHandleUser(t, ctx, pool)
+			ev := seedManageEvent(t, ctx, pool, owner, state)
+			tier := seedTier(t, ctx, pool, ev, 1000, 10, 0)
+			_, err := svc.IssueComp(ctx, owner, ev, tier, []string{handle}, "", newIdem())
+			if !errors.Is(err, top5events.ErrNotPurchasable) {
+				t.Fatalf("want ErrNotPurchasable, got %v", err)
+			}
+			var sold, tk, ord int
+			_ = pool.QueryRow(ctx, `SELECT sold FROM event_ticket_tiers WHERE id=$1`, tier).Scan(&sold)
+			_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_tickets WHERE event_id=$1`, ev).Scan(&tk)
+			_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_orders WHERE event_id=$1`, ev).Scan(&ord)
+			if sold != 0 || tk != 0 || ord != 0 {
+				t.Fatalf("created despite terminal state: sold=%d tickets=%d orders=%d", sold, tk, ord)
+			}
+		})
+	}
+}
+
 func TestLiveDB_IssueComp_StrangerForbidden(t *testing.T) {
 	ctx := context.Background()
 	pool := ticketTokenPool(t)

@@ -60,6 +60,13 @@ func (s *Service) IssueComp(ctx context.Context, callerID, eventID, tierID strin
 		return nil, err
 	}
 
+	// Terminal states are closed to issuance (pre-go-live comps stay allowed).
+	// ErrNotPurchasable maps to 409 in handler_lifecycle.go. Checked before any
+	// order/credential/ticket is created.
+	if ev.State == EventClosed || ev.State == EventCancelled {
+		return nil, fmt.Errorf("%w (state %s)", ErrNotPurchasable, ev.State)
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
