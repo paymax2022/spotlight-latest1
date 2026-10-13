@@ -135,7 +135,7 @@ const caseSelect = `SELECT m.id::text, m.sender_id::text, m.reason_codes, m.crea
 	LEFT JOIN LATERAL (
 	  SELECT decision, case_id FROM connect_moderation_decisions
 	   WHERE target_type = 'message' AND target_id = m.id::text
-	   ORDER BY created_at DESC LIMIT 1
+	   ORDER BY created_at DESC, id DESC LIMIT 1
 	) d ON true
 	WHERE m.flagged = true`
 
@@ -177,7 +177,7 @@ func (s *Service) GetCase(ctx context.Context, id string) (*CaseDetail, error) {
 	}
 	rows, err := s.db.Query(ctx, `SELECT decision, reason_codes, model, reviewer_id::text, created_at
 		FROM connect_moderation_decisions WHERE target_type = 'message' AND target_id = $1
-		ORDER BY created_at ASC`, id)
+		ORDER BY created_at ASC, id ASC`, r.ID)
 	if err != nil {
 		return nil, fmt.Errorf("connect: get moderation history: %w", err)
 	}

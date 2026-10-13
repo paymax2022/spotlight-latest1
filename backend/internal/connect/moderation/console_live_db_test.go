@@ -185,3 +185,38 @@ func TestLive_UnflaggedMessagesAreNotCases(t *testing.T) {
 		t.Fatalf("an unflagged message was served as a case: %d", code)
 	}
 }
+
+// Review: a non-canonical (but parseable) uuid must still return the case's history, and equal-timestamp
+// decisions must resolve deterministically.
+func TestLive_NonCanonicalIDStillReturnsHistoryAndTiesAreStable(t *testing.T) {
+	pool, ctx := liveDB(t)
+	_, msgs := seedFlagged(t, ctx, pool, 1)
+	decide(t, ctx, pool, msgs[0], "flagged")
+	decide(t, ctx, pool, msgs[0], "warned")
+	if _, err := pool.Exec(ctx, `UPDATE connect_moderation_decisions SET created_at = '2026-10-13T10:00:00Z' WHERE target_type='message' AND target_id = $1`, msgs[0]); err != nil {
+		t.Fatal(err)
+	}
+	upper := strings.ToUpper(msgs[0])
+	code, raw := consoleGET(t, pool, "/moderation/"+upper)
+	if code != http.StatusOK {
+		t.Fatalf("code=%d %s", code, raw)
+	}
+	var body struct {
+		Data CaseDetail `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(raw), &body)
+	if len(body.Data.History) != 2 {
+		t.Fatalf("history for a non-canonical id = %d entries, want 2", len(body.Data.History))
+	}
+	first := body.Data.Status
+	for i := 0; i < 5; i++ {
+		_, again := consoleGET(t, pool, "/moderation/"+msgs[0])
+		var b2 struct {
+			Data CaseDetail `json:"data"`
+		}
+		_ = json.Unmarshal([]byte(again), &b2)
+		if b2.Data.Status != first {
+			t.Fatalf("status flipped between identical requests with tied decisions: %q vs %q", first, b2.Data.Status)
+		}
+	}
+}
