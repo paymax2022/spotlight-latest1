@@ -36,7 +36,5 @@ span permissions (gift volume is money; the dashboard is an operations view).
 
 ## Consequences
 - DAU/MAU are login-based because Connect keeps no activity log; revisit when one exists.
-- Status filtering is applied after the status is derived, over a bounded window (1000 rows) when a non-`all` status is requested, so
-  it is exact within that window; a very large directory may need a status column or a SQL-side derivation.
 - `last_active_at` falls back to `created_at` when a user has never logged in; that reads as "joined" rather than "active".
 - Reads of user detail are not audited yet; add an access-audit event with the first admin write action.
