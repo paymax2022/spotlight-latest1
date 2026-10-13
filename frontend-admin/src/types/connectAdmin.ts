@@ -40,8 +40,8 @@ export interface ConnectDashboard {
   mau: number;
   matches_today: number;
   live_sessions: number;
-  gift_volume_today_kobo: number;   // money in kobo
-  gift_volume_30d_kobo: number;
+  gift_volume_today_kobo: number | null;   // money in kobo; null without the gifting permission
+  gift_volume_30d_kobo: number | null;
   open_cases: number;
   aml_alerts_open: number;
   payouts_pending: number;
@@ -144,10 +144,10 @@ export interface ConnectFinanceSummary {
   gift_volume_30d_kobo: number;
   paid_vote_volume_30d_kobo: number;
   payout_volume_30d_kobo: number;
-  take_rate_30d_kobo: number;
-  float_balance_kobo: number;
-  ledger_debits_kobo: number;
-  ledger_credits_kobo: number;
+  take_rate_30d_kobo: number | null;      // null: no agreed definition yet
+  float_balance_kobo: number | null;
+  ledger_debits_kobo: number | null;
+  ledger_credits_kobo: number | null;
   pending_payouts_kobo: number;
 }
 export interface GiftTransaction {
