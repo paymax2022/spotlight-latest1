@@ -300,3 +300,20 @@ export interface EventVendorDisplay {
   emoji:    string;
   items:    VendorMenuItem[];
 }
+
+// POST /events/{id}/comps — recipients are handles or cashtags.
+export interface IssueCompInput {
+  tier_id:    string;
+  recipients: string[];
+  note?:      string;
+}
+
+// POST /events/{id}/announcements — contract requires both subject and body.
+export interface AnnounceInput {
+  subject: string;
+  body:    string;
+}
+
+export interface AnnounceResult {
+  recipient_count: number;
+}

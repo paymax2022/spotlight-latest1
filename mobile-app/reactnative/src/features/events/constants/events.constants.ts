@@ -18,6 +18,12 @@ export const EVENTS_EDIT_LIFECYCLE_ENABLED =
 export const EVENTS_TICKETING_DEPTH_ENABLED =
   process.env.EXPO_PUBLIC_EVENTS_TICKETING_DEPTH?.trim().toLowerCase() === 'true';
 
+// Complimentary tickets, attendee CSV export, organiser announcements. OFF unless
+// explicitly 'true' — mirrors the server's comps/attendees gate. Writes, so
+// intentionally NOT mock-defaulted.
+export const EVENTS_COMPS_ENABLED =
+  process.env.EXPO_PUBLIC_EVENTS_COMPS?.trim().toLowerCase() === 'true';
+
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed
 // with the shared axios client's baseURL (EXPO_PUBLIC_API_BASE_URL) in api.ts.

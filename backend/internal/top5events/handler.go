@@ -18,6 +18,9 @@ import (
 // routes are RBAC-gated via the guard injected at Register time.
 type Handler struct {
 	svc *Service
+	// compsEnabled is set by RegisterComps (FEATURE_EVENTS_COMPS) and gates the
+	// attendees ?format=csv branch.
+	compsEnabled bool
 }
 
 func NewHandler(svc *Service) *Handler {
@@ -406,6 +409,10 @@ func (h *Handler) ListStewards(c *gin.Context) {
 func (h *Handler) Attendees(c *gin.Context) {
 	u, ok := uid(c)
 	if !ok {
+		return
+	}
+	if c.Query("format") == "csv" {
+		h.attendeesCSV(c, u)
 		return
 	}
 	out, err := h.svc.AttendeesForEvent(c.Request.Context(), u, c.Param("id"))
