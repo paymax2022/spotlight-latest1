@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Plus, Users, Tag, Percent, ScanLine, ChevronRight, Pencil, Copy, Pause, Play, XCircle } from 'lucide-react-native';
+import { Plus, Users, Tag, Percent, ScanLine, ChevronRight, Pencil, Copy, Pause, Play, XCircle, UserCog } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -16,7 +16,7 @@ import {
 import { idempotencyKey, lifecycleErrorMessage } from '@/features/events/api';
 import type { OrganiserEventStats } from '@/features/events/types';
 import { useEventsRealtime } from '@/features/events/realtime/useEventsRealtime';
-import { EventColors, formatNaira, formatNairaCompact, EVENT_STATE_BADGE, EVENTS_EDIT_LIFECYCLE_ENABLED, EVENTS_TICKETING_DEPTH_ENABLED } from '@/features/events/constants/events.constants';
+import { EventColors, formatNaira, formatNairaCompact, EVENT_STATE_BADGE, EVENTS_EDIT_LIFECYCLE_ENABLED, EVENTS_TICKETING_DEPTH_ENABLED, EVENTS_TEAM_ROLES_ENABLED } from '@/features/events/constants/events.constants';
 
 export default function OrganiserDashboard() {
   // Live check-in push (accelerates the poll below when accepted scans come
@@ -90,6 +90,13 @@ export default function OrganiserDashboard() {
                       <ChevronRight size={16} color={EventColors.muted} />
                     </Pressable>
                   </>
+                ) : null}
+                {EVENTS_TEAM_ROLES_ENABLED ? (
+                  <Pressable style={styles.attendeesLink} onPress={() => router.push({ pathname: '/events/organiser/team/[id]', params: { id: e.id } })}>
+                    <UserCog size={16} color={EventColors.brand} />
+                    <Text style={styles.attendeesText}>Manage team</Text>
+                    <ChevronRight size={16} color={EventColors.muted} />
+                  </Pressable>
                 ) : null}
                 <Pressable style={styles.attendeesLink} onPress={() => router.push({ pathname: '/events/organiser/attendees', params: { eventId: e.id } })}>
                   <Users size={16} color={EventColors.brand} />
