@@ -2,12 +2,16 @@ package connectconsole
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // UnderageFlag mirrors frontend-admin UnderageFlag. The declared DOB is masked to century and day only.
@@ -126,7 +130,7 @@ func parseMediaState(s string) (string, bool) {
 func (s *Service) ListUnderage(ctx context.Context, status string, limit int) ([]UnderageFlag, bool, error) {
 	rows, err := s.db.Query(ctx, `SELECT f.id::text, f.user_id::text, p.display_name, f.reason, f.dob, f.status, f.created_at
 		FROM connect_underage_flags f
-		LEFT JOIN LATERAL (SELECT display_name FROM connect_profiles WHERE user_id = f.user_id ORDER BY created_at LIMIT 1) p ON true
+		LEFT JOIN LATERAL (SELECT display_name FROM connect_profiles WHERE user_id = f.user_id AND deleted_at IS NULL ORDER BY created_at LIMIT 1) p ON true
 		WHERE f.status = ANY($1)
 		ORDER BY (f.status = 'queued') DESC, f.created_at DESC, f.id DESC LIMIT $2`, underageStatuses[status], limit+1)
 	if err != nil {
@@ -198,6 +202,7 @@ func (h *Handler) Underage(c *gin.Context) {
 		internalErr(c, "list underage", err)
 		return
 	}
+	h.svc.audit(c, ginutil.UserID(c), "connect.underage.list", "connect_underage_flags", map[string]any{"status": status, "rows": len(list), "has_more": more})
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": list, "has_more": more})
 }
 
@@ -213,5 +218,16 @@ func (h *Handler) MediaReview(c *gin.Context) {
 		internalErr(c, "list media", err)
 		return
 	}
+	h.svc.audit(c, ginutil.UserID(c), "connect.media_review.list", "connect_profile_media", map[string]any{"state": state, "rows": len(list), "has_more": more})
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": list, "has_more": more})
+}
+
+// audit records that an admin read a child-safety or media queue: who, which filter, how many rows.
+// It is best effort and never fails the read: a failure is logged server-side.
+func (s *Service) audit(ctx context.Context, actor, action, entityType string, detail map[string]any) {
+	raw, _ := json.Marshal(detail)
+	if _, err := s.db.Exec(ctx, `INSERT INTO connect_audit_log (actor_id, actor_role, action, entity_type, new_value)
+		VALUES (NULLIF($1,'')::uuid, 'admin', $2, $3, $4::jsonb)`, actor, action, entityType, string(raw)); err != nil {
+		log.Printf("[connect-console] audit write failed action=%s: %v", action, err)
+	}
 }

@@ -21,4 +21,13 @@ data: suspected minors' dates of birth and users' uploaded media.
 ## Consequences
 - A reviewer cannot see the media itself from this endpoint; viewing media needs its own signed-URL route with an access audit.
 - The underage queue shows the age-gate signal only until other signals exist.
-- Reads are not audited yet; add an access-audit event with the first admin write action.
+
+## Review follow-ups (no blockers)
+- **Reads are audited.** Each successful list writes a `connect_audit_log` row (`connect.underage.list`,
+  `connect.media_review.list`) with the admin, the filter, the row count and `has_more`; a rejected (400) request is not a read and
+  is not audited. The write is best effort (a failure is logged, never fails the read); the table's `actor_id` references `auth.users`.
+- **Deleted profiles:** their display name is never shown on a flag (the handle falls back to `user <id>`) while the flag itself
+  stays listed (a deleted account can still be a suspected minor); their media is excluded from the queue.
+- **Known and deferred:** the DOB mask adds little (century is constant and the day is a weak corroborator); drop the day if the
+  console does not need it. No cursor beyond 200 rows. There is no route-level 403 test for these two routes (the guard is the same
+  one-line `RequirePermission` as their neighbours).
