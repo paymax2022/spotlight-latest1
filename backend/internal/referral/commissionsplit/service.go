@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -149,60 +150,115 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		return nil
 	}
 
-	// 3. Atomically claim one of this CODE's capped reward slots — a single
-	// UPDATE ... WHERE reward_count < reward_cap so two concurrent purchases by
-	// different referred users under the same code can never both succeed past
-	// the cap (a read-then-write here would race).
-	//
-	// A referrer with NO referral_links row at all is NOT retired — they simply
-	// never minted a code: referral_links is only created by GetOrCreateLink
-	// when the referrer opens their link page, yet attribution can already point
-	// at them via the legacy finance_referral_codes table (RewardService.Attribute
-	// resolves both code tables). Without a lazy mint here, every purchase under
-	// such an attribution would silently pay the house while the other engine
+	// 3. Make sure the referrer has a code row to claim against. A referrer with
+	// NO referral_links row at all is NOT retired — they simply never minted a
+	// code: referral_links is only created by GetOrCreateLink when the referrer
+	// opens their link page, yet attribution can already point at them via the
+	// legacy finance_referral_codes table (RewardService.Attribute resolves both
+	// code tables). Without a lazy mint here, every purchase under such an
+	// attribution would silently pay the house while the other engine
 	// (OnPurchaseSettled) pays the same referrer from the same attribution row.
-	err = s.claimRewardSlot(ctx, *referrerID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Code retired (at/over cap) — defaults to admin: no payout, no reward
-		// row is written for this earning (there is nothing to record — it was
-		// never rewarded).
-		return nil
-	}
-	if err != nil {
+	if err := s.ensureLink(ctx, *referrerID); err != nil {
 		return err
 	}
 
-	// 4. Reward record — reuses referral_rewards (see package doc). Inserted as
-	// PENDING first (never CREDITED up front): if the ledger credit below fails,
-	// the row must honestly say so, not claim money moved that never did.
+	// 4. Reward record + cap slot, in ONE transaction. The reward row is
+	// inserted first (ON CONFLICT DO NOTHING on the UNIQUE source_transaction_id)
+	// and the slot is claimed only if that insert won, so a concurrent call for
+	// the same earning (live hook vs catch-up sweep), or a failed insert retried
+	// by the sweep, can never burn a cap slot without a reward row to show for
+	// it. The slot claim is a single UPDATE ... WHERE reward_count < reward_cap,
+	// so two purchases under the same code can never both pass the cap. A
+	// retired code rolls the reward row back: no payout, no record (defaults to
+	// admin — there is nothing to move).
+	//
+	// The row is PENDING (never CREDITED up front): if the ledger credit below
+	// fails it must honestly say so, and RetryPending picks it up later.
 	// source_transaction_id is namespaced "commission:<earning id>" so it can
 	// never collide with the older engine's own (unprefixed) transaction ids.
-	// ON CONFLICT DO NOTHING remains as defense-in-depth against a genuine race
-	// between two concurrent calls for the same earning (step 2 already made
-	// this vanishingly unlikely, not impossible under true concurrency).
+	rewardID, err := s.reserveReward(ctx, *referrerID, *e.UserID, sourceTxnID, e.SourceModule, e.SpotlightRevenueKobo, rewardKobo)
+	if err != nil || rewardID == "" {
+		return err
+	}
+
+	return s.creditReward(ctx, pendingReward{
+		ID:                  rewardID,
+		ReferrerID:          *referrerID,
+		ReferredUserID:      *e.UserID,
+		SourceTransactionID: sourceTxnID,
+		Module:              e.SourceModule,
+		MarginKobo:          e.SpotlightRevenueKobo,
+		RewardKobo:          rewardKobo,
+	})
+}
+
+// pendingReward is a referral_rewards row that holds a cap slot and still
+// needs (or is getting) its ledger credit.
+type pendingReward struct {
+	ID                  string
+	ReferrerID          string
+	ReferredUserID      string
+	SourceTransactionID string // "commission:<earning id>"
+	Module              string
+	MarginKobo          int64
+	RewardKobo          int64
+}
+
+// reserveReward inserts the PENDING reward row and claims a cap slot in one
+// transaction. Returns "" (and nil) when the earning already has a reward row
+// or the code is retired — in both cases nothing is written.
+func (s *Service) reserveReward(ctx context.Context, referrerID, referredID, sourceTxnID, module string, marginKobo, rewardKobo int64) (string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
 	var rewardID string
-	err = s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO public.referral_rewards
 			(referrer_id, referred_user_id, source_transaction_id, module, margin_kobo, applied_rate, reward_kobo, status, config_version)
 		VALUES ($1, $2, $3, $4, $5, 0.20, $6, 'PENDING', 0)
 		ON CONFLICT (source_transaction_id) DO NOTHING
 		RETURNING id`,
-		*referrerID, *e.UserID, sourceTxnID, e.SourceModule, e.SpotlightRevenueKobo, rewardKobo,
+		referrerID, referredID, sourceTxnID, module, marginKobo, rewardKobo,
 	).Scan(&rewardID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return "", nil // already rewarded (or being rewarded) — nothing to do
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	// 5. Credit the referrer's wallet, debiting the standing referral-reward
-	// account — the same account type the older engine posts against, so every
-	// referral payout (whichever engine produced it) lands in one place for
-	// reporting. On success (or a benign duplicate-credit race), flip the
-	// reward row to CREDITED; on any other failure it is left PENDING — an
-	// honest record of "claimed a cap slot, not yet actually paid" rather than
-	// a false CREDITED claim, and the error is still returned so it gets logged.
+	var linkID string
+	err = tx.QueryRow(ctx, `
+		UPDATE public.referral_links
+		SET reward_count = reward_count + 1
+		WHERE referrer_id = $1 AND reward_count < reward_cap
+		RETURNING id`,
+		referrerID,
+	).Scan(&linkID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil // code retired — rollback drops the reward row
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return rewardID, nil
+}
+
+// creditReward credits the referrer's wallet for a reserved reward, debiting
+// the standing referral-reward account — the same account type the older
+// engine posts against, so every referral payout (whichever engine produced it)
+// lands in one place for reporting. The ledger idempotency key is derived from
+// the reward id, so calling this again for the same reward (RetryPending) can
+// never post twice: a duplicate is treated as already paid. On success the row
+// flips to CREDITED and an audit event is appended; on any other failure it
+// stays PENDING and the error is returned.
+func (s *Service) creditReward(ctx context.Context, r pendingReward) error {
 	if s.ledger == nil {
 		return nil
 	}
@@ -210,63 +266,52 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 	if err != nil {
 		return err
 	}
-	creditErr := s.ledger.Credit(ctx, *referrerID, sourceTxnID, "referral:commission-split:"+rewardID, rewardAcct.ID, rewardKobo)
+	// ErrDuplicate is read as "already paid". That holds only because every
+	// ledger handed to this package is built WITHOUT Redis (withReferralSplit,
+	// finance_routes.go): there, ErrDuplicate can only come from the DB's unique
+	// idempotency key, i.e. a committed post. A Redis-backed ledger can return it
+	// from a short-lived lock while the DB post failed — wiring one in here would
+	// let a retry mark an unpaid reward CREDITED. Keep these ledgers Redis-free.
+	creditErr := s.ledger.Credit(ctx, r.ReferrerID, r.SourceTransactionID, "referral:commission-split:"+r.ID, rewardAcct.ID, r.RewardKobo)
 	if creditErr != nil && !errors.Is(creditErr, ledger.ErrDuplicate) {
 		return creditErr
 	}
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE public.referral_rewards SET status = 'CREDITED', credited_at = now() WHERE id = $1`,
-		rewardID,
+		`UPDATE public.referral_rewards SET status = 'CREDITED', credited_at = now() WHERE id = $1 AND status = 'PENDING'`,
+		r.ID,
 	); err != nil {
 		return err
 	}
 
-	// 6. Audit event — append-only referral_engine_events row, keyed on the
-	// reward id so a replay dedupes instead of double-recording. Best-effort like
-	// the rest of this hook: the money is already committed, so a failed event
-	// write is logged, never treated as a split failure (which would retry the
-	// whole path and claim another cap slot).
+	// Audit event — append-only referral_engine_events row, keyed on the reward
+	// id so a replay dedupes instead of double-recording. Best-effort: the money
+	// is already committed, so a failed event write is logged, never treated as
+	// a split failure.
 	if s.events != nil {
 		if err := s.events.Record(ctx, referralevents.Input{
 			EventType:  eventTypeCredited,
-			UserID:     *e.UserID,
-			ReferrerID: *referrerID,
+			UserID:     r.ReferredUserID,
+			ReferrerID: r.ReferrerID,
 			Payload: map[string]any{
-				"reward_id":             rewardID,
-				"earning_id":            e.ID,
-				"source_transaction_id": sourceTxnID,
-				"module":                e.SourceModule,
-				"margin_kobo":           e.SpotlightRevenueKobo,
-				"reward_kobo":           rewardKobo,
+				"reward_id":             r.ID,
+				"earning_id":            strings.TrimPrefix(r.SourceTransactionID, "commission:"),
+				"source_transaction_id": r.SourceTransactionID,
+				"module":                r.Module,
+				"margin_kobo":           r.MarginKobo,
+				"reward_kobo":           r.RewardKobo,
 				"rate_bps":              RateBps,
 			},
-			IdempotencyKey: "commission-split:credited:" + rewardID,
+			IdempotencyKey: "commission-split:credited:" + r.ID,
 		}); err != nil {
-			log.Printf("[referral/commissionsplit] audit event failed (reward=%s): %v", rewardID, err)
+			log.Printf("[referral/commissionsplit] audit event failed (reward=%s): %v", r.ID, err)
 		}
 	}
 	return nil
 }
 
-// claimRewardSlot atomically takes one of the referrer code's capped reward
-// slots, lazily minting the referral_links row first when the referrer has none
-// (a legacy-code referrer — see step 3 in trySplit). Returns pgx.ErrNoRows when
-// the code exists but is at/over its cap (retired); any other error propagates.
-func (s *Service) claimRewardSlot(ctx context.Context, referrerID string) error {
-	var linkID string
-	err := s.pool.QueryRow(ctx, `
-		UPDATE public.referral_links
-		SET reward_count = reward_count + 1
-		WHERE referrer_id = $1 AND reward_count < reward_cap
-		RETURNING id`,
-		referrerID,
-	).Scan(&linkID)
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-
-	// No claim — either the code is retired or the row is missing entirely. A
-	// missing row is not retirement: mint it, then take the slot.
+// ensureLink lazily mints a referral_links row for a referrer who has none (a
+// legacy-code referrer — see step 3 in trySplit). Idempotent.
+func (s *Service) ensureLink(ctx context.Context, referrerID string) error {
 	var hasLink bool
 	if err := s.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM public.referral_links WHERE referrer_id = $1)`,
@@ -275,18 +320,9 @@ func (s *Service) claimRewardSlot(ctx context.Context, referrerID string) error 
 		return err
 	}
 	if hasLink {
-		return pgx.ErrNoRows // exists but at cap — retired, pay the house
+		return nil
 	}
-	if err := s.mintLink(ctx, referrerID); err != nil {
-		return err
-	}
-	return s.pool.QueryRow(ctx, `
-		UPDATE public.referral_links
-		SET reward_count = reward_count + 1
-		WHERE referrer_id = $1 AND reward_count < reward_cap
-		RETURNING id`,
-		referrerID,
-	).Scan(&linkID)
+	return s.mintLink(ctx, referrerID)
 }
 
 // mintLink inserts a referral_links row for a referrer who never opened their

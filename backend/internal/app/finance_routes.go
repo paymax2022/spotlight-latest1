@@ -79,6 +79,7 @@ import (
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
+	"spotlight/backend/internal/referral/commissionsplit"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/restaurant/paystackcheckout"
@@ -485,6 +486,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// stays nil if the engine returns nil (nil pool), keeping all emits nil-safe.
 		rewardSvc = RegisterReferralRewards(r, pool, rbac, mapsAuth(), cfg.ReferralRewardsInternalSecret,
 			middleware.PerUserRateLimit(redisClient, "referrals-attribute", cfg.ReferralAttributeRatePerMin))
+	}
+
+	// Referral commission-split catch-up: pays referrers for commission_earnings
+	// rows written outside commission.Service (frontend-web's utility path inserts
+	// them directly, so the ReferralHook never fires). Same flag as the hook;
+	// idempotent with it — see commissionsplit.Sweep.
+	if cfg.FeatureReferralCommissionSplitEnabled && pool != nil {
+		commissionsplit.NewService(pool, ledger.NewService(ledger.NewRepository(pool), nil), true).
+			StartSweeper(context.Background(), 5*time.Minute, commissionsplit.SweepOptions{
+				MinAge: 2 * time.Minute, Lookback: 7 * 24 * time.Hour, Limit: 200,
+			})
 	}
 
 	// Member routes under /api/finance/insurance/* (auth via finance group);
