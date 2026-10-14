@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -322,11 +323,32 @@ type decisionBody struct {
 	Reason string `json:"reason"`
 }
 
+// maxDecisionReasonLen bounds the free-text reason persisted to the audit trail.
+const maxDecisionReasonLen = 500
+
+// decisionReason parses and validates the mandatory decision reason. On failure
+// it has already written the 400 and the caller must return.
+func decisionReason(c *gin.Context) (string, bool) {
+	var body decisionBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "a JSON body with a reason is required"})
+		return "", false
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" || len(reason) > maxDecisionReasonLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required (1-500 characters)"})
+		return "", false
+	}
+	return reason, true
+}
+
 // ApproveCase handles POST /api/finance/admin/kyc/cases/:id/approve
 func (h *Handler) ApproveCase(c *gin.Context) {
-	var body decisionBody
-	_ = c.ShouldBindJSON(&body)
-	st, err := h.svc.ApproveCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Reason)
+	reason, ok := decisionReason(c)
+	if !ok {
+		return
+	}
+	st, err := h.svc.ApproveCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), reason)
 	if err != nil {
 		writeErr(c, err)
 		return
@@ -336,9 +358,11 @@ func (h *Handler) ApproveCase(c *gin.Context) {
 
 // RejectCase handles POST /api/finance/admin/kyc/cases/:id/reject
 func (h *Handler) RejectCase(c *gin.Context) {
-	var body decisionBody
-	_ = c.ShouldBindJSON(&body)
-	st, err := h.svc.RejectCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Reason)
+	reason, ok := decisionReason(c)
+	if !ok {
+		return
+	}
+	st, err := h.svc.RejectCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), reason)
 	if err != nil {
 		writeErr(c, err)
 		return

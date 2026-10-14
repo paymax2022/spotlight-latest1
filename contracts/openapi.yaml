@@ -4732,7 +4732,10 @@ paths:
     get:
       operationId: getUserRoles
       summary: List a user's active role slugs
-      description: Read-only. Requires `users.view`. Returns an empty array when the user has no roles.
+      description: >-
+        Read-only. Requires `users.view`, and the target user must be within the
+        caller's scope (same object-level check as GET /api/admin/users/{id}).
+        Returns an empty array when the user has no roles.
       tags: [AdminUsers]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -4748,7 +4751,9 @@ paths:
                 properties:
                   success: { type: boolean }
                   roles: { type: array, items: { type: string } }
-        '403': { description: Missing users.view permission }
+        '400': { description: id is not a UUID }
+        '403': { description: Missing users.view permission, or the target user is outside the caller's scope }
+        '404': { description: User not found }
         '500': { description: Failed to load roles }
   /api/admin/users/{id}/roles/bulk:
     post:
@@ -13129,13 +13134,19 @@ paths:
                   tier: { type: integer }
                   status: { type: string }
                   openCaseId: { type: string, format: uuid, nullable: true }
+        '400': { description: id is not a UUID }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '500': { description: Failed to load KYC profile or review case }
   /api/finance/admin/kyc/cases/{id}/approve:
     post:
       operationId: admKycApproveCase
       summary: Approve a case (manual override; audited)
-      description: Requires the finance.admin.kyc permission. Audited.
+      description: >-
+        Requires the finance.admin.kyc permission. A non-empty `reason` (max 500
+        characters) is mandatory and is recorded in the durable audit trail along with
+        the deciding admin. A reviewer cannot decide a case on their own verification
+        (403).
       tags: [KYCAdmin]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -13148,20 +13159,25 @@ paths:
               type: object
               required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: Case approved
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
+        '400': { description: Missing, blank or over-long reason }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/cases/{id}/reject:
     post:
       operationId: admKycRejectCase
       summary: Reject a case (manual override; audited)
-      description: Requires the finance.admin.kyc permission. Audited.
+      description: >-
+        Requires the finance.admin.kyc permission. A non-empty `reason` (max 500
+        characters) is mandatory and is recorded in the durable audit trail along with
+        the deciding admin. A reviewer cannot decide a case on their own verification
+        (403).
       tags: [KYCAdmin]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -13174,13 +13190,14 @@ paths:
               type: object
               required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: Case rejected
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
+        '400': { description: Missing, blank or over-long reason }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/routing-rules:
