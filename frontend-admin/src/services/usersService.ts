@@ -194,3 +194,23 @@ export async function getUserSessions(userId: string): Promise<UserSession[]> {
   const payload = await readOrThrow(res, 'Loading sessions');
   return Array.isArray(payload.sessions) ? (payload.sessions as UserSession[]) : [];
 }
+
+export type UserModule = {
+  key: string;
+  label: string;
+  group: string;
+  href: string;
+  status: 'member' | 'none' | 'error';
+  count: number;
+  since?: string;
+};
+
+/** Module memberships for a user. A 404 means the module overview flag is off. */
+export async function getUserModules(userId: string): Promise<UserModule[]> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(userId)}/modules`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading modules');
+  return Array.isArray(payload.modules) ? (payload.modules as UserModule[]) : [];
+}

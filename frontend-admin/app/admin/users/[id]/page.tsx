@@ -20,6 +20,7 @@ import { ActivityPanel } from './ActivityPanel';
 import { ReferralTierPanel } from './ReferralTierPanel';
 import { AdminActionsPanel } from './AdminActionsPanel';
 import { SessionsPanel } from './SessionsPanel';
+import { ModulesPanel } from './ModulesPanel';
 import { useToasts, ToastStack } from '@/components/rbac';
 import { Page, PageHeader, Card, Button, Input, Badge, colors } from '@/components/ui/vuexy';
 
@@ -213,6 +214,7 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
       </div>
 
       <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
+        <ModulesPanel userId={id} />
         <RolesPanel userId={id} />
         <WalletPanel userId={id} />
         <TransactionsPanel userId={id} />

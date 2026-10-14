@@ -25,6 +25,7 @@ vi.mock('@/services/usersService', () => ({
   removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
   getAuditLogsForUser: vi.fn().mockResolvedValue([]),
   getUserSessions: vi.fn().mockResolvedValue([]),
+  getUserModules: vi.fn().mockResolvedValue([]),
   AdminUsersRequestError: class extends Error {
     constructor(public readonly status: number, message: string) {
       super(message)
@@ -136,6 +137,7 @@ describe('AdminUserProfilePage', () => {
       await screen.findByText('No admin actions recorded')
       await screen.findByText('No active sessions')
       await screen.findAllByText('No transactions')
+      await screen.findByText('Not onboarded to any module')
       expect(fetchSpy).not.toHaveBeenCalled()
     } finally {
       fetchSpy.mockRestore()

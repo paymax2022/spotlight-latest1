@@ -44,6 +44,9 @@ type Config struct {
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
 	// detection, revocation enforcement, and suspicious-login response are active.
 	FeatureSessionHardeningEnabled bool
+	// FeatureAdminUserModulesEnabled gates GET /api/admin/users/:id/modules (admin
+	// User 360 module membership). Default OFF: the route answers 404 when off.
+	FeatureAdminUserModulesEnabled bool
 	// Suspicious-login thresholds. Fail-closed defaults: any new device/IP is
 	// treated as suspicious, a small failed-login spike escalates, and travel
 	// faster than this km/h is "impossible".
@@ -828,6 +831,7 @@ func Load() Config {
 		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
+		FeatureAdminUserModulesEnabled: getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
 		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
 		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
 		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),

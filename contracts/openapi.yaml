@@ -4707,6 +4707,45 @@ paths:
                       referredBy: { type: string }
         '403': { description: Target user is outside the caller's scope }
         '404': { description: User not found }
+  /api/admin/users/{id}/modules:
+    get:
+      operationId: getAdminUserModules
+      summary: List every registry module with the user's membership status
+      description: |-
+        Read-only. Requires `users.view`, and the target must be within the
+        caller's scope. Gated by the FEATURE_ADMIN_USER_MODULES_ENABLED flag
+        (default OFF): the route answers 404 while the flag is off. A module
+        whose membership probe fails is reported with status `error` rather
+        than failing the whole response.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Module membership for the user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  modules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        group: { type: string }
+                        href: { type: string }
+                        status: { type: string, enum: [member, none, error] }
+                        count: { type: integer, format: int64 }
+                        since: { type: string }
+        '400': { description: id is not a UUID }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller lacks users.view or the target is outside the caller's scope }
+        '404': { description: "User not found, or the feature flag is off" }
   /api/admin/users/export:
     get:
       operationId: exportAdminUsers

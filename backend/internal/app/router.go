@@ -459,6 +459,8 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 			log.Printf("[router] WARN: could not connect to database: %v — DB-backed routes disabled", err)
 		} else {
 			sharedPool = p
+			adminUsersHandler.WithModules(sharedPool, cfg.FeatureAdminUserModulesEnabled)
+			registerAdminUserModulesRoutes(r, supabase, rbacService, adminUsersHandler, sharedPool)
 		}
 	} else if deployedTier {
 		log.Fatalf("[router] DATABASE_URL is not set (APP_ENV=%q) — refusing to start with every DB-backed route disabled", cfg.AppEnv)
