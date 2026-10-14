@@ -21,6 +21,7 @@ vi.mock('@/services/usersService', () => ({
   getUserRoles: (...args: unknown[]) => mockGetUserRoles(...args),
   getLoginActivity: (...args: unknown[]) => mockGetLoginActivity(...args),
   getSecurityEvents: (...args: unknown[]) => mockGetSecurityEvents(...args),
+  getUserNavigation: (...args: unknown[]) => mockGetUserNavigation(...args),
   assignUserRole: (...args: unknown[]) => mockAssignUserRole(...args),
   removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
   getAuditLogsForUser: vi.fn().mockResolvedValue([]),
@@ -46,6 +47,7 @@ vi.mock('@/services/transactionsAdminService', async () => {
 const mockGetUserRoles = vi.fn()
 const mockGetLoginActivity = vi.fn()
 const mockGetSecurityEvents = vi.fn()
+const mockGetUserNavigation = vi.fn()
 const mockAssignUserRole = vi.fn()
 const mockRemoveUserRole = vi.fn()
 const mockListRoles = vi.fn()
@@ -87,6 +89,7 @@ import { WalletPanel } from './WalletPanel'
 import { KycPanel } from './KycPanel'
 import { ActivityPanel } from './ActivityPanel'
 import { ReferralTierPanel } from './ReferralTierPanel'
+import { NavigationHistoryPanel } from './NavigationHistoryPanel'
 import { UserAvatar } from './UserAvatar'
 import { AdminUsersRequestError } from '@/services/usersService'
 
@@ -123,6 +126,7 @@ describe('AdminUserProfilePage', () => {
     mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'none', openCaseId: null })
     mockGetLoginActivity.mockResolvedValue([])
     mockGetSecurityEvents.mockResolvedValue([])
+    mockGetUserNavigation.mockResolvedValue({ enabled: true, events: [] })
     mockGetUserTier.mockResolvedValue({ tier: 1, dailyDebitLimitKobo: 5000000, maxBalanceKobo: 30000000 })
     mockGetUserReferralCase.mockResolvedValue({ referrer_id: 'u1', tier: null, rewards: [], milestones: [] })
   })
@@ -708,5 +712,66 @@ describe('ReferralTierPanel', () => {
     await waitFor(() => expect(panel().getByTestId('referral-tier-name').textContent).toBe('silver'))
     expect(mockGetUserReferralCase).toHaveBeenCalledTimes(2)
     expect(mockGetUserTier).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe('NavigationHistoryPanel', () => {
+  const panel = () => within(screen.getByTestId('navigation-history-panel'))
+
+  beforeEach(() => {
+    mockGetUserNavigation.mockReset()
+  })
+  afterEach(() => cleanup())
+
+  it('renders the timeline newest first with surface and route', async () => {
+    mockGetUserNavigation.mockResolvedValue({
+      enabled: true,
+      events: [
+        { surface: 'mobile', route: '/wallet', occurred_at: '2026-01-02T03:04:05Z' },
+        { surface: 'web', route: '/home', occurred_at: '2026-01-01T03:04:05Z' },
+      ],
+    })
+    render(<NavigationHistoryPanel userId="u1" />)
+    await waitFor(() => expect(panel().getAllByTestId('navigation-row')).toHaveLength(2))
+    expect(mockGetUserNavigation).toHaveBeenCalledWith('u1')
+    const rows = panel().getAllByTestId('navigation-row')
+    expect(within(rows[0]).getByText('mobile')).toBeTruthy()
+    expect(within(rows[0]).getByText('/wallet')).toBeTruthy()
+    expect(within(rows[1]).getByText('web')).toBeTruthy()
+    expect(within(rows[1]).getByText('/home')).toBeTruthy()
+  })
+
+  it('shows an empty state', async () => {
+    mockGetUserNavigation.mockResolvedValue({ enabled: true, events: [] })
+    render(<NavigationHistoryPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('No navigation history')).toBeTruthy())
+  })
+
+  it('shows a not-enabled placeholder without Retry', async () => {
+    mockGetUserNavigation.mockResolvedValue({ enabled: false, events: [] })
+    render(<NavigationHistoryPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Navigation telemetry not enabled')).toBeTruthy())
+    expect(panel().queryByText('Retry')).toBeNull()
+  })
+
+  it('shows a permission placeholder on 403 without Retry', async () => {
+    mockGetUserNavigation.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    render(<NavigationHistoryPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText(/permission/i)).toBeTruthy())
+    expect(panel().queryByText('Retry')).toBeNull()
+  })
+
+  it('shows an error and refetches on Retry', async () => {
+    mockGetUserNavigation.mockRejectedValueOnce(new Error('boom'))
+    render(<NavigationHistoryPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('boom')).toBeTruthy())
+    mockGetUserNavigation.mockResolvedValue({
+      enabled: true,
+      events: [{ surface: 'web', route: '/x', occurred_at: '2026-01-01T00:00:00Z' }],
+    })
+    fireEvent.click(panel().getByText('Retry'))
+    await waitFor(() => expect(panel().getByText('/x')).toBeTruthy())
+    expect(mockGetUserNavigation).toHaveBeenCalledTimes(2)
   })
 })

@@ -131,3 +131,37 @@ func TestLive_PurgeReturnsCount(t *testing.T) {
 		t.Fatalf("PurgeOlderThan = %d, %v; want 1, nil", n, err)
 	}
 }
+
+func TestLive_ListRecentByUser_OrderAndClamp(t *testing.T) {
+	pool := livePool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	uid := uuid.NewString()
+	cleanupUser(t, pool, uid)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	evs := make([]Event, 0, 205)
+	for i := 0; i < 205; i++ {
+		evs = append(evs, Event{UserID: uid, Surface: "web", Route: "/r", OccurredAt: now.Add(-time.Duration(i) * time.Second)})
+	}
+	evs[0].Route = "/newest"
+	if _, err := repo.Insert(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ListRecentByUser(ctx, uid, 3)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("limit 3: %d, %v", len(got), err)
+	}
+	if got[0].Route != "/newest" || !got[0].OccurredAt.After(got[1].OccurredAt) || !got[1].OccurredAt.After(got[2].OccurredAt) {
+		t.Fatalf("not DESC: %+v", got)
+	}
+	if got[0].Surface != "web" {
+		t.Fatalf("surface = %q", got[0].Surface)
+	}
+	for _, lim := range []int{0, -1, 201} {
+		g, err := repo.ListRecentByUser(ctx, uid, lim)
+		if err != nil || len(g) != 100 {
+			t.Fatalf("limit %d -> %d rows, %v; want 100", lim, len(g), err)
+		}
+	}
+}

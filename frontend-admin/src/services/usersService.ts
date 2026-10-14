@@ -155,6 +155,24 @@ export async function getSecurityEvents(id: string): Promise<Record<string, unkn
   return Array.isArray(payload.events) ? (payload.events as Record<string, unknown>[]) : [];
 }
 
+export type UserNavigationEvent = { surface: string; route: string; occurred_at: string };
+
+/** 404 means navigation telemetry is not enabled on the backend (route unmounted). */
+export async function getUserNavigation(
+  id: string,
+): Promise<{ enabled: boolean; events: UserNavigationEvent[] }> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${encodeURIComponent(id)}/navigation`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  if (res.status === 404) return { enabled: false, events: [] };
+  const payload = await readOrThrow(res, 'Loading navigation history');
+  return {
+    enabled: true,
+    events: Array.isArray(payload.events) ? (payload.events as UserNavigationEvent[]) : [],
+  };
+}
+
 export type AdminAuditEntry = {
   id: string;
   actor_user_id: string;

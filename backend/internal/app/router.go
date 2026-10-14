@@ -462,6 +462,13 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 			sharedPool = p
 			adminUsersHandler.WithModules(sharedPool, cfg.FeatureAdminUserModulesEnabled)
 			registerAdminUserModulesRoutes(r, supabase, rbacService, adminUsersHandler, sharedPool)
+			if cfg.FeatureNavTelemetryEnabled {
+				// Admin navigation history (SP4) — same audit category as login-activity.
+				navAdmin := r.Group("/api/admin")
+				navAdmin.Use(middleware.RequireAuthContext(supabase, rbacService))
+				navAdmin.GET("/users/:id/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
+					AdminUserNavigationHandler(navigation.NewRepository(sharedPool)))
+			}
 		}
 	} else if deployedTier {
 		log.Fatalf("[router] DATABASE_URL is not set (APP_ENV=%q) — refusing to start with every DB-backed route disabled", cfg.AppEnv)

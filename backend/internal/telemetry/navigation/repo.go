@@ -76,3 +76,30 @@ func (r *Repository) PurgeOlderThan(ctx context.Context, cutoff time.Time, batch
 		}
 	}
 }
+
+// ListRecentByUser returns a user's most recent navigation events, newest
+// first. limit <= 0 or > 200 is clamped to 100. UserID is left empty.
+func (r *Repository) ListRecentByUser(ctx context.Context, userID string, limit int) ([]Event, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	const q = `SELECT surface, route, occurred_at FROM navigation_events
+		WHERE user_id = $1::uuid ORDER BY occurred_at DESC LIMIT $2`
+	rows, err := r.db.Query(ctx, q, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("navigation repo: list: %w", err)
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.Surface, &e.Route, &e.OccurredAt); err != nil {
+			return nil, fmt.Errorf("navigation repo: scan: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("navigation repo: list: %w", err)
+	}
+	return out, nil
+}
