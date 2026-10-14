@@ -74,6 +74,20 @@ describe('ModulesPanel', () => {
     await screen.findByText('Not onboarded to any module')
   })
 
+  it('all rows error -> neutral text, not the not-onboarded claim', async () => {
+    impl = async () => [mod('e1', { status: 'error' }), mod('e2', { status: 'error' })]
+    render(<ModulesPanel userId="u1" />)
+    await screen.findByText('No confirmed memberships')
+    expect(screen.queryByText('Not onboarded to any module')).toBeNull()
+  })
+
+  it('some none, some error, zero members -> neutral text', async () => {
+    impl = async () => [mod('n1', { status: 'none' }), mod('e1', { status: 'error' })]
+    render(<ModulesPanel userId="u1" />)
+    await screen.findByText('No confirmed memberships')
+    expect(screen.queryByText('Not onboarded to any module')).toBeNull()
+  })
+
   it('shows a permission message on 403 without Retry', async () => {
     impl = async () => {
       throw new AdminUsersRequestError(403, 'forbidden')

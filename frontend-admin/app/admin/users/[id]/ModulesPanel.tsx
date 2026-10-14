@@ -95,7 +95,11 @@ export function ModulesPanel({ userId }: { userId: string }) {
     }
     body = (
       <div style={{ display: 'grid', gap: 12 }}>
-        {members.length === 0 ? <p style={{ ...muted, margin: 0 }}>Not onboarded to any module</p> : null}
+        {members.length === 0 ? (
+          <p style={{ ...muted, margin: 0 }}>
+            {errored.length === 0 ? 'Not onboarded to any module' : 'No confirmed memberships'}
+          </p>
+        ) : null}
         {Array.from(groups.entries()).map(([group, list]) => (
           <div key={group}>
             <div style={{ fontSize: 12, fontWeight: 600, color: colors.muted }}>{group}</div>
