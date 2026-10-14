@@ -581,8 +581,8 @@ export async function getAvailability(vetId: string): Promise<AvailabilityDay[]>
     await delay();
     return buildAvailability(vetId);
   }
-  const { data } = await api.get<AvailabilityDay[]>(`${VET_API}/vets/${vetId}/availability`);
-  return data;
+  const { data } = await api.get<{ days?: AvailabilityDay[] }>(`${VET_API}/vets/${vetId}/availability`);
+  return data.days ?? [];
 }
 
 export async function getReviews(vetId: string): Promise<VetReview[]> {
@@ -980,8 +980,8 @@ export async function getProviderAvailability(): Promise<ProviderAvailabilityBlo
     await delay();
     return MOCK_AVAIL_BLOCKS;
   }
-  const { data } = await api.get<ProviderAvailabilityBlock[]>(`${VET_API}/provider/availability`);
-  return data;
+  const { data } = await api.get<{ blocks?: ProviderAvailabilityBlock[] }>(`${VET_API}/provider/availability`);
+  return data.blocks ?? [];
 }
 
 export async function setProviderAvailability(blocks: ProviderAvailabilityBlock[]): Promise<ProviderAvailabilityBlock[]> {
@@ -990,8 +990,8 @@ export async function setProviderAvailability(blocks: ProviderAvailabilityBlock[
     MOCK_AVAIL_BLOCKS = blocks;
     return blocks;
   }
-  const { data } = await api.put<ProviderAvailabilityBlock[]>(`${VET_API}/provider/availability`, { blocks });
-  return data;
+  const { data } = await api.put<{ blocks?: ProviderAvailabilityBlock[] }>(`${VET_API}/provider/availability`, { blocks });
+  return data.blocks ?? [];
 }
 
 export async function getProviderAppointments(): Promise<ProviderAppointmentRow[]> {
