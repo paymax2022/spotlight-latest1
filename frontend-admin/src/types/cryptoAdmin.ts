@@ -188,3 +188,31 @@ export interface CryptoReconSummary {
   breaks: number;
   as_of: string;
 }
+
+// GET/PUT /admin/crypto/fee-schedule — the swap markup in integer basis points (never money,
+// never floats). version 0 is the configured default (nothing stored yet).
+export interface CryptoFeeScheduleVersion {
+  version: number;
+  major_bps: number;
+  other_bps: number;
+  majors: string[];
+  overrides: Record<string, number>;
+  reason: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface CryptoFeeScheduleResponse {
+  current: CryptoFeeScheduleVersion;
+  ceiling_bps: number;
+  history: CryptoFeeScheduleVersion[];
+}
+
+export interface CryptoFeeScheduleUpdate {
+  expected_version: number;
+  major_bps: number;
+  other_bps: number;
+  majors: string[];
+  overrides: Record<string, number>;
+  reason: string;
+}
