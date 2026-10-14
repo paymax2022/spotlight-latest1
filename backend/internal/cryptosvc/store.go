@@ -99,6 +99,10 @@ type Store interface {
 	// (updated_at asc), paginated by limit/offset (the caller bounds them). It backs
 	// the admin review queue; it is read-only and must not lock rows.
 	ListByState(ctx context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error)
+	// SwapByIDAny reads a swap by id WITHOUT user scoping. It is for the admin resolution
+	// path only (the caller is already gated by the crypto.admin permission); member reads
+	// must use SwapByID so another user's id stays 404.
+	SwapByIDAny(ctx context.Context, id string) (SwapRecord, bool, error)
 	// MarkExecuteAttempt records that the provider call is about to be made. first is true
 	// only for the call that set it.
 	MarkExecuteAttempt(ctx context.Context, id string) (first bool, err error)

@@ -118,6 +118,47 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /admin/crypto/swaps/{id}/resolve:
+    post:
+      tags: [Admin]
+      summary: Resolve a parked swap (admin)
+      description: >
+        Apply a human decision to a swap parked in needs_review. The decision is state-dependent
+        and enforced server-side:
+          - `retry`  — allowed ONLY when the swap has a provider swap id: re-poll the provider and
+            apply the authoritative outcome (which itself settles or releases).
+          - `release` — allowed ONLY when the swap has NO provider swap id (provider outcome
+            unknown): reverse the NGN hold back to the user's wallet and fail the swap. There is no
+            manual "settle/capture": we never credit crypto we cannot prove was bought.
+        An Idempotency-Key and a non-empty operator note are required. Idempotent — a repeat is a
+        no-op (the swap is no longer parked). crypto.admin; flag-gated by FEATURE_CRYPTO_SWAPS_ENABLED.
+        ADR-PR728.
+      operationId: resolveCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SwapId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, note]
+              additionalProperties: false
+              properties:
+                decision: { type: string, enum: [release, retry] }
+                note: { type: string, minLength: 1, description: Operator reason, audited }
+      responses:
+        '200':
+          description: The resolved swap
+          content: { application/json: { schema: { $ref: '#/components/schemas/ResolvedSwap' } } }
+        '400': { description: 'idempotency_key_required, note_required or bad_decision', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: swap_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'not_parked or settlement_conflict', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'nothing_to_retry (no provider id) or release_unsafe (has provider id)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '500': { $ref: '#/components/responses/Error' }
   /webhooks/crypto/{provider}:
     post:
       tags: [Webhooks]
@@ -163,6 +204,12 @@ components:
         success: { type: boolean, const: true }
         message: { type: string }
         swap: { $ref: '#/components/schemas/Swap' }
+    ResolvedSwap:
+      type: object
+      required: [success, swap]
+      properties:
+        success: { type: boolean, const: true }
+        swap: { $ref: '#/components/schemas/AdminReviewSwap' }
     ReviewQueue:
       type: object
       required: [success, swaps, count]
