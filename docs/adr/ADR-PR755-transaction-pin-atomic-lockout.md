@@ -26,8 +26,12 @@ Alternatives rejected:
   right PIN to trigger that.
 - After a lock expires `failed_attempts` is still at the threshold, so the first wrong guess relocks immediately.
   This is the previous behaviour, kept on purpose.
-- A failed reset after a correct PIN is still swallowed (as before): the user is let through but keeps the
-  reservation. Worth revisiting if the store gains logging.
+- A failed reset after a correct PIN now fails closed (it used to be swallowed): the reservation counted the
+  success too, so an unreset counter could leave the user locked while the money step proceeded.
+- **Parallel correct PINs each take a reservation.** A client already at 4 failures that fires two correct
+  requests at once can see the second refused as locked for about one bcrypt (~60 ms) until the first success
+  resets the state; a retry storm of 6+ simultaneous correct requests can trip the lock the same way. Transient
+  and self-clearing, and the price of capping guesses by reservation rather than by outcome.
 
 ## Not covered
 Per-user rate limiting on quote/confirm, and rate limiting by IP or device.

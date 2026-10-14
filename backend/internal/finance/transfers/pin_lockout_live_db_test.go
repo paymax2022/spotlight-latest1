@@ -165,3 +165,78 @@ func TestPinLockoutLiveDB_NotSetFailsClosed(t *testing.T) {
 		t.Fatalf("err = %v, want ErrPinNotSet", err)
 	}
 }
+
+// An expired lock with the counter still at the threshold: a burst of wrong
+// guesses may evaluate exactly one before the account relocks.
+func TestPinLockoutLiveDB_BurstAgainstExpiredLockEvaluatesOneGuess(t *testing.T) {
+	pool := liveDBPool(t)
+	ps := newPinStore(pool)
+	id := seedPinUser(t, pool, ps)
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE user_transaction_pin SET failed_attempts=$2, locked_until=now() - interval '1 minute' WHERE user_id=$1`, id, maxPinFailures); err != nil {
+		t.Fatal(err)
+	}
+	const burst = 20
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	evaluated := 0
+	start := make(chan struct{})
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			err := ps.Verify(context.Background(), id, "0000")
+			var attempt *PinAttemptError
+			mu.Lock()
+			defer mu.Unlock()
+			// The one reservation that gets in also hits the threshold, so it reports
+			// ErrPinLocked like the rest; count it by the stored attempt total below.
+			if errors.As(err, &attempt) {
+				evaluated++
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if evaluated != 0 {
+		t.Fatalf("%d guesses reported tries remaining; the counter was already at the threshold", evaluated)
+	}
+	if failed, locked := pinState(t, pool, id); failed != maxPinFailures+1 || !locked {
+		t.Fatalf("stored state failed=%d locked=%v, want exactly one reservation (%d) and locked", failed, locked, maxPinFailures+1)
+	}
+}
+
+// Parallel CORRECT PINs each take a reservation, so a legitimate burst at the
+// edge can be briefly refused; the first success must still clear the state.
+func TestPinLockoutLiveDB_ParallelCorrectPinsNeverLeaveTheUserLocked(t *testing.T) {
+	pool := liveDBPool(t)
+	ps := newPinStore(pool)
+	id := seedPinUser(t, pool, ps)
+
+	const burst = 4 // under the threshold: every request must succeed
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	failures := 0
+	start := make(chan struct{})
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := ps.Verify(context.Background(), id, lockoutTestPIN); err != nil {
+				mu.Lock()
+				failures++
+				mu.Unlock()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if failures != 0 {
+		t.Fatalf("%d of %d correct-PIN requests failed below the threshold", failures, burst)
+	}
+	if err := ps.Verify(context.Background(), id, lockoutTestPIN); err != nil {
+		t.Fatalf("user left unable to verify after a correct burst: %v", err)
+	}
+}

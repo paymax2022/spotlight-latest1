@@ -1308,8 +1308,12 @@ func (p *pinStore) Verify(ctx context.Context, userID, pin string) error {
 		return err // ErrPinNotSet, ErrPinLocked, or a DB error (all fail closed)
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(pin)) == nil {
-		_, _ = p.db.Exec(ctx,
-			`UPDATE user_transaction_pin SET failed_attempts=0, locked_until=NULL, updated_at=now() WHERE user_id=$1`, userID)
+		// The reservation counted this success too, so the reset must land or the
+		// user is left holding a spent attempt (and possibly a lock). Fail closed.
+		if _, err := p.db.Exec(ctx,
+			`UPDATE user_transaction_pin SET failed_attempts=0, locked_until=NULL, updated_at=now() WHERE user_id=$1`, userID); err != nil {
+			return fmt.Errorf("transfers: reset pin attempts: %w", err)
+		}
 		return nil
 	}
 	// Wrong PIN: the reservation already counted it, and set the lock if it was the last.
