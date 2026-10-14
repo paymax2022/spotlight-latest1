@@ -274,6 +274,8 @@ export interface DriverProfile {
   documents: DriverDocument[];
   vehicle: Vehicle | null;
   rating: number;
+  serviceInterests?: string[];
+  coverageAreas?: string[];
 }
 
 export interface OnboardingSubmitDraft {
@@ -285,6 +287,7 @@ export interface OnboardingSubmitDraft {
 
 export interface VehicleDraft {
   plateNumber: string;
+  vehicleType?: 'car' | 'motorcycle' | 'bicycle';
   make: string;
   model: string;
   year: number;

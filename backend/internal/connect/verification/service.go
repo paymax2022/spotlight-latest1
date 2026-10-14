@@ -156,10 +156,21 @@ func (s *StatusService) SubmitSelfie(ctx context.Context, req LivenessRequest) (
 	err = tx.QueryRow(ctx, sel, req.UserID).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		current = StatusNone
-		const ins = `INSERT INTO connect_verification (user_id, level, status) VALUES ($1,'l0','none')
-			ON CONFLICT (user_id) DO NOTHING`
+		// A bare ON CONFLICT DO NOTHING (no conflict target) is valid whether or not the unique
+		// index exists: with it, the loser of a concurrent first submit waits for the winner and
+		// does nothing instead of failing with 23505; without it (a database that still has
+		// duplicate rows) the NOT EXISTS guard keeps the common case to one row.
+		const ins = `INSERT INTO connect_verification (user_id, level, status)
+			SELECT $1::uuid, 'l0', 'none'
+			WHERE NOT EXISTS (SELECT 1 FROM connect_verification WHERE user_id = $1::uuid)
+			ON CONFLICT DO NOTHING`
 		if _, err := tx.Exec(ctx, ins, req.UserID); err != nil {
 			return nil, fmt.Errorf("connect: init verification: %w", err)
+		}
+		// Re-read under the row lock: another submit may have created the row (and moved it on)
+		// first, and the transition check below must see the real current state.
+		if err := tx.QueryRow(ctx, sel, req.UserID).Scan(&current); err != nil {
+			return nil, fmt.Errorf("connect: lock verification: %w", err)
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("connect: lock verification: %w", err)

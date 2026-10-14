@@ -35,6 +35,7 @@ import type {
   OverridePolicy,
   MerchantSummary,
   MerchantDetail,
+  BudgetLine,
 } from '@/types/referralAdminOps';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
@@ -442,9 +443,38 @@ export async function getReconciliation(): Promise<Reconciliation> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(RECONCILIATION)); }
   return getJson<Reconciliation>('/finance/reconciliation');
 }
+// Assembled from the endpoints that exist: budgets (/finance/budgets) and
+// reward-to-LTV (/finance/reward-to-ltv). The backend has no burn-rate window,
+// daily spend series or LTV cap yet, so those come back null and the pages say so.
 export async function getBudgetBurn(): Promise<BudgetBurn> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(BUDGET_BURN)); }
-  return getJson<BudgetBurn>('/finance/budget');
+  const [b, l] = await Promise.all([
+    getJson<{ budgets?: { scope: string; scope_ref?: string; budget_kobo: number; spent_kobo: number; active: boolean; alert_triggered: boolean }[] }>('/finance/budgets'),
+    getJson<{ reward_to_ltv?: { ratio_bps: number } }>('/finance/reward-to-ltv'),
+  ]);
+  const active = (b.budgets ?? []).filter((x) => x.active);
+  const global = active.find((x) => x.scope === 'global');
+  const lines: BudgetLine[] = active.map((x) => {
+    const spent = x.spent_kobo;
+    const alert: BudgetLine['alert'] = spent >= x.budget_kobo ? 'breach' : x.alert_triggered ? 'warn' : 'ok';
+    return {
+      scope: x.scope_ref ? `${x.scope}: ${x.scope_ref}` : x.scope,
+      budget_kobo: x.budget_kobo,
+      spent_kobo: spent,
+      burn_rate_kobo_per_day: null,
+      projected_exhaust_date: null,
+      alert,
+    };
+  });
+  return {
+    as_of: new Date().toISOString(),
+    program_budget_kobo: global?.budget_kobo ?? null,
+    program_spent_kobo: global?.spent_kobo ?? null,
+    reward_to_ltv_ratio: l.reward_to_ltv ? l.reward_to_ltv.ratio_bps / 10000 : null,
+    reward_to_ltv_cap_pct: null,
+    lines,
+    trend: [],
+  };
 }
 export async function getFloat(): Promise<Float> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(FLOAT)); }
