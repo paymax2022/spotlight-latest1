@@ -110,17 +110,20 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.POST("/pets/:id/vaccinations", h.ScheduleVaccination) // reminder via scheduler
 	vg.GET("/vets", h.DiscoverVets)                          // map/list discovery (HL-2, PostGIS)
 	vg.GET("/vets/:id", h.GetVet)                            // one listed vet (profile)
-	vg.POST("/services", h.UpsertService)                    // verified vet owner; fee governance
-	vg.POST("/appointments", h.Book)                         // tele/home/clinic; payment HELD (HL-9)
-	vg.GET("/appointments", h.ListMyAppointments)            // owner's own appointment history
-	vg.GET("/appointments/:id", h.Get)                       // object-level authZ
-	vg.POST("/appointments/:id/accept", h.Accept)            // verified vet (HL-2)
-	vg.POST("/appointments/:id/confirm", h.Confirm)          // ACCEPTED → CONFIRMED
-	vg.POST("/appointments/:id/cancel", h.Cancel)            // owner/vet → refund HELD (HL-9)
-	vg.POST("/appointments/:id/dispatch", h.Dispatch)        // home visit on transport rail
-	vg.POST("/consults/:id/start", h.StartConsult)           // verified vet; consult engine (HL-2)
-	vg.POST("/consults/:id/complete", h.CompleteConsult)     // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
-	vg.POST("/sos", h.EmergencySOS)                          // HL-11: nearest in-person vet + disclaimer
+	vg.GET("/vets/:id/availability", h.VetAvailability)      // bookable slots for a listed vet
+	vg.GET("/provider/availability", h.ProviderAvailability) // the vet's own weekly hours
+	vg.PUT("/provider/availability", h.SaveProviderAvailability)
+	vg.POST("/services", h.UpsertService)                // verified vet owner; fee governance
+	vg.POST("/appointments", h.Book)                     // tele/home/clinic; payment HELD (HL-9)
+	vg.GET("/appointments", h.ListMyAppointments)        // owner's own appointment history
+	vg.GET("/appointments/:id", h.Get)                   // object-level authZ
+	vg.POST("/appointments/:id/accept", h.Accept)        // verified vet (HL-2)
+	vg.POST("/appointments/:id/confirm", h.Confirm)      // ACCEPTED → CONFIRMED
+	vg.POST("/appointments/:id/cancel", h.Cancel)        // owner/vet → refund HELD (HL-9)
+	vg.POST("/appointments/:id/dispatch", h.Dispatch)    // home visit on transport rail
+	vg.POST("/consults/:id/start", h.StartConsult)       // verified vet; consult engine (HL-2)
+	vg.POST("/consults/:id/complete", h.CompleteConsult) // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
+	vg.POST("/sos", h.EmergencySOS)                      // HL-11: nearest in-person vet + disclaimer
 
 	ag := admin.Group("")
 	// Identical bug to PHARMACY-006/LAB-003: `admin` here is adminGroupTop5
