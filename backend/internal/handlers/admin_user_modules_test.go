@@ -226,9 +226,41 @@ func TestModules_RespectsConcurrencyCap(t *testing.T) {
 		atomic.AddInt32(&cur, -1)
 		return 0, "", nil
 	}
-	callModules(t, enabledModulesHandler(superAdminRBAC(), q), rolesTargetID)
+	// Two concurrent requests share ONE cap; a per-request semaphore would allow 2x.
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			callModules(t, enabledModulesHandler(superAdminRBAC(), q), rolesTargetID)
+		}()
+	}
+	wg.Wait()
 	if max > overviewConcurrency || max < 2 {
-		t.Fatalf("max in-flight = %d, want 2..%d", max, overviewConcurrency)
+		t.Fatalf("max in-flight across two requests = %d, want 2..%d", max, overviewConcurrency)
+	}
+}
+
+func TestModules_NonCanonicalIDIsNormalised(t *testing.T) {
+	var mu sync.Mutex
+	ids := map[string]bool{}
+	q := func(_ context.Context, _ string, userID string) (int64, string, error) {
+		mu.Lock()
+		ids[userID] = true
+		mu.Unlock()
+		return 0, "", nil
+	}
+	w := callModules(t, enabledModulesHandler(superAdminRBAC(), q), "%7B"+strings.ToUpper(rolesTargetID)+"%7D")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if len(ids) != 1 || !ids[rolesTargetID] {
+		t.Fatalf("querier saw %v, want only the canonical %s", ids, rolesTargetID)
+	}
+	for _, m := range decodeModules(t, w).Modules {
+		if m.Key == "mkt_listings" && !strings.HasSuffix(m.Href, "/"+rolesTargetID) {
+			t.Errorf("href %q not canonical", m.Href)
+		}
 	}
 }
 

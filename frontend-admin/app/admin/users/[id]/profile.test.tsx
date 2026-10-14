@@ -137,6 +137,7 @@ describe('AdminUserProfilePage', () => {
       await screen.findByText('No admin actions recorded')
       await screen.findByText('No active sessions')
       await screen.findAllByText('No transactions')
+      await screen.findByText('Not onboarded to any module')
       expect(fetchSpy).not.toHaveBeenCalled()
     } finally {
       fetchSpy.mockRestore()

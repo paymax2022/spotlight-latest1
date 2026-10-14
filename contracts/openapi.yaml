@@ -4742,6 +4742,7 @@ paths:
                         status: { type: string, enum: [member, none, error] }
                         count: { type: integer, format: int64 }
                         since: { type: string }
+        '400': { description: id is not a UUID }
         '401': { description: Missing or invalid bearer token }
         '403': { description: Caller lacks users.view or the target is outside the caller's scope }
         '404': { description: User not found, or the feature flag is off }

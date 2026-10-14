@@ -25,6 +25,10 @@ import (
 	"spotlight/backend/internal/middleware"
 )
 
+// membershipSem is process-wide, not per request: N concurrent profile views must
+// not multiply the in-flight queries on the pool the money path shares.
+var membershipSem = make(chan struct{}, overviewConcurrency)
+
 type membershipSpec struct {
 	Key   string
 	Label string
@@ -58,8 +62,8 @@ var membershipSpecs = []membershipSpec{
 		SQL: `SELECT count(*), min(created_at)::text FROM public.doctor_profiles WHERE user_id = $1`},
 	{Key: "doctors", Label: "Telemedicine doctor", Group: "Health", Href: "/admin/telemedicine/dashboard",
 		SQL: `SELECT count(*), min(created_at)::text FROM public.doctors WHERE user_id = $1`},
-	{Key: "events", Label: "Event organiser", Group: "Community", Href: "/admin/events/approval",
-		SQL: `SELECT count(*), min(created_at)::text FROM public.events WHERE organizer_id = $1`},
+	{Key: "events", Label: "Event organiser", Group: "Community", Href: "/admin/events/approval", // organiser_id: canonical since 20260902000001 (organizer_id is legacy)
+		SQL: `SELECT count(*), min(created_at)::text FROM public.events WHERE organiser_id = $1`},
 	{Key: "event_tickets", Label: "Event ticket holder", Group: "Community", Href: "/admin/events/approval",
 		SQL: `SELECT count(*), min(created_at)::text FROM public.event_tickets WHERE owner_id = $1`},
 	{Key: "creator_profiles", Label: "Creator", Group: "Community", Href: "/admin/creators/dashboard",
@@ -133,11 +137,14 @@ func (h *AdminUsersHandler) Modules(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "not found"})
 		return
 	}
-	userID := c.Param("id")
-	if _, err := uuid.Parse(userID); err != nil {
+	parsed, err := uuid.Parse(c.Param("id"))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid user id"})
 		return
 	}
+	// Canonical lowercase form: uuid.Parse also accepts {..}/urn:uuid forms, which
+	// must not reach the href or the bound parameter.
+	userID := parsed.String()
 	target, err := h.svc.GetAdminUser(userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "user not found"})
@@ -154,18 +161,23 @@ func (h *AdminUsersHandler) Modules(c *gin.Context) {
 		timeout = overviewQueryTimeout
 	}
 	out := make([]userModule, len(membershipSpecs))
-	sem := make(chan struct{}, overviewConcurrency)
 	var wg sync.WaitGroup
 	for i, spec := range membershipSpecs {
 		wg.Add(1)
 		go func(i int, s membershipSpec) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
 			m := userModule{
 				Key: s.Key, Label: s.Label, Group: s.Group,
 				Href: strings.ReplaceAll(s.Href, "{userId}", userID),
+			}
+			// Wait for a global slot, but give up if the request is cancelled.
+			select {
+			case membershipSem <- struct{}{}:
+				defer func() { <-membershipSem }()
+			case <-c.Request.Context().Done():
+				m.Status = "error"
+				out[i] = m
+				return
 			}
 			ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 			defer cancel()
