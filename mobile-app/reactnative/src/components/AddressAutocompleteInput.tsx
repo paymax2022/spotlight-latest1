@@ -75,6 +75,16 @@ interface Props {
    * under the field, and in the dropdown when the field is focused & empty.
    */
   enableRecents?: boolean;
+  /**
+   * Render the suggestion list IN the layout flow (pushing whatever is below it
+   * down) instead of floating over it. Use it in forms where a button or field
+   * sits under the address: an absolutely-positioned list overflows its card,
+   * the later sibling paints over it, and Android does not deliver touches that
+   * land outside the parent's bounds — so the suggestions are visible-but-dead
+   * or hidden entirely. Default false keeps the floating list the checkout
+   * screens were built around.
+   */
+  inlineDropdown?: boolean;
 }
 
 /**
@@ -101,6 +111,7 @@ export default function AddressAutocompleteInput({
   enableMapConfirm = true,
   enableCurrentLocation = true,
   enableRecents = true,
+  inlineDropdown = false,
 }: Props) {
   const [suggestions, setSuggestions] = useState<AddressHit[]>([]);
   const [recents, setRecents] = useState<RecentAddress[]>([]);
@@ -273,7 +284,7 @@ export default function AddressAutocompleteInput({
       </View>
 
       {dropdownVisible && (
-        <View style={[styles.dropdown, shadow1]}>
+        <View style={[styles.dropdown, inlineDropdown && styles.dropdownInline, shadow1]}>
           {enableCurrentLocation && gps.available && (
             <Pressable onPress={useMyLocation} style={[styles.row, styles.actionRow]} accessibilityRole="button">
               <Crosshair size={16} color={Colors.primary} strokeWidth={2} />
@@ -426,6 +437,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     zIndex: 20,
   },
+  dropdownInline: { position: 'relative', top: undefined, left: undefined, right: undefined },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
