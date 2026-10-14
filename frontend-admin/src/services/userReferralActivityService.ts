@@ -35,7 +35,9 @@ export async function getUserReferralCode(id: string): Promise<ReferralCode | nu
   });
   if (res.status === 404) return null;
   const p = await readOrThrow(res, 'Loading referral code');
-  return { code: String(p.code ?? ''), source: String(p.source ?? '') };
+  const code = typeof p.code === 'string' ? p.code.trim() : '';
+  if (!code) return null;
+  return { code, source: String(p.source ?? '') };
 }
 
 /** GET /api/referral/admin/users/:id/referral-360 (referral.users.view); payload is {user: {...}}. */

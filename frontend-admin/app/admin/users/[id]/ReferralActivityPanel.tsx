@@ -157,7 +157,7 @@ function LedgerSection({ userId }: { userId: string }) {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={`${r.id}-${i}`}>
+                    <tr key={r.id || `row-${i}`}>
                       <td>{r.kind}</td>
                       <td>{r.state}</td>
                       <td>{formatKobo(r.amount_kobo)}</td>

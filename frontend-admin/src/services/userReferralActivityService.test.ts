@@ -20,6 +20,12 @@ describe('getUserReferralCode', () => {
     stub(404, { error: 'no referral code' })
     expect(await getUserReferralCode('u1')).toBeNull()
   })
+  it('treats a 200 with an empty or absent code as no code', async () => {
+    stub(200, { code: '   ', source: 'referral_links' })
+    expect(await getUserReferralCode('u1')).toBeNull()
+    stub(200, { source: 'referral_links' })
+    expect(await getUserReferralCode('u1')).toBeNull()
+  })
   it('throws with status on 403', async () => {
     stub(403, { error: 'forbidden' })
     await expect(getUserReferralCode('u1')).rejects.toMatchObject({ status: 403 })
