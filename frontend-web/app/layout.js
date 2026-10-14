@@ -1,5 +1,6 @@
 import "@/src/styles/tailwind.css"
 
+import NavTelemetry from "@/src/features/telemetry/NavTelemetry"
 import { Kumbh_Sans } from 'next/font/google'
 
 const kumbh = Kumbh_Sans({
@@ -67,7 +68,10 @@ export default function RootLayout({ children }) {
           <link key={href} rel="stylesheet" href={href} />
         ))}
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <NavTelemetry />
+      </body>
     </html>
   )
 }
