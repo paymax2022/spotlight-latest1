@@ -2634,8 +2634,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// separate finance-ops/compliance role exists yet to justify splitting them.
 		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
 		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
-		// Read-only tier + limits for the admin user profile (raw numbers; Tier 0 = wallet disabled, Tier 3 = unlimited).
-		adminFinance.GET("/tiers/:user_id", middleware.RequirePermission(rbac, "finance.admin.transfers"), tiers.AdminGetTier(tiersSvc))
+	}
+	// Read-only reads for the admin user profile; deliberately NOT wallet-flag gated.
+	// Raw numbers: Tier 0 limits 0/0 = wallet disabled, Tier 3 limits 0/0 = unlimited.
+	adminFinance.GET("/tiers/:user_id", middleware.RequirePermission(rbac, "finance.admin.transfers"), tiers.AdminGetTier(tiersSvc))
+	if rewardSvc != nil {
+		adminFinance.GET("/referrals/:user_id", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCaseByUser(rewardSvc))
 	}
 
 	// Capture the service so we can wire the optional CAC-business gate below once the

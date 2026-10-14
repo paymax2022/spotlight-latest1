@@ -1,9 +1,8 @@
-import { webProxyBase } from '@/config/env';
-import { authHeaders, readOrThrow } from './usersService';
+import { adminApiBase, authHeaders, readOrThrow } from './usersService';
 
 /**
  * Read-only referral case for the admin user profile. Backend:
- * GET /v1/admin/referrals/:referrerId/case (referral.admin.case RBAC). Reads
+ * GET /api/finance/admin/referrals/:id (Go thin alias of /v1/admin/referrals/:referrerId/case; referral.admin.case RBAC). Reads
  * throw AdminUsersRequestError (via readOrThrow) so callers can tell 403 apart.
  */
 export type ReferralCase = {
@@ -35,12 +34,8 @@ export type ReferralCase = {
   }>;
 };
 
-function webBase(): string {
-  return webProxyBase();
-}
-
 export async function getUserReferralCase(id: string): Promise<ReferralCase> {
-  const res = await fetch(`${webBase()}/v1/admin/referrals/${encodeURIComponent(id)}/case`, {
+  const res = await fetch(`${adminApiBase()}/finance/admin/referrals/${encodeURIComponent(id)}`, {
     cache: 'no-store',
     headers: authHeaders(),
   });
