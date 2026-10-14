@@ -1,7 +1,7 @@
 # Vet profile and availability — design
 
 **Date:** 2026-10-14
-**Status:** Approved direction (options A and B as recommended). Slice 1 not started.
+**Status:** Approved direction; all three open points answered (see below). Slice 1 not started.
 **Scope:** slices 1 and 2 of the vet module build-out. Booking (slice 3) and reviews (slice 4) get their own specs.
 
 ## Goal
@@ -90,11 +90,29 @@ RLS: enabled, no anon/authenticated policies, access only through the Go pool (t
 - Object-level: `GET /vets/:id` and `/availability` answer 404 for unlisted vets, so the endpoints are not an existence oracle.
 - Provider writes are scoped to the caller's own `health_providers` row (the same owner check as the pet work).
 
-## Open points (to settle before slice 1 merges)
+## Resolved points (answered 2026-10-14)
 
-1. **Profile draft shape.** The editor saves inside `profileDraft.draft` (the app's own note says this is deeper than the top level). The keys the public profile needs (headline, bio, clinic, address, species, specialties) must be confirmed against the vet profile editor and written down as the contract. Until then, slice 1 maps only what is certain and leaves the rest empty.
-2. **Fees in the profile editor.** The editor collects chat, video and audio fees. The vet module's booking prices come from `vet_services`. Recommend: `vet_services` is the only source for money, and the editor's fee fields are ignored by this module. Needs a yes/no.
-3. **Staging fixtures.** Staging has no vets. End-to-end tests need approved, discoverable, published vets with services and hours. Seeding staging is a shared-data write and needs your approval; the alternative is local-only fixtures.
+1. **Profile draft shape — resolved.** The vet draft is `VetProfileDraft` (`mobile-app/reactnative/src/types/doctor.batch1.ts`), saved under `doctor_vet_profiles.profile_draft.draft`. The public profile maps from these keys:
+
+   | Public field | Draft key |
+   |---|---|
+   | name | `personalInfo.title` + `firstName` + `lastName` |
+   | bio | `bio` |
+   | address / city / state | `personalInfo.address`, `city`, `state` |
+   | clinicName | the `affiliations[]` entry with `isPrimary: true`, `name` |
+   | species | `speciesTreated` |
+   | specialty | `specialtyId` (an id; the label lookup is part of slice 1) |
+   | years of experience | `yearsExperience` |
+   | credential status | `doctor_vet_profiles.verification` |
+   | published | `doctor_vet_profiles.is_published` |
+
+   `headline` has no draft key. Slice 1 returns it empty rather than inventing one.
+
+   **Known risk, not fixed here:** every save replaces the whole `draft` object, so saving one editor step can erase the others (recorded in `doctor.profile.api.ts`). A vet can publish a partial profile. The fix belongs in the profile write path and is a separate change; slice 1 shows whatever is published and does not hide it.
+
+2. **Fees — resolved: `vet_services` only.** The editor's `pricing` fields are ignored by the vet module. Booking and every fee shown to an owner come from active `vet_services` rows.
+
+3. **Staging fixtures — approved.** Approval covers seeding a small set of clearly labelled test vets on staging (approved, discoverable, published, with services and hours). Names will carry a `TEST` marker. Seeding happens after slice 1 merges, so it can be checked live.
 
 ## Testing
 
