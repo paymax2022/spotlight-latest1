@@ -216,3 +216,39 @@ export interface CryptoFeeScheduleUpdate {
   overrides: Record<string, number>;
   reason: string;
 }
+
+// GET /admin/crypto/reconciler — the swap reconciler's state. `replica` is in-process state of
+// the replica that answered (only the elected leader works; resets on restart); `backlog` is read
+// from the database. Counts and integer kobo only; no swap or user identifiers.
+export interface CryptoReconcilerAlert {
+  at: string;
+  kind: string;
+  message: string;
+}
+
+export interface CryptoReconcilerStatus {
+  success: boolean;
+  note: string;
+  replica: {
+    started_at: string;
+    runs: number;
+    led_runs: number;
+    skipped_runs: number;
+    last_run_at: string;
+    last_led_at: string;
+    last_led: boolean;
+    last_error: string;
+    last_result: { resolved: number; released: number; parked: number; expired: number; errors: number; clearing_negative: boolean };
+    totals: { resolved: number; released: number; parked: number; expired: number; errors: number; clearing_negative_runs: number };
+    recent_alerts: CryptoReconcilerAlert[];
+  };
+  backlog: CryptoReconcilerBacklog[];
+}
+
+export interface CryptoReconcilerBacklog {
+  state: 'needs_review' | 'confirming' | 'processing' | 'quoted' | string;
+  count: number;
+  held_kobo: number;
+  oldest_updated_at?: string;
+  oldest_age_seconds: number;
+}
