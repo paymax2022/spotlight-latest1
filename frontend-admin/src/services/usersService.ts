@@ -154,3 +154,43 @@ export async function getSecurityEvents(id: string): Promise<Record<string, unkn
   const payload = await readOrThrow(res, 'Loading security events');
   return Array.isArray(payload.events) ? (payload.events as Record<string, unknown>[]) : [];
 }
+
+export type AdminAuditEntry = {
+  id: string;
+  actor_user_id: string;
+  target_user_id: string;
+  action: string;
+  module: string;
+  severity: string;
+  created_at: string;
+};
+
+/** Admin actions taken on a user (permission audit.logs.view). */
+export async function getAuditLogsForUser(userId: string, limit = 50): Promise<AdminAuditEntry[]> {
+  const res = await fetch(`${adminApiBase()}/admin/audit-logs?targetUser=${enc(userId)}&limit=${limit}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading admin actions');
+  return Array.isArray(payload.logs) ? (payload.logs as AdminAuditEntry[]) : [];
+}
+
+export type UserSession = {
+  id: string;
+  device: string;
+  ip: string;
+  userAgent: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  createdAt: string;
+};
+
+/** Active sessions for a user. A 503 means session hardening is disabled. */
+export async function getUserSessions(userId: string): Promise<UserSession[]> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(userId)}/sessions`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading sessions');
+  return Array.isArray(payload.sessions) ? (payload.sessions as UserSession[]) : [];
+}

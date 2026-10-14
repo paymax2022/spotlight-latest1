@@ -4,6 +4,8 @@ import {
   AdminUsersRequestError,
   assignUserRole,
   getAdminUser,
+  getAuditLogsForUser,
+  getUserSessions,
   getLoginActivity,
   getSecurityEvents,
   getUserRoles,
@@ -101,5 +103,41 @@ describe('usersService role writes', () => {
   it('removeUserRole returns false on failure', async () => {
     respond(500, { success: false });
     await expect(removeUserRole('u1', 'r1')).resolves.toBe(false);
+  });
+});
+
+describe('usersService audit logs and sessions', () => {
+  it('getAuditLogsForUser sends targetUser and limit and returns logs', async () => {
+    respond(200, { success: true, logs: [{ id: 'a1' }] });
+    await expect(getAuditLogsForUser('u1', 20)).resolves.toEqual([{ id: 'a1' }]);
+    const { url, init } = lastCall();
+    expect(url).toBe(full('/api/admin/audit-logs?targetUser=u1&limit=20'));
+    expect(init.method ?? 'GET').toBe('GET');
+  });
+
+  it('getAuditLogsForUser defaults the limit to 50', async () => {
+    respond(200, { success: true, logs: [] });
+    await getAuditLogsForUser('u1');
+    expect(lastCall().url).toBe(full('/api/admin/audit-logs?targetUser=u1&limit=50'));
+  });
+
+  it('getAuditLogsForUser throws AdminUsersRequestError(403)', async () => {
+    respond(403, { success: false, error: 'forbidden' });
+    const err = await getAuditLogsForUser('u1').catch((e) => e);
+    expect(err).toBeInstanceOf(AdminUsersRequestError);
+    expect(err.status).toBe(403);
+  });
+
+  it('getUserSessions returns sessions', async () => {
+    respond(200, { success: true, sessions: [{ id: 's1' }] });
+    await expect(getUserSessions('u1')).resolves.toEqual([{ id: 's1' }]);
+    expect(lastCall().url).toBe(full('/api/admin/users/u1/sessions'));
+  });
+
+  it('getUserSessions surfaces status 503 on feature_disabled', async () => {
+    respond(503, { success: false, error: 'feature_disabled' });
+    const err = await getUserSessions('u1').catch((e) => e);
+    expect(err).toBeInstanceOf(AdminUsersRequestError);
+    expect(err.status).toBe(503);
   });
 });
