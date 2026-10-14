@@ -123,4 +123,35 @@ describe('TransactionsPanel', () => {
       expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'DEBIT', offset: 0, user_id: 'u1' })),
     )
   })
+
+  it('userId change: a slow response for the old user does not overwrite the new user\'s rows', async () => {
+    const pending: Record<string, (v: unknown) => void> = {}
+    impl = (f) =>
+      new Promise((resolve) => {
+        pending[String(f.user_id)] = resolve
+      })
+    const { rerender } = render(<TransactionsPanel userId="A" />)
+    await waitFor(() => expect(pending.A).toBeTruthy())
+    rerender(<TransactionsPanel userId="B" />)
+    await waitFor(() => expect(pending.B).toBeTruthy())
+    pending.B(page([row('b1')], 1))
+    await screen.findByText('desc-b1')
+    pending.A(page([row('a1')], 1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('desc-a1')).toBeNull()
+    expect(screen.getByText('desc-b1')).toBeTruthy()
+  })
+
+  it('userId change resets the page to offset 0', async () => {
+    setResult(page([row('a')], 60))
+    const { rerender } = render(<TransactionsPanel userId="A" />)
+    await screen.findByText('desc-a')
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 'A', offset: 25 })))
+    mockList.mockClear()
+    rerender(<TransactionsPanel userId="B" />)
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+    expect(mockList).toHaveBeenCalledTimes(1)
+    expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 'B', offset: 0 }))
+  })
 })

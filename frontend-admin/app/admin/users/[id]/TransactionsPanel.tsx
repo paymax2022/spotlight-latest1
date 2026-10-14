@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   formatKobo,
   listAdminTransactions,
@@ -47,13 +47,20 @@ const td = { padding: '6px 8px' };
 export function TransactionsPanel({ userId }: { userId: string }) {
   const [rows, setRows] = useState<AdminTransactionRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  // Offset is stored with the user it belongs to, so a userId change reads as
+  // offset 0 immediately (no fetch with the previous user's stale offset).
+  const [paging, setPaging] = useState({ userId, offset: 0 });
+  const offset = paging.userId === userId ? paging.offset : 0;
+  const setOffset = (o: number) => setPaging({ userId, offset: o });
+  // Incremented per load(); results of superseded requests are ignored.
+  const requestId = useRef(0);
   const [type, setType] = useState<LedgerEntryType | ''>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
 
   const load = useCallback(async () => {
+    const myId = ++requestId.current;
     setLoading(true);
     setError(null);
     setForbidden(false);
@@ -64,16 +71,18 @@ export function TransactionsPanel({ userId }: { userId: string }) {
         offset,
         ...(type ? { type } : {}),
       });
+      if (myId !== requestId.current) return;
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
+      if (myId !== requestId.current) return;
       if (isForbidden(err)) {
         setForbidden(true);
       } else {
         setError(err instanceof Error ? err.message : 'Loading transactions failed.');
       }
     } finally {
-      setLoading(false);
+      if (myId === requestId.current) setLoading(false);
     }
   }, [userId, offset, type]);
 
