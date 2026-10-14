@@ -27,8 +27,8 @@ Alternatives rejected:
   A leader election outage shows as every replica skipping or erroring while `backlog` ages.
 - Alert history is lost on restart. The log sink is unchanged and remains the durable record.
 - `Store` gains `Backlog`; any new `Store` implementation must provide it. `HandlerDeps` gains `Recon` (nil answers 503).
-- The rollup is a full group-by over open rows only (`status IN (...)`), cheap while open swaps stay few; revisit if the
-  table grows large without an index on status.
+- The rollup groups over open rows only (`status IN (...)`) and `crypto_swaps` already has an index covering status, so it
+  stays cheap while open swaps stay few.
 
 ## Not covered
 A persisted fleet-wide history, an alert sink other than the log, staleness thresholds in the response, and an admin UI tab.
