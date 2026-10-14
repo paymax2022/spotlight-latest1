@@ -30,6 +30,14 @@ type AdminUser struct {
 	ContestID        string `json:"contestId"`
 	SchoolID         string `json:"schoolId"`
 	CreatedAt        string `json:"createdAt"`
+
+	// Filled only by the single-user GET (EnrichAdminUser); omitted from list/export.
+	AvatarURL       string `json:"avatarUrl,omitempty"`
+	LastLoginAt     string `json:"lastLoginAt,omitempty"`
+	EmailVerifiedAt string `json:"emailVerifiedAt,omitempty"`
+	PhoneVerifiedAt string `json:"phoneVerifiedAt,omitempty"`
+	ReferralCode    string `json:"referralCode,omitempty"`
+	ReferredBy      string `json:"referredBy,omitempty"`
 }
 
 type AdminUserFilter struct {

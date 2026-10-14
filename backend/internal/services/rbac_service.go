@@ -65,6 +65,19 @@ type BulkOpResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// AdminUserEnricher is an optional capability of RBACService (kept off the
+// interface so existing fakes stay valid); the handler type-asserts for it.
+type AdminUserEnricher interface {
+	EnrichAdminUser(ctx context.Context, u domain.AdminUser) domain.AdminUser
+}
+
+func (s *rbacService) EnrichAdminUser(ctx context.Context, u domain.AdminUser) domain.AdminUser {
+	if e, ok := s.repo.(repositories.AdminUserEnricher); ok {
+		return e.EnrichAdminUser(ctx, u)
+	}
+	return u
+}
+
 type rbacService struct{ repo repositories.RBACRepository }
 
 func NewRBACService(repo repositories.RBACRepository) RBACService { return &rbacService{repo: repo} }

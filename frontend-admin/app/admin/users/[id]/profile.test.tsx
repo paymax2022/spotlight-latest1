@@ -23,12 +23,24 @@ vi.mock('@/services/usersService', () => ({
   getSecurityEvents: (...args: unknown[]) => mockGetSecurityEvents(...args),
   assignUserRole: (...args: unknown[]) => mockAssignUserRole(...args),
   removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
+  getAuditLogsForUser: vi.fn().mockResolvedValue([]),
+  getUserSessions: vi.fn().mockResolvedValue([]),
   AdminUsersRequestError: class extends Error {
     constructor(public readonly status: number, message: string) {
       super(message)
     }
   },
 }))
+
+vi.mock('@/services/transactionsAdminService', async () => {
+  const actual = await vi.importActual<typeof import('@/services/transactionsAdminService')>(
+    '@/services/transactionsAdminService',
+  )
+  return {
+    ...actual,
+    listAdminTransactions: vi.fn().mockResolvedValue({ rows: [], total: 0, limit: 25, offset: 0 }),
+  }
+})
 
 const mockGetUserRoles = vi.fn()
 const mockGetLoginActivity = vi.fn()
@@ -65,6 +77,7 @@ import { WalletPanel } from './WalletPanel'
 import { KycPanel } from './KycPanel'
 import { ActivityPanel } from './ActivityPanel'
 import { ReferralTierPanel } from './ReferralTierPanel'
+import { UserAvatar } from './UserAvatar'
 import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
@@ -114,6 +127,21 @@ describe('AdminUserProfilePage', () => {
     expect(screen.getByText('Save Changes')).toBeTruthy()
   })
 
+  it('makes no real network calls while rendering the full profile', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    try {
+      getAdminUserImpl = async () => user
+      render(<AdminUserProfilePage params={params('u1')} />)
+      await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeTruthy())
+      await screen.findByText('No admin actions recorded')
+      await screen.findByText('No active sessions')
+      await screen.findAllByText('No transactions')
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   it('says so when the user does not exist', async () => {
     getAdminUserImpl = async () => null
     render(<AdminUserProfilePage params={params('missing')} />)
@@ -128,6 +156,91 @@ describe('AdminUserProfilePage', () => {
     await waitFor(() => expect(screen.getByText(/HTTP 403/)).toBeTruthy())
     expect(screen.getByText('Retry')).toBeTruthy()
     expect(screen.queryByText('User not found.')).toBeNull()
+  })
+})
+
+describe('AdminUserProfilePage header', () => {
+  beforeEach(() => {
+    mockGetUserRoles.mockResolvedValue([])
+    mockListRoles.mockResolvedValue([])
+    mockGetWalletBalance.mockResolvedValue({ balanceKobo: 0 })
+    mockGetWalletTransactions.mockResolvedValue([])
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'none', openCaseId: null })
+    mockGetLoginActivity.mockResolvedValue([])
+    mockGetSecurityEvents.mockResolvedValue([])
+  })
+  afterEach(() => cleanup())
+
+  const renderWith = async (extra: Record<string, unknown>) => {
+    getAdminUserImpl = async () => ({ ...user, ...extra })
+    render(<AdminUserProfilePage params={params('u1')} />)
+    await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeTruthy())
+  }
+
+  it('renders avatar image when avatarUrl is present', async () => {
+    await renderWith({ avatarUrl: 'https://cdn.example.com/ada.png' })
+    const img = screen.getByRole('img', { name: 'Ada Lovelace' }) as HTMLImageElement
+    expect(img.getAttribute('src')).toBe('https://cdn.example.com/ada.png')
+  })
+
+  it('falls back to initials when avatarUrl is absent', async () => {
+    await renderWith({})
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it('falls back to initials when the image fails to load', async () => {
+    await renderWith({ avatarUrl: 'https://cdn.example.com/broken.png' })
+    fireEvent.error(screen.getByRole('img', { name: 'Ada Lovelace' }))
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it.each([
+    ['http:', 'http://cdn.example.com/ada.png'],
+    ['data:', 'data:image/png;base64,AAAA'],
+    ['javascript:', 'javascript:alert(1)'],
+    ['unparsable', 'not a url'],
+  ])('falls back to initials for a %s avatarUrl', async (_label, avatarUrl) => {
+    await renderWith({ avatarUrl })
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it('renders the img with referrerPolicy no-referrer for an https avatarUrl', async () => {
+    await renderWith({ avatarUrl: 'https://cdn.example.com/ada.png' })
+    expect(screen.getByRole('img', { name: 'Ada Lovelace' }).getAttribute('referrerpolicy')).toBe('no-referrer')
+  })
+
+  it('recovers from a failed image when the user (avatarUrl) changes', () => {
+    const { rerender } = render(<UserAvatar name="Ada Lovelace" src="https://cdn.example.com/broken.png" />)
+    fireEvent.error(screen.getByRole('img', { name: 'Ada Lovelace' }))
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    rerender(<UserAvatar name="Ada Lovelace" src="https://cdn.example.com/other.png" />)
+    expect(screen.getByRole('img', { name: 'Ada Lovelace' }).getAttribute('src')).toBe('https://cdn.example.com/other.png')
+  })
+
+  it('shows Email verified / Phone verified badges only when the timestamps are set', async () => {
+    await renderWith({})
+    expect(screen.queryByText('Email verified')).toBeNull()
+    expect(screen.queryByText('Phone verified')).toBeNull()
+    cleanup()
+    await renderWith({ emailVerifiedAt: '2025-02-01T00:00:00Z' })
+    expect(screen.getByText('Email verified')).toBeTruthy()
+    expect(screen.queryByText('Phone verified')).toBeNull()
+    cleanup()
+    await renderWith({ emailVerifiedAt: '2025-02-01T00:00:00Z', phoneVerifiedAt: '2025-02-02T00:00:00Z' })
+    expect(screen.getByText('Email verified')).toBeTruthy()
+    expect(screen.getByText('Phone verified')).toBeTruthy()
+  })
+
+  it('shows "Last login" formatted, or "Never" when lastLoginAt is absent', async () => {
+    await renderWith({})
+    expect(screen.getByText('Last login: Never')).toBeTruthy()
+    cleanup()
+    const iso = '2025-03-04T05:06:07Z'
+    await renderWith({ lastLoginAt: iso })
+    expect(screen.getByText(`Last login: ${new Date(iso).toLocaleString('en-NG')}`)).toBeTruthy()
   })
 })
 

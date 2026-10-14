@@ -13,6 +13,12 @@ export type AdminUser = {
   contestId?: string;
   schoolId?: string;
   createdAt: string;
+  avatarUrl?: string;
+  lastLoginAt?: string;
+  emailVerifiedAt?: string;
+  phoneVerifiedAt?: string;
+  referralCode?: string;
+  referredBy?: string;
 };
 
 export type AdminUserFilters = {

@@ -101,6 +101,10 @@ func (h *AdminUsersHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
 		return
 	}
+	// Enrich only after the scope check so out-of-scope requests never trigger extra reads.
+	if e, ok := h.svc.(services.AdminUserEnricher); ok {
+		row = e.EnrichAdminUser(c.Request.Context(), row)
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "user": row})
 }
 

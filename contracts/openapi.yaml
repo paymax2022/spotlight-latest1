@@ -4660,6 +4660,53 @@ paths:
   # ║ Every mutation is audited via audit_service. Composes (not duplicates) ║
   # ║ the #19 session surface for the read-only per-user session view.       ║
   # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/admin/users/{id}:
+    get:
+      operationId: getAdminUser
+      summary: Get one admin-user record (enriched)
+      description: >-
+        Requires `users.view`, and the target must be within the caller's scope.
+        Unlike the list/export endpoints, this response also carries best-effort
+        enrichment fields (photo, verification timestamps, last login, referral
+        code); each is omitted when unavailable.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      firstName: { type: string }
+                      lastName: { type: string }
+                      email: { type: string }
+                      phone: { type: string }
+                      userType: { type: string }
+                      status: { type: string }
+                      profileCompleted: { type: boolean }
+                      state: { type: string }
+                      country: { type: string }
+                      programId: { type: string }
+                      contestId: { type: string }
+                      schoolId: { type: string }
+                      createdAt: { type: string }
+                      avatarUrl: { type: string }
+                      lastLoginAt: { type: string, format: date-time }
+                      emailVerifiedAt: { type: string, format: date-time }
+                      phoneVerifiedAt: { type: string, format: date-time }
+                      referralCode: { type: string }
+                      referredBy: { type: string }
+        '403': { description: Target user is outside the caller's scope }
+        '404': { description: User not found }
   /api/admin/users/export:
     get:
       operationId: exportAdminUsers

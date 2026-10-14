@@ -524,6 +524,70 @@ func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, 
 	return user, nil
 }
 
+// AdminUserEnricher fills the extra single-user-view fields (photo, verification
+// timestamps, last login, referral code). Optional: callers type-assert for it.
+type AdminUserEnricher interface {
+	EnrichAdminUser(ctx context.Context, u domain.AdminUser) domain.AdminUser
+}
+
+// EnrichAdminUser is best-effort: each REST read that fails leaves its fields
+// empty and never surfaces an error.
+func (r *RBACSupabaseRepository) EnrichAdminUser(ctx context.Context, u domain.AdminUser) domain.AdminUser {
+	var platform []struct {
+		LastLoginAt     *string `json:"last_login_at"`
+		EmailVerifiedAt *string `json:"email_verified_at"`
+		PhoneVerifiedAt *string `json:"phone_verified_at"`
+		ReferralCode    *string `json:"referral_code"`
+		ReferredBy      *string `json:"referred_by"`
+	}
+	pq := map[string]string{
+		"select": "last_login_at,email_verified_at,phone_verified_at,referral_code,referred_by",
+		"id":     "eq." + u.ID,
+		"limit":  "1",
+	}
+	if err := r.client.REST(ctx, http.MethodGet, "platform_users", pq, nil, &platform); err == nil && len(platform) > 0 {
+		p := platform[0]
+		u.LastLoginAt = deref(p.LastLoginAt)
+		u.EmailVerifiedAt = deref(p.EmailVerifiedAt)
+		u.PhoneVerifiedAt = deref(p.PhoneVerifiedAt)
+		u.ReferralCode = deref(p.ReferralCode)
+		u.ReferredBy = deref(p.ReferredBy)
+	}
+
+	var profiles []struct {
+		ProfilePhotoURL *string        `json:"profile_photo_url"`
+		AvatarURL       *string        `json:"avatar_url"`
+		Metadata        map[string]any `json:"metadata"`
+	}
+	uq := map[string]string{
+		"select": "profile_photo_url,avatar_url,metadata",
+		"id":     "eq." + u.ID,
+		"limit":  "1",
+	}
+	if err := r.client.REST(ctx, http.MethodGet, "user_profiles", uq, nil, &profiles); err == nil && len(profiles) > 0 {
+		p := profiles[0]
+		// Same precedence as frontend-web/src/server/user/profile.ts.
+		switch {
+		case strings.TrimSpace(deref(p.ProfilePhotoURL)) != "":
+			u.AvatarURL = strings.TrimSpace(deref(p.ProfilePhotoURL))
+		case strings.TrimSpace(deref(p.AvatarURL)) != "":
+			u.AvatarURL = strings.TrimSpace(deref(p.AvatarURL))
+		default:
+			if m, ok := p.Metadata["profilePhotoUrl"].(string); ok {
+				u.AvatarURL = strings.TrimSpace(m)
+			}
+		}
+	}
+	return u
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string]any) (domain.AdminUser, error) {
 	allowed := map[string]bool{"first_name": true, "last_name": true, "phone": true, "user_type": true, "status": true, "profile_completed": true}
 	payload := map[string]any{}
