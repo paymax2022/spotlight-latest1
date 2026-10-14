@@ -118,6 +118,31 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   convert the writes. It is a money module (send/request, splits, pools, escrow, spray) — have
   `ledger-auditor` review.
 
+### Batch 5 (2026-10-12) — announcements; estate-family triage
+- **announcements** (`src/features/announcements/api.ts`) — frontend-web handlers
+  (`app/api/v1/estate/announcements/**`). Verified with `scripts/audit/verify_mobile_module.py`:
+  **4/4 client calls match** (list, create, get, mark-read), real DB access, tables
+  `estate_announcements`, `announcement_reads`, `estate_residents` and `user_profiles` exist; creating
+  requires `estate_admin`, everything is residency-scoped, ids are UUID-checked. No automated suite
+  for the handlers (code reading). 2 mutations converted (`markRead`, `createAnnouncement`); e2e pin
+  added.
+- **Tool:** `python3 scripts/audit/verify_mobile_module.py . <feature>` maps a module's client calls to
+  frontend-web route files and checks the tables against migrations. Calls that only match the
+  `app/api/v1/[...path]` catch-all are reported separately — a catch-all match is NOT proof a route
+  exists, so check the Go side (caveats in its docstring).
+- **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
+  - **Clean — ready to flip, one module per PR:** documents (2 calls), dues (2), emergencies (3),
+    repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
+    "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
+    table exists, no read-side traps.
+  - **Blocked — path mismatch, do not flip:** `ainotes` (1 of 4 calls matches; `GET
+    /estate/ai-notes/:id`, `POST /estate/ai-notes/:id/approve`, `POST /estate/meetings/:id/ai-notes`
+    have no web handler — Go serves `/api/finance/estate/:id/ai-notes/...`), `estateadmin` (1 of 9;
+    the other 8 hit only the catch-all), `properties` (1 of 9; the web handler is only the list route),
+    `estatesettings` (2 of 3; `DELETE /estate/account` hits only the catch-all). Go's estate routes
+    live under `/api/finance/estate`, so these calls would 404 live. They need a client/proxy path
+    reconciliation before any default can flip.
+
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
 `notInFixtureMode`) by commit `9e45713ed4` ("fix(association): stop mobile writes from faking
@@ -140,7 +165,7 @@ kycverify, property, restaurantmerchant, stayshotelier.
 
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
-academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, announcements, arena, connect,
+academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connect,
 creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, documents, dues, emergencies, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
