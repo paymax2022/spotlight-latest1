@@ -41,6 +41,7 @@ export default defineConfig({
           EXPO_PUBLIC_ELECTION_USE_MOCK: 'true',
           EXPO_PUBLIC_VISITOR_USE_MOCK: 'true',
           EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK: 'true',
+          EXPO_PUBLIC_DOCUMENTS_USE_MOCK: 'true',
         },
       },
   projects: [

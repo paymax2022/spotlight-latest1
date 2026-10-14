@@ -131,7 +131,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   `app/api/v1/[...path]` catch-all are reported separately — a catch-all match is NOT proof a route
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
-  - **Clean — ready to flip, one module per PR:** documents (2 calls), dues (2), emergencies (3),
+  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2), emergencies (3),
     repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
     "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
     table exists, no read-side traps.
@@ -142,6 +142,14 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
     `estatesettings` (2 of 3; `DELETE /estate/account` hits only the catch-all). Go's estate routes
     live under `/api/finance/estate`, so these calls would 404 live. They need a client/proxy path
     reconciliation before any default can flip.
+
+### Batch 6 (2026-10-15) — documents
+- **documents** (`src/features/documents/api.ts`) — frontend-web handler
+  (`app/api/v1/estate/documents`). `verify_mobile_module.py`: **2/2 client calls match** (list,
+  create), real DB access, tables `estate_documents`, `estate_residents`, `user_profiles` exist.
+  Server-side authz is correct: restricted documents are filtered out for non-admins on read, creating
+  requires `estate_admin`, the file URL must be `http(s)://`. No automated suite for the handler (code
+  reading). 1 mutation converted (`createDocument`); e2e pin added.
 
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
@@ -166,7 +174,7 @@ kycverify, property, restaurantmerchant, stayshotelier.
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
 academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connect,
-creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, documents, dues, emergencies, estateadmin,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, dues, emergencies, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,

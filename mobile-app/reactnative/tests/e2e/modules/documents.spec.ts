@@ -4,7 +4,7 @@ import { mockAmbientRequests } from '../helpers/common';
 
 /**
  * Documents hub (estate document vault). The feature ships an in-app mock
- * layer (EXPO_PUBLIC_DOCUMENTS_USE_MOCK defaults true), so the list renders
+ * layer (EXPO_PUBLIC_DOCUMENTS_USE_MOCK is pinned true in playwright.config.ts), so the list renders
  * with no endpoint mocks — items come from the seeded list in
  * src/features/documents/api.ts.
  */
