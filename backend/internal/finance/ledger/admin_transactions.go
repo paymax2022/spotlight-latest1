@@ -51,6 +51,22 @@ type AdminTransactionRow struct {
 	UserName       *string         `json:"user_name"`
 	UserEmail      *string         `json:"user_email"`
 	UserPhone      *string         `json:"user_phone"`
+
+	// Referral fields. Set ONLY on a user's purchase (DEBIT) leg when that purchase
+	// earned the payer's referrer a commission; nil everywhere else, and nil on rows
+	// that were not enriched (detail and related entries). See attachReferral.
+	//   ReferralID                 earliest referral_rewards.id for the purchase
+	//   ReferralCommissionKobo     net commission rewarded to the referrer (reversed rewards count 0)
+	//   ReferralCommissionStatus   CREDITED | PENDING | REVERSED
+	//   ReferralRewardCount        how many reward rows the purchase produced (normally 1)
+	//   ReferrerID/Name/Code       who was paid, and their referral code
+	ReferralID               *string `json:"referral_id"`
+	ReferralCommissionKobo   *int64  `json:"referral_commission_kobo"`
+	ReferralCommissionStatus *string `json:"referral_commission_status"`
+	ReferralRewardCount      *int    `json:"referral_reward_count"`
+	ReferrerID               *string `json:"referrer_id"`
+	ReferrerName             *string `json:"referrer_name"`
+	ReferrerCode             *string `json:"referrer_code"`
 }
 
 // AdminTransactionsPage is the paginated result: the page of rows plus the
@@ -311,7 +327,125 @@ func (r *Repository) AdminListTransactions(ctx context.Context, f AdminTransacti
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("ledger: admin list transactions rows: %w", err)
 	}
+	// Referral enrichment is a read-only annotation: if it fails the list is still
+	// correct, just without the referral columns, so it must not fail the request.
+	if err := r.attachReferral(ctx, out.Rows); err != nil {
+		log.Printf("ledger: admin list transactions: referral enrichment skipped: %v", err)
+	}
 	return out, nil
+}
+
+// attachReferral annotates a user's purchase (DEBIT) rows with the commission the
+// purchase earned the payer's referrer, in one batched query for the whole page.
+//
+// A reward is linked to a transaction two ways, because two engines write rewards:
+//   - the direct engine stores the purchase's own reference as source_transaction_id;
+//   - the commission split stores "commission:<commission_earnings.id>", and the earning
+//     carries the purchase reference as source_ref (or ledger_ref).
+//
+// A reward attaches only to the PAYER's DEBIT leg (referral_rewards.referred_user_id ==
+// the row's user): the same reference also appears on the referrer's own credit and on
+// any reversal leg, and none of those is the purchase that earned the commission.
+func (r *Repository) attachReferral(ctx context.Context, rows []AdminTransactionRow) error {
+	seen := map[string]bool{}
+	refs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.Type == "DEBIT" && row.UserID != nil && row.Reference != "" && !seen[row.Reference] {
+			seen[row.Reference] = true
+			refs = append(refs, row.Reference)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+
+	const q = `
+		WITH links AS (
+		  SELECT r AS ref, r AS txn FROM unnest($1::text[]) AS r
+		  UNION
+		  SELECT r, 'commission:' || ce.id::text
+		    FROM unnest($1::text[]) AS r
+		    JOIN public.commission_earnings ce ON ce.source_ref = r OR ce.ledger_ref = r
+		)
+		SELECT l.ref, rr.id::text, rr.referred_user_id::text, rr.referrer_id::text, rr.reward_kobo, rr.status,
+		       COALESCE(up.full_name, ''), COALESCE(rl.code, '')
+		FROM links l
+		JOIN public.referral_rewards rr ON rr.source_transaction_id = l.txn
+		LEFT JOIN public.user_profiles up ON up.id = rr.referrer_id
+		LEFT JOIN public.referral_links rl ON rl.referrer_id = rr.referrer_id
+		ORDER BY rr.created_at, rr.id`
+	rs, err := r.db.Query(ctx, q, refs)
+	if err != nil {
+		return fmt.Errorf("ledger: referral rewards lookup: %w", err)
+	}
+	defer rs.Close()
+
+	type reward struct {
+		id, referred, referrer, status, name, code string
+		kobo                                       int64
+	}
+	byRef := map[string][]reward{}
+	for rs.Next() {
+		var ref string
+		var w reward
+		if err := rs.Scan(&ref, &w.id, &w.referred, &w.referrer, &w.kobo, &w.status, &w.name, &w.code); err != nil {
+			return fmt.Errorf("ledger: referral rewards scan: %w", err)
+		}
+		byRef[ref] = append(byRef[ref], w)
+	}
+	if err := rs.Err(); err != nil {
+		return fmt.Errorf("ledger: referral rewards rows: %w", err)
+	}
+
+	for i := range rows {
+		row := &rows[i]
+		if row.Type != "DEBIT" || row.UserID == nil {
+			continue
+		}
+		var mine []reward
+		for _, w := range byRef[row.Reference] {
+			if w.referred == *row.UserID {
+				mine = append(mine, w)
+			}
+		}
+		if len(mine) == 0 {
+			continue
+		}
+		var net int64
+		reversed, pending := 0, 0
+		for _, w := range mine {
+			switch w.status {
+			case "REVERSED":
+				reversed++
+			case "PENDING":
+				pending++
+				net += w.kobo
+			default:
+				net += w.kobo
+			}
+		}
+		status := "CREDITED"
+		switch {
+		case reversed == len(mine):
+			status = "REVERSED"
+		case pending > 0:
+			status = "PENDING"
+		}
+		first := mine[0]
+		count := len(mine)
+		row.ReferralID = &first.id
+		row.ReferralCommissionKobo = &net
+		row.ReferralCommissionStatus = &status
+		row.ReferralRewardCount = &count
+		row.ReferrerID = &first.referrer
+		if first.name != "" {
+			row.ReferrerName = &first.name
+		}
+		if first.code != "" {
+			row.ReferrerCode = &first.code
+		}
+	}
+	return nil
 }
 
 // ModuleTransactionDetail is the REAL, per-module view of a ledger_entries

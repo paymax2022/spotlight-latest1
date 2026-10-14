@@ -36,6 +36,26 @@ function isForbidden(err: unknown): boolean {
   return /\(403\)/.test(msg) || /forbidden|permission denied|insufficient permission/i.test(msg);
 }
 
+/**
+ * The commission this purchase earned the payer's referrer, with who got it. A
+ * reversed reward reads "Reversed" (it paid nothing), a pending one is flagged, and a
+ * purchase with no referral commission is a dash.
+ */
+function referralCommissionCell(t: AdminTransactionRow) {
+  if (!t.referral_id) return '—';
+  const who = [t.referrer_name, t.referrer_code ? `code ${t.referrer_code}` : null].filter(Boolean).join(' · ');
+  const amount =
+    t.referral_commission_status === 'REVERSED'
+      ? 'Reversed'
+      : `${formatKobo(t.referral_commission_kobo ?? 0)}${t.referral_commission_status === 'PENDING' ? ' · Pending' : ''}`;
+  return (
+    <>
+      <div>{amount}</div>
+      {who ? <div style={{ color: colors.muted, fontSize: 12 }}>{who}</div> : null}
+    </>
+  );
+}
+
 const th = { textAlign: 'left' as const, padding: '6px 8px', color: colors.muted, fontWeight: 600 };
 const td = { padding: '6px 8px' };
 
@@ -133,6 +153,8 @@ export function TransactionsPanel({ userId }: { userId: string }) {
                   <th style={th}>Amount</th>
                   <th style={th}>Description</th>
                   <th style={th}>Account</th>
+                  <th style={th}>Referral commission</th>
+                  <th style={th}>Referral ID</th>
                   <th style={th}>Date</th>
                 </tr>
               </thead>
@@ -145,6 +167,10 @@ export function TransactionsPanel({ userId }: { userId: string }) {
                     <td style={td}>{formatKobo(t.amount_kobo)}</td>
                     <td style={td}>{t.description ?? ''}</td>
                     <td style={td}>{t.account_type}</td>
+                    <td style={td} data-testid={`referral-commission-${t.id}`}>{referralCommissionCell(t)}</td>
+                    <td style={td} data-testid={`referral-id-${t.id}`} title={t.referral_id ?? undefined}>
+                      {t.referral_id ? `${t.referral_id.slice(0, 8)}…` : '—'}
+                    </td>
                     <td style={td}>{formatDate(t.created_at)}</td>
                   </tr>
                 ))}
