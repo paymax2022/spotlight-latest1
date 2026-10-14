@@ -3301,6 +3301,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			} else {
 				swapMember := cryptoV1.Group("/crypto")
 				swapMember.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermTrade))
+				// Per-user budgets, quote looser than confirm (confirm spends a PIN attempt and holds
+				// funds). Separate Redis prefixes so the two never share a count.
+				wired.Deps.QuoteLimit = middleware.PerUserRateLimit(redisClient, "crypto-swap-quote", cfg.CryptoQuoteRatePerMin)
+				wired.Deps.ConfirmLimit = middleware.PerUserRateLimit(redisClient, "crypto-swap-confirm", cfg.CryptoConfirmRatePerMin)
 				cryptosvc.RegisterRoutes(swapMember, r.Group("/api/v1/webhooks"), wired.Deps)
 				// Read-only ops surface for swaps the pipeline parked in needs_review (NGN held).
 				// Its own admin group under the same /api/v1/admin/crypto prefix as the legacy

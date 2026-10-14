@@ -444,6 +444,11 @@ type Config struct {
 	CryptoLockPoolConns int
 	// CryptoReconcileSeconds is the reconciler interval.
 	CryptoReconcileSeconds int
+	// CryptoQuoteRatePerMin / CryptoConfirmRatePerMin are the per-user budgets for
+	// POST /crypto/swaps/quote and /confirm. Confirm is the tighter one: it spends a
+	// PIN attempt and moves money. Validated 1..600 when the swap pipeline is on.
+	CryptoQuoteRatePerMin   int
+	CryptoConfirmRatePerMin int
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
 	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
@@ -988,6 +993,8 @@ func Load() Config {
 		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
 		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
 		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
+		CryptoQuoteRatePerMin:                        getEnvInt("CRYPTO_QUOTE_RATE_PER_MIN", 20),
+		CryptoConfirmRatePerMin:                      getEnvInt("CRYPTO_CONFIRM_RATE_PER_MIN", 5),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
@@ -1326,6 +1333,14 @@ func (c Config) Validate() error {
 			}
 			if c.CryptoLockPoolConns < 4 || c.CryptoLockPoolConns > 500 {
 				strict = append(strict, "CRYPTO_LOCK_POOL_CONNS must be between 4 and 500 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			// PerUserRateLimit treats <= 0 as 60/min, so an unset-looking 0 would loosen the
+			// budget rather than tighten it. Refuse instead of guessing.
+			if c.CryptoQuoteRatePerMin < 1 || c.CryptoQuoteRatePerMin > 600 {
+				strict = append(strict, "CRYPTO_QUOTE_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			if c.CryptoConfirmRatePerMin < 1 || c.CryptoConfirmRatePerMin > 600 {
+				strict = append(strict, "CRYPTO_CONFIRM_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)

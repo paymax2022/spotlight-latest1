@@ -55,6 +55,12 @@ func (w whProv) ParseWebhook(b []byte) (cryptoprov.Event, error) {
 
 func newHTTPRig(t *testing.T, uid string) *httpRig {
 	t.Helper()
+	return newHTTPRigWith(t, uid, nil)
+}
+
+// newHTTPRigWith is newHTTPRig with a hook to adjust the handler deps (limiters).
+func newHTTPRigWith(t *testing.T, uid string, tweak func(*HandlerDeps)) *httpRig {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	s := newSvcRig(t)
 	// Re-register a webhook-capable provider under the same name.
@@ -71,7 +77,11 @@ func newHTTPRig(t *testing.T, uid string) *httpRig {
 		}
 		c.Next()
 	})
-	RegisterRoutes(member, h.r.Group("/api/v1/webhooks"), HandlerDeps{Service: s.svc, Ingest: ing, StepUp: h.su})
+	deps := HandlerDeps{Service: s.svc, Ingest: ing, StepUp: h.su}
+	if tweak != nil {
+		tweak(&deps)
+	}
+	RegisterRoutes(member, h.r.Group("/api/v1/webhooks"), deps)
 	return h
 }
 
