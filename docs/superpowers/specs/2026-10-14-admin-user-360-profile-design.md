@@ -118,8 +118,9 @@ crash; the registry test (below) keeps this from shipping silently.
 
 ### B3. `GET /api/finance/admin/referrals/:user_id/code` (PR C)
 Thin handler in `finance/referrals` reusing the existing code-resolution order
-(`referral_links.referrer_id`, then `finance_referral_codes.user_id`, then
-`platform_users.referral_code`). Returns `{code, source}` or 404. Permission
+(`finance_referral_codes.user_id`, then `referral_links.referrer_id`, then
+`platform_users.referral_code`) as a **pure SELECT** (the existing `GetOrCreateCode` also
+INSERTs and must not be called from an admin read). Returns `{code, source}` or 404. Permission
 `referral.admin.case`; wired through the same finance-admin proxy as the #753 aliases.
 
 ## Frontend (all under `frontend-admin/app/admin/users/[id]/`)
