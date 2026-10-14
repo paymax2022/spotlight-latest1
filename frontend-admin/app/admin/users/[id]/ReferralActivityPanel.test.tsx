@@ -119,6 +119,34 @@ describe('ReferralActivityPanel', () => {
     expect(panel().getByTestId('referral-code').textContent).toBe('NEWCODE');
   });
 
+  it('summary and ledger 404 mean the engine is off: plain message, no Retry, other sections intact', async () => {
+    mock360.mockRejectedValue(err(404, 'No API route matches GET /api/referral/admin/x'));
+    mockLedger.mockRejectedValue(err(404, 'No API route matches GET /api/referral/admin/y'));
+    render(<ReferralActivityPanel userId="u1" />);
+    await waitFor(() => expect(panel().getAllByText('Referral engine is not enabled in this environment.')).toHaveLength(2));
+    expect(panel().queryByText(/No API route/)).toBeNull();
+    expect(panel().queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(panel().getByTestId('referral-code').textContent).toBe('K7QX2');
+  });
+
+  it('code 404 still means no code yet, and the other sections render', async () => {
+    mockCode.mockResolvedValue(null);
+    render(<ReferralActivityPanel userId="u1" />);
+    expect(await panel().findByText('No referral code yet')).toBeTruthy();
+    expect(await panel().findByText('₦123.45')).toBeTruthy();
+  });
+
+  it('a Copied badge does not carry over to the next user', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+    mockCode.mockImplementation(async (id: string) => ({ code: id === 'u1' ? 'K7QX2' : 'OTHER', source: 'referral_links' }));
+    const { rerender } = render(<ReferralActivityPanel userId="u1" />);
+    fireEvent.click(await panel().findByRole('button', { name: /copy/i }));
+    expect(await panel().findByText('Copied')).toBeTruthy();
+    rerender(<ReferralActivityPanel userId="u2" />);
+    await waitFor(() => expect(panel().getByTestId('referral-code').textContent).toBe('OTHER'));
+    expect(panel().queryByText('Copied')).toBeNull();
+  });
+
   it('is read-only: only Copy and Retry buttons exist', async () => {
     render(<ReferralActivityPanel userId="u1" />);
     await panel().findByText('₦123.45');

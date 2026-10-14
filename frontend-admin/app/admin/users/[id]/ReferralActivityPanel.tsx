@@ -13,7 +13,7 @@ import {
 import { formatKobo } from '@/services/transactionsAdminService';
 import { Card, Button, colors } from '@/components/ui/vuexy';
 
-type Section<T> = { data: T | null; loading: boolean; error: string | null; forbidden: boolean; reload: () => void };
+type Section<T> = { data: T | null; loading: boolean; error: string | null; forbidden: boolean; notFound: boolean; reload: () => void };
 
 /**
  * One independently loading section. Each load takes a ticket; a response that is no
@@ -25,6 +25,7 @@ function useSection<T>(userId: string, fetcher: (id: string) => Promise<T>, fail
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  const [notFound, setNotFound] = useState(false);
   const requestId = useRef(0);
 
   const load = useCallback(async () => {
@@ -32,6 +33,7 @@ function useSection<T>(userId: string, fetcher: (id: string) => Promise<T>, fail
     setLoading(true);
     setError(null);
     setForbidden(false);
+    setNotFound(false);
     setData(null);
     try {
       const v = await fetcher(userId);
@@ -40,6 +42,7 @@ function useSection<T>(userId: string, fetcher: (id: string) => Promise<T>, fail
     } catch (err) {
       if (myId !== requestId.current) return;
       if (err instanceof AdminUsersRequestError && err.status === 403) setForbidden(true);
+      else if (err instanceof AdminUsersRequestError && err.status === 404) setNotFound(true);
       else setError(err instanceof Error ? err.message : failure);
     } finally {
       if (myId === requestId.current) setLoading(false);
@@ -51,12 +54,15 @@ function useSection<T>(userId: string, fetcher: (id: string) => Promise<T>, fail
     void load();
   }, [load]);
 
-  return { data, loading, error, forbidden, reload: () => void load() };
+  return { data, loading, error, forbidden, notFound, reload: () => void load() };
 }
 
-function SectionBody<T>({ s, what, children }: { s: Section<T>; what: string; children: (d: T) => ReactNode }) {
+function SectionBody<T>({ s, what, disabledOn404, children }: { s: Section<T>; what: string; disabledOn404?: boolean; children: (d: T) => ReactNode }) {
   if (s.loading) return <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>Loading {what}…</p>;
   if (s.forbidden) return <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>You don&apos;t have permission to view this.</p>;
+  if (s.notFound && disabledOn404) {
+    return <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>Referral engine is not enabled in this environment.</p>;
+  }
   if (s.error || s.data === null) {
     return (
       <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
@@ -76,6 +82,10 @@ function CodeSection({ userId }: { userId: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => {
+    setCopied(false);
+    if (timer.current) clearTimeout(timer.current);
+  }, [userId]);
 
   const copy = async (code: string) => {
     try {
@@ -123,7 +133,7 @@ function SummarySection({ userId }: { userId: string }) {
   return (
     <div>
       <h3 style={heading}>Referral summary</h3>
-      <SectionBody s={s} what="referral summary">
+      <SectionBody s={s} what="referral summary" disabledOn404>
         {(d) => (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12 }}>
             <Figure label="People referred" value={String(d.referred_count)} />
@@ -143,7 +153,7 @@ function LedgerSection({ userId }: { userId: string }) {
   return (
     <div>
       <h3 style={heading}>Referral ledger <span style={{ color: colors.muted, fontWeight: 400 }}>(most recent 200)</span></h3>
-      <SectionBody s={s} what="referral ledger">
+      <SectionBody s={s} what="referral ledger" disabledOn404>
         {(rows) =>
           rows.length === 0 ? (
             <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>No referral ledger entries</p>
