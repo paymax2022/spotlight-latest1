@@ -32,6 +32,7 @@ import { useElectionPushBridge } from '@/features/election/hooks/useElectionPush
 import * as Sentry from '@sentry/react-native';
 import { isUnauthorized, currentPathForReturn } from '@/lib/authError';
 import { promptSignIn } from '@/lib/authRedirect';
+import { useNavigationTelemetry } from '@/features/telemetry/useNavigationTelemetry';
 
 // Error tracking + native crash capture. Inert until EXPO_PUBLIC_SENTRY_DSN is set,
 // so local/dev and Expo Go are unaffected.
@@ -80,6 +81,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router   = useRouter();
   const pathname = usePathname();
+  useNavigationTelemetry(); // flag-gated (EXPO_PUBLIC_NAV_TELEMETRY), best-effort
   // Module publication for this environment. Read once here and shared by the
   // deep-link guard below; the render gates use the same cached query.
   const { data: moduleVisibility, isLoading: moduleVisibilityLoading } = useQuery({
