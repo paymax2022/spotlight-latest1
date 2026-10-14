@@ -65,6 +65,7 @@ import { WalletPanel } from './WalletPanel'
 import { KycPanel } from './KycPanel'
 import { ActivityPanel } from './ActivityPanel'
 import { ReferralTierPanel } from './ReferralTierPanel'
+import { UserAvatar } from './UserAvatar'
 import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
@@ -166,6 +167,30 @@ describe('AdminUserProfilePage header', () => {
     fireEvent.error(screen.getByRole('img', { name: 'Ada Lovelace' }))
     expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
     expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it.each([
+    ['http:', 'http://cdn.example.com/ada.png'],
+    ['data:', 'data:image/png;base64,AAAA'],
+    ['javascript:', 'javascript:alert(1)'],
+    ['unparsable', 'not a url'],
+  ])('falls back to initials for a %s avatarUrl', async (_label, avatarUrl) => {
+    await renderWith({ avatarUrl })
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it('renders the img with referrerPolicy no-referrer for an https avatarUrl', async () => {
+    await renderWith({ avatarUrl: 'https://cdn.example.com/ada.png' })
+    expect(screen.getByRole('img', { name: 'Ada Lovelace' }).getAttribute('referrerpolicy')).toBe('no-referrer')
+  })
+
+  it('recovers from a failed image when the user (avatarUrl) changes', () => {
+    const { rerender } = render(<UserAvatar name="Ada Lovelace" src="https://cdn.example.com/broken.png" />)
+    fireEvent.error(screen.getByRole('img', { name: 'Ada Lovelace' }))
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    rerender(<UserAvatar name="Ada Lovelace" src="https://cdn.example.com/other.png" />)
+    expect(screen.getByRole('img', { name: 'Ada Lovelace' }).getAttribute('src')).toBe('https://cdn.example.com/other.png')
   })
 
   it('shows Email verified / Phone verified badges only when the timestamps are set', async () => {

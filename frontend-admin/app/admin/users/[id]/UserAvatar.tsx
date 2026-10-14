@@ -11,8 +11,19 @@ function initials(name: string): string {
   return (first + last).toUpperCase();
 }
 
+function safeHttpsSrc(src?: string): string | undefined {
+  if (!src) return undefined;
+  try {
+    return new URL(src).protocol === 'https:' ? src : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Circular profile photo; shows initials when there is no src or it fails to load. */
-export function UserAvatar({ name, src, size = 72 }: { name: string; src?: string; size?: number }) {
+export function UserAvatar({ name, src: rawSrc, size = 72 }: { name: string; src?: string; size?: number }) {
+  // avatarUrl is user-controlled: only https is loaded in the admin's browser.
+  const src = safeHttpsSrc(rawSrc);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const showImage = Boolean(src) && failedSrc !== src;
   const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const;
@@ -23,6 +34,9 @@ export function UserAvatar({ name, src, size = 72 }: { name: string; src?: strin
       <img
         src={src}
         alt={name}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        decoding="async"
         onError={() => setFailedSrc(src ?? null)}
         style={{ ...box, objectFit: 'cover' }}
       />
