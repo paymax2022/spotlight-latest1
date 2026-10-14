@@ -18,6 +18,7 @@ import { TransactionsPanel } from './TransactionsPanel';
 import { KycPanel } from './KycPanel';
 import { ActivityPanel } from './ActivityPanel';
 import { ReferralTierPanel } from './ReferralTierPanel';
+import { NavigationHistoryPanel } from './NavigationHistoryPanel';
 import { ReferredByPanel } from './ReferredByPanel';
 import { ReferralActivityPanel } from './ReferralActivityPanel';
 import { AdminActionsPanel } from './AdminActionsPanel';
@@ -226,6 +227,7 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
         <ActivityPanel userId={id} />
         <ReferredByPanel userId={id} />
         <ReferralTierPanel userId={id} />
+        <NavigationHistoryPanel userId={id} />
         <ReferralActivityPanel userId={id} />
       </div>
     </Page>
