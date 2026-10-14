@@ -5,9 +5,11 @@ import { useAuthStore } from '@/store/authStore';
 import { createTelemetryBuffer } from './buffer';
 import { routeTemplate } from './route';
 import { sendNavigationBatch } from './sender';
+import { shouldEmit } from './gate';
 
 export const isNavTelemetryEnabled = (): boolean =>
   process.env.EXPO_PUBLIC_NAV_TELEMETRY === 'true';
+const flag = () => process.env.EXPO_PUBLIC_NAV_TELEMETRY;
 
 let buffer: ReturnType<typeof createTelemetryBuffer> | null = null;
 function getBuffer() {
@@ -34,7 +36,7 @@ export function useNavigationTelemetry(): void {
   const params = useGlobalSearchParams();
 
   useEffect(() => {
-    if (!enabled || !authed) return;
+    if (!shouldEmit(flag(), authed)) return;
     try {
       const route = routeTemplate(pathname, params as Record<string, string | string[]>);
       if (route) {

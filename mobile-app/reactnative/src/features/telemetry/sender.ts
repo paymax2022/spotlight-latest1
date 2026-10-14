@@ -2,26 +2,21 @@ import axios from 'axios';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
 import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
-import type { NavEvent } from './buffer';
+import { createSender } from './senderCore';
 
 // Deliberately a PLAIN axios instance: the shared `api` client signs the user
 // out on a 401, and background telemetry must never be able to do that.
+// (Guarded by sender.test.ts.)
 const http = axios.create({
   timeout: 10_000,
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 });
 
-export async function sendNavigationBatch(batch: NavEvent[]): Promise<void> {
-  try {
-    if (batch.length === 0) return;
+export const sendNavigationBatch = createSender({
+  get baseURL() { return getDevUrl(resolveApiBaseUrl()); },
+  getToken: async () => {
     const { data: { session } } = await createSupabaseClient().auth.getSession();
-    const token = session?.access_token;
-    if (!token) return;
-    const baseURL = getDevUrl(resolveApiBaseUrl());
-    await http.post(
-      '/api/v1/telemetry/navigation',
-      { events: batch.map(({ surface, route, occurred_at }) => ({ surface, route, occurred_at })) },
-      { baseURL, headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true },
-    );
-  } catch { /* swallow everything: telemetry is best-effort */ }
-}
+    return session?.access_token;
+  },
+  post: (url, body, config) => http.post(url, body, config),
+});
