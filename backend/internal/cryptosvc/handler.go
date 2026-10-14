@@ -48,6 +48,10 @@ type HandlerDeps struct {
 	// Recon is this replica's reconciler, read by the admin status view. Nil leaves that
 	// endpoint answering 503.
 	Recon *Reconciler
+	// FeeAdmin is the editable fee-schedule history behind the admin API; nil answers 503.
+	FeeAdmin FeeStore
+	// Audit records admin changes (nil = none; production wiring sets it).
+	Audit Auditor
 }
 
 const (

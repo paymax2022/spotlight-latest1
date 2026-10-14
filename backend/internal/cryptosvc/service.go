@@ -42,8 +42,12 @@ type ServiceConfig struct {
 	Settler  *Settler
 	Ingest   *Ingest
 	Fees     FeeSchedule
-	Users    UserDirectory
-	Gate     TradeGate
+	// FeeSource, when set, supplies the live (editable) schedule per quote and Fees is only the
+	// fallback shape; nil keeps the static Fees (unit tests). A source error or an invalid stored
+	// schedule refuses the quote rather than pricing at a guess.
+	FeeSource FeeSource
+	Users     UserDirectory
+	Gate      TradeGate
 	// Locker serialises account creation and confirm per swap. Production MUST set it.
 	Locker SwapLocker
 	Now    func() time.Time
@@ -51,6 +55,22 @@ type ServiceConfig struct {
 	MinQuoteLife time.Duration
 	// Audit records money-relevant actions (nil = none; production wiring sets it).
 	Audit Auditor
+}
+
+// schedule returns the fee schedule a new quote is priced from. The bps and fee are stored on the
+// swap at quote time, so a later schedule change never reprices a swap that already exists.
+func (s *Service) schedule(ctx context.Context) (FeeSchedule, error) {
+	if s.cfg.FeeSource == nil {
+		return s.cfg.Fees, nil
+	}
+	v, err := s.cfg.FeeSource.Current(ctx)
+	if err != nil {
+		return FeeSchedule{}, fmt.Errorf("cryptosvc: read fee schedule: %w", err)
+	}
+	if err := v.Schedule.Validate(); err != nil {
+		return FeeSchedule{}, err
+	}
+	return v.Schedule, nil
 }
 
 // MaxQuoteKobo caps a single quote (10 bn NGN) so an absurd amount never reaches the provider
@@ -187,7 +207,11 @@ func (s *Service) Quote(ctx context.Context, req QuoteRequest) (SwapRecord, erro
 		}
 		return prev, nil
 	}
-	bps, err := s.cfg.Fees.Bps(asset)
+	fees, err := s.schedule(ctx)
+	if err != nil {
+		return SwapRecord{}, err
+	}
+	bps, err := fees.Bps(asset)
 	if err != nil {
 		return SwapRecord{}, err
 	}

@@ -1,9 +1,14 @@
 package cryptosvc
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -91,4 +96,137 @@ func FeeKobo(ngnKobo int64, bps int) (int64, error) {
 		return 0, errors.New("cryptosvc: fee computation out of range")
 	}
 	return fee.IntPart(), nil
+}
+
+// HardMaxBps is the markup ceiling. It is code, not data: the editable schedule can move rates
+// anywhere in [0, HardMaxBps], but raising the ceiling is a reviewed code change.
+const HardMaxBps = 150
+
+const (
+	maxFeeAssets    = 50  // majors and overrides are each bounded
+	maxFeeReasonLen = 500 // the free-text reason stored with every change
+)
+
+var (
+	// ErrFeeInput is returned for a malformed fee-schedule edit (bad asset code, blank reason, ...).
+	ErrFeeInput = errors.New("cryptosvc: invalid fee schedule input")
+	// ErrFeeVersionConflict means the writer's expected version is no longer the current one.
+	ErrFeeVersionConflict = errors.New("cryptosvc: fee schedule changed since it was read")
+	// ErrFeeIdempotencyConflict means an Idempotency-Key was reused with a different schedule.
+	ErrFeeIdempotencyConflict = errors.New("cryptosvc: idempotency key reused with a different fee schedule")
+
+	assetCodeRe = regexp.MustCompile(`^[A-Z0-9]{2,12}$`)
+)
+
+// FeeScheduleInput is one requested edit: a complete replacement schedule plus who, why and the
+// version the editor was looking at.
+type FeeScheduleInput struct {
+	MajorBps, OtherBps int
+	Majors             []string
+	Overrides          map[string]int
+	Reason             string
+	Actor              string
+	IdempotencyKey     string
+	// ExpectedVersion is the schedule version the editor read (0 = none stored yet). A write
+	// against any other version is refused so two admins cannot silently overwrite each other.
+	ExpectedVersion int64
+}
+
+func normAsset(a string) string { return strings.ToUpper(strings.TrimSpace(a)) }
+
+// normalised returns the input with asset codes upper-cased, de-duplicated and sorted and the
+// reason trimmed, so two spellings of the same schedule compare equal.
+func (in FeeScheduleInput) normalised() FeeScheduleInput {
+	out := FeeScheduleInput{MajorBps: in.MajorBps, OtherBps: in.OtherBps, Reason: strings.TrimSpace(in.Reason)}
+	seen := map[string]struct{}{}
+	for _, m := range in.Majors {
+		a := normAsset(m)
+		if _, dup := seen[a]; !dup {
+			seen[a] = struct{}{}
+			out.Majors = append(out.Majors, a)
+		}
+	}
+	sort.Strings(out.Majors)
+	if len(in.Overrides) > 0 {
+		out.Overrides = make(map[string]int, len(in.Overrides))
+		for k, v := range in.Overrides {
+			out.Overrides[normAsset(k)] = v
+		}
+	}
+	return out
+}
+
+// Schedule validates the edit and returns the resulting schedule, capped at HardMaxBps.
+func (in FeeScheduleInput) Schedule() (FeeSchedule, error) {
+	switch {
+	case in.ExpectedVersion < 0:
+		return FeeSchedule{}, fmt.Errorf("%w: expected version must not be negative", ErrFeeInput)
+	case strings.TrimSpace(in.Actor) == "":
+		return FeeSchedule{}, fmt.Errorf("%w: an actor is required", ErrFeeInput)
+	case strings.TrimSpace(in.Reason) == "":
+		return FeeSchedule{}, fmt.Errorf("%w: a reason is required", ErrFeeInput)
+	case len(strings.TrimSpace(in.Reason)) > maxFeeReasonLen:
+		return FeeSchedule{}, fmt.Errorf("%w: reason is longer than %d characters", ErrFeeInput, maxFeeReasonLen)
+	case len(in.Majors) > maxFeeAssets || len(in.Overrides) > maxFeeAssets:
+		return FeeSchedule{}, fmt.Errorf("%w: at most %d majors and %d overrides", ErrFeeInput, maxFeeAssets, maxFeeAssets)
+	}
+	n := in.normalised()
+	sch := FeeSchedule{MajorBps: n.MajorBps, OtherBps: n.OtherBps, MaxBps: HardMaxBps, Majors: map[string]struct{}{}, Overrides: n.Overrides}
+	for _, a := range n.Majors {
+		if !assetCodeRe.MatchString(a) {
+			return FeeSchedule{}, fmt.Errorf("%w: %q is not an asset code", ErrFeeInput, a)
+		}
+		sch.Majors[a] = struct{}{}
+	}
+	for a := range n.Overrides {
+		if !assetCodeRe.MatchString(a) {
+			return FeeSchedule{}, fmt.Errorf("%w: %q is not an asset code", ErrFeeInput, a)
+		}
+	}
+	if err := sch.Validate(); err != nil {
+		return FeeSchedule{}, err
+	}
+	return sch, nil
+}
+
+// VersionedFees is a stored schedule with its provenance. Version 0 is the code default.
+type VersionedFees struct {
+	Version   int64
+	Schedule  FeeSchedule
+	Reason    string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+// asInput turns a stored schedule back into the editable shape, for comparing a replayed request.
+func (v VersionedFees) asInput() FeeScheduleInput {
+	in := FeeScheduleInput{MajorBps: v.Schedule.MajorBps, OtherBps: v.Schedule.OtherBps, Reason: v.Reason, Overrides: v.Schedule.Overrides}
+	for m := range v.Schedule.Majors {
+		in.Majors = append(in.Majors, m)
+	}
+	return in
+}
+
+// FeeSource supplies the schedule quotes are priced from.
+type FeeSource interface {
+	// Current returns the active schedule (Version 0 and the code default when none is stored).
+	Current(ctx context.Context) (VersionedFees, error)
+}
+
+// FeeStore is the editable, append-only schedule history behind the admin API.
+type FeeStore interface {
+	FeeSource
+	// Append stores a new version. It returns ErrFeeVersionConflict when in.ExpectedVersion is
+	// not the current version, and ErrFeeIdempotencyConflict when in.IdempotencyKey was used for
+	// a different schedule. A repeat of the same request returns the stored row with created=false.
+	Append(ctx context.Context, in FeeScheduleInput) (v VersionedFees, created bool, err error)
+	// History returns up to limit versions, newest first.
+	History(ctx context.Context, limit int) ([]VersionedFees, error)
+}
+
+func overridesJSON(o map[string]int) ([]byte, error) {
+	if len(o) == 0 {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(o)
 }

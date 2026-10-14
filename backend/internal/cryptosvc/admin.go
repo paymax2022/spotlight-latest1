@@ -1,8 +1,10 @@
 package cryptosvc
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +74,8 @@ func RegisterAdminRoutes(admin *gin.RouterGroup, d HandlerDeps) {
 	admin.GET("/swaps/review", h.reviewQueue)
 	admin.POST("/swaps/:id/resolve", h.resolve)
 	admin.GET("/reconciler", h.reconcilerStatus)
+	admin.GET("/fee-schedule", h.feeSchedule)
+	admin.PUT("/fee-schedule", h.updateFeeSchedule)
 }
 
 // reconcilerStatus GET /admin/crypto/reconciler — what the reconciler has been doing and what
@@ -240,4 +244,126 @@ func boundedQuery(c *gin.Context, name string, def, lo, hi int) int {
 		return hi
 	}
 	return n
+}
+
+// feeView is the admin representation of one stored schedule version. Rates are integer basis
+// points; Version 0 is the code default.
+func feeView(v VersionedFees) gin.H {
+	majors := make([]string, 0, len(v.Schedule.Majors))
+	for m := range v.Schedule.Majors {
+		majors = append(majors, m)
+	}
+	sort.Strings(majors)
+	overrides := map[string]int{}
+	for a, bps := range v.Schedule.Overrides {
+		overrides[a] = bps
+	}
+	return gin.H{
+		"version": v.Version, "major_bps": v.Schedule.MajorBps, "other_bps": v.Schedule.OtherBps,
+		"majors": majors, "overrides": overrides, "reason": v.Reason, "created_by": v.CreatedBy, "created_at": ts(v.CreatedAt),
+	}
+}
+
+const feeHistoryLimit = 20
+
+// feeSchedule GET /admin/crypto/fee-schedule — the active markup schedule, the hard ceiling and
+// the last changes (who, when, why). Read-only.
+func (h *adminHandler) feeSchedule(c *gin.Context) {
+	if h.d.FeeAdmin == nil {
+		fail(c, http.StatusServiceUnavailable, "fee_schedule_unavailable")
+		return
+	}
+	cur, err := h.d.FeeAdmin.Current(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	hist, err := h.d.FeeAdmin.History(c.Request.Context(), feeHistoryLimit)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	rows := make([]gin.H, 0, len(hist))
+	for _, v := range hist {
+		rows = append(rows, feeView(v))
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "current": feeView(cur), "ceiling_bps": HardMaxBps, "history": rows})
+}
+
+// updateFeeSchedule PUT /admin/crypto/fee-schedule — replace the markup schedule with a new
+// version. It needs an Idempotency-Key, the version the editor read (refused with 409 if stale)
+// and a reason; every rate is capped at HardMaxBps. A new version prices NEW quotes only: a swap
+// already quoted keeps the bps stored on it. Each applied change is audited with old and new.
+func (h *adminHandler) updateFeeSchedule(c *gin.Context) {
+	if h.d.FeeAdmin == nil {
+		fail(c, http.StatusServiceUnavailable, "fee_schedule_unavailable")
+		return
+	}
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
+	if !idemKeyRe.MatchString(key) {
+		fail(c, http.StatusBadRequest, "invalid_idempotency_key")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBytes)
+	var body struct {
+		ExpectedVersion *int64         `json:"expected_version"`
+		MajorBps        int            `json:"major_bps"`
+		OtherBps        int            `json:"other_bps"`
+		Majors          []string       `json:"majors"`
+		Overrides       map[string]int `json:"overrides"`
+		Reason          string         `json:"reason"`
+	}
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || body.ExpectedVersion == nil {
+		fail(c, http.StatusBadRequest, "invalid_body")
+		return
+	}
+	in := FeeScheduleInput{
+		MajorBps: body.MajorBps, OtherBps: body.OtherBps, Majors: body.Majors, Overrides: body.Overrides,
+		Reason: body.Reason, Actor: ginutil.UserID(c), IdempotencyKey: key, ExpectedVersion: *body.ExpectedVersion,
+	}
+	if _, err := in.Schedule(); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid_fee_schedule", "detail": err.Error()})
+		return
+	}
+	before, berr := h.d.FeeAdmin.Current(c.Request.Context())
+	v, created, err := h.d.FeeAdmin.Append(c.Request.Context(), in)
+	switch {
+	case errors.Is(err, ErrFeeVersionConflict):
+		fail(c, http.StatusConflict, "version_conflict")
+		return
+	case errors.Is(err, ErrFeeIdempotencyConflict):
+		fail(c, http.StatusConflict, "idempotency_conflict")
+		return
+	case errors.Is(err, ErrFeeInput), errors.Is(err, ErrFeeBps):
+		fail(c, http.StatusBadRequest, "invalid_fee_schedule")
+		return
+	case err != nil:
+		fail(c, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	if created && h.d.Audit != nil {
+		ev := AuditEvent{
+			Actor: in.Actor, Action: "crypto.fee_schedule.update", EntityType: "crypto_fee_schedule",
+			EntityID: strconv.FormatInt(v.Version, 10), Reason: v.Reason, Detail: feeAuditValues(v),
+		}
+		if berr == nil {
+			ev.Old = feeAuditValues(before)
+		}
+		h.d.Audit.Audit(c.Request.Context(), ev)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "current": feeView(v), "ceiling_bps": HardMaxBps})
+}
+
+// feeAuditValues is the audit-log form of a schedule version (no free text beyond the reason).
+func feeAuditValues(v VersionedFees) map[string]any {
+	m := map[string]any{}
+	for k, val := range feeView(v) {
+		m[k] = val
+	}
+	return m
 }
