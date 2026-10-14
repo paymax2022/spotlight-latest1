@@ -4752,7 +4752,7 @@ paths:
                   success: { type: boolean }
                   roles: { type: array, items: { type: string } }
         '400': { description: id is not a UUID }
-        '403': { description: Missing users.view permission, or the target user is outside the caller's scope }
+        '403': { description: "Missing users.view permission, or the target user is outside the caller's scope" }
         '404': { description: User not found }
         '500': { description: Failed to load roles }
   /api/admin/users/{id}/roles/bulk:
@@ -13166,7 +13166,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
-        '400': { description: Missing, blank or over-long reason }
+        '400': { description: "Missing, blank or over-long reason" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/cases/{id}/reject:
@@ -13197,7 +13197,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
-        '400': { description: Missing, blank or over-long reason }
+        '400': { description: "Missing, blank or over-long reason" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/routing-rules:
