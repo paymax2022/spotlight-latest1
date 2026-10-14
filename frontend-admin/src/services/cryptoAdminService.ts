@@ -13,7 +13,7 @@ import type {
   CryptoWithdrawal, CryptoWithdrawalDecisionRequest,
   CryptoSwapOrder, CryptoAddress, CryptoAddressDecisionRequest,
   CryptoReconRow, CryptoReconSummary, CryptoReviewSwap, CryptoSwapResolveRequest,
-  CryptoFeeScheduleResponse, CryptoFeeScheduleUpdate, CryptoFeeScheduleVersion,
+  CryptoFeeScheduleResponse, CryptoFeeScheduleUpdate, CryptoFeeScheduleVersion, CryptoReconcilerStatus,
 } from '@/types/cryptoAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
@@ -406,4 +406,33 @@ export async function adminUpdateFeeSchedule(input: CryptoFeeScheduleUpdate, cei
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Fee schedule update failed'));
   const out = await res.json();
   return (out?.current ?? out) as CryptoFeeScheduleVersion;
+}
+
+// ── Reconciler status ───────────────────────────────────────────────────────────────────────
+// GET /admin/crypto/reconciler (backend/internal/cryptosvc/admin.go, ADR-PR758). Read-only.
+// null = the route is not mounted (swap pipeline off) or this replica runs no reconciler (503).
+
+const MOCK_RECONCILER: CryptoReconcilerStatus = {
+  success: true,
+  note: 'FIXTURE DATA: this console is in fixture mode, so none of this is real.',
+  replica: {
+    started_at: '', runs: 0, led_runs: 0, skipped_runs: 0, last_run_at: '', last_led_at: '', last_led: false, last_error: '',
+    last_result: { resolved: 0, released: 0, parked: 0, expired: 0, errors: 0, clearing_negative: false },
+    totals: { resolved: 0, released: 0, parked: 0, expired: 0, errors: 0, clearing_negative_runs: 0 },
+    recent_alerts: [],
+  },
+  backlog: [],
+};
+
+export async function adminGetReconcilerStatus(): Promise<CryptoReconcilerStatus | null> {
+  if (USE_MOCK) return delay({ ...MOCK_RECONCILER });
+  const res = await fetch(`${base()}/reconciler`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404 || res.status === 503) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Reconciler status fetch failed'));
+  const body = (await res.json()) as CryptoReconcilerStatus;
+  return {
+    ...body,
+    backlog: body.backlog ?? [],
+    replica: { ...body.replica, recent_alerts: body.replica?.recent_alerts ?? [] },
+  };
 }

@@ -5,24 +5,13 @@ import { adminListReviewSwaps, adminResolveReviewSwap, formatKobo } from '@/serv
 import type { CryptoReviewSwap, CryptoSwapResolveRequest } from '@/types/cryptoAdmin';
 import {
   CryptoTabs, Kpi, StateBlock, DisclosureNote, AuditNote, PermissionBanner,
-  mono, fmtDate, label as lbl, textarea, CRYPTO_PERMS, useCryptoPermission,
+  mono, fmtDate, fmtAge, label as lbl, textarea, CRYPTO_PERMS, useCryptoPermission,
 } from '../_ui';
 import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 50;
 
 type Decision = CryptoSwapResolveRequest['decision'];
-
-// Parked money ages in seconds server-side; render it compactly (2h 15m, 3d 4h).
-function fmtAge(seconds: number): string {
-  if (!seconds || seconds < 0) return '—';
-  const d = Math.floor(seconds / 86_400);
-  const h = Math.floor((seconds % 86_400) / 3_600);
-  const m = Math.floor((seconds % 3_600) / 60);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
 
 // The only safe action depends on whether the provider received the swap.
 function actionFor(s: CryptoReviewSwap): Decision {
