@@ -116,6 +116,27 @@ export interface CryptoSwapOrder {
   created_at: string;
 }
 
+// Mirrors backend/internal/cryptosvc/admin.go AdminReviewSwap — a swap from the NEW
+// provider-driven BUY swap pipeline (table crypto_swaps) that the pipeline could not
+// auto-resolve and parked in needs_review with the user's NGN still held in the ledger.
+// DISTINCT from CryptoSwapOrder above, which is the LEGACY crypto_swap_orders asset→asset
+// swap read off /admin/crypto/swaps. This one comes from /admin/crypto/swaps/review.
+// Money fields are integer kobo — never floats, format-only via formatKobo().
+export interface CryptoReviewSwap {
+  id: string;
+  user_id: string;
+  status: string;            // always 'needs_review'
+  asset: string;             // crypto bought (to-currency)
+  ngn_kobo: number;
+  fee_kobo: number;
+  held_kobo: number;         // ngn_kobo + fee_kobo — NGN held from the wallet
+  provider: string;
+  provider_swap_id?: string; // absent when the provider never returned one
+  has_provider_id: boolean;  // false ⇒ provider outcome unknown; only release is safe (follow-up)
+  updated_at?: string;       // when the swap was parked
+  age_seconds: number;       // how long the swap has been parked
+}
+
 // Mirrors backend/internal/crypto/model_ext.go Address, plus admin review fields.
 export type CryptoAddressReview = 'pending' | 'approved' | 'rejected' | string;
 

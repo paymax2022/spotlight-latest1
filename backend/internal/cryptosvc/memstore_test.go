@@ -80,6 +80,31 @@ func (s *memStore) staleLocked(state cryptoprov.SwapState, olderThan time.Time, 
 	return out
 }
 
+func (s *memStore) ListByState(_ context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []SwapRecord
+	for _, r := range s.swaps {
+		if r.State == state {
+			out = append(out, *r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { // oldest parked first, id tiebreak — like the SQL
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].UpdatedAt.Before(out[j].UpdatedAt)
+	})
+	if offset >= len(out) {
+		return nil, nil
+	}
+	out = out[offset:]
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // age pretends a swap's last write was d ago relative to now.
 func (s *memStore) age(id string, now time.Time, d time.Duration) {
 	s.mu.Lock()

@@ -3302,7 +3302,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				swapMember := cryptoV1.Group("/crypto")
 				swapMember.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermTrade))
 				cryptosvc.RegisterRoutes(swapMember, r.Group("/api/v1/webhooks"), wired.Deps)
-				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, reconciler running)")
+				// Read-only ops surface for swaps the pipeline parked in needs_review (NGN held).
+				// Its own admin group under the same /api/v1/admin/crypto prefix as the legacy
+				// crypto admin routes; GET /swaps/review is a static sibling of the legacy
+				// GET /swaps, so the two never collide. crypto.admin, like the legacy surface.
+				swapAdmin := cryptoV1.Group("/admin/crypto")
+				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
+				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
 			}
 		}
 	} else {

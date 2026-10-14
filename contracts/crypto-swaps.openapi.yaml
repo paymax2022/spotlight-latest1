@@ -5,7 +5,8 @@ info:
   description: >
     Provider-driven crypto buy (NGN to crypto) swaps over the Quidax adapter: quote, confirm
     (second factor), read, plus the provider webhook. Behind FEATURE_CRYPTO_ENABLED and
-    FEATURE_CRYPTO_SWAPS_ENABLED (default off). ADR-PR708, ADR-PR709, ADR-PR710, ADR-PR716.
+    FEATURE_CRYPTO_SWAPS_ENABLED (default off). ADR-PR708, ADR-PR709, ADR-PR710, ADR-PR716,
+    ADR-PR727.
 
     Conventions:
       - NGN amounts are integers in kobo. Never floats. Crypto amounts are decimal STRINGS.
@@ -24,6 +25,7 @@ servers:
 tags:
   - name: Swaps
   - name: Webhooks
+  - name: Admin
 
 paths:
   /crypto/swaps/quote:
@@ -92,6 +94,30 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Swap' }
         '404': { $ref: '#/components/responses/Error' }
+  /admin/crypto/swaps/review:
+    get:
+      tags: [Admin]
+      summary: List swaps parked in needs_review (admin, read-only)
+      description: >
+        Operational surface for swaps the pipeline could not auto-resolve and parked in
+        needs_review with the user's NGN still held. Read-only in this round — it lets ops SEE
+        held money; the settle/release/retry decision controls are a follow-up. Returns
+        user_id and the provider swap id (hidden from members) because the surface is gated by
+        the crypto.admin permission. has_provider_id = false means the provider outcome is
+        unknown, so the swap must never be blindly settled. Oldest-parked first. Flag-gated by
+        FEATURE_CRYPTO_SWAPS_ENABLED; when the flag is off the route is not mounted (404).
+      operationId: listCryptoSwapsForReview
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Parked swaps, oldest first
+          content: { application/json: { schema: { $ref: '#/components/schemas/ReviewQueue' } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /webhooks/crypto/{provider}:
     post:
       tags: [Webhooks]
@@ -137,6 +163,31 @@ components:
         success: { type: boolean, const: true }
         message: { type: string }
         swap: { $ref: '#/components/schemas/Swap' }
+    ReviewQueue:
+      type: object
+      required: [success, swaps, count]
+      properties:
+        success: { type: boolean, const: true }
+        count: { type: integer, description: Number of swaps in this page }
+        swaps:
+          type: array
+          items: { $ref: '#/components/schemas/AdminReviewSwap' }
+    AdminReviewSwap:
+      type: object
+      required: [id, user_id, status, asset, ngn_kobo, fee_kobo, held_kobo, provider, has_provider_id, age_seconds]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        status: { type: string, enum: [needs_review] }
+        asset: { type: string, description: Crypto bought (to-currency) }
+        ngn_kobo: { type: integer, format: int64 }
+        fee_kobo: { type: integer, format: int64 }
+        held_kobo: { type: integer, format: int64, description: ngn_kobo + fee_kobo, the NGN held from the wallet }
+        provider: { type: string }
+        provider_swap_id: { type: string, description: Omitted when the provider never returned one }
+        has_provider_id: { type: boolean, description: false ⇒ provider outcome unknown; only release is safe }
+        updated_at: { type: string, format: date-time, description: When the swap was parked }
+        age_seconds: { type: integer, format: int64, description: Seconds the swap has been parked }
     Swap:
       type: object
       required: [id, status, side, asset, ngn_kobo, fee_kobo, fee_bps, total_kobo, quoted_amount, price]
