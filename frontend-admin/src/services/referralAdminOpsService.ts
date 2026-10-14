@@ -572,7 +572,32 @@ export async function listReferralUsers(filters?: { role?: string; status?: stri
 }
 export async function getReferralUser360(id: string): Promise<ReferralUser360 | null> {
   if (USE_MOCK) { await delay(); return USER_360[id] ?? USER_360.usr_a12 ?? null; }
-  return getJson<ReferralUser360>(`/users/${id}`);
+  // The backend's only route is GET /users/:id/referral-360 and it answers {user: {...}}
+  // (analytics.Handler.User360), which carries none of the detail lists this type has.
+  // Unwrap it and default the lists so the page does not crash; see the concern in the
+  // task report about the missing fields.
+  const raw = await getJson<Record<string, unknown>>(`/users/${encodeURIComponent(id)}/referral-360`);
+  const u = ((raw?.user as Record<string, unknown> | undefined) ?? raw ?? {}) as Record<string, unknown>;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    id: String(u.user_id ?? u.id ?? id),
+    name: String(u.name ?? ''),
+    email: String(u.email ?? ''),
+    phone: String(u.phone ?? ''),
+    roles: [],
+    status: 'active',
+    kyc_tier: String(u.kyc_tier ?? ''),
+    risk_score: n(u.risk_score),
+    total_earned_kobo: n(u.total_earned_kobo),
+    pending_kobo: 0,
+    clawed_back_kobo: n(u.clawed_back_kobo),
+    referrals_count: n(u.referred_count ?? u.referrals_count),
+    active_referrals: 0,
+    referrals: [],
+    earnings: [],
+    audit: [],
+    created_at: String(u.created_at ?? ''),
+  };
 }
 export async function interveneUser(input: InterveneInput): Promise<{ ok: true }> {
   // No backend at all: the referral users admin surface has exactly one route,

@@ -69,6 +69,11 @@ const mockGetUserReferralCase = vi.fn()
 vi.mock('@/services/userReferralService', () => ({
   getUserReferralCase: (...args: unknown[]) => mockGetUserReferralCase(...args),
 }))
+vi.mock('@/services/userReferralActivityService', () => ({
+  getUserReferralCode: vi.fn().mockResolvedValue(null),
+  getReferral360: vi.fn().mockResolvedValue({ referrer_id: null, referred_count: 0, total_earned_kobo: 0, paid_kobo: 0, clawed_back_kobo: 0, fraud_standing: 'clear' }),
+  getReferralLedger: vi.fn().mockResolvedValue([]),
+}))
 const mockApproveKycCase = vi.fn()
 const mockRejectKycCase = vi.fn()
 
@@ -138,6 +143,7 @@ describe('AdminUserProfilePage', () => {
       await screen.findByText('No active sessions')
       await screen.findAllByText('No transactions')
       await screen.findByText('Not onboarded to any module')
+      await screen.findByText('No referral ledger entries')
       expect(fetchSpy).not.toHaveBeenCalled()
     } finally {
       fetchSpy.mockRestore()
