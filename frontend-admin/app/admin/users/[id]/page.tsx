@@ -19,6 +19,7 @@ import { KycPanel } from './KycPanel';
 import { ActivityPanel } from './ActivityPanel';
 import { ReferralTierPanel } from './ReferralTierPanel';
 import { ReferredByPanel } from './ReferredByPanel';
+import { ReferralActivityPanel } from './ReferralActivityPanel';
 import { AdminActionsPanel } from './AdminActionsPanel';
 import { SessionsPanel } from './SessionsPanel';
 import { ModulesPanel } from './ModulesPanel';
@@ -225,6 +226,7 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
         <ActivityPanel userId={id} />
         <ReferredByPanel userId={id} />
         <ReferralTierPanel userId={id} />
+        <ReferralActivityPanel userId={id} />
       </div>
     </Page>
   );

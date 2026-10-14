@@ -13224,6 +13224,31 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { description: Failed to load KYC profile or review case }
+  /api/finance/admin/referrals/{user_id}/code:
+    get:
+      operationId: getAdminReferralCode
+      summary: Read a user's referral code (admin, read-only)
+      description: "Requires the referral.admin.case permission. Pure read: never mints or converges a code. The first-minted code wins when finance_referral_codes and referral_links diverge; falls back to platform_users.referral_code."
+      tags: [Referrals]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Referral code and the table it was read from
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, source]
+                properties:
+                  code: { type: string }
+                  source: { type: string, enum: [finance_referral_codes, referral_links, platform_users] }
+        '400': { description: "user_id is not a UUID" }
+        '401': { description: "Missing or invalid bearer token" }
+        '403': { description: "Missing referral.admin.case permission" }
+        '404': { description: "User has no referral code" }
+        '500': { description: "Failed to read the referral code" }
   /api/finance/admin/kyc/cases/{id}/approve:
     post:
       operationId: admKycApproveCase
