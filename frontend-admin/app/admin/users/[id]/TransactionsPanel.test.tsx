@@ -51,6 +51,50 @@ describe('TransactionsPanel', () => {
     expect(screen.getByText('₦1,500.00')).toBeTruthy()
   })
 
+  it('shows the referrer commission and referral id on a purchase that earned one', async () => {
+    setResult(page([
+      row('a', {
+        type: 'DEBIT',
+        referral_id: 'rw-1234567890abcdef',
+        referral_commission_kobo: 200000,
+        referral_commission_status: 'CREDITED',
+        referral_reward_count: 1,
+        referrer_id: 'ref-1',
+        referrer_name: 'Ada Obi',
+        referrer_code: 'K7QX2',
+      }),
+    ], 1))
+    render(<TransactionsPanel userId="u1" />)
+    await screen.findByText('desc-a')
+    expect(screen.getByRole('columnheader', { name: 'Referral commission' })).toBeTruthy()
+    expect(screen.getByRole('columnheader', { name: 'Referral ID' })).toBeTruthy()
+    expect(screen.getByTestId('referral-commission-a').textContent).toContain('₦2,000.00')
+    expect(screen.getByTestId('referral-commission-a').textContent).toContain('Ada Obi')
+    expect(screen.getByTestId('referral-commission-a').textContent).toContain('K7QX2')
+    // the full id is in the title so it can be copied; the cell shows it shortened
+    expect(screen.getByTestId('referral-id-a').getAttribute('title')).toBe('rw-1234567890abcdef')
+    expect(screen.getByTestId('referral-id-a').textContent).toBe('rw-12345…')
+  })
+
+  it('flags a reversed commission and a pending one instead of showing a plain amount', async () => {
+    setResult(page([
+      row('r', { type: 'DEBIT', referral_id: 'rw-r', referral_commission_kobo: 0, referral_commission_status: 'REVERSED', referrer_name: 'Ada' }),
+      row('p', { type: 'DEBIT', referral_id: 'rw-p', referral_commission_kobo: 50000, referral_commission_status: 'PENDING', referrer_name: 'Ada' }),
+    ], 2))
+    render(<TransactionsPanel userId="u1" />)
+    await screen.findByText('desc-r')
+    expect(screen.getByTestId('referral-commission-r').textContent).toContain('Reversed')
+    expect(screen.getByTestId('referral-commission-p').textContent).toContain('Pending')
+  })
+
+  it('shows a dash when the row earned no referral commission', async () => {
+    setResult(page([row('a')], 1))
+    render(<TransactionsPanel userId="u1" />)
+    await screen.findByText('desc-a')
+    expect(screen.getByTestId('referral-commission-a').textContent).toBe('—')
+    expect(screen.getByTestId('referral-id-a').textContent).toBe('—')
+  })
+
   it('Next requests offset 25 and Previous goes back', async () => {
     impl = (async (f: { offset: number }) =>
       f.offset === 0 ? page([row('a')], 30) : page([row('b')], 30, 25))
