@@ -64,6 +64,9 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	if err := cfg.Fees.Validate(); err != nil {
 		return nil, err
 	}
+	if cfg.Fees.MaxBps != HardMaxBps {
+		return nil, fmt.Errorf("cryptosvc: the base fee schedule must use the code ceiling of %d bps (got %d)", HardMaxBps, cfg.Fees.MaxBps)
+	}
 	if cfg.MinTier < tiers.Tier1 {
 		cfg.MinTier = tiers.Tier1
 	}
@@ -90,10 +93,13 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	store := NewPGStore(d.Pool)
 	settler := NewSettler(d.Ledger).WithLocker(locker)
 	auditor := &PGAuditor{Pool: d.Pool}
+	// The editable schedule: quotes read the live version per request. cfg.Fees (validated above) is
+	// the base that applies until the first version is stored.
+	fees := NewPGFeeStore(d.Pool, cfg.Fees)
 	ingest := NewIngest(reg, store).WithSettler(settler).WithAuditor(auditor)
 	svc := NewService(ServiceConfig{
 		Registry: reg, Provider: client.Name(), Store: store, Settler: settler, Ingest: ingest,
-		Fees: cfg.Fees, Users: &PGUserDirectory{Pool: d.Pool},
+		Fees: cfg.Fees, FeeSource: fees, Users: &PGUserDirectory{Pool: d.Pool},
 		Gate:   &TierTradeGate{Pool: d.Pool, Tiers: d.Tiers, MinTier: cfg.MinTier},
 		Locker: locker, Audit: auditor,
 	})
@@ -121,7 +127,7 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	go rec.Run(rctx, cfg.ReconcileInterval)
 
 	return &Wired{
-		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec},
+		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees},
 		Close: func() { cancel(); closeLeader(); closeLocks() },
 	}, nil
 }
