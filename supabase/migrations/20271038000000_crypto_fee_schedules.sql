@@ -34,6 +34,13 @@ CREATE TRIGGER trg_crypto_fee_schedules_immutable
   BEFORE UPDATE OR DELETE ON public.crypto_fee_schedules
   FOR EACH ROW EXECUTE FUNCTION public.crypto_fee_schedules_immutable();
 
+-- TRUNCATE bypasses row triggers, so refuse it with a statement trigger and take the privilege away.
+DROP TRIGGER IF EXISTS trg_crypto_fee_schedules_no_truncate ON public.crypto_fee_schedules;
+CREATE TRIGGER trg_crypto_fee_schedules_no_truncate
+  BEFORE TRUNCATE ON public.crypto_fee_schedules
+  FOR EACH STATEMENT EXECUTE FUNCTION public.crypto_fee_schedules_immutable();
+REVOKE TRUNCATE ON public.crypto_fee_schedules FROM PUBLIC;
+
 DO $$
 BEGIN
   EXECUTE 'ALTER TABLE public.crypto_fee_schedules ENABLE ROW LEVEL SECURITY';

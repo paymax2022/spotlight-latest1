@@ -64,6 +64,9 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	if err := cfg.Fees.Validate(); err != nil {
 		return nil, err
 	}
+	if cfg.Fees.MaxBps != HardMaxBps {
+		return nil, fmt.Errorf("cryptosvc: the base fee schedule must use the code ceiling of %d bps (got %d)", HardMaxBps, cfg.Fees.MaxBps)
+	}
 	if cfg.MinTier < tiers.Tier1 {
 		cfg.MinTier = tiers.Tier1
 	}
@@ -124,7 +127,7 @@ func Wire(ctx context.Context, cfg WireConfig, d WireDeps) (*Wired, error) {
 	go rec.Run(rctx, cfg.ReconcileInterval)
 
 	return &Wired{
-		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees, Audit: auditor},
+		Deps:  HandlerDeps{Service: svc, Ingest: ingest, StepUp: &TransfersStepUp{Svc: d.Transfers}, Recon: rec, FeeAdmin: fees},
 		Close: func() { cancel(); closeLeader(); closeLocks() },
 	}, nil
 }

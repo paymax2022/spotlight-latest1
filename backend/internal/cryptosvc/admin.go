@@ -293,7 +293,8 @@ func (h *adminHandler) feeSchedule(c *gin.Context) {
 // updateFeeSchedule PUT /admin/crypto/fee-schedule — replace the markup schedule with a new
 // version. It needs an Idempotency-Key, the version the editor read (refused with 409 if stale)
 // and a reason; every rate is capped at HardMaxBps. A new version prices NEW quotes only: a swap
-// already quoted keeps the bps stored on it. Each applied change is audited with old and new.
+// already quoted keeps the bps stored on it. Each applied change is audited (old and new) in the
+// same transaction that stores it.
 func (h *adminHandler) updateFeeSchedule(c *gin.Context) {
 	if h.d.FeeAdmin == nil {
 		fail(c, http.StatusServiceUnavailable, "fee_schedule_unavailable")
@@ -318,7 +319,7 @@ func (h *adminHandler) updateFeeSchedule(c *gin.Context) {
 	}
 	dec := json.NewDecoder(c.Request.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil || body.ExpectedVersion == nil {
+	if err := dec.Decode(&body); err != nil || body.ExpectedVersion == nil || dec.More() {
 		fail(c, http.StatusBadRequest, "invalid_body")
 		return
 	}
@@ -330,8 +331,7 @@ func (h *adminHandler) updateFeeSchedule(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid_fee_schedule", "detail": err.Error()})
 		return
 	}
-	before, berr := h.d.FeeAdmin.Current(c.Request.Context())
-	v, created, err := h.d.FeeAdmin.Append(c.Request.Context(), in)
+	ch, err := h.d.FeeAdmin.Append(c.Request.Context(), in)
 	switch {
 	case errors.Is(err, ErrFeeVersionConflict):
 		fail(c, http.StatusConflict, "version_conflict")
@@ -346,17 +346,8 @@ func (h *adminHandler) updateFeeSchedule(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	if created && h.d.Audit != nil {
-		ev := AuditEvent{
-			Actor: in.Actor, Action: "crypto.fee_schedule.update", EntityType: "crypto_fee_schedule",
-			EntityID: strconv.FormatInt(v.Version, 10), Reason: v.Reason, Detail: feeAuditValues(v),
-		}
-		if berr == nil {
-			ev.Old = feeAuditValues(before)
-		}
-		h.d.Audit.Audit(c.Request.Context(), ev)
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "current": feeView(v), "ceiling_bps": HardMaxBps})
+	// The audit record was written by the store in the same transaction as the version row.
+	c.JSON(http.StatusOK, gin.H{"success": true, "current": feeView(ch.New), "ceiling_bps": HardMaxBps})
 }
 
 // feeAuditValues is the audit-log form of a schedule version (no free text beyond the reason).

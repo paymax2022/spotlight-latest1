@@ -207,6 +207,32 @@ func (v VersionedFees) asInput() FeeScheduleInput {
 	return in
 }
 
+// FeeChange is the outcome of Append.
+type FeeChange struct {
+	New, Old VersionedFees
+	Created  bool
+}
+
+// validateStored refuses a stored schedule that could silently mis-price: a rate above the
+// ceiling, or an asset code that is not in canonical upper-case form (it would never match the
+// asset being quoted and that asset would quietly fall through to the other-assets rate).
+func validateStored(v VersionedFees) error {
+	if v.Schedule.MaxBps != HardMaxBps {
+		return fmt.Errorf("%w: stored schedule ceiling is %d, want %d", ErrFeeBps, v.Schedule.MaxBps, HardMaxBps)
+	}
+	for m := range v.Schedule.Majors {
+		if !assetCodeRe.MatchString(m) {
+			return fmt.Errorf("%w: stored major %q is not a canonical asset code", ErrFeeInput, m)
+		}
+	}
+	for a := range v.Schedule.Overrides {
+		if !assetCodeRe.MatchString(a) {
+			return fmt.Errorf("%w: stored override %q is not a canonical asset code", ErrFeeInput, a)
+		}
+	}
+	return v.Schedule.Validate()
+}
+
 // FeeSource supplies the schedule quotes are priced from.
 type FeeSource interface {
 	// Current returns the active schedule (Version 0 and the code default when none is stored).
@@ -216,10 +242,12 @@ type FeeSource interface {
 // FeeStore is the editable, append-only schedule history behind the admin API.
 type FeeStore interface {
 	FeeSource
-	// Append stores a new version. It returns ErrFeeVersionConflict when in.ExpectedVersion is
-	// not the current version, and ErrFeeIdempotencyConflict when in.IdempotencyKey was used for
-	// a different schedule. A repeat of the same request returns the stored row with created=false.
-	Append(ctx context.Context, in FeeScheduleInput) (v VersionedFees, created bool, err error)
+	// Append stores a new version AND its audit record in one atomic step, so a change can never
+	// exist without its audit row. It returns ErrFeeVersionConflict when in.ExpectedVersion is not
+	// the current version, and ErrFeeIdempotencyConflict when in.IdempotencyKey was used for a
+	// different schedule. A repeat of the same request returns the stored row with Created=false
+	// and writes nothing. Old is the version that was current under the same lock.
+	Append(ctx context.Context, in FeeScheduleInput) (FeeChange, error)
 	// History returns up to limit versions, newest first.
 	History(ctx context.Context, limit int) ([]VersionedFees, error)
 }

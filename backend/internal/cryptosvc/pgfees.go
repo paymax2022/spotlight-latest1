@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,7 @@ var _ FeeStore = (*PGFeeStore)(nil)
 
 // NewPGFeeStore wraps pool; base is the schedule in force before any version is stored.
 func NewPGFeeStore(pool *pgxpool.Pool, base FeeSchedule) *PGFeeStore {
+	base.MaxBps = HardMaxBps // the base can never carry a looser ceiling than the code's
 	return &PGFeeStore{pool: pool, base: base}
 }
 
@@ -68,7 +70,7 @@ func (s *PGFeeStore) Current(ctx context.Context) (VersionedFees, error) {
 	if err != nil {
 		return VersionedFees{}, err
 	}
-	if err := v.Schedule.Validate(); err != nil {
+	if err := validateStored(v); err != nil {
 		return VersionedFees{}, err
 	}
 	return v, nil
@@ -102,42 +104,46 @@ func sameSchedule(a, b FeeScheduleInput) bool {
 	return reflect.DeepEqual(x, y)
 }
 
-// Append stores a new version under an advisory lock: replay or conflict on the idempotency key
-// first, then the optimistic version check, then the insert.
-func (s *PGFeeStore) Append(ctx context.Context, in FeeScheduleInput) (VersionedFees, bool, error) {
+// Append stores a new version and its audit row in ONE transaction, under an advisory lock:
+// replay or conflict on the idempotency key first, then the optimistic version check, then the
+// insert and the audit write. The audit row is therefore atomic with the change and its "old"
+// value is read under the same lock, not before it.
+func (s *PGFeeStore) Append(ctx context.Context, in FeeScheduleInput) (FeeChange, error) {
 	sch, err := in.Schedule()
 	if err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
 	n := in.normalised()
 	over, err := overridesJSON(n.Overrides)
 	if err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, feeLockKey); err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
 
 	if prev, err := scanFees(tx.QueryRow(ctx, `SELECT `+feeCols+` FROM public.crypto_fee_schedules WHERE idempotency_key = $1`, in.IdempotencyKey)); err == nil {
 		if !sameSchedule(prev.asInput(), in) {
-			return VersionedFees{}, false, ErrFeeIdempotencyConflict
+			return FeeChange{}, ErrFeeIdempotencyConflict
 		}
-		return prev, false, nil
+		return FeeChange{New: prev, Created: false}, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
 
-	var cur int64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(max(version), 0) FROM public.crypto_fee_schedules`).Scan(&cur); err != nil {
-		return VersionedFees{}, false, err
+	old := VersionedFees{Version: 0, Schedule: s.base, Reason: "configured default", CreatedBy: "system"}
+	if cur, err := scanFees(tx.QueryRow(ctx, `SELECT `+feeCols+` FROM public.crypto_fee_schedules ORDER BY version DESC LIMIT 1`)); err == nil {
+		old = cur
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return FeeChange{}, err
 	}
-	if cur != in.ExpectedVersion {
-		return VersionedFees{}, false, ErrFeeVersionConflict
+	if old.Version != in.ExpectedVersion {
+		return FeeChange{}, ErrFeeVersionConflict
 	}
 	majors := make([]string, 0, len(sch.Majors))
 	for m := range sch.Majors {
@@ -149,10 +155,18 @@ func (s *PGFeeStore) Append(ctx context.Context, in FeeScheduleInput) (Versioned
 		 VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) RETURNING `+feeCols,
 		sch.MajorBps, sch.OtherBps, majors, string(over), strings.TrimSpace(in.Reason), in.Actor, in.IdempotencyKey))
 	if err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
+	}
+	oldJSON, _ := json.Marshal(feeAuditValues(old))
+	newJSON, _ := json.Marshal(feeAuditValues(v))
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO public.crypto_audit_log (actor_id, action, entity_type, entity_id, old_value, new_value, reason)
+		 VALUES ($1, 'crypto.fee_schedule.update', 'crypto_fee_schedule', $2, $3::jsonb, $4::jsonb, $5)`,
+		in.Actor, strconv.FormatInt(v.Version, 10), string(oldJSON), string(newJSON), v.Reason); err != nil {
+		return FeeChange{}, fmt.Errorf("cryptosvc: write fee audit record: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
-	return v, true, nil
+	return FeeChange{New: v, Old: old, Created: true}, nil
 }

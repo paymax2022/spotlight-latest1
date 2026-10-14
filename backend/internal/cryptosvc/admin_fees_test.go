@@ -14,16 +14,15 @@ import (
 )
 
 type feeAdminRig struct {
-	f   *memFees
-	aud *auditSink
-	e   *gin.Engine
+	f *memFees
+	e *gin.Engine
 }
 
 func newFeeAdminRig(t *testing.T, withStore bool) *feeAdminRig {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	rr := &feeAdminRig{f: newMemFees(), aud: &auditSink{}, e: gin.New()}
-	d := HandlerDeps{Audit: rr.aud}
+	rr := &feeAdminRig{f: newMemFees(), e: gin.New()}
+	d := HandlerDeps{}
 	if withStore {
 		d.FeeAdmin = rr.f
 	}
@@ -96,10 +95,10 @@ func TestFeeSchedulePutAppendsAVersionAndAuditsOldAndNew(t *testing.T) {
 	if cur["version"].(float64) != 1 || cur["major_bps"].(float64) != 80 || cur["created_by"] != "admin-7" || cur["reason"] != "Q4 review" {
 		t.Fatalf("applied schedule wrong: %v", cur)
 	}
-	if len(rr.aud.ev) != 1 {
-		t.Fatalf("exactly one audit event expected, got %d", len(rr.aud.ev))
+	if len(rr.f.audits) != 1 {
+		t.Fatalf("exactly one audit event expected, got %d", len(rr.f.audits))
 	}
-	ev := rr.aud.ev[0]
+	ev := rr.f.audits[0]
 	if ev.Action != "crypto.fee_schedule.update" || ev.Actor != "admin-7" || ev.EntityType != "crypto_fee_schedule" || ev.EntityID != "1" || ev.Reason != "Q4 review" {
 		t.Fatalf("audit event wrong: %+v", ev)
 	}
@@ -120,8 +119,8 @@ func TestFeeSchedulePutRefusesAStaleVersion(t *testing.T) {
 	if code != http.StatusConflict || body["error"] != "version_conflict" {
 		t.Fatalf("a blind overwrite must be refused: %d %v", code, body)
 	}
-	if len(rr.aud.ev) != 1 {
-		t.Fatalf("a refused write must not be audited as applied: %d events", len(rr.aud.ev))
+	if len(rr.f.audits) != 1 {
+		t.Fatalf("a refused write must not be audited as applied: %d events", len(rr.f.audits))
 	}
 }
 
@@ -135,8 +134,8 @@ func TestFeeSchedulePutIsIdempotent(t *testing.T) {
 	if h, _ := rr.f.History(context.Background(), 10); len(h) != 1 {
 		t.Fatalf("a retry must not append a second row, have %d", len(h))
 	}
-	if len(rr.aud.ev) != 1 {
-		t.Fatalf("a replay must not emit a second audit event, got %d", len(rr.aud.ev))
+	if len(rr.f.audits) != 1 {
+		t.Fatalf("a replay must not emit a second audit event, got %d", len(rr.f.audits))
 	}
 	other := goodBody(0)
 	other["major_bps"] = 99
@@ -160,6 +159,7 @@ func TestFeeSchedulePutValidatesBeforeAnythingIsStored(t *testing.T) {
 		"unknown field":            {func() any { b := goodBody(0); b["max_bps"] = 9999; return b }(), "k", 400, "invalid_body"},
 		"missing expected_version": {map[string]any{"major_bps": 80, "other_bps": 110, "majors": []string{"BTC"}, "reason": "x"}, "k", 400, "invalid_body"},
 		"not json":                 {"{not json", "k", 400, "invalid_body"},
+		"trailing data after json": {`{"expected_version":0,"major_bps":80,"other_bps":110,"majors":["BTC"],"reason":"x"}{"x":1}`, "k", 400, "invalid_body"},
 		"oversized":                {strings.Repeat("x", maxJSONBytes+10), "k", 400, "invalid_body"},
 	} {
 		rr := newFeeAdminRig(t, true)
@@ -173,7 +173,7 @@ func TestFeeSchedulePutValidatesBeforeAnythingIsStored(t *testing.T) {
 		if h, _ := rr.f.History(context.Background(), 10); len(h) != 0 {
 			t.Errorf("%s: a rejected request stored a row", name)
 		}
-		if len(rr.aud.ev) != 0 {
+		if len(rr.f.audits) != 0 {
 			t.Errorf("%s: a rejected request emitted an audit event", name)
 		}
 	}

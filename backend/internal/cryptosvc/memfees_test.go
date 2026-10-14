@@ -3,6 +3,7 @@ package cryptosvc
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ type memFees struct {
 	keyVer   map[string]int64
 	failRead error
 	now      time.Time
+	audits   []AuditEvent // what the real store writes in the same transaction as the row
 }
 
 func newMemFees() *memFees {
@@ -51,26 +53,31 @@ func sameInput(a, b FeeScheduleInput) bool {
 	return reflect.DeepEqual(a.normalised(), b.normalised())
 }
 
-func (m *memFees) Append(_ context.Context, in FeeScheduleInput) (VersionedFees, bool, error) {
+func (m *memFees) Append(_ context.Context, in FeeScheduleInput) (FeeChange, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if prev, ok := m.keys[in.IdempotencyKey]; ok {
 		if !sameInput(prev, in) {
-			return VersionedFees{}, false, ErrFeeIdempotencyConflict
+			return FeeChange{}, ErrFeeIdempotencyConflict
 		}
-		return m.rows[m.keyVer[in.IdempotencyKey]-1], false, nil
+		return FeeChange{New: m.rows[m.keyVer[in.IdempotencyKey]-1]}, nil
 	}
-	cur := int64(len(m.rows))
-	if in.ExpectedVersion != cur {
-		return VersionedFees{}, false, ErrFeeVersionConflict
+	old := VersionedFees{Version: 0, Schedule: DefaultFeeSchedule(), Reason: "configured default", CreatedBy: "system"}
+	if len(m.rows) > 0 {
+		old = m.rows[len(m.rows)-1]
+	}
+	if in.ExpectedVersion != old.Version {
+		return FeeChange{}, ErrFeeVersionConflict
 	}
 	sch, err := in.Schedule()
 	if err != nil {
-		return VersionedFees{}, false, err
+		return FeeChange{}, err
 	}
-	row := VersionedFees{Version: cur + 1, Schedule: sch, Reason: strings.TrimSpace(in.Reason), CreatedBy: in.Actor, CreatedAt: m.now}
+	row := VersionedFees{Version: old.Version + 1, Schedule: sch, Reason: strings.TrimSpace(in.Reason), CreatedBy: in.Actor, CreatedAt: m.now}
 	m.rows = append(m.rows, row)
 	m.keys[in.IdempotencyKey] = in
 	m.keyVer[in.IdempotencyKey] = row.Version
-	return row, true, nil
+	m.audits = append(m.audits, AuditEvent{Actor: in.Actor, Action: "crypto.fee_schedule.update", EntityType: "crypto_fee_schedule",
+		EntityID: strconv.FormatInt(row.Version, 10), Reason: row.Reason, Old: feeAuditValues(old), Detail: feeAuditValues(row)})
+	return FeeChange{New: row, Old: old, Created: true}, nil
 }

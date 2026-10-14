@@ -20,8 +20,16 @@ is revenue and a customer-facing price, so an editor must be hard to misuse as w
   rejected: two admins editing from stale screens would silently undo each other's price change.
 - **The ceiling is code.** `HardMaxBps` (150) bounds every rate and is enforced in the API and again whenever a stored schedule
   is read. The table has only sanity CHECKs, so raising the ceiling is a reviewed change, not something the endpoint can do.
-- **Mandatory reason, Idempotency-Key and audit.** Every change carries a reason, is replay-safe, and writes
-  `crypto.fee_schedule.update` with old and new values to `crypto_audit_log` (audit events gained an entity type and old values).
+- **Mandatory reason, Idempotency-Key and an atomic audit row.** Every change carries a reason, is replay-safe, and the store
+  writes `crypto.fee_schedule.update` (old and new values) to `crypto_audit_log` **in the same transaction as the version row**,
+  with the "old" value read under the same advisory lock. An independent review found that auditing from the handler after the
+  commit could lose the record if the audit write failed and the client then retried (the replay would skip it); writing it
+  in-transaction removes that gap. A replay or a refused write adds no audit row.
+- **Stored data is validated on read, not trusted.** Every quote re-checks the schedule: rates within the ceiling, the ceiling
+  itself equal to the code's `HardMaxBps`, and every asset code in canonical upper-case form (a lower-case code would never
+  match and the asset would silently price at the other-assets rate). The base schedule can never carry a looser ceiling.
+- **TRUNCATE is refused** (statement trigger and revoked privilege) because row triggers do not fire for it; the history is
+  evidence only if it cannot be emptied.
 
 ## Consequences
 - Any holder of `crypto.admin` can reprice within [0, 150] bps. We did not add a dedicated permission or a maker/checker rule
@@ -32,5 +40,5 @@ is revenue and a customer-facing price, so an editor must be hard to misuse as w
 - Every quote does one extra read of the latest row. If that ever matters, add a short TTL cache keyed on the version.
 
 ## Not covered
-Scheduled or future-dated schedules, a per-edit change-size limit, sell-side and order-book fees, an admin UI, and per-user or
+Recording the schedule version on each swap (provenance for disputes; an additive nullable column), scheduled or future-dated schedules, a per-edit change-size limit, sell-side and order-book fees, an admin UI, and per-user or
 per-tier pricing.

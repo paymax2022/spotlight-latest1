@@ -67,7 +67,7 @@ func (s *Service) schedule(ctx context.Context) (FeeSchedule, error) {
 	if err != nil {
 		return FeeSchedule{}, fmt.Errorf("cryptosvc: read fee schedule: %w", err)
 	}
-	if err := v.Schedule.Validate(); err != nil {
+	if err := validateStored(v); err != nil {
 		return FeeSchedule{}, err
 	}
 	return v.Schedule, nil
