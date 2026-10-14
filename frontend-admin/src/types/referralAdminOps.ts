@@ -42,16 +42,16 @@ export interface BudgetLine {
   scope: string; // campaign / program / vertical
   budget_kobo: number;
   spent_kobo: number;
-  burn_rate_kobo_per_day: number;
+  burn_rate_kobo_per_day: number | null; // null: the backend has no burn window yet
   projected_exhaust_date: string | null;
   alert: 'ok' | 'warn' | 'breach';
 }
 export interface BudgetBurn {
   as_of: string;
-  program_budget_kobo: number;
-  program_spent_kobo: number;
-  reward_to_ltv_ratio: number; // 0..1 (A-FIN-04)
-  reward_to_ltv_cap_pct: number;
+  program_budget_kobo: number | null; // null: no active global budget
+  program_spent_kobo: number | null;
+  reward_to_ltv_ratio: number | null; // 0..1 (A-FIN-04); null: not available
+  reward_to_ltv_cap_pct: number | null; // null: no cap configured on the backend
   lines: BudgetLine[];
   trend: { date: string; spent_kobo: number }[];
 }
