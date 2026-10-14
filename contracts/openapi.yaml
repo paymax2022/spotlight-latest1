@@ -4699,7 +4699,7 @@ paths:
                       contestId: { type: string }
                       schoolId: { type: string }
                       createdAt: { type: string }
-                      avatarUrl: { type: string }
+                      avatarUrl: { type: string, description: "user_profiles.avatar_url, else metadata.profilePhotoUrl" }
                       lastLoginAt: { type: string, format: date-time }
                       emailVerifiedAt: { type: string, format: date-time }
                       phoneVerifiedAt: { type: string, format: date-time }
