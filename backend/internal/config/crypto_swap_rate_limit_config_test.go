@@ -52,3 +52,30 @@ func TestValidate_SwapRateLimitsAreBounded(t *testing.T) {
 		}
 	}
 }
+
+// Boundaries of the accepted range: 1 and 600 pass, 0 and 601 do not.
+func TestValidate_SwapRateLimitBoundaries(t *testing.T) {
+	base := func() Config {
+		c := staging()
+		c.FeatureCryptoEnabled, c.CryptoProvider = true, "quidax"
+		c.CryptoQuidaxTestKey, c.CryptoQuidaxTestBaseURL = "qk_real", "https://openapi.quidax.io/exchange-open-api/api/v1"
+		c.FeatureCryptoSwapsEnabled, c.CryptoWebhookSecret, c.CryptoLockPoolConns = true, "whsec_real", 40
+		c.CryptoQuoteRatePerMin, c.CryptoConfirmRatePerMin = 20, 5
+		return c
+	}
+	for _, tc := range []struct {
+		v    int
+		want bool // accepted
+	}{{0, false}, {1, true}, {600, true}, {601, false}} {
+		for name, set := range map[string]func(*Config){
+			"quote":   func(c *Config) { c.CryptoQuoteRatePerMin = tc.v },
+			"confirm": func(c *Config) { c.CryptoConfirmRatePerMin = tc.v },
+		} {
+			c := base()
+			set(&c)
+			if got := c.Validate() == nil; got != tc.want {
+				t.Errorf("%s=%d: accepted=%v, want %v", name, tc.v, got, tc.want)
+			}
+		}
+	}
+}

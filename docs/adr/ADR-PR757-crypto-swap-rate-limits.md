@@ -21,6 +21,15 @@ one user could price swaps against the provider or fire confirms. Confirm also s
 ## Consequences
 - **Redis errors fail open** (existing middleware behaviour). During an outage the budget is not enforced; the atomic PIN
   lockout (ADR-PR755), the in-process gate and the lock pool still bound the damage.
+- **Bad input spends budget too.** The limiter runs before the handler's cheap rejections, so a malformed id, bad body
+  or missing PIN also counts toward the 5/min confirm budget. Limiting later would need a handler-level counter; we
+  prefer the simple, strictly-earlier placement. A client that loops on bad input can lock itself out of confirming
+  for up to a minute.
+- **429 must mean "outcome unknown", not "failed", for clients.** Confirm does not use the Idempotency-Key, so a retry
+  after a timeout spends budget; clients should poll the swap rather than treat a throttled confirm as a failure.
+  (No client for the new pipeline is on `main` yet.)
+- At mount the limits are clamped to at least 1, because non-dev validation does not run in dev and the middleware
+  would turn 0 into 60/min.
 - Fixed one-minute window: a user can burst up to twice the budget across a boundary.
 - Keyed by user id only. IP or device limits are out of scope (IP keying is spoofable behind a proxy).
 - Without Redis the limit is per replica, so the effective cap scales with replica count.
