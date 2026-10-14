@@ -3,6 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchant from './api';
+import { uploadKYBDocument, type KYBPickedFile } from './kybUpload';
 import type { StaffMember } from './types';
 import type { CreateStoreInput, UpdateStoreInput } from './types';
 
@@ -109,6 +110,15 @@ export function useAddKYBDocument(id: string) {
   return useMutation({
     mutationFn: (v: { docType: string; fileUrl: string; fileName?: string }) =>
       merchant.addKYBDocument(id, v.docType, v.fileUrl, v.fileName),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'kyb', id] }),
+  });
+}
+
+/** Pick-and-send a KYB document: presign, PUT to storage, then record the key. */
+export function useUploadKYBDocument(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { docType: string; file: KYBPickedFile }) => uploadKYBDocument(id, v.docType, v.file),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'kyb', id] }),
   });
 }

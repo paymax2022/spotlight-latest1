@@ -472,6 +472,37 @@ components:
         rider_stars: { type: integer, minimum: 1, maximum: 5, nullable: true }
         comment: { type: string, nullable: true }
 
+    KYBStatus:
+      type: string
+      enum: [draft, submitted, under_review, needs_more_info, approved, rejected]
+      description: >
+        Merchant Know-Your-Business state. draft/needs_more_info/rejected are owner-editable;
+        submitted/under_review/approved are locked until a reviewer acts. Opening for orders
+        (PATCH /{id}/availability with is_open=true) requires `approved`; closing is always allowed.
+    KYB:
+      type: object
+      properties:
+        restaurant_id: { type: string }
+        legal_name: { type: string }
+        business_type: { type: string, enum: [sole_proprietor, limited_company, partnership, ngo] }
+        rc_number: { type: string, description: CAC RC/BN number; required for every business_type except sole_proprietor }
+        tin: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        bank_code: { type: string }
+        account_number: { type: string, description: 10-digit NUBAN }
+        account_name: { type: string }
+        status: { $ref: '#/components/schemas/KYBStatus' }
+        decision_reason: { type: string, nullable: true, description: Reviewer's reason on needs_more_info / rejected }
+    KYBDocumentPresign:
+      type: object
+      properties:
+        upload_url: { type: string, description: Short-lived presigned PUT URL }
+        object_key: { type: string, description: Server-chosen key; send back as file_url when recording the document }
+        content_type: { type: string, description: The client MUST send exactly this Content-Type on the PUT }
+        expires_in: { type: integer, description: Seconds }
+        method: { type: string, enum: [PUT] }
+
 paths:
   # ═══════════════════════════════════════════════════════════════════════════
   # RESTAURANTS & MENU
@@ -553,7 +584,7 @@ paths:
     patch:
       tags: [restaurant]
       summary: Open or close the store (operator)
-      description: Owner-only operational open/close switch. Eligibility/KYC gating is handled upstream by the merchant-onboarding engine.
+      description: Owner-only operational open/close switch. Closing is always allowed; opening is refused with 403 until the outlet's business verification (KYB) is `approved` (see /{id}/kyb).
       parameters: [{ $ref: '#/components/parameters/IdParam' }]
       requestBody:
         required: true
@@ -568,7 +599,119 @@ paths:
         '200': { description: Updated store, content: { application/json: { schema: { $ref: '#/components/schemas/Restaurant' } } } }
         '400': { description: is_open is required }
         '401': { description: Not authenticated }
-        '403': { description: Not the restaurant owner }
+        '403': { description: "Not the restaurant owner, or opening while business verification (KYB) is not approved" }
+  /{id}/kyb:
+    get:
+      tags: [restaurant]
+      summary: Read the outlet's business verification (KYB) record (owner)
+      description: >
+        Requires permission to manage banking for the outlet. An outlet that has never
+        saved anything reads back as an empty `draft`. `documents` lists the uploaded
+        document types (e.g. `cac_certificate`), not their locations.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses:
+        '200':
+          description: KYB record and uploaded document types
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kyb: { $ref: '#/components/schemas/KYB' }
+                  documents: { type: array, items: { type: string } }
+        '401': { description: Not authenticated }
+        '403': { description: Not permitted to manage banking for this outlet }
+    put:
+      tags: [restaurant]
+      summary: Save the KYB business and settlement details (owner)
+      description: >
+        Full overwrite of the details (send every field). Rejected with 400 once the KYB is
+        submitted, under review or approved. Does not change `status`.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KYB' }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { type: object, properties: { kyb: { $ref: '#/components/schemas/KYB' } } } } } }
+        '400': { description: "Malformed body, or the KYB is locked for editing" }
+        '401': { description: Not authenticated }
+        '403': { description: Not permitted to manage banking for this outlet }
+  /{id}/kyb/documents/presign:
+    post:
+      tags: [restaurant]
+      summary: Get a presigned upload URL for a KYB document (owner)
+      description: >
+        Step 1 of a document upload. The backend chooses the object key
+        (restaurant/<id>/kyb/<doc_type>/<random><ext>) and binds the Content-Type into the
+        signature, so the client cannot pick where a file lands or change its type. Step 2 is a
+        direct PUT of the file to `upload_url` (no Authorization header); step 3 records the
+        returned `object_key` through POST /{id}/kyb/documents. The declared Content-Type must
+        match the file extension: .pdf application/pdf, .png image/png, .jpg/.jpeg image/jpeg,
+        .webp image/webp. Refused once the KYB is locked for editing.
+        503 means the server has no usable object storage; retrying cannot succeed, so clients
+        should fall back to recording a pasted http(s) link.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doc_type, file_name, content_type]
+              properties:
+                doc_type: { type: string, pattern: '^[a-z][a-z0-9_]{1,63}$', example: cac_certificate }
+                file_name: { type: string, description: Used only for its extension, example: cac.pdf }
+                content_type: { type: string, example: application/pdf }
+      responses:
+        '200': { description: Upload URL, content: { application/json: { schema: { $ref: '#/components/schemas/KYBDocumentPresign' } } } }
+        '400': { description: "Bad doc_type, unsupported extension, type/extension mismatch, or the KYB is locked" }
+        '401': { description: Not authenticated }
+        '403': { description: Not permitted to manage banking for this outlet }
+        '503': { description: Document uploads are not configured on this server }
+  /{id}/kyb/documents:
+    post:
+      tags: [restaurant]
+      summary: Record a KYB document (owner)
+      description: >
+        `file_url` is either an `object_key` returned by the presign endpoint for THIS outlet, or a
+        plain http(s) link to a copy hosted elsewhere. Anything else (another outlet's key, other
+        schemes such as javascript:/data:, path traversal) is rejected with 400. One document per
+        (outlet, doc_type); re-adding a type replaces it, until the KYB is locked for editing.
+        The reviewer console receives short-lived signed URLs for stored keys.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doc_type, file_url]
+              properties:
+                doc_type: { type: string, pattern: '^[a-z][a-z0-9_]{1,63}$', example: cac_certificate }
+                file_url: { type: string }
+                file_name: { type: string }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { description: "Invalid doc_type or file_url, or the KYB is locked" }
+        '401': { description: Not authenticated }
+        '403': { description: Not permitted to manage banking for this outlet }
+  /{id}/kyb/submit:
+    post:
+      tags: [restaurant]
+      summary: Submit the KYB for review (owner)
+      description: >
+        Validates the details and moves the record to `submitted`. A registered business
+        (anything other than sole_proprietor) also needs its rc_number and a `cac_certificate`
+        document. Allowed from draft, needs_more_info and rejected.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses:
+        '200': { description: Submitted, content: { application/json: { schema: { type: object, properties: { kyb: { $ref: '#/components/schemas/KYB' } } } } } }
+        '400': { description: Not submittable from the current status }
+        '401': { description: Not authenticated }
+        '403': { description: Not permitted to manage banking for this outlet }
+        '422': { description: Submission incomplete; the message lists what is missing }
   /mine:
     get:
       tags: [restaurant]
