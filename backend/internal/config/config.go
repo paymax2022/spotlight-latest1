@@ -142,6 +142,9 @@ type Config struct {
 	// (web/mobile SDK flows use a server-issued token). DEFAULT OFF.
 	FeatureKYCVerifyEnabled bool
 
+	// FeatureNavTelemetryEnabled mounts POST /api/v1/telemetry/navigation.
+	FeatureNavTelemetryEnabled bool
+
 	// Dojah — headers Authorization:<secret> + AppId:<app_id>; sandbox→live.
 	DojahAppID         string
 	DojahSecretKey     string
@@ -876,21 +879,22 @@ func Load() Config {
 		TransferFailoverEnabled: getEnvBool("TRANSFER_FAILOVER_ENABLED", true),
 
 		// ── Multi-provider KYC verification (ADR-013) ──
-		FeatureKYCVerifyEnabled: getEnvBool("FEATURE_KYC_VERIFY_ENABLED", false),
-		DojahAppID:              getEnv("DOJAH_APP_ID", ""),
-		DojahSecretKey:          getEnv("DOJAH_SECRET_KEY", ""),
-		DojahProd:               getEnvBool("DOJAH_PROD", false),
-		DojahWebhookSecret:      getEnv("DOJAH_WEBHOOK_SECRET", ""),
-		SmileIDPartnerID:        getEnv("SMILEID_PARTNER_ID", ""),
-		SmileIDAPIKey:           getEnv("SMILEID_API_KEY", ""),
-		SmileIDProd:             getEnvBool("SMILEID_PROD", false),
-		SmileIDCallbackURL:      getEnv("SMILEID_CALLBACK_URL", ""),
-		YouverifyToken:          getEnv("YOUVERIFY_TOKEN", ""),
-		YouverifyProd:           getEnvBool("YOUVERIFY_PROD", false),
-		YouverifyWebhookSecret:  getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
-		KYCPIIEncKey:            getEnv("KYC_PII_ENC_KEY", ""),
-		KYCFacialMatchThreshold: getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
-		FeatureKYCOwnershipGate: getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
+		FeatureKYCVerifyEnabled:    getEnvBool("FEATURE_KYC_VERIFY_ENABLED", false),
+		FeatureNavTelemetryEnabled: getEnvBool("FEATURE_NAV_TELEMETRY_ENABLED", false),
+		DojahAppID:                 getEnv("DOJAH_APP_ID", ""),
+		DojahSecretKey:             getEnv("DOJAH_SECRET_KEY", ""),
+		DojahProd:                  getEnvBool("DOJAH_PROD", false),
+		DojahWebhookSecret:         getEnv("DOJAH_WEBHOOK_SECRET", ""),
+		SmileIDPartnerID:           getEnv("SMILEID_PARTNER_ID", ""),
+		SmileIDAPIKey:              getEnv("SMILEID_API_KEY", ""),
+		SmileIDProd:                getEnvBool("SMILEID_PROD", false),
+		SmileIDCallbackURL:         getEnv("SMILEID_CALLBACK_URL", ""),
+		YouverifyToken:             getEnv("YOUVERIFY_TOKEN", ""),
+		YouverifyProd:              getEnvBool("YOUVERIFY_PROD", false),
+		YouverifyWebhookSecret:     getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
+		KYCPIIEncKey:               getEnv("KYC_PII_ENC_KEY", ""),
+		KYCFacialMatchThreshold:    getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
+		FeatureKYCOwnershipGate:    getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
 
 		// ── Arena competition engine (ADR-014) ──
 		FeatureArenaEnabled:       getEnvBool("FEATURE_ARENA_ENABLED", false),
