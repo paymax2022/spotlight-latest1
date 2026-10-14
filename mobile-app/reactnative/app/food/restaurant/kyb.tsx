@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -11,6 +11,8 @@ import TextInputField from '@/components/TextInputField';
 import SegmentedControl from '@/components/SegmentedControl';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import { alertAsync } from '@/lib/confirm';
+import { useAuthStore } from '@/store/authStore';
+import { getErrorMessage } from '@/utils/errorMapper';
 import { Colors } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
@@ -65,6 +67,7 @@ export default function KYBScreen() {
   const submit = useSubmitKYB(storeId);
   const banks = useBanks();
   const resolveAccountMut = useResolveAccount();
+  const account = useAuthStore((s) => s.user);
 
   const bankOptions = useMemo(
     () => (banks.data ?? []).map((b) => ({ label: b.name, value: b.code })),
@@ -82,6 +85,10 @@ export default function KYBScreen() {
   const [accountName, setAccountName] = useState('');
   const [certUrl, setCertUrl] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [resolveError, setResolveError] = useState('');
+  // The bank+number the CURRENT accountName belongs to. A name is only valid for
+  // the pair it was resolved (or saved) for; changing either must drop it.
+  const resolvedFor = useRef('');
 
   // Seed local form state from the server once, when it first arrives — after that
   // the form is the source of truth until the next successful save (same pattern as
@@ -92,11 +99,15 @@ export default function KYBScreen() {
     if (kyb.data.businessType) setBusinessType(kyb.data.businessType);
     setRcNumber(kyb.data.rcNumber);
     setTin(kyb.data.tin);
-    setContactEmail(kyb.data.contactEmail);
-    setContactPhone(kyb.data.contactPhone);
+    // Nothing saved yet -> default to the email/phone the owner already gave when
+    // they created their account, instead of asking for them again. Anything they
+    // have saved (or later type) wins.
+    setContactEmail(kyb.data.contactEmail || account?.email || '');
+    setContactPhone(kyb.data.contactPhone || account?.phone || '');
     setBankCode(kyb.data.bankCode);
     setAccountNumber(kyb.data.accountNumber);
     setAccountName(kyb.data.accountName);
+    if (kyb.data.accountName) resolvedFor.current = `${kyb.data.bankCode}:${kyb.data.accountNumber}`;
     setLoaded(true);
   }, [kyb.data, loaded]);
 
@@ -104,16 +115,30 @@ export default function KYBScreen() {
   // TransferScreen — the owner shouldn't have to type their own settlement account's
   // registered name by hand when the bank can confirm it.
   useEffect(() => {
+    if (!loaded) return; // don't race the seeding above
+    const pair = `${bankCode}:${accountNumber}`;
+    if (pair !== resolvedFor.current) {
+      // Bank or number changed since the name was resolved: that name now belongs
+      // to a different account. Showing it next to the new details would let the
+      // owner submit someone else's registered name.
+      if (accountName) setAccountName('');
+      setResolveError('');
+    }
     if (!bankCode || !/^\d{10}$/.test(accountNumber)) return;
+    if (pair === resolvedFor.current) return; // already resolved / saved for this pair
     const handle = setTimeout(() => {
       resolveAccountMut.mutate(
         { bankCode, accountNumber },
-        { onSuccess: (r) => setAccountName(r.accountName) },
+        {
+          onSuccess: (r) => { resolvedFor.current = pair; setAccountName(r.accountName); setResolveError(''); },
+          // Was silent: a failed lookup left an empty box and no reason why.
+          onError: (e) => setResolveError(getErrorMessage(e) || "Couldn't verify this account."),
+        },
       );
     }, 500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bankCode, accountNumber]);
+  }, [loaded, bankCode, accountNumber]);
 
   const needsRegistration = businessType !== 'sole_proprietor';
   const hasCertDoc = (kyb.data?.documents ?? []).includes('cac_certificate');
@@ -193,7 +218,7 @@ export default function KYBScreen() {
 
   return (
     <Shell>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Text style={styles.outlet}>{active.name}</Text>
         <View style={styles.introRow}>
           <ShieldCheck size={18} color={Colors.primary} />
@@ -255,7 +280,7 @@ export default function KYBScreen() {
 
             <Card title="Settlement account">
               <Text style={styles.muted}>The bank account your payouts are settled to once approved.</Text>
-              <BankPicker label="Bank" value={bankCode} options={bankOptions} onChange={setBankCode} loading={banks.isLoading} />
+              <BankPicker label="Bank" value={bankCode} options={bankOptions} onChange={setBankCode} loading={banks.isLoading} autoFocusSearch={false} />
               <TextInputField label="Account number" value={accountNumber} onChangeText={(t) => setAccountNumber(t.replace(/\D/g, '').slice(0, 10))} placeholder="0123456789" keyboardType="number-pad" />
               <TextInputField
                 label="Account name"
@@ -263,6 +288,7 @@ export default function KYBScreen() {
                 onChangeText={setAccountName}
                 placeholder={resolveAccountMut.isPending ? 'Resolving…' : 'Auto-fills from bank + account number'}
                 editable={!resolveAccountMut.isPending}
+                error={resolveError || undefined}
               />
             </Card>
 
