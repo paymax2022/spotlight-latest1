@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
@@ -25,6 +26,12 @@ type AdminUsersHandler struct {
 	// sessionsEnabled mirrors FEATURE_SESSION_HARDENING_ENABLED (deny/503 when off).
 	sessions        services.SessionService
 	sessionsEnabled bool
+	// membership / modulesEnabled back the read-only per-user module membership
+	// view (see admin_user_modules.go); modulesTimeout overrides the per-query cap
+	// (zero = overviewQueryTimeout).
+	membership     membershipQuerier
+	modulesEnabled bool
+	modulesTimeout time.Duration
 }
 
 func NewAdminUsersHandler(svc services.RBACService, audit services.AuditService) *AdminUsersHandler {
