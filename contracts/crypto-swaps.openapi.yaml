@@ -136,6 +136,31 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /admin/crypto/reconciler:
+    get:
+      tags: [Admin]
+      summary: Reconciler status and swap backlog (admin, read-only)
+      description: >
+        What the reconciler has been doing and what is waiting on it. `replica` is the in-process
+        state of the replica that answered: only the elected leader does work, so a follower mostly
+        shows skipped passes, and the counters reset when the process restarts. `backlog` is read
+        from the database and is the same whichever replica answers; it has one row per open state
+        (needs_review, confirming, processing, quoted), zero-filled. Counts, integer kobo and alert
+        text only: no swap, user or provider identifiers. Requires crypto.admin. 503 when the
+        reconciler is not running on the serving replica.
+      operationId: getCryptoReconcilerStatus
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Reconciler status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcilerStatus'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /admin/crypto/swaps/{id}/resolve:
     post:
       tags: [Admin]
@@ -209,6 +234,60 @@ components:
       description: Error
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
   schemas:
+    ReconcilerStatus:
+      type: object
+      required: [success, note, replica, backlog]
+      properties:
+        success: { type: boolean }
+        note: { type: string }
+        replica:
+          type: object
+          properties:
+            started_at: { type: string }
+            runs: { type: integer, format: int64 }
+            led_runs: { type: integer, format: int64 }
+            skipped_runs: { type: integer, format: int64 }
+            last_run_at: { type: string }
+            last_led_at: { type: string }
+            last_led: { type: boolean }
+            last_error: { type: string }
+            last_result:
+              type: object
+              properties:
+                resolved: { type: integer }
+                released: { type: integer }
+                parked: { type: integer }
+                expired: { type: integer }
+                errors: { type: integer }
+                clearing_negative: { type: boolean }
+            totals:
+              type: object
+              properties:
+                resolved: { type: integer, format: int64 }
+                released: { type: integer, format: int64 }
+                parked: { type: integer, format: int64 }
+                expired: { type: integer, format: int64 }
+                errors: { type: integer, format: int64 }
+                clearing_negative_runs: { type: integer, format: int64 }
+            recent_alerts:
+              type: array
+              items:
+                type: object
+                properties:
+                  at: { type: string }
+                  kind: { type: string }
+                  message: { type: string }
+        backlog:
+          type: array
+          items:
+            type: object
+            required: [state, count, held_kobo, oldest_age_seconds]
+            properties:
+              state: { type: string, enum: [needs_review, confirming, processing, quoted] }
+              count: { type: integer, format: int64 }
+              held_kobo: { type: integer, format: int64 }
+              oldest_updated_at: { type: string }
+              oldest_age_seconds: { type: integer, format: int64 }
     Error:
       type: object
       required: [success, error]

@@ -130,6 +130,30 @@ func (s *PGStore) ListByState(ctx context.Context, state cryptoprov.SwapState, l
 	return out, rows.Err()
 }
 
+// Backlog rolls the open swaps up by state in one read-only statement; no swap contents leave it.
+func (s *PGStore) Backlog(ctx context.Context) ([]BacklogState, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT status, count(*), COALESCE(sum(ngn_kobo + fee_kobo), 0)::bigint, min(updated_at)
+		  FROM public.crypto_swaps
+		 WHERE status IN ('quoted','confirming','processing','needs_review')
+		 GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BacklogState
+	for rows.Next() {
+		var b BacklogState
+		var st string
+		if err := rows.Scan(&st, &b.Count, &b.HeldKobo, &b.OldestUpdatedAt); err != nil {
+			return nil, err
+		}
+		b.State = cryptoprov.SwapState(st)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // SwapByIDAny reads a swap by id with no user scoping, for the admin resolution path.
 func (s *PGStore) SwapByIDAny(ctx context.Context, id string) (SwapRecord, bool, error) {
 	r, err := scanSwap(s.pool.QueryRow(ctx, `SELECT `+swapCols+` FROM public.crypto_swaps WHERE id = $1::uuid`, id))

@@ -254,3 +254,31 @@ func (s *memStore) TransitionSwap(_ context.Context, id string, from, to cryptop
 	s.transitions = append(s.transitions, string(from)+">"+string(to))
 	return true, nil
 }
+
+func (s *memStore) Backlog(_ context.Context) ([]BacklogState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	by := map[cryptoprov.SwapState]*BacklogState{}
+	for _, r := range s.swaps {
+		switch r.State {
+		case cryptoprov.SwapStateQuoted, cryptoprov.SwapStateConfirming, cryptoprov.SwapStateProcessing, cryptoprov.SwapStateNeedsReview:
+		default:
+			continue
+		}
+		b := by[r.State]
+		if b == nil {
+			b = &BacklogState{State: r.State, OldestUpdatedAt: r.UpdatedAt}
+			by[r.State] = b
+		}
+		b.Count++
+		b.HeldKobo += r.NGNKobo + r.FeeKobo
+		if r.UpdatedAt.Before(b.OldestUpdatedAt) {
+			b.OldestUpdatedAt = r.UpdatedAt
+		}
+	}
+	out := make([]BacklogState, 0, len(by))
+	for _, b := range by {
+		out = append(out, *b)
+	}
+	return out, nil
+}
