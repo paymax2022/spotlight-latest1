@@ -3,7 +3,7 @@
  * Mocks the usersService so no network calls are made.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // Mock the service module before importing the component
 const mockListAdminUsers = vi.fn()
@@ -88,5 +88,29 @@ describe('AdminUsersPage', () => {
       expect(screen.getByText(/Total: 2/)).toBeTruthy()
     })
     expect(screen.getByText(/Suspended: 1/)).toBeTruthy()
+  })
+
+  it('has a Profile column whose link goes to the user profile page', async () => {
+    mockListAdminUsers.mockResolvedValue([makeUser()])
+    render(<AdminUsersPage />)
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy()
+    })
+    expect(screen.getByRole('columnheader', { name: 'Profile' })).toBeTruthy()
+    const link = screen.getByRole('link', { name: /view profile/i })
+    expect(link.getAttribute('href')).toBe('/admin/users/u1')
+  })
+
+  it('still opens the side panel when a row is clicked', async () => {
+    mockListAdminUsers.mockResolvedValue([makeUser()])
+    mockGetAdminUser.mockResolvedValue(makeUser())
+    render(<AdminUsersPage />)
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByText('Ada Lovelace'))
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Ada')).toBeTruthy()
+    })
   })
 })

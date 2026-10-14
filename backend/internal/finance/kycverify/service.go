@@ -35,6 +35,8 @@ type Service struct {
 	consent *ConsentStore
 	orch    *Orchestrator
 
+	adminAuditor AdminAuditor // durable review-decision audit (may be nil)
+
 	seed          RoutingSeed // env seed, folded with DB rules per run
 	facialDefault int
 
@@ -84,6 +86,16 @@ type Deps struct {
 	// check. Optional: nil skips persistence (the verification + tier grant still
 	// stand).
 	IdentitySink IdentitySink
+	// AdminAuditor receives a DURABLE record of every admin review decision
+	// (actor, target user, session, reason). Optional: nil leaves only the
+	// structured log line, so production wiring should always set it.
+	AdminAuditor AdminAuditor
+}
+
+// AdminAuditor is the narrow port onto the shared immutable audit sink. Its
+// LogAction signature is identical to services.AuditService, which satisfies it.
+type AdminAuditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
 }
 
 // NewService builds the KYC verification service.
@@ -101,6 +113,7 @@ func NewService(d Deps) *Service {
 		ownershipGate: d.OwnershipGate,
 		accountPhone:  d.AccountPhoneSource,
 		identitySink:  d.IdentitySink,
+		adminAuditor:  d.AdminAuditor,
 	}
 }
 
@@ -357,6 +370,7 @@ func (s *Service) ApproveCase(ctx context.Context, sessionID, actorID, reason st
 		return "", err
 	}
 	s.audit(ctx, "kycverify.admin.approved", actorID, sessionID, reason)
+	s.auditDecision(ctx, "kyc.review.approve", actorID, sessionID, st, reason)
 	return st, nil
 }
 
@@ -367,7 +381,38 @@ func (s *Service) RejectCase(ctx context.Context, sessionID, actorID, reason str
 		return "", err
 	}
 	s.audit(ctx, "kycverify.admin.rejected", actorID, sessionID, reason)
+	s.auditDecision(ctx, "kyc.review.reject", actorID, sessionID, st, reason)
 	return st, nil
+}
+
+// auditDecision writes the durable audit record for an admin review decision.
+// The decision has already been applied, so a failure to look up the target
+// user must not undo it; the record then carries an empty target and the log
+// line above still names the session.
+func (s *Service) auditDecision(ctx context.Context, action, actorID, sessionID string, outcome SessionStatus, reason string) {
+	if s.adminAuditor == nil {
+		return
+	}
+	target := ""
+	if sess, err := s.repo.GetSession(ctx, sessionID); err == nil && sess != nil {
+		target = sess.UserID
+	}
+	s.adminAuditor.LogAction(actorID, target, action, "kyc", "kyc_verification_session", sessionID,
+		nil, map[string]any{"outcome": string(outcome), "reason": reason}, "", "", "high")
+}
+
+// reviewActorGuard enforces separation of duties on KYC review decisions: the
+// deciding admin must be identified and must not be the account under review,
+// otherwise a reviewer could approve their own tier upgrade. Fail-closed.
+func reviewActorGuard(actorID, sessionOwnerID string) error {
+	a := strings.ToLower(strings.TrimSpace(actorID))
+	if a == "" {
+		return fmt.Errorf("%w: review decision has no actor", ErrForbidden)
+	}
+	if a == strings.ToLower(strings.TrimSpace(sessionOwnerID)) {
+		return fmt.Errorf("%w: reviewers cannot decide their own verification", ErrForbidden)
+	}
+	return nil
 }
 
 // ListRoutingRules returns the current routing rules for the admin console.
@@ -703,6 +748,9 @@ func (o *Orchestrator) ResolveReview(ctx context.Context, sessionID string, appr
 	if err != nil {
 		return "", err
 	}
+	if err := reviewActorGuard(actorID, sess.UserID); err != nil {
+		return "", err
+	}
 	target := SessRejected
 	if approve {
 		// Approving a review is a manual override to TIER_VERIFIED (the state
@@ -890,4 +938,10 @@ func GateFacial(match bool, confidence float64, threshold int) provider.KycCheck
 		return provider.KycReview
 	}
 	return provider.KycFailed
+}
+
+// OpenReviewCaseID returns the id of the user's current open review case (their
+// latest NEEDS_REVIEW verification session), if any. Read-only.
+func (s *Service) OpenReviewCaseID(ctx context.Context, userID string) (string, bool, error) {
+	return s.repo.LatestReviewSessionID(ctx, userID)
 }

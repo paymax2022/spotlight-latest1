@@ -15,11 +15,11 @@ import type { AdminUser, AdminUserFilters } from '@/types/users';
  * no-op and every request 404'd against <proxy>/admin/users instead of
  * <proxy>/api/admin/users.
  */
-function adminApiBase(): string {
+export function adminApiBase(): string {
   return `${apiRoot()}/api`;
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   return { 'Content-Type': 'application/json' };
 }
@@ -44,14 +44,39 @@ async function statusAction(id: string, action: 'suspend' | 'unsuspend' | 'lock'
   return Boolean(res.ok && payload?.success);
 }
 
+/**
+ * Reads must not turn a failure into "no data": an empty list is
+ * indistinguishable from a real empty result, so a 401/403/5xx or a network
+ * error used to render as "No users" with nothing to act on. Throw instead,
+ * carrying the HTTP status and the backend's own message so the caller can say
+ * what happened (the page's catch already shows a toast and an error state).
+ */
+export class AdminUsersRequestError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'AdminUsersRequestError';
+  }
+}
+
+export async function readOrThrow(res: Response, what: string): Promise<Record<string, unknown>> {
+  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || payload?.success === false) {
+    const detail = typeof payload?.error === 'string' && payload.error ? `: ${payload.error}` : '';
+    throw new AdminUsersRequestError(res.status, `${what} failed (HTTP ${res.status})${detail}`);
+  }
+  return payload;
+}
+
 export async function listAdminUsers(filters: AdminUserFilters): Promise<AdminUser[]> {
   const qs = toQuery(filters);
   const res = await fetch(`${adminApiBase()}/admin/users${qs ? `?${qs}` : ''}`, {
     cache: 'no-store',
     headers: authHeaders(),
   });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok || !payload?.success || !Array.isArray(payload?.users)) return [];
+  const payload = await readOrThrow(res, 'Loading users');
+  if (!Array.isArray(payload.users)) {
+    throw new AdminUsersRequestError(res.status, 'Loading users failed: unexpected response shape');
+  }
   return payload.users as AdminUser[];
 }
 
@@ -60,9 +85,10 @@ export async function getAdminUser(id: string): Promise<AdminUser | null> {
     cache: 'no-store',
     headers: authHeaders(),
   });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok || !payload?.success || !payload?.user) return null;
-  return payload.user as AdminUser;
+  // A missing user is a normal answer, not a failure.
+  if (res.status === 404) return null;
+  const payload = await readOrThrow(res, 'Loading user');
+  return (payload.user as AdminUser | undefined) ?? null;
 }
 
 export async function updateAdminUser(id: string, patch: Record<string, unknown>): Promise<AdminUser | null> {
@@ -80,3 +106,51 @@ export async function suspendAdminUser(id: string): Promise<boolean> { return st
 export async function unsuspendAdminUser(id: string): Promise<boolean> { return statusAction(id, 'unsuspend'); }
 export async function lockAdminUser(id: string): Promise<boolean> { return statusAction(id, 'lock'); }
 export async function unlockAdminUser(id: string): Promise<boolean> { return statusAction(id, 'unlock'); }
+
+const enc = encodeURIComponent;
+
+export async function getUserRoles(id: string): Promise<string[]> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading user roles');
+  return Array.isArray(payload.roles) ? (payload.roles as string[]) : [];
+}
+
+export async function assignUserRole(id: string, roleId: string): Promise<boolean> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ roleId }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  return Boolean(res.ok && payload?.success);
+}
+
+export async function removeUserRole(id: string, roleId: string): Promise<boolean> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles/${enc(roleId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  const payload = await res.json().catch(() => ({}));
+  return Boolean(res.ok && payload?.success);
+}
+
+export async function getLoginActivity(id: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${adminApiBase()}/admin/login-activity?actorUser=${enc(id)}&limit=50`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading login activity');
+  return Array.isArray(payload.activity) ? (payload.activity as Record<string, unknown>[]) : [];
+}
+
+export async function getSecurityEvents(id: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${adminApiBase()}/admin/security-events?actorUser=${enc(id)}&limit=50`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading security events');
+  return Array.isArray(payload.events) ? (payload.events as Record<string, unknown>[]) : [];
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getDashboard, formatNaira } from '@/services/staysAdminService';
+import { isMetricUnavailable, UNAVAILABLE_LABEL } from '@/services/staysDashboardMetrics';
 import type { StaysDashboard } from '@/types/staysAdmin';
 import {
   StaysTabs,
@@ -58,7 +59,11 @@ export default function StaysDashboardPage() {
               <Kpi label="Conversion" value={pct(data.conversion)} sub="Search → book" />
               <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} />
               <Kpi label="Commission (30d)" value={formatNaira(data.commission_30d_kobo)} accent={colors.success} />
-              <Kpi label="Recon breaks open" value={data.reconciliation_breaks_open.toLocaleString('en-NG')} sub={formatNaira(data.reconciliation_break_value_kobo)} accent={data.reconciliation_breaks_open > 0 ? colors.danger : undefined} />
+              {isMetricUnavailable(data, 'reconciliation_breaks_open') ? (
+                <Kpi label="Recon breaks open" value={UNAVAILABLE_LABEL} sub="No reconciliation data source yet" />
+              ) : (
+                <Kpi label="Recon breaks open" value={data.reconciliation_breaks_open.toLocaleString('en-NG')} sub={isMetricUnavailable(data, 'reconciliation_break_value_kobo') ? UNAVAILABLE_LABEL : formatNaira(data.reconciliation_break_value_kobo)} accent={data.reconciliation_breaks_open > 0 ? colors.danger : undefined} />
+              )}
               <Kpi label="Refunds pending" value={data.refunds_pending.toLocaleString('en-NG')} />
               <Kpi label="Paid-but-unconfirmed" value={data.paid_unconfirmed.toLocaleString('en-NG')} sub="#1 invariant watch" accent={colors.danger} />
               <Kpi label="Mapping conflicts" value={data.mapping_conflicts_open.toLocaleString('en-NG')} accent={data.mapping_conflicts_open > 0 ? colors.warning : undefined} />

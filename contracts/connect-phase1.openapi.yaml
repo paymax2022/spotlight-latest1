@@ -29,6 +29,19 @@ components:
       schema: { type: string }
       description: Recommended on POST /likes; uniqueness is also enforced in the DB.
   schemas:
+    IdentityReview:
+      type: object
+      required: [id, user_id, handle, doc_type, badge_target, state, doc_ref_masked, submitted_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        handle: { type: string, description: Profile display name, or "user <first 8 of id>" when the user has no profile }
+        doc_type: { type: string, enum: [selfie_liveness, national_id, passport, drivers_license, bvn, nin] }
+        badge_target: { type: string, enum: [unverified, selfie, bvn, nin, id, full] }
+        state: { type: string, enum: [pending, approved, rejected, resubmit] }
+        doc_ref_masked: { type: string, example: 'NIN ••••9f3a' }
+        submitted_at: { type: string, format: date-time }
+        liveness_score: { type: number, nullable: true, description: Always null today; scores are not stored }
     Profile:
       type: object
       properties:
@@ -337,4 +350,135 @@ paths:
       description: Served at GET /api/connect/admin/verification/status.
       responses:
         '200': { description: OK }
+        '403': { description: forbidden }
+  /users#admin:
+    get:
+      summary: 'Admin: user directory (read-only, RBAC connect.users.view)'
+      description: >
+        Served at GET /api/connect/admin/users. Newest first; has_more signals truncation (no cursor yet).
+        status is derived (a ban beats a suspension beats a login lockout beats pending); verification is the
+        badge a passed check earned. wallet_balance_kobo is the user wallet balance in kobo. last_active_at is
+        the last login, falling back to created_at. No PII beyond handle and region.
+      parameters:
+        - { name: s, in: query, schema: { type: string, maxLength: 64 }, description: 'display-name search (wildcards are literal)' }
+        - { name: status, in: query, schema: { type: string, enum: [all, active, suspended, banned, restricted, pending], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: UserSummary[], has_more}' }
+        '400': { description: invalid status }
+        '403': { description: forbidden }
+  /users/{id}#admin:
+    get:
+      summary: 'Admin: user detail (read-only, RBAC connect.users.view)'
+      description: >
+        Served at GET /api/connect/admin/users/{id} (id is the user id). email_masked and phone_masked are
+        masked and never raw. devices and tier_history are always empty lists (not stored). bvn_status and
+        nin_status are verified or none.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'OK: {success, data: UserDetail}' }
+        '404': { description: not found, or not a uuid }
+  /dashboard#admin:
+    get:
+      summary: 'Admin: operations dashboard (read-only, RBAC connect.cases.view)'
+      description: >
+        Served at GET /api/connect/admin/dashboard. DAU/MAU are login-based (Connect keeps no activity log).
+        gift_volume_today_kobo and gift_volume_30d_kobo are null unless the caller also holds
+        connect.gifting.view. activity holds codes/types only, never names or content.
+      responses:
+        '200': { description: 'OK: {success, data: Dashboard}' }
+  /finance#admin:
+    get:
+      summary: 'Admin: finance summary (read-only, RBAC connect.gifting.view AND connect.payouts.view)'
+      description: >
+        Served at GET /api/connect/admin/finance. take_rate_30d_kobo, float_balance_kobo, ledger_debits_kobo
+        and ledger_credits_kobo are null: no agreed definition exists yet. Gifts count status sent only;
+        payout volume counts settled in the last 30 days; pending payouts are requested + processing.
+      responses:
+        '200': { description: 'OK: {success, data: FinanceSummary}' }
+        '403': { description: forbidden }
+  /underage#admin:
+    get:
+      summary: 'Admin: underage flag queue (read-only, RBAC connect.underage.review)'
+      description: >
+        Served at GET /api/connect/admin/underage. Open flags first, then newest. status maps the stored
+        value (queued: open; banned: confirmed_minor; cleared: cleared). declared_dob_masked keeps only the
+        century and the day of month ("20••-••-14"); the date of birth is never returned. case_id is always
+        null (flags are not linked to cases). signal is dob_under_18 for the age-gate reason and report
+        otherwise.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, open, confirmed_minor, cleared], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: UnderageFlag[], has_more}' }
+        '400': { description: invalid status }
+        '403': { description: forbidden }
+  /media-review#admin:
+    get:
+      summary: 'Admin: media moderation queue (read-only, RBAC connect.moderation.view)'
+      description: >
+        Served at GET /api/connect/admin/media-review. Pending first, then newest. Metadata only: the media
+        URL is never returned. ai_reason_codes is [] and ai_confidence is 0 because neither is stored.
+        media_kind is profile_photo for the first photo, otherwise gallery.
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [all, pending, approved, rejected], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: MediaReviewItem[], has_more}' }
+        '400': { description: invalid state }
+        '403': { description: forbidden }
+  /voting#admin:
+    get:
+      summary: 'Admin: Connect contest list (read-only, RBAC connect.moderation.view)'
+      description: >
+        Served at GET /api/connect/admin/voting. Connect contests (connect_contests / connect_votes), newest
+        first. status is derived from the stored status and the open/close window: draft is scheduled; closed or
+        past closes_at is closed; open and started is live; open with a future opens_at is scheduled. finalized
+        has no stored equivalent and always lists nothing. paid_votes and free_votes are vote quantities.
+        paid_vote_volume_kobo is null unless the caller also holds connect.gifting.view. integrity_score and
+        flags_open are always null (nothing stores them).
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, scheduled, live, closed, finalized], default: all } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: 'OK: {success, data: ContestSummary[], has_more}' }
+        '400': { description: invalid status }
+        '403': { description: forbidden }
+  /voting/{id}#admin:
+    get:
+      summary: 'Admin: Connect contest detail (read-only, RBAC connect.moderation.view)'
+      description: >
+        Served at GET /api/connect/admin/voting/{id}. entrants lists every roster contestant (even with no votes)
+        plus any voted option that is not on the roster (a plain-poll label), ordered by total votes, capped at 500
+        with entrants_truncated=true when there are more. tally_kobo and paid_vote_volume_kobo are null without
+        connect.gifting.view. flags is always [].
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'OK: {success, data: ContestDetail}' }
+        '404': { description: not found, or not a uuid }
+  /identity#admin:
+    get:
+      summary: 'Admin: verification review queue (read-only, RBAC connect.verification.view)'
+      description: >
+        Served at GET /api/connect/admin/identity. Read-only, masked: the document hash and the
+        evidence pointer are never returned, only a masked reference (label plus the last four
+        characters of the non-reversible HMAC). The table holds two status vocabularies
+        (ADR-PR735); this view maps them to the console states: pending; approved
+        (l0_passed, l1_passed, approved); rejected (failed, rejected); resubmit (expired).
+        in_review has no stored equivalent and is always an empty list. Rows that were never
+        submitted ('none') are excluded. Pending rows sort first, then newest. liveness_score is
+        null because scores are not stored.
+      parameters:
+        - name: state
+          in: query
+          schema: { type: string, enum: [all, pending, in_review, approved, rejected, resubmit], default: all }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, minimum: 1, maximum: 200 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [success, data], properties: { success: { type: boolean }, data: { type: array, items: { $ref: '#/components/schemas/IdentityReview' } }, has_more: { type: boolean, description: true when more rows exist than limit } } } } } }
+        '400': { description: invalid state }
+        '401': { description: unauthenticated }
         '403': { description: forbidden }

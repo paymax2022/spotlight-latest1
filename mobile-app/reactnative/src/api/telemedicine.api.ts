@@ -28,7 +28,9 @@ const wait = <T>(value: T, ms = 350): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ms));
 
 // live /api/v1/telemedicine/* routes (see backend/internal/app/finance_routes.go).
-const TELEMEDICINE_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK, true);
+// Off unless explicitly enabled: the telemedicine endpoints are live, so a build that
+// forgets the flag must fail against the backend, not show invented doctors.
+const TELEMEDICINE_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK, false);
 
 // All live telemedicine endpoints live under this prefix on the API base URL.
 const BASE = '/api/v1/telemedicine';

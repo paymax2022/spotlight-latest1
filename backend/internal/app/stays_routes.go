@@ -176,6 +176,8 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	// Property moderation.
 	ag.GET("/properties", guard("stays.admin.moderation"), adminHandler.ListModeration)
 	ag.POST("/properties/:id/status", guard("stays.admin.moderation"), adminHandler.ModerateProperty)
+	// Operations dashboard (read-only aggregates; same permission as reservation search).
+	ag.GET("/dashboard", guard("stays.admin.reservation"), adminHandler.Dashboard)
 	// Reservation search (ops support).
 	ag.GET("/reservations", guard("stays.admin.reservation"), reservationHandler.AdminSearch)
 

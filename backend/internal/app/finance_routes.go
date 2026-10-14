@@ -1049,6 +1049,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Registry: kvReg,
 			Cipher:   kvCipher,
 			Elevator: kvElevator,
+			// Durable audit of admin approve/reject decisions (shared immutable sink).
+			AdminAuditor: auditSink,
 			Seed: kycverify.RoutingSeed{
 				IDNumber:  cfg.KYCRouteIDNumber,
 				IDFacial:  cfg.KYCRouteIDFacial,
@@ -1101,6 +1103,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		kvAdmin.GET("/routing-rules", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ListRoutingRules)
 		kvAdmin.PUT("/routing-rules/:check_type", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.UpdateRoutingRule)
 		kvAdmin.GET("/events", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.Events)
+		// Per-user KYC snapshot for the admin profile page (see kyc_user_snapshot.go).
+		kvAdmin.GET("/users/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycUserSnapshotHandler(
+			func(ctx context.Context, id string) (int, string, error) {
+				prof, err := kycSvc.GetProfile(ctx, id)
+				if err != nil {
+					return 0, "", err
+				}
+				return int(prof.Tier), string(prof.Status), nil
+			},
+			kvSvc.OpenReviewCaseID,
+		))
 
 		log.Println("[finance] KYC verification gateway routes + webhook registered")
 	}
@@ -2253,6 +2266,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		drv.POST("/documents", transportHandler.AddDocument)
 		drv.POST("/documents/presign", transportHandler.PresignDriverDocument)
 		drv.POST("/vehicle", transportHandler.AddVehicle)
+		drv.PUT("/service-profile", transportHandler.SetServiceProfile)
+		drv.GET("/onboarding-options", transportHandler.OnboardingOptions)
 		drv.GET("/me", transportHandler.DriverMe)
 		drv.PATCH("/status", transportHandler.DriverStatus)
 		drv.GET("/requests", transportHandler.DriverRequests)
@@ -2612,6 +2627,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// separate finance-ops/compliance role exists yet to justify splitting them.
 		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
 		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
+	}
+	// Read-only reads for the admin user profile; deliberately NOT wallet-flag gated.
+	// Raw numbers: Tier 0 limits 0/0 = wallet disabled, Tier 3 limits 0/0 = unlimited.
+	adminFinance.GET("/tiers/:user_id", middleware.RequirePermission(rbac, "finance.admin.transfers"), tiers.AdminGetTier(tiersSvc))
+	if rewardSvc != nil {
+		adminFinance.GET("/referrals/:user_id", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCaseByUser(rewardSvc))
 	}
 
 	// Capture the service so we can wire the optional CAC-business gate below once the
