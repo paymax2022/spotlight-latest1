@@ -6,6 +6,7 @@ import {
   getAdminUser,
   getAuditLogsForUser,
   getUserSessions,
+  getUserModules,
   getLoginActivity,
   getSecurityEvents,
   getUserRoles,
@@ -139,5 +140,18 @@ describe('usersService audit logs and sessions', () => {
     const err = await getUserSessions('u1').catch((e) => e);
     expect(err).toBeInstanceOf(AdminUsersRequestError);
     expect(err.status).toBe(503);
+  });
+
+  it('getUserModules returns modules', async () => {
+    respond(200, { success: true, modules: [{ key: 'k', status: 'member' }] });
+    await expect(getUserModules('u1')).resolves.toEqual([{ key: 'k', status: 'member' }]);
+    expect(lastCall().url).toBe(full('/api/admin/users/u1/modules'));
+  });
+
+  it('getUserModules surfaces status 404 when the flag is off', async () => {
+    respond(404, { success: false, error: 'not_found' });
+    const err = await getUserModules('u1').catch((e) => e);
+    expect(err).toBeInstanceOf(AdminUsersRequestError);
+    expect(err.status).toBe(404);
   });
 });

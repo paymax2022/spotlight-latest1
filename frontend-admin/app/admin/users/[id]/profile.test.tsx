@@ -25,6 +25,7 @@ vi.mock('@/services/usersService', () => ({
   removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
   getAuditLogsForUser: vi.fn().mockResolvedValue([]),
   getUserSessions: vi.fn().mockResolvedValue([]),
+  getUserModules: vi.fn().mockResolvedValue([]),
   AdminUsersRequestError: class extends Error {
     constructor(public readonly status: number, message: string) {
       super(message)
