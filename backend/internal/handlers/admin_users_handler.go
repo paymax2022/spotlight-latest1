@@ -14,6 +14,7 @@ import (
 	"spotlight/backend/internal/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type AdminUsersHandler struct {
@@ -101,6 +102,36 @@ func (h *AdminUsersHandler) Get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "user": row})
+}
+
+// Roles returns a user's active role slugs. Read-only; gated upstream by
+// users.view. Runs the same object-level scope check as Get so a scoped admin
+// cannot enumerate roles of users outside their scope.
+func (h *AdminUsersHandler) Roles(c *gin.Context) {
+	userID := c.Param("id")
+	if _, err := uuid.Parse(userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid user id"})
+		return
+	}
+	target, err := h.svc.GetAdminUser(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "user not found"})
+		return
+	}
+	actor, _ := middleware.GetAuthenticatedUser(c)
+	if !h.canAccessUser(c.Request.Context(), actor.ID, target) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
+		return
+	}
+	roles, err := h.svc.GetUserRoles(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	if roles == nil {
+		roles = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "roles": roles})
 }
 
 func (h *AdminUsersHandler) Update(c *gin.Context) {

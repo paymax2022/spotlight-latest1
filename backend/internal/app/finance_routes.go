@@ -1049,6 +1049,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Registry: kvReg,
 			Cipher:   kvCipher,
 			Elevator: kvElevator,
+			// Durable audit of admin approve/reject decisions (shared immutable sink).
+			AdminAuditor: auditSink,
 			Seed: kycverify.RoutingSeed{
 				IDNumber:  cfg.KYCRouteIDNumber,
 				IDFacial:  cfg.KYCRouteIDFacial,
@@ -1101,26 +1103,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		kvAdmin.GET("/routing-rules", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ListRoutingRules)
 		kvAdmin.PUT("/routing-rules/:check_type", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.UpdateRoutingRule)
 		kvAdmin.GET("/events", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.Events)
-		// Per-user KYC snapshot for the admin profile page: tier/status plus the
-		// id of the user's open review case (null when none).
-		kvAdmin.GET("/users/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), func(c *gin.Context) {
-			id := c.Param("id")
-			prof, err := kycSvc.GetProfile(c.Request.Context(), id)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load kyc profile"})
-				return
-			}
-			var openCaseID *string
-			caseID, found, err := kvSvc.OpenReviewCaseID(c.Request.Context(), id)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load review case"})
-				return
-			}
-			if found {
-				openCaseID = &caseID
-			}
-			c.JSON(http.StatusOK, gin.H{"tier": prof.Tier, "status": prof.Status, "openCaseId": openCaseID})
-		})
+		// Per-user KYC snapshot for the admin profile page (see kyc_user_snapshot.go).
+		kvAdmin.GET("/users/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycUserSnapshotHandler(
+			func(ctx context.Context, id string) (int, string, error) {
+				prof, err := kycSvc.GetProfile(ctx, id)
+				if err != nil {
+					return 0, "", err
+				}
+				return int(prof.Tier), string(prof.Status), nil
+			},
+			kvSvc.OpenReviewCaseID,
+		))
 
 		log.Println("[finance] KYC verification gateway routes + webhook registered")
 	}

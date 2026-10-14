@@ -63,8 +63,8 @@ async function decide(caseId: string, action: 'approve' | 'reject', body?: unkno
   return res.ok;
 }
 
-export async function approveKycCase(caseId: string): Promise<boolean> {
-  return decide(caseId, 'approve');
+export async function approveKycCase(caseId: string, reason: string): Promise<boolean> {
+  return decide(caseId, 'approve', { reason });
 }
 
 export async function rejectKycCase(caseId: string, reason: string): Promise<boolean> {

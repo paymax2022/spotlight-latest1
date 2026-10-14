@@ -200,20 +200,6 @@ func (h *RBACHandler) BulkAssignPermissionsToRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "results": results})
 }
 
-// GetUserRoles returns the active role slugs for a user. Read-only; gated
-// upstream by users.view.
-func (h *RBACHandler) GetUserRoles(c *gin.Context) {
-	roles, err := h.svc.GetUserRoles(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": httperr.Msg(c, http.StatusInternalServerError, err)})
-		return
-	}
-	if roles == nil {
-		roles = []string{}
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "roles": roles})
-}
-
 func (h *RBACHandler) AssignRoleToUser(c *gin.Context) {
 	userID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)

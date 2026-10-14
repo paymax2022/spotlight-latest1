@@ -47,12 +47,13 @@ describe('userFinanceService reads', () => {
 });
 
 describe('userFinanceService KYC decisions', () => {
-  it('approveKycCase POSTs with an idempotency key', async () => {
+  it('approveKycCase POSTs { reason } with an idempotency key', async () => {
     respond(200, { status: 'APPROVED' });
-    await expect(approveKycCase('c1')).resolves.toBe(true);
+    await expect(approveKycCase('c1', 'docs verified')).resolves.toBe(true);
     const { url, init } = lastCall();
     expect(url).toBe(full('/api/finance/admin/kyc/cases/c1/approve'));
     expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ reason: 'docs verified' });
     expect((init.headers as Record<string, string>)['Idempotency-Key']).toBeTruthy();
   });
   it('rejectKycCase POSTs { reason }', async () => {
@@ -65,7 +66,7 @@ describe('userFinanceService KYC decisions', () => {
   });
   it('returns false when the backend refuses', async () => {
     respond(403, { error: 'forbidden' });
-    await expect(approveKycCase('c1')).resolves.toBe(false);
+    await expect(approveKycCase('c1', 'x')).resolves.toBe(false);
     respond(500, { error: 'boom' });
     await expect(rejectKycCase('c1', 'x')).resolves.toBe(false);
   });

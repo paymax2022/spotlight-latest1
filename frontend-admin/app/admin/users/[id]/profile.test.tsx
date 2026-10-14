@@ -326,8 +326,10 @@ describe('KycPanel', () => {
     await waitFor(() => expect(panel().getByText('Approve')).toBeTruthy())
     mockGetUserKyc.mockResolvedValue({ tier: 1, status: 'verified', openCaseId: null })
     fireEvent.click(panel().getByText('Approve'))
+    fireEvent.change(panel().getByLabelText('Approval reason'), { target: { value: 'documents match' } })
+    fireEvent.click(panel().getByText('Confirm approve'))
     await waitFor(() => expect(panel().getByTestId('kyc-status').textContent).toBe('verified'))
-    expect(mockApproveKycCase).toHaveBeenCalledWith('c9')
+    expect(mockApproveKycCase).toHaveBeenCalledWith('c9', 'documents match')
     expect(mockGetUserKyc).toHaveBeenCalledTimes(2)
     expect(panel().queryByText('Approve')).toBeNull()
   })
@@ -346,6 +348,17 @@ describe('KycPanel', () => {
     expect(mockGetUserKyc).toHaveBeenCalledTimes(2)
   })
 
+  it('does not call approve without a reason', async () => {
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'pending', openCaseId: 'c9' })
+    render(<KycPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('Approve')).toBeTruthy())
+    fireEvent.click(panel().getByText('Approve'))
+    fireEvent.change(panel().getByLabelText('Approval reason'), { target: { value: '   ' } })
+    fireEvent.click(panel().getByText('Confirm approve'))
+    expect(mockApproveKycCase).not.toHaveBeenCalled()
+    expect(panel().getByText('An approval reason is required')).toBeTruthy()
+  })
+
   it('does not call reject without a reason', async () => {
     mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'pending', openCaseId: 'c9' })
     render(<KycPanel userId="u1" />)
@@ -361,6 +374,8 @@ describe('KycPanel', () => {
     render(<KycPanel userId="u1" />)
     await waitFor(() => expect(panel().getByText('Approve')).toBeTruthy())
     fireEvent.click(panel().getByText('Approve'))
+    fireEvent.change(panel().getByLabelText('Approval reason'), { target: { value: 'ok' } })
+    fireEvent.click(panel().getByText('Confirm approve'))
     await waitFor(() => expect(panel().getByText('Approve failed')).toBeTruthy())
     expect(mockGetUserKyc).toHaveBeenCalledTimes(1)
     expect(panel().getByTestId('kyc-status').textContent).toBe('pending')

@@ -18,7 +18,7 @@ export function KycPanel({ userId }: { userId: string }) {
   const [forbidden, setForbidden] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [rejecting, setRejecting] = useState(false);
+  const [deciding, setDeciding] = useState<'approve' | 'reject' | null>(null);
   const [reason, setReason] = useState('');
 
   const load = useCallback(async () => {
@@ -47,7 +47,7 @@ export function KycPanel({ userId }: { userId: string }) {
     setActionError(null);
     try {
       if (await run()) {
-        setRejecting(false);
+        setDeciding(null);
         setReason('');
         await load();
       } else {
@@ -84,26 +84,36 @@ export function KycPanel({ userId }: { userId: string }) {
         {caseId ? (
           <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="primary" sm disabled={busy} onClick={() => void decide('Approve', () => approveKycCase(caseId))}>Approve</Button>
-              <Button variant="danger" sm disabled={busy} onClick={() => setRejecting(true)}>Reject</Button>
+              <Button variant="primary" sm disabled={busy} onClick={() => { setActionError(null); setDeciding('approve'); }}>Approve</Button>
+              <Button variant="danger" sm disabled={busy} onClick={() => { setActionError(null); setDeciding('reject'); }}>Reject</Button>
             </div>
-            {rejecting ? (
+            {deciding ? (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Input aria-label="Rejection reason" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+                <Input
+                  aria-label={deciding === 'approve' ? 'Approval reason' : 'Rejection reason'}
+                  placeholder="Reason (recorded in the audit log)"
+                  maxLength={500}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
                 <Button
-                  variant="danger"
+                  variant={deciding === 'approve' ? 'primary' : 'danger'}
                   sm
                   disabled={busy}
                   onClick={() => {
                     const r = reason.trim();
                     if (!r) {
-                      setActionError('A rejection reason is required');
+                      setActionError(`${deciding === 'approve' ? 'An approval' : 'A rejection'} reason is required`);
                       return;
                     }
-                    void decide('Reject', () => rejectKycCase(caseId, r));
+                    if (deciding === 'approve') {
+                      void decide('Approve', () => approveKycCase(caseId, r));
+                    } else {
+                      void decide('Reject', () => rejectKycCase(caseId, r));
+                    }
                   }}
                 >
-                  Confirm reject
+                  {deciding === 'approve' ? 'Confirm approve' : 'Confirm reject'}
                 </Button>
               </div>
             ) : null}
