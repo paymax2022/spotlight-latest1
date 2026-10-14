@@ -46,10 +46,16 @@ vi.mock('@/services/userFinanceService', () => ({
   getWalletBalance: (...args: unknown[]) => mockGetWalletBalance(...args),
   getWalletTransactions: (...args: unknown[]) => mockGetWalletTransactions(...args),
   getUserKyc: (...args: unknown[]) => mockGetUserKyc(...args),
+  getUserTier: (...args: unknown[]) => mockGetUserTier(...args),
   approveKycCase: (...args: unknown[]) => mockApproveKycCase(...args),
   rejectKycCase: (...args: unknown[]) => mockRejectKycCase(...args),
 }))
 const mockGetUserKyc = vi.fn()
+const mockGetUserTier = vi.fn()
+const mockGetUserReferralCase = vi.fn()
+vi.mock('@/services/userReferralService', () => ({
+  getUserReferralCase: (...args: unknown[]) => mockGetUserReferralCase(...args),
+}))
 const mockApproveKycCase = vi.fn()
 const mockRejectKycCase = vi.fn()
 
@@ -58,6 +64,7 @@ import RolesPanel from './RolesPanel'
 import { WalletPanel } from './WalletPanel'
 import { KycPanel } from './KycPanel'
 import { ActivityPanel } from './ActivityPanel'
+import { ReferralTierPanel } from './ReferralTierPanel'
 import { AdminUsersRequestError } from '@/services/usersService'
 
 const user = {
@@ -93,6 +100,8 @@ describe('AdminUserProfilePage', () => {
     mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'none', openCaseId: null })
     mockGetLoginActivity.mockResolvedValue([])
     mockGetSecurityEvents.mockResolvedValue([])
+    mockGetUserTier.mockResolvedValue({ tier: 1, dailyDebitLimitKobo: 5000000, maxBalanceKobo: 30000000 })
+    mockGetUserReferralCase.mockResolvedValue({ referrer_id: 'u1', tier: null, rewards: [], milestones: [] })
   })
   afterEach(() => cleanup())
 
@@ -486,5 +495,92 @@ describe('ActivityPanel', () => {
     render(<ActivityPanel userId="u1" />)
     await waitFor(() => expect(panel().getAllByTestId('login-activity-row').length).toBe(2))
     expect(panel().getAllByTestId('security-event-row').length).toBe(2)
+  })
+})
+
+describe('ReferralTierPanel', () => {
+  const panel = () => within(screen.getByTestId('referral-tier-panel'))
+  const refCase = {
+    referrer_id: 'u1',
+    tier: { referrer_id: 'u1', active_referral_count: 7, current_tier: 'silver', current_rate: 0.05, last_recalculated_at: '2025-01-01T00:00:00Z' },
+    rewards: [
+      { id: 'r1', referrer_id: 'u1', referred_user_id: 'a', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 150000, status: 'CREDITED' },
+      { id: 'r2', referrer_id: 'u1', referred_user_id: 'b', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 50000, status: 'CREDITED' },
+      { id: 'r3', referrer_id: 'u1', referred_user_id: 'c', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 70000, status: 'PENDING' },
+      { id: 'r4', referrer_id: 'u1', referred_user_id: 'd', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 90000, status: 'REVERSED' },
+    ],
+    milestones: [{ id: 'm1', threshold: 10, bonus_kobo: 500000, status: 'achieved', achieved_at: '2025-01-02T00:00:00Z' }],
+  }
+
+  beforeEach(() => {
+    mockGetUserTier.mockReset()
+    mockGetUserReferralCase.mockReset()
+    mockGetUserTier.mockResolvedValue({ tier: 1, dailyDebitLimitKobo: 5000000, maxBalanceKobo: 30000000 })
+    mockGetUserReferralCase.mockResolvedValue(refCase)
+  })
+  afterEach(() => cleanup())
+
+  it('renders tier limits in naira and the referral summary', async () => {
+    render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByTestId('tier-limits').textContent).toBe('₦50,000.00/day debit · ₦300,000.00 max balance'))
+    expect(mockGetUserTier).toHaveBeenCalledWith('u1')
+    expect(mockGetUserReferralCase).toHaveBeenCalledWith('u1')
+    expect(panel().getByTestId('tier-number').textContent).toBe('1')
+    await waitFor(() => expect(panel().getByTestId('referral-tier-name').textContent).toBe('silver'))
+    expect(panel().getByTestId('referral-active-count').textContent).toBe('7')
+    expect(panel().getByTestId('referral-rate').textContent).toBe('5%')
+    // earned = CREDITED only (150000 + 50000), never pending/reversed
+    expect(panel().getByTestId('referral-rewards-count').textContent).toBe('2')
+    expect(panel().getByTestId('referral-rewards-sum').textContent).toBe('₦2,000.00')
+    expect(panel().getByTestId('referral-rewards-breakdown').textContent).toBe('2 credited · 1 pending · 1 reversed')
+    expect(panel().getByText(/most recent 200/)).toBeTruthy()
+    expect(panel().getByTestId('referral-milestones').textContent).toMatch(/10.*₦5,000\.00.*achieved/)
+    expect(panel().queryAllByRole('button').length).toBe(0)
+  })
+
+  it('shows Wallet disabled for Tier 0 and Unlimited for Tier 3', async () => {
+    mockGetUserTier.mockResolvedValue({ tier: 0, dailyDebitLimitKobo: 0, maxBalanceKobo: 0 })
+    const { unmount } = render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByTestId('tier-limits').textContent).toBe('Wallet disabled'))
+    unmount()
+    mockGetUserTier.mockResolvedValue({ tier: 3, dailyDebitLimitKobo: 0, maxBalanceKobo: 0 })
+    render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByTestId('tier-limits').textContent).toBe('Unlimited'))
+  })
+
+  it('shows none-yet labels, not an error, for an empty referral case', async () => {
+    mockGetUserReferralCase.mockResolvedValue({ referrer_id: 'u1', tier: null, rewards: [], milestones: [] })
+    render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('No referral tier yet')).toBeTruthy())
+    expect(panel().getByText('No rewards yet')).toBeTruthy()
+    expect(panel().getByText('No milestones yet')).toBeTruthy()
+    expect(panel().queryByText('Retry')).toBeNull()
+  })
+
+  it('403 on tier shows its placeholder while referrals still render', async () => {
+    mockGetUserTier.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
+    await waitFor(() => expect(panel().getByTestId('referral-tier-name').textContent).toBe('silver'))
+    expect(panel().queryByText('Retry')).toBeNull()
+  })
+
+  it('403 on referrals shows its placeholder while the tier still renders', async () => {
+    mockGetUserReferralCase.mockRejectedValue(new AdminUsersRequestError(403, 'forbidden'))
+    render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText("You don't have permission to view this.")).toBeTruthy())
+    await waitFor(() => expect(panel().getByTestId('tier-number').textContent).toBe('1'))
+    expect(panel().queryByText('Retry')).toBeNull()
+  })
+
+  it('an erroring sub-read shows Retry that refetches only that sub-read', async () => {
+    mockGetUserReferralCase.mockRejectedValueOnce(new Error('boom'))
+    render(<ReferralTierPanel userId="u1" />)
+    await waitFor(() => expect(panel().getByText('boom')).toBeTruthy())
+    await waitFor(() => expect(panel().getByTestId('tier-number').textContent).toBe('1'))
+    fireEvent.click(panel().getByText('Retry'))
+    await waitFor(() => expect(panel().getByTestId('referral-tier-name').textContent).toBe('silver'))
+    expect(mockGetUserReferralCase).toHaveBeenCalledTimes(2)
+    expect(mockGetUserTier).toHaveBeenCalledTimes(1)
   })
 })

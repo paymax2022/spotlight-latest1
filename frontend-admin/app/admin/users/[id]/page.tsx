@@ -15,6 +15,7 @@ import RolesPanel from './RolesPanel';
 import { WalletPanel } from './WalletPanel';
 import { KycPanel } from './KycPanel';
 import { ActivityPanel } from './ActivityPanel';
+import { ReferralTierPanel } from './ReferralTierPanel';
 import { useToasts, ToastStack } from '@/components/rbac';
 import { Page, PageHeader, Card, Button, Input, Badge, colors } from '@/components/ui/vuexy';
 
@@ -202,6 +203,7 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
         <WalletPanel userId={id} />
         <KycPanel userId={id} />
         <ActivityPanel userId={id} />
+        <ReferralTierPanel userId={id} />
       </div>
     </Page>
   );

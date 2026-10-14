@@ -70,3 +70,18 @@ export async function approveKycCase(caseId: string, reason: string): Promise<bo
 export async function rejectKycCase(caseId: string, reason: string): Promise<boolean> {
   return decide(caseId, 'reject', { reason });
 }
+
+export async function getUserTier(
+  id: string,
+): Promise<{ tier: number; dailyDebitLimitKobo: number; maxBalanceKobo: number }> {
+  const res = await fetch(`${financeBase()}/tiers/${enc(id)}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading account tier');
+  return {
+    tier: Number(payload.tier ?? 0),
+    dailyDebitLimitKobo: Number(payload.dailyDebitLimitKobo ?? 0),
+    maxBalanceKobo: Number(payload.maxBalanceKobo ?? 0),
+  };
+}
