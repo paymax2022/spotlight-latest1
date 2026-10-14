@@ -1,0 +1,102 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Health — Veterinary (owner-facing listings)
+  version: 1.0.0
+  description: >
+    Owner-facing vet listings served by the Go backend under
+    /api/finance/health/vet (registered in backend/internal/app/health_vet_routes.go).
+    A vet is listed only when the provider is APPROVED and discoverable, and the
+    vet's profile is published and verification-approved. Unlisted and missing
+    vets both answer 404. Listings never carry a licence number.
+servers:
+  - url: /api/finance/health/vet
+    description: Same-origin API base (mounted under the finance group)
+paths:
+  /vets:
+    get:
+      operationId: listVets
+      summary: List listed vets, nearest first when lat and lng are given
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: lat, in: query, required: false, schema: { type: number } }
+        - { name: lng, in: query, required: false, schema: { type: number } }
+        - { name: radius_m, in: query, required: false, schema: { type: number, default: 25000 } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+        - { name: type, in: query, required: false, schema: { type: string, enum: [tele, home, clinic] } }
+        - { name: species, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Listed vets (at most 100)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, vets]
+                properties:
+                  success: { type: boolean }
+                  vets:
+                    type: array
+                    items: { $ref: '#/components/schemas/VetListing' }
+        '401': { description: Not authenticated }
+        '500': { description: Internal error }
+  /vets/{id}:
+    get:
+      operationId: getVet
+      summary: One listed vet
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The vet
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, vet]
+                properties:
+                  success: { type: boolean }
+                  vet: { $ref: '#/components/schemas/VetListing' }
+        '400': { description: id is not a uuid }
+        '401': { description: Not authenticated }
+        '404': { description: "Not listed, or does not exist: the same answer for both" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    VetListing:
+      type: object
+      required: [id, name, credential, types, species, specialties, active]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        headline: { type: string, description: Empty until the profile carries one }
+        bio: { type: string }
+        credential:
+          type: object
+          required: [authority, status]
+          properties:
+            authority: { type: string, enum: [VCN] }
+            status: { type: string, enum: [verified] }
+        clinicName: { type: string }
+        address: { type: string }
+        distanceM: { type: number, description: Present when lat and lng are given }
+        lat: { type: number }
+        lng: { type: number }
+        consultFeeKobo: { type: integer, format: int64, description: "Lowest active tele price, in kobo" }
+        homeVisitFeeKobo: { type: integer, format: int64, description: "Lowest active home price, in kobo" }
+        types:
+          type: array
+          items: { type: string, enum: [tele, home, clinic] }
+        species:
+          type: array
+          items: { type: string, enum: [dog, cat, bird, rabbit, reptile, other] }
+        specialties: { type: array, items: { type: string } }
+        rating: { type: number, description: Zero until reviews exist }
+        reviewCount: { type: integer, description: Zero until reviews exist }
+        availableNow: { type: boolean, description: False until availability exists }
+        active: { type: boolean }

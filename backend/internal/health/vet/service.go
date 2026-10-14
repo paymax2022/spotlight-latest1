@@ -361,63 +361,6 @@ func (s *Service) petClinicalContext(ctx context.Context, petID string) clinical
 	return pc
 }
 
-// DiscoverVets returns APPROVED + discoverable VCN vets (HL-2). When lat/lng are
-// provided it ranks by PostGIS distance (ST_Distance over geography) within
-// radiusM; otherwise it returns a plain list. Parameterised throughout.
-func (s *Service) DiscoverVets(ctx context.Context, lat, lng *float64, radiusM float64) ([]VetResult, error) {
-	if lat != nil && lng != nil {
-		if radiusM <= 0 {
-			radiusM = 25000 // 25km default discovery radius
-		}
-		const gq = `
-			SELECT id, display_name, owner_user_id::text,
-			       ST_Y(geo::geometry) AS lat, ST_X(geo::geometry) AS lng,
-			       ST_Distance(geo, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS dist
-			FROM health_providers
-			WHERE domain='VET' AND provider_type='vet' AND status='APPROVED'
-			  AND discoverable = true AND geo IS NOT NULL
-			  AND ST_DWithin(geo, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
-			ORDER BY dist ASC
-			LIMIT 100`
-		rows, err := s.db.Query(ctx, gq, *lng, *lat, radiusM)
-		if err != nil {
-			return nil, fmt.Errorf("vet: discover (geo): %w", err)
-		}
-		defer rows.Close()
-		var out []VetResult
-		for rows.Next() {
-			var v VetResult
-			var vlat, vlng, dist float64
-			if err := rows.Scan(&v.ProviderID, &v.DisplayName, &v.OwnerUserID, &vlat, &vlng, &dist); err != nil {
-				return nil, err
-			}
-			v.Lat, v.Lng, v.DistanceM = &vlat, &vlng, &dist
-			out = append(out, v)
-		}
-		return out, nil
-	}
-	const lq = `
-		SELECT id, display_name, owner_user_id::text
-		FROM health_providers
-		WHERE domain='VET' AND provider_type='vet' AND status='APPROVED' AND discoverable = true
-		ORDER BY display_name ASC
-		LIMIT 100`
-	rows, err := s.db.Query(ctx, lq)
-	if err != nil {
-		return nil, fmt.Errorf("vet: discover (list): %w", err)
-	}
-	defer rows.Close()
-	var out []VetResult
-	for rows.Next() {
-		var v VetResult
-		if err := rows.Scan(&v.ProviderID, &v.DisplayName, &v.OwnerUserID); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
-}
-
 // UpsertService writes a vet service+fee. HL-2: only the verified vet owner may
 // list services for that provider. Price is positive kobo (NL-8).
 func (s *Service) UpsertService(ctx context.Context, ownerID string, v VetService) (*VetService, error) {
@@ -1037,8 +980,8 @@ func (s *Service) ScheduleVaccination(ctx context.Context, ownerID, petID, vacci
 // SOSResult is the emergency routing response: the nearest in-person (HOME/CLINIC)
 // vet(s) plus a mandatory disclaimer. Tele is deliberately excluded from SOS.
 type SOSResult struct {
-	Disclaimer string      `json:"disclaimer"`
-	Vets       []VetResult `json:"vets"`
+	Disclaimer string       `json:"disclaimer"`
+	Vets       []VetListing `json:"vets"`
 }
 
 // EmergencySOS implements HL-11: tele-consult is NOT a substitute for emergency
@@ -1050,9 +993,15 @@ func (s *Service) EmergencySOS(ctx context.Context, ownerID string, lat, lng flo
 		return nil, errors.New("vet: unauthenticated")
 	}
 	// Route to nearest in-person vets only (tele excluded by design — HL-11).
-	vets, err := s.DiscoverVets(ctx, &lat, &lng, 50000) // wider 50km emergency radius
+	listed, err := s.ListVetListings(ctx, &lat, &lng, 50000, VetFilter{}) // wider 50km emergency radius
 	if err != nil {
 		return nil, err
+	}
+	var vets []VetListing
+	for _, v := range listed {
+		if contains(v.Types, "home") || contains(v.Types, "clinic") {
+			vets = append(vets, v)
+		}
 	}
 	s.audited(ownerID, "", "health.vet.sos", ownerID, nil, map[string]any{"results": len(vets)})
 	return &SOSResult{
@@ -1460,18 +1409,6 @@ type Pet struct {
 	// the response so a replayed create returns byte-identical output.
 	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
-}
-
-// VetResult is a discoverable, verified (VCN) vet returned by map/list discovery.
-// Only APPROVED + discoverable health_providers in the VET domain surface (HL-2).
-// DistanceM is populated for geo (map) queries via PostGIS ST_Distance.
-type VetResult struct {
-	ProviderID  string   `json:"provider_id"`
-	DisplayName string   `json:"display_name"`
-	OwnerUserID string   `json:"owner_user_id"`
-	Lat         *float64 `json:"lat,omitempty"`
-	Lng         *float64 `json:"lng,omitempty"`
-	DistanceM   *float64 `json:"distance_m,omitempty"`
 }
 
 // VetService is a priced service a verified vet offers (e.g. tele-consult,
