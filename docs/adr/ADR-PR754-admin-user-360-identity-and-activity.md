@@ -27,6 +27,7 @@ endpoints keyed by user id; none of it reached the profile.
    The flag `FEATURE_ADMIN_USER_MODULES_ENABLED` is reserved for PR B, which adds a new endpoint.
 
 ## Consequences
+- Photo source is user_profiles.avatar_url, else metadata.profilePhotoUrl; user_profiles.profile_photo_url does not exist (the first version of this feature selected it and silently lost every avatar; the strict test fake now guards the column list).
 - Anyone holding `users.view` and passing the scope check now also reads the photo URL, last login,
   verification times and referral code of that user.
 - The Transactions and Admin-actions panels use global permissions (`finance.admin.transactions.view`,

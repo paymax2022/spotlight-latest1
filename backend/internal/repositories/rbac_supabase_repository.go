@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
@@ -545,7 +546,11 @@ func (r *RBACSupabaseRepository) EnrichAdminUser(ctx context.Context, u domain.A
 		"id":     "eq." + u.ID,
 		"limit":  "1",
 	}
-	if err := r.client.REST(ctx, http.MethodGet, "platform_users", pq, nil, &platform); err == nil && len(platform) > 0 {
+	err := r.client.REST(ctx, http.MethodGet, "platform_users", pq, nil, &platform)
+	if err != nil {
+		log.Printf("[admin-users] enrich: read of platform_users failed for user %s: %v", u.ID, err)
+	}
+	if err == nil && len(platform) > 0 {
 		p := platform[0]
 		u.LastLoginAt = deref(p.LastLoginAt)
 		u.EmailVerifiedAt = deref(p.EmailVerifiedAt)
@@ -555,21 +560,22 @@ func (r *RBACSupabaseRepository) EnrichAdminUser(ctx context.Context, u domain.A
 	}
 
 	var profiles []struct {
-		ProfilePhotoURL *string        `json:"profile_photo_url"`
-		AvatarURL       *string        `json:"avatar_url"`
-		Metadata        map[string]any `json:"metadata"`
+		AvatarURL *string        `json:"avatar_url"`
+		Metadata  map[string]any `json:"metadata"`
 	}
 	uq := map[string]string{
-		"select": "profile_photo_url,avatar_url,metadata",
+		"select": "avatar_url,metadata",
 		"id":     "eq." + u.ID,
 		"limit":  "1",
 	}
-	if err := r.client.REST(ctx, http.MethodGet, "user_profiles", uq, nil, &profiles); err == nil && len(profiles) > 0 {
+	err = r.client.REST(ctx, http.MethodGet, "user_profiles", uq, nil, &profiles)
+	if err != nil {
+		log.Printf("[admin-users] enrich: read of user_profiles failed for user %s: %v", u.ID, err)
+	}
+	if err == nil && len(profiles) > 0 {
 		p := profiles[0]
-		// Same precedence as frontend-web/src/server/user/profile.ts.
+		// user_profiles has no profile_photo_url column: avatar_url, else metadata.profilePhotoUrl.
 		switch {
-		case strings.TrimSpace(deref(p.ProfilePhotoURL)) != "":
-			u.AvatarURL = strings.TrimSpace(deref(p.ProfilePhotoURL))
 		case strings.TrimSpace(deref(p.AvatarURL)) != "":
 			u.AvatarURL = strings.TrimSpace(deref(p.AvatarURL))
 		default:
