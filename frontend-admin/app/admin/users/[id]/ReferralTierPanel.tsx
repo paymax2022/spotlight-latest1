@@ -104,7 +104,11 @@ export function ReferralTierPanel({ userId }: { userId: string }) {
             <h4 style={heading}>Referrals</h4>
             <SubBody sub={refSub} loadingLabel="Loading referrals…">
               {(c) => {
-                const sum = c.rewards.reduce((acc, r) => acc + r.reward_kobo, 0);
+                const credited = c.rewards.filter((r) => r.status === 'CREDITED');
+                const sum = credited.reduce((acc, r) => acc + r.reward_kobo, 0);
+                const pending = c.rewards.filter((r) => r.status === 'PENDING').length;
+                const reversed = c.rewards.filter((r) => r.status === 'REVERSED').length;
+                const breakdown = [`${credited.length} credited`, ...(pending ? [`${pending} pending`] : []), ...(reversed ? [`${reversed} reversed`] : [])].join(' · ');
                 return (
                   <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
                     {c.tier ? (
@@ -120,8 +124,10 @@ export function ReferralTierPanel({ userId }: { userId: string }) {
                       <p style={muted}>No rewards yet</p>
                     ) : (
                       <div>
-                        Rewards earned <strong data-testid="referral-rewards-count">{c.rewards.length}</strong>
+                        Rewards earned (credited, most recent 200){' '}
+                        <strong data-testid="referral-rewards-count">{credited.length}</strong>
                         {' · '}Total <strong data-testid="referral-rewards-sum">{formatKobo(sum)}</strong>
+                        <div data-testid="referral-rewards-breakdown" style={{ color: colors.muted }}>{breakdown}</div>
                       </div>
                     )}
                     {c.milestones.length === 0 ? (

@@ -22,6 +22,7 @@ export type ReferralCase = {
     margin_kobo: number;
     applied_rate: number;
     reward_kobo: number;
+    status: string;
   }>;
   milestones: Array<{
     id: string;

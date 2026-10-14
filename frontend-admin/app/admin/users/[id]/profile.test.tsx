@@ -489,8 +489,10 @@ describe('ReferralTierPanel', () => {
     referrer_id: 'u1',
     tier: { referrer_id: 'u1', active_referral_count: 7, current_tier: 'silver', current_rate: 0.05, last_recalculated_at: '2025-01-01T00:00:00Z' },
     rewards: [
-      { id: 'r1', referrer_id: 'u1', referred_user_id: 'a', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 150000 },
-      { id: 'r2', referrer_id: 'u1', referred_user_id: 'b', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 50000 },
+      { id: 'r1', referrer_id: 'u1', referred_user_id: 'a', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 150000, status: 'CREDITED' },
+      { id: 'r2', referrer_id: 'u1', referred_user_id: 'b', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 50000, status: 'CREDITED' },
+      { id: 'r3', referrer_id: 'u1', referred_user_id: 'c', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 70000, status: 'PENDING' },
+      { id: 'r4', referrer_id: 'u1', referred_user_id: 'd', module: 'fx', margin_kobo: 1000, applied_rate: 0.05, reward_kobo: 90000, status: 'REVERSED' },
     ],
     milestones: [{ id: 'm1', threshold: 10, bonus_kobo: 500000, status: 'achieved', achieved_at: '2025-01-02T00:00:00Z' }],
   }
@@ -512,8 +514,11 @@ describe('ReferralTierPanel', () => {
     await waitFor(() => expect(panel().getByTestId('referral-tier-name').textContent).toBe('silver'))
     expect(panel().getByTestId('referral-active-count').textContent).toBe('7')
     expect(panel().getByTestId('referral-rate').textContent).toBe('5%')
+    // earned = CREDITED only (150000 + 50000), never pending/reversed
     expect(panel().getByTestId('referral-rewards-count').textContent).toBe('2')
     expect(panel().getByTestId('referral-rewards-sum').textContent).toBe('₦2,000.00')
+    expect(panel().getByTestId('referral-rewards-breakdown').textContent).toBe('2 credited · 1 pending · 1 reversed')
+    expect(panel().getByText(/most recent 200/)).toBeTruthy()
     expect(panel().getByTestId('referral-milestones').textContent).toMatch(/10.*₦5,000\.00.*achieved/)
     expect(panel().queryAllByRole('button').length).toBe(0)
   })
