@@ -15,11 +15,11 @@ import type { AdminUser, AdminUserFilters } from '@/types/users';
  * no-op and every request 404'd against <proxy>/admin/users instead of
  * <proxy>/api/admin/users.
  */
-function adminApiBase(): string {
+export function adminApiBase(): string {
   return `${apiRoot()}/api`;
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   return { 'Content-Type': 'application/json' };
 }
@@ -58,7 +58,7 @@ export class AdminUsersRequestError extends Error {
   }
 }
 
-async function readOrThrow(res: Response, what: string): Promise<Record<string, unknown>> {
+export async function readOrThrow(res: Response, what: string): Promise<Record<string, unknown>> {
   const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || payload?.success === false) {
     const detail = typeof payload?.error === 'string' && payload.error ? `: ${payload.error}` : '';
@@ -106,3 +106,51 @@ export async function suspendAdminUser(id: string): Promise<boolean> { return st
 export async function unsuspendAdminUser(id: string): Promise<boolean> { return statusAction(id, 'unsuspend'); }
 export async function lockAdminUser(id: string): Promise<boolean> { return statusAction(id, 'lock'); }
 export async function unlockAdminUser(id: string): Promise<boolean> { return statusAction(id, 'unlock'); }
+
+const enc = encodeURIComponent;
+
+export async function getUserRoles(id: string): Promise<string[]> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading user roles');
+  return Array.isArray(payload.roles) ? (payload.roles as string[]) : [];
+}
+
+export async function assignUserRole(id: string, roleId: string): Promise<boolean> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ roleId }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  return Boolean(res.ok && payload?.success);
+}
+
+export async function removeUserRole(id: string, roleId: string): Promise<boolean> {
+  const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles/${enc(roleId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  const payload = await res.json().catch(() => ({}));
+  return Boolean(res.ok && payload?.success);
+}
+
+export async function getLoginActivity(id: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${adminApiBase()}/admin/login-activity?actorUser=${enc(id)}&limit=50`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading login activity');
+  return Array.isArray(payload.activity) ? (payload.activity as Record<string, unknown>[]) : [];
+}
+
+export async function getSecurityEvents(id: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${adminApiBase()}/admin/security-events?actorUser=${enc(id)}&limit=50`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await readOrThrow(res, 'Loading security events');
+  return Array.isArray(payload.events) ? (payload.events as Record<string, unknown>[]) : [];
+}

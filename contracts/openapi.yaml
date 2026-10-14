@@ -4728,6 +4728,28 @@ paths:
                         error: { type: string, nullable: true }
         '400': { description: roleId and userIds are required }
         '403': { description: Missing users.roles.assign permission }
+  /api/admin/users/{id}/roles:
+    get:
+      operationId: getUserRoles
+      summary: List a user's active role slugs
+      description: Read-only. Requires `users.view`. Returns an empty array when the user has no roles.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Active role slugs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roles]
+                properties:
+                  success: { type: boolean }
+                  roles: { type: array, items: { type: string } }
+        '403': { description: Missing users.view permission }
+        '500': { description: Failed to load roles }
   /api/admin/users/{id}/roles/bulk:
     post:
       operationId: bulkAssignRolesToUser
@@ -13086,6 +13108,29 @@ paths:
                         items: { type: string }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/finance/admin/kyc/users/{id}:
+    get:
+      operationId: admKycUserSnapshot
+      summary: Per-user KYC snapshot (tier, status, open review case)
+      description: Requires the finance.admin.kyc permission. `openCaseId` is null when the user has no open review case.
+      tags: [KYCAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: KYC snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tier, status, openCaseId]
+                properties:
+                  tier: { type: integer }
+                  status: { type: string }
+                  openCaseId: { type: string, format: uuid, nullable: true }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { description: Failed to load KYC profile or review case }
   /api/finance/admin/kyc/cases/{id}/approve:
     post:
       operationId: admKycApproveCase
