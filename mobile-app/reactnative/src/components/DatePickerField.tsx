@@ -107,6 +107,13 @@ interface DatePickerFieldProps {
   error?: string;
   minYear?: number;
   maxYear?: number;
+  /** YYYY-MM-DD. The latest date that can be picked (e.g. today for a birth date). */
+  maxDate?: string;
+}
+
+function parseIsoDate(iso?: string): { y: number; m: number; d: number } | null {
+  const match = iso ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso) : null;
+  return match ? { y: Number(match[1]), m: Number(match[2]), d: Number(match[3]) } : null;
 }
 
 export default function DatePickerField({
@@ -115,9 +122,21 @@ export default function DatePickerField({
   onChange,
   error,
   minYear = 1940,
-  maxYear = new Date().getFullYear() - 5,
+  maxYear: maxYearProp = new Date().getFullYear() - 5,
+  maxDate,
 }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false);
+
+  // A maxDate sets the year ceiling too, so the year wheel stops at that year
+  // instead of the default "five years ago" cap (which would hide young pets).
+  const max = parseIsoDate(maxDate);
+  const maxYear = max ? max.y : maxYearProp;
+  // Keeps a (year, month, day) at or before maxDate; a no-op without one.
+  const clampToMax = (y: number, m: number, d: number) => {
+    if (!max) return { y, m, d };
+    const after = y > max.y || (y === max.y && (m > max.m || (m === max.m && d > max.d)));
+    return after ? { y: max.y, m: max.m, d: max.d } : { y, m, d };
+  };
 
   // With no value yet, the wheels must default to something INSIDE
   // [minYear, maxYear] — a caller whose range doesn't cover a fixed arbitrary
@@ -131,10 +150,23 @@ export default function DatePickerField({
   const initYear  = parsed ? parsed.getUTCFullYear()  : Math.min(Math.max(today.getFullYear(), minYear), maxYear);
   const initMonth = parsed ? parsed.getUTCMonth() + 1 : today.getMonth() + 1;
   const initDay   = parsed ? parsed.getUTCDate()      : today.getDate();
+  const init = clampToMax(initYear, initMonth, initDay);
 
-  const [selYear,  setSelYear]  = useState(initYear);
-  const [selMonth, setSelMonth] = useState(initMonth);
-  const [selDay,   setSelDay]   = useState(initDay);
+  const [selYear,  setSelYear]  = useState(init.y);
+  const [selMonth, setSelMonth] = useState(init.m);
+  const [selDay,   setSelDay]   = useState(init.d);
+
+  // Scrolling the wheels past maxDate pulls the selection back to it.
+  useEffect(() => {
+    const c = clampToMax(selYear, selMonth, selDay);
+    if (c.y !== selYear || c.m !== selMonth || c.d !== selDay) {
+      setSelYear(c.y);
+      setSelMonth(c.m);
+      setSelDay(c.d);
+    }
+    // clampToMax closes over maxDate; the selection is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selYear, selMonth, selDay, maxDate]);
 
   const years  = range(minYear, maxYear).map(String);
   const months = MONTHS;
@@ -145,10 +177,10 @@ export default function DatePickerField({
   const dayIndex   = Math.min(selDay - 1, days.length - 1);
 
   const onConfirm = () => {
-    const day   = Math.min(selDay, daysInMonth(selMonth, selYear));
-    const mm    = String(selMonth).padStart(2, '0');
-    const dd    = String(day).padStart(2, '0');
-    onChange(`${selYear}-${mm}-${dd}`);
+    const c   = clampToMax(selYear, selMonth, Math.min(selDay, daysInMonth(selMonth, selYear)));
+    const mm  = String(c.m).padStart(2, '0');
+    const dd  = String(c.d).padStart(2, '0');
+    onChange(`${c.y}-${mm}-${dd}`);
     setOpen(false);
   };
 
