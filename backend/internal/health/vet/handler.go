@@ -214,12 +214,35 @@ func (h *Handler) DiscoverVets(c *gin.Context) {
 	if v := c.Query("radius_m"); v != "" {
 		radius, _ = strconv.ParseFloat(v, 64)
 	}
-	vets, err := h.svc.DiscoverVets(c.Request.Context(), lat, lng, radius)
+	filter := VetFilter{Query: c.Query("q"), Type: c.Query("type"), Species: c.Query("species")}
+	vets, err := h.svc.ListVetListings(c.Request.Context(), lat, lng, radius, filter)
 	if err != nil {
 		failErr(c, http.StatusInternalServerError, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "vets": vets})
+}
+
+// GetVet — GET /vets/:id  (any signed-in owner; only a listed vet is returned)
+func (h *Handler) GetVet(c *gin.Context) {
+	if id := ginutil.UserID(c); id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	vetID, ok := uuidPathID(c, "id")
+	if !ok {
+		return
+	}
+	vet, err := h.svc.GetVetListing(c.Request.Context(), vetID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrVetNotFound) {
+			status = http.StatusNotFound
+		}
+		failErr(c, status, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "vet": vet})
 }
 
 // UpsertService — POST /services  (verified vet owner; fee governance, HL-2)

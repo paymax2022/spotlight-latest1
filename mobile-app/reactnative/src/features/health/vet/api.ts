@@ -10,6 +10,7 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/tokens';
 import { toWirePet } from './petForm';
+import { mapListedVet, type ListedVetWire } from './vetListing';
 import type {
   Pet,
   PetInput,
@@ -560,8 +561,8 @@ export async function getVets(query?: VetQuery): Promise<Vet[]> {
     }
     return rows;
   }
-  const { data } = await api.get<Vet[]>(`${VET_API}/vets`, { params: query });
-  return data;
+  const { data } = await api.get<{ vets?: ListedVetWire[] }>(`${VET_API}/vets`, { params: query });
+  return (data.vets ?? []).map(mapListedVet);
 }
 
 export async function getVet(id: string): Promise<Vet> {
@@ -571,8 +572,8 @@ export async function getVet(id: string): Promise<Vet> {
     if (!v) throw new Error('Vet not found');
     return v;
   }
-  const { data } = await api.get<Vet>(`${VET_API}/vets/${id}`);
-  return data;
+  const { data } = await api.get<{ vet: ListedVetWire }>(`${VET_API}/vets/${id}`);
+  return mapListedVet(data.vet);
 }
 
 export async function getAvailability(vetId: string): Promise<AvailabilityDay[]> {
