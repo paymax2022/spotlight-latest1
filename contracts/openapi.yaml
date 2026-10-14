@@ -16810,7 +16810,7 @@ paths:
                 properties:
                   user_id: { type: string, format: uuid }
                   attributed: { type: boolean }
-                  is_house: { type: boolean, description: True when the referrer is the house (Admin) account, not a person }
+                  is_house: { type: boolean, description: 'True when the referrer is the house (Admin) account, not a person' }
                   attribution_id: { type: string, format: uuid }
                   attribution_type: { type: string, enum: [code, deeplink, context, regional_house, global_house] }
                   status: { type: string, enum: [grace, locked] }
