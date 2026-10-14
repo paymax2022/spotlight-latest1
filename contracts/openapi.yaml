@@ -16785,6 +16785,46 @@ paths:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
         '400': { description: reason is required }
         '403': { description: Missing referral.admin.case (Support Lead) }
+  /api/v1/admin/referrals/{userId}/referred-by:
+    get:
+      operationId: getReferralReferredBy
+      summary: Who referred this user (admin user profile)
+      description: >
+        Served by the console at GET /api/finance/admin/referrals/{userId}/referred-by.
+        Every user is meant to have a referrer: the owner of the code they entered, or the
+        house (Admin) account when they entered none. A user with no attribution row returns
+        attributed=false (a background sweep then connects them to the house account); no
+        referrer is ever invented.
+      tags: [Referral Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Attribution
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, attributed, is_house]
+                properties:
+                  user_id: { type: string, format: uuid }
+                  attributed: { type: boolean }
+                  is_house: { type: boolean, description: True when the referrer is the house (Admin) account, not a person }
+                  attribution_id: { type: string, format: uuid }
+                  attribution_type: { type: string, enum: [code, deeplink, context, regional_house, global_house] }
+                  status: { type: string, enum: [grace, locked] }
+                  code_used: { type: string }
+                  attributed_at: { type: string, format: date-time }
+                  referrer_id: { type: string, format: uuid }
+                  referrer_name: { type: string }
+                  referrer_email: { type: string }
+                  referrer_code: { type: string }
+                  house_account_id: { type: string, format: uuid }
+                  house_code: { type: string }
+                  house_owner_id: { type: string, format: uuid }
+                  house_owner_name: { type: string }
+        '403': { description: Missing referral.admin.case }
   /api/v1/admin/referrals/{referrerId}/code:
     put:
       operationId: setReferralReferrerCode
