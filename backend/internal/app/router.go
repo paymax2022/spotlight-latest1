@@ -534,6 +534,9 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 			middleware.RequireAuthContext(supabase, rbacService),
 			middleware.PerUserRateLimit(sharedRedis, "navtel", 120))
 	}
+	if cfg.FeatureNavTelemetryEnabled && sharedPool != nil {
+		navigation.StartPurgeScheduler(ctx, navigation.NewRepository(sharedPool), 24*time.Hour)
+	}
 
 	// Paymax Connect wallet endpoints (/api/v1/wallet/*, /api/v1/kyc/*, etc.)
 	// — member-facing wallet balance, gifting, tier progression, and payouts.
