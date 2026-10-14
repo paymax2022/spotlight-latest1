@@ -2633,6 +2633,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	adminFinance.GET("/tiers/:user_id", middleware.RequirePermission(rbac, "finance.admin.transfers"), tiers.AdminGetTier(tiersSvc))
 	if rewardSvc != nil {
 		adminFinance.GET("/referrals/:user_id", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCaseByUser(rewardSvc))
+		adminFinance.GET("/referrals/:user_id/referred-by", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetReferredBy(rewardSvc))
 	}
 
 	// Capture the service so we can wire the optional CAC-business gate below once the
