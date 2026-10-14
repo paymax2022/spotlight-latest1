@@ -8,8 +8,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  getReport, listEarnings, formatNaira,
-  type ReportRow, type Earning, type GroupBy,
+  getReport, listEarnings, getReferralSummary, formatNaira,
+  type ReportRow, type Earning, type GroupBy, type ReferralSummary, type ReferralReward,
 } from '@/services/commissionService';
 import { PageHeader, Card, Kpi, Badge, CommissionTabs, StateBlock, th, td, label, input, btn } from '../_ui';
 
@@ -22,17 +22,21 @@ export default function CommissionProfitPage() {
 
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [earnings, setEarnings] = useState<Earning[]>([]);
+  const [referral, setReferral] = useState<ReferralSummary | null>(null);
+  const [referralRewards, setReferralRewards] = useState<ReferralReward[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true); setError(null);
     try {
-      const [r, e] = await Promise.all([
+      const [r, e, ref] = await Promise.all([
         getReport({ from, to, groupBy }),
         listEarnings({ from, to, limit: 50 }),
+        getReferralSummary({ from, to }),
       ]);
       setRows(r); setEarnings(e);
+      setReferral(ref.summary); setReferralRewards(ref.rewards);
     } catch (err) { setError(String(err)); }
     finally { setLoading(false); }
   }
@@ -48,6 +52,11 @@ export default function CommissionProfitPage() {
     fixed: acc.fixed + r.fixedFeeKobo,
     count: acc.count + r.count,
   }), { revenue: 0, gross: 0, commission: 0, platform: 0, convenience: 0, fixed: 0, count: 0 }), [rows]);
+
+  // Spotlight profit = Spotlight revenue − the referral commission it paid out.
+  // Referral commission is CREDITED + PENDING (owed), reversals are excluded.
+  const referralKobo = referral?.earnedKobo ?? 0;
+  const profitKobo = totals.revenue - referralKobo;
 
   const isDay = groupBy === 'day';
 
@@ -81,8 +90,27 @@ export default function CommissionProfitPage() {
         </div>
       </Card>
 
+      <Card title="Spotlight profit">
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'baseline', fontSize: '1.05rem' }}>
+          <span><strong>{formatNaira(totals.revenue)}</strong> Total Spotlight revenue</span>
+          <span style={{ color: '#6f6b7d' }}>−</span>
+          <span><strong>{formatNaira(referralKobo)}</strong> Referral commission</span>
+          <span style={{ color: '#6f6b7d' }}>=</span>
+          <span style={{ color: profitKobo >= 0 ? '#15803d' : '#dc2626' }}>
+            <strong>{formatNaira(profitKobo)}</strong> Spotlight profit
+          </span>
+        </div>
+        {referral && referral.pendingKobo > 0 ? (
+          <p style={{ margin: '0.5rem 0 0', fontSize: '0.82rem', color: '#6f6b7d' }}>
+            Referral commission includes {formatNaira(referral.pendingKobo)} not yet credited to referrers.
+            {referral.reversedKobo > 0 ? ` ${formatNaira(referral.reversedKobo)} was reversed and is excluded.` : ''}
+          </p>
+        ) : null}
+      </Card>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total Spotlight revenue" value={formatNaira(totals.revenue)} sub={`${totals.count.toLocaleString('en-NG')} transactions`} accent="#15803d" />
+        <Kpi label="Referral commission" value={formatNaira(referralKobo)} sub={`${(referral?.count ?? 0).toLocaleString('en-NG')} referred purchases`} />
         <Kpi label="Gross processed" value={formatNaira(totals.gross)} />
         <Kpi label="Commission" value={formatNaira(totals.commission)} />
         <Kpi label="Platform charge" value={formatNaira(totals.platform)} />
@@ -125,6 +153,39 @@ export default function CommissionProfitPage() {
                     <td style={td()}>{formatNaira(r.convenienceFeeKobo)}</td>
                     <td style={td()}>{formatNaira(r.fixedFeeKobo)}</td>
                     <td style={{ ...td(), fontWeight: 700, color: '#15803d' }}>{formatNaira(r.spotlightRevenueKobo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </StateBlock>
+      </Card>
+
+      <Card title="Referral earnings">
+        <StateBlock loading={loading} error={error} empty={referralRewards.length === 0} emptyText="No referral commission paid in this range.">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={th()}>When</th>
+                  <th style={th()}>Source</th>
+                  <th style={th()}>Purchase revenue</th>
+                  <th style={th()}>Rate</th>
+                  <th style={th()}>Referral paid</th>
+                  <th style={th()}>Status</th>
+                  <th style={th()}>Referrer / referred</th>
+                </tr>
+              </thead>
+              <tbody>
+                {referralRewards.map((r) => (
+                  <tr key={r.id}>
+                    <td style={td()}>{new Date(r.createdAt).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })}</td>
+                    <td style={td()}><Badge label={r.module} tone="neutral" /></td>
+                    <td style={td()}>{formatNaira(r.marginKobo)}</td>
+                    <td style={td()}>{Math.round(r.appliedRate * 100)}%</td>
+                    <td style={{ ...td(), fontWeight: 600 }}>{formatNaira(r.rewardKobo)}</td>
+                    <td style={td()}><Badge label={r.status.toLowerCase()} tone={r.status === 'CREDITED' ? 'ok' : r.status === 'REVERSED' ? 'off' : 'neutral'} /></td>
+                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.referrerRef} → {r.referredUserRef}</code></td>
                   </tr>
                 ))}
               </tbody>

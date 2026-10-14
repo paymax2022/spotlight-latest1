@@ -406,3 +406,81 @@ func jsonbOrNil(m map[string]any) any {
 	}
 	return m
 }
+
+// ReferralSummary is what the referral commission split cost Spotlight over a
+// range. Only the commission-split engine's rows count: they are keyed
+// "commission:<earning id>". The older tiered referral engine pays from its own
+// margin and is not part of Spotlight's commission profit.
+type ReferralSummary struct {
+	// EarnedKobo is CREDITED + PENDING: the referral commission Spotlight owes
+	// for purchases in the range. Profit subtracts this figure.
+	EarnedKobo   int64 `json:"earnedKobo"`
+	CreditedKobo int64 `json:"creditedKobo"`
+	PendingKobo  int64 `json:"pendingKobo"`
+	// ReversedKobo is reward that was clawed back. It is excluded from EarnedKobo.
+	ReversedKobo int64 `json:"reversedKobo"`
+	// Count is the number of earned (CREDITED + PENDING) rewards.
+	Count int64 `json:"count"`
+}
+
+// ReferralReward is one referral commission payout, shown on the profit page.
+// The referrer and referred user are truncated ids: the page identifies a
+// payout, it does not expose who the people are.
+type ReferralReward struct {
+	ID                string    `json:"id"`
+	CreatedAt         time.Time `json:"createdAt"`
+	Module            string    `json:"module"`
+	MarginKobo        int64     `json:"marginKobo"`
+	RewardKobo        int64     `json:"rewardKobo"`
+	AppliedRate       float64   `json:"appliedRate"`
+	Status            string    `json:"status"`
+	ReferrerRef       string    `json:"referrerRef"`
+	ReferredUserRef   string    `json:"referredUserRef"`
+	SourceTransaction string    `json:"sourceTransaction"`
+}
+
+// ReferralSummaryFor totals the commission-split rewards created in [from, to).
+func (r *Repository) ReferralSummaryFor(ctx context.Context, from, to time.Time) (ReferralSummary, error) {
+	const q = `
+		SELECT
+		  COALESCE(SUM(reward_kobo) FILTER (WHERE status = 'CREDITED'), 0),
+		  COALESCE(SUM(reward_kobo) FILTER (WHERE status = 'PENDING'), 0),
+		  COALESCE(SUM(reward_kobo) FILTER (WHERE status = 'REVERSED'), 0),
+		  COUNT(*) FILTER (WHERE status IN ('CREDITED', 'PENDING'))
+		FROM public.referral_rewards
+		WHERE source_transaction_id LIKE 'commission:%'
+		  AND created_at >= $1 AND created_at < $2`
+	var s ReferralSummary
+	if err := r.db.QueryRow(ctx, q, from, to).Scan(&s.CreditedKobo, &s.PendingKobo, &s.ReversedKobo, &s.Count); err != nil {
+		return ReferralSummary{}, fmt.Errorf("commission: referral summary: %w", err)
+	}
+	s.EarnedKobo = s.CreditedKobo + s.PendingKobo
+	return s, nil
+}
+
+// ListReferralRewards returns the most recent commission-split payouts in [from, to).
+func (r *Repository) ListReferralRewards(ctx context.Context, from, to time.Time, limit int) ([]ReferralReward, error) {
+	const q = `
+		SELECT id::text, created_at, module, margin_kobo, reward_kobo, applied_rate::float8, status,
+		       LEFT(referrer_id::text, 8), LEFT(referred_user_id::text, 8), source_transaction_id
+		FROM public.referral_rewards
+		WHERE source_transaction_id LIKE 'commission:%'
+		  AND created_at >= $1 AND created_at < $2
+		ORDER BY created_at DESC
+		LIMIT $3`
+	rows, err := r.db.Query(ctx, q, from, to, limit)
+	if err != nil {
+		return nil, fmt.Errorf("commission: list referral rewards: %w", err)
+	}
+	defer rows.Close()
+	out := []ReferralReward{}
+	for rows.Next() {
+		var x ReferralReward
+		if err := rows.Scan(&x.ID, &x.CreatedAt, &x.Module, &x.MarginKobo, &x.RewardKobo, &x.AppliedRate,
+			&x.Status, &x.ReferrerRef, &x.ReferredUserRef, &x.SourceTransaction); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}

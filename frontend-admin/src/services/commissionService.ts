@@ -260,6 +260,44 @@ export async function getReport(opts: { from?: string; to?: string; groupBy: Gro
   return j.rows ?? [];
 }
 
+export interface ReferralSummary {
+  /** CREDITED + PENDING: the referral commission Spotlight owes for the range. */
+  earnedKobo: number;
+  creditedKobo: number;
+  pendingKobo: number;
+  /** Clawed-back reward; not counted in earnedKobo. */
+  reversedKobo: number;
+  count: number;
+}
+
+export interface ReferralReward {
+  id: string;
+  createdAt: string;
+  module: string;
+  marginKobo: number;
+  rewardKobo: number;
+  appliedRate: number;
+  status: 'PENDING' | 'CREDITED' | 'REVERSED';
+  referrerRef: string;
+  referredUserRef: string;
+  sourceTransaction: string;
+}
+
+// GET /finance/commission/referral-summary?from&to → { summary, rewards }
+export async function getReferralSummary(opts?: { from?: string; to?: string }): Promise<{ summary: ReferralSummary; rewards: ReferralReward[] }> {
+  const empty = { summary: { earnedKobo: 0, creditedKobo: 0, pendingKobo: 0, reversedKobo: 0, count: 0 }, rewards: [] };
+  if (USE_MOCK) {
+    await delay();
+    return empty;
+  }
+  const qs = new URLSearchParams();
+  if (opts?.from) qs.set('from', opts.from);
+  if (opts?.to) qs.set('to', opts.to);
+  const q = qs.toString();
+  const j = await getRaw<{ summary?: ReferralSummary; rewards?: ReferralReward[] }>(`/commission/referral-summary${q ? `?${q}` : ''}`);
+  return { summary: j.summary ?? empty.summary, rewards: j.rewards ?? [] };
+}
+
 // GET /finance/commission/earnings?from&to&category&limit → { success, earnings }
 export async function listEarnings(opts?: { from?: string; to?: string; category?: string; limit?: number }): Promise<Earning[]> {
   if (USE_MOCK) {

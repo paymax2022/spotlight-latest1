@@ -6,9 +6,12 @@ package top5events
 // reads/aggregates: no ledger/wallet mutation, standard testing.
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -88,6 +91,12 @@ func (s *Service) AttendeesForEvent(ctx context.Context, callerID, eventID strin
 		return nil, err
 	}
 
+	return s.attendeeRows(ctx, eventID)
+}
+
+// attendeeRows is the roster query shared by AttendeesForEvent and
+// AttendeesCSV. It performs NO authorization — callers must gate first.
+func (s *Service) attendeeRows(ctx context.Context, eventID string) ([]AttendeeRow, error) {
 	const q = `
 		SELECT t.id, COALESCE(up.full_name,''), COALESCE(ch.handle,''), tr.name, t.id, t.state,
 		       t.checked_in_at IS NOT NULL, to_char(t.checked_in_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
@@ -114,6 +123,56 @@ func (s *Service) AttendeesForEvent(ctx context.Context, callerID, eventID strin
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// AttendeesCSV exports an event's roster as CSV. Gated on authorizeManage
+// (owner or MANAGER) — stricter than AttendeesForEvent: bulk export of attendee
+// PII is a stronger action than viewing the check-in roster, so stewards are
+// excluded.
+func (s *Service) AttendeesCSV(ctx context.Context, callerID, eventID string) ([]byte, error) {
+	if _, err := s.authorizeManage(ctx, callerID, eventID); err != nil {
+		return nil, err
+	}
+	rows, err := s.attendeeRows(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{"name", "cashtag", "tier_name", "ticket_id", "state", "checked_in", "checked_in_at"}); err != nil {
+		return nil, err
+	}
+	for _, a := range rows {
+		at := ""
+		if a.CheckedInAt != nil {
+			at = *a.CheckedInAt
+		}
+		// Sanitize user-controlled free-text cells against spreadsheet formula
+		// injection (a cell beginning =,+,-,@ executes when opened in Excel/Sheets).
+		// ticket_id/state/checked_in/timestamp are machine-controlled and left as-is.
+		if err := w.Write([]string{csvSafe(a.Name), csvSafe(a.Cashtag), csvSafe(a.TierName), a.TicketID, a.State, strconv.FormatBool(a.CheckedIn), at}); err != nil {
+			return nil, err
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// csvSafe neutralizes spreadsheet formula injection by prefixing a leading
+// formula-trigger character (= + - @, and the tab/CR control chars some parsers
+// treat as leaders) with an apostrophe, which spreadsheet apps render as text.
+func csvSafe(v string) string {
+	if v == "" {
+		return v
+	}
+	switch v[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + v
+	}
+	return v
 }
 
 // VendorsForEvent lists an event's registered vendors — identity only
