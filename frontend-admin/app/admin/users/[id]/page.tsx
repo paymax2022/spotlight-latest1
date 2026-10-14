@@ -11,6 +11,7 @@ import {
   unsuspendAdminUser,
   updateAdminUser,
 } from '@/services/usersService';
+import { UserAvatar } from './UserAvatar';
 import RolesPanel from './RolesPanel';
 import { WalletPanel } from './WalletPanel';
 import { KycPanel } from './KycPanel';
@@ -149,7 +150,12 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
       <ToastStack toasts={toasts} onDismiss={dismiss} />
       {back}
       <div style={{ height: 8 }} />
-      <PageHeader title={name} subtitle={user.email || undefined} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <UserAvatar name={name} src={user.avatarUrl} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <PageHeader title={name} subtitle={user.email || undefined} />
+        </div>
+      </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         {user.status ? <Badge text={user.status} color={statusColor(user.status)} /> : null}
@@ -158,6 +164,11 @@ export default function AdminUserProfilePage({ params }: { params: Promise<{ id:
           text={user.profileCompleted ? 'Profile complete' : 'Profile incomplete'}
           color={user.profileCompleted ? colors.success : colors.secondary}
         />
+        {user.emailVerifiedAt ? <Badge text="Email verified" color={colors.success} /> : null}
+        {user.phoneVerifiedAt ? <Badge text="Phone verified" color={colors.success} /> : null}
+        <span style={{ fontSize: 12, color: colors.muted }}>
+          {`Last login: ${user.lastLoginAt ? formatDate(user.lastLoginAt) : 'Never'}`}
+        </span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }}>

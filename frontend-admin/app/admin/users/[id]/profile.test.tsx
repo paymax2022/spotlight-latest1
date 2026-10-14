@@ -131,6 +131,67 @@ describe('AdminUserProfilePage', () => {
   })
 })
 
+describe('AdminUserProfilePage header', () => {
+  beforeEach(() => {
+    mockGetUserRoles.mockResolvedValue([])
+    mockListRoles.mockResolvedValue([])
+    mockGetWalletBalance.mockResolvedValue({ balanceKobo: 0 })
+    mockGetWalletTransactions.mockResolvedValue([])
+    mockGetUserKyc.mockResolvedValue({ tier: 0, status: 'none', openCaseId: null })
+    mockGetLoginActivity.mockResolvedValue([])
+    mockGetSecurityEvents.mockResolvedValue([])
+  })
+  afterEach(() => cleanup())
+
+  const renderWith = async (extra: Record<string, unknown>) => {
+    getAdminUserImpl = async () => ({ ...user, ...extra })
+    render(<AdminUserProfilePage params={params('u1')} />)
+    await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeTruthy())
+  }
+
+  it('renders avatar image when avatarUrl is present', async () => {
+    await renderWith({ avatarUrl: 'https://cdn.example.com/ada.png' })
+    const img = screen.getByRole('img', { name: 'Ada Lovelace' }) as HTMLImageElement
+    expect(img.getAttribute('src')).toBe('https://cdn.example.com/ada.png')
+  })
+
+  it('falls back to initials when avatarUrl is absent', async () => {
+    await renderWith({})
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it('falls back to initials when the image fails to load', async () => {
+    await renderWith({ avatarUrl: 'https://cdn.example.com/broken.png' })
+    fireEvent.error(screen.getByRole('img', { name: 'Ada Lovelace' }))
+    expect(screen.queryByRole('img', { name: 'Ada Lovelace' })).toBeNull()
+    expect(screen.getByText('AL')).toBeTruthy()
+  })
+
+  it('shows Email verified / Phone verified badges only when the timestamps are set', async () => {
+    await renderWith({})
+    expect(screen.queryByText('Email verified')).toBeNull()
+    expect(screen.queryByText('Phone verified')).toBeNull()
+    cleanup()
+    await renderWith({ emailVerifiedAt: '2025-02-01T00:00:00Z' })
+    expect(screen.getByText('Email verified')).toBeTruthy()
+    expect(screen.queryByText('Phone verified')).toBeNull()
+    cleanup()
+    await renderWith({ emailVerifiedAt: '2025-02-01T00:00:00Z', phoneVerifiedAt: '2025-02-02T00:00:00Z' })
+    expect(screen.getByText('Email verified')).toBeTruthy()
+    expect(screen.getByText('Phone verified')).toBeTruthy()
+  })
+
+  it('shows "Last login" formatted, or "Never" when lastLoginAt is absent', async () => {
+    await renderWith({})
+    expect(screen.getByText('Last login: Never')).toBeTruthy()
+    cleanup()
+    const iso = '2025-03-04T05:06:07Z'
+    await renderWith({ lastLoginAt: iso })
+    expect(screen.getByText(`Last login: ${new Date(iso).toLocaleString('en-NG')}`)).toBeTruthy()
+  })
+})
+
 describe('RolesPanel', () => {
   const catalog = [
     { id: 'r-admin', slug: 'admin', name: 'Administrator' },
