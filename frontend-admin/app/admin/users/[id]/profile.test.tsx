@@ -23,12 +23,24 @@ vi.mock('@/services/usersService', () => ({
   getSecurityEvents: (...args: unknown[]) => mockGetSecurityEvents(...args),
   assignUserRole: (...args: unknown[]) => mockAssignUserRole(...args),
   removeUserRole: (...args: unknown[]) => mockRemoveUserRole(...args),
+  getAuditLogsForUser: vi.fn().mockResolvedValue([]),
+  getUserSessions: vi.fn().mockResolvedValue([]),
   AdminUsersRequestError: class extends Error {
     constructor(public readonly status: number, message: string) {
       super(message)
     }
   },
 }))
+
+vi.mock('@/services/transactionsAdminService', async () => {
+  const actual = await vi.importActual<typeof import('@/services/transactionsAdminService')>(
+    '@/services/transactionsAdminService',
+  )
+  return {
+    ...actual,
+    listAdminTransactions: vi.fn().mockResolvedValue({ rows: [], total: 0, limit: 25, offset: 0 }),
+  }
+})
 
 const mockGetUserRoles = vi.fn()
 const mockGetLoginActivity = vi.fn()
@@ -113,6 +125,21 @@ describe('AdminUserProfilePage', () => {
     expect(mockGetAdminUser).toHaveBeenCalledWith('u1')
     expect(screen.getAllByText('ada@example.com').length).toBeGreaterThan(0)
     expect(screen.getByText('Save Changes')).toBeTruthy()
+  })
+
+  it('makes no real network calls while rendering the full profile', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    try {
+      getAdminUserImpl = async () => user
+      render(<AdminUserProfilePage params={params('u1')} />)
+      await waitFor(() => expect(screen.getByText('Ada Lovelace')).toBeTruthy())
+      await screen.findByText('No admin actions recorded')
+      await screen.findByText('No active sessions')
+      await screen.findAllByText('No transactions')
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   it('says so when the user does not exist', async () => {
