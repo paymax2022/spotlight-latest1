@@ -53,6 +53,15 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '409': { description: Idempotency-Key reused with a different request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429':
+          description: >-
+            Per-user rate limit exceeded (code rate_limited). Quote and confirm have separate
+            per-minute budgets (defaults 20 and 5). Retry after the next minute; the
+            X-RateLimit-Limit and X-RateLimit-Remaining headers report the budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500': { $ref: '#/components/responses/Error' }
   /crypto/swaps/{id}/confirm:
     post:
@@ -82,6 +91,15 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '410': { description: quote_expired, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '422': { description: insufficient_funds or limit_exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429':
+          description: >-
+            Per-user rate limit exceeded (code rate_limited). Quote and confirm have separate
+            per-minute budgets (defaults 20 and 5). Retry after the next minute; the
+            X-RateLimit-Limit and X-RateLimit-Remaining headers report the budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500': { $ref: '#/components/responses/Error' }
   /crypto/swaps/{id}:
     get:
