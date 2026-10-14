@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -49,7 +50,110 @@ type ReconcileResult struct {
 // Reconciler re-reads in-flight swaps from the provider and repairs the ones a crash or a
 // lost webhook left behind. It never calls ConfirmSwap and never refunds a swap whose
 // provider call may have happened.
-type Reconciler struct{ cfg ReconcilerConfig }
+type Reconciler struct {
+	cfg ReconcilerConfig
+	tel telemetry
+}
+
+// maxRecentAlerts bounds the in-memory alert history kept for the admin status view.
+const maxRecentAlerts = 50
+
+// ReconcilerAlert is one alert the reconciler raised, kept for the admin status view.
+type ReconcilerAlert struct {
+	At      time.Time
+	Kind    string
+	Message string
+}
+
+// ReconcilerTotals are work counters accumulated since this process started.
+type ReconcilerTotals struct {
+	Resolved, Released, Parked, Expired, Errors int64
+	ClearingNegativeRuns                        int64
+}
+
+// ReconcilerSnapshot is a copy of what THIS replica's reconciler has done since it started.
+// Only the elected leader does work, so a follower mostly shows skipped passes.
+type ReconcilerSnapshot struct {
+	StartedAt    time.Time
+	Runs         int64 // passes attempted, however they ended
+	LedRuns      int64 // passes this replica led
+	SkippedRuns  int64 // passes another replica led
+	LastRunAt    time.Time
+	LastLedAt    time.Time
+	LastLed      bool
+	LastResult   ReconcileResult // the most recent pass this replica led
+	LastError    string          // "" after a healthy pass
+	Totals       ReconcilerTotals
+	RecentAlerts []ReconcilerAlert // newest first, at most maxRecentAlerts
+}
+
+// telemetry is the reconciler's in-process recorder. It holds counts and alert text only,
+// never swap contents, and is guarded because Snapshot is read from request goroutines.
+type telemetry struct {
+	mu     sync.Mutex
+	snap   ReconcilerSnapshot
+	alerts []ReconcilerAlert // oldest first; reversed on read
+}
+
+func (t *telemetry) alert(at time.Time, kind, msg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.alerts = append(t.alerts, ReconcilerAlert{At: at, Kind: kind, Message: msg})
+	if len(t.alerts) > maxRecentAlerts {
+		t.alerts = t.alerts[len(t.alerts)-maxRecentAlerts:]
+	}
+}
+
+func (t *telemetry) pass(at time.Time, res ReconcileResult, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.snap.StartedAt.IsZero() {
+		t.snap.StartedAt = at
+	}
+	t.snap.Runs++
+	t.snap.LastRunAt = at
+	t.snap.LastError = ""
+	if err != nil {
+		t.snap.LastError = err.Error()
+		return
+	}
+	if res.Skipped {
+		t.snap.SkippedRuns++
+		t.snap.LastLed = false
+		return
+	}
+	t.snap.LedRuns++
+	t.snap.LastLed = true
+	t.snap.LastLedAt = at
+	t.snap.LastResult = res
+	t.snap.Totals.Resolved += int64(res.Resolved)
+	t.snap.Totals.Released += int64(res.Released)
+	t.snap.Totals.Parked += int64(res.Parked)
+	t.snap.Totals.Expired += int64(res.Expired)
+	t.snap.Totals.Errors += int64(res.Errors)
+	if res.ClearingNegative {
+		t.snap.Totals.ClearingNegativeRuns++
+	}
+}
+
+// Snapshot returns a copy of this replica's reconciler state. Safe from any goroutine.
+func (r *Reconciler) Snapshot() ReconcilerSnapshot {
+	r.tel.mu.Lock()
+	defer r.tel.mu.Unlock()
+	s := r.tel.snap
+	s.RecentAlerts = make([]ReconcilerAlert, 0, len(r.tel.alerts))
+	for i := len(r.tel.alerts) - 1; i >= 0; i-- {
+		s.RecentAlerts = append(s.RecentAlerts, r.tel.alerts[i])
+	}
+	return s
+}
+
+func (r *Reconciler) now() time.Time {
+	if r.cfg.Service != nil && r.cfg.Service.cfg.Now != nil {
+		return r.cfg.Service.cfg.Now()
+	}
+	return time.Now()
+}
 
 // NewReconciler applies defaults.
 func NewReconciler(cfg ReconcilerConfig) *Reconciler {
@@ -73,6 +177,7 @@ func NewReconciler(cfg ReconcilerConfig) *Reconciler {
 
 // alert never lets a faulty sink abort a pass.
 func (r *Reconciler) alert(kind, msg string) {
+	r.tel.alert(r.now(), kind, msg) // recorded even with no sink, for the admin status view
 	if r.cfg.Alert == nil {
 		return
 	}
@@ -80,8 +185,15 @@ func (r *Reconciler) alert(kind, msg string) {
 	r.cfg.Alert(kind, msg)
 }
 
-// RunOnce does one pass. Safe to call from several replicas: only the leader works.
+// RunOnce does one pass and records it for the admin status view. Safe to call from several
+// replicas: only the leader works.
 func (r *Reconciler) RunOnce(ctx context.Context) (ReconcileResult, error) {
+	res, err := r.runOnce(ctx)
+	r.tel.pass(r.now(), res, err)
+	return res, err
+}
+
+func (r *Reconciler) runOnce(ctx context.Context) (ReconcileResult, error) {
 	var res ReconcileResult
 	if r.cfg.Leader == nil || r.cfg.Service == nil {
 		return res, errors.New("cryptosvc: reconciler needs a service and a leader lock")

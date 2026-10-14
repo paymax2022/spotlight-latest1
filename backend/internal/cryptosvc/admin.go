@@ -71,6 +71,73 @@ func RegisterAdminRoutes(admin *gin.RouterGroup, d HandlerDeps) {
 	h := &adminHandler{d: d, now: time.Now}
 	admin.GET("/swaps/review", h.reviewQueue)
 	admin.POST("/swaps/:id/resolve", h.resolve)
+	admin.GET("/reconciler", h.reconcilerStatus)
+}
+
+// reconcilerStatus GET /admin/crypto/reconciler — what the reconciler has been doing and what
+// is waiting on it. "replica" is in-process state of the replica that served this request (only
+// the elected leader works, so a follower mostly shows skipped passes); "backlog" is read from
+// the database and is the same whichever replica answers. Counts, kobo and alert text only:
+// no swap, user or provider identifiers. Read-only.
+func (h *adminHandler) reconcilerStatus(c *gin.Context) {
+	if h.d.Recon == nil {
+		fail(c, http.StatusServiceUnavailable, "reconciler_not_running")
+		return
+	}
+	snap := h.d.Recon.Snapshot()
+	backlog, err := h.d.Service.Backlog(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	now := h.now()
+	type alertView struct {
+		At      string `json:"at"`
+		Kind    string `json:"kind"`
+		Message string `json:"message"`
+	}
+	alerts := make([]alertView, 0, len(snap.RecentAlerts))
+	for _, a := range snap.RecentAlerts {
+		alerts = append(alerts, alertView{At: ts(a.At), Kind: a.Kind, Message: a.Message})
+	}
+	rows := make([]gin.H, 0, len(backlog))
+	for _, b := range backlog {
+		row := gin.H{"state": string(b.State), "count": b.Count, "held_kobo": b.HeldKobo, "oldest_age_seconds": int64(0)}
+		if b.Count > 0 && !b.OldestUpdatedAt.IsZero() {
+			row["oldest_updated_at"] = ts(b.OldestUpdatedAt)
+			if d := now.Sub(b.OldestUpdatedAt); d > 0 {
+				row["oldest_age_seconds"] = int64(d.Seconds())
+			}
+		}
+		rows = append(rows, row)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"note":    "replica is the in-process state of the replica that answered; only the elected leader does work, so a follower mostly shows skipped passes. backlog comes from the database.",
+		"replica": gin.H{
+			"started_at": ts(snap.StartedAt), "runs": snap.Runs, "led_runs": snap.LedRuns, "skipped_runs": snap.SkippedRuns,
+			"last_run_at": ts(snap.LastRunAt), "last_led_at": ts(snap.LastLedAt), "last_led": snap.LastLed,
+			"last_error": snap.LastError,
+			"last_result": gin.H{
+				"resolved": snap.LastResult.Resolved, "released": snap.LastResult.Released, "parked": snap.LastResult.Parked,
+				"expired": snap.LastResult.Expired, "errors": snap.LastResult.Errors, "clearing_negative": snap.LastResult.ClearingNegative,
+			},
+			"totals": gin.H{
+				"resolved": snap.Totals.Resolved, "released": snap.Totals.Released, "parked": snap.Totals.Parked,
+				"expired": snap.Totals.Expired, "errors": snap.Totals.Errors, "clearing_negative_runs": snap.Totals.ClearingNegativeRuns,
+			},
+			"recent_alerts": alerts,
+		},
+		"backlog": rows,
+	})
+}
+
+// ts formats a time as RFC3339 UTC, or "" for the zero time.
+func ts(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 // reviewQueue GET /admin/crypto/swaps/review?limit=&offset= — swaps parked in needs_review,

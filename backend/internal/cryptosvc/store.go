@@ -99,6 +99,10 @@ type Store interface {
 	// (updated_at asc), paginated by limit/offset (the caller bounds them). It backs
 	// the admin review queue; it is read-only and must not lock rows.
 	ListByState(ctx context.Context, state cryptoprov.SwapState, limit, offset int) ([]SwapRecord, error)
+	// Backlog rolls up the OPEN swaps (quoted, confirming, processing, needs_review) by state:
+	// how many, the NGN held for them (ngn+fee, kobo) and the oldest last write. States with no
+	// rows may be omitted. It is read-only, takes no row locks and returns no swap contents.
+	Backlog(ctx context.Context) ([]BacklogState, error)
 	// SwapByIDAny reads a swap by id WITHOUT user scoping. It is for the admin resolution
 	// path only (the caller is already gated by the crypto.admin permission); member reads
 	// must use SwapByID so another user's id stays 404.
@@ -123,3 +127,11 @@ var (
 	// ErrBadSignature is returned for any delivery that fails verification (HTTP 401).
 	ErrBadSignature = cryptoprov.ErrBadSignature
 )
+
+// BacklogState is one state's rollup in the operational backlog.
+type BacklogState struct {
+	State           cryptoprov.SwapState
+	Count           int64
+	HeldKobo        int64
+	OldestUpdatedAt time.Time // zero when Count is 0
+}

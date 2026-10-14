@@ -45,6 +45,9 @@ type HandlerDeps struct {
 	// deliberately not throttled by them.
 	QuoteLimit   gin.HandlerFunc
 	ConfirmLimit gin.HandlerFunc
+	// Recon is this replica's reconciler, read by the admin status view. Nil leaves that
+	// endpoint answering 503.
+	Recon *Reconciler
 }
 
 const (

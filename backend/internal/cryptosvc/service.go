@@ -480,6 +480,33 @@ func (s *Service) ListByState(ctx context.Context, state cryptoprov.SwapState, l
 	return s.cfg.Store.ListByState(ctx, state, limit, offset)
 }
 
+// openBacklogStates are the states a swap sits in while money is held or a decision is pending,
+// in the order the status view reports them.
+var openBacklogStates = []cryptoprov.SwapState{
+	cryptoprov.SwapStateNeedsReview, cryptoprov.SwapStateConfirming,
+	cryptoprov.SwapStateProcessing, cryptoprov.SwapStateQuoted,
+}
+
+// Backlog returns one rollup per open state, zero-filled so "no swaps" is distinguishable from
+// "not reported". Read-only.
+func (s *Service) Backlog(ctx context.Context) ([]BacklogState, error) {
+	rows, err := s.cfg.Store.Backlog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[cryptoprov.SwapState]BacklogState, len(rows))
+	for _, r := range rows {
+		by[r.State] = r
+	}
+	out := make([]BacklogState, 0, len(openBacklogStates))
+	for _, st := range openBacklogStates {
+		b := by[st]
+		b.State = st
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 // ResolveDecision is a human operator's choice for a swap parked in needs_review.
 type ResolveDecision string
 
