@@ -64,6 +64,29 @@ timeout cannot strand a live class.
 7. Load test before launch: `lk load-test --url ... --room load --video-publishers 5 --subscribers 50`
    from a separate host, and watch CPU, bandwidth and packet loss on the VM.
 
+## Mobile build
+
+LiveKit needs native code, so the app must be built as a development or EAS build (it cannot run in Expo Go;
+it already cannot, because of maps and Sentry). After pulling this change: reinstall (`npm ci`), then rebuild the
+native app (`npx expo run:android`, `npx expo run:ios`, or an EAS build). An old dev build without the LiveKit
+modules opens everything else normally; only the live-class screen reports an error.
+
+Device verification checklist (do this once on a real Android and a real iPhone, on Wi-Fi and on mobile data):
+1. Host account: start a class, open the room, tap the camera and mic buttons. The OS asks for camera and
+   microphone permission with the text from `app.json`.
+2. Learner account on a second device: join. The host's video appears; the participant count is 2.
+3. Learner raises a hand: the host sees the name. Learner sends a chat message: it appears on both devices with
+   the sender's display name. A message with RTL-override characters shows without them.
+4. Turn off Wi-Fi on the learner for 20 seconds: status shows "Reconnecting…", then recovers.
+5. Host ends the class: the learner sees "This class has ended." and the room disappears from the status endpoint.
+6. Put the learner app in the background for the token lifetime (10 minutes), return, and rejoin: it fetches a
+   fresh token rather than reusing the expired one.
+
+`npx expo prebuild --platform ios` currently fails in this repo on an unrelated `plist` / `@xmldom/xmldom`
+incompatibility (it fails identically without the LiveKit plugins), so iOS native configuration, including the
+microphone and camera permission strings, is not verified by that route. Android prebuild succeeds and includes
+CAMERA, RECORD_AUDIO and MODIFY_AUDIO_SETTINGS.
+
 ## Rotating the secret
 
 LiveKit accepts more than one key at once. Add the new pair alongside the old one in the server's
@@ -106,10 +129,10 @@ previous provider cannot join, so roll back between classes, not during one.
 - If `FEATURE_LIVEKIT_ENABLED` is on but LiveKit cannot be used, live classes refuse (HTTP 502 on start and
   join) rather than falling back to the dev stub. Check the `[livekit][ALERT]` log line.
 
-- **No client SDK ships yet.** The backend issues tokens and the server URL, but the mobile and web
-  apps have no LiveKit client, so nobody can actually join media until one is added (React Native
-  needs `@livekit/react-native` and `react-native-webrtc`, which means a development/EAS build, not
-  Expo Go).
+- **The mobile client exists but has not been run on a device.** The Android and iOS app joins academy live
+  classes through `src/features/academy/live/` (host: mic and camera, raised hands; learner: watch, chat, raise
+  hand). It type-checks against the real SDK and its logic is unit-tested, but no one has joined a real room from
+  a phone yet. There is **no web client**: on web the screen says to open the app. See "Mobile build" below.
 - Only academy live classes use LiveKit. Telemedicine calls and Connect live still use VideoSDK.
 - No recording or egress, and no domain action on webhooks (events are logged only).
 - A user joining the same room from two devices is disconnected from the first (same identity).

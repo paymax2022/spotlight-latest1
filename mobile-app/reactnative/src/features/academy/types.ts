@@ -895,6 +895,8 @@ export interface LiveJoinToken {
   canPublish: boolean;
   /** Moderated room — messages pass a filter; minors cannot DM (group only). */
   moderated: boolean;
+  /** Where to connect with the token. Present only when the class runs on LiveKit. */
+  rtc?: { provider: string; url: string };
 }
 
 export interface StudyGroup {
