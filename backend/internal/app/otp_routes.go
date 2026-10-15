@@ -193,6 +193,19 @@ func buildOTPService(cfg config.Config, pool *pgxpool.Pool) (*otp.Service, strin
 		cfg.BrevoOTPTemplateID,
 		time.Duration(cfg.BrevoTimeoutSeconds)*time.Second,
 	)
+	// BREVO_ENDPOINT lets a local stack route OTP emails to a fake that drops them
+	// into Mailpit (scripts/dev/fake-brevo.mjs), so the real send path can be
+	// exercised without Brevo credentials. Honoured ONLY where mocks are allowed:
+	// on staging/production it would silently divert every code to whoever runs
+	// the endpoint, so there it is ignored loudly.
+	if ep := strings.TrimSpace(cfg.BrevoEndpoint); ep != "" {
+		if cfg.MocksAllowed() {
+			log.Printf("[otp] WARNING: sending OTP email to %s instead of Brevo (BREVO_ENDPOINT, dev only)", ep)
+			sender = sender.WithEndpoint(ep)
+		} else {
+			log.Printf("[otp] ERROR: BREVO_ENDPOINT is set but APP_ENV=%q does not allow mocks — ignoring it", cfg.AppEnv)
+		}
+	}
 
 	svc, err := otp.NewService(
 		otp.NewPostgresStore(pool),
