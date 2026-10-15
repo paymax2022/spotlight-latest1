@@ -760,6 +760,9 @@ type Config struct {
 	BrevoSenderEmail          string
 	BrevoOTPTemplateID        int64
 	BrevoTimeoutSeconds       int
+	// BrevoEndpoint redirects OTP sends to a local fake (dev/test only). Ignored
+	// unless MocksAllowed(); see otp_routes.go for why it can never reach staging/prod.
+	BrevoEndpoint string
 
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
@@ -1142,6 +1145,7 @@ func Load() Config {
 		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
 		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
 		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		BrevoEndpoint:             getEnv("BREVO_ENDPOINT", ""),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),
