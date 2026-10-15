@@ -4,11 +4,13 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "prestart": "node scripts/check-web-api.mjs",
     "start": "expo start --port 8083",
     "android": "expo run:android",
     "build:android": "cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a",
     "build:ios": "react-native run-ios --configuration Release",
     "ios": "expo run:ios",
+    "preweb": "node scripts/check-web-api.mjs",
     "web": "expo start --web --port 8083",
     "uat:insurance": "EXPO_PUBLIC_INSURANCE_USE_MOCK=false expo start --web --port 8083",
     "typecheck": "node --stack-size=15000 --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
