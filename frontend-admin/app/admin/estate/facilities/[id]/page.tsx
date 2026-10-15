@@ -4,28 +4,10 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { EstateTabs } from '../../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
-
-interface Facility {
-  id: string;
-  estateId: string;
-  name: string;
-  kind: string;
-  capacity?: number;
-  feeKobo: number;
-}
-
-interface Booking {
-  id: string;
-  residentId: string;
-  residentName: string;
-  startsAt: string;
-  endsAt: string;
-  status: string;
-  amountKobo: number;
-}
+import { getFacility, updateFacility, listFacilityBookings } from '@/services/estateAdminService';
+import type { OversightFacility, OversightFacilityBooking } from '@/types/estateAdmin';
 
 const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
@@ -50,8 +32,8 @@ export default function FacilityDetailPage() {
   const router = useRouter();
   const facilityId = params.id as string;
 
-  const [facility, setFacility] = useState<Facility | null>(null);
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [facility, setFacility] = useState<OversightFacility | null>(null);
+  const [bookings, setBookings] = useState<OversightFacilityBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -62,9 +44,8 @@ export default function FacilityDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/facilities/${facilityId}`);
-      if (!res.ok) throw new Error(`Failed to load facility: ${res.status}`);
-      const data = await res.json();
+      const data = await getFacility(facilityId);
+      if (!data) throw new Error('Facility not found');
       setFacility(data);
       setEditData({
         name: data.name,
@@ -80,11 +61,8 @@ export default function FacilityDetailPage() {
 
   async function loadBookings() {
     try {
-      const res = await fetch(`/api/admin/facilities/${facilityId}/bookings`);
-      if (res.ok) {
-        const data = await res.json();
-        setBookings(data);
-      }
+      const data = await listFacilityBookings(facilityId);
+      setBookings(data);
     } catch (e) {
       console.error('Failed to load bookings:', e);
     }
@@ -100,17 +78,11 @@ export default function FacilityDetailPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/facilities/${facilityId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: editData.name,
-          capacity: editData.capacity ? parseInt(editData.capacity) : null,
-          feeKobo: parseInt((parseFloat(editData.feeKobo || '0') * 100).toString()),
-        }),
+      const updated = await updateFacility(facilityId, {
+        name: editData.name,
+        capacity: editData.capacity ? parseInt(editData.capacity) : null,
+        feeKobo: parseInt((parseFloat(editData.feeKobo || '0') * 100).toString()),
       });
-      if (!res.ok) throw new Error(`Failed to update facility: ${res.status}`);
-      const updated = await res.json();
       setFacility(updated);
       setEditing(false);
     } catch (e) {
@@ -236,7 +208,7 @@ export default function FacilityDetailPage() {
                 <tbody>
                   {bookings.map((b) => (
                     <tr key={b.id}>
-                      <td style={tdCell}>{b.residentName}</td>
+                      <td style={tdCell}>{b.residentName || b.residentId}</td>
                       <td style={tdCell}>{formatDate(b.startsAt)}</td>
                       <td style={tdCell}>{formatDate(b.endsAt)}</td>
                       <td style={tdCell}>{money(b.amountKobo)}</td>
