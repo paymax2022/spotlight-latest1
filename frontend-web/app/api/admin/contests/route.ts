@@ -125,6 +125,7 @@ export async function POST(request: Request) {
       formSchema: sanitizeContestFormSchema(body?.formSchema),
       rulesText: String(body?.rulesText || '').trim(),
       bannerImageUrl: String(body?.bannerImageUrl || '').trim(),
+      logoUrl: String(body?.logoUrl || '').trim(),
     });
 
     // Write through to Postgres so the contest exists outside this process: the

@@ -16,6 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AndroidKeyboardAvoider from '@/components/AndroidKeyboardAvoider';
 import ToastHost from '@/components/ToastHost';
 import ConfirmHost from '@/components/ConfirmHost';
+import EmailPromptHost from '@/components/EmailPromptHost';
 import HomeMenuHost from '@/components/HomeMenu';
 import { Colors } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
@@ -31,6 +32,7 @@ import { useElectionPushBridge } from '@/features/election/hooks/useElectionPush
 import * as Sentry from '@sentry/react-native';
 import { isUnauthorized, currentPathForReturn } from '@/lib/authError';
 import { promptSignIn } from '@/lib/authRedirect';
+import { useNavigationTelemetry } from '@/features/telemetry/useNavigationTelemetry';
 
 // Error tracking + native crash capture. Inert until EXPO_PUBLIC_SENTRY_DSN is set,
 // so local/dev and Expo Go are unaffected.
@@ -79,6 +81,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router   = useRouter();
   const pathname = usePathname();
+  useNavigationTelemetry(); // flag-gated (EXPO_PUBLIC_NAV_TELEMETRY), best-effort
   // Module publication for this environment. Read once here and shared by the
   // deep-link guard below; the render gates use the same cached query.
   const { data: moduleVisibility, isLoading: moduleVisibilityLoading } = useQuery({
@@ -288,6 +291,8 @@ function RootLayout() {
         <ToastHost />
         {/* Web renderer for confirmAsync/alertAsync (no-op on native). */}
         <ConfirmHost />
+        {/* "Enter your email" prompt for checkouts the backend answers email_required. */}
+        <EmailPromptHost />
         {/* Global "back to the module grid" hamburger + sheet. Above the
             navigator for the same reason as the toasts: it must outlive screen
             changes, and the floating fallback needs to sit over any screen. */}

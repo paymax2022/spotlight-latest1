@@ -5,6 +5,8 @@
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
+import { SERVICE_INTERESTS, resolveOnboardingOptions, pickStringArray } from '../deliveryOnboarding';
+import type { Option, OnboardingOptions } from '../deliveryOnboarding';
 import type {
   MobilityHome,
   PricingConfig,
@@ -233,7 +235,7 @@ export async function initiateRidePaystack(
   if (USE_MOCK) {
     await delay(600);
     return {
-      reference: `rideorder:${req.idempotencyKey}`,
+      reference: `rideorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: 0,
     };
@@ -480,6 +482,8 @@ function normalizeDriverProfile(raw: Partial<DriverProfile> & Record<string, any
     documents: raw.documents ?? [],
     vehicle: raw.vehicle ?? vehicles[0] ?? null,
     rating: raw.rating ?? 0,
+    serviceInterests: pickStringArray(raw, 'serviceInterests', 'service_interests'),
+    coverageAreas: pickStringArray(raw, 'coverageAreas', 'coverage_areas'),
   };
 }
 
@@ -625,6 +629,7 @@ export async function addDriverVehicle(draft: VehicleDraft): Promise<DriverProfi
     color: draft.color,
     category: draft.category,
     capacity: draft.capacity,
+    vehicle_type: draft.vehicleType,
   });
   return getDriverMe();
 }
@@ -827,3 +832,29 @@ export async function updateRideSettings(patch: UpdateRideSettingsInput): Promis
 }
 
 export { USE_MOCK };
+
+// --- Delivery provider onboarding (Slice A) ---
+
+export async function setDriverServiceProfile(
+  interests: string[],
+  areas: string[],
+): Promise<{ service_interests: string[]; coverage_areas: string[] }> {
+  return unwrap<{ service_interests: string[]; coverage_areas: string[] }>(
+    await api.put(`${BASE}/driver/service-profile`, { service_interests: interests, coverage_areas: areas }),
+  );
+}
+
+async function fetchDriverOnboardingOptions(): Promise<OnboardingOptions> {
+  const data = unwrap<{ services: Option[]; coverage_areas: Option[] }>(
+    await api.get(`${BASE}/driver/onboarding-options`),
+  );
+  const iconByValue: Record<string, string> = Object.fromEntries(SERVICE_INTERESTS.map((s) => [s.value, s.icon]));
+  return {
+    services: (data.services ?? []).map((s) => ({ value: s.value, label: s.label, icon: iconByValue[s.value] ?? 'Circle' })),
+    coverageAreas: data.coverage_areas ?? [],
+  };
+}
+
+export function getDriverOnboardingOptions(): Promise<OnboardingOptions> {
+  return resolveOnboardingOptions(fetchDriverOnboardingOptions);
+}

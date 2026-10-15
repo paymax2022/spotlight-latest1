@@ -14,6 +14,7 @@ import (
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
+	"spotlight/backend/internal/telemetry/navigation"
 	"strings"
 	"time"
 
@@ -397,6 +398,7 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		rbacAdmin.DELETE("/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.delete"), rbacHandler.DeletePermission)
 		rbacAdmin.POST("/roles/:id/permissions", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.AssignPermissionToRole)
 		rbacAdmin.DELETE("/roles/:id/permissions/:permissionId", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.RemovePermissionFromRole)
+		rbacAdmin.GET("/users/:id/roles", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Roles)
 		rbacAdmin.POST("/users/:id/roles", middleware.RequirePermission(rbacService, "users.roles.assign"), rbacHandler.AssignRoleToUser)
 		rbacAdmin.DELETE("/users/:id/roles/:roleId", middleware.RequirePermission(rbacService, "users.roles.assign"), rbacHandler.RemoveRoleFromUser)
 		rbacAdmin.PATCH("/users/:id/suspend", middleware.RequirePermission(rbacService, "users.suspend"), rbacHandler.SuspendUser)
@@ -458,6 +460,17 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 			log.Printf("[router] WARN: could not connect to database: %v — DB-backed routes disabled", err)
 		} else {
 			sharedPool = p
+			adminUsersHandler.WithModules(sharedPool, cfg.FeatureAdminUserModulesEnabled)
+			registerAdminUserModulesRoutes(r, supabase, rbacService, adminUsersHandler, sharedPool)
+			if cfg.FeatureNavTelemetryEnabled {
+				// Admin navigation history (SP4) — same audit category as login-activity.
+				navAdmin := r.Group("/api/admin")
+				navAdmin.Use(middleware.RequireAuthContext(supabase, rbacService))
+				navAdmin.GET("/users/:id/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
+					AdminUserNavigationHandler(navigation.NewRepository(sharedPool)))
+				navAdmin.GET("/analytics/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
+					AdminNavigationAnalyticsHandler(navigation.NewRepository(sharedPool)))
+			}
 		}
 	} else if deployedTier {
 		log.Fatalf("[router] DATABASE_URL is not set (APP_ENV=%q) — refusing to start with every DB-backed route disabled", cfg.AppEnv)
@@ -525,6 +538,16 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool, sharedRedis)
+
+	// Navigation telemetry ingest — flag-gated inside; needs the shared pool.
+	if sharedPool != nil {
+		RegisterNavTelemetryRoutes(r, cfg, navigation.NewRepository(sharedPool),
+			middleware.RequireAuthContext(supabase, rbacService),
+			middleware.PerUserRateLimit(sharedRedis, "navtel", 120))
+	}
+	if cfg.FeatureNavTelemetryEnabled && sharedPool != nil {
+		navigation.StartPurgeScheduler(ctx, navigation.NewRepository(sharedPool), 24*time.Hour)
+	}
 
 	// Paymax Connect wallet endpoints (/api/v1/wallet/*, /api/v1/kyc/*, etc.)
 	// — member-facing wallet balance, gifting, tier progression, and payouts.

@@ -2,9 +2,13 @@ import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/tokens';
 import type { MeetingMode, MeetingStatus, RsvpResponse } from '../types/meetings.types';
 
-// Flip to false once the estate meetings endpoints are verified (or set
-// EXPO_PUBLIC_MEETINGS_USE_MOCK=false). Mirrors the visitor/election convention.
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_MEETINGS_USE_MOCK, true);
+// Live endpoints verified — the four estate meetings route handlers
+// (frontend-web/app/api/v1/estate/meetings/**) run real Supabase queries against
+// the estate_meetings/meeting_rsvps/meeting_minutes tables (no dedicated Go/test
+// suite; verified by reading the handlers and confirming the tables exist in
+// supabase/migrations/). Defaults to live — set
+// EXPO_PUBLIC_MEETINGS_USE_MOCK=true to force mock locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_MEETINGS_USE_MOCK, false);
 
 // Meetings are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/meetings (GET list, POST create, GET /{mid}, POST /{mid}/rsvp,

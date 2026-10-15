@@ -14,11 +14,12 @@ import { MarketColors } from '@/features/marketplace';
 import { useNotificationPrefs, useUpdateNotificationPrefs } from '@/features/marketplace/api/account.hooks';
 import type { NotificationPrefs } from '@/features/marketplace/api/account.api';
 
-type PrefKey = keyof Pick<NotificationPrefs, 'newOffer' | 'priceDrop' | 'orderStatus' | 'boostExpiry' | 'promotional'>;
+type PrefKey = keyof Pick<NotificationPrefs, 'newOffer' | 'priceDrop' | 'orderStatus' | 'boostExpiry' | 'promotional' | 'newListing'>;
 
 const TOGGLES: Array<{ key: PrefKey; label: string; sub: string }> = [
   { key: 'newOffer', label: 'New offers', sub: 'When a buyer makes or counters an offer' },
   { key: 'priceDrop', label: 'Price drops', sub: 'When a saved item gets cheaper' },
+  { key: 'newListing', label: 'New listings from sellers you follow', sub: 'When a seller you follow posts something new' },
   { key: 'orderStatus', label: 'Order updates', sub: 'Funding, delivery, release and dispute changes' },
   { key: 'boostExpiry', label: 'Boost expiry', sub: 'When a listing boost is about to end' },
   { key: 'promotional', label: 'Promotions & tips', sub: 'Occasional marketplace news (off by default)' },

@@ -528,3 +528,20 @@ func (c *ConsentStore) List(ctx context.Context, userID string) ([]Consent, erro
 	}
 	return out, rows.Err()
 }
+
+// LatestReviewSessionID returns the user's most recent verification session
+// awaiting manual review (status NEEDS_REVIEW). found=false when none exists.
+func (r *Repository) LatestReviewSessionID(ctx context.Context, userID string) (string, bool, error) {
+	var id string
+	err := r.db.QueryRow(ctx,
+		`SELECT id::text FROM verification_session
+		  WHERE user_id = $1::uuid AND status = 'NEEDS_REVIEW'
+		  ORDER BY created_at DESC LIMIT 1`, userID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}

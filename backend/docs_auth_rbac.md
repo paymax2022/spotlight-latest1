@@ -60,6 +60,7 @@
 - `FEATURE_OTP_EMAIL_ENABLED` (default `false`) — gates the Brevo/Postgres-backed OTP system (`/api/auth/otp/*`); when off, email verification falls back to GoTrue's own confirmation email
 - `FEATURE_OTP_LOGIN_MFA_ENABLED` (default `false`) — requires `FEATURE_OTP_EMAIL_ENABLED`; turns a correct-password login into a second-factor code challenge
 - `FEATURE_SESSION_HARDENING_ENABLED` (default `false`) — gates the `/api/auth/sessions*` surface and revocation enforcement
+- `FEATURE_ADMIN_USER_MODULES_ENABLED` (default `false`) — gates `GET /api/admin/users/:id/modules` (admin User 360 module membership); 404 when off
 
 ## Notes
 - OTP **is** implemented (server-issued email codes for email verification, login MFA, and password reset — see `internal/otp/`), flag-gated as above. The deprecated `{token, newPassword}` reset shape (pre-OTP) is refused, not silently no-op'd.

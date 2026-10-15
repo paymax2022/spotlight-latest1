@@ -17,6 +17,7 @@ import (
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/disbursement"
 )
@@ -127,6 +128,7 @@ var (
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db            *pgxpool.Pool
+	discountsOn   bool // FEATURE_RESTAURANT_DISCOUNTS: menu reads show discounted prices
 	settlement    *settlement.Service
 	ledger        *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
 	geocoder      AddressGeocoder
@@ -151,6 +153,11 @@ type Service struct {
 	// (recordOrderEvent). nil ⇒ transition events stay unwritten — the
 	// transition itself is unaffected either way.
 	audit OrderAuditor
+	// kybPresigner mints owner-side upload URLs for KYB documents and signs stored
+	// document keys back into short-lived viewable URLs for the reviewer console
+	// (the bucket is private). nil/unconfigured ⇒ uploads fail closed with
+	// ErrKYBUploadsUnavailable and the paste-a-link path keeps working.
+	kybPresigner *r2.Presigner
 }
 
 // OrderAuditor is the nil-safe seam into the shared durable audit sink
@@ -259,6 +266,13 @@ func (s *Service) WithModeration(enabled bool) *Service {
 // a thin adapter over the finance commission service).
 func (s *Service) WithCommission(c CommissionRecorder) *Service {
 	s.commission = c
+	return s
+}
+
+// WithKYBStorage attaches the R2 presigner used for KYB document uploads and for
+// resolving stored document keys into reviewer-viewable URLs. nil-safe.
+func (s *Service) WithKYBStorage(p *r2.Presigner) *Service {
+	s.kybPresigner = p
 	return s
 }
 
@@ -403,15 +417,18 @@ type orderPricing struct {
 	breakdown           *DeliveryFeeBreakdown
 	distanceMeters      *float64
 	etaMinutes          *float64
-	surgeKobo           int64
-	serviceFeeKobo      int64
-	tipKobo             int64
-	discountKobo        int64
-	promoID             *string
-	promoFunder         *string
-	packageCount        int
-	packagingKobo       int64
-	total               int64
+	// maxPrepMinutes is the slowest item in the cart: a multi-item order is ready when
+	// its slowest item is, so the estimate folds in that one, not the sum.
+	maxPrepMinutes int
+	surgeKobo      int64
+	serviceFeeKobo int64
+	tipKobo        int64
+	discountKobo   int64
+	promoID        *string
+	promoFunder    *string
+	packageCount   int
+	packagingKobo  int64
+	total          int64
 }
 
 // priceOrder computes orderPricing for a cart against CURRENT DB state
@@ -496,15 +513,22 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 
 	var itemsWithRest []itemWithRest
 	var subtotal int64
+	var maxPrepMinutes int
 	for _, input := range req.Items {
 		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
-		const qMI = `SELECT id, restaurant_id, name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
-		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
+		const qMI = `SELECT id, restaurant_id, name, price_kobo, ` + availableNow + ` AS is_available,
+		             COALESCE(prep_time_minutes, (SELECT r.prep_time_minutes FROM restaurants r WHERE r.id = menu_items.restaurant_id)) AS prep_minutes
+		             FROM menu_items WHERE id=$1 AND restaurant_id=$2`
+		var prep int
+		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable, &prep); err != nil {
 			return nil, fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("%w (%s)", ErrMenuItemUnavailable, mi.Name)
+		}
+		if prep > maxPrepMinutes {
+			maxPrepMinutes = prep
 		}
 		// Sanity-bound the line before it is multiplied. Quantity was only bounded below
 		// (>= 1), and the pricing that follows multiplies before it divides — see
@@ -680,6 +704,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		breakdown:           breakdown,
 		distanceMeters:      distanceMeters,
 		etaMinutes:          etaMinutes,
+		maxPrepMinutes:      maxPrepMinutes,
 		surgeKobo:           surgeKobo,
 		serviceFeeKobo:      serviceFeeKobo,
 		tipKobo:             tipKobo,
@@ -775,6 +800,10 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	breakdown := pricing.breakdown
 	distanceMeters := pricing.distanceMeters
 	etaMinutes := pricing.etaMinutes
+	if etaMinutes != nil && pricing.maxPrepMinutes > 0 {
+		folded := totalEtaMinutes(pricing.maxPrepMinutes, *etaMinutes)
+		etaMinutes = &folded
+	}
 	surgeKobo := pricing.surgeKobo
 	serviceFeeKobo := pricing.serviceFeeKobo
 	tipKobo := pricing.tipKobo

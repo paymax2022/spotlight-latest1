@@ -6,7 +6,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { codeTypeMeta, USE_MOCK, VISITOR_API_BASE as B } from '../constants/visitor.constants';
+import { USE_MOCK, VISITOR_API_BASE as B } from '../constants/visitor.constants';
 import type {
   AccessCode,
   ApproveEntryInput,
@@ -35,7 +35,6 @@ import type {
   WalkInInput,
 } from '../types/visitor.types';
 import {
-  DEMO_IDS,
   seedCodes,
   seedEvents,
   seedGateSession,
@@ -60,13 +59,14 @@ let blacklist: BlacklistEntry[] = [...seedBlacklist];
 let incidents: IncidentReport[] = [...seedIncidents];
 
 const latency = (ms = 450) => new Promise((r) => setTimeout(r, ms));
-const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? generateIdempotencyKey() } });
 
-function genNumeric(len: 6 | 8 = 6): string {
-  let s = '';
-  for (let i = 0; i < len; i++) s += Math.floor(Math.random() * 10);
-  return s;
-}
+// Every write in this file has a live route handler (frontend-web/app/api/v1/visitor/**,
+// real Supabase queries), so fixture mode refuses loudly instead of reporting a code
+// created, an entry approved or a visitor blacklisted that never reached the database —
+// mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_VISITOR_USE_MOCK=false to send this against the live backend.`);
+const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? generateIdempotencyKey() } });
 
 /** Simple typed error so the UI error-state contract is predictable. */
 export class VisitorApiError extends Error {
@@ -113,87 +113,26 @@ export async function getAccessCode(id: string): Promise<AccessCode> {
 }
 
 export async function createAccessCode(input: CreateAccessCodeInput): Promise<AccessCode> {
-  if (USE_MOCK) {
-    await latency(600);
-    // VM-108 / VM-301: restriction is read at creation time, fail-closed.
-    if (restriction.state === 'hard_ban') {
-      throw new VisitorApiError('PAYMENT_RESTRICTED', 'Visitor access is disabled due to a pending payment.');
-    }
-    if (!input.visitorName.trim()) {
-      throw new VisitorApiError('VALIDATION', 'Visitor name is required.');
-    }
-    const meta = codeTypeMeta(input.codeType);
-    const codeValue = genNumeric(input.codeType === 'domestic_staff' ? 8 : 6);
-    const created: AccessCode = {
-      id: `code_${Date.now()}`,
-      estateId: DEMO_IDS.ESTATE_ID,
-      estateName: DEMO_IDS.ESTATE_NAME,
-      hostResidentId: DEMO_IDS.RESIDENT_ID,
-      hostName: DEMO_IDS.HOST_NAME,
-      propertyId: 'prop_c4',
-      unitLabel: DEMO_IDS.UNIT,
-      codeValue,
-      qrPayload: `PMX|${DEMO_IDS.ESTATE_ID}|${codeValue}|${input.validityEnd}`,
-      codeType: input.codeType,
-      purposeLabel: meta.label,
-      status: 'active',
-      visitor: {
-        name: input.visitorName.trim(),
-        phone: input.visitorPhone,
-        purpose: input.purpose,
-        expectedArrival: input.expectedArrival,
-        vehiclePlate: input.vehiclePlate,
-        vehicleDesc: input.vehicleDesc,
-      },
-      validityStart: input.validityStart,
-      validityEnd: input.validityEnd,
-      maxEntries: input.maxEntries,
-      entriesUsed: 0,
-      usageMode: input.usageMode,
-      partySize: Math.max(1, input.partySize),
-      recurrenceRule: input.recurrenceRule ?? null,
-      createdAt: new Date().toISOString(),
-      createdBy: DEMO_IDS.RESIDENT_ID,
-    };
-    codes = [created, ...codes];
-    return { ...created };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating an access code');
   const { data } = await api.post<AccessCode>(`${B}/codes`, input, idem(input.idempotencyKey));
   return data;
 }
 
 export async function revokeAccessCode(id: string): Promise<AccessCode> {
-  if (USE_MOCK) {
-    await latency(400);
-    const code = codes.find((c) => c.id === id);
-    if (!code) throw new VisitorApiError('NOT_FOUND', 'Access code not found.');
-    code.status = 'revoked';
-    return { ...code };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Revoking an access code');
   const { data } = await api.post<AccessCode>(`${B}/codes/${id}/revoke`, {}, idem());
   return data;
 }
 
 export async function extendAccessCode(id: string, newValidityEnd: string): Promise<AccessCode> {
-  if (USE_MOCK) {
-    await latency(400);
-    const code = codes.find((c) => c.id === id);
-    if (!code) throw new VisitorApiError('NOT_FOUND', 'Access code not found.');
-    if (code.status !== 'active') throw new VisitorApiError('INVALID_STATE', 'Only active codes can be extended.');
-    code.validityEnd = newValidityEnd;
-    return { ...code };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Extending an access code');
   const { data } = await api.post<AccessCode>(`${B}/codes/${id}/extend`, { validityEnd: newValidityEnd }, idem());
   return data;
 }
 
 // VM-121/123: re-share returns the same code unchanged (no regeneration).
 export async function logShare(id: string): Promise<void> {
-  if (USE_MOCK) {
-    await latency(150);
-    void id;
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Logging a code share');
   await api.post(`${B}/codes/${id}/share`, {});
 }
 
@@ -248,15 +187,7 @@ export async function pendingSyncCount(): Promise<number> {
 }
 
 export async function syncPendingLogs(): Promise<number> {
-  if (USE_MOCK) {
-    await latency(700);
-    let n = 0;
-    events = events.map((e) => {
-      if (e.syncStatus === 'pending') { n++; return { ...e, syncStatus: 'synced' }; }
-      return e;
-    });
-    return n;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Syncing gate logs');
   const { data } = await api.post<{ synced: number }>(`${B}/gate/sync`, {}, idem());
   return data.synced;
 }
@@ -284,57 +215,13 @@ export async function lookupCode(raw: string): Promise<LookupOutcome> {
 }
 
 export async function approveEntry(input: ApproveEntryInput): Promise<VisitEvent> {
-  if (USE_MOCK) {
-    await latency(500);
-    const code = codes.find((c) => c.id === input.accessCodeId);
-    if (!code) throw new VisitorApiError('NOT_FOUND', 'Access code not found.');
-    code.entriesUsed += 1;
-    // the visitor can leave and return within the validity window.
-    if (code.usageMode === 'one_time') code.status = 'used';
-    const event: VisitEvent = {
-      id: `ev_${Date.now()}`,
-      accessCodeId: code.id,
-      visitorName: code.visitor.name,
-      unitLabel: code.unitLabel,
-      gateId: input.gateId,
-      guardId: seedGateSession.guardId,
-      action: 'check_in',
-      timestamp: new Date().toISOString(),
-      syncStatus: 'synced',
-      capturedPlate: input.capture?.plate ?? code.visitor.vehiclePlate,
-      codeType: code.codeType,
-    };
-    events = [event, ...events];
-    notifications = [
-      { id: `n_${Date.now()}`, type: 'checked_in', title: 'Visitor checked in', body: `${code.visitor.name} entered the estate.`, timestamp: event.timestamp, read: false, accessCodeId: code.id },
-      ...notifications,
-    ];
-    return { ...event };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Approving a visitor entry');
   const { data } = await api.post<VisitEvent>(`${B}/gate/approve`, input, idem(input.idempotencyKey));
   return data;
 }
 
 export async function denyEntry(input: DenyEntryInput): Promise<VisitEvent> {
-  if (USE_MOCK) {
-    await latency(400);
-    const code = input.accessCodeId ? codes.find((c) => c.id === input.accessCodeId) : undefined;
-    const event: VisitEvent = {
-      id: `ev_${Date.now()}`,
-      accessCodeId: input.accessCodeId,
-      visitorName: code?.visitor.name ?? `Code ${input.codeValue}`,
-      unitLabel: code?.unitLabel ?? '—',
-      gateId: input.gateId,
-      guardId: seedGateSession.guardId,
-      action: 'deny',
-      reason: input.reason,
-      timestamp: new Date().toISOString(),
-      syncStatus: 'synced',
-      codeType: code?.codeType,
-    };
-    events = [event, ...events];
-    return { ...event };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Denying a visitor entry');
   const { data } = await api.post<VisitEvent>(`${B}/gate/deny`, input, idem(input.idempotencyKey));
   return data;
 }
@@ -372,66 +259,14 @@ export async function getCodeAttendance(codeId: string): Promise<CodeAttendance>
 // VM-161 — when a guard queries a code at the gate, log an arrival and notify
 // the resident, then return the live attendance so the gate screen updates.
 export async function recordArrival(accessCodeId: string, gateId: string): Promise<CodeAttendance> {
-  if (USE_MOCK) {
-    await latency(200);
-    const code = codes.find((c) => c.id === accessCodeId);
-    if (!code) throw new VisitorApiError('NOT_FOUND', 'Access code not found.');
-    const event: VisitEvent = {
-      id: `ev_${Date.now()}`,
-      accessCodeId: code.id,
-      visitorName: code.visitor.name,
-      unitLabel: code.unitLabel,
-      gateId,
-      guardId: gateSession.guardId,
-      action: 'arrival',
-      timestamp: new Date().toISOString(),
-      syncStatus: 'synced',
-      codeType: code.codeType,
-    };
-    events = [event, ...events];
-    notifications = [
-      {
-        id: `n_${Date.now()}`,
-        type: 'arrival',
-        title: 'Visitor at the gate',
-        body: `${code.visitor.name} is being verified at the gate.`,
-        timestamp: event.timestamp,
-        read: false,
-        accessCodeId: code.id,
-      },
-      ...notifications,
-    ];
-    return attendanceFromEvents(code.id);
-  }
+  if (USE_MOCK) throw notInFixtureMode('Recording a visitor arrival');
   const { data } = await api.post<CodeAttendance>(`${B}/codes/${accessCodeId}/arrival`, { gateId }, idem());
   return data;
 }
 
 // Record an exit for an entry+exit code (check-out by code, VM-212/163).
 export async function recordExit(input: RecordExitInput): Promise<VisitEvent> {
-  if (USE_MOCK) {
-    await latency(400);
-    const code = codes.find((c) => c.id === input.accessCodeId);
-    if (!code) throw new VisitorApiError('NOT_FOUND', 'Access code not found.');
-    const event: VisitEvent = {
-      id: `ev_${Date.now()}`,
-      accessCodeId: code.id,
-      visitorName: code.visitor.name,
-      unitLabel: code.unitLabel,
-      gateId: input.gateId,
-      guardId: gateSession.guardId,
-      action: 'check_out',
-      timestamp: new Date().toISOString(),
-      syncStatus: 'synced',
-      codeType: code.codeType,
-    };
-    events = [event, ...events];
-    notifications = [
-      { id: `n_${Date.now()}`, type: 'checked_out', title: 'Visitor checked out', body: `${code.visitor.name} has left the estate.`, timestamp: event.timestamp, read: false, accessCodeId: code.id },
-      ...notifications,
-    ];
-    return { ...event };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Recording a visitor exit');
   const { data } = await api.post<VisitEvent>(`${B}/codes/${input.accessCodeId}/exit`, { gateId: input.gateId }, idem(input.idempotencyKey));
   return data;
 }
@@ -501,50 +336,13 @@ export async function listOverstays(): Promise<OverstayVisit[]> {
 }
 
 export async function checkOutVisit(input: CheckOutInput): Promise<VisitEvent> {
-  if (USE_MOCK) {
-    await latency(400);
-    const origin = events.find((e) => e.id === input.visitEventId);
-    if (!origin) throw new VisitorApiError('NOT_FOUND', 'Open visit not found.');
-    const event: VisitEvent = {
-      id: `ev_${Date.now()}`,
-      accessCodeId: origin.accessCodeId,
-      visitorName: origin.visitorName,
-      unitLabel: origin.unitLabel,
-      gateId: input.gateId,
-      guardId: gateSession.guardId,
-      action: 'check_out',
-      timestamp: new Date().toISOString(),
-      syncStatus: 'synced',
-      codeType: origin.codeType,
-    };
-    events = [event, ...events];
-    return { ...event };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Checking out a visit');
   const { data } = await api.post<VisitEvent>(`${B}/gate/checkout`, input, idem(input.idempotencyKey));
   return data;
 }
 
 export async function createWalkIn(input: WalkInInput): Promise<VisitEvent> {
-  if (USE_MOCK) {
-    await latency(500);
-    if (!input.visitorName.trim() || !input.unitLabel.trim()) {
-      throw new VisitorApiError('VALIDATION', 'Visitor name and host unit are required.');
-    }
-    const event: VisitEvent = {
-      id: `ev_${Date.now()}`,
-      visitorName: input.visitorName.trim(),
-      unitLabel: input.unitLabel.trim(),
-      gateId: input.gateId,
-      guardId: gateSession.guardId,
-      action: input.emergency ? 'emergency' : 'walk_in',
-      reason: input.purpose?.trim() || (input.emergency ? 'Emergency entry' : 'Walk-in — resident approval'),
-      timestamp: new Date().toISOString(),
-      // Emergencies are flagged for review; walk-ins sync normally once approved.
-      syncStatus: input.emergency ? 'pending' : 'synced',
-    };
-    events = [event, ...events];
-    return { ...event };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Registering a walk-in');
   const { data } = await api.post<VisitEvent>(`${B}/gate/walkin`, input, idem(input.idempotencyKey));
   return data;
 }
@@ -559,11 +357,7 @@ export async function getOpenVisitCount(): Promise<number> {
 }
 
 export async function submitHandover(input: HandoverInput): Promise<GateSession> {
-  if (USE_MOCK) {
-    await latency(500);
-    gateSession = { ...gateSession, shiftEnd: new Date().toISOString(), handoverNotes: input.notes.trim() };
-    return { ...gateSession };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Submitting a shift handover');
   const { data } = await api.post<GateSession>(`${B}/gate/handover`, input, idem(input.idempotencyKey));
   return data;
 }
@@ -578,20 +372,12 @@ export async function listNotifications(): Promise<VisitorNotification[]> {
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
-  if (USE_MOCK) {
-    await latency(120);
-    notifications = notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Marking a notification read');
   await api.post(`${B}/notifications/${id}/read`, {});
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-  if (USE_MOCK) {
-    await latency(200);
-    notifications = notifications.map((n) => ({ ...n, read: true }));
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Marking all notifications read');
   await api.post(`${B}/notifications/read-all`, {});
 }
 
@@ -614,34 +400,13 @@ export async function listBlacklist(): Promise<BlacklistEntry[]> {
 }
 
 export async function addBlacklist(input: BlacklistInput): Promise<BlacklistEntry> {
-  if (USE_MOCK) {
-    await latency(400);
-    if (!input.matchValue.trim() || !input.reason.trim()) {
-      throw new VisitorApiError('VALIDATION', 'Match value and reason are required.');
-    }
-    const entry: BlacklistEntry = {
-      id: `bl_${Date.now()}`,
-      estateId: DEMO_IDS.ESTATE_ID,
-      matchKind: input.matchKind,
-      matchValue: input.matchValue.trim(),
-      name: input.name?.trim() || undefined,
-      reason: input.reason.trim(),
-      createdBy: gateSession.guardId,
-      createdAt: new Date().toISOString(),
-    };
-    blacklist = [entry, ...blacklist];
-    return { ...entry };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Adding to the blacklist');
   const { data } = await api.post<BlacklistEntry>(`${B}/blacklist`, input, idem(input.idempotencyKey));
   return data;
 }
 
 export async function removeBlacklist(id: string): Promise<void> {
-  if (USE_MOCK) {
-    await latency(300);
-    blacklist = blacklist.filter((b) => b.id !== id);
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Removing from the blacklist');
   await api.delete(`${B}/blacklist/${id}`);
 }
 
@@ -655,25 +420,7 @@ export async function listIncidents(): Promise<IncidentReport[]> {
 }
 
 export async function submitIncident(input: IncidentInput): Promise<IncidentReport> {
-  if (USE_MOCK) {
-    await latency(500);
-    if (!input.title.trim() || !input.description.trim()) {
-      throw new VisitorApiError('VALIDATION', 'Title and description are required.');
-    }
-    const report: IncidentReport = {
-      id: `inc_${Date.now()}`,
-      kind: input.kind,
-      severity: input.severity,
-      title: input.title.trim(),
-      description: input.description.trim(),
-      gateId: input.gateId,
-      escalate: input.escalate,
-      status: input.escalate ? 'escalated' : 'open',
-      createdAt: new Date().toISOString(),
-    };
-    incidents = [report, ...incidents];
-    return { ...report };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Reporting an incident');
   const { data } = await api.post<IncidentReport>(`${B}/incidents`, input, idem(input.idempotencyKey));
   return data;
 }
@@ -720,69 +467,19 @@ export async function listVehicleEntries(): Promise<VisitEvent[]> {
 }
 
 export async function createEventGuestCodes(input: EventGuestInput): Promise<EventGuestManifest> {
-  if (USE_MOCK) {
-    await latency(700);
-    const names = input.guestNames.map((n) => n.trim()).filter(Boolean);
-    if (!input.eventName.trim() || names.length === 0) {
-      throw new VisitorApiError('VALIDATION', 'Event name and at least one guest are required.');
-    }
-    const meta = codeTypeMeta('event_guest');
-    const guests = names.map((name) => {
-      const codeValue = genNumeric(6);
-      const created: AccessCode = {
-        id: `code_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        estateId: DEMO_IDS.ESTATE_ID,
-        estateName: DEMO_IDS.ESTATE_NAME,
-        hostResidentId: DEMO_IDS.RESIDENT_ID,
-        hostName: DEMO_IDS.HOST_NAME,
-        propertyId: 'prop_c4',
-        unitLabel: DEMO_IDS.UNIT,
-        codeValue,
-        qrPayload: `PMX|${DEMO_IDS.ESTATE_ID}|${codeValue}|${input.validityEnd}`,
-        codeType: 'event_guest',
-        purposeLabel: `${meta.label}: ${input.eventName.trim()}`,
-        status: 'active',
-        visitor: { name, purpose: input.eventName.trim() },
-        validityStart: input.validityStart,
-        validityEnd: input.validityEnd,
-        maxEntries: 1,
-        entriesUsed: 0,
-        usageMode: 'one_time',
-        partySize: 1,
-        recurrenceRule: null,
-        createdAt: new Date().toISOString(),
-        createdBy: DEMO_IDS.RESIDENT_ID,
-      };
-      codes = [created, ...codes];
-      return { name, codeValue };
-    });
-    return {
-      eventCodeId: `evt_${Date.now()}`,
-      eventName: input.eventName.trim(),
-      guests,
-      validityEnd: input.validityEnd,
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating event guest codes');
   const { data } = await api.post<EventGuestManifest>(`${B}/codes/event`, input, idem(input.idempotencyKey));
   return data;
 }
 
 export async function submitProofOfPayment(): Promise<RestrictionStatus> {
-  if (USE_MOCK) {
-    await latency(600);
-    restriction = { ...restriction, state: 'restoration_pending' };
-    return { ...restriction };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Submitting proof of payment');
   const { data } = await api.post<RestrictionStatus>(`${B}/restriction/proof`, {}, idem());
   return data;
 }
 
 export async function submitAppeal(): Promise<RestrictionStatus> {
-  if (USE_MOCK) {
-    await latency(600);
-    restriction = { ...restriction, state: 'restoration_pending' };
-    return { ...restriction };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Submitting an appeal');
   const { data } = await api.post<RestrictionStatus>(`${B}/restriction/appeal`, {}, idem());
   return data;
 }

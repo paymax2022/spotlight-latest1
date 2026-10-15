@@ -3,6 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchant from './api';
+import { uploadKYBDocument, type KYBPickedFile } from './kybUpload';
 import type { StaffMember } from './types';
 import type { CreateStoreInput, UpdateStoreInput } from './types';
 
@@ -113,6 +114,15 @@ export function useAddKYBDocument(id: string) {
   });
 }
 
+/** Pick-and-send a KYB document: presign, PUT to storage, then record the key. */
+export function useUploadKYBDocument(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { docType: string; file: KYBPickedFile }) => uploadKYBDocument(id, v.docType, v.file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'kyb', id] }),
+  });
+}
+
 export function useSubmitKYB(id: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -163,6 +173,23 @@ export function useDeleteItem(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (itemId: string) => merchant.deleteItem(id, itemId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
+  });
+}
+
+export function useMenuTaxonomy() {
+  return useQuery({
+    queryKey: [KEY, 'taxonomy'],
+    queryFn: merchant.getMenuTaxonomy,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useCreateTaxonomyItem(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: import('./taxonomy').TaxonomyItemPayload) => merchant.createTaxonomyItem(id, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', id] }),
   });
 }

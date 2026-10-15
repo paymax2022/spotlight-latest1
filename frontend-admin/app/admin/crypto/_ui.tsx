@@ -31,6 +31,9 @@ export function CryptoTabs({ active }: { active: string }) {
     { href: '/admin/crypto/orders', label: 'Orders', key: 'orders' },
     { href: '/admin/crypto/withdrawals', label: 'Withdrawals / AML', key: 'withdrawals' },
     { href: '/admin/crypto/swaps', label: 'Swaps', key: 'swaps' },
+    { href: '/admin/crypto/review', label: 'Review queue', key: 'review' },
+    { href: '/admin/crypto/reconciler', label: 'Swap reconciler', key: 'reconciler' },
+    { href: '/admin/crypto/fees', label: 'Fees', key: 'fees' },
     { href: '/admin/crypto/addresses', label: 'Address review', key: 'addresses' },
     { href: '/admin/crypto/reconciliation', label: 'Reconciliation', key: 'reconciliation' },
     { href: '/admin/crypto/assets', label: 'Assets', key: 'assets' },
@@ -119,6 +122,17 @@ export function PermissionBanner({ permission }: { permission: string }) {
 // Inline filter bar wrapper.
 export function FilterBar({ children }: PropsWithChildren) {
   return <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '1rem' }}>{children}</div>;
+}
+
+// Elapsed seconds, compactly: 45m, 2h 15m, 3d 4h. "—" for zero or unknown.
+export function fmtAge(seconds: number): string {
+  if (!seconds || seconds < 0) return '—';
+  const d = Math.floor(seconds / 86_400);
+  const h = Math.floor((seconds % 86_400) / 3_600);
+  const m = Math.floor((seconds % 3_600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 export function fmtDate(isoStr: string | null | undefined): string {

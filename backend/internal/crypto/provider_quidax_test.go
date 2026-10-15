@@ -56,6 +56,19 @@ func TestQuidax_PriceKobo(t *testing.T) {
 			t.Errorf("missing bearer auth header")
 		}
 	})
+	t.Run("real sandbox shape: data.<market>.ticker.last is a JSON number", func(t *testing.T) {
+		rt := &rtFunc{status: 200, body: `{"status":"success","data":{"usdtngn":{"ticker":{"last":1363.5000000000000000,"buy":1363.5},"at":1791736915000}}}`}
+		got, ok := newTestQuidax(rt, false).PriceKobo(context.Background(), "USDT")
+		if !ok || got != 136350 {
+			t.Fatalf("PriceKobo = %d, ok=%v; want 136350, true", got, ok)
+		}
+	})
+	t.Run("real shape for a different market is not used", func(t *testing.T) {
+		rt := &rtFunc{status: 200, body: `{"data":{"ethngn":{"ticker":{"last":5}}}}`}
+		if _, ok := newTestQuidax(rt, false).PriceKobo(context.Background(), "BTC"); ok {
+			t.Fatal("price taken from the wrong market")
+		}
+	})
 	t.Run("fractional naira rounds to nearest kobo", func(t *testing.T) {
 		rt := &rtFunc{status: 200, body: `{"data":{"ticker":{"last":"1599.999"}}}`}
 		got, ok := newTestQuidax(rt, false).PriceKobo(context.Background(), "usdt")

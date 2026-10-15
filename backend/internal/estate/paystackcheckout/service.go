@@ -14,7 +14,7 @@ import (
 // ReferencePrefix identifies a Paystack reference as belonging to this
 // package (mirrors restaurant/paystackcheckout.ReferencePrefix's "foodorder:"
 // idiom).
-const ReferencePrefix = "duespay:"
+const ReferencePrefix = "duespay-"
 
 func referenceFor(idempotencyKey string) string { return ReferencePrefix + idempotencyKey }
 

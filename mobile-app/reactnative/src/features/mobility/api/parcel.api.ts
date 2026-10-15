@@ -112,7 +112,7 @@ export async function initiateParcelPaystack(
   if (USE_MOCK) {
     await delay(600);
     return {
-      reference: `parcelorder:${req.idempotencyKey}`,
+      reference: `parcelorder-${req.idempotencyKey}`,
       authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
       amountKobo: 0,
       status: 'pending',

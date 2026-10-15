@@ -501,7 +501,7 @@ func TestPartial_SettlementValidatedBeforeTheGateway(t *testing.T) {
 	cases := map[string]func(*prig){
 		"wallet funded": func(p *prig) { p.lg.setts["sett-dep"].FundingSource = "wallet" },
 		"other payer":   func(p *prig) { p.lg.setts["sett-dep"].PayerID = "u2" },
-		"foreign key":   func(p *prig) { p.lg.setts["sett-dep"].IdempotencyKey = "fakeorder:other-key-1:deposit" },
+		"foreign key":   func(p *prig) { p.lg.setts["sett-dep"].IdempotencyKey = "fakeorder-other-key-1:deposit" },
 		"nested suffix": func(p *prig) { p.lg.setts["sett-dep"].IdempotencyKey = p.ref + ":a:b" },
 		"empty suffix":  func(p *prig) { p.lg.setts["sett-dep"].IdempotencyKey = p.ref + ":" },
 		"settled":       func(p *prig) { p.lg.setts["sett-dep"].Status = settlement.StatusSettled },

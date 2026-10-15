@@ -12,7 +12,8 @@ import type {
   CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
   CryptoWithdrawal, CryptoWithdrawalDecisionRequest,
   CryptoSwapOrder, CryptoAddress, CryptoAddressDecisionRequest,
-  CryptoReconRow, CryptoReconSummary,
+  CryptoReconRow, CryptoReconSummary, CryptoReviewSwap, CryptoSwapResolveRequest,
+  CryptoFeeScheduleResponse, CryptoFeeScheduleUpdate, CryptoFeeScheduleVersion, CryptoReconcilerStatus,
 } from '@/types/cryptoAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
@@ -206,6 +207,45 @@ export async function adminListSwaps(limit = 50, offset = 0): Promise<CryptoSwap
   return body?.swaps ?? [];
 }
 
+// GET /admin/crypto/swaps/review — swaps parked in needs_review by the NEW swap
+// pipeline (backend/internal/cryptosvc, table crypto_swaps), with the user's NGN still
+// held. DISTINCT from adminListSwaps above, which reads the LEGACY crypto_swap_orders.
+// Read-only this round: it surfaces held money so ops can see it; settle/release/retry
+// decision controls are a follow-up. Flag-gated server-side by FEATURE_CRYPTO_SWAPS_ENABLED
+// — when the flag is off the route is not mounted (404) and this returns [].
+
+const MOCK_REVIEW_SWAPS: CryptoReviewSwap[] = [
+  { id: '7b1e9d2a-0000-4000-8000-000000000001', user_id: 'usr_7f2a', status: 'needs_review', asset: 'USDT', ngn_kobo: 1_000_000, fee_kobo: 7_500, held_kobo: 1_007_500, provider: 'quidax', provider_swap_id: 'qdx_swp_5501', has_provider_id: true, updated_at: iso(90), age_seconds: 90 * 60 },
+  { id: '3c2d4e5f-0000-4000-8000-000000000002', user_id: 'usr_2b9e', status: 'needs_review', asset: 'BTC', ngn_kobo: 5_000_000, fee_kobo: 37_500, held_kobo: 5_037_500, provider: 'quidax', has_provider_id: false, updated_at: iso(240), age_seconds: 240 * 60 },
+];
+
+export async function adminListReviewSwaps(limit = 50, offset = 0): Promise<CryptoReviewSwap[]> {
+  if (USE_MOCK) return delay([...MOCK_REVIEW_SWAPS]);
+  const res = await fetch(`${base()}/swaps/review?limit=${limit}&offset=${offset}`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404) return []; // flag off / pipeline not mounted — no parked swaps to show
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Review queue fetch failed'));
+  const body = await res.json();
+  return body?.swaps ?? [];
+}
+
+// POST /admin/crypto/swaps/:id/resolve — apply a human decision to a parked swap. This is a
+// MONEY-PATH mutation (release reverses the NGN hold; retry re-polls the provider), so the
+// decision validity is enforced server-side and fixture mode refuses loudly rather than
+// reporting a release it did not perform (see adminConfigAsset / ADMIN_SIMULATED_WRITES.md).
+export async function adminResolveReviewSwap(id: string, input: CryptoSwapResolveRequest): Promise<CryptoReviewSwap> {
+  if (!input.note || !input.note.trim()) throw new Error('An operator note is required to resolve a swap.');
+  if (input.decision !== 'release' && input.decision !== 'retry') throw new Error('decision must be release or retry.');
+  if (USE_MOCK) throw new Error(`Resolving a parked swap ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${base()}/swaps/${encodeURIComponent(id)}/resolve`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:swap-resolve', id) },
+    body: JSON.stringify({ decision: input.decision, note: input.note.trim() }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Swap resolve failed'));
+  const body = await res.json();
+  return body?.swap ?? body;
+}
+
 // GET /admin/crypto/addresses — whitelisted withdrawal destinations pending or
 // completed review.
 
@@ -273,4 +313,126 @@ export async function adminGetReconciliation(): Promise<CryptoReconSummary> {
   const body = await res.json();
   const rows: CryptoReconRow[] = body?.rows ?? [];
   return { rows, breaks: body?.breaks ?? rows.filter((r) => r.status === 'break').length, as_of: body?.as_of ?? new Date().toISOString() };
+}
+
+// ── Fee schedule ────────────────────────────────────────────────────────────────────────────
+// GET/PUT /admin/crypto/fee-schedule (backend/internal/cryptosvc/admin.go, ADR-PR761). The swap
+// markup in integer basis points: a rate for majors, one for everything else, per-asset overrides.
+// A new version prices NEW quotes only. Versions are append-only server-side, so a mistake is
+// corrected with another version, never by editing history.
+
+const FEE_ASSET_RE = /^[A-Za-z0-9]{2,12}$/;
+const FEE_MAX_ASSETS = 50;
+const FEE_MAX_REASON = 500;
+
+/** Thrown when the schedule changed since the operator loaded it (HTTP 409 version_conflict). */
+export class FeeScheduleConflictError extends Error {
+  constructor(message = 'version_conflict') {
+    super(message);
+    this.name = 'FeeScheduleConflictError';
+  }
+}
+
+const isBps = (v: unknown, max: number) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max;
+
+/** Client-side mirror of the backend rules, so a bad edit never leaves the browser. null = valid. */
+export function validateFeeScheduleUpdate(input: CryptoFeeScheduleUpdate, ceilingBps: number): string | null {
+  if (!Number.isInteger(input.expected_version) || input.expected_version < 0) return 'Missing schedule version — reload the page.';
+  if (!isBps(input.major_bps, ceilingBps)) return `Major markup must be a whole number of basis points, at most ${ceilingBps}.`;
+  if (!isBps(input.other_bps, ceilingBps)) return `Other-assets markup must be a whole number of basis points, at most ${ceilingBps}.`;
+  if (input.majors.length > FEE_MAX_ASSETS || Object.keys(input.overrides).length > FEE_MAX_ASSETS) return `At most ${FEE_MAX_ASSETS} major assets and ${FEE_MAX_ASSETS} overrides.`;
+  for (const m of input.majors) if (!FEE_ASSET_RE.test(m.trim())) return `"${m}" is not a valid asset code.`;
+  for (const [a, bps] of Object.entries(input.overrides)) {
+    if (!FEE_ASSET_RE.test(a.trim())) return `"${a}" is not a valid asset code.`;
+    if (!isBps(bps, ceilingBps)) return `Override for ${a.toUpperCase()} must be a whole number of basis points, at most ${ceilingBps}.`;
+  }
+  const reason = input.reason.trim();
+  if (!reason) return 'A reason is required (it is recorded in the audit log).';
+  if (reason.length > FEE_MAX_REASON) return `The reason must be at most ${FEE_MAX_REASON} characters.`;
+  return null;
+}
+
+/** Upper-case, trim, de-duplicate and sort, so equal schedules produce equal bodies and keys. */
+function normaliseFeeUpdate(input: CryptoFeeScheduleUpdate): CryptoFeeScheduleUpdate {
+  const majors = Array.from(new Set(input.majors.map((m) => m.trim().toUpperCase()))).sort();
+  const overrides: Record<string, number> = {};
+  for (const a of Object.keys(input.overrides).map((k) => k.trim().toUpperCase()).sort()) {
+    const orig = Object.entries(input.overrides).find(([k]) => k.trim().toUpperCase() === a);
+    if (orig) overrides[a] = orig[1];
+  }
+  return { ...input, majors, overrides, reason: input.reason.trim() };
+}
+
+// Small stable string hash (not security): the idempotency key must change when the content does,
+// because the backend rejects a reused key with a different body.
+function contentHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+const MOCK_FEE_SCHEDULE: CryptoFeeScheduleResponse = {
+  ceiling_bps: 150,
+  current: { version: 0, major_bps: 75, other_bps: 100, majors: ['BTC', 'ETH', 'USDC', 'USDT'], overrides: {}, reason: 'configured default', created_by: 'system', created_at: '' },
+  history: [],
+};
+
+/** null = the pipeline is not mounted (flag off) or has no fee store — nothing to show. */
+export async function adminGetFeeSchedule(): Promise<CryptoFeeScheduleResponse | null> {
+  if (USE_MOCK) return delay({ ...MOCK_FEE_SCHEDULE });
+  const res = await fetch(`${base()}/fee-schedule`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404 || res.status === 503) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Fee schedule fetch failed'));
+  return (await res.json()) as CryptoFeeScheduleResponse;
+}
+
+/** PRICING mutation. Fixture mode refuses loudly rather than report a change it did not make. */
+export async function adminUpdateFeeSchedule(input: CryptoFeeScheduleUpdate, ceilingBps = 150): Promise<CryptoFeeScheduleVersion> {
+  const bad = validateFeeScheduleUpdate(input, ceilingBps);
+  if (bad) throw new Error(bad);
+  if (USE_MOCK) throw new Error(`Changing the fee schedule ${NOT_IN_FIXTURE_MODE}`);
+  const body = normaliseFeeUpdate(input);
+  const json = JSON.stringify(body);
+  const res = await fetch(`${base()}/fee-schedule`, {
+    method: 'PUT',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:fee-schedule', body.expected_version, contentHash(json)) },
+    body: json,
+  });
+  if (res.status === 409) {
+    const err = await res.json().catch(() => ({} as { error?: string }));
+    if (err?.error === 'version_conflict') throw new FeeScheduleConflictError();
+    throw new Error(`Fee schedule change refused: ${err?.error ?? 'conflict'}`);
+  }
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Fee schedule update failed'));
+  const out = await res.json();
+  return (out?.current ?? out) as CryptoFeeScheduleVersion;
+}
+
+// ── Reconciler status ───────────────────────────────────────────────────────────────────────
+// GET /admin/crypto/reconciler (backend/internal/cryptosvc/admin.go, ADR-PR758). Read-only.
+// null = the route is not mounted (swap pipeline off) or this replica runs no reconciler (503).
+
+const MOCK_RECONCILER: CryptoReconcilerStatus = {
+  success: true,
+  note: 'FIXTURE DATA: this console is in fixture mode, so none of this is real.',
+  replica: {
+    started_at: '', runs: 0, led_runs: 0, skipped_runs: 0, last_run_at: '', last_led_at: '', last_led: false, last_error: '',
+    last_result: { resolved: 0, released: 0, parked: 0, expired: 0, errors: 0, clearing_negative: false },
+    totals: { resolved: 0, released: 0, parked: 0, expired: 0, errors: 0, clearing_negative_runs: 0 },
+    recent_alerts: [],
+  },
+  backlog: [],
+};
+
+export async function adminGetReconcilerStatus(): Promise<CryptoReconcilerStatus | null> {
+  if (USE_MOCK) return delay({ ...MOCK_RECONCILER });
+  const res = await fetch(`${base()}/reconciler`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 404 || res.status === 503) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Reconciler status fetch failed'));
+  const body = (await res.json()) as CryptoReconcilerStatus;
+  return {
+    ...body,
+    backlog: body.backlog ?? [],
+    replica: { ...body.replica, recent_alerts: body.replica?.recent_alerts ?? [] },
+  };
 }

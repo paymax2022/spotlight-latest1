@@ -1,20 +1,18 @@
-// Typed data layer the Learn screens code against (Backend role owns this file).
-// the real Paymax /api/v1/learn/* endpoints (docs/crypto/api.md envelope) land.
+// Paymax Invest · Learn Center — API wrapper.
+//
 // The Learn surface is read-mostly: getPaths / getPath / getLesson / getQuiz /
-// in production (the client never decides pass/fail authoritatively).
-// GO-LIVE (2026-07): the real backend module now EXISTS —
-// backend/internal/learn (service+handler+routes) is registered on the Go router
-// under /api/v1/learn/* (see backend/internal/app/learn_routes.go), backed by the
-// learn_* tables (migration 20260912000000_learn_center.sql). Content matches
-// these mock fixtures, so a flipped client renders identical copy.
-// proxy. Add a catch-all at frontend-web/app/api/v1/learn/[...path]/route.ts (a
-// thin mirror of the existing app/api/v1/invest proxy) that forwards to the Go
-// backend's /api/v1/learn/*. Once that proxy lands, flip the flag — the live
-// paths below already match the Go routes exactly.
+// getGlossary are GETs; submitQuiz is the only mutation and is scored server-side
+// (the client never decides pass/fail authoritatively).
+//
+// LIVE: backend/internal/learn (service+handler+routes) is registered on the Go
+// router under /api/v1/learn/* (see backend/internal/app/learn_routes.go), backed
+// by the learn_* tables (migration 20260912000000_learn_center.sql), and the
+// frontend-web catch-all proxy at app/api/v1/learn/[...path]/route.ts forwards to
+// it. backend/tests/learn passes green. Defaults to live — set
+// EXPO_PUBLIC_LEARN_USE_MOCK=true to force mock locally.
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { QUIZ_PASS_RATIO } from '../constants/learn.constants';
 import {
   MOCK_GLOSSARY,
   MOCK_LESSONS,
@@ -30,11 +28,18 @@ import type {
   QuizResult,
 } from '../types/learn.types';
 
-const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LEARN_USE_MOCK, true);
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LEARN_USE_MOCK, false);
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+
+// submitQuiz is the module's only write. Its live route exists and passes
+// backend/tests/learn, so fixture mode refuses loudly instead of grading a quiz
+// the server never scored — mirrors frontend-admin's crowdfundingAdminService.ts
+// NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a result the server did not compute. Set EXPO_PUBLIC_LEARN_USE_MOCK=false to send this against the live backend.`);
 
 /** Normalise a thrown axios error into the Go backend's real message. */
 function toLearnError(err: unknown): Error {
@@ -85,18 +90,7 @@ export async function getQuiz(lessonId: string): Promise<Quiz | null> {
 // the result/retake path is reachable end-to-end.
 
 export async function submitQuiz(quizId: string, answers: QuizAnswers): Promise<QuizResult> {
-  if (USE_MOCK) {
-    await delay(700);
-    const quiz = MOCK_QUIZZES.find((q) => q.id === quizId);
-    if (!quiz) throw new Error('Quiz not found');
-    const total = quiz.questions.length;
-    const score = quiz.questions.reduce((n, q) => {
-      const chosen = answers[q.id];
-      const correct = q.options.find((o) => o.correct)?.id;
-      return n + (chosen && chosen === correct ? 1 : 0);
-    }, 0);
-    return { score, total, passed: total > 0 && score / total >= QUIZ_PASS_RATIO };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Submitting a quiz');
   try {
     return unwrap<QuizResult>(await api.post(`/api/v1/learn/quizzes/${quizId}/submit`, { answers }));
   } catch (err) {

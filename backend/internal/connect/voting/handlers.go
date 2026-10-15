@@ -55,13 +55,37 @@ func mapError(c *gin.Context, err error) {
 	}
 }
 
+// contestStatusFilter maps the list endpoint's ?status= value to the stored
+// connect_contests statuses. It is an allowlist: an unrecognised value is an
+// error (never a silently-unfiltered list) and nothing the caller sent reaches
+// SQL. No value keeps the original behaviour, open and closed together, so
+// existing callers are unaffected.
+func contestStatusFilter(raw string) ([]string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return []string{"open", "closed"}, nil
+	case "active", "open":
+		return []string{"open"}, nil
+	case "closed", "ended":
+		return []string{"closed"}, nil
+	default:
+		return nil, errors.New("invalid status")
+	}
+}
+
 // ListContests — GET /api/v1/connect/contests (member).
+// Optional ?status=active|closed|all narrows the list (default: open + closed).
 func (h *Handler) ListContests(c *gin.Context) {
+	statuses, err := contestStatusFilter(c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status: use active, closed or all"})
+		return
+	}
 	limit := 0
 	if v := c.Query("limit"); v != "" {
 		limit, _ = strconv.Atoi(v)
 	}
-	out, err := h.svc.ListContests(c.Request.Context(), limit)
+	out, err := h.svc.ListContestsByStatus(c.Request.Context(), limit, statuses)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return

@@ -758,6 +758,10 @@ type TransactionPatch struct {
 	// previously-failed transaction must not leave the old reason behind). Takes
 	// precedence over FailureReason.
 	ClearFailureReason bool
+	// MetadataMerge, when set, is JSON merged INTO the row's metadata (existing
+	// keys are kept, same-named keys are replaced) — used to record a pending
+	// refund request without clobbering the captured payment_reference.
+	MetadataMerge json.RawMessage
 	// GuardStatuses, when non-empty, restricts the update to rows whose status
 	// is in the set — a compare-and-swap so a settle write cannot resurrect a
 	// transaction that recovery or an admin already moved to a terminal state.
@@ -793,6 +797,10 @@ func (r *Repository) UpdateTransaction(ctx context.Context, id string, patch Tra
 	}
 	if len(patch.ProviderResponse) > 0 {
 		add("provider_response", patch.ProviderResponse)
+	}
+	if len(patch.MetadataMerge) > 0 {
+		args = append(args, patch.MetadataMerge)
+		sets = append(sets, fmt.Sprintf("metadata = COALESCE(metadata, '{}'::jsonb) || $%d::jsonb", len(args)))
 	}
 	switch {
 	case patch.ClearFailureReason:

@@ -171,6 +171,8 @@ export interface ContestRegistrationDefinition {
   rulesText?: string;
   /** Banner image shown on the mobile contest list and detail screens. */
   bannerImageUrl?: string;
+  /** Contest logo, shown on the contest card and header (mobile + web). */
+  logoUrl?: string;
   // Optional admin-defined form mapping. When present the contestant form is
   // code template (forms/<slug>.ts) or the capability-driven default.
   formSchema?: ContestFormSchema;

@@ -1,0 +1,56 @@
+name: Utility vend retry
+
+# Retries card-paid utility bills whose vend is CONFIRMED failed, and refunds the
+# customer's wallet when vending has been failing for 30 minutes (holding the funds
+# with admin and emailing the customer when their wallet is not active). Owner rule.
+#
+# DORMANT until enabled. To turn on:
+#   1. UTILITY_WORKER_SECRET: the same random value as the repo secret and as the
+#      variable on the frontend-web service the URL below points at (the route
+#      answers 503 without it). It is shared with utility-intent-sweep.yml.
+#   2. Repo variable UTILITY_VEND_RETRY_URL = that service's origin, no trailing
+#      slash, e.g. https://frontend-web-staging-ec46.up.railway.app
+#   3. Repo variable UTILITY_VEND_RETRY_ENABLED = true
+#   4. Set FEATURE_UTILITY_CARD_LEDGER on BOTH the frontend-web and backend services.
+#
+# Every money leg is idempotent and every row is claimed with a version check, so an
+# overlapping or repeated run cannot double-vend or double-refund. A 5-minute
+# schedule keeps the 30-minute refund close to on time.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utility-vend-retry
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    name: retry failed utility vends, refund after 30 minutes
+    if: ${{ vars.UTILITY_VEND_RETRY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RETRY_URL: ${{ vars.UTILITY_VEND_RETRY_URL }}
+      WORKER_SECRET: ${{ secrets.UTILITY_WORKER_SECRET }}
+    steps:
+      - name: Check configuration
+        run: |
+          : "${RETRY_URL:?missing repo variable UTILITY_VEND_RETRY_URL}"
+          : "${WORKER_SECRET:?missing repo secret UTILITY_WORKER_SECRET}"
+
+      - name: Run the retry worker
+        run: |
+          set -euo pipefail
+          status=$(curl -sS -o response.json -w '%{http_code}' --max-time 120 -X POST \
+            -H "x-worker-secret: ${WORKER_SECRET}" \
+            "${RETRY_URL%/}/api/internal/utility/workers/retry-failed-vends?limit=25")
+          echo "HTTP ${status}"
+          # The body carries counts only, never the secret.
+          cat response.json; echo
+          test "${status}" = "200"

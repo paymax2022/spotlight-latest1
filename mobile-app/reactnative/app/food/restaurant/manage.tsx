@@ -16,8 +16,12 @@ import AddressAutocompleteInput, { type SelectedAddress } from '@/components/Add
 import {
   useMyStores, useStoreDetail, useCreateStore, useUpdateStore, useSetAvailability,
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
+  useMenuTaxonomy, useCreateTaxonomyItem, useUpdateItem,
 } from '@/features/restaurantmerchant/hooks';
 import type { MerchantMenuCategory, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
+import {
+  subcategoriesFor, validateItemDraft, type ItemDraft, type ItemDraftErrors, type TaxonomyCategory,
+} from '@/features/restaurantmerchant/taxonomy';
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 
@@ -125,7 +129,7 @@ function CreateStore({ onDone }: { onDone: () => void }) {
   };
   return (
     <Shell>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Text style={styles.lead}>Set up your restaurant to start receiving orders.</Text>
         <Card>
           <Field label="Restaurant name" value={name} onChangeText={setName} placeholder="Blue Yam Kitchen" />
@@ -215,7 +219,7 @@ function ManageStore({
 
   return (
     <Shell>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         {/* Outlet switcher — only when the owner runs more than one. Every section
             below (profile, packaging, menu) acts on the selected outlet, so this
             is the control that decides which shop gets edited. */}
@@ -499,10 +503,18 @@ function PackagingPrice({ storeId, store }: { storeId: string; store: MerchantSt
 }
 
 function MenuBuilder({ storeId, categories }: { storeId: string; categories: MerchantMenuCategory[] }) {
+  const taxonomy = useMenuTaxonomy();
+  const taxonomyOn = taxonomy.isSuccess && taxonomy.data.length > 0;
   const [newCat, setNewCat] = useState('');
   const createCat = useCreateCategory(storeId);
   const deleteCat = useDeleteCategory(storeId);
   const deleteItem = useDeleteItem(storeId);
+  const updateItem = useUpdateItem(storeId);
+
+  const setStock = (itemId: string, name: string, inStock: boolean) =>
+    updateItem.mutate({ itemId, patch: { isAvailable: inStock } }, {
+      onError: (e) => alertAsync({ title: `Could not update ${name}`, message: (e as Error).message }),
+    });
 
   const addCategory = () => {
     if (!newCat.trim()) return;
@@ -515,6 +527,8 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
 
   return (
     <View style={{ gap: Spacing.md }}>
+      {taxonomyOn ? <TaxonomyAddItem storeId={storeId} tree={taxonomy.data ?? []} /> : null}
+
       {categories.length === 0 ? (
         <Text style={styles.muted}>No categories yet. Add one below to start building your menu.</Text>
       ) : null}
@@ -523,23 +537,33 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
         <Card key={cat.id}>
           <View style={styles.rowBetween}>
             <Text style={styles.cardTitle}>{cat.name}</Text>
-            <Pressable
-              onPress={() =>
-                cat.items.length > 0
-                  ? alertAsync({ title: 'Category not empty', message: 'Remove its items before deleting the category.' })
-                  : deleteCat.mutate(cat.id)
-              }
-              hitSlop={8}
-            >
-              <Trash2 size={18} color={Colors.error} />
-            </Pressable>
+            {taxonomyOn ? null : (
+              <Pressable
+                onPress={() =>
+                  cat.items.length > 0
+                    ? alertAsync({ title: 'Category not empty', message: 'Remove its items before deleting the category.' })
+                    : deleteCat.mutate(cat.id)
+                }
+                hitSlop={8}
+              >
+                <Trash2 size={18} color={Colors.error} />
+              </Pressable>
+            )}
           </View>
 
           {cat.items.map((it) => (
             <View key={it.id} style={styles.itemRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{it.name}</Text>
-                <Text style={styles.muted}>{naira(it.priceKobo)}{it.isAvailable ? '' : ' · unavailable'}</Text>
+                <Text style={styles.muted}>{naira(it.priceKobo)}{it.isAvailable ? '' : ' · out of stock'}</Text>
+              </View>
+              <View style={{ alignItems: 'center', gap: 2 }}>
+                <Switch
+                  value={it.isAvailable}
+                  onValueChange={(v) => setStock(it.id, it.name, v)}
+                  accessibilityLabel={`${it.name} in stock`}
+                />
+                <Text style={styles.muted}>{it.isAvailable ? 'In stock' : 'Out'}</Text>
               </View>
               <Pressable onPress={() => confirmDeleteItem(it.id, it.name)} hitSlop={8}>
                 <Trash2 size={16} color={Colors.outline} />
@@ -547,11 +571,12 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
             </View>
           ))}
 
-          <AddItem storeId={storeId} categoryId={cat.id} />
+          {taxonomyOn ? null : <AddItem storeId={storeId} categoryId={cat.id} />}
         </Card>
       ))}
 
-      {/* Add category */}
+      {/* Add category: owners cannot create categories once the admin taxonomy is on */}
+      {taxonomyOn ? null : (
       <Card>
         <Text style={styles.cardTitle}>Add a category</Text>
         <View style={styles.inlineRow}>
@@ -564,6 +589,80 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
           </Pressable>
         </View>
       </Card>
+      )}
+    </View>
+  );
+}
+
+function TaxonomyAddItem({ storeId, tree }: { storeId: string; tree: TaxonomyCategory[] }) {
+  const [draft, setDraft] = useState<ItemDraft>({ categoryId: null, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '' });
+  const [errors, setErrors] = useState<ItemDraftErrors>({});
+  const createItem = useCreateTaxonomyItem(storeId);
+  const subs = subcategoriesFor(tree, draft.categoryId);
+
+  const submit = () => {
+    const r = validateItemDraft(draft, tree);
+    if (!r.ok) {
+      setErrors(r.errors);
+      return;
+    }
+    setErrors({});
+    createItem.mutate(r.payload, {
+      onSuccess: () => setDraft((d) => ({ ...d, subcategoryId: null, name: '', priceNaira: '', prepMinutes: '' })),
+      onError: (e) => alertAsync({ title: 'Could not add the item', message: (e as Error).message }),
+    });
+  };
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Add an item</Text>
+      <Text style={styles.label}>Category</Text>
+      <View style={styles.chipWrap}>
+        {tree.map((c) => {
+          const on = draft.categoryId === c.id;
+          return (
+            <Pressable key={c.id} accessibilityRole="button" accessibilityState={{ selected: on }}
+              onPress={() => setDraft((d) => ({ ...d, categoryId: c.id, subcategoryId: null }))}
+              style={[styles.outletChip, on && styles.outletChipOn]}>
+              <Text style={[styles.outletChipText, on && styles.outletChipTextOn]}>{c.name}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {errors.category ? <Text style={styles.errorText}>{errors.category}</Text> : null}
+
+      {subs.length > 0 ? (
+        <>
+          <Text style={styles.label}>Sub-category (optional)</Text>
+          <View style={styles.chipWrap}>
+            {subs.map((s) => {
+              const on = draft.subcategoryId === s.id;
+              return (
+                <Pressable key={s.id} accessibilityRole="button" accessibilityState={{ selected: on }}
+                  onPress={() => setDraft((d) => ({ ...d, subcategoryId: on ? null : s.id }))}
+                  style={[styles.outletChip, on && styles.outletChipOn]}>
+                  <Text style={[styles.outletChipText, on && styles.outletChipTextOn]}>{s.name}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {errors.subcategory ? <Text style={styles.errorText}>{errors.subcategory}</Text> : null}
+        </>
+      ) : null}
+
+      <TextInput value={draft.name} onChangeText={(name) => setDraft((d) => ({ ...d, name }))} placeholder="Item name"
+        placeholderTextColor={Colors.outline} style={styles.input} />
+      {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
+      <TextInput value={draft.priceNaira} onChangeText={(priceNaira) => setDraft((d) => ({ ...d, priceNaira }))}
+        placeholder="Price in naira, e.g. 2500" keyboardType="decimal-pad"
+        placeholderTextColor={Colors.outline} style={styles.input} />
+      {errors.price ? <Text style={styles.errorText}>{errors.price}</Text> : null}
+      <TextInput value={draft.prepMinutes ?? ''} onChangeText={(prepMinutes) => setDraft((d) => ({ ...d, prepMinutes }))}
+        placeholder="Prep time in minutes (optional, 5 to 180)" keyboardType="number-pad"
+        placeholderTextColor={Colors.outline} style={styles.input} />
+      {errors.prep ? <Text style={styles.errorText}>{errors.prep}</Text> : null}
+
+      <PrimaryButton label="Add item" onPress={submit} loading={createItem.isPending} />
     </View>
   );
 }
@@ -658,6 +757,7 @@ function AddressField({
         surface="checkout"
         placeholder={placeholder}
         enableRecents={false}
+        inlineDropdown
       />
     </View>
   );
@@ -716,4 +816,5 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.outlineVariant, paddingHorizontal: Spacing.md, paddingVertical: 12,
   },
   ordersLinkText: { color: Colors.primary, fontSize: 15, fontWeight: '700' },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
 });

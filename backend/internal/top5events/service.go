@@ -67,6 +67,7 @@ type Service struct {
 
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
+	notifier   NotificationSender // optional; nil ⇒ Announce records the row but sends nothing
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett *settlement.Service, tiersSvc *tiers.Service, cred *credential.Service, tags *cashtag.Service, audit Auditor) *Service {
@@ -109,6 +110,9 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	e.OrganiserID = organiserID
 	e.State = EventDraft
 	e.CreatedAt = time.Now()
+	if e.FeeBps <= 0 {
+		e.FeeBps = 1000 // platform default: 10% (the Cancel refund keeps this as the non-refundable fee)
+	}
 	// organizer_id (legacy, NOT NULL, no default) is populated alongside the
 	// new organiser_id with the SAME value — see
 	// 20270228000000_events_ticket_legacy_columns_nullable.sql for the full
@@ -320,17 +324,22 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 
 // AddTier creates an inventory tier (organiser-only).
 func (s *Service) AddTier(ctx context.Context, organiserID, eventID string, t TicketTier) (*TicketTier, error) {
-	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+	if _, err := s.authorizeManage(ctx, organiserID, eventID); err != nil {
 		return nil, err
 	}
 	if t.PriceKobo < 0 || t.Capacity < 0 {
-		return nil, errors.New("events: tier price/capacity must be non-negative")
+		return nil, fmt.Errorf("%w: events: tier price/capacity must be non-negative", ErrValidation)
+	}
+	if t.SalesStartAt != nil && t.SalesEndAt != nil && !t.SalesStartAt.Before(*t.SalesEndAt) {
+		return nil, ErrInvalidWindow
 	}
 	t.ID = uuid.New().String()
 	t.EventID = eventID
 	t.Active = true
-	const ins = `INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, active) VALUES ($1,$2,$3,$4,$5,true)`
-	if _, err := s.db.Exec(ctx, ins, t.ID, t.EventID, t.Name, t.PriceKobo, t.Capacity); err != nil {
+	const ins = `INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, active, description, sales_start_at, sales_end_at, invite_only)
+		VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,$9)`
+	if _, err := s.db.Exec(ctx, ins, t.ID, t.EventID, t.Name, t.PriceKobo, t.Capacity,
+		t.Description, t.SalesStartAt, t.SalesEndAt, t.InviteOnly); err != nil {
 		return nil, fmt.Errorf("events: insert tier: %w", err)
 	}
 	return &t, nil
@@ -339,11 +348,26 @@ func (s *Service) AddTier(ctx context.Context, organiserID, eventID string, t Ti
 // AddPromo creates a versioned promo code (organiser-only). A re-add of the same
 // code supersedes by version (config-driven, history preserved).
 func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p PromoCode) (*PromoCode, error) {
-	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+	if _, err := s.authorizeManage(ctx, organiserID, eventID); err != nil {
 		return nil, err
 	}
-	if p.PercentOff < 0 || p.PercentOff > 100 {
-		return nil, errors.New("events: percent_off out of range")
+	if err := validatePromoValue(p.PercentOff, p.AmountOffKobo); err != nil {
+		return nil, err
+	}
+	if p.PerUserLimit < 0 || p.MaxUses < 0 {
+		return nil, fmt.Errorf("%w: events: per_user_limit and max_uses must be non-negative", ErrValidation)
+	}
+	if p.StartsAt != nil && p.EndsAt != nil && !p.StartsAt.Before(*p.EndsAt) {
+		return nil, ErrInvalidWindow
+	}
+	if p.TierID != nil {
+		var ok bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_ticket_tiers WHERE id=$1 AND event_id=$2)`, *p.TierID, eventID).Scan(&ok); err != nil {
+			return nil, fmt.Errorf("events: tier lookup: %w", err)
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: events: promo tier does not belong to this event", ErrValidation)
+		}
 	}
 	var maxVer int
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(MAX(version),0) FROM event_promo_codes WHERE event_id=$1 AND code=$2`, eventID, p.Code).Scan(&maxVer)
@@ -353,11 +377,27 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 	p.Active = true
 	// Deactivate prior versions of this code.
 	_, _ = s.db.Exec(ctx, `UPDATE event_promo_codes SET active=false WHERE event_id=$1 AND code=$2`, eventID, p.Code)
-	const ins = `INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, active) VALUES ($1,$2,$3,$4,$5,$6,true)`
-	if _, err := s.db.Exec(ctx, ins, p.ID, p.EventID, p.Code, p.Version, p.PercentOff, p.MaxUses); err != nil {
+	const ins = `INSERT INTO event_promo_codes (id, event_id, code, version, percent_off, max_uses, active, tier_id, amount_off_kobo, starts_at, ends_at, per_user_limit)
+		VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11)`
+	if _, err := s.db.Exec(ctx, ins, p.ID, p.EventID, p.Code, p.Version, p.PercentOff, p.MaxUses,
+		p.TierID, p.AmountOffKobo, p.StartsAt, p.EndsAt, p.PerUserLimit); err != nil {
 		return nil, fmt.Errorf("events: insert promo: %w", err)
 	}
 	return &p, nil
+}
+
+// validatePromoValue enforces exactly one of percent_off (1..100) or amount_off_kobo (>=0).
+func validatePromoValue(percent int, amount *int64) error {
+	if percent < 0 || percent > 100 {
+		return errors.New("events: percent_off out of range")
+	}
+	if amount != nil && *amount < 0 {
+		return fmt.Errorf("%w: events: amount_off_kobo must be non-negative", ErrValidation)
+	}
+	if (percent > 0) == (amount != nil) {
+		return errors.New("events: promo needs exactly one of percent_off or amount_off_kobo")
+	}
+	return nil
 }
 
 // ---------- Order + issuance via credential ----------
@@ -384,8 +424,11 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if err != nil {
 		return nil, err
 	}
+	// Placed AFTER the orderByIdem replay above (a replay of an already-placed
+	// order must still resolve even if the event is now paused) and BEFORE any
+	// new order is reserved/inserted below.
 	if ev.State != EventLive {
-		return nil, fmt.Errorf("events: event not on sale (state %s)", ev.State)
+		return nil, fmt.Errorf("%w (state %s)", ErrNotPurchasable, ev.State)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -396,8 +439,9 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 
 	var price int64
 	var capacity, sold int
-	var active bool
-	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active); err != nil {
+	var active, inviteOnly bool
+	var salesStart, salesEnd *time.Time
+	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active, sales_start_at, sales_end_at, invite_only FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active, &salesStart, &salesEnd, &inviteOnly); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -406,20 +450,63 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if !active {
 		return nil, errors.New("events: tier inactive")
 	}
+	now := time.Now()
+	if inviteOnly {
+		return nil, ErrInviteOnly
+	}
+	if (salesStart != nil && now.Before(*salesStart)) || (salesEnd != nil && now.After(*salesEnd)) {
+		return nil, ErrTierNotOnSale
+	}
 	if capacity > 0 && sold >= capacity {
 		return nil, ErrSoldOut
 	}
 
 	payable := price
+	var appliedPromoID string
 	if promo != "" {
 		var pid string
-		var pct, maxUses, used int
-		if err := tx.QueryRow(ctx, `SELECT id, percent_off, max_uses, used FROM event_promo_codes WHERE event_id=$1 AND code=$2 AND active=true FOR UPDATE`, eventID, promo).Scan(&pid, &pct, &maxUses, &used); err == nil {
-			if maxUses == 0 || used < maxUses {
-				payable = price - (price*int64(pct))/100
-				_, _ = tx.Exec(ctx, `UPDATE event_promo_codes SET used=used+1 WHERE id=$1`, pid)
+		var pct, maxUses, used, perUser int
+		var promoTier *string
+		var amountOff *int64
+		var startsAt, endsAt *time.Time
+		err := tx.QueryRow(ctx, `SELECT id, percent_off, max_uses, used, tier_id::text, amount_off_kobo, starts_at, ends_at, per_user_limit FROM event_promo_codes WHERE event_id=$1 AND code=$2 AND active=true FOR UPDATE`, eventID, promo).
+			Scan(&pid, &pct, &maxUses, &used, &promoTier, &amountOff, &startsAt, &endsAt, &perUser)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("%w: unknown or inactive code", ErrPromoNotApplicable)
+			}
+			return nil, fmt.Errorf("events: lock promo: %w", err)
+		}
+		if maxUses > 0 && used >= maxUses {
+			return nil, fmt.Errorf("%w: code exhausted", ErrPromoNotApplicable)
+		}
+		if (startsAt != nil && now.Before(*startsAt)) || (endsAt != nil && now.After(*endsAt)) {
+			return nil, fmt.Errorf("%w: outside validity window", ErrPromoNotApplicable)
+		}
+		if promoTier != nil && *promoTier != tierID {
+			return nil, fmt.Errorf("%w: code is for a different tier", ErrPromoNotApplicable)
+		}
+		if perUser > 0 {
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM event_promo_redemptions WHERE promo_id=$1 AND user_id=$2`, pid, buyerID).Scan(&n); err != nil {
+				return nil, fmt.Errorf("events: promo per-user count: %w", err)
+			}
+			if n >= perUser {
+				return nil, fmt.Errorf("%w: per-user limit reached", ErrPromoNotApplicable)
 			}
 		}
+		if amountOff != nil {
+			payable = price - *amountOff
+			if payable < 0 {
+				payable = 0
+			}
+		} else {
+			payable = price - (price*int64(pct))/100
+		}
+		if _, err := tx.Exec(ctx, `UPDATE event_promo_codes SET used=used+1 WHERE id=$1`, pid); err != nil {
+			return nil, fmt.Errorf("events: bump promo: %w", err)
+		}
+		appliedPromoID = pid
 	}
 
 	// Reserve inventory before money moves (a debit can never outrun capacity) and
@@ -435,6 +522,11 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	const insOrder = `INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, status, idempotency_key) VALUES ($1,$2,$3,$4,$5,'PENDING',$6)`
 	if _, err := tx.Exec(ctx, insOrder, orderID, eventID, buyerID, tierID, payable, idemKey); err != nil {
 		return nil, fmt.Errorf("events: insert order: %w", err)
+	}
+	if appliedPromoID != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO event_promo_redemptions (id, promo_id, user_id, order_id) VALUES ($1,$2,$3,$4) ON CONFLICT (promo_id, order_id) DO NOTHING`, uuid.New().String(), appliedPromoID, buyerID, orderID); err != nil {
+			return nil, fmt.Errorf("events: record promo redemption: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("events: commit reservation: %w", err)
@@ -1355,9 +1447,17 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var (
-	ErrNotFound          = errors.New("events: not found")
-	ErrForbidden         = errors.New("events: forbidden")
-	ErrSoldOut           = errors.New("events: tier sold out")
-	ErrInsufficientFloat = errors.New("events: insufficient event-wallet balance")
-	ErrKYCRequired       = errors.New("events: vendor must complete KYC before payout (NL-10)")
+	ErrNotFound           = errors.New("events: not found")
+	ErrForbidden          = errors.New("events: forbidden")
+	ErrTierLocked         = errors.New("events: tier field locked by existing sales")
+	ErrPromoLocked        = errors.New("events: promo field locked by existing redemptions")
+	ErrInvalidWindow      = errors.New("events: sales_start_at must be before sales_end_at")
+	ErrValidation         = errors.New("events: invalid request")
+	ErrSoldOut            = errors.New("events: tier sold out")
+	ErrNotPurchasable     = errors.New("events: event is not on sale")
+	ErrInviteOnly         = errors.New("events: tier is invite-only")
+	ErrTierNotOnSale      = errors.New("events: tier is outside its sales window")
+	ErrPromoNotApplicable = errors.New("events: promo code not applicable")
+	ErrInsufficientFloat  = errors.New("events: insufficient event-wallet balance")
+	ErrKYCRequired        = errors.New("events: vendor must complete KYC before payout (NL-10)")
 )

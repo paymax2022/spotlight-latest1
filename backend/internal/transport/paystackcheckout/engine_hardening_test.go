@@ -27,6 +27,7 @@ func TestInitiateDisabled_KeepsStatusConfirmerAndRefunderLive(t *testing.T) {
 	g2.Use(func(c *gin.Context) {
 		if u := c.GetHeader("X-Test-User"); u != "" {
 			c.Set("user_id", u)
+			c.Set("user_email", "buyer@gmail.com")
 		}
 	})
 	r2.e.SetInitiateEnabled("fake", false)
@@ -106,7 +107,7 @@ func TestCallbackURL_AllowlistedHTTPSOnly_ElseDropped(t *testing.T) {
 func TestVerify_ForADifferentReference_IsRefused_NothingClaimedOrBooked(t *testing.T) {
 	r := newRig()
 	ref := paid(t, r)
-	r.gw.verify = &provider.PaymentStatus{Reference: "fakeorder:somebody-elses", Status: "success", AmountKobo: 250_000, Currency: "NGN"}
+	r.gw.verify = &provider.PaymentStatus{Reference: "fakeorder-somebody-elses", Status: "success", AmountKobo: 250_000, Currency: "NGN"}
 	_, err := r.e.OnChargeSuccess(context.Background(), ref, ref)
 	if err == nil {
 		t.Fatal("a verify response for another transaction must not confirm this intent")
@@ -128,6 +129,7 @@ func TestInitiate_PerUserRateLimited_StatusRouteIsNot(t *testing.T) {
 	g.Use(func(c *gin.Context) {
 		if u := c.GetHeader("X-Test-User"); u != "" {
 			c.Set("user_id", u)
+			c.Set("user_email", "buyer@gmail.com")
 		}
 	})
 	r.e.RegisterRoutes(g.Group("/m"), WithInitiateMiddleware(middleware.PerUserRateLimit(nil, "test-carddirect", 2)))
@@ -141,7 +143,7 @@ func TestInitiate_PerUserRateLimited_StatusRouteIsNot(t *testing.T) {
 		t.Errorf("another user shares no budget: %d", w.Code)
 	}
 	for i := 0; i < 5; i++ {
-		if w := do(g, "GET", "/m/fakes/paystack/fakeorder:key-0000001/status", "u1", "", ""); w.Code == http.StatusTooManyRequests {
+		if w := do(g, "GET", "/m/fakes/paystack/fakeorder-key-0000001/status", "u1", "", ""); w.Code == http.StatusTooManyRequests {
 			t.Fatalf("status polling must never be rate limited (the poll IS the self-heal)")
 		}
 	}

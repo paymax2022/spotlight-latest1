@@ -22,10 +22,17 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 const contestColumns = `id, title, description, status, paid_vote_kobo,
-	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, rules_text, banner_image_url`
+	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, rules_text, banner_image_url, logo_url`
 
 // ListContests returns open/closed contests, newest first.
 func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, error) {
+	return r.ListContestsByStatus(ctx, limit, []string{"open", "closed"})
+}
+
+// ListContestsByStatus is ListContests narrowed to the given stored statuses.
+// statuses must come from contestStatusFilter (an allowlist); it is bound as a
+// parameter, never concatenated.
+func (r *Repository) ListContestsByStatus(ctx context.Context, limit int, statuses []string) ([]Contest, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -35,8 +42,8 @@ func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, er
 			(SELECT COALESCE(SUM(quantity), 0) FROM connect_votes cv
 			  WHERE cv.contest_id = connect_contests.id) AS total_votes
 		FROM connect_contests
-		WHERE status IN ('open','closed') ORDER BY created_at DESC LIMIT $1`
-	rows, err := r.db.Query(ctx, q, limit)
+		WHERE status = ANY($2) ORDER BY created_at DESC LIMIT $1`
+	rows, err := r.db.Query(ctx, q, limit, statuses)
 	if err != nil {
 		return nil, fmt.Errorf("voting: list contests: %w", err)
 	}
@@ -68,7 +75,7 @@ func scanContest(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL,
 	); err != nil {
 		return nil, err
 	}
@@ -82,7 +89,7 @@ func scanContestWithCounts(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL, &c.ContestantCount, &c.TotalVotes,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.ContestantCount, &c.TotalVotes,
 	); err != nil {
 		return nil, err
 	}

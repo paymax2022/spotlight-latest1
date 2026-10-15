@@ -87,7 +87,7 @@ func TestLiveDB_BookParcelPaystackFunded_SkipsTierGate_BalancedExternalEscrow(t 
 		t.Fatalf("QuoteParcelBooking = %d, %v", quoted, err)
 	}
 	before := riderWalletBalance(t, ctx, pool, sender)
-	key := "parcelorder:pfparcel-" + uuid.New().String()
+	key := "parcelorder-pfparcel-" + uuid.New().String()
 	id, err := svc.BookParcelPaystackFunded(ctx, sender, req, key, quoted)
 	if err != nil {
 		t.Fatalf("card-direct must succeed for a Tier-0 sender: %v", err)
@@ -131,7 +131,7 @@ func TestLiveDB_BookParcelPaystackFunded_AmountMismatch_NothingWritten(t *testin
 		t.Fatal(err)
 	}
 	for _, wrong := range []int64{quoted - 1, quoted + 1, 0, -quoted} {
-		key := "parcelorder:pfparcel-mm-" + uuid.New().String()
+		key := "parcelorder-pfparcel-mm-" + uuid.New().String()
 		_, err := svc.BookParcelPaystackFunded(ctx, sender, req, key, wrong)
 		var ce *CodedError
 		if !errors.As(err, &ce) || ce.Code != CodeAmountMismatch || ce.Status != http.StatusConflict {
@@ -168,7 +168,7 @@ func TestLiveDB_BookParcelPaystackFunded_ReplayBooksOnce(t *testing.T) {
 	svc, _, sender := paystackRideFixture(t, ctx, pool, 0)
 	req := parcelReq()
 	quoted, _ := svc.QuoteParcelBooking(ctx, req)
-	key := "parcelorder:pfparcel-replay-" + uuid.New().String()
+	key := "parcelorder-pfparcel-replay-" + uuid.New().String()
 	a, err := svc.BookParcelPaystackFunded(ctx, sender, req, key, quoted)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestLiveDB_CancelParcel_CardFunded_UsesExternalRefunder_NeverWalletCredit(t
 
 	req := parcelReq()
 	quoted, _ := svc.QuoteParcelBooking(ctx, req)
-	id, err := svc.BookParcelPaystackFunded(ctx, sender, req, "parcelorder:pfparcel-cx-"+uuid.New().String(), quoted)
+	id, err := svc.BookParcelPaystackFunded(ctx, sender, req, "parcelorder-pfparcel-cx-"+uuid.New().String(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestLiveDB_CancelParcel_CardFunded_NoRefunderFailsClosed_ThenRetryCompletes
 	// Deliberately no SetDomainExternalRefunder.
 	req := parcelReq()
 	quoted, _ := svc.QuoteParcelBooking(ctx, req)
-	id, err := svc.BookParcelPaystackFunded(ctx, sender, req, "parcelorder:pfparcel-nr-"+uuid.New().String(), quoted)
+	id, err := svc.BookParcelPaystackFunded(ctx, sender, req, "parcelorder-pfparcel-nr-"+uuid.New().String(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}

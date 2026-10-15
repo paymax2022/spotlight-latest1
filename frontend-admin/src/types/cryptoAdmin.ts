@@ -116,6 +116,36 @@ export interface CryptoSwapOrder {
   created_at: string;
 }
 
+// Mirrors backend/internal/cryptosvc/admin.go AdminReviewSwap — a swap from the NEW
+// provider-driven BUY swap pipeline (table crypto_swaps) that the pipeline could not
+// auto-resolve and parked in needs_review with the user's NGN still held in the ledger.
+// DISTINCT from CryptoSwapOrder above, which is the LEGACY crypto_swap_orders asset→asset
+// swap read off /admin/crypto/swaps. This one comes from /admin/crypto/swaps/review.
+// Money fields are integer kobo — never floats, format-only via formatKobo().
+export interface CryptoReviewSwap {
+  id: string;
+  user_id: string;
+  status: string;            // always 'needs_review'
+  asset: string;             // crypto bought (to-currency)
+  ngn_kobo: number;
+  fee_kobo: number;
+  held_kobo: number;         // ngn_kobo + fee_kobo — NGN held from the wallet
+  provider: string;
+  provider_swap_id?: string; // absent when the provider never returned one
+  has_provider_id: boolean;  // false ⇒ provider outcome unknown; only release is safe (follow-up)
+  updated_at?: string;       // when the swap was parked
+  age_seconds: number;       // how long the swap has been parked
+}
+
+// POST /admin/crypto/swaps/:id/resolve body. State-dependent, enforced server-side:
+//  - 'retry'   is valid only when has_provider_id (re-poll the provider).
+//  - 'release' is valid only when NOT has_provider_id (reverse the hold to the user).
+// There is deliberately no manual settle — see ADR-PR728.
+export interface CryptoSwapResolveRequest {
+  decision: 'release' | 'retry';
+  note: string;
+}
+
 // Mirrors backend/internal/crypto/model_ext.go Address, plus admin review fields.
 export type CryptoAddressReview = 'pending' | 'approved' | 'rejected' | string;
 
@@ -157,4 +187,68 @@ export interface CryptoReconSummary {
   rows: CryptoReconRow[];
   breaks: number;
   as_of: string;
+}
+
+// GET/PUT /admin/crypto/fee-schedule — the swap markup in integer basis points (never money,
+// never floats). version 0 is the configured default (nothing stored yet).
+export interface CryptoFeeScheduleVersion {
+  version: number;
+  major_bps: number;
+  other_bps: number;
+  majors: string[];
+  overrides: Record<string, number>;
+  reason: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface CryptoFeeScheduleResponse {
+  current: CryptoFeeScheduleVersion;
+  ceiling_bps: number;
+  history: CryptoFeeScheduleVersion[];
+}
+
+export interface CryptoFeeScheduleUpdate {
+  expected_version: number;
+  major_bps: number;
+  other_bps: number;
+  majors: string[];
+  overrides: Record<string, number>;
+  reason: string;
+}
+
+// GET /admin/crypto/reconciler — the swap reconciler's state. `replica` is in-process state of
+// the replica that answered (only the elected leader works; resets on restart); `backlog` is read
+// from the database. Counts and integer kobo only; no swap or user identifiers.
+export interface CryptoReconcilerAlert {
+  at: string;
+  kind: string;
+  message: string;
+}
+
+export interface CryptoReconcilerStatus {
+  success: boolean;
+  note: string;
+  replica: {
+    started_at: string;
+    runs: number;
+    led_runs: number;
+    skipped_runs: number;
+    last_run_at: string;
+    last_led_at: string;
+    last_led: boolean;
+    last_error: string;
+    last_result: { resolved: number; released: number; parked: number; expired: number; errors: number; clearing_negative: boolean };
+    totals: { resolved: number; released: number; parked: number; expired: number; errors: number; clearing_negative_runs: number };
+    recent_alerts: CryptoReconcilerAlert[];
+  };
+  backlog: CryptoReconcilerBacklog[];
+}
+
+export interface CryptoReconcilerBacklog {
+  state: 'needs_review' | 'confirming' | 'processing' | 'quoted' | string;
+  count: number;
+  held_kobo: number;
+  oldest_updated_at?: string;
+  oldest_age_seconds: number;
 }

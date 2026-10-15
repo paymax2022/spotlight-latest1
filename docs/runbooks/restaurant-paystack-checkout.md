@@ -20,11 +20,11 @@ Money shape (iron-rule compliant):
   `Idempotency-Key` header, freezes the server-quoted amount (integer kobo)
   into `restaurant_order_paystack_intents` (migration
   `20270306000000_restaurant_order_paystack_intents.sql`), and returns a Paystack
-  `authorization_url` + `foodorder:`-prefixed reference.
+  `authorization_url` + `foodorder-`-prefixed reference.
 - Confirmation happens two ways, both landing on
   `paystackcheckout.Service.OnChargeSuccess`:
   1. the shared Paystack webhook `POST /api/webhooks/paystack/go` routes any
-     `charge.success` whose reference carries the `foodorder:` prefix
+     `charge.success` whose reference carries the `foodorder-` prefix
      (`webhooks.RestaurantOrderReferencePrefix`) to the injected
      `RestaurantOrderConfirmer`;
   2. `GET /api/finance/restaurant/orders/paystack/:reference/status` polls and
@@ -79,7 +79,7 @@ provider client calls (`/transaction/initialize`, `/transaction/verify/{ref}`,
 - Fake env: `PAYSTACK_SECRET_KEY=<same secret>`,
   `PAYSTACK_FAKE_WEBHOOK_URL=http://localhost:<api-port>/api/webhooks/paystack/go`
   (leave unset to exercise only the status-poll self-heal).
-- Drive it: initiate → `POST /_paystack/complete {"reference":"foodorder:…"}`
+- Drive it: initiate → `POST /_paystack/complete {"reference":"foodorder-…"}`
   flips the charge to `success` and fires a signed `charge.success`;
   `{"webhook":false}` skips the delivery so `GET …/status` self-heals instead.
   An un-completed charge verifies `pending`, so the unpaid fail-closed path is
@@ -98,7 +98,7 @@ Manual smoke (staging, Paystack test keys `sk_test_…`/`pk_test_…`):
 
 1. `POST /api/v1/restaurant/<id>/orders/paystack/initiate` with
    `Idempotency-Key: w10-food-<n>` and a normal order body → expect 200 +
-   `authorizationUrl` + `reference` starting `foodorder:`.
+   `authorizationUrl` + `reference` starting `foodorder-`.
 2. Replay the same request with the same key → same reference, no second charge.
 3. Complete the charge with a Paystack test card →
    `GET …/orders/paystack/<reference>/status` → `confirmed` + `orderId`; the

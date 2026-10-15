@@ -74,10 +74,10 @@ test('a tow service without a destination is refused client-side (server would 4
 test('status path url-encodes the reference (it contains a colon) and the resolver route matches the screen', () => {
   assert.equal(TOWING_CARD_DIRECT_BASE, '/mobility/towing/paystack');
   assert.equal(
-    towingCardDirectStatusPath('towingorder:towing-paystack-1-abc'),
-    '/mobility/towing/paystack/towingorder%3Atowing-paystack-1-abc/status',
+    towingCardDirectStatusPath('towingorder-towing-paystack-1-abc'),
+    '/mobility/towing/paystack/towingorder-towing-paystack-1-abc/status',
   );
-  assert.equal(towingCardDirectResolverRoute('towingorder:k'), '/mobility/paystack/towing/towingorder%3Ak');
+  assert.equal(towingCardDirectResolverRoute('towingorder-k'), '/mobility/paystack/towing/towingorder-k');
 });
 
 test('the client key shape satisfies the server key pattern', () => {
@@ -86,6 +86,6 @@ test('the client key shape satisfies the server key pattern', () => {
 });
 
 test('normalizeTowingStatus exposes the domain entity id as towingJobId', () => {
-  const s = normalizeTowingStatus({ reference: 'towingorder:k', status: 'confirmed', amountKobo: 845_000, towingJobId: 'j-1' });
-  assert.deepEqual(s, { reference: 'towingorder:k', status: 'confirmed', amountKobo: 845_000, towingJobId: 'j-1' });
+  const s = normalizeTowingStatus({ reference: 'towingorder-k', status: 'confirmed', amountKobo: 845_000, towingJobId: 'j-1' });
+  assert.deepEqual(s, { reference: 'towingorder-k', status: 'confirmed', amountKobo: 845_000, towingJobId: 'j-1' });
 });

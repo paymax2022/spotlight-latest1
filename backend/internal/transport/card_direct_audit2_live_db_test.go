@@ -45,7 +45,7 @@ func cardFundedTow(t *testing.T, ctx context.Context, svc *Service, user string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder:a2-"+uuid.NewString(), quoted)
+	id, err := svc.BookTowingPaystackFunded(ctx, user, req, "towingorder-a2-"+uuid.NewString(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func cardFundedParcel(t *testing.T, ctx context.Context, svc *Service, user stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := svc.BookParcelPaystackFunded(ctx, user, req, "parcelorder:a2-"+uuid.NewString(), quoted)
+	id, err := svc.BookParcelPaystackFunded(ctx, user, req, "parcelorder-a2-"+uuid.NewString(), quoted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestLiveDB_BookTowingPaystackFunded_ZeroFareAndZeroVerified_IsRefusedNotEsc
 	// A snapshot whose config prices everything at zero: fare = 0 == verified 0,
 	// so the plain "fare != verified" cross-check would let it through.
 	zero := []byte(`{"distanceM":0,"config":{}}`)
-	key := "towingorder:zero-" + uuid.NewString()
+	key := "towingorder-zero-" + uuid.NewString()
 	_, err := svc.BookTowingPaystackFundedFrozen(ctx, user, liveTowingReq(), key, 0, zero)
 	wantCoded(t, err, 409, CodeAmountMismatch)
 	if n := countSettlementsByKey(t, ctx, pool, key); n != 0 {
@@ -597,7 +597,7 @@ func TestLiveDB_AdminPatch_RefundedCardSettlement_IsNotBlocked_AndTheRunbookReco
 func seedMoverIntent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, payer, jobID, bidID, status string) string {
 	t.Helper()
 	key := "mvintent-" + uuid.NewString()
-	ref := "moversorder:" + key
+	ref := "moversorder-" + key
 	body := fmt.Sprintf(`{"job_id":%q,"bid_id":%q}`, jobID, bidID)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO transport_paystack_intents (reference, domain, payer_id, request_json, amount_kobo, idempotency_key, status)

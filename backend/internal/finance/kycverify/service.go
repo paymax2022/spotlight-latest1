@@ -35,8 +35,36 @@ type Service struct {
 	consent *ConsentStore
 	orch    *Orchestrator
 
+	adminAuditor AdminAuditor // durable review-decision audit (may be nil)
+
 	seed          RoutingSeed // env seed, folded with DB rules per run
 	facialDefault int
+
+	// NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE). When ownershipGate is
+	// true, a PASSED ID-number check is only honoured if the ID's registered
+	// phone matches the account's verified phone (read via accountPhone). See
+	// ownership.go.
+	ownershipGate bool
+	accountPhone  AccountPhoneSource
+
+	identitySink IdentitySink // optional; persists verified name/DOB on a PASSED ID-number check
+}
+
+// AccountPhoneSource returns a user's account phone and whether it is verified,
+// for the NIN/BVN ownership gate. kycverify depends only on this narrow port —
+// never on the kyc package or a concrete profile type — mirroring TierElevator.
+// It is satisfied by a thin adapter over user_profiles, wired in finance_routes.go.
+type AccountPhoneSource interface {
+	VerifiedPhone(ctx context.Context, userID string) (phone string, verified bool, err error)
+}
+
+// IdentitySink persists a provider-verified legal identity (full name, first/last
+// name, ISO date of birth) to the user's profile after a PASSED ID-number
+// data-match. kycverify depends only on this narrow port — never on the kyc
+// package — mirroring TierElevator. It is satisfied by *kyc.Service, wired in
+// finance_routes.go. A nil sink skips persistence (degraded/dev configuration).
+type IdentitySink interface {
+	SaveVerifiedIdentity(ctx context.Context, userID, fullName, firstName, lastName, dobISO string) error
 }
 
 // Deps bundles the KYC verification service dependencies.
@@ -48,6 +76,26 @@ type Deps struct {
 	Seed     RoutingSeed
 	// FacialThreshold seeds the default facial gate when a routing rule omits it.
 	FacialThreshold int
+	// OwnershipGate enables the NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE,
+	// default off). When true, AccountPhoneSource MUST be wired — a nil source with
+	// the gate on fails CLOSED (blocks), never open.
+	OwnershipGate bool
+	// AccountPhoneSource reads the caller's verified account phone for the gate.
+	AccountPhoneSource AccountPhoneSource
+	// IdentitySink persists the provider-verified name/DOB on a PASSED ID-number
+	// check. Optional: nil skips persistence (the verification + tier grant still
+	// stand).
+	IdentitySink IdentitySink
+	// AdminAuditor receives a DURABLE record of every admin review decision
+	// (actor, target user, session, reason). Optional: nil leaves only the
+	// structured log line, so production wiring should always set it.
+	AdminAuditor AdminAuditor
+}
+
+// AdminAuditor is the narrow port onto the shared immutable audit sink. Its
+// LogAction signature is identical to services.AuditService, which satisfies it.
+type AdminAuditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
 }
 
 // NewService builds the KYC verification service.
@@ -62,6 +110,10 @@ func NewService(d Deps) *Service {
 		orch:          NewOrchestrator(d.Pool, repo, d.Elevator),
 		seed:          d.Seed,
 		facialDefault: d.FacialThreshold,
+		ownershipGate: d.OwnershipGate,
+		accountPhone:  d.AccountPhoneSource,
+		identitySink:  d.IdentitySink,
+		adminAuditor:  d.AdminAuditor,
 	}
 }
 
@@ -214,6 +266,32 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 		rawRef = ref
 	}
 
+	// NIN/BVN OWNERSHIP GATE (FEATURE_KYC_OWNERSHIP_GATE). A PASSED ID-number
+	// data-match proves the ID is real, not that the caller owns it. Before the
+	// status is written — upstream of both tier elevation (Recompute) and any
+	// identity persistence — require the ID's registered phone to match the
+	// account's verified phone. A mismatch / indeterminate state downgrades the
+	// result to FAILED with a user-facing reason (masked last-4 hint on a
+	// mismatch). Exempt ID types and non-PASS results are untouched. A read error
+	// fails CLOSED (we never let a PASS stand when ownership could not be checked).
+	if s.ownershipGate && ct == provider.KycIDNumber &&
+		gr.Result.Status == provider.KycPassed && isPhoneBearingIDType(req.IDType) {
+		phone, verified := "", false
+		if s.accountPhone != nil {
+			p, v, perr := s.accountPhone.VerifiedPhone(ctx, userID)
+			if perr != nil {
+				return nil, fmt.Errorf("kycverify: ownership gate phone lookup user=%s: %w", userID, perr)
+			}
+			phone, verified = p, v
+		}
+		before := gr.Result.Status
+		gr.Result = applyOwnershipGate(gr.Result, req.IDType, phone, verified)
+		if gr.Result.Status != before {
+			s.audit(ctx, "kycverify.ownership.blocked", userID, stored.ID,
+				fmt.Sprintf("type=%s id_type=%s", ct, req.IDType))
+		}
+	}
+
 	if err := applyCheckTransition(stored.Status, gr.Result.Status); err != nil {
 		return nil, err
 	}
@@ -230,6 +308,20 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	}
 	s.audit(ctx, "kycverify.check.completed", userID, stored.ID,
 		fmt.Sprintf("type=%s provider=%s status=%s", ct, gr.Provider, stored.Status))
+
+	// Persist the provider-verified legal identity (name + DOB) on a PASSED
+	// ID-number data-match — SOURCED FROM THE PROVIDER RESPONSE, never from user
+	// input (the KYC form no longer collects name/DOB). Best-effort and
+	// non-fatal: a storage hiccup must not fail an otherwise-successful
+	// verification, and the value self-heals on the next PASSED check. The PII
+	// itself is never logged.
+	if ct == provider.KycIDNumber && stored.Status == provider.KycPassed && s.identitySink != nil {
+		if vi, ok := ExtractVerifiedIdentity(gr.Result.ExtractedFields); ok {
+			if serr := s.identitySink.SaveVerifiedIdentity(ctx, userID, vi.FullName, vi.FirstName, vi.LastName, vi.DOB); serr != nil {
+				log.Printf("kycverify: persist verified identity user=%s check=%s: %v", userID, stored.ID, serr)
+			}
+		}
+	}
 
 	if _, err := s.orch.Recompute(ctx, sessionID); err != nil {
 		// The check itself is persisted; surface the orchestration error so the
@@ -278,6 +370,7 @@ func (s *Service) ApproveCase(ctx context.Context, sessionID, actorID, reason st
 		return "", err
 	}
 	s.audit(ctx, "kycverify.admin.approved", actorID, sessionID, reason)
+	s.auditDecision(ctx, "kyc.review.approve", actorID, sessionID, st, reason)
 	return st, nil
 }
 
@@ -288,7 +381,38 @@ func (s *Service) RejectCase(ctx context.Context, sessionID, actorID, reason str
 		return "", err
 	}
 	s.audit(ctx, "kycverify.admin.rejected", actorID, sessionID, reason)
+	s.auditDecision(ctx, "kyc.review.reject", actorID, sessionID, st, reason)
 	return st, nil
+}
+
+// auditDecision writes the durable audit record for an admin review decision.
+// The decision has already been applied, so a failure to look up the target
+// user must not undo it; the record then carries an empty target and the log
+// line above still names the session.
+func (s *Service) auditDecision(ctx context.Context, action, actorID, sessionID string, outcome SessionStatus, reason string) {
+	if s.adminAuditor == nil {
+		return
+	}
+	target := ""
+	if sess, err := s.repo.GetSession(ctx, sessionID); err == nil && sess != nil {
+		target = sess.UserID
+	}
+	s.adminAuditor.LogAction(actorID, target, action, "kyc", "kyc_verification_session", sessionID,
+		nil, map[string]any{"outcome": string(outcome), "reason": reason}, "", "", "high")
+}
+
+// reviewActorGuard enforces separation of duties on KYC review decisions: the
+// deciding admin must be identified and must not be the account under review,
+// otherwise a reviewer could approve their own tier upgrade. Fail-closed.
+func reviewActorGuard(actorID, sessionOwnerID string) error {
+	a := strings.ToLower(strings.TrimSpace(actorID))
+	if a == "" {
+		return fmt.Errorf("%w: review decision has no actor", ErrForbidden)
+	}
+	if a == strings.ToLower(strings.TrimSpace(sessionOwnerID)) {
+		return fmt.Errorf("%w: reviewers cannot decide their own verification", ErrForbidden)
+	}
+	return nil
 }
 
 // ListRoutingRules returns the current routing rules for the admin console.
@@ -624,6 +748,9 @@ func (o *Orchestrator) ResolveReview(ctx context.Context, sessionID string, appr
 	if err != nil {
 		return "", err
 	}
+	if err := reviewActorGuard(actorID, sess.UserID); err != nil {
+		return "", err
+	}
 	target := SessRejected
 	if approve {
 		// Approving a review is a manual override to TIER_VERIFIED (the state
@@ -811,4 +938,10 @@ func GateFacial(match bool, confidence float64, threshold int) provider.KycCheck
 		return provider.KycReview
 	}
 	return provider.KycFailed
+}
+
+// OpenReviewCaseID returns the id of the user's current open review case (their
+// latest NEEDS_REVIEW verification session), if any. Read-only.
+func (s *Service) OpenReviewCaseID(ctx context.Context, userID string) (string, bool, error) {
+	return s.repo.LatestReviewSessionID(ctx, userID)
 }

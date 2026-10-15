@@ -8,6 +8,7 @@ import (
 
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/estate"
+	"spotlight/backend/internal/platform/billingemail"
 )
 
 const keyMessage = "message"
@@ -93,7 +94,11 @@ func (h *Handler) Initiate(c *gin.Context) {
 		return
 	}
 
-	out, err := h.svc.InitiateCheckout(c.Request.Context(), c.Param("id"), u, c.Param("invoiceId"), idempotencyKey, req.Email, req.CallbackURL)
+	email, ok := billingemail.Require(c, req.Email)
+	if !ok {
+		return
+	}
+	out, err := h.svc.InitiateCheckout(c.Request.Context(), c.Param("id"), u, c.Param("invoiceId"), idempotencyKey, email, req.CallbackURL)
 	if err != nil {
 		h.fail(c, err)
 		return

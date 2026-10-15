@@ -51,7 +51,7 @@ func TestLiveDB_TowingCardDirect_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initiate (Tier-0 user): %v", err)
 	}
-	if co.AmountKobo <= 0 || co.Reference != "towingorder:"+key {
+	if co.AmountKobo <= 0 || co.Reference != "towingorder-"+key {
 		t.Fatalf("checkout %+v", co)
 	}
 	r.gw.verify = &provider.PaymentStatus{Status: "success", AmountKobo: co.AmountKobo, Currency: "NGN"}

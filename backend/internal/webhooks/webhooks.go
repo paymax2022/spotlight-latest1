@@ -157,10 +157,10 @@ type FeesChargeConfirmer interface {
 
 // FeesReferencePrefix is the reference prefix fees payment intents use
 // (academy/fees/payment.referenceFor → "feespay:"+idempotencyKey).
-const FeesReferencePrefix = "feespay:"
+const FeesReferencePrefix = "feespay-"
 
 // RestaurantOrderConfirmer is the confirm-and-place entry point for
-// Paystack-funded food orders ("foodorder:" prefix). Impl is
+// Paystack-funded food orders ("foodorder-" prefix). Impl is
 // *restaurant/paystackcheckout.Service.OnChargeSuccess, injected via
 // SetRestaurantOrderConfirmer; same nil ⇒ no-op seam contract as
 // FeesChargeConfirmer.
@@ -169,8 +169,9 @@ type RestaurantOrderConfirmer interface {
 }
 
 // RestaurantOrderReferencePrefix is the reference prefix restaurant Paystack
-// checkout intents use (paystackcheckout.referenceFor → "foodorder:"+idempotencyKey).
-const RestaurantOrderReferencePrefix = "foodorder:"
+// checkout intents use (paystackcheckout.referenceFor → "foodorder-"+idempotencyKey). "-" not ":" —
+// Paystack rejects a ":" in a transaction reference.
+const RestaurantOrderReferencePrefix = "foodorder-"
 
 // RideOrderConfirmer is the confirm-and-book entry point for Paystack-funded
 // ride-hailing checkouts ("rideorder:" prefix). Impl is
@@ -182,7 +183,7 @@ type RideOrderConfirmer interface {
 
 // RideOrderReferencePrefix is the reference prefix transport ride-checkout
 // intents use (paystackcheckout.referenceFor → "rideorder:"+idempotencyKey).
-const RideOrderReferencePrefix = "rideorder:"
+const RideOrderReferencePrefix = "rideorder-"
 
 // DuesOrderConfirmer is the confirm-and-pay entry point for Paystack-funded
 // estate dues checkouts ("duespay:" prefix). Impl is
@@ -194,7 +195,7 @@ type DuesOrderConfirmer interface {
 
 // DuesOrderReferencePrefix is the reference prefix estate dues-checkout
 // intents use (paystackcheckout.referenceFor → "duespay:"+idempotencyKey).
-const DuesOrderReferencePrefix = "duespay:"
+const DuesOrderReferencePrefix = "duespay-"
 
 // PrefixConfirmer is the GENERIC confirm seam for any module that owns a
 // Paystack reference prefix (Mobility card-direct: "parcelorder:", and every
@@ -328,7 +329,7 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		return err
 	}
 
-	// Restaurant food-order checkout ("foodorder:" prefix) → confirm-and-place
+	// Restaurant food-order checkout ("foodorder-" prefix) → confirm-and-place
 	// path (verify → cross-check → PlaceOrderPaystackFunded → refund-on-failure).
 	if strings.HasPrefix(d.Reference, RestaurantOrderReferencePrefix) {
 		if h.restaurantConfirmer == nil {

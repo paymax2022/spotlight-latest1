@@ -6,6 +6,7 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { buildQuote, buildSwapQuote } from '../utils/cryptoFormatters';
+import { unwrapEnvelope } from '../utils/envelope';
 import {
   MOCK_ASSETS,
   MOCK_POSITIONS,
@@ -44,16 +45,11 @@ const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK, true);
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
-// Backend wraps success payloads as { success: true, [key]: value }. This unwrap
-// extracts the actual data by looking for a nested 'data' field (if present) or
-// returning the payload as-is. This matches the fx.api.ts pattern.
-const unwrap = <T>(res: { data: unknown }): T => {
-  const body = res?.data;
-  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
-    return (body as { data: T }).data;
-  }
-  return body as T;
-};
+// The Go crypto handlers wrap every 2xx body as { success: true, <namedKey>: value }
+// (order / portfolio / assets / swap / …), not under `data`. Unwrap the single
+// payload key so mockless (staging/prod) builds get the payload, not the envelope;
+// mock responses carry no `success` flag and pass through untouched. See envelope.ts.
+const unwrap = <T>(res: { data: unknown }): T => unwrapEnvelope<T>(res?.data);
 
 /**
  * Normalise a thrown axios error into an Error carrying the Go backend's real

@@ -15,6 +15,7 @@
 //   PATCH  /restaurant/:id/staff/:userId             → set staff status
 
 import { mockAllowed } from '@/config/mockPolicy';
+import type { TaxonomyCategory, TaxonomyItemPayload } from './taxonomy';
 import { api } from '@/api/client';
 import { buildUpdateStoreBody } from './packagingPrice';
 import type {
@@ -355,11 +356,58 @@ export async function saveKYB(id: string, input: SaveKYBInput): Promise<Restaura
 }
 
 /**
- * Registers a document the owner has already hosted elsewhere (e.g. a Drive/Dropbox
- * link) against the KYB record. There is no presigned-upload flow for KYB documents
- * yet (see logoUpload.api.ts for the equivalent pattern once one exists) — this
- * mirrors the same "paste a URL" fallback the branding screen already uses when
- * direct uploads aren't wired.
+ * Thrown when the server has no usable R2 storage, so it can never sign an upload.
+ * The presign endpoint fails closed with 503 in that case, and retrying cannot
+ * help — the only way forward is to paste a link to a hosted copy instead.
+ */
+export class KYBUploadsUnavailableError extends Error {
+  constructor() {
+    super('Document uploads are not configured on this server.');
+    this.name = 'KYBUploadsUnavailableError';
+  }
+}
+
+export interface KYBDocumentPresign {
+  uploadUrl: string;
+  objectKey: string;
+  contentType: string;
+  expiresIn: number;
+  method: string;
+}
+
+/**
+ * Ask the backend for a short-lived presigned PUT URL for one KYB document. The
+ * backend chooses the object key and binds the Content-Type into the signature, so
+ * the exact `contentType` returned here must be sent on the PUT.
+ */
+export async function presignKYBDocument(
+  id: string, docType: string, fileName: string, contentType: string,
+): Promise<KYBDocumentPresign> {
+  try {
+    const raw = unwrap<any>(await api.post(
+      `${BASE}/${enc(id)}/kyb/documents/presign`,
+      { doc_type: docType, file_name: fileName, content_type: contentType },
+    ));
+    return {
+      uploadUrl: raw.upload_url,
+      objectKey: raw.object_key,
+      contentType: raw.content_type,
+      expiresIn: raw.expires_in ?? 0,
+      method: raw.method ?? 'PUT',
+    };
+  } catch (err) {
+    if ((err as { response?: { status?: number } })?.response?.status === 503) {
+      throw new KYBUploadsUnavailableError();
+    }
+    throw err;
+  }
+}
+
+/**
+ * Records a document against the KYB record. `fileUrl` is either an object key
+ * returned by presignKYBDocument (after the file was PUT to storage) or a plain
+ * http(s) link to a copy hosted elsewhere — the backend accepts nothing else, and
+ * only a key minted for THIS outlet.
  */
 export async function addKYBDocument(id: string, docType: string, fileUrl: string, fileName?: string): Promise<void> {
   if (USE_MOCK) {
@@ -374,4 +422,32 @@ export async function submitKYB(id: string): Promise<RestaurantKYB> {
   if (USE_MOCK) { await delay(); mockKYB = { ...mockKYB, status: 'submitted' }; return mockKYB; }
   const raw = unwrap<any>(await api.post(`${BASE}/${enc(id)}/kyb/submit`, {}));
   return mapKYB(raw?.kyb ?? raw);
+}
+
+// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode, which keeps
+// the screen on the legacy per-category add. A server without the flag answers 404,
+// which surfaces as a thrown error and the same fallback.
+export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
+  if (USE_MOCK) return [];
+  const raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`));
+  const list: any[] = Array.isArray(raw) ? raw : [];
+  return list.map((c) => ({
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+    kind: c.kind,
+    children: (c.children ?? []).map((s: any) => ({ id: s.id, name: s.name, slug: s.slug })),
+  }));
+}
+
+export async function createTaxonomyItem(id: string, input: TaxonomyItemPayload): Promise<MerchantMenuItem> {
+  if (USE_MOCK) throw new Error('Taxonomy items are not available in mock mode.');
+  const body = {
+    taxonomy_category_id: input.taxonomyCategoryId,
+    taxonomy_subcategory_id: input.taxonomySubcategoryId,
+    name: input.name,
+    price_kobo: input.priceKobo,
+    ...(input.prepTimeMinutes !== undefined ? { prep_time_minutes: input.prepTimeMinutes } : {}),
+  };
+  return mapItem(unwrap<any>(await api.post(`${BASE}/${enc(id)}/menu/items`, body)));
 }

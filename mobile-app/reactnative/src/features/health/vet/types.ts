@@ -39,6 +39,8 @@ export interface PetInput {
   microchipId?: string;
   neutered?: boolean;
   notes?: string;
+  /** Create only: stable across retries of one submit (server dedupes on it). */
+  idempotencyKey?: string;
 }
 
 export type PetRecordKind =

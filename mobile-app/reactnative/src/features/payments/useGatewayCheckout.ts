@@ -16,6 +16,8 @@
 import { useCallback, useState } from 'react';
 
 import { useAuthStore } from '@/store/authStore';
+import { promptEmailAsync } from '@/lib/emailPrompt';
+import { isEmailRequiredError } from './billingEmail';
 import { usePaystackGateway } from './usePaystackGateway';
 import { extractAccessCode, type PaystackGatewayController } from './paystackGateway';
 
@@ -29,9 +31,19 @@ export interface GatewayInitResult {
   transactionId?: string;
 }
 
+export interface GatewayInitContext {
+  /**
+   * Set only on the retry after the server answered `email_required` and the
+   * user typed an address. The first attempt sends none, so the server uses the
+   * email the account registered with. Flows whose server owns the email can
+   * ignore this argument.
+   */
+  email?: string;
+}
+
 export interface GatewayCheckoutRequest {
   /** Server initialize (already sets Idempotency-Key). */
-  initialize: () => Promise<GatewayInitResult>;
+  initialize: (ctx: GatewayInitContext) => Promise<GatewayInitResult>;
   /** Navigate to the transaction status screen after the SDK checkout succeeds. */
   onResolved: (result: GatewayInitResult) => void;
   /** What is being paid for (Paystack metadata / diagnostics), e.g. 'wallet_topup'. */
@@ -61,14 +73,35 @@ export function useGatewayCheckout(): GatewayCheckoutController {
       setError(null);
       setPhase('initializing');
 
-      let init: GatewayInitResult;
-      try {
-        init = await req.initialize();
-      } catch (e) {
-        setPhase('error');
-        setError(e instanceof Error ? e.message : 'Could not start payment. Please try again.');
-        return;
+      // Rule (backend/internal/platform/billingemail): registered email if it is
+      // usable, else the one supplied with the request, else 422 email_required.
+      // So: try with no email; if the server asks for one, ask the user ONCE and
+      // retry with it. Cancelling the prompt abandons the checkout quietly.
+      let typedEmail: string | undefined;
+      let init: GatewayInitResult | undefined;
+      for (let attempt = 0; attempt < 2 && !init; attempt++) {
+        try {
+          init = await req.initialize({ email: typedEmail });
+        } catch (e) {
+          if (attempt === 0 && isEmailRequiredError(e)) {
+            const entered = await promptEmailAsync({
+              title: 'Add your email to pay',
+              message: 'Paystack needs a valid email address for this payment and to send your receipt.',
+              confirmLabel: 'Continue',
+            });
+            if (!entered) {
+              setPhase('idle');
+              return;
+            }
+            typedEmail = entered;
+            continue;
+          }
+          setPhase('error');
+          setError(e instanceof Error ? e.message : 'Could not start payment. Please try again.');
+          return;
+        }
       }
+      if (!init) return;
 
       const accessCode = extractAccessCode(init.authorizationUrl);
 
@@ -83,7 +116,7 @@ export function useGatewayCheckout(): GatewayCheckoutController {
 
       setPhase('awaiting');
       gateway.open({
-        email: req.email ?? user?.email ?? 'customer@paymax.app',
+        email: typedEmail ?? req.email ?? user?.email ?? 'customer@paymax.app',
         // Amount is fixed by the server-initialized transaction; resume ignores it.
         amountKobo: 0,
         domain: req.domain,

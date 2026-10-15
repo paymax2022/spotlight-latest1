@@ -39,11 +39,20 @@ type Config struct {
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
 
+	// FrontendSiteURL is where a Supabase recovery/confirmation email link
+	// lands (frontend-web's /auth/reset-password, which establishes the
+	// session from the URL and hands off from there). Without it, GoTrue's
+	// /auth/v1/recover call falls back to the project's dashboard-configured
+	// Site URL, which is not guaranteed to be this page.
+	FrontendSiteURL string
 	// Feature-flagged surface (default OFF). When OFF, the new self/admin session
 	// endpoints return 503 feature-disabled and the middleware session check is a
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
 	// detection, revocation enforcement, and suspicious-login response are active.
 	FeatureSessionHardeningEnabled bool
+	// FeatureAdminUserModulesEnabled gates GET /api/admin/users/:id/modules (admin
+	// User 360 module membership). Default OFF: the route answers 404 when off.
+	FeatureAdminUserModulesEnabled bool
 	// Suspicious-login thresholds. Fail-closed defaults: any new device/IP is
 	// treated as suspicious, a small failed-login spike escalates, and travel
 	// faster than this km/h is "impossible".
@@ -139,6 +148,9 @@ type Config struct {
 	// (web/mobile SDK flows use a server-issued token). DEFAULT OFF.
 	FeatureKYCVerifyEnabled bool
 
+	// FeatureNavTelemetryEnabled mounts POST /api/v1/telemetry/navigation.
+	FeatureNavTelemetryEnabled bool
+
 	// Dojah — headers Authorization:<secret> + AppId:<app_id>; sandbox→live.
 	DojahAppID         string
 	DojahSecretKey     string
@@ -161,6 +173,13 @@ type Config struct {
 	KYCPIIEncKey string
 	// Facial-match confidence gate (default 70): below → REVIEW, not silent fail.
 	KYCFacialMatchThreshold int
+	// FEATURE_KYC_OWNERSHIP_GATE (default OFF): when on, a PASSED NIN/BVN/vNIN
+	// ID-number check is only honoured if the ID's registered phone matches the
+	// account's verified phone — binding the submitted ID to the caller. Closes
+	// the "any valid NIN → Tier 1" gap and the NIN→identity disclosure oracle
+	// (ADR-PR722). Phone-less ID types (passport/DL/PVC) are exempt. No effect
+	// unless FEATURE_KYC_VERIFY_ENABLED is also on.
+	FeatureKYCOwnershipGate bool
 
 	// ── Arena competition engine (ADR-014) ───────────────────────────────────
 	// Config-driven competition module (Naija Driver = instance #1). Merit ledger
@@ -219,9 +238,16 @@ type Config struct {
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
 	// structurally valid card token for a known membership id.
-	AssocCardSigningSecret string
-	FeatureEventsEnabled   bool
-	FeatureEstateEnabled   bool
+	AssocCardSigningSecret     string
+	FeatureEventsEnabled       bool
+	FeatureEventsEditLifecycle bool // organiser edit/duplicate/pause/resume/cancel routes
+	// FeatureEventsTicketingDepth (FEATURE_EVENTS_TICKETING_DEPTH) exposes tier/promo edit routes.
+	FeatureEventsTicketingDepth bool
+	// FeatureEventsTeamRoles (FEATURE_EVENTS_TEAM_ROLES) exposes per-event team (MANAGER) grant routes.
+	FeatureEventsTeamRoles bool
+	// FeatureEventsComps (FEATURE_EVENTS_COMPS) exposes comp tickets, attendee CSV export and organiser announcements.
+	FeatureEventsComps   bool
+	FeatureEstateEnabled bool
 	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
 	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
 	// Paystack payment posted DR provider-clearing / CR settlement, never
@@ -231,6 +257,14 @@ type Config struct {
 	FeatureEstateDuesPaystackCheckoutEnabled bool
 	FeatureCrowdfundingEnabled               bool
 	FeatureRestaurantEnabled                 bool
+
+	// FeatureRestaurantAdminCategories moves menu-category ownership to the platform:
+	// owners get 403 on category create/delete, and the admin taxonomy routes mount.
+	FeatureRestaurantAdminCategories bool
+
+	// FeatureRestaurantDiscounts turns on owner discounts (automatic, item or category
+	// or whole-restaurant). Off means no discount routes and no discounted prices.
+	FeatureRestaurantDiscounts bool
 	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
 	// money path (wallet → saved bank account; restaurant/withdrawal.go
 	// RequestWithdrawal). Default OFF: the routes are always mounted once
@@ -411,6 +445,23 @@ type Config struct {
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
 
+	// Crypto swap pipeline (quote/confirm/webhook/reconciler over the provider adapter,
+	// ADR-PR708..716). DEFAULT OFF and additionally requires FEATURE_CRYPTO_ENABLED, a real
+	// Quidax key and webhook secret. Mounted at /api/v1/crypto/swaps and
+	// /api/v1/webhooks/crypto/:provider.
+	FeatureCryptoSwapsEnabled bool
+	// CryptoWebhookSecret verifies Quidax webhook signatures (QUIDAX_WEBHOOK_SECRET).
+	CryptoWebhookSecret string
+	// CryptoLockPoolConns sizes the DEDICATED advisory-lock pool (>= 2x concurrent confirms + 3).
+	CryptoLockPoolConns int
+	// CryptoReconcileSeconds is the reconciler interval.
+	CryptoReconcileSeconds int
+	// CryptoQuoteRatePerMin / CryptoConfirmRatePerMin are the per-user budgets for
+	// POST /crypto/swaps/quote and /confirm. Confirm is the tighter one: it spends a
+	// PIN attempt and moves money. Validated 1..600 when the swap pipeline is on.
+	CryptoQuoteRatePerMin   int
+	CryptoConfirmRatePerMin int
+
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
 	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
 	// patient-visible price increase, so it is opt-in, and switching it off is the
@@ -500,6 +551,11 @@ type Config struct {
 	// public HMAC webhooks (logistics delivery + payments funding), and the escrow
 	// order/dispute/boost state machines (internal/marketplace). No flag, no money path.
 	FeatureMarketplaceEnabled bool
+
+	// FeatureMarketplaceAlertsEnabled turns on the marketplace alert producers (new
+	// listing from a followed seller; saved-item price drop below the saved price).
+	// DEFAULT OFF. Best-effort, bounded fan-out after the listing write commits.
+	FeatureMarketplaceAlertsEnabled bool
 
 	// ElasticsearchURL is the marketplace search read-model cluster base URL
 	// (e.g. "http://elasticsearch:9200"). When empty, GET /v1/marketplace/search
@@ -773,6 +829,7 @@ func Load() Config {
 		AppEnv:                      getEnv("APP_ENV", "development"),
 		Port:                        getEnv("APP_PORT", "8080"),
 		SupabaseURL:                 getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
+		FrontendSiteURL:             getEnv("FRONTEND_SITE_URL", getEnv("NEXT_PUBLIC_SITE_URL", "https://www.spotlightng.com")),
 		SupabaseServiceRoleKey:      getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
 		SupabaseJWTSecret:           getEnv("SUPABASE_JWT_SECRET", ""),
 		AuthJWTLocalVerify:          getEnvBool("AUTH_JWT_LOCAL_VERIFY", false),
@@ -784,6 +841,7 @@ func Load() Config {
 		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
+		FeatureAdminUserModulesEnabled: getEnvBool("FEATURE_ADMIN_USER_MODULES_ENABLED", false),
 		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
 		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
 		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
@@ -800,10 +858,10 @@ func Load() Config {
 		PaystackBaseURL:              getEnv("PAYSTACK_BASE_URL", ""),
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
-		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
-		CryptoQuidaxTestBaseURL: getEnv("QUIDAX_TEST_BASE_URL", "https://app.quidax.io/api/v1"),
+		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", getEnv("QUIDAX_API_KEY", "")), // Railway stores the unlabeled name; it never feeds the live slot
+		CryptoQuidaxTestBaseURL: getEnv("QUIDAX_TEST_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
-		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://app.quidax.io/api/v1"),
+		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://openapi.quidax.io/exchange-open-api/api/v1"),
 
 		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
 		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
@@ -828,20 +886,22 @@ func Load() Config {
 		TransferFailoverEnabled: getEnvBool("TRANSFER_FAILOVER_ENABLED", true),
 
 		// ── Multi-provider KYC verification (ADR-013) ──
-		FeatureKYCVerifyEnabled: getEnvBool("FEATURE_KYC_VERIFY_ENABLED", false),
-		DojahAppID:              getEnv("DOJAH_APP_ID", ""),
-		DojahSecretKey:          getEnv("DOJAH_SECRET_KEY", ""),
-		DojahProd:               getEnvBool("DOJAH_PROD", false),
-		DojahWebhookSecret:      getEnv("DOJAH_WEBHOOK_SECRET", ""),
-		SmileIDPartnerID:        getEnv("SMILEID_PARTNER_ID", ""),
-		SmileIDAPIKey:           getEnv("SMILEID_API_KEY", ""),
-		SmileIDProd:             getEnvBool("SMILEID_PROD", false),
-		SmileIDCallbackURL:      getEnv("SMILEID_CALLBACK_URL", ""),
-		YouverifyToken:          getEnv("YOUVERIFY_TOKEN", ""),
-		YouverifyProd:           getEnvBool("YOUVERIFY_PROD", false),
-		YouverifyWebhookSecret:  getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
-		KYCPIIEncKey:            getEnv("KYC_PII_ENC_KEY", ""),
-		KYCFacialMatchThreshold: getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
+		FeatureKYCVerifyEnabled:    getEnvBool("FEATURE_KYC_VERIFY_ENABLED", false),
+		FeatureNavTelemetryEnabled: getEnvBool("FEATURE_NAV_TELEMETRY_ENABLED", false),
+		DojahAppID:                 getEnv("DOJAH_APP_ID", ""),
+		DojahSecretKey:             getEnv("DOJAH_SECRET_KEY", ""),
+		DojahProd:                  getEnvBool("DOJAH_PROD", false),
+		DojahWebhookSecret:         getEnv("DOJAH_WEBHOOK_SECRET", ""),
+		SmileIDPartnerID:           getEnv("SMILEID_PARTNER_ID", ""),
+		SmileIDAPIKey:              getEnv("SMILEID_API_KEY", ""),
+		SmileIDProd:                getEnvBool("SMILEID_PROD", false),
+		SmileIDCallbackURL:         getEnv("SMILEID_CALLBACK_URL", ""),
+		YouverifyToken:             getEnv("YOUVERIFY_TOKEN", ""),
+		YouverifyProd:              getEnvBool("YOUVERIFY_PROD", false),
+		YouverifyWebhookSecret:     getEnv("YOUVERIFY_WEBHOOK_SECRET", ""),
+		KYCPIIEncKey:               getEnv("KYC_PII_ENC_KEY", ""),
+		KYCFacialMatchThreshold:    getEnvInt("KYC_FACIAL_MATCH_THRESHOLD", 70),
+		FeatureKYCOwnershipGate:    getEnvBool("FEATURE_KYC_OWNERSHIP_GATE", false),
 
 		// ── Arena competition engine (ADR-014) ──
 		FeatureArenaEnabled:       getEnvBool("FEATURE_ARENA_ENABLED", false),
@@ -878,10 +938,16 @@ func Load() Config {
 		FeatureAssociationsEnabled:                   getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
 		AssocCardSigningSecret:                       getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
 		FeatureEventsEnabled:                         getEnvBool("FEATURE_EVENTS_ENABLED", false),
+		FeatureEventsEditLifecycle:                   getEnvBool("FEATURE_EVENTS_EDIT_LIFECYCLE", false),
+		FeatureEventsTicketingDepth:                  getEnvBool("FEATURE_EVENTS_TICKETING_DEPTH", false),
+		FeatureEventsTeamRoles:                       getEnvBool("FEATURE_EVENTS_TEAM_ROLES", false),
+		FeatureEventsComps:                           getEnvBool("FEATURE_EVENTS_COMPS", false),
 		FeatureEstateEnabled:                         getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureEstateDuesPaystackCheckoutEnabled:     getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureCrowdfundingEnabled:                   getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:                     getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantAdminCategories:             getEnvBool("FEATURE_RESTAURANT_ADMIN_CATEGORIES", false),
+		FeatureRestaurantDiscounts:                   getEnvBool("FEATURE_RESTAURANT_DISCOUNTS", false),
 		FeatureRestaurantWithdrawalsEnabled:          getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureRestaurantPaystackCheckoutEnabled:     getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
 		FeatureModuleGateEnforce:                     getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
@@ -938,6 +1004,12 @@ func Load() Config {
 		FeaturePropertyRolesEnabled:                  getEnvBool("FEATURE_PROPERTY_ROLES_ENABLED", false),
 		FeatureFractionalREEnabled:                   getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                         getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureCryptoSwapsEnabled:                    getEnvBool("FEATURE_CRYPTO_SWAPS_ENABLED", false),
+		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
+		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
+		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
+		CryptoQuoteRatePerMin:                        getEnvInt("CRYPTO_QUOTE_RATE_PER_MIN", 20),
+		CryptoConfirmRatePerMin:                      getEnvInt("CRYPTO_CONFIRM_RATE_PER_MIN", 5),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureCheckoutTopupTier0:                    getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:               getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
@@ -959,6 +1031,7 @@ func Load() Config {
 		FeatureStaysEnabled:                getEnvBool("FEATURE_STAYS_ENABLED", false),
 		FeaturePlacementEnabled:            getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
 		FeatureMarketplaceEnabled:          getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
+		FeatureMarketplaceAlertsEnabled:    getEnvBool("FEATURE_MARKETPLACE_ALERTS_ENABLED", false),
 		ElasticsearchURL:                   getEnv("ELASTICSEARCH_URL", ""),
 		RunWorkersInProcess:                getEnvBool("RUN_WORKERS_INPROCESS", false),
 		FeatureSocialPayEnabled:            getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
@@ -1175,6 +1248,12 @@ func (c Config) Validate() error {
 		}
 	}
 
+	// The NIN/BVN ownership gate only runs inside the KYC verification gateway, so
+	// enabling it without the gateway is a silent no-op — surface the misconfig.
+	if c.FeatureKYCOwnershipGate && !c.FeatureKYCVerifyEnabled {
+		problems = append(problems, "FEATURE_KYC_OWNERSHIP_GATE=true has no effect unless FEATURE_KYC_VERIFY_ENABLED=true")
+	}
+
 	// Arena (ADR-014): merit entries must be signable — require at least one valid
 	// Ed25519 signing seed (base64 32 bytes) when enabled. Any provided seed must
 	// be well-formed.
@@ -1258,6 +1337,25 @@ func (c Config) Validate() error {
 			}
 			if !strings.EqualFold(strings.TrimSpace(c.CryptoProvider), "quidax") || isPlaceholder(key) || strings.TrimSpace(base) == "" {
 				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
+			}
+		}
+		if c.FeatureCryptoSwapsEnabled {
+			if !c.FeatureCryptoEnabled {
+				strict = append(strict, "FEATURE_CRYPTO_SWAPS_ENABLED=true requires FEATURE_CRYPTO_ENABLED=true")
+			}
+			if isPlaceholder(c.CryptoWebhookSecret) {
+				strict = append(strict, "QUIDAX_WEBHOOK_SECRET is required when FEATURE_CRYPTO_SWAPS_ENABLED=true (every webhook would be rejected and swaps would never settle)")
+			}
+			if c.CryptoLockPoolConns < 4 || c.CryptoLockPoolConns > 500 {
+				strict = append(strict, "CRYPTO_LOCK_POOL_CONNS must be between 4 and 500 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			// PerUserRateLimit treats <= 0 as 60/min, so an unset-looking 0 would loosen the
+			// budget rather than tighten it. Refuse instead of guessing.
+			if c.CryptoQuoteRatePerMin < 1 || c.CryptoQuoteRatePerMin > 600 {
+				strict = append(strict, "CRYPTO_QUOTE_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
+			}
+			if c.CryptoConfirmRatePerMin < 1 || c.CryptoConfirmRatePerMin > 600 {
+				strict = append(strict, "CRYPTO_CONFIRM_RATE_PER_MIN must be between 1 and 600 when FEATURE_CRYPTO_SWAPS_ENABLED=true")
 			}
 		}
 		problems = append(problems, strict...)

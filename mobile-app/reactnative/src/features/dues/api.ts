@@ -13,7 +13,12 @@ export interface DuesInvoice {
 }
 export interface PayResult { success: boolean; alreadyProcessed: boolean; payment: { id: string; amountKobo: number; reference?: string; createdAt: string }; invoice: DuesInvoice; }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_DUES_USE_MOCK, true);
+// The /api/v1/estate/dues handlers are live: paying debits the wallet through the shared
+// ledger primitive (atomic RPC, tier checks, idempotency key) and dues.money-path.spec.ts
+// covers it. So this defaults to live: a forgotten flag fails visibly instead of inventing
+// invoices or reporting a payment that never moved money. Set EXPO_PUBLIC_DUES_USE_MOCK=true
+// to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_DUES_USE_MOCK, false);
 
 // Dues are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/dues (GET list, POST /{id}/pay). The current resident's
@@ -42,12 +47,18 @@ export const STATUS_META: Record<InvoiceStatus, { label: string; color: string; 
 };
 
 const D = 86_400_000, iso = (o: number) => new Date(Date.now() + o).toISOString();
-let invoices: DuesInvoice[] = [
+const invoices: DuesInvoice[] = [
   { id: 'i1', estateId: 'est_amber_court', residentId: 'res_demo', category: 'service_charge', amountKobo: 7_500_000, dueDate: iso(7 * D), status: 'pending', createdAt: iso(-20 * D) },
   { id: 'i2', estateId: 'est_amber_court', residentId: 'res_demo', category: 'security_levy', amountKobo: 3_000_000, dueDate: iso(-3 * D), status: 'overdue', createdAt: iso(-33 * D) },
   { id: 'i3', estateId: 'est_amber_court', residentId: 'res_demo', category: 'waste', amountKobo: 500_000, dueDate: iso(-40 * D), status: 'paid', createdAt: iso(-70 * D) },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// payInvoice is a money path with a live handler, so fixture mode refuses loudly instead of
+// reporting an invoice paid that never debited a wallet — mirrors frontend-admin's
+// crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a payment it did not make. Set EXPO_PUBLIC_DUES_USE_MOCK=false to send this against the live backend.`);
 const idem = (k?: string) => ({ headers: { 'Idempotency-Key': k ?? generateIdempotencyKey() } });
 
 export async function listInvoices(): Promise<DuesInvoice[]> {
@@ -60,11 +71,6 @@ export async function listInvoices(): Promise<DuesInvoice[]> {
   const { data } = await api.get<DuesInvoice[]>(DUES_API_BASE); return data;
 }
 export async function payInvoice(id: string, idempotencyKey: string): Promise<PayResult> {
-  if (USE_MOCK) {
-    await latency(600); const inv = invoices.find((x) => x.id === id); if (!inv) throw new Error('Invoice not found');
-    if (inv.status === 'paid') throw new Error('Invoice is already paid');
-    inv.status = 'paid';
-    return { success: true, alreadyProcessed: false, payment: { id: `pay_${Date.now()}`, amountKobo: inv.amountKobo, reference: idempotencyKey, createdAt: new Date().toISOString() }, invoice: { ...inv } };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Paying dues');
   const { data } = await api.post<PayResult>(`${DUES_API_BASE}/${id}/pay`, {}, idem(idempotencyKey)); return data;
 }

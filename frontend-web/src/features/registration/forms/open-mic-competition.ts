@@ -52,7 +52,6 @@ const guardianConsentFields: RegistrationField[] = [
 const performanceFields: RegistrationField[] = [
   { key: 'category.performanceType', label: 'Performance type', type: 'select', options: ['Singing', 'Rap', 'Spoken Word', 'Comedy', 'Instrumental', 'Other'], required: true },
   { key: 'category.genre', label: 'Genre / style', type: 'select', options: [...PERFORMANCE_GENRES], required: true },
-  { key: 'category.durationMinutes', label: 'Planned performance length (minutes)', type: 'number' },
   { key: 'category.audioUpload', label: 'Upload audition audio', type: 'file', accept: '.mp3,.wav,.m4a' },
   { key: 'category.sampleLink', label: 'Performance sample link', type: 'url' },
   { key: 'category.ownsRights', label: 'I own or have rights to the material I will perform', type: 'checkbox', required: true },
@@ -85,7 +84,6 @@ const auditionFields: RegistrationField[] = [
 ];
 
 const publicProfileFields: RegistrationField[] = [
-  { key: 'publicProfile.talentSummary', label: 'Talent summary', type: 'textarea' },
   { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting profile visibility', type: 'checkbox', required: true },
 ];
 

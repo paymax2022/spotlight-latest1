@@ -15,6 +15,7 @@ import { packsForRestaurant } from '@/features/food/packScope';
 import { formatNaira, formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
 import type { MenuItem } from '@/features/food/types';
+import { readyInLabel } from '@/features/food/prepLabel';
 import { DishNutritionBlock } from '@/features/nutrition';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
@@ -41,6 +42,7 @@ function MenuRow({
           </Text>
         ) : null}
         <Text style={mr.price}>{formatNaira(item.priceKobo)}</Text>
+        {readyInLabel(item.prepMinutes) ? <Text style={mr.ready}>{readyInLabel(item.prepMinutes)}</Text> : null}
         {/* Nutrition + allergen disclosure (honest, additive). */}
         <Pressable
           onPress={() => setShowNutrition((v) => !v)}
@@ -108,6 +110,7 @@ const mr = StyleSheet.create({
   name: { ...Typography.labelLg, color: Colors.onSurface },
   desc: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   price: { ...Typography.labelMd, color: Colors.secondary, marginTop: 2 },
+  ready: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
   unavailable: { ...Typography.labelSm, color: Colors.error, marginTop: 2 },
   addBtn: { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },

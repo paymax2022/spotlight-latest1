@@ -31,6 +31,8 @@ interface Props {
   error?: string;
   disabled?: boolean;
   loading?: boolean;
+  /** Focus the search box (and raise the keyboard) as soon as the sheet opens. Default true. */
+  autoFocusSearch?: boolean;
 }
 
 /**
@@ -47,20 +49,32 @@ export default function BankPicker({
   error,
   disabled = false,
   loading = false,
+  autoFocusSearch = true,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // Captured when the sheet opens. Reading Dimensions on every render made the
+  // sheet resize as the keyboard animated in/out (window height changes), which
+  // reads as flicker.
+  const [sheetMaxHeight, setSheetMaxHeight] = useState(0);
 
   const selectedLabel = useMemo(
     () => options.find((o) => o.value === value)?.label,
     [options, value],
   );
 
+  // Provider bank lists can repeat a code. Duplicate FlatList keys make rows
+  // remount and flash, and make "selected" light up on more than one row.
+  const uniqueOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return options.filter((o) => (seen.has(o.value) ? false : (seen.add(o.value), true)));
+  }, [options]);
+
   const filtered = useMemo(() => {
-    if (!query.trim()) return options;
+    if (!query.trim()) return uniqueOptions;
     const q = query.trim().toLowerCase();
-    return options.filter((o) => o.label.toLowerCase().includes(q));
-  }, [options, query]);
+    return uniqueOptions.filter((o) => o.label.toLowerCase().includes(q));
+  }, [uniqueOptions, query]);
 
   const handleSelect = (item: PickerOption) => {
     onChange(item.value, item);
@@ -68,7 +82,6 @@ export default function BankPicker({
     setQuery('');
   };
 
-  const screenHeight = Dimensions.get('window').height;
 
   return (
     <View style={styles.wrapper}>
@@ -78,7 +91,11 @@ export default function BankPicker({
         accessibilityRole="button"
         accessibilityLabel={label ?? placeholder}
         accessibilityState={{ disabled: disabled || loading }}
-        onPress={() => !disabled && !loading && setOpen(true)}
+        onPress={() => {
+          if (disabled || loading) return;
+          setSheetMaxHeight(Dimensions.get('window').height * 0.78);
+          setOpen(true);
+        }}
         style={[styles.trigger, !!error && styles.triggerError, (disabled || loading) && styles.triggerDisabled]}
       >
         <Building2 size={18} color={Colors.outline} strokeWidth={2} />
@@ -93,7 +110,7 @@ export default function BankPicker({
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
           <Pressable style={styles.backdrop} onPress={() => { setOpen(false); setQuery(''); }} />
-          <View style={[styles.sheet, { maxHeight: screenHeight * 0.78 }]}>
+          <View style={[styles.sheet, { maxHeight: sheetMaxHeight || '78%' }]}>
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>{label ?? 'Select bank'}</Text>
@@ -110,7 +127,7 @@ export default function BankPicker({
                 placeholderTextColor={Colors.outline}
                 value={query}
                 onChangeText={setQuery}
-                autoFocus
+                autoFocus={autoFocusSearch}
                 autoCorrect={false}
                 autoCapitalize="none"
               />

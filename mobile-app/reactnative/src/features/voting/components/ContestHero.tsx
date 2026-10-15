@@ -28,6 +28,10 @@ export default function ContestHero({ contest, height = 260 }: Props) {
         style={StyleSheet.absoluteFill}
       />
 
+      {contest.logoImage ? (
+        <Image source={{ uri: contest.logoImage }} style={styles.logo} resizeMode="cover" accessibilityLabel={`${contest.title} logo`} />
+      ) : null}
+
       <View style={styles.content}>
         <ContestStatusBadge status={contest.status} />
         <Text style={styles.title}>{contest.title}</Text>
@@ -62,6 +66,14 @@ const styles = StyleSheet.create({
   wrap:        { position: 'relative', borderRadius: Radius.xl, overflow: 'hidden' },
   image:       { ...StyleSheet.absoluteFillObject },
   placeholder: { backgroundColor: Colors.primaryContainer },
+  logo: {
+    position:        'absolute', top: Spacing.md, right: Spacing.md,
+    width:           56, height: 56,
+    borderRadius:    Radius.lg,
+    borderWidth:     2,
+    borderColor:     Colors.white,
+    backgroundColor: Colors.surfaceContainerLowest,
+  },
   content: {
     position:    'absolute',
     bottom:      0,

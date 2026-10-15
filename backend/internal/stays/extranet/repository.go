@@ -675,7 +675,10 @@ func (r *Repository) MyProperties(ctx context.Context, userID string) ([]gin2H, 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []gin2H
+	// Non-nil on purpose: a user with no properties yet (exactly who taps "List
+	// your property") must get `[]`, not `null`, or clients unwrap the envelope
+	// into the whole object and fail to treat it as a list.
+	out := []gin2H{}
 	for rows.Next() {
 		var id, name, city, status, role string
 		if err := rows.Scan(&id, &name, &city, &status, &role); err != nil {

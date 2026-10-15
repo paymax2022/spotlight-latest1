@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
-import SelectableCard from '@/features/mobility/components/SelectableCard';
+import HireTypeCard from '@/features/mobility/components/HireTypeCard';
 import VehicleClassCard from '@/features/mobility/components/VehicleClassCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
@@ -78,8 +78,9 @@ export default function CarHireHomeScreen() {
       onCard: async () => {
         await paystackCheckout.start({
           domain: 'carhire',
-          initialize: async () => {
+          initialize: async ({ email }) => {
             const r = await carhireAPI.initiateCarHirePaystack({
+              email, // typed at checkout after the server answered email_required; else the registered email is used
               hireType, vehicleClass, startAt: new Date(startDate).toISOString(),
               durationHours, chauffeur,
               idempotencyKey: newIdempotencyKey('carhire-paystack'),
@@ -104,11 +105,16 @@ export default function CarHireHomeScreen() {
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
             <Text style={styles.section}>Hire type</Text>
-            <View style={styles.grid2}>
+            <View style={styles.hireGrid}>
               {HIRE_TYPES.map((h) => (
-                <View key={h.value} style={styles.gridHalf}>
-                  <SelectableCard title={h.label} subtitle={h.hint} icon={h.icon} selected={hireType === h.value} onPress={() => setHireType(h.value)} />
-                </View>
+                <HireTypeCard
+                  key={h.value}
+                  title={h.label}
+                  hint={h.hint}
+                  icon={h.icon}
+                  selected={hireType === h.value}
+                  onPress={() => setHireType(h.value)}
+                />
               ))}
             </View>
 
@@ -196,8 +202,7 @@ const styles = StyleSheet.create({
   section: { ...Typography.labelLg, color: Colors.onSurface, marginTop: Spacing.md },
   sectionHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: -2 },
   vehicleList: { gap: Spacing.md, marginTop: Spacing.xs },
-  grid2: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  gridHalf: { width: '48.5%' },
+  hireGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.xs },
   list: { gap: Spacing.sm },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
   stepBtn: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: Colors.outlineVariant },

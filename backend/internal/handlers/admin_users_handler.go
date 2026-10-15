@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
@@ -14,6 +15,7 @@ import (
 	"spotlight/backend/internal/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type AdminUsersHandler struct {
@@ -24,6 +26,12 @@ type AdminUsersHandler struct {
 	// sessionsEnabled mirrors FEATURE_SESSION_HARDENING_ENABLED (deny/503 when off).
 	sessions        services.SessionService
 	sessionsEnabled bool
+	// membership / modulesEnabled back the read-only per-user module membership
+	// view (see admin_user_modules.go); modulesTimeout overrides the per-query cap
+	// (zero = overviewQueryTimeout).
+	membership     membershipQuerier
+	modulesEnabled bool
+	modulesTimeout time.Duration
 }
 
 func NewAdminUsersHandler(svc services.RBACService, audit services.AuditService) *AdminUsersHandler {
@@ -100,7 +108,41 @@ func (h *AdminUsersHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
 		return
 	}
+	// Enrich only after the scope check so out-of-scope requests never trigger extra reads.
+	if e, ok := h.svc.(services.AdminUserEnricher); ok {
+		row = e.EnrichAdminUser(c.Request.Context(), row)
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "user": row})
+}
+
+// Roles returns a user's active role slugs. Read-only; gated upstream by
+// users.view. Runs the same object-level scope check as Get so a scoped admin
+// cannot enumerate roles of users outside their scope.
+func (h *AdminUsersHandler) Roles(c *gin.Context) {
+	userID := c.Param("id")
+	if _, err := uuid.Parse(userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid user id"})
+		return
+	}
+	target, err := h.svc.GetAdminUser(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "user not found"})
+		return
+	}
+	actor, _ := middleware.GetAuthenticatedUser(c)
+	if !h.canAccessUser(c.Request.Context(), actor.ID, target) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
+		return
+	}
+	roles, err := h.svc.GetUserRoles(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	if roles == nil {
+		roles = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "roles": roles})
 }
 
 func (h *AdminUsersHandler) Update(c *gin.Context) {

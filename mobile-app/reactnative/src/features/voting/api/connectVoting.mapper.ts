@@ -46,6 +46,7 @@ export interface BackendContest {
   total_votes?: number;
   rules_text?: string;
   banner_image_url?: string;
+  logo_url?: string;
 }
 
 /**
@@ -88,6 +89,7 @@ export function mapContest(
     paidVotingEnabled: (raw.paid_vote_kobo ?? 0) > 0,
     rulesText: raw.rules_text || undefined,
     bannerImage: raw.banner_image_url || undefined,
+    logoImage: raw.logo_url || undefined,
   };
 }
 

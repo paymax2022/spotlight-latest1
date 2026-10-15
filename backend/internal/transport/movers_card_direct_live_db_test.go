@@ -130,7 +130,7 @@ func TestLiveDB_MoverAcceptCardDirect_SkipsTierGate_BalancedExternalEscrow_Amoun
 		t.Fatalf("QuoteMoverAcceptance = %d %s %v; the amount must be the accepted bid", amt, pricing, err)
 	}
 	before := riderWalletBalance(t, ctx, pool, customer)
-	key := "moversorder:mvcd-" + uuid.New().String()
+	key := "moversorder-mvcd-" + uuid.New().String()
 	id, err := svc.AcceptMoverBidPaystackFunded(ctx, customer, moverReq(jobID, bids[0]), key, amt, pricing)
 	if err != nil || id != jobID {
 		t.Fatalf("card-direct must succeed for a Tier-0 customer: %q %v", id, err)
@@ -182,7 +182,7 @@ func TestLiveDB_MoverAcceptCardDirect_AmountMismatch_NothingWritten(t *testing.T
 	jobID, bids, _ := seedMoverJob(t, ctx, svc, pool, customer, 4_500_000)
 	amt, pricing, _ := svc.QuoteMoverAcceptance(ctx, customer, moverReq(jobID, bids[0]))
 	for _, wrong := range []int64{amt - 1, amt + 1, 0, -amt} {
-		key := "moversorder:mvcd-mm-" + uuid.New().String()
+		key := "moversorder-mvcd-mm-" + uuid.New().String()
 		_, err := svc.AcceptMoverBidPaystackFunded(ctx, customer, moverReq(jobID, bids[0]), key, wrong, pricing)
 		wantCoded(t, err, http.StatusConflict, CodeAmountMismatch)
 		if n := settlementsForKey(t, ctx, pool, key); n != 0 {
@@ -239,7 +239,7 @@ func TestLiveDB_MoverAcceptCardDirect_StateChangedBeforeBook_RefusedNothingEscro
 			if c.caller != nil {
 				payer = c.caller(customer)
 			}
-			key := "moversorder:mvcd-st-" + uuid.New().String()
+			key := "moversorder-mvcd-st-" + uuid.New().String()
 			if _, err := svc.AcceptMoverBidPaystackFunded(ctx, payer, moverReq(jobID, bids[0]), key, amt, pricing); err == nil {
 				t.Fatal("Book must refuse: the job/bid is no longer what was charged for")
 			}
@@ -289,7 +289,7 @@ func TestLiveDB_MoverAcceptCardDirect_ReplayBooksOnce_FindIsPayerScoped(t *testi
 	svc, _, customer := paystackRideFixture(t, ctx, pool, 0)
 	jobID, bids, _ := seedMoverJob(t, ctx, svc, pool, customer, 4_500_000)
 	amt, pricing, _ := svc.QuoteMoverAcceptance(ctx, customer, moverReq(jobID, bids[0]))
-	key := "moversorder:mvcd-replay-" + uuid.New().String()
+	key := "moversorder-mvcd-replay-" + uuid.New().String()
 	a, err := svc.AcceptMoverBidPaystackFunded(ctx, customer, moverReq(jobID, bids[0]), key, amt, pricing)
 	if err != nil {
 		t.Fatal(err)
@@ -308,7 +308,7 @@ func TestLiveDB_MoverAcceptCardDirect_ReplayBooksOnce_FindIsPayerScoped(t *testi
 	if _, found, _ := svc.FindMoverAcceptanceByIdempotencyKey(ctx, uuid.New().String(), key); found {
 		t.Error("Find must be scoped to the payer")
 	}
-	if _, found, _ := svc.FindMoverAcceptanceByIdempotencyKey(ctx, customer, "moversorder:nope-"+uuid.New().String()); found {
+	if _, found, _ := svc.FindMoverAcceptanceByIdempotencyKey(ctx, customer, "moversorder-nope-"+uuid.New().String()); found {
 		t.Error("an unknown key must not be found")
 	}
 }
@@ -321,7 +321,7 @@ func TestLiveDB_MoverAcceptCardDirect_ReplayOverRefundedOrForeignSettlement_Book
 	amt, pricing, _ := svc.QuoteMoverAcceptance(ctx, customer, moverReq(jobID, bids[0]))
 
 	// refunded: an escrow for this key already exists and was reversed.
-	keyR := "moversorder:mvcd-ref-" + uuid.New().String()
+	keyR := "moversorder-mvcd-ref-" + uuid.New().String()
 	sett, err := svc.settlement.EscrowExternal(ctx, customer, "mover:"+jobID, keyR, "transport", amt)
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +337,7 @@ func TestLiveDB_MoverAcceptCardDirect_ReplayOverRefundedOrForeignSettlement_Book
 	}
 
 	// foreign payer's settlement under the same key.
-	keyF := "moversorder:mvcd-for-" + uuid.New().String()
+	keyF := "moversorder-mvcd-for-" + uuid.New().String()
 	stranger := uuid.New().String()
 	pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2)`, stranger, stranger+"@mv.test")
 	testsupport.CleanupUser(t, pool, stranger)
@@ -349,7 +349,7 @@ func TestLiveDB_MoverAcceptCardDirect_ReplayOverRefundedOrForeignSettlement_Book
 	}
 
 	// wallet-funded settlement under the same key.
-	keyW := "moversorder:mvcd-wal-" + uuid.New().String()
+	keyW := "moversorder-mvcd-wal-" + uuid.New().String()
 	testsupport.SetKycTier(t, ctx, pool, customer, testsupport.KycTierUnlimited)
 	if _, err := svc.settlement.Escrow(ctx, customer, "mover:"+jobID, keyW, "transport", amt); err != nil {
 		t.Fatal(err)
@@ -385,7 +385,7 @@ func TestLiveDB_MoverAcceptCardDirect_FailureAfterEscrow_ReversesEscrowWhenNoJob
 		_, _ = pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS `+fn+`()`)
 	})
 
-	key := "moversorder:mvcd-fail-" + uuid.New().String()
+	key := "moversorder-mvcd-fail-" + uuid.New().String()
 	if _, err := svc.AcceptMoverBidPaystackFunded(ctx, customer, moverReq(jobID, bids[0]), key, amt, pricing); err == nil {
 		t.Fatal("the injected failure must surface")
 	}
@@ -415,7 +415,7 @@ func TestLiveDB_MoverAcceptCardDirect_TwoChargesOneJob_ExactlyOneBooks(t *testin
 	jobID, bids, _ := seedMoverJob(t, ctx, svc, pool, customer, 4_500_000)
 	amt, pricing, _ := svc.QuoteMoverAcceptance(ctx, customer, moverReq(jobID, bids[0]))
 
-	keys := []string{"moversorder:mvcd-race-a-" + uuid.NewString(), "moversorder:mvcd-race-b-" + uuid.NewString()}
+	keys := []string{"moversorder-mvcd-race-a-" + uuid.NewString(), "moversorder-mvcd-race-b-" + uuid.NewString()}
 	errs := make([]error, 2)
 	var wg sync.WaitGroup
 	for i := range keys {
@@ -481,7 +481,7 @@ func cardFundedMove(t *testing.T, ctx context.Context, svc *Service, pool *pgxpo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AcceptMoverBidPaystackFunded(ctx, customer, moverReq(jobID, bids[0]), "moversorder:mvcd-c-"+uuid.NewString(), amt, pricing); err != nil {
+	if _, err := svc.AcceptMoverBidPaystackFunded(ctx, customer, moverReq(jobID, bids[0]), "moversorder-mvcd-c-"+uuid.NewString(), amt, pricing); err != nil {
 		t.Fatal(err)
 	}
 	return jobID

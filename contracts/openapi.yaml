@@ -1775,12 +1775,23 @@ components:
         venue: { type: string, nullable: true }
         state:
           type: string
-          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, CLOSED, SUSPENDED]
+          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED]
         category: { type: string, nullable: true, description: "Discovery filter, e.g. music/tech/sports/comedy/faith" }
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
         fee_bps: { type: integer, description: "Platform fee in basis points on vendor settlement (0-10000)" }
         created_at: { type: string, format: date-time }
+
+    EventPatch:
+      description: Partial organiser edit (PATCH /events/{id}); every field optional, snake_case.
+      type: object
+      properties:
+        title: { type: string }
+        description: { type: string }
+        venue: { type: string }
+        category: { type: string }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
 
     EventSummary:
       description: Lightweight discovery-feed projection returned by GET /events.
@@ -1791,7 +1802,7 @@ components:
         venue: { type: string, nullable: true }
         state:
           type: string
-          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, CLOSED, SUSPENDED]
+          enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED]
         category: { type: string, nullable: true }
         starts_at: { type: string, format: date-time }
         ends_at: { type: string, format: date-time }
@@ -1808,6 +1819,48 @@ components:
         capacity: { type: integer, description: "0 = unlimited" }
         sold: { type: integer }
         active: { type: boolean }
+        description: { type: string, nullable: true }
+        sales_start_at: { type: string, format: date-time, nullable: true }
+        sales_end_at: { type: string, format: date-time, nullable: true }
+        invite_only: { type: boolean }
+
+    TierPatch:
+      description: Partial organiser edit of a tier (PATCH /events/{id}/tiers/{tierId}); every field optional, snake_case.
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        price_kobo: { type: integer, format: int64, minimum: 0 }
+        capacity: { type: integer, minimum: 0, description: "0 = unlimited" }
+        active: { type: boolean }
+        invite_only: { type: boolean }
+        sales_start_at: { type: string, format: date-time }
+        sales_end_at: { type: string, format: date-time }
+
+    EventTeamMember:
+      description: A per-event team-role grant (snake_case).
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        handle: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [MANAGER, FINANCE] }
+        granted_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    PromoPatch:
+      description: Partial organiser edit of a promo (PATCH /events/{id}/promos/{promoId}); every field optional, snake_case.
+      type: object
+      properties:
+        code: { type: string }
+        percent_off: { type: integer, minimum: 0, maximum: 100 }
+        amount_off_kobo: { type: integer, format: int64, minimum: 0 }
+        tier_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        per_user_limit: { type: integer, minimum: 0 }
+        max_uses: { type: integer, minimum: 0, description: "0 = unlimited" }
+        active: { type: boolean }
 
     PromoCode:
       type: object
@@ -1820,6 +1873,11 @@ components:
         max_uses: { type: integer, description: "0 = unlimited" }
         used: { type: integer }
         active: { type: boolean }
+        tier_id: { type: string, format: uuid, nullable: true }
+        amount_off_kobo: { type: integer, format: int64 }
+        starts_at: { type: string, format: date-time, nullable: true }
+        ends_at: { type: string, format: date-time, nullable: true }
+        per_user_limit: { type: integer, description: "0 = unlimited" }
 
     EventOrder:
       type: object
@@ -4602,6 +4660,92 @@ paths:
   # ║ Every mutation is audited via audit_service. Composes (not duplicates) ║
   # ║ the #19 session surface for the read-only per-user session view.       ║
   # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/admin/users/{id}:
+    get:
+      operationId: getAdminUser
+      summary: Get one admin-user record (enriched)
+      description: >-
+        Requires `users.view`, and the target must be within the caller's scope.
+        Unlike the list/export endpoints, this response also carries best-effort
+        enrichment fields (photo, verification timestamps, last login, referral
+        code); each is omitted when unavailable.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      firstName: { type: string }
+                      lastName: { type: string }
+                      email: { type: string }
+                      phone: { type: string }
+                      userType: { type: string }
+                      status: { type: string }
+                      profileCompleted: { type: boolean }
+                      state: { type: string }
+                      country: { type: string }
+                      programId: { type: string }
+                      contestId: { type: string }
+                      schoolId: { type: string }
+                      createdAt: { type: string }
+                      avatarUrl: { type: string, description: "user_profiles.avatar_url, else metadata.profilePhotoUrl" }
+                      lastLoginAt: { type: string, format: date-time }
+                      emailVerifiedAt: { type: string, format: date-time }
+                      phoneVerifiedAt: { type: string, format: date-time }
+                      referralCode: { type: string }
+                      referredBy: { type: string }
+        '403': { description: Target user is outside the caller's scope }
+        '404': { description: User not found }
+  /api/admin/users/{id}/modules:
+    get:
+      operationId: getAdminUserModules
+      summary: List every registry module with the user's membership status
+      description: |-
+        Read-only. Requires `users.view`, and the target must be within the
+        caller's scope. Gated by the FEATURE_ADMIN_USER_MODULES_ENABLED flag
+        (default OFF): the route answers 404 while the flag is off. A module
+        whose membership probe fails is reported with status `error` rather
+        than failing the whole response.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Module membership for the user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  modules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        group: { type: string }
+                        href: { type: string }
+                        status: { type: string, enum: [member, none, error] }
+                        count: { type: integer, format: int64 }
+                        since: { type: string }
+        '400': { description: id is not a UUID }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller lacks users.view or the target is outside the caller's scope }
+        '404': { description: "User not found, or the feature flag is off" }
   /api/admin/users/export:
     get:
       operationId: exportAdminUsers
@@ -4670,6 +4814,33 @@ paths:
                         error: { type: string, nullable: true }
         '400': { description: roleId and userIds are required }
         '403': { description: Missing users.roles.assign permission }
+  /api/admin/users/{id}/roles:
+    get:
+      operationId: getUserRoles
+      summary: List a user's active role slugs
+      description: >-
+        Read-only. Requires `users.view`, and the target user must be within the
+        caller's scope (same object-level check as GET /api/admin/users/{id}).
+        Returns an empty array when the user has no roles.
+      tags: [AdminUsers]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Active role slugs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roles]
+                properties:
+                  success: { type: boolean }
+                  roles: { type: array, items: { type: string } }
+        '400': { description: id is not a UUID }
+        '403': { description: "Missing users.view permission, or the target user is outside the caller's scope" }
+        '404': { description: User not found }
+        '500': { description: Failed to load roles }
   /api/admin/users/{id}/roles/bulk:
     post:
       operationId: bulkAssignRolesToUser
@@ -8191,7 +8362,7 @@ paths:
           description: Optional category filter (e.g. music, tech, sports, comedy, faith)
         - name: state
           in: query
-          schema: { type: string, enum: [DRAFT, SUBMITTED, APPROVED, LIVE, CLOSED, SUSPENDED] }
+          schema: { type: string, enum: [DRAFT, SUBMITTED, APPROVED, LIVE, PAUSED, CLOSED, CANCELLED, SUSPENDED] }
           description: Optional state filter. Non-public states are only honoured for the caller's own organised events.
         - name: limit
           in: query
@@ -8262,6 +8433,118 @@ paths:
                   data: { $ref: '#/components/schemas/Event' }
         '404': { description: "Event not found, or in a non-public state and the caller is not the organiser (existence is never leaked)" }
 
+    patch:
+      operationId: patchEvent
+      summary: Organiser partially edits an event (title/description/venue/category/times); locked once edits are disallowed
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventPatch' }
+      responses:
+        '200':
+          description: The updated event
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/Event' }
+        '400': { description: Invalid body or invalid times (ends_at must be after starts_at) }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is edit-locked in its current state }
+
+  /events/{id}/duplicate:
+    post:
+      operationId: duplicateEvent
+      summary: Organiser duplicates an event into a new DRAFT (owner, or any publicly visible event)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201':
+          description: New event summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventSummary' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
+  /events/{id}/pause:
+    post:
+      operationId: pauseEvent
+      summary: Organiser pauses ticket sales (LIVE -> PAUSED)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: State transitioned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is not in a state that allows this transition }
+
+  /events/{id}/resume:
+    post:
+      operationId: resumeEvent
+      summary: Organiser resumes ticket sales (PAUSED -> LIVE)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: State transitioned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is not in a state that allows this transition }
+
+  /events/{id}/cancel:
+    post:
+      operationId: cancelEvent
+      summary: Organiser cancels the event; buyers refunded 90/10 via reversing ledger entries (idempotent)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '202':
+          description: Cancellation accepted; refunds processed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '400': { description: "Missing Idempotency-Key or invalid body" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+        '409': { description: Event is already closed or cancelled }
+
   /events/{id}/submit:
     post:
       operationId: submitEvent
@@ -8329,6 +8612,10 @@ paths:
                 name: { type: string }
                 price_kobo: { type: integer, format: int64, minimum: 0 }
                 capacity: { type: integer, minimum: 0, description: "0 = unlimited" }
+                description: { type: string }
+                sales_start_at: { type: string, format: date-time }
+                sales_end_at: { type: string, format: date-time }
+                invite_only: { type: boolean }
       responses:
         '200':
           description: Tier created
@@ -8340,6 +8627,35 @@ paths:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/TicketTier' }
         '404': { description: Event not found }
+
+  /events/{id}/tiers/{tierId}:
+    patch:
+      operationId: patchTicketTier
+      summary: Organiser partially edits a ticket tier; price/capacity are locked once tickets are sold
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: tierId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TierPatch' }
+      responses:
+        '200':
+          description: The updated tier
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/TicketTier' }
+        '400': { description: Invalid body or invalid sales window (sales_end_at must be after sales_start_at) }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or tier not found }
+        '409': { description: Tier is locked (price/capacity cannot change after sales) }
 
   /events/{id}/promos:
     post:
@@ -8360,6 +8676,11 @@ paths:
                 code: { type: string }
                 percent_off: { type: integer, minimum: 0, maximum: 100 }
                 max_uses: { type: integer, minimum: 0, description: "0 = unlimited" }
+                tier_id: { type: string, format: uuid, description: "Scope the promo to one tier of this event" }
+                amount_off_kobo: { type: integer, format: int64, minimum: 0, description: "Fixed-amount discount in kobo" }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                per_user_limit: { type: integer, minimum: 0, description: "0 = unlimited" }
       responses:
         '200':
           description: Promo code created (new version if code already existed)
@@ -8370,6 +8691,113 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/PromoCode' }
+        '404': { description: Event not found }
+
+  /events/{id}/promos/{promoId}:
+    patch:
+      operationId: patchPromoCode
+      summary: Organiser partially edits a promo code; locked once the promo has been used
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: promoId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoPatch' }
+      responses:
+        '200':
+          description: The updated promo code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/PromoCode' }
+        '400': { description: "Invalid body, discount, or window" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or promo not found }
+        '409': { description: Promo is locked (already used) }
+        '422': { description: Promo not applicable (e.g. tier_id does not belong to this event) }
+
+  /events/{id}/team:
+    post:
+      operationId: addEventTeamMember
+      summary: Organiser grants a team role to a user (owner only)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_handle, role]
+              properties:
+                user_handle: { type: string, description: "Handle of the user to grant the role to" }
+                role:
+                  type: string
+                  enum: [MANAGER, FINANCE]
+                  description: "Currently only MANAGER is accepted; FINANCE is reserved and not yet active (returns 400)"
+      responses:
+        '201':
+          description: The granted team member
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/EventTeamMember' }
+        '400': { description: "Invalid body, role not available, unknown handle, or granting the organiser" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+    get:
+      operationId: listEventTeam
+      summary: Organiser lists the event's team members (owner only)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The event's team members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventTeamMember' }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
+  /events/{id}/team/{userId}:
+    delete:
+      operationId: removeEventTeamMember
+      summary: Organiser revokes a team member (owner only)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Team member revoked (idempotent — also 200 when the user holds no such grant)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+        '403': { description: Caller is not the organiser }
         '404': { description: Event not found }
 
   /events/{id}/vendors:
@@ -8418,6 +8846,119 @@ paths:
                 properties:
                   success: { type: boolean }
                   data: { $ref: '#/components/schemas/Vendor' }
+        '404': { description: Event not found }
+
+  /events/{id}/comps:
+    post:
+      operationId: issueEventComps
+      summary: Organiser issues complimentary tickets to recipients (handles or cashtags)
+      description: >-
+        Issues zero-price comp tickets from the given tier to each recipient.
+        Recipients are handles or cashtags. Replays with the same
+        Idempotency-Key return the original result.
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tier_id, recipients]
+              properties:
+                tier_id: { type: string, format: uuid }
+                recipients:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+                  description: "Recipient handles or cashtags"
+                note: { type: string, description: "Optional message shown to recipients" }
+      responses:
+        '201':
+          description: Comp tickets issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Ticket' }
+        '400': { description: "Missing Idempotency-Key, invalid body, or unresolvable recipient" }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event or tier not found }
+        '409': { description: "Tier is sold out, or the event is closed or cancelled" }
+
+  /events/{id}/attendees:
+    get:
+      operationId: listEventAttendees
+      summary: Organiser lists event attendees as JSON or CSV
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: format
+          in: query
+          required: false
+          description: "Response format; json is the default"
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        '200':
+          description: Attendee list (JSON by default or a CSV download when format=csv)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+            text/csv:
+              schema: { type: string }
+        '403': { description: Caller is not the organiser }
+        '404': { description: Event not found }
+
+  /events/{id}/announcements:
+    post:
+      operationId: sendEventAnnouncement
+      summary: Organiser sends an announcement to all ticket holders
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                subject: { type: string, description: "Optional; defaults to \"Event update\" when empty" }
+                body: { type: string }
+      responses:
+        '202':
+          description: Announcement accepted for delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      recipient_count: { type: integer, minimum: 0 }
+        '400': { description: "Missing Idempotency-Key or invalid body" }
+        '403': { description: Caller is not the organiser }
         '404': { description: Event not found }
 
   /events/{id}/purchase:
@@ -12658,11 +13199,65 @@ paths:
                         items: { type: string }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/finance/admin/kyc/users/{id}:
+    get:
+      operationId: admKycUserSnapshot
+      summary: Per-user KYC snapshot (tier, status, open review case)
+      description: Requires the finance.admin.kyc permission. `openCaseId` is null when the user has no open review case.
+      tags: [KYCAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: KYC snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tier, status, openCaseId]
+                properties:
+                  tier: { type: integer }
+                  status: { type: string }
+                  openCaseId: { type: string, format: uuid, nullable: true }
+        '400': { description: id is not a UUID }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { description: Failed to load KYC profile or review case }
+  /api/finance/admin/referrals/{user_id}/code:
+    get:
+      operationId: getAdminReferralCode
+      summary: Read a user's referral code (admin, read-only)
+      description: "Requires the referral.admin.case permission. Pure read: never mints or converges a code. The first-minted code wins when finance_referral_codes and referral_links diverge; falls back to platform_users.referral_code."
+      tags: [Referrals]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Referral code and the table it was read from
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, source]
+                properties:
+                  code: { type: string }
+                  source: { type: string, enum: [finance_referral_codes, referral_links, platform_users] }
+        '400': { description: "user_id is not a UUID" }
+        '401': { description: "Missing or invalid bearer token" }
+        '403': { description: "Missing referral.admin.case permission" }
+        '404': { description: "User has no referral code" }
+        '500': { description: "Failed to read the referral code" }
   /api/finance/admin/kyc/cases/{id}/approve:
     post:
       operationId: admKycApproveCase
       summary: Approve a case (manual override; audited)
-      description: Requires the finance.admin.kyc permission. Audited.
+      description: >-
+        Requires the finance.admin.kyc permission. A non-empty `reason` (max 500
+        characters) is mandatory and is recorded in the durable audit trail along with
+        the deciding admin. A reviewer cannot decide a case on their own verification
+        (403).
       tags: [KYCAdmin]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -12675,20 +13270,25 @@ paths:
               type: object
               required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: Case approved
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
+        '400': { description: "Missing, blank or over-long reason" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/cases/{id}/reject:
     post:
       operationId: admKycRejectCase
       summary: Reject a case (manual override; audited)
-      description: Requires the finance.admin.kyc permission. Audited.
+      description: >-
+        Requires the finance.admin.kyc permission. A non-empty `reason` (max 500
+        characters) is mandatory and is recorded in the durable audit trail along with
+        the deciding admin. A reviewer cannot decide a case on their own verification
+        (403).
       tags: [KYCAdmin]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -12701,13 +13301,14 @@ paths:
               type: object
               required: [reason]
               properties:
-                reason: { type: string }
+                reason: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: Case rejected
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerificationSession' }
+        '400': { description: "Missing, blank or over-long reason" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/finance/admin/kyc/routing-rules:
@@ -15918,6 +16519,131 @@ paths:
         '400': { description: Missing Idempotency-Key header }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Verified KYC tier below the withdrawal floor }
+  /api/restaurant/admin/menu-taxonomy/categories:
+    get:
+      operationId: adminListMenuTaxonomy
+      summary: Full menu taxonomy tree, including inactive rows and usage counts
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Tree of categories with sub-categories }
+        '403': { description: Missing restaurant.manage }
+    post:
+      operationId: adminCreateMenuCategory
+      summary: Create a top-level category or a sub-category (slug derived from name)
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+        '409': { description: Name or slug already exists under this parent }
+        '422': { description: 'Invalid kind, or a third level was requested' }
+  /api/restaurant/admin/menu-taxonomy/categories/reorder:
+    patch:
+      operationId: adminReorderMenuCategories
+      summary: Set sort_order for many categories in one transaction
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Reordered }
+        '404': { description: A category id does not exist }
+  /api/restaurant/admin/menu-taxonomy/categories/{id}:
+    patch:
+      operationId: adminUpdateMenuCategory
+      summary: Rename, change kind or icon, or activate/deactivate. Slug never changes.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+    delete:
+      operationId: adminDeleteMenuCategory
+      summary: Delete a custom category with no children and no items. Default rows are refused.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Deleted }
+        '404': { description: Not found }
+        '409': { description: 'Default row (use deactivate) or in use (body.count gives the dependants)' }
+  /api/restaurant/admin/menu-taxonomy/categories/seed-defaults:
+    post:
+      operationId: adminSeedMenuDefaults
+      summary: Insert any missing default categories and cuisines. Never overwrites an existing row.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Counts of inserted, skipped and duplicate rows' }
+  /api/restaurant/admin/menu-taxonomy/cuisines:
+    get:
+      operationId: adminListCuisines
+      summary: All cuisines, including inactive
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Cuisines }
+    post:
+      operationId: adminCreateCuisine
+      summary: Create a cuisine
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+        '409': { description: Slug already exists }
+  /api/restaurant/admin/menu-taxonomy/cuisines/{id}:
+    patch:
+      operationId: adminUpdateCuisine
+      summary: Rename, reorder, or activate/deactivate. Cuisines are never deleted.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Updated }
+        '404': { description: Not found }
+  /api/restaurant/admin/menu-taxonomy/backfill:
+    post:
+      operationId: adminBackfillMenuCategories
+      summary: Map legacy item categories onto the taxonomy. dry_run defaults to true.
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: dry_run, in: query, required: false, schema: { type: boolean, default: true } }
+      responses:
+        '200': { description: 'Groups, with counts of mapped and unmapped items. A dry run writes nothing.' }
+  /api/restaurant/admin/menu-taxonomy/needs-review:
+    get:
+      operationId: adminMenuNeedsReview
+      summary: Labels whose items still have no taxonomy category
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Groups of label and item count, largest first' }
+  /api/restaurant/admin/menu-taxonomy/needs-review/remap:
+    patch:
+      operationId: adminRemapMenuLabel
+      summary: Point every unmapped item with a label at one category, in one call
+      tags: [Restaurant Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Count of items changed' }
+        '404': { description: 'Category does not exist or is inactive' }
+        '422': { description: 'Category is not top-level, or the sub-category does not belong to it' }
+  /api/restaurant/menu-taxonomy/categories:
+    get:
+      operationId: ownerListMenuTaxonomy
+      summary: Active category tree, read-only for owners
+      tags: [Restaurant]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Active tree }
+  /api/restaurant/menu-taxonomy/cuisines:
+    get:
+      operationId: ownerListCuisines
+      summary: Active cuisines, read-only
+      tags: [Restaurant]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Active cuisines }
   /api/v1/referrals/me/dashboard:
     get:
       operationId: getMyReferralDashboard
@@ -16123,6 +16849,46 @@ paths:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
         '400': { description: reason is required }
         '403': { description: Missing referral.admin.case (Support Lead) }
+  /api/v1/admin/referrals/{userId}/referred-by:
+    get:
+      operationId: getReferralReferredBy
+      summary: Who referred this user (admin user profile)
+      description: >
+        Served by the console at GET /api/finance/admin/referrals/{userId}/referred-by.
+        Every user is meant to have a referrer: the owner of the code they entered, or the
+        house (Admin) account when they entered none. A user with no attribution row returns
+        attributed=false (a background sweep then connects them to the house account); no
+        referrer is ever invented.
+      tags: [Referral Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Attribution
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, attributed, is_house]
+                properties:
+                  user_id: { type: string, format: uuid }
+                  attributed: { type: boolean }
+                  is_house: { type: boolean, description: 'True when the referrer is the house (Admin) account, not a person' }
+                  attribution_id: { type: string, format: uuid }
+                  attribution_type: { type: string, enum: [code, deeplink, context, regional_house, global_house] }
+                  status: { type: string, enum: [grace, locked] }
+                  code_used: { type: string }
+                  attributed_at: { type: string, format: date-time }
+                  referrer_id: { type: string, format: uuid }
+                  referrer_name: { type: string }
+                  referrer_email: { type: string }
+                  referrer_code: { type: string }
+                  house_account_id: { type: string, format: uuid }
+                  house_code: { type: string }
+                  house_owner_id: { type: string, format: uuid }
+                  house_owner_name: { type: string }
+        '403': { description: Missing referral.admin.case }
   /api/v1/admin/referrals/{referrerId}/code:
     put:
       operationId: setReferralReferrerCode

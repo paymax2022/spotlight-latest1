@@ -1,0 +1,209 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Health — Veterinary (owner-facing listings)
+  version: 1.0.0
+  description: >
+    Owner-facing vet listings served by the Go backend under
+    /api/finance/health/vet (registered in backend/internal/app/health_vet_routes.go).
+    A vet is listed only when the provider is APPROVED and discoverable, and the
+    vet's profile is published and verification-approved. Unlisted and missing
+    vets both answer 404. Listings never carry a licence number.
+servers:
+  - url: /api/finance/health/vet
+    description: Same-origin API base (mounted under the finance group)
+paths:
+  /vets:
+    get:
+      operationId: listVets
+      summary: List listed vets, nearest first when lat and lng are given
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: lat, in: query, required: false, schema: { type: number } }
+        - { name: lng, in: query, required: false, schema: { type: number } }
+        - { name: radius_m, in: query, required: false, schema: { type: number, default: 25000 } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+        - { name: type, in: query, required: false, schema: { type: string, enum: [tele, home, clinic] } }
+        - { name: species, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Listed vets (at most 100)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, vets]
+                properties:
+                  success: { type: boolean }
+                  vets:
+                    type: array
+                    items: { $ref: '#/components/schemas/VetListing' }
+        '401': { description: Not authenticated }
+        '500': { description: Internal error }
+  /vets/{id}:
+    get:
+      operationId: getVet
+      summary: One listed vet
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The vet
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, vet]
+                properties:
+                  success: { type: boolean }
+                  vet: { $ref: '#/components/schemas/VetListing' }
+        '400': { description: id is not a uuid }
+        '401': { description: Not authenticated }
+        '404': { description: "Not listed, or does not exist: the same answer for both" }
+  /vets/{id}/availability:
+    get:
+      operationId: getVetAvailability
+      summary: Bookable slots for one listed vet, in the clinic calendar (Africa/Lagos)
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: days, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 14, default: 14 } }
+      responses:
+        '200':
+          description: Days with at least one open slot, nearest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, days]
+                properties:
+                  success: { type: boolean }
+                  days:
+                    type: array
+                    items: { $ref: '#/components/schemas/AvailabilityDay' }
+        '400': { description: id is not a uuid }
+        '401': { description: Not authenticated }
+        '404': { description: "Not listed, or does not exist: the same answer for both" }
+  /provider/availability:
+    get:
+      operationId: getProviderAvailability
+      summary: The signed-in vet's own weekly working hours
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Working windows
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, blocks]
+                properties:
+                  success: { type: boolean }
+                  blocks:
+                    type: array
+                    items: { $ref: '#/components/schemas/HoursWindow' }
+        '401': { description: Not authenticated }
+        '404': { description: The account has no vet profile }
+    put:
+      operationId: saveProviderAvailability
+      summary: Replace the signed-in vet's weekly working hours (all or nothing)
+      tags: [Health Vet]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blocks]
+              properties:
+                blocks:
+                  type: array
+                  items: { $ref: '#/components/schemas/HoursWindow' }
+      responses:
+        '200':
+          description: The saved windows, with their ids
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, blocks]
+                properties:
+                  success: { type: boolean }
+                  blocks:
+                    type: array
+                    items: { $ref: '#/components/schemas/HoursWindow' }
+        '400': { description: The body is not valid JSON in the expected shape }
+        '401': { description: Not authenticated }
+        '404': { description: The account has no vet profile }
+        '422': { description: "A window is invalid (day, type, time, length, or overlap on the same day); the message says which" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    HoursWindow:
+      type: object
+      required: [day, start, end, type, enabled]
+      properties:
+        id: { type: string, description: Assigned by the server on save }
+        day: { type: string, enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun] }
+        start: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: "HH:MM" }
+        end: { type: string, pattern: '^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$', description: "HH:MM; 24:00 allowed" }
+        type: { type: string, enum: [tele, home, clinic] }
+        enabled: { type: boolean, description: "Disabled windows are kept but offer no slots" }
+    AvailabilitySlot:
+      type: object
+      required: [id, start, label, type, available]
+      properties:
+        id: { type: string }
+        start: { type: string, format: date-time, description: "UTC" }
+        label: { type: string, description: "HH:MM in the clinic calendar" }
+        type: { type: string, enum: [tele, home, clinic] }
+        available: { type: boolean }
+    AvailabilityDay:
+      type: object
+      required: [date, label, slots]
+      properties:
+        date: { type: string, format: date, description: "YYYY-MM-DD in the clinic calendar" }
+        label: { type: string, description: "for example Fri 16 Oct" }
+        slots:
+          type: array
+          items: { $ref: '#/components/schemas/AvailabilitySlot' }
+    VetListing:
+      type: object
+      required: [id, name, credential, types, species, specialties, active]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        headline: { type: string, description: Empty until the profile carries one }
+        bio: { type: string }
+        credential:
+          type: object
+          required: [authority, status]
+          properties:
+            authority: { type: string, enum: [VCN] }
+            status: { type: string, enum: [verified] }
+        clinicName: { type: string }
+        address: { type: string }
+        distanceM: { type: number, description: Present when lat and lng are given }
+        lat: { type: number }
+        lng: { type: number }
+        consultFeeKobo: { type: integer, format: int64, description: "Lowest active tele price, in kobo" }
+        homeVisitFeeKobo: { type: integer, format: int64, description: "Lowest active home price, in kobo" }
+        types:
+          type: array
+          items: { type: string, enum: [tele, home, clinic] }
+        species:
+          type: array
+          items: { type: string, enum: [dog, cat, bird, rabbit, reptile, other] }
+        specialties: { type: array, items: { type: string } }
+        rating: { type: number, description: Zero until reviews exist }
+        reviewCount: { type: integer, description: Zero until reviews exist }
+        availableNow: { type: boolean, description: False until availability exists }
+        active: { type: boolean }

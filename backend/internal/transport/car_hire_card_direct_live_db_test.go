@@ -114,7 +114,7 @@ func cardCarHire(t *testing.T, ctx context.Context, svc *Service, user string) (
 	if q.TotalKobo != total {
 		t.Fatalf("card quote %d differs from the wallet quote %d", total, q.TotalKobo)
 	}
-	key = "carhireorder:ch-" + uuid.NewString()
+	key = "carhireorder-ch-" + uuid.NewString()
 	id, err = svc.BookCarHirePaystackFundedFrozen(ctx, user, req, key, total, frozen)
 	if err != nil {
 		t.Fatalf("card-direct book: %v", err)
@@ -208,8 +208,8 @@ func TestCarHireQuote_RejectsNonPositiveFare_Overflow_PastStart_BadHireType(t *t
 }
 
 func TestExternalCarHireID_IsDeterministicPerKey(t *testing.T) {
-	a, b := externalCarHireID("carhireorder:k1-aaaaaaaa"), externalCarHireID("carhireorder:k1-aaaaaaaa")
-	if a != b || a == externalCarHireID("carhireorder:k2-aaaaaaaa") {
+	a, b := externalCarHireID("carhireorder-k1-aaaaaaaa"), externalCarHireID("carhireorder-k1-aaaaaaaa")
+	if a != b || a == externalCarHireID("carhireorder-k2-aaaaaaaa") {
 		t.Fatalf("id not a function of the key: %s %s", a, b)
 	}
 	if _, err := uuid.Parse(a); err != nil {
@@ -286,7 +286,7 @@ func TestLiveDB_BookCarHireCardDirect_AmountMismatchPlusMinusOne_WritesNothing(t
 		t.Fatal(err)
 	}
 	for _, wrong := range []int64{total - 1, total + 1, 0, -total} {
-		key := "carhireorder:chmm-" + uuid.NewString()
+		key := "carhireorder-chmm-" + uuid.NewString()
 		_, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, key, wrong, frozen)
 		wantCoded(t, err, 409, CodeAmountMismatch)
 		if countCarHireByKey(t, ctx, pool, key) != 0 || countSettlementsByKey(t, ctx, pool, key+":fare") != 0 || countSettlementsByKey(t, ctx, pool, key+":deposit") != 0 {
@@ -304,7 +304,7 @@ func TestLiveDB_BookCarHireCardDirect_ReplayBooksOnce_FindScopedToPayer(t *testi
 	svc, _, user := paystackRideFixture(t, ctx, pool, 0)
 	req := liveCarHireReq()
 	total, frozen, _ := svc.QuoteCarHireBookingFrozen(ctx, req)
-	key := "carhireorder:chrp-" + uuid.NewString()
+	key := "carhireorder-chrp-" + uuid.NewString()
 	a, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, key, total, frozen)
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestLiveDB_BookCarHireCardDirect_ReplayOverRefundedOrForeignSettlement_Refu
 		{"foreign payer deposit", func(k string) { seed(k, ":deposit", other, "external", "escrowed", q.DepositKobo) }},
 		{"wallet-funded deposit", func(k string) { seed(k, ":deposit", user, "wallet", "escrowed", q.DepositKobo) }},
 	} {
-		key := "carhireorder:chh2-" + uuid.NewString()
+		key := "carhireorder-chh2-" + uuid.NewString()
 		c.prepare(key)
 		if got, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, key, total, frozen); err == nil {
 			t.Errorf("%s: booked %s on a settlement that is not this user's live external escrow of this charge", c.name, got)
@@ -369,7 +369,7 @@ func TestLiveDB_BookCarHireCardDirect_DepositEscrowFails_FareReversedLedgerSide(
 	svc, _, user := paystackRideFixture(t, ctx, pool, 0)
 	req := liveCarHireReq()
 	total, frozen, _ := svc.QuoteCarHireBookingFrozen(ctx, req)
-	key := "carhireorder:chdf-" + uuid.NewString()
+	key := "carhireorder-chdf-" + uuid.NewString()
 	// A refunded settlement squats the DEPOSIT key: the deposit leg fails the H2
 	// replay check AFTER the fare was escrowed.
 	if _, err := pool.Exec(ctx, `INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key, funding_source)
@@ -397,8 +397,8 @@ func TestLiveDB_BookCarHireCardDirect_InsertFailure_ReversesBothEscrowsWhenNoBoo
 	svc, _, user := paystackRideFixture(t, ctx, pool, 0)
 	req := liveCarHireReq()
 	total, frozen, _ := svc.QuoteCarHireBookingFrozen(ctx, req)
-	k1 := "carhireorder:chin1-" + uuid.NewString()
-	k2 := "carhireorder:chin2-" + uuid.NewString()
+	k1 := "carhireorder-chin1-" + uuid.NewString()
+	k2 := "carhireorder-chin2-" + uuid.NewString()
 	first, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, k1, total, frozen)
 	if err != nil {
 		t.Fatal(err)
@@ -433,7 +433,7 @@ func TestLiveDB_BookCarHireCardDirect_FrozenPricing_ConfigDriftNoMismatch_Garbag
 		Config: PricingConfig{BaseFareKobo: 900_000, PerKMKobo: 10_000, MinFareKobo: 900_000},
 	})
 	want := int64(900_000+8*10_000) + 900_000
-	key := "carhireorder:chfz-" + uuid.NewString()
+	key := "carhireorder-chfz-" + uuid.NewString()
 	id, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, key, want, frozen)
 	if err != nil {
 		t.Fatalf("a charge priced from the frozen snapshot must book even though live pricing differs: %v", err)
@@ -445,14 +445,14 @@ func TestLiveDB_BookCarHireCardDirect_FrozenPricing_ConfigDriftNoMismatch_Garbag
 	}
 	// An inconsistent snapshot (its stated fare does not follow from its config) is refused.
 	bad, _ := json.Marshal(carHireFrozenPricing{DurationHours: 8, FareKobo: 1, DepositKobo: 1, Config: PricingConfig{BaseFareKobo: 900_000, PerKMKobo: 10_000, MinFareKobo: 900_000}})
-	if _, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, "carhireorder:chfzb-"+uuid.NewString(), want, bad); err == nil {
+	if _, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, "carhireorder-chfzb-"+uuid.NewString(), want, bad); err == nil {
 		t.Error("an inconsistent snapshot was accepted")
 	}
 	// Unreadable / zero-priced snapshots are refused, never silently re-priced or zero-booked.
-	if _, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, "carhireorder:chfzc-"+uuid.NewString(), want, json.RawMessage(`{not json`)); err == nil {
+	if _, err := svc.BookCarHirePaystackFundedFrozen(ctx, user, req, "carhireorder-chfzc-"+uuid.NewString(), want, json.RawMessage(`{not json`)); err == nil {
 		t.Error("garbage snapshot accepted")
 	}
-	key0 := "carhireorder:chfz0-" + uuid.NewString()
+	key0 := "carhireorder-chfz0-" + uuid.NewString()
 	_, err = svc.BookCarHirePaystackFundedFrozen(ctx, user, req, key0, 0, json.RawMessage(`{"durationHours":8,"config":{}}`))
 	wantCoded(t, err, 409, CodeAmountMismatch)
 	if countSettlementsByKey(t, ctx, pool, key0+":fare") != 0 {
@@ -851,7 +851,7 @@ func TestLiveDB_WalletBookCarHire_RejectsReservedPrefixAndBadHireType(t *testing
 	ctx := context.Background()
 	svc, _, user := paystackRideFixture(t, ctx, pool, 50_000_000)
 	testsupport.SetKycTier(t, ctx, pool, user, testsupport.KycTierUnlimited)
-	for _, k := range []string{"carhireorder:abc12345", "CARHIREORDER:abc12345", "parcelorder:abc12345"} {
+	for _, k := range []string{"carhireorder-abc12345", "CARHIREORDER:abc12345", "parcelorder-abc12345"} {
 		_, err := svc.BookCarHire(ctx, user, liveCarHireReq(), k)
 		wantCoded(t, err, 400, "INVALID_IDEMPOTENCY_KEY")
 		// body-key fallback too
@@ -999,10 +999,10 @@ func TestLiveDB_SweepCarHire_CancelledAndCompleted_FinishesStrandedCardRefunds_O
 // does when it starts refunding that settlement to the card.
 func seedPieceRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, payer, bookingID, settlementID, pieceStatus string) {
 	t.Helper()
-	ref := "carhireorder:piece-" + uuid.NewString()
+	ref := "carhireorder-piece-" + uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO public.transport_paystack_intents
 		(reference, domain, payer_id, request_json, amount_kobo, idempotency_key, status, entity_id)
-		VALUES ($1,'carhire',$2,'{}',1064000,$3,'confirmed',$4)`, ref, payer, ref[len("carhireorder:"):], bookingID); err != nil {
+		VALUES ($1,'carhire',$2,'{}',1064000,$3,'confirmed',$4)`, ref, payer, ref[len("carhireorder-"):], bookingID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -1180,7 +1180,7 @@ func TestLiveDB_ExtendCarHire_RejectsReservedPrefixKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := riderWalletBalance(t, ctx, pool, user)
-	for _, k := range []string{"carhireorder:abcdefgh", "PARCELORDER:abcdefgh"} {
+	for _, k := range []string{"carhireorder-abcdefgh", "PARCELORDER:abcdefgh"} {
 		_, err := svc.ExtendCarHire(ctx, id, user, 2, k)
 		wantCoded(t, err, 400, "INVALID_IDEMPOTENCY_KEY")
 	}

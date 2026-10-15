@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import Link from 'next/link';
 import type { AdminUser, AdminUserFilters } from '@/types/users';
 import {
   getAdminUser,
@@ -78,10 +79,11 @@ export default function AdminUsersPage() {
       const rows = await listAdminUsers(filters);
       setUsers(rows);
       setPage(1);
-    } catch {
+    } catch (err) {
       setErrored(true);
       setUsers([]);
-      toast.error('Failed to load users. Check your permissions and try again.');
+      const detail = err instanceof Error ? err.message : '';
+      toast.error(`Failed to load users${detail ? ` - ${detail}` : ''}. Check your permissions and try again.`);
     } finally {
       setLoading(false);
     }
@@ -98,8 +100,12 @@ export default function AdminUsersPage() {
         setSelected(null);
         return;
       }
-      const row = await getAdminUser(selectedId);
-      setSelected(row);
+      try {
+        setSelected(await getAdminUser(selectedId));
+      } catch (err) {
+        setSelected(null);
+        toast.error(err instanceof Error ? err.message : 'Loading user failed.');
+      }
     };
     void run();
   }, [selectedId]);
@@ -185,8 +191,13 @@ export default function AdminUsersPage() {
         return;
       }
       toast.success(`User ${label.toLowerCase()} succeeded.`);
-      const refreshed = await getAdminUser(selected.id);
-      setSelected(refreshed);
+      // The action already succeeded; a failed refresh must not be reported as
+      // a failed action.
+      try {
+        setSelected(await getAdminUser(selected.id));
+      } catch {
+        toast.error('The change was applied but the profile could not be reloaded.');
+      }
       await load(applied);
     } catch {
       toast.error(`${label} failed due to a network or server error.`);
@@ -231,15 +242,16 @@ export default function AdminUsersPage() {
                 <th style={thCell}><SortHeaderButton label="Email" active={sort?.key === 'email'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('email')} /></th>
                 <th style={thCell}><SortHeaderButton label="Type" active={sort?.key === 'userType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('userType')} /></th>
                 <th style={thCell}><SortHeaderButton label="Status" active={sort?.key === 'status'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('status')} /></th>
+                <th style={thCell}>Profile</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>Loading…</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>Loading…</td></tr>
               ) : errored ? (
-                <tr><td style={tdCell} colSpan={4}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
+                <tr><td style={tdCell} colSpan={5}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
               ) : slice.length === 0 ? (
-                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>No users match the current filters.</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>No users match the current filters.</td></tr>
               ) : (
                 slice.map((u) => (
                   <tr
@@ -251,6 +263,15 @@ export default function AdminUsersPage() {
                     <td style={{ ...tdCell, color: colors.muted }}>{u.email}</td>
                     <td style={tdCell}>{u.userType || '—'}</td>
                     <td style={tdCell}>{u.status ? <Badge text={u.status} color={statusColor(u.status)} /> : '—'}</td>
+                    <td style={tdCell}>
+                      <Link
+                        href={`/admin/users/${encodeURIComponent(u.id)}`}
+                        className="vx-btn vx-btn--outline vx-btn--sm"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View profile
+                      </Link>
+                    </td>
                   </tr>
                 ))
               )}
@@ -261,6 +282,7 @@ export default function AdminUsersPage() {
           </div>
         </Card>
 
+        <div>
         <Card title="Selected User">
           {!selected ? <p style={{ color: colors.muted, fontSize: 13, marginTop: 12 }}>Select a user to inspect/update.</p> : null}
           {selected ? (
@@ -294,6 +316,7 @@ export default function AdminUsersPage() {
             </div>
           ) : null}
         </Card>
+        </div>
       </div>
     </Page>
   );

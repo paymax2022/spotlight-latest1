@@ -11,7 +11,10 @@ export interface Announcement {
 }
 export interface CreateAnnouncementInput { title: string; body: string; kind: AnnouncementKind; idempotencyKey: string; }
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK, true);
+// The /api/v1/estate/announcements handlers are live and query real tables, so this
+// defaults to live: a forgotten flag fails visibly instead of inventing notices. Set
+// EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK=true to force fixtures locally.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK, false);
 
 // Announcements are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/announcements (GET list, POST create, GET/POST /{id},
@@ -31,13 +34,19 @@ export const KIND_META: Record<AnnouncementKind, { label: string; icon: string; 
 };
 
 const D = 86_400_000, iso = (o: number) => new Date(Date.now() + o).toISOString();
-let items: Announcement[] = [
+const items: Announcement[] = [
   { id: 'a1', estateId: 'est_amber_court', title: 'Water supply maintenance Saturday', body: 'The estate water supply will be interrupted 8am–12pm on Saturday for tank cleaning. Please store water in advance.', kind: 'maintenance', createdBy: 'res_2', createdByName: 'Estate Office', createdAt: iso(-0.2 * D), read: false },
   { id: 'a2', estateId: 'est_amber_court', title: 'Q3 service charge due 30th', body: 'Kindly settle the Q3 service charge before month end to keep your visitor and facility access active.', kind: 'payment', createdBy: 'res_2', createdByName: 'Estate Office', createdAt: iso(-1.5 * D), read: false },
   { id: 'a3', estateId: 'est_amber_court', title: 'Increased patrols this week', body: 'Following recent reports, security has increased night patrols. Report anything suspicious via the app.', kind: 'security', createdBy: 'res_3', createdByName: 'Security Committee', createdAt: iso(-3 * D), read: true },
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 const idem = (k?: string) => ({ headers: { 'Idempotency-Key': k ?? generateIdempotencyKey() } });
+
+// markRead and createAnnouncement have live route handlers, so fixture mode refuses
+// loudly instead of reporting a notice posted or marked read that never reached the
+// database — mirrors frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK=false to send this against the live backend.`);
 
 export async function listAnnouncements(): Promise<Announcement[]> {
   if (USE_MOCK) { await latency(); return items.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
@@ -48,14 +57,10 @@ export async function getAnnouncement(id: string): Promise<Announcement> {
   const { data } = await api.get<Announcement>(`${ANNOUNCEMENTS_API_BASE}/${id}`); return data;
 }
 export async function markRead(id: string): Promise<void> {
-  if (USE_MOCK) { await latency(120); const a = items.find((x) => x.id === id); if (a) a.read = true; return; }
+  if (USE_MOCK) throw notInFixtureMode('Marking an announcement read');
   await api.post(`${ANNOUNCEMENTS_API_BASE}/${id}/read`, {});
 }
 export async function createAnnouncement(input: CreateAnnouncementInput): Promise<Announcement> {
-  if (USE_MOCK) {
-    await latency(400);
-    const a: Announcement = { id: `a_${Date.now()}`, estateId: 'est_amber_court', title: input.title.trim(), body: input.body.trim(), kind: input.kind, createdBy: 'res_demo', createdByName: 'You', createdAt: new Date().toISOString(), read: true };
-    items = [a, ...items]; return { ...a };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Posting an announcement');
   const { data } = await api.post<Announcement>(ANNOUNCEMENTS_API_BASE, input, idem(input.idempotencyKey)); return data;
 }

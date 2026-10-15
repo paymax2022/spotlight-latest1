@@ -42,7 +42,7 @@ describe('forwardGoOwnedPaystackEvent', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each(['feespay:', 'foodorder:', 'rideorder:', 'duespay:'])(
+  it.each(['feespay-', 'foodorder-', 'rideorder-', 'duespay-'])(
     'forwards charge.success with the %s reference prefix verbatim', async (prefix) => {
       const raw = payload('charge.success', `${prefix}abc123`);
       const res = await forwardGoOwnedPaystackEvent(raw, SIG);

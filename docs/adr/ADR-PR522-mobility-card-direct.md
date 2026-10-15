@@ -644,3 +644,16 @@ in the same transaction. Never do (2b) without checking the dashboard first: it 
 - One place (engine) to audit for the money invariants; each service is ~100 lines.
 - New table + one more webhook prefix per service; flags default off, rollout per service.
 - Known follow-ups: ride adapter onto the engine; car hire driver assignment + extension/deduction design (if card car hire must support them); dispute/chargeback webhooks; the bus/event settle-at-booking defect (independent of this ADR). (The reconciliation sweep for stranded refunds is done — H7.)
+
+## Addendum — reference separator is `-`, not `:`
+
+Paystack refuses a transaction reference containing anything but letters,
+digits, `-`, `.` and `=` (`Invalid character in transaction reference`). The
+prefixes written above as `parcelorder:`, `rideorder:`, `foodorder:`, `duespay:`,
+`feespay:`, `towingorder:`, `moversorder:`, `carhireorder:` were therefore
+unusable against real Paystack — the fake used in tests accepts any string. The
+live prefixes are now the same words ending in `-` (`parcelorder-<key>` …).
+`Engine.Register` rejects any prefix that is not `^[a-z0-9]+-$`. The `:` forms
+stay reserved in `transport.reservedIdempotencyPrefixes` so no wallet key can
+shadow an old row. Settlement sub-keys such as `<reference>:fare` are internal
+ledger keys and never reach Paystack, so they keep their `:`.

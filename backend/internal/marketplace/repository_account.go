@@ -324,10 +324,10 @@ func (r *Repository) ListBlocks(ctx context.Context, userID string) ([]Block, er
 // except promotional) when no row exists yet.
 func (r *Repository) GetNotificationPrefs(ctx context.Context, userID string) (*NotificationPrefs, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT user_id, new_offer, price_drop, order_status, boost_expiry, promotional, updated_at
+		SELECT user_id, new_offer, price_drop, order_status, boost_expiry, promotional, new_listing, updated_at
 		FROM public.mkt_notification_prefs WHERE user_id=$1`, userID)
 	var p NotificationPrefs
-	err := row.Scan(&p.UserID, &p.NewOffer, &p.PriceDrop, &p.OrderStatus, &p.BoostExpiry, &p.Promotional, &p.UpdatedAt)
+	err := row.Scan(&p.UserID, &p.NewOffer, &p.PriceDrop, &p.OrderStatus, &p.BoostExpiry, &p.Promotional, &p.NewListing, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return defaultNotificationPrefs(userID), nil
 	}
@@ -343,19 +343,20 @@ func (r *Repository) GetNotificationPrefs(ctx context.Context, userID string) (*
 func (r *Repository) UpsertNotificationPrefs(ctx context.Context, userID string, patch NotificationPrefsPatch) (*NotificationPrefs, error) {
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO public.mkt_notification_prefs
-			(user_id, new_offer, price_drop, order_status, boost_expiry, promotional, updated_at)
-		VALUES ($1, COALESCE($2,true), COALESCE($3,true), COALESCE($4,true), COALESCE($5,true), COALESCE($6,false), now())
+			(user_id, new_offer, price_drop, order_status, boost_expiry, promotional, new_listing, updated_at)
+		VALUES ($1, COALESCE($2,true), COALESCE($3,true), COALESCE($4,true), COALESCE($5,true), COALESCE($6,false), COALESCE($7,true), now())
 		ON CONFLICT (user_id) DO UPDATE SET
 			new_offer    = COALESCE($2, public.mkt_notification_prefs.new_offer),
 			price_drop   = COALESCE($3, public.mkt_notification_prefs.price_drop),
 			order_status = COALESCE($4, public.mkt_notification_prefs.order_status),
 			boost_expiry = COALESCE($5, public.mkt_notification_prefs.boost_expiry),
 			promotional  = COALESCE($6, public.mkt_notification_prefs.promotional),
+			new_listing  = COALESCE($7, public.mkt_notification_prefs.new_listing),
 			updated_at   = now()
-		RETURNING user_id, new_offer, price_drop, order_status, boost_expiry, promotional, updated_at`,
-		userID, patch.NewOffer, patch.PriceDrop, patch.OrderStatus, patch.BoostExpiry, patch.Promotional)
+		RETURNING user_id, new_offer, price_drop, order_status, boost_expiry, promotional, new_listing, updated_at`,
+		userID, patch.NewOffer, patch.PriceDrop, patch.OrderStatus, patch.BoostExpiry, patch.Promotional, patch.NewListing)
 	var p NotificationPrefs
-	if err := row.Scan(&p.UserID, &p.NewOffer, &p.PriceDrop, &p.OrderStatus, &p.BoostExpiry, &p.Promotional, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.UserID, &p.NewOffer, &p.PriceDrop, &p.OrderStatus, &p.BoostExpiry, &p.Promotional, &p.NewListing, &p.UpdatedAt); err != nil {
 		return nil, wrapInternal("upsert notification prefs", err)
 	}
 	return &p, nil

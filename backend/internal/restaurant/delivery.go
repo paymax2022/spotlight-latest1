@@ -63,8 +63,17 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		return nil, err
 	}
 
-	const qi = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, is_available, dietary_tags
-	            FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
+	const qi = `SELECT ` + menuItemCols + ` FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
+	var live []PriceDiscount
+	var taxonomy map[string][2]string
+	if s.discountsOn {
+		if live, err = loadLiveDiscounts(ctx, s.db, restaurantID, time.Now()); err != nil {
+			return nil, err
+		}
+		if taxonomy, err = itemTaxonomy(ctx, s.db, restaurantID); err != nil {
+			return nil, err
+		}
+	}
 	irows, err := s.db.Query(ctx, qi, restaurantID)
 	if err != nil {
 		return nil, err
@@ -73,8 +82,13 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	for irows.Next() {
 		var it MenuItem
 		var catID *string
-		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
+		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
 			return nil, err
+		}
+		if s.discountsOn {
+			tx := taxonomy[it.ID]
+			p := PriceItem(it.PriceKobo, it.ID, tx[0], tx[1], live, time.Now())
+			it.Price = &p
 		}
 		if catID != nil {
 			it.CategoryID = *catID
@@ -323,9 +337,15 @@ func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, r
 
 // UpdateItemRequest changes price and/or availability (86 an item).
 type UpdateItemRequest struct {
-	PriceKobo   *int64    `json:"price_kobo,omitempty"`
-	IsAvailable *bool     `json:"is_available,omitempty"`
-	DietaryTags *[]string `json:"dietary_tags,omitempty"`
+	PriceKobo   *int64 `json:"price_kobo,omitempty"`
+	IsAvailable *bool  `json:"is_available,omitempty"`
+	// UnavailableUntil, with is_available false, puts the item back on its own at that
+	// time (RFC 3339). Ignored when is_available is true.
+	UnavailableUntil *string   `json:"unavailable_until,omitempty"`
+	DietaryTags      *[]string `json:"dietary_tags,omitempty"`
+	// PrepTimeMinutes sets the item's own prep time (5 to 180); 0 clears it back to the
+	// restaurant default.
+	PrepTimeMinutes *int `json:"prep_time_minutes,omitempty"`
 }
 
 // UpdateItem updates an item's price/availability/dietary tags (owner only).
@@ -343,8 +363,28 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 		}
 	}
 	if req.IsAvailable != nil {
-		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET is_available=$1 WHERE id=$2 AND restaurant_id=$3`,
-			*req.IsAvailable, itemID, restaurantID); err != nil {
+		until, err := restockAt(req.UnavailableUntil, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if *req.IsAvailable {
+			until = nil
+		}
+		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET is_available=$1, unavailable_until=$2 WHERE id=$3 AND restaurant_id=$4`,
+			*req.IsAvailable, until, itemID, restaurantID); err != nil {
+			return nil, err
+		}
+	}
+	if req.PrepTimeMinutes != nil {
+		var prep *int
+		if *req.PrepTimeMinutes != 0 {
+			if err := validItemPrepMinutes(*req.PrepTimeMinutes); err != nil {
+				return nil, err
+			}
+			prep = req.PrepTimeMinutes
+		}
+		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET prep_time_minutes=$1 WHERE id=$2 AND restaurant_id=$3`,
+			prep, itemID, restaurantID); err != nil {
 			return nil, err
 		}
 	}
@@ -356,10 +396,9 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 	}
 	var it MenuItem
 	var catID *string
-	const q = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, is_available, dietary_tags
-	           FROM menu_items WHERE id=$1 AND restaurant_id=$2`
+	const q = `SELECT ` + menuItemCols + ` FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 	if err := s.db.QueryRow(ctx, q, itemID, restaurantID).Scan(&it.ID, &catID, &it.RestaurantID, &it.Name,
-		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
+		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags, &it.PrepTimeOverride, &it.PrepMinutes); err != nil {
 		return nil, errors.New("restaurant: menu item not found")
 	}
 	if catID != nil {

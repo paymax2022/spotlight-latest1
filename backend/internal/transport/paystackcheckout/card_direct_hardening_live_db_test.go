@@ -261,7 +261,7 @@ type escrowThenFailDomain struct {
 }
 
 func (escrowThenFailDomain) Name() string            { return "escrowfail" }
-func (escrowThenFailDomain) ReferencePrefix() string { return "escrowfail:" }
+func (escrowThenFailDomain) ReferencePrefix() string { return "escrowfail-" }
 func (escrowThenFailDomain) RoutePrefix() string     { return "/escrowfail/paystack" }
 func (escrowThenFailDomain) EntityIDKey() string     { return "x" }
 func (d escrowThenFailDomain) Quote(context.Context, string, json.RawMessage) (Quoted, error) {
@@ -271,7 +271,7 @@ func (escrowThenFailDomain) Find(context.Context, string, string) (string, bool,
 	return "", false, nil
 }
 func (d escrowThenFailDomain) Book(ctx context.Context, payer string, _ json.RawMessage, _ json.RawMessage, idem string, amt int64) (string, error) {
-	if _, err := d.r.settle.EscrowExternal(ctx, payer, "escrowfail:"+uuid.New().String(), idem, "transport", amt); err != nil {
+	if _, err := d.r.settle.EscrowExternal(ctx, payer, "escrowfail-"+uuid.New().String(), idem, "transport", amt); err != nil {
 		return "", err
 	}
 	return "", errors.New("insert failed after escrow, compensation also failed")

@@ -11,6 +11,7 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/billingemail"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/services"
@@ -148,9 +149,9 @@ func (h *Handler) PayFeePaystackInit(c *gin.Context) {
 		CallbackURL string `json:"callbackUrl"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	email := body.Email
-	if email == "" {
-		email = userEmail(c)
+	email, ok := billingemail.Require(c, body.Email)
+	if !ok {
+		return
 	}
 	out, err := h.svc.InitiateRegistrationFeePaystack(c.Request.Context(), userID(c), c.Param("id"), email, body.CallbackURL)
 	if err != nil {

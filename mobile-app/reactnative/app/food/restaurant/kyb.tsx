@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { ShieldCheck } from 'lucide-react-native';
+import * as Sentry from '@sentry/react-native';
 
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
@@ -11,10 +12,18 @@ import TextInputField from '@/components/TextInputField';
 import SegmentedControl from '@/components/SegmentedControl';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import { alertAsync } from '@/lib/confirm';
+import { useAuthStore } from '@/store/authStore';
+import { getErrorMessage } from '@/utils/errorMapper';
 import { Colors } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
-import { useMyStores, useKYB, useSaveKYB, useAddKYBDocument, useSubmitKYB } from '@/features/restaurantmerchant/hooks';
+import {
+  useMyStores, useKYB, useSaveKYB, useAddKYBDocument, useUploadKYBDocument, useSubmitKYB,
+} from '@/features/restaurantmerchant/hooks';
+import { KYBUploadsUnavailableError } from '@/features/restaurantmerchant/api';
+import { KYBUploadError } from '@/features/restaurantmerchant/kybUpload';
+import { pickKYBDocument } from '@/features/restaurantmerchant/kybPicker';
+import { isWebLink } from '@/features/restaurantmerchant/kybFiles';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 import { useBanks, useResolveAccount } from '@/features/transfers/hooks';
 import type { KYBBusinessType } from '@/features/restaurantmerchant/types';
@@ -62,9 +71,11 @@ export default function KYBScreen() {
   const kyb = useKYB(storeId);
   const save = useSaveKYB(storeId);
   const addDoc = useAddKYBDocument(storeId);
+  const uploadDoc = useUploadKYBDocument(storeId);
   const submit = useSubmitKYB(storeId);
   const banks = useBanks();
   const resolveAccountMut = useResolveAccount();
+  const account = useAuthStore((s) => s.user);
 
   const bankOptions = useMemo(
     () => (banks.data ?? []).map((b) => ({ label: b.name, value: b.code })),
@@ -81,7 +92,16 @@ export default function KYBScreen() {
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
   const [certUrl, setCertUrl] = useState('');
+  // The server can't sign uploads (no R2 credentials): offer the link field and stop
+  // inviting a retry that cannot succeed. `showLink` is the owner's own choice.
+  const [uploadsUnavailable, setUploadsUnavailable] = useState(false);
+  const [showLink, setShowLink] = useState(false);
+  const [uploadedName, setUploadedName] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [resolveError, setResolveError] = useState('');
+  // The bank+number the CURRENT accountName belongs to. A name is only valid for
+  // the pair it was resolved (or saved) for; changing either must drop it.
+  const resolvedFor = useRef('');
 
   // Seed local form state from the server once, when it first arrives — after that
   // the form is the source of truth until the next successful save (same pattern as
@@ -92,11 +112,15 @@ export default function KYBScreen() {
     if (kyb.data.businessType) setBusinessType(kyb.data.businessType);
     setRcNumber(kyb.data.rcNumber);
     setTin(kyb.data.tin);
-    setContactEmail(kyb.data.contactEmail);
-    setContactPhone(kyb.data.contactPhone);
+    // Nothing saved yet -> default to the email/phone the owner already gave when
+    // they created their account, instead of asking for them again. Anything they
+    // have saved (or later type) wins.
+    setContactEmail(kyb.data.contactEmail || account?.email || '');
+    setContactPhone(kyb.data.contactPhone || account?.phone || '');
     setBankCode(kyb.data.bankCode);
     setAccountNumber(kyb.data.accountNumber);
     setAccountName(kyb.data.accountName);
+    if (kyb.data.accountName) resolvedFor.current = `${kyb.data.bankCode}:${kyb.data.accountNumber}`;
     setLoaded(true);
   }, [kyb.data, loaded]);
 
@@ -104,16 +128,30 @@ export default function KYBScreen() {
   // TransferScreen — the owner shouldn't have to type their own settlement account's
   // registered name by hand when the bank can confirm it.
   useEffect(() => {
+    if (!loaded) return; // don't race the seeding above
+    const pair = `${bankCode}:${accountNumber}`;
+    if (pair !== resolvedFor.current) {
+      // Bank or number changed since the name was resolved: that name now belongs
+      // to a different account. Showing it next to the new details would let the
+      // owner submit someone else's registered name.
+      if (accountName) setAccountName('');
+      setResolveError('');
+    }
     if (!bankCode || !/^\d{10}$/.test(accountNumber)) return;
+    if (pair === resolvedFor.current) return; // already resolved / saved for this pair
     const handle = setTimeout(() => {
       resolveAccountMut.mutate(
         { bankCode, accountNumber },
-        { onSuccess: (r) => setAccountName(r.accountName) },
+        {
+          onSuccess: (r) => { resolvedFor.current = pair; setAccountName(r.accountName); setResolveError(''); },
+          // Was silent: a failed lookup left an empty box and no reason why.
+          onError: (e) => setResolveError(getErrorMessage(e) || "Couldn't verify this account."),
+        },
       );
     }, 500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bankCode, accountNumber]);
+  }, [loaded, bankCode, accountNumber]);
 
   const needsRegistration = businessType !== 'sole_proprietor';
   const hasCertDoc = (kyb.data?.documents ?? []).includes('cac_certificate');
@@ -142,12 +180,56 @@ export default function KYBScreen() {
   };
 
   const attachCert = () => {
-    if (!certUrl.trim()) return;
+    const link = certUrl.trim();
+    if (!link) return;
+    // The backend only accepts http(s) links; say so here instead of round-tripping.
+    if (!isWebLink(link)) {
+      alertAsync({ title: 'Check the link', message: 'Paste a full web link starting with https://.' });
+      return;
+    }
     addDoc.mutate(
-      { docType: 'cac_certificate', fileUrl: certUrl.trim() },
+      { docType: 'cac_certificate', fileUrl: link },
       {
-        onSuccess: () => setCertUrl(''),
+        onSuccess: () => { setCertUrl(''); setUploadedName(''); },
         onError: (e) => alertAsync({ title: "Couldn't attach document", message: (e as Error)?.message ?? 'Please try again.' }),
+      },
+    );
+  };
+
+  // Pick → presign → PUT to storage → record the key (see kybUpload.ts).
+  const uploadCert = async () => {
+    let file;
+    try {
+      file = await pickKYBDocument();
+    } catch {
+      alertAsync({ title: "Couldn't open your files", message: 'Something went wrong. Please try again.' });
+      return;
+    }
+    if (!file) return;
+    uploadDoc.mutate(
+      { docType: 'cac_certificate', file },
+      {
+        onSuccess: () => { setUploadedName(file.name); setShowLink(false); },
+        onError: (err) => {
+          // No R2 credentials means no upload can ever be signed: say so and open the
+          // link field, rather than leaving the owner to retry something that cannot work.
+          if (err instanceof KYBUploadsUnavailableError) {
+            setUploadsUnavailable(true);
+            alertAsync({
+              title: 'Upload not available yet',
+              message: "Uploading isn't switched on for this server yet. Paste a link to your certificate instead.",
+            });
+            return;
+          }
+          if (err instanceof KYBUploadError) {
+            // Which step failed matters: they look identical to the owner and have
+            // completely different fixes.
+            Sentry.captureException(err, { tags: { feature: 'restaurant-kyb-upload', step: err.step, status: String(err.status ?? 'none') } });
+            alertAsync({ title: "Couldn't upload", message: err.message });
+            return;
+          }
+          alertAsync({ title: "Couldn't upload", message: (err as Error)?.message ?? 'Please try again.' });
+        },
       },
     );
   };
@@ -193,7 +275,7 @@ export default function KYBScreen() {
 
   return (
     <Shell>
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Text style={styles.outlet}>{active.name}</Text>
         <View style={styles.introRow}>
           <ShieldCheck size={18} color={Colors.primary} />
@@ -245,17 +327,40 @@ export default function KYBScreen() {
               <Card title="CAC certificate">
                 <Text style={styles.muted}>
                   {hasCertDoc
-                    ? 'Certificate on file. Paste a new link below to replace it.'
-                    : 'Required for a registered business. Paste a link to your hosted certificate (e.g. a Drive or Dropbox share link).'}
+                    ? 'Certificate on file. Upload a new one to replace it.'
+                    : 'Required for a registered business. Upload a PDF or a clear photo of your CAC certificate.'}
                 </Text>
-                <TextInputField label="Certificate URL" value={certUrl} onChangeText={setCertUrl} placeholder="https://…" autoCapitalize="none" />
-                <PrimaryButton label="Attach document" variant="secondary" onPress={attachCert} loading={addDoc.isPending} disabled={!certUrl.trim()} />
+                {!!uploadedName && <Text style={styles.okText}>Uploaded: {uploadedName}</Text>}
+                {!uploadsUnavailable && (
+                  <PrimaryButton
+                    label={hasCertDoc ? 'Replace certificate' : 'Upload certificate'}
+                    variant="secondary"
+                    onPress={uploadCert}
+                    loading={uploadDoc.isPending}
+                  />
+                )}
+                {uploadsUnavailable && (
+                  <Text style={styles.muted}>
+                    Uploading isn't available on this server yet — paste a link to your certificate below.
+                  </Text>
+                )}
+                {!uploadsUnavailable && !showLink && (
+                  <Pressable onPress={() => setShowLink(true)} hitSlop={8} accessibilityRole="button">
+                    <Text style={styles.linkText}>Or paste a link instead</Text>
+                  </Pressable>
+                )}
+                {(uploadsUnavailable || showLink) && (
+                  <>
+                    <TextInputField label="Certificate link" value={certUrl} onChangeText={setCertUrl} placeholder="https://…" autoCapitalize="none" keyboardType="url" />
+                    <PrimaryButton label="Attach link" variant="secondary" onPress={attachCert} loading={addDoc.isPending} disabled={!certUrl.trim()} />
+                  </>
+                )}
               </Card>
             )}
 
             <Card title="Settlement account">
               <Text style={styles.muted}>The bank account your payouts are settled to once approved.</Text>
-              <BankPicker label="Bank" value={bankCode} options={bankOptions} onChange={setBankCode} loading={banks.isLoading} />
+              <BankPicker label="Bank" value={bankCode} options={bankOptions} onChange={setBankCode} loading={banks.isLoading} autoFocusSearch={false} />
               <TextInputField label="Account number" value={accountNumber} onChangeText={(t) => setAccountNumber(t.replace(/\D/g, '').slice(0, 10))} placeholder="0123456789" keyboardType="number-pad" />
               <TextInputField
                 label="Account name"
@@ -263,6 +368,7 @@ export default function KYBScreen() {
                 onChangeText={setAccountName}
                 placeholder={resolveAccountMut.isPending ? 'Resolving…' : 'Auto-fills from bank + account number'}
                 editable={!resolveAccountMut.isPending}
+                error={resolveError || undefined}
               />
             </Card>
 
@@ -305,5 +411,7 @@ const styles = StyleSheet.create({
   },
   statusWarn: { borderColor: Colors.error },
   statusTitle: { color: Colors.onSurface, fontSize: 14, fontWeight: '700' },
+  okText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
+  linkText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
   missingText: { color: Colors.error, fontSize: 12, textAlign: 'center' },
 });

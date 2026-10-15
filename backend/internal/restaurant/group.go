@@ -79,7 +79,7 @@ func (s *Service) AddGroupItem(ctx context.Context, groupID, contributorID, menu
 	var name string
 	var price int64
 	var available bool
-	if err := s.db.QueryRow(ctx, `SELECT name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`, menuItemID, restaurantID).Scan(&name, &price, &available); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT name, price_kobo, `+availableNow+` AS is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`, menuItemID, restaurantID).Scan(&name, &price, &available); err != nil {
 		return nil, errors.New("restaurant: item not on this restaurant's menu")
 	}
 	if !available {

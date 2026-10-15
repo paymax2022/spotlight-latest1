@@ -638,3 +638,29 @@ func sanitizeUploadFileName(name string) string {
 	}
 	return b.String()
 }
+
+// SetServiceProfile (member): PUT /driver/service-profile — records the driver's
+// services of interest and coverage areas (Slice A: recorded preference).
+func (h *Handler) SetServiceProfile(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req struct {
+		ServiceInterests []string `json:"service_interests"`
+		CoverageAreas    []string `json:"coverage_areas"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	vi, ca, err := h.svc.SetServiceProfile(c.Request.Context(), userID, req.ServiceInterests, req.CoverageAreas)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"service_interests": vi, "coverage_areas": ca})
+}
+
+// OnboardingOptions (member): GET /driver/onboarding-options — the canonical
+// selectable services and coverage areas (server-owned allow-list).
+func (h *Handler) OnboardingOptions(c *gin.Context) {
+	c.JSON(http.StatusOK, OnboardingOptions())
+}

@@ -9,6 +9,14 @@ import { USE_MOCK, API_BASE, formatNaira, formatPoints } from './constants/loyal
 export { formatNaira, formatPoints };
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
+
+// redeemPerk has a live member endpoint (POST /black/redeem), so fixture mode refuses
+// loudly instead of reporting a redemption that never reached the backend — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+// upgradeToBlack is deliberately not converted: enrolment is admin-only, there is no
+// member endpoint, and it already refuses in live mode.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_LOYALTY_USE_MOCK=false to send this against the live backend.`);
 function blackIdempotencyKey(): string {
   return `blk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -150,16 +158,7 @@ export async function upgradeToBlack(): Promise<{ ok: boolean; memberSinceISO: s
 // returned in the response envelope today (MISSING: a presentable credential
 // token) — we surface the redemption id as a stand-in reference.
 export async function redeemPerk(input: RedeemPerkInput): Promise<PerkCredential> {
-  if (USE_MOCK) {
-    await delay();
-    const perk = MOCK_PERKS.find((p) => p.id === input.perkId);
-    return {
-      ok: true,
-      token: `PMX-BLK-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-      perkTitle: perk?.title ?? 'Perk',
-      expiresAtISO: daysFromNow(1),
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Redeeming a perk');
   const perk = MOCK_PERKS.find((p) => p.id === input.perkId);
   const res = await api.post(
     `${API_BASE}/black/redeem`,

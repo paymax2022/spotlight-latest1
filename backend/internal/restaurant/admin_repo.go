@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -75,10 +76,10 @@ type AdminApplication struct {
 	// KYBStatus is the raw restaurants.kyb_status (E2E-PROV-020): Status alone
 	// maps both "never submitted" (NULL) and "submitted, awaiting review" to
 	// 'pending', which made them indistinguishable in the queue.
-	KYBStatus   *string   `json:"kyb_status,omitempty"`
-	Documents   []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
-	SubmittedAt time.Time `json:"submitted_at"`
-	ReviewNote  *string   `json:"review_note,omitempty"`
+	KYBStatus   *string               `json:"kyb_status,omitempty"`
+	Documents   []AdminApplicationDoc `json:"documents"` // restaurant_kyb_documents, keys signed for the reviewer
+	SubmittedAt time.Time             `json:"submitted_at"`
+	ReviewNote  *string               `json:"review_note,omitempty"`
 }
 
 // AdminPayoutRun is a READ-ONLY reconciliation view of settled food-delivery
@@ -168,6 +169,14 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.kyb_status, r.created_at
 		FROM restaurants r
 		ORDER BY r.created_at DESC`
+	// One query for every outlet's documents, rather than one per row. A failure
+	// here degrades to "no documents listed" instead of failing the whole queue:
+	// the reviewer can still see and decide applications, and the error is logged.
+	docRefs, derr := s.kybDocRefsByRestaurant(ctx)
+	if derr != nil {
+		log.Printf("[restaurant] admin applications: could not load KYB documents: %v", derr)
+		docRefs = nil
+	}
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -184,10 +193,12 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 		a.KYBStatus = kybStatus
 		// No KYC review-note column exists on `restaurants` yet (see report); the
 		// review note supplied on reject is delivered to the owner, not persisted.
-		a.Documents = []any{}
 		if status != "" && a.Status != status {
 			continue
 		}
+		// Only for outlets actually being returned: signing mints a download URL for
+		// an identity document, so a filtered queue must not sign the ones it drops.
+		a.Documents = s.adminDocsFor(a.ID, docRefs[a.ID])
 		out = append(out, a)
 	}
 	return out, rows.Err()

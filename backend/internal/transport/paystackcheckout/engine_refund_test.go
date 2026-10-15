@@ -242,7 +242,7 @@ func TestRefundExternal_ConcurrentRefundInFlight_IsRefusedNotDoubled(t *testing.
 func TestRefundExternal_SettlementValidatedBeforeTheGateway(t *testing.T) {
 	good := func() *settlement.Settlement {
 		return &settlement.Settlement{ID: "sett-1", Status: settlement.StatusEscrowed, FundingSource: "external",
-			TotalKobo: 250_000, PayerID: "u1", IdempotencyKey: "fakeorder:" + key1}
+			TotalKobo: 250_000, PayerID: "u1", IdempotencyKey: "fakeorder-" + key1}
 	}
 	cases := map[string]func(*settlement.Settlement){
 		"wallet-funded":         func(s *settlement.Settlement) { s.FundingSource = "wallet" },
@@ -250,7 +250,7 @@ func TestRefundExternal_SettlementValidatedBeforeTheGateway(t *testing.T) {
 		"refunded, intent not":  func(s *settlement.Settlement) { s.Status = settlement.StatusRefunded },
 		"amount differs":        func(s *settlement.Settlement) { s.TotalKobo = 249_999 },
 		"other payer":           func(s *settlement.Settlement) { s.PayerID = "someone-else" },
-		"other intent's escrow": func(s *settlement.Settlement) { s.IdempotencyKey = "fakeorder:another-key-0001" },
+		"other intent's escrow": func(s *settlement.Settlement) { s.IdempotencyKey = "fakeorder-another-key-0001" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -292,7 +292,7 @@ func TestRefundExternal_BothAlreadyRefunded_IsANoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.lg.setts = map[string]*settlement.Settlement{"sett-1": {ID: "sett-1", Status: settlement.StatusRefunded, FundingSource: "external",
-		TotalKobo: 250_000, PayerID: "u1", IdempotencyKey: "fakeorder:" + key1}}
+		TotalKobo: 250_000, PayerID: "u1", IdempotencyKey: "fakeorder-" + key1}}
 	calls, ledger := len(r.gw.refundCalls), len(r.lg.calls)
 	if err := rf.RefundExternalSettlement(context.Background(), "ent-1", "sett-1", "x"); err != nil {
 		t.Fatalf("settlement refunded + intent refunded is done, not an error: %v", err)

@@ -25,9 +25,16 @@ import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
  *
  * Falls back to the local filesystem when R2 is unconfigured, so the flow works
  * in dev exactly as it does in production.
+ *
+ * The same route also takes the contest LOGO (form field `kind=logo`): same
+ * permission, same storage, same public GET, but keyed under `contests/logos/`
+ * so a logo is told apart from a banner. No `kind` means a banner, so existing
+ * callers are unchanged; any other value is refused rather than guessed.
  */
 const MAX_FILE_SIZE_MB = 8;
 const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const KIND_PREFIX = { banner: 'contests/banners/', logo: 'contests/logos/' } as const;
+type ImageKind = keyof typeof KIND_PREFIX;
 
 export async function POST(request: Request) {
   try {
@@ -40,9 +47,16 @@ export async function POST(request: Request) {
     const file = formData.get('file');
     if (!(file instanceof File)) return errorResponse('file is required', 400);
 
+    const rawKind = formData.get('kind');
+    const kind = (rawKind === null || rawKind === '' ? 'banner' : rawKind) as string;
+    if (!Object.prototype.hasOwnProperty.call(KIND_PREFIX, kind)) {
+      return errorResponse('kind must be "banner" or "logo"', 400);
+    }
+    const label = kind === 'logo' ? 'Logo' : 'Banner';
+
     const ext = path.extname(file.name).toLowerCase();
     if (!ALLOWED_EXT.has(ext)) {
-      return errorResponse('Banner must be a JPG, PNG or WebP image', 400);
+      return errorResponse(`${label} must be a JPG, PNG or WebP image`, 400);
     }
     if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
       return errorResponse(`Image exceeds the ${MAX_FILE_SIZE_MB}MB limit`, 400);
@@ -50,7 +64,7 @@ export async function POST(request: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const contentType = file.type || 'image/jpeg';
-    const objectKey = `contests/banners/${randomUUID()}${ext}`;
+    const objectKey = `${KIND_PREFIX[kind as ImageKind]}${randomUUID()}${ext}`;
 
     if (hasR2Config()) {
       const uploadUrl = await createR2UploadUrl({ key: objectKey, contentType });

@@ -62,7 +62,18 @@ function makeFakeSupabase(intent: Record<string, unknown>) {
     }),
     maybeSingle: vi.fn(async () => ({ data: state.intent, error: null })),
   };
-  return { from: vi.fn(() => builder), _state: state };
+  // Only the intents table holds this row. verifyUtilityPaystackPayment also asks
+  // utility_transactions whether payUtility got far enough to create one (it did
+  // not, in this scenario), so every other table must answer "no row".
+  const empty: any = {
+    select: vi.fn(() => empty),
+    eq: vi.fn(() => empty),
+    maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+  };
+  return {
+    from: vi.fn((table: string) => (table === 'utility_paystack_intents' ? builder : empty)),
+    _state: state,
+  };
 }
 
 describe('verifyUtilityPaystackPayment — payUtility throws before creating a transaction', () => {

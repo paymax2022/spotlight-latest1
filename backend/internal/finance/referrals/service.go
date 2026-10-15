@@ -31,6 +31,73 @@ const (
 type Service struct {
 	db     *pgxpool.Pool
 	ledger *ledger.Service
+	// reader is the SELECT-only seam LookupCode uses; nil means s.db.
+	reader rowQuerier
+}
+
+// rowQuerier is the single-row read seam; *pgxpool.Pool satisfies it.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// ErrNoCode means the user has no referral code in any table.
+var ErrNoCode = errors.New("referrals: no referral code")
+
+func (s *Service) rowReader() rowQuerier {
+	if s.reader != nil {
+		return s.reader
+	}
+	return s.db
+}
+
+// LookupCode returns the user's canonical referral code WITHOUT writing
+// (unlike GetOrCreateCode). It mirrors GetOrCreateCode's convergence rule:
+// the first-minted code wins when the two tables diverge. Falls back to
+// platform_users.referral_code; returns ErrNoCode when nothing exists.
+func (s *Service) LookupCode(ctx context.Context, userID string) (code, source string, err error) {
+	rq := s.rowReader()
+	var finCode, linkCode string
+	var finAt, linkAt time.Time
+	haveFin, haveLink := true, true
+
+	if e := rq.QueryRow(ctx,
+		`SELECT code, created_at FROM finance_referral_codes WHERE user_id = $1`,
+		userID).Scan(&finCode, &finAt); e != nil {
+		if !errors.Is(e, pgx.ErrNoRows) {
+			return "", "", e
+		}
+		haveFin = false
+	}
+	if e := rq.QueryRow(ctx,
+		`SELECT code, created_at FROM referral_links WHERE referrer_id = $1`,
+		userID).Scan(&linkCode, &linkAt); e != nil {
+		if !errors.Is(e, pgx.ErrNoRows) {
+			return "", "", e
+		}
+		haveLink = false
+	}
+	switch {
+	case haveFin && haveLink && finCode != linkCode && linkAt.Before(finAt):
+		return linkCode, "referral_links", nil
+	case haveFin:
+		return finCode, "finance_referral_codes", nil
+	case haveLink:
+		return linkCode, "referral_links", nil
+	}
+
+	var puCode string
+	if e := rq.QueryRow(ctx,
+		`SELECT COALESCE(referral_code, '') FROM platform_users WHERE id = $1`,
+		userID).Scan(&puCode); e != nil {
+		if errors.Is(e, pgx.ErrNoRows) {
+			return "", "", ErrNoCode
+		}
+		return "", "", e
+	}
+	if puCode == "" {
+		return "", "", ErrNoCode
+	}
+	return puCode, "platform_users", nil
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {

@@ -70,6 +70,8 @@ export interface MenuItem {
   available: boolean;
   /** Defaults to 'regular' when omitted. */
   foodType?: FoodType;
+  /** How long this item takes to make: its own, or the restaurant's default. */
+  prepMinutes?: number;
 }
 
 export interface MenuCategory {

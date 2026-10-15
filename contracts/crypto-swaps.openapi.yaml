@@ -1,0 +1,460 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Crypto Swaps API
+  version: 1.0.0
+  description: >
+    Provider-driven crypto buy (NGN to crypto) swaps over the Quidax adapter: quote, confirm
+    (second factor), read, plus the provider webhook. Behind FEATURE_CRYPTO_ENABLED and
+    FEATURE_CRYPTO_SWAPS_ENABLED (default off). ADR-PR708, ADR-PR709, ADR-PR710, ADR-PR716,
+    ADR-PR727.
+
+    Conventions:
+      - NGN amounts are integers in kobo. Never floats. Crypto amounts are decimal STRINGS.
+      - Quote requires an Idempotency-Key; the same key with a different body is 409.
+      - Confirm requires the user's transaction PIN in the body. A missing PIN is 400 and is
+        never verified (it must not count toward the PIN lockout).
+      - Confirm moves the NGN into a ledger hold BEFORE the provider executes; the final
+        settlement arrives by webhook or reconciler and is visible by polling GET.
+      - Another user's swap is always 404. Provider ids and internal fields are never returned.
+      - Auth: Bearer JWT (Supabase). Member routes need the crypto.trade permission.
+
+servers:
+  - url: /api/v1
+    description: Crypto swap routes (Go backend)
+
+tags:
+  - name: Swaps
+  - name: Webhooks
+  - name: Admin
+
+paths:
+  /crypto/swaps/quote:
+    post:
+      tags: [Swaps]
+      summary: Price a buy and persist the quote
+      operationId: quoteCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset, ngn_kobo]
+              additionalProperties: false
+              properties:
+                asset: { type: string, example: USDT }
+                ngn_kobo: { type: integer, format: int64, minimum: 1, description: NGN to spend, in kobo (fee is added on top) }
+      responses:
+        '201': { $ref: '#/components/responses/Swap' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { description: Idempotency-Key reused with a different request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429':
+          description: >-
+            Per-user rate limit exceeded (code rate_limited). Quote and confirm have separate
+            per-minute budgets (defaults 20 and 5). Retry after the next minute; the
+            X-RateLimit-Limit and X-RateLimit-Remaining headers report the budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/{id}/confirm:
+    post:
+      tags: [Swaps]
+      summary: Confirm a quoted swap (second factor required)
+      operationId: confirmCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SwapId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              additionalProperties: false
+              properties:
+                pin: { type: string, description: The user's transaction PIN }
+      responses:
+        '200': { $ref: '#/components/responses/Swap' }
+        '202':
+          description: The provider outcome is unknown; the swap is parked for review with the NGN held.
+          content: { application/json: { schema: { $ref: '#/components/schemas/SwapEnvelope' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { description: pin_not_set, pin_invalid or trading_not_allowed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '410': { description: quote_expired, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: insufficient_funds or limit_exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429':
+          description: >-
+            Per-user rate limit exceeded (code rate_limited). Quote and confirm have separate
+            per-minute budgets (defaults 20 and 5). Retry after the next minute; the
+            X-RateLimit-Limit and X-RateLimit-Remaining headers report the budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500': { $ref: '#/components/responses/Error' }
+  /crypto/swaps/{id}:
+    get:
+      tags: [Swaps]
+      summary: Read one of your swaps
+      operationId: getCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SwapId'
+      responses:
+        '200': { $ref: '#/components/responses/Swap' }
+        '404': { $ref: '#/components/responses/Error' }
+  /admin/crypto/swaps/review:
+    get:
+      tags: [Admin]
+      summary: List swaps parked in needs_review (admin, read-only)
+      description: >
+        Operational surface for swaps the pipeline could not auto-resolve and parked in
+        needs_review with the user's NGN still held. Read-only in this round — it lets ops SEE
+        held money; the settle/release/retry decision controls are a follow-up. Returns
+        user_id and the provider swap id (hidden from members) because the surface is gated by
+        the crypto.admin permission. has_provider_id = false means the provider outcome is
+        unknown, so the swap must never be blindly settled. Oldest-parked first. Flag-gated by
+        FEATURE_CRYPTO_SWAPS_ENABLED; when the flag is off the route is not mounted (404).
+      operationId: listCryptoSwapsForReview
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Parked swaps, oldest first
+          content: { application/json: { schema: { $ref: '#/components/schemas/ReviewQueue' } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /admin/crypto/reconciler:
+    get:
+      tags: [Admin]
+      summary: Reconciler status and swap backlog (admin, read-only)
+      description: >
+        What the reconciler has been doing and what is waiting on it. `replica` is the in-process
+        state of the replica that answered: only the elected leader does work, so a follower mostly
+        shows skipped passes, and the counters reset when the process restarts. `backlog` is read
+        from the database and is the same whichever replica answers; it has one row per open state
+        (needs_review, confirming, processing, quoted), zero-filled. Counts, integer kobo and alert
+        text only: no swap, user or provider identifiers. Requires crypto.admin. 503 when the
+        reconciler is not running on the serving replica.
+      operationId: getCryptoReconcilerStatus
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Reconciler status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcilerStatus'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /admin/crypto/fee-schedule:
+    get:
+      tags: [Admin]
+      summary: Active markup schedule, ceiling and recent changes (admin, read-only)
+      description: >
+        The platform markup in basis points per asset: a rate for majors, a rate for every other asset
+        and per-asset overrides. `version` 0 is the configured default (nothing stored yet). The
+        history lists the last 20 versions, newest first, with who changed them and why. Requires
+        crypto.admin.
+      operationId: getCryptoFeeSchedule
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Active schedule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeeScheduleResponse'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Admin]
+      summary: Replace the markup schedule with a new version (admin)
+      description: >
+        Appends a new, immutable version; history is never edited. Requires crypto.admin, an
+        Idempotency-Key, a non-empty `reason` (max 500 characters) and `expected_version`, the
+        version the editor read: a different current version is refused with 409 version_conflict,
+        so two admins cannot silently overwrite each other. Every rate must be within 0 and
+        ceiling_bps (150); the ceiling is fixed in code, not editable here. A new version prices NEW
+        quotes only: a swap that is already quoted keeps the bps stored on it. A retry with the same
+        Idempotency-Key and body returns the stored version (200); the same key with a different body
+        is 409 idempotency_conflict. Each applied change is audited with the old and new values.
+      operationId: updateCryptoFeeSchedule
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeeScheduleUpdate'
+      responses:
+        '200':
+          description: The applied (or replayed) version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeeScheduleResponse'
+        '400':
+          description: Missing or invalid Idempotency-Key, unknown field, or a schedule outside the allowed range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409':
+          description: version_conflict or idempotency_conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /admin/crypto/swaps/{id}/resolve:
+    post:
+      tags: [Admin]
+      summary: Resolve a parked swap (admin)
+      description: >
+        Apply a human decision to a swap parked in needs_review. The decision is state-dependent
+        and enforced server-side:
+          - `retry`  — allowed ONLY when the swap has a provider swap id: re-poll the provider and
+            apply the authoritative outcome (which itself settles or releases).
+          - `release` — allowed ONLY when the swap has NO provider swap id (provider outcome
+            unknown): reverse the NGN hold back to the user's wallet and fail the swap. There is no
+            manual "settle/capture": we never credit crypto we cannot prove was bought.
+        An Idempotency-Key and a non-empty operator note are required. Idempotent — a repeat is a
+        no-op (the swap is no longer parked). crypto.admin; flag-gated by FEATURE_CRYPTO_SWAPS_ENABLED.
+        ADR-PR728.
+      operationId: resolveCryptoSwap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SwapId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, note]
+              additionalProperties: false
+              properties:
+                decision: { type: string, enum: [release, retry] }
+                note: { type: string, minLength: 1, description: Operator reason, audited }
+      responses:
+        '200':
+          description: The resolved swap
+          content: { application/json: { schema: { $ref: '#/components/schemas/ResolvedSwap' } } }
+        '400': { description: 'idempotency_key_required, note_required or bad_decision', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: swap_not_found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'not_parked or settlement_conflict', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'nothing_to_retry (no provider id) or release_unsafe (has provider id)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '500': { $ref: '#/components/responses/Error' }
+  /webhooks/crypto/{provider}:
+    post:
+      tags: [Webhooks]
+      summary: Provider event delivery (signature-authenticated, no session)
+      operationId: cryptoProviderWebhook
+      security: []
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, example: quidax } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        '200': { description: Processed, or an already-processed duplicate }
+        '401': { description: Bad signature }
+        '404': { description: Unknown provider }
+        '413': { description: Body over 1 MiB }
+        '500': { description: Processing failed; the provider should redeliver }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1 } }
+    SwapId: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Swap:
+      description: A swap
+      content: { application/json: { schema: { $ref: '#/components/schemas/SwapEnvelope' } } }
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    FeeScheduleVersion:
+      type: object
+      required: [version, major_bps, other_bps, majors, overrides, reason, created_by, created_at]
+      properties:
+        version: { type: integer, format: int64, description: 0 is the configured default }
+        major_bps: { type: integer, minimum: 0, maximum: 150 }
+        other_bps: { type: integer, minimum: 0, maximum: 150 }
+        majors:
+          type: array
+          items: { type: string }
+        overrides:
+          type: object
+          additionalProperties: { type: integer, minimum: 0, maximum: 150 }
+        reason: { type: string }
+        created_by: { type: string }
+        created_at: { type: string }
+    FeeScheduleResponse:
+      type: object
+      required: [success, current, ceiling_bps]
+      properties:
+        success: { type: boolean }
+        current: { $ref: '#/components/schemas/FeeScheduleVersion' }
+        ceiling_bps: { type: integer, example: 150 }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/FeeScheduleVersion' }
+    FeeScheduleUpdate:
+      type: object
+      additionalProperties: false
+      required: [expected_version, major_bps, other_bps, majors, reason]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0, description: The version the editor read }
+        major_bps: { type: integer, minimum: 0, maximum: 150 }
+        other_bps: { type: integer, minimum: 0, maximum: 150 }
+        majors:
+          type: array
+          maxItems: 50
+          items: { type: string, pattern: '^[A-Za-z0-9]{2,12}$' }
+        overrides:
+          type: object
+          maxProperties: 50
+          additionalProperties: { type: integer, minimum: 0, maximum: 150 }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    ReconcilerStatus:
+      type: object
+      required: [success, note, replica, backlog]
+      properties:
+        success: { type: boolean }
+        note: { type: string }
+        replica:
+          type: object
+          properties:
+            started_at: { type: string }
+            runs: { type: integer, format: int64 }
+            led_runs: { type: integer, format: int64 }
+            skipped_runs: { type: integer, format: int64 }
+            last_run_at: { type: string }
+            last_led_at: { type: string }
+            last_led: { type: boolean }
+            last_error: { type: string }
+            last_result:
+              type: object
+              properties:
+                resolved: { type: integer }
+                released: { type: integer }
+                parked: { type: integer }
+                expired: { type: integer }
+                errors: { type: integer }
+                clearing_negative: { type: boolean }
+            totals:
+              type: object
+              properties:
+                resolved: { type: integer, format: int64 }
+                released: { type: integer, format: int64 }
+                parked: { type: integer, format: int64 }
+                expired: { type: integer, format: int64 }
+                errors: { type: integer, format: int64 }
+                clearing_negative_runs: { type: integer, format: int64 }
+            recent_alerts:
+              type: array
+              items:
+                type: object
+                properties:
+                  at: { type: string }
+                  kind: { type: string }
+                  message: { type: string }
+        backlog:
+          type: array
+          items:
+            type: object
+            required: [state, count, held_kobo, oldest_age_seconds]
+            properties:
+              state: { type: string, enum: [needs_review, confirming, processing, quoted] }
+              count: { type: integer, format: int64 }
+              held_kobo: { type: integer, format: int64 }
+              oldest_updated_at: { type: string }
+              oldest_age_seconds: { type: integer, format: int64 }
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, const: false }
+        error: { type: string, description: Stable machine code (never provider or database text) }
+    SwapEnvelope:
+      type: object
+      required: [success, swap]
+      properties:
+        success: { type: boolean, const: true }
+        message: { type: string }
+        swap: { $ref: '#/components/schemas/Swap' }
+    ResolvedSwap:
+      type: object
+      required: [success, swap]
+      properties:
+        success: { type: boolean, const: true }
+        swap: { $ref: '#/components/schemas/AdminReviewSwap' }
+    ReviewQueue:
+      type: object
+      required: [success, swaps, count]
+      properties:
+        success: { type: boolean, const: true }
+        count: { type: integer, description: Number of swaps in this page }
+        swaps:
+          type: array
+          items: { $ref: '#/components/schemas/AdminReviewSwap' }
+    AdminReviewSwap:
+      type: object
+      required: [id, user_id, status, asset, ngn_kobo, fee_kobo, held_kobo, provider, has_provider_id, age_seconds]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        status: { type: string, enum: [needs_review] }
+        asset: { type: string, description: Crypto bought (to-currency) }
+        ngn_kobo: { type: integer, format: int64 }
+        fee_kobo: { type: integer, format: int64 }
+        held_kobo: { type: integer, format: int64, description: ngn_kobo + fee_kobo, the NGN held from the wallet }
+        provider: { type: string }
+        provider_swap_id: { type: string, description: Omitted when the provider never returned one }
+        has_provider_id: { type: boolean, description: false ⇒ provider outcome unknown; only release is safe }
+        updated_at: { type: string, format: date-time, description: When the swap was parked }
+        age_seconds: { type: integer, format: int64, description: Seconds the swap has been parked }
+    Swap:
+      type: object
+      required: [id, status, side, asset, ngn_kobo, fee_kobo, fee_bps, total_kobo, quoted_amount, price]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [quoted, confirming, processing, completed, failed, expired, needs_review] }
+        side: { type: string, enum: [buy] }
+        asset: { type: string }
+        ngn_kobo: { type: integer, format: int64 }
+        fee_kobo: { type: integer, format: int64 }
+        fee_bps: { type: integer }
+        total_kobo: { type: integer, format: int64, description: ngn_kobo + fee_kobo, the amount held from the wallet }
+        quoted_amount: { type: string, description: Decimal string of crypto quoted }
+        received_amount: { type: string, description: Decimal string, present once the provider confirms }
+        price: { type: string, description: Decimal string }
+        expires_at: { type: string, format: date-time }

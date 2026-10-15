@@ -46,6 +46,7 @@ func TestRestaurantRouteShapeRegistersWithoutConflict(t *testing.T) {
 	g.GET("/:id/kyb", noop)
 	g.PUT("/:id/kyb", noop)
 	g.POST("/:id/kyb/documents", noop)
+	g.POST("/:id/kyb/documents/presign", noop)
 	g.POST("/:id/kyb/submit", noop)
 	g.GET("/:id/staff", noop)
 	g.POST("/:id/staff", noop)

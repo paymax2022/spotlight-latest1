@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -27,6 +28,7 @@ import (
 	cfinvestment "spotlight/backend/internal/crowdfunding/investment"
 	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
 	"spotlight/backend/internal/crypto"
+	"spotlight/backend/internal/cryptosvc"
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/estate"
 	estatepaystackcheckout "spotlight/backend/internal/estate/paystackcheckout"
@@ -77,9 +79,11 @@ import (
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
+	"spotlight/backend/internal/referral/commissionsplit"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/restaurant/paystackcheckout"
+	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
@@ -482,6 +486,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// stays nil if the engine returns nil (nil pool), keeping all emits nil-safe.
 		rewardSvc = RegisterReferralRewards(r, pool, rbac, mapsAuth(), cfg.ReferralRewardsInternalSecret,
 			middleware.PerUserRateLimit(redisClient, "referrals-attribute", cfg.ReferralAttributeRatePerMin))
+	}
+
+	// Referral commission-split catch-up: pays referrers for commission_earnings
+	// rows written outside commission.Service (frontend-web's utility path inserts
+	// them directly, so the ReferralHook never fires). Same flag as the hook;
+	// idempotent with it — see commissionsplit.Sweep.
+	if cfg.FeatureReferralCommissionSplitEnabled && pool != nil {
+		commissionsplit.NewService(pool, ledger.NewService(ledger.NewRepository(pool), nil), true).
+			StartSweeper(context.Background(), 5*time.Minute, commissionsplit.SweepOptions{
+				MinAge: 2 * time.Minute, Lookback: 7 * 24 * time.Hour, Limit: 200,
+			})
 	}
 
 	// Member routes under /api/finance/insurance/* (auth via finance group);
@@ -1046,6 +1061,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Registry: kvReg,
 			Cipher:   kvCipher,
 			Elevator: kvElevator,
+			// Durable audit of admin approve/reject decisions (shared immutable sink).
+			AdminAuditor: auditSink,
 			Seed: kycverify.RoutingSeed{
 				IDNumber:  cfg.KYCRouteIDNumber,
 				IDFacial:  cfg.KYCRouteIDFacial,
@@ -1055,6 +1072,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				Threshold: cfg.KYCFacialMatchThreshold,
 			},
 			FacialThreshold: cfg.KYCFacialMatchThreshold,
+			// NIN/BVN ownership gate (FEATURE_KYC_OWNERSHIP_GATE, default off). The
+			// phone source is wired whenever the gate is on so a nil source can
+			// never make the gate fail open.
+			OwnershipGate:      cfg.FeatureKYCOwnershipGate,
+			AccountPhoneSource: kycAccountPhoneSource{pool: pool},
+			// Persist the provider-verified legal name + DOB onto user_profiles on a
+			// PASSED ID-number check (sourced from the provider, never the user).
+			// *kyc.Service satisfies kycverify.IdentitySink via SaveVerifiedIdentity.
+			IdentitySink: kycSvc,
 		})
 		kvHandler := kycverify.NewHandler(kvSvc)
 
@@ -1089,6 +1115,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		kvAdmin.GET("/routing-rules", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.ListRoutingRules)
 		kvAdmin.PUT("/routing-rules/:check_type", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.UpdateRoutingRule)
 		kvAdmin.GET("/events", middleware.RequirePermission(rbac, "finance.admin.kyc"), kvHandler.Events)
+		// Per-user KYC snapshot for the admin profile page (see kyc_user_snapshot.go).
+		kvAdmin.GET("/users/:id", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycUserSnapshotHandler(
+			func(ctx context.Context, id string) (int, string, error) {
+				prof, err := kycSvc.GetProfile(ctx, id)
+				if err != nil {
+					return 0, "", err
+				}
+				return int(prof.Tier), string(prof.Status), nil
+			},
+			kvSvc.OpenReviewCaseID,
+		))
 
 		log.Println("[finance] KYC verification gateway routes + webhook registered")
 	}
@@ -1403,6 +1440,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 33: Facilities / Amenities
 		estGroup.GET("/:id/facilities", estateHandler.ListFacilities)
 		estGroup.POST("/:id/facilities", estateHandler.CreateFacility)
+		estGroup.PATCH("/:id/facilities/:facilityId", estateHandler.UpdateFacility)
 		estGroup.POST("/:id/facilities/:facilityId/book", estateHandler.BookFacility)
 		estGroup.GET("/:id/bookings", estateHandler.ListMyBookings)
 
@@ -1614,6 +1652,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
 
+		// Backend-owned presigned R2 uploads for KYB documents, attached to the
+		// service so it both mints owner upload URLs and signs stored keys back into
+		// reviewer-viewable URLs (the bucket is private). Unconfigured or failing
+		// creds make the presign endpoint answer 503, which the app turns into the
+		// paste-a-link fallback rather than a retry loop.
+		kybPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		kybPresigner.EnableHealthCheck(nil)
+		restaurantSvc = restaurantSvc.WithKYBStorage(kybPresigner)
+
 		// Commission recording for food-delivery profit at settleOrder. Ledger-less
 		// recorder — the escrow split already posts the platform cut, so RecordFor
 		// appends the earning ROW only; best-effort, never fails an order (see
@@ -1658,6 +1711,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restaurantRT.Start(ctx)
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
 
+		restaurantSvc = restaurantSvc.WithDiscounts(cfg.FeatureRestaurantDiscounts)
 		restaurantHandler := restaurant.NewHandler(restaurantSvc).WithRealtime(restaurantHub)
 		restGroup := finance.Group("/restaurant")
 
@@ -1713,13 +1767,30 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// details, attach documents, then submit for admin review.
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 
 		// Menu management (owner only).
-		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
-		restGroup.DELETE("/:id/menu/categories/:categoryId", restaurantHandler.DeleteCategory)
-		restGroup.POST("/:id/menu/items", restaurantHandler.CreateItem)
+		if cfg.FeatureRestaurantAdminCategories {
+			restGroup.POST("/:id/menu/categories", taxonomy.ForbidOwnerCategoryWrite)
+			restGroup.DELETE("/:id/menu/categories/:categoryId", taxonomy.ForbidOwnerCategoryWrite)
+		} else {
+			restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
+			restGroup.DELETE("/:id/menu/categories/:categoryId", restaurantHandler.DeleteCategory)
+		}
+		if cfg.FeatureRestaurantAdminCategories {
+			restGroup.POST("/:id/menu/items", restaurantHandler.CreateTaxonomyItem)
+		} else {
+			restGroup.POST("/:id/menu/items", restaurantHandler.CreateItem)
+		}
+		restGroup.PATCH("/:id/menu/items/availability/bulk", restaurantHandler.BulkSetAvailability)
+		if cfg.FeatureRestaurantDiscounts {
+			restGroup.GET("/:id/discounts", restaurantHandler.ListDiscounts)
+			restGroup.POST("/:id/discounts", restaurantHandler.CreateDiscount)
+			restGroup.PATCH("/:id/discounts/:discountId", restaurantHandler.SetDiscountActive)
+			restGroup.DELETE("/:id/discounts/:discountId", restaurantHandler.DeleteDiscount)
+		}
 		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
 		restGroup.DELETE("/:id/menu/items/:itemId", restaurantHandler.DeleteItem)
 
@@ -1805,6 +1876,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// permission middleware fail-closed.
 		restAdmin := r.Group("/api/restaurant/admin")
 		restAdmin.Use(mapsAuth())
+		if cfg.FeatureRestaurantAdminCategories && pool != nil {
+			taxonomy.Register(restAdmin, restGroup, taxonomy.NewHandler(taxonomy.NewService(pool)),
+				func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) })
+		}
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfig)
 
@@ -2220,6 +2295,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		drv.POST("/documents", transportHandler.AddDocument)
 		drv.POST("/documents/presign", transportHandler.PresignDriverDocument)
 		drv.POST("/vehicle", transportHandler.AddVehicle)
+		drv.PUT("/service-profile", transportHandler.SetServiceProfile)
+		drv.GET("/onboarding-options", transportHandler.OnboardingOptions)
 		drv.GET("/me", transportHandler.DriverMe)
 		drv.PATCH("/status", transportHandler.DriverStatus)
 		drv.GET("/requests", transportHandler.DriverRequests)
@@ -2580,6 +2657,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
 		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}
+	// Read-only reads for the admin user profile; deliberately NOT wallet-flag gated.
+	// Raw numbers: Tier 0 limits 0/0 = wallet disabled, Tier 3 limits 0/0 = unlimited.
+	adminFinance.GET("/tiers/:user_id", middleware.RequirePermission(rbac, "finance.admin.transfers"), tiers.AdminGetTier(tiersSvc))
+	if rewardSvc != nil {
+		adminFinance.GET("/referrals/:user_id", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCaseByUser(rewardSvc))
+		adminFinance.GET("/referrals/:user_id/referred-by", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetReferredBy(rewardSvc))
+	}
+	// Pure read of existing data (no rewards engine, no write path), so no new flag.
+	adminFinance.GET("/referrals/:user_id/code", middleware.RequirePermission(rbac, "referral.admin.case"), referrals.AdminGetCode(referralSvc))
 
 	// Capture the service so we can wire the optional CAC-business gate below once the
 	// business registry service exists (registered later in this function). nil when the
@@ -3226,6 +3312,43 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		})
 		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
 		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
+
+		// Provider-driven swap pipeline (quote -> confirm -> webhook/reconciler settle). Its own
+		// flag, and it fails closed: any missing piece skips the routes instead of mounting a
+		// half-wired money path.
+		if cfg.FeatureCryptoSwapsEnabled {
+			quidaxKey, quidaxBase := cfg.CryptoQuidaxTestKey, cfg.CryptoQuidaxTestBaseURL
+			if cfg.IsProd() {
+				quidaxKey, quidaxBase = cfg.CryptoQuidaxLiveKey, cfg.CryptoQuidaxLiveBaseURL
+			}
+			wired, werr := cryptosvc.Wire(ctx, cryptosvc.WireConfig{
+				Provider: cfg.CryptoProvider, QuidaxKey: quidaxKey, QuidaxBaseURL: quidaxBase,
+				WebhookSecret: cfg.CryptoWebhookSecret, DatabaseURL: cfg.DatabaseURL,
+				LockPoolConns:     cfg.CryptoLockPoolConns,
+				ReconcileInterval: time.Duration(cfg.CryptoReconcileSeconds) * time.Second,
+				Fees:              cryptosvc.DefaultFeeSchedule(),
+			}, cryptosvc.WireDeps{Pool: pool, Ledger: ledgerSvc, Tiers: tiersSvc, Transfers: xferSvc})
+			if werr != nil {
+				log.Printf("[crypto] swap pipeline NOT mounted: %v", werr)
+			} else {
+				swapMember := cryptoV1.Group("/crypto")
+				swapMember.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermTrade))
+				// Per-user budgets, quote looser than confirm (confirm spends a PIN attempt and holds
+				// funds). Separate Redis prefixes so the two never share a count. max(.., 1): the
+				// middleware turns <= 0 into 60/min, and non-dev validation does not run in dev.
+				wired.Deps.QuoteLimit = middleware.PerUserRateLimit(redisClient, "crypto-swap-quote", max(cfg.CryptoQuoteRatePerMin, 1))
+				wired.Deps.ConfirmLimit = middleware.PerUserRateLimit(redisClient, "crypto-swap-confirm", max(cfg.CryptoConfirmRatePerMin, 1))
+				cryptosvc.RegisterRoutes(swapMember, r.Group("/api/v1/webhooks"), wired.Deps)
+				// Read-only ops surface for swaps the pipeline parked in needs_review (NGN held).
+				// Its own admin group under the same /api/v1/admin/crypto prefix as the legacy
+				// crypto admin routes; GET /swaps/review is a static sibling of the legacy
+				// GET /swaps, so the two never collide. crypto.admin, like the legacy surface.
+				swapAdmin := cryptoV1.Group("/admin/crypto")
+				swapAdmin.Use(mapsAuth(), middleware.RequirePermission(rbac, crypto.PermAdmin))
+				cryptosvc.RegisterAdminRoutes(swapAdmin, wired.Deps)
+				log.Println("[crypto] swap pipeline mounted (quote/confirm/webhook, admin review queue, reconciler running)")
+			}
+		}
 	} else {
 		log.Println("[crypto] FEATURE_CRYPTO_ENABLED is false — skipping routes")
 	}
@@ -3378,6 +3501,30 @@ func (e kycTierElevator) ElevateTier(ctx context.Context, userID string, newTier
 	}
 	_, err := e.svc.Approve(ctx, userID, newTier, actorID)
 	return err
+}
+
+// kycAccountPhoneSource adapts the pgx pool to the kycverify.AccountPhoneSource
+// port used by the NIN/BVN ownership gate. It reads the caller's account phone
+// and verified flag straight from user_profiles (the same columns sign-in and
+// wallet recipient-resolution use); a missing row yields an empty, unverified
+// phone, which the gate treats as a hard block (fail-closed).
+type kycAccountPhoneSource struct{ pool *pgxpool.Pool }
+
+func (s kycAccountPhoneSource) VerifiedPhone(ctx context.Context, userID string) (string, bool, error) {
+	if s.pool == nil || userID == "" {
+		return "", false, nil
+	}
+	const q = `SELECT COALESCE(phone, ''), COALESCE(phone_verified, false) FROM user_profiles WHERE id = $1`
+	var phone string
+	var verified bool
+	switch err := s.pool.QueryRow(ctx, q, userID).Scan(&phone, &verified); {
+	case err == nil:
+		return phone, verified, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", false, nil // no profile → nothing to match → fail-closed block
+	default:
+		return "", false, err
+	}
 }
 
 // restaurantOrderConfirmer adapts *paystackcheckout.Service to

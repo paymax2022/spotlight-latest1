@@ -29,6 +29,7 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	realtime   RealtimePublisher  // optional; nil ⇒ no live push (clients poll instead)
 	thumbs     ThumbPresigner     // optional; nil ⇒ listings serve without images
+	alerts     bool               // FEATURE_MARKETPLACE_ALERTS_ENABLED: new-listing + saved-price-drop producers
 	tiers      TierEnforcer       // REQUIRED for PurchaseBoost; nil ⇒ fail-closed refusal (ErrTierGateUnwired)
 	// referralEmitter was removed in the listings-and-connect pivot (ADR-023): the
 	// marketplace no longer settles purchases (no escrow release), so there is nothing
@@ -148,6 +149,10 @@ type RealtimePublisher interface {
 
 // WithRealtime attaches an optional live-push sink for chat events.
 func (s *Service) WithRealtime(p RealtimePublisher) *Service { s.realtime = p; return s }
+
+// WithListingAlerts turns the new-listing / saved-price-drop alert producers on or
+// off (FEATURE_MARKETPLACE_ALERTS_ENABLED).
+func (s *Service) WithListingAlerts(on bool) *Service { s.alerts = on; return s }
 
 // WithNotifier attaches an optional notification sink.
 func (s *Service) WithNotifier(n Notifier) *Service { s.notify = n; return s }
