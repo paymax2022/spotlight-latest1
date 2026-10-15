@@ -39,6 +39,12 @@ type Config struct {
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
 
+	// FrontendSiteURL is where a Supabase recovery/confirmation email link
+	// lands (frontend-web's /auth/reset-password, which establishes the
+	// session from the URL and hands off from there). Without it, GoTrue's
+	// /auth/v1/recover call falls back to the project's dashboard-configured
+	// Site URL, which is not guaranteed to be this page.
+	FrontendSiteURL string
 	// Feature-flagged surface (default OFF). When OFF, the new self/admin session
 	// endpoints return 503 feature-disabled and the middleware session check is a
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
@@ -823,6 +829,7 @@ func Load() Config {
 		AppEnv:                      getEnv("APP_ENV", "development"),
 		Port:                        getEnv("APP_PORT", "8080"),
 		SupabaseURL:                 getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
+		FrontendSiteURL:             getEnv("FRONTEND_SITE_URL", getEnv("NEXT_PUBLIC_SITE_URL", "https://www.spotlightng.com")),
 		SupabaseServiceRoleKey:      getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
 		SupabaseJWTSecret:           getEnv("SUPABASE_JWT_SECRET", ""),
 		AuthJWTLocalVerify:          getEnvBool("AUTH_JWT_LOCAL_VERIFY", false),
