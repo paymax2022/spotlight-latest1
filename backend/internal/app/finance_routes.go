@@ -1651,6 +1651,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
 
+		// Backend-owned presigned R2 uploads for KYB documents, attached to the
+		// service so it both mints owner upload URLs and signs stored keys back into
+		// reviewer-viewable URLs (the bucket is private). Unconfigured or failing
+		// creds make the presign endpoint answer 503, which the app turns into the
+		// paste-a-link fallback rather than a retry loop.
+		kybPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		kybPresigner.EnableHealthCheck(nil)
+		restaurantSvc = restaurantSvc.WithKYBStorage(kybPresigner)
+
 		// Commission recording for food-delivery profit at settleOrder. Ledger-less
 		// recorder — the escrow split already posts the platform cut, so RecordFor
 		// appends the earning ROW only; best-effort, never fails an order (see
@@ -1751,6 +1766,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// details, attach documents, then submit for admin review.
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 
