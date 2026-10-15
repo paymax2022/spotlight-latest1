@@ -24,7 +24,6 @@ import { getPinStatus } from '@/features/transfers/api';
 import { requiresTransactionPin } from '@/features/security/moneyRoutes';
 import { rememberResume, toParamMap } from '@/lib/resume';
 import { useBrandFonts } from '@/lib/brandFonts';
-import { createSupabaseClient } from '@/lib/supabase';
 import { usePushNotifications } from '@/lib/push';
 import { resetUserScopedState } from '@/lib/resetUserScopedState';
 import { useVisitorPushBridge } from '@/features/visitor/hooks/useVisitorPushBridge';
@@ -97,18 +96,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   globalParamsRef.current = globalParams;
 
   useEffect(() => { init(); }, [init]);
-
-  // Supabase fires PASSWORD_RECOVERY when the user opens the reset deep link.
-  // Navigate to the set-password screen immediately; the session is already live.
-  useEffect(() => {
-    const supabase = createSupabaseClient();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        router.push('/(auth)/reset-password');
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, [router]);
 
   // Register for push + wire deep-link routing once the user is signed in.
   const signedIn = initialized && !!user;

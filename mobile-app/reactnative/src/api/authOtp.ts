@@ -13,9 +13,11 @@ export const OTP_ROUTES = {
   verifyEmail: '/api/auth/verify-otp',
   /** Re-issues a sign-up code. */
   resend: '/api/auth/resend-otp',
-  /** Starts a reset — sends BOTH the Supabase link and our code. */
+  /** Starts a reset: emails a one-time code (never a link). Takes email OR phone. */
   forgotPassword: '/api/auth/forgot-password',
-  /** Completes a reset, with either the code or the link session. */
+  /** Checks the emailed code; answers with a single-use resetToken. */
+  verifyResetCode: '/api/auth/verify-password-reset-otp',
+  /** Sets the new password, authorised by the resetToken. */
   resetPassword: '/api/auth/reset-password',
   /** Redeems the LOGIN second factor. Returns a session. */
   loginStepUp: '/api/auth/otp-verify',
@@ -34,25 +36,50 @@ export function resendBody(email: string) {
   return { email: normaliseEmail(email) };
 }
 
-export function forgotPasswordBody(email: string) {
-  return { email: normaliseEmail(email) };
+/**
+ * A reset identifier is an email OR a phone number. Emails are lowercased (the
+ * server keys on that); anything else is only trimmed — the server owns phone
+ * normalisation, and guessing here would mangle formats it accepts.
+ */
+export function normaliseIdentifier(identifier: string): string {
+  const trimmed = identifier.trim();
+  return trimmed.includes('@') ? trimmed.toLowerCase() : trimmed;
 }
 
-export function resetWithCodeBody(email: string, code: string, password: string) {
-  return { email: normaliseEmail(email), code: code.trim(), password };
+export function forgotPasswordBody(identifier: string) {
+  return { identifier: normaliseIdentifier(identifier) };
+}
+
+export function verifyResetCodeBody(identifier: string, code: string) {
+  return { identifier: normaliseIdentifier(identifier), code: code.trim() };
+}
+
+export function resetWithTokenBody(identifier: string, resetToken: string, password: string) {
+  return { identifier: normaliseIdentifier(identifier), resetToken, password };
+}
+
+/**
+ * Holds the proof that the reset code was correct, between the code screen and the
+ * new-password screen. In memory ONLY: a route param would put the token in
+ * navigation state and deep links, and persisting it would outlive the 10-minute
+ * server TTL. Losing it (app killed) just means starting the reset again.
+ */
+let pendingReset: { identifier: string; resetToken: string } | null = null;
+
+export function setPendingReset(identifier: string, resetToken: string): void {
+  pendingReset = { identifier: normaliseIdentifier(identifier), resetToken };
+}
+
+export function getPendingReset(): { identifier: string; resetToken: string } | null {
+  return pendingReset;
+}
+
+export function clearPendingReset(): void {
+  pendingReset = null;
 }
 
 export function loginStepUpBody(email: string, otp: string) {
   return { email: normaliseEmail(email), code: otp.trim() };
-}
-
-/**
- * Whether a reset request carries a CODE rather than relying on the link's
- * recovery session. Both are live: the reset email sends both mechanisms, so a
- * user may arrive holding either.
- */
-export function isCodeReset(payload: { email?: string; code?: string }): boolean {
-  return Boolean(payload.email && payload.code);
 }
 
 type Sessionish = { access_token?: unknown; refresh_token?: unknown } | undefined | null;

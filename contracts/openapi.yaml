@@ -4382,19 +4382,20 @@ security:
 # ── KYC endpoints ─────────────────────────────────────────────────────────────
 
 paths:
-  /api/auth/reset-password:
+  # PASSWORD RESET is an emailed one-time code in three steps. There is NO reset link.
+  /api/auth/request-password-reset:
     post:
-      operationId: resetPasswordWithCode
-      summary: Complete a password reset with an emailed code
+      operationId: requestPasswordReset
+      summary: Step 1 - email a password-reset code
       description: >
-        Requires `email` + `code` + `newPassword`. The former `{token, newPassword}`
-        form is REFUSED with 400: it was answered with "Password reset successful"
-        for any non-empty token while changing nothing, which is the same defect
-        the audit removed as B4 on verify-email. No client used it — web and
-        mobile both complete resets through Supabase's own recovery session.
+        `identifier` is an email OR a phone number (`email` is accepted as an alias).
+        A phone number is resolved to its account server-side and the code is
+        emailed to that account's address; the address is never returned.
 
 
-        Answers identically whether or not an account exists for the address.
+        Answers 200 with the same body whether or not an account matched, and
+        whether or not delivery succeeded (otherwise this enumerates users). 429 is
+        the one exception: it is per client IP, not per account.
         Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
       tags: [OTP]
       requestBody:
@@ -4403,18 +4404,77 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, code, newPassword]
+              required: [identifier]
               properties:
-                email: { type: string, format: email }
+                identifier: { type: string, example: "ada@example.com" }
+      responses:
+        '200': { description: "If an account matches, a reset code was sent to its email" }
+        '400': { description: Identifier missing }
+        '429': { description: Per-IP request budget exceeded }
+        '503': { description: Feature disabled or misconfigured }
+  /api/auth/verify-password-reset-otp:
+    post:
+      operationId: verifyPasswordResetOTP
+      summary: Step 2 - check the emailed code, receive a reset token
+      description: >
+        Spends the code and returns a single-use, 10-minute `resetToken` bound to the
+        identifier's account. It changes no password. The new-password form should be
+        shown only after this succeeds. A wrong code, an unknown identifier and a
+        mismatched purpose all return the same 400.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, code]
+              properties:
+                identifier: { type: string }
                 code: { type: string, example: "482913" }
+      responses:
+        '200':
+          description: Code accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  verified: { type: boolean, example: true }
+                  resetToken: { type: string, description: "Single-use; redeemed by /api/auth/reset-password" }
+        '400': { description: Invalid or expired code }
+        '429': { description: "Attempt ceiling reached, or per-IP verify budget exceeded" }
+        '503': { description: Feature disabled or misconfigured }
+  /api/auth/reset-password:
+    post:
+      operationId: resetPasswordWithToken
+      summary: Step 3 - set the new password
+      description: >
+        Requires `identifier` + `resetToken` (from step 2) + `newPassword`. The token
+        is single-use and bound to the account, so it cannot be replayed or used for
+        another identifier. The earlier `{email, code, newPassword}` and
+        `{token, newPassword}` forms are REFUSED with 400.
+        Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, resetToken, newPassword]
+              properties:
+                identifier: { type: string }
+                resetToken: { type: string }
                 newPassword: { type: string, minLength: 8 }
       responses:
-        '200': { description: "Password reset (or the address has no account — indistinguishable by design)" }
-        '400': { description: "Invalid or expired code, or the removed token-only form" }
+        '200': { description: Password updated }
+        '400': { description: "Invalid, expired or already-used token, or password too short" }
         '403': { description: Account suspended or locked }
-        '429': { description: Attempt ceiling reached }
-        '500': { description: "The code was consumed but the password could not be set" }
-        '503': { description: Feature disabled }
+        '429': { description: Per-IP redemption budget exceeded }
+        '500': { description: "The token was consumed but the password could not be set" }
+        '503': { description: Feature disabled or misconfigured }
 
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ SERVER-ISSUED EMAIL OTP (Brevo)                                        ║
@@ -4442,7 +4502,8 @@ paths:
   # ║ log in without a password. To resend, submit the password again.       ║
   # ║ ⚠️ Login MFA fails closed: an email outage is a total login outage.     ║
   # ║                                                                        ║
-  # ║ PASSWORD RESET is wired at /api/auth/reset-password (code form).       ║
+  # ║ PASSWORD RESET: request-password-reset -> verify-password-reset-otp -> ║
+  # ║ reset-password (code, then single-use token; never a link).           ║
   # ║                                                                        ║
   # ║ Both endpoints are unauthenticated and answer identically whether or   ║
   # ║ not an account exists — otherwise they enumerate users.                ║
@@ -4530,8 +4591,8 @@ paths:
           description: >
             The caller controls the mailbox. For verify_email the account is now
             confirmed. For login a SESSION is returned, in the same three shapes
-            POST /api/auth/login uses. For password_reset the code is simply
-            consumed — the new password is submitted to /api/auth/reset-password.
+            POST /api/auth/login uses. For password_reset prefer the dedicated
+            /api/auth/verify-password-reset-otp, which also returns the resetToken.
           content:
             application/json:
               schema:

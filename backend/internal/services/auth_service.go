@@ -25,7 +25,6 @@ type AuthService interface {
 	RegisterUser(ctx context.Context, in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(ctx context.Context, in domain.LoginRequest) (map[string]any, error)
 	LogoutUser(accessToken string) error
-	RequestPasswordReset(ctx context.Context, email string) error
 	ChangePassword(ctx context.Context, accessToken, currentPassword, newPassword string) error
 	CompleteProfile(ctx context.Context, userID string, profileType string, metadata map[string]any) error
 }
@@ -495,49 +494,6 @@ func (s *authService) LogoutUser(accessToken string) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("gotrue logout returned %d", resp.StatusCode)
-	}
-	return nil
-}
-
-func (s *authService) RequestPasswordReset(ctx context.Context, email string) error {
-	// redirect_to must be set explicitly: omitted, GoTrue falls back to the
-	// project dashboard's Site URL, which is not guaranteed to be a page that
-	// can actually complete a reset (and historically wasn't here — the link
-	// landed nowhere useful even when the email arrived). frontend-web's own
-	// Supabase fallback path (createAnonClient().auth.resetPasswordForEmail)
-	// already sets the same target; this brings the primary Go path in line.
-	redirectTo := strings.TrimRight(s.cfg.FrontendSiteURL, "/") + "/auth/reset-password"
-	payload := map[string]any{
-		"email":       strings.TrimSpace(strings.ToLower(email)),
-		"redirect_to": redirectTo,
-	}
-	b, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/recover", bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Apikey", s.supabase.APIKey())
-	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := gotrueHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// A 4xx is EXPECTED and must stay quiet: Supabase answers this way for an
-	// address with no account, and the endpoint deliberately does not disclose
-	// whether one exists. Reporting it would turn the reset form into an account
-	// enumeration oracle.
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		return nil
-	}
-	// A 5xx is NOT expected. It previously returned nil too, so an outage looked
-	// exactly like success: the user was told to check their email and no email
-	// was ever going to arrive. The caller still answers the user identically —
-	// this exists so the failure reaches the logs instead of vanishing.
-	if resp.StatusCode >= 500 {
-		return fmt.Errorf("password reset upstream returned %d", resp.StatusCode)
 	}
 	return nil
 }

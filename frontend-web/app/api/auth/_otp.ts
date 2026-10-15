@@ -19,6 +19,7 @@
  * turn "that code is wrong" into a confusing second error.
  */
 
+import { NextResponse } from 'next/server';
 import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
@@ -63,6 +64,22 @@ export async function callGo(path: string, body: unknown, request?: Request): Pr
   }
 
   return { kind: 'answered', status: upstream.status, body: payload ?? {} };
+}
+
+/**
+ * The answer for the password-reset routes when codes cannot be served (feature
+ * closed, or Go unreachable). Unlike sign-up, reset has NO Supabase fallback: its
+ * only mechanism is the emailed code, so "unavailable" is the honest answer and
+ * the user is not told something was sent.
+ *
+ * Safe to say plainly: this describes the environment, identically for every
+ * identifier, so it reveals nothing about which accounts exist.
+ */
+export function resetUnavailable(): NextResponse {
+  return NextResponse.json(
+    { error: 'Password reset is unavailable right now. Please try again later.' },
+    { status: 503 },
+  );
 }
 
 /**

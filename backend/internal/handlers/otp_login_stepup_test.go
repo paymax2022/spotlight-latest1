@@ -320,12 +320,15 @@ func TestStepUpCodeIsScopedToLogin(t *testing.T) {
 	}
 }
 
-func resetRouter(t *testing.T, verify OTPVerifier, setter services.PasswordSetter) *gin.Engine {
+// resetRouter builds the set-password step. The code is checked in an earlier
+// step (VerifyPasswordResetOTP) and arrives here as a single-use resetToken, so
+// the thing to fake is the ticket redeemer.
+func resetRouter(t *testing.T, redeem OTPTicketRedeemer, setter services.PasswordSetter) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	h := NewAuthHandler(&stubAuthService{}, nil, noopAudit{})
-	if verify != nil {
-		h.WithOTPVerifier(verify)
+	if redeem != nil {
+		h.WithOTPTickets(nil, redeem)
 	}
 	if setter != nil {
 		h.WithPasswordSetter(setter)
@@ -335,7 +338,7 @@ func resetRouter(t *testing.T, verify OTPVerifier, setter services.PasswordSette
 	return r
 }
 
-func okVerifier() OTPVerifier {
+func okRedeemer() OTPTicketRedeemer {
 	return func(context.Context, string, string, string, string) error { return nil }
 }
 
@@ -343,10 +346,10 @@ func okVerifier() OTPVerifier {
 // not changed, for any non-empty token. It must actually set the password now.
 func TestResetPasswordActuallySetsThePassword(t *testing.T) {
 	setter := &fakeSetter{changed: true}
-	r := resetRouter(t, okVerifier(), setter)
+	r := resetRouter(t, okRedeemer(), setter)
 
 	w := post(t, r, "/api/auth/reset-password", map[string]string{
-		"email": "Ada@Example.com", "code": "482913", "newPassword": "brand-new-passphrase",
+		"email": "Ada@Example.com", "resetToken": "tok-from-verify-step", "newPassword": "brand-new-passphrase",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
@@ -359,7 +362,7 @@ func TestResetPasswordActuallySetsThePassword(t *testing.T) {
 // The old shape reported success and changed nothing. It must now say so.
 func TestResetPasswordRefusesTheOldTokenForm(t *testing.T) {
 	setter := &fakeSetter{changed: true}
-	r := resetRouter(t, okVerifier(), setter)
+	r := resetRouter(t, okRedeemer(), setter)
 
 	w := post(t, r, "/api/auth/reset-password", map[string]string{
 		"token": "anything-at-all", "newPassword": "brand-new-passphrase",
@@ -372,29 +375,29 @@ func TestResetPasswordRefusesTheOldTokenForm(t *testing.T) {
 	}
 }
 
-func TestResetPasswordRefusesAWrongCode(t *testing.T) {
+func TestResetPasswordRefusesAnInvalidToken(t *testing.T) {
 	setter := &fakeSetter{changed: true}
 	bad := func(context.Context, string, string, string, string) error { return otp.ErrInvalidCode }
 	r := resetRouter(t, bad, setter)
 
 	w := post(t, r, "/api/auth/reset-password", map[string]string{
-		"email": "a@b.com", "code": "000000", "newPassword": "brand-new-passphrase",
+		"email": "a@b.com", "resetToken": "not-a-real-token", "newPassword": "brand-new-passphrase",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
 	}
 	if setter.calls != 0 {
-		t.Fatal("the password was changed despite an invalid code")
+		t.Fatal("the password was changed despite an invalid reset token")
 	}
 }
 
 // A suspended account must not take a new password and walk back in.
 func TestResetPasswordRefusesAnUnavailableAccount(t *testing.T) {
 	setter := &fakeSetter{err: services.ErrAccountUnavailable}
-	r := resetRouter(t, okVerifier(), setter)
+	r := resetRouter(t, okRedeemer(), setter)
 
 	w := post(t, r, "/api/auth/reset-password", map[string]string{
-		"email": "a@b.com", "code": "482913", "newPassword": "brand-new-passphrase",
+		"email": "a@b.com", "resetToken": "tok-from-verify-step", "newPassword": "brand-new-passphrase",
 	})
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", w.Code)
@@ -403,9 +406,9 @@ func TestResetPasswordRefusesAnUnavailableAccount(t *testing.T) {
 
 // An address with no account answers exactly like one that was reset.
 func TestResetPasswordDoesNotRevealWhetherAnAccountExists(t *testing.T) {
-	real := resetRouter(t, okVerifier(), &fakeSetter{changed: true})
-	ghost := resetRouter(t, okVerifier(), &fakeSetter{changed: false})
-	body := map[string]string{"email": "a@b.com", "code": "482913", "newPassword": "brand-new-passphrase"}
+	real := resetRouter(t, okRedeemer(), &fakeSetter{changed: true})
+	ghost := resetRouter(t, okRedeemer(), &fakeSetter{changed: false})
+	body := map[string]string{"email": "a@b.com", "resetToken": "tok-from-verify-step", "newPassword": "brand-new-passphrase"}
 
 	a := post(t, real, "/api/auth/reset-password", body)
 	b := post(t, ghost, "/api/auth/reset-password", body)
@@ -418,7 +421,7 @@ func TestResetPasswordDoesNotRevealWhetherAnAccountExists(t *testing.T) {
 func TestResetPasswordIs503WhenTheFeatureIsClosed(t *testing.T) {
 	r := resetRouter(t, nil, nil)
 	w := post(t, r, "/api/auth/reset-password", map[string]string{
-		"email": "a@b.com", "code": "482913", "newPassword": "brand-new-passphrase",
+		"email": "a@b.com", "resetToken": "tok-from-verify-step", "newPassword": "brand-new-passphrase",
 	})
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", w.Code)
