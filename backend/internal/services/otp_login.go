@@ -165,6 +165,13 @@ func asOTPBridgeInt(v any) int {
 	return 0
 }
 
+// ResolveEmail maps what a user typed (an email, or a phone in any common Nigerian
+// format) to the account email, or "" when no single account matches. The email
+// is for the server's own use and must never be returned to the caller.
+func (b *otpAuthBridge) ResolveEmail(ctx context.Context, identifier string) string {
+	return b.svc.resolveLoginEmail(ctx, identifier, "")
+}
+
 func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword string) (bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || newPassword == "" {

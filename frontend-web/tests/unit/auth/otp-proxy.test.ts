@@ -160,79 +160,188 @@ describe('POST /api/auth/resend-otp', () => {
   });
 });
 
-describe('POST /api/auth/reset-password', () => {
-  it('sends the code form to Go', async () => {
-    const spy = mockGo(200, { success: true, message: 'Password reset successful' });
-    const res = await post('@/app/api/auth/reset-password/route',
-      { email: 'A@b.test', code: '482913', password: 'brand-new-passphrase' });
+// Password reset is the emailed CODE only — no link, and therefore no Supabase
+// fallback. Three steps: request → verify (returns a resetToken) → set password.
+
+describe('POST /api/auth/forgot-password', () => {
+  it('asks Go for a code, with the identifier as typed (email OR phone)', async () => {
+    const spy = mockGo(200, { success: true });
+    const res = await post('@/app/api/auth/forgot-password/route', { identifier: ' 0803 123 4567 ' });
 
     expect(res.status).toBe(200);
     const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toContain('/api/auth/reset-password');
-    expect(JSON.parse(String(init.body))).toMatchObject({
-      email: 'a@b.test', code: '482913', newPassword: 'brand-new-passphrase',
-    });
+    expect(String(url)).toContain('/api/auth/request-password-reset');
+    expect(JSON.parse(String(init.body))).toEqual({ identifier: '0803 123 4567' });
   });
 
-  it('refuses rather than falling back when the code path is closed', async () => {
-    mockGo(503, { success: false, error: 'feature_disabled' });
-    const res = await post('@/app/api/auth/reset-password/route',
-      { email: 'a@b.test', code: '482913', password: 'brand-new-passphrase' });
-    const body = await res.json();
-
-    expect(res.status).toBe(503);
-    // is pointed at the link, which is the mechanism that works in that state.
-    expect(String(body.error)).toContain('link');
-  });
-
-  it('a wrong code is final — it must not get a second chance elsewhere', async () => {
-    mockGo(400, { success: false, error: 'invalid code' });
-    const res = await post('@/app/api/auth/reset-password/route',
-      { email: 'a@b.test', code: '000000', password: 'brand-new-passphrase' });
-
-    expect(res.status).toBe(400);
-    expect(supabaseCalls).toEqual([]);
-  });
-
-  it('still rejects a request carrying neither a code nor a link session', async () => {
-    mockGo(200, {});
-    const res = await post('@/app/api/auth/reset-password/route', { password: 'brand-new-passphrase' });
-    expect(res.status).toBe(400);
-  });
-});
-
-describe('POST /api/auth/forgot-password', () => {
-  it('prefers Go, which sends BOTH the link and the code', async () => {
+  it('still accepts the older "email" key', async () => {
     const spy = mockGo(200, { success: true });
-    const res = await post('@/app/api/auth/forgot-password/route', { email: 'a@b.test' });
+    await post('@/app/api/auth/forgot-password/route', { email: 'a@b.test' });
+    expect(JSON.parse(String((spy.mock.calls[0] as unknown as [string, RequestInit])[1].body)))
+      .toEqual({ identifier: 'a@b.test' });
+  });
 
-    expect(res.status).toBe(200);
-    expect(String((spy.mock.calls[0] as unknown as [string, RequestInit])[0])).toContain('/api/auth/request-password-reset');
-    // Calling Supabase as well would send a second link.
+  it('NEVER sends a Supabase reset link — not even when Go is closed or unreachable', async () => {
+    mockGo(503, { success: false, error: 'feature_disabled' });
+    const closed = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });
+    expect(closed.status).toBe(503);
+
+    vi.resetModules();
+    mockGoUnreachable();
+    const down = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });
+    expect(down.status).toBe(503);
+
+    // The old behaviour fell back to resetPasswordForEmail, i.e. a link.
     expect(supabaseCalls).toEqual([]);
   });
 
-  it('falls back to the link alone when Go is unreachable', async () => {
-    mockGoUnreachable();
-    const res = await post('@/app/api/auth/forgot-password/route', { email: 'a@b.test' });
-
-    expect(res.status).toBe(200);
-    expect(supabaseCalls).toEqual(['resetPasswordForEmail']);
+  it('does not claim a code was sent when none can be', async () => {
+    mockGo(503, { success: false, error: 'feature_disabled' });
+    const res = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });
+    const body = await res.json();
+    expect(String(body.error).toLowerCase()).toContain('unavailable');
+    expect(body.message).toBeUndefined();
   });
 
   it('answers identically whether or not the upstream succeeded', async () => {
     mockGo(200, { success: true });
-    const ok = await post('@/app/api/auth/forgot-password/route', { email: 'a@b.test' });
+    const ok = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });
     const okBody = await ok.json();
 
-    vi.resetModules(); supabaseCalls.length = 0;
+    vi.resetModules();
     mockGo(500, { error: 'boom' });
-    const bad = await post('@/app/api/auth/forgot-password/route', { email: 'a@b.test' });
+    const bad = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });
     const badBody = await bad.json();
 
     // Any difference here is an account-enumeration oracle.
     expect(bad.status).toBe(ok.status);
     expect(badBody).toEqual(okBody);
+  });
+
+  it('tells a throttled caller to wait — that limit is per IP, not per account', async () => {
+    mockGo(429, { success: false, error: 'Too many attempts. Please try again later.' });
+    const res = await post('@/app/api/auth/forgot-password/route', { identifier: 'a@b.test' });
+    expect(res.status).toBe(429);
+  });
+});
+
+describe('POST /api/auth/verify-password-reset-otp', () => {
+  it('returns the resetToken only when Go accepts the code', async () => {
+    const spy = mockGo(200, { success: true, verified: true, resetToken: 'tok-abc' });
+    const res = await post('@/app/api/auth/verify-password-reset-otp/route',
+      { identifier: '08031234567', code: ' 482913 ' });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ verified: true, resetToken: 'tok-abc' });
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toContain('/api/auth/verify-password-reset-otp');
+    expect(JSON.parse(String(init.body))).toEqual({ identifier: '08031234567', code: '482913' });
+  });
+
+  it('a wrong code is final — no second chance elsewhere, and no token', async () => {
+    mockGo(400, { success: false, error: 'invalid code' });
+    const res = await post('@/app/api/auth/verify-password-reset-otp/route',
+      { identifier: 'a@b.test', code: '000000' });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe('invalid code');
+    expect(body.resetToken).toBeUndefined();
+    expect(supabaseCalls).toEqual([]);
+  });
+
+  it('passes through expiry and lockout wording and status', async () => {
+    mockGo(400, { success: false, error: 'code expired, request a new code' });
+    const expired = await post('@/app/api/auth/verify-password-reset-otp/route', { identifier: 'a@b.test', code: '1' });
+    expect(expired.status).toBe(400);
+    expect((await expired.json()).error).toContain('expired');
+
+    vi.resetModules();
+    mockGo(429, { success: false, error: 'too many attempts, request a new code' });
+    const locked = await post('@/app/api/auth/verify-password-reset-otp/route', { identifier: 'a@b.test', code: '1' });
+    expect(locked.status).toBe(429);
+  });
+
+  it('never reports success when Go sent nothing to continue with', async () => {
+    mockGo(200, { success: true, verified: true });
+    const res = await post('@/app/api/auth/verify-password-reset-otp/route', { identifier: 'a@b.test', code: '482913' });
+    expect(res.status).toBe(502);
+    expect((await res.json()).verified).toBeUndefined();
+  });
+
+  it('is 503 when codes are unavailable', async () => {
+    mockGo(503, { success: false, error: 'feature_disabled' });
+    const res = await post('@/app/api/auth/verify-password-reset-otp/route', { identifier: 'a@b.test', code: '482913' });
+    expect(res.status).toBe(503);
+  });
+
+  it('rejects a request missing the identifier or the code', async () => {
+    mockGo(200, {});
+    expect((await post('@/app/api/auth/verify-password-reset-otp/route', { identifier: 'a@b.test' })).status).toBe(400);
+    expect((await post('@/app/api/auth/verify-password-reset-otp/route', { code: '482913' })).status).toBe(400);
+  });
+});
+
+describe('POST /api/auth/reset-password', () => {
+  it('sends identifier + resetToken + new password to Go', async () => {
+    const spy = mockGo(200, { success: true, message: 'Password reset successful' });
+    const res = await post('@/app/api/auth/reset-password/route',
+      { identifier: '08031234567', resetToken: 'tok-abc', password: 'brand-new-passphrase' });
+
+    expect(res.status).toBe(200);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toContain('/api/auth/reset-password');
+    expect(JSON.parse(String(init.body))).toEqual({
+      identifier: '08031234567', resetToken: 'tok-abc', newPassword: 'brand-new-passphrase',
+    });
+  });
+
+  it('refuses a request that skipped the code step', async () => {
+    const spy = mockGo(200, {});
+    const res = await post('@/app/api/auth/reset-password/route',
+      { identifier: 'a@b.test', password: 'brand-new-passphrase' });
+    expect(res.status).toBe(400);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('a raw emailed code is not accepted in place of the token', async () => {
+    const spy = mockGo(200, {});
+    const res = await post('@/app/api/auth/reset-password/route',
+      { email: 'a@b.test', code: '482913', password: 'brand-new-passphrase' });
+    expect(res.status).toBe(400);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('checks the length BEFORE asking Go to spend the token', async () => {
+    const spy = mockGo(200, {});
+    const res = await post('@/app/api/auth/reset-password/route',
+      { identifier: 'a@b.test', resetToken: 'tok-abc', password: 'short' });
+    expect(res.status).toBe(400);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('there is no link-session form any more', async () => {
+    mockGo(200, {});
+    const res = await post('@/app/api/auth/reset-password/route', { password: 'brand-new-passphrase' },
+      { headers: { 'Content-Type': 'application/json', Authorization: 'Bearer some-recovery-token' } });
+    expect(res.status).toBe(400);
+  });
+
+  it('a bad or spent token is final', async () => {
+    mockGo(400, { success: false, error: 'invalid code' });
+    const res = await post('@/app/api/auth/reset-password/route',
+      { identifier: 'a@b.test', resetToken: 'stale', password: 'brand-new-passphrase' });
+    expect(res.status).toBe(400);
+    expect(supabaseCalls).toEqual([]);
+  });
+
+  it('is 503 when codes are unavailable, without pointing at a link', async () => {
+    mockGo(503, { success: false, error: 'feature_disabled' });
+    const res = await post('@/app/api/auth/reset-password/route',
+      { identifier: 'a@b.test', resetToken: 'tok-abc', password: 'brand-new-passphrase' });
+    const body = await res.json();
+    expect(res.status).toBe(503);
+    expect(String(body.error).toLowerCase()).not.toContain('link');
   });
 });
 
@@ -245,7 +354,8 @@ describe('malformed request bodies', () => {
     ['verify-otp', '@/app/api/auth/verify-otp/route', 'Email and OTP are required'],
     ['otp-verify', '@/app/api/auth/otp-verify/route', 'Email and code are required'],
     ['resend-otp', '@/app/api/auth/resend-otp/route', 'Email is required'],
-    ['forgot-password', '@/app/api/auth/forgot-password/route', 'Email is required'],
+    ['forgot-password', '@/app/api/auth/forgot-password/route', 'Email or phone number is required'],
+    ['verify-password-reset-otp', '@/app/api/auth/verify-password-reset-otp/route', 'Identifier and code are required'],
     ['reset-password', '@/app/api/auth/reset-password/route', 'Password must be at least 8 characters'],
   ];
 

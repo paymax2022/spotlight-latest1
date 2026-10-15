@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Text, StyleSheet } from 'react-native';
-import { Lock, KeyRound } from 'lucide-react-native';
+import { Lock } from 'lucide-react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter } from 'expo-router';
 import AuthScreenWrapper from '@/components/AuthScreenWrapper';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -12,16 +12,15 @@ import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import * as authApi from '@/api/auth.api';
+import { getPendingReset, clearPendingReset } from '@/api/authOtp';
 import { getErrorMessage } from '@/utils/errorMapper';
 
-// Two ways to land here: the emailed LINK (Supabase fires PASSWORD_RECOVERY,
-// see app/_layout.tsx, and a session is already live — no email/code needed),
-// or the emailed CODE, which forgot-password.tsx routes to directly with
-// ?email= since it can't know whether the link will ever arrive. `email`
-// being present is what distinguishes the two shapes resetPassword() accepts.
+// Step 3 of the OTP reset. Reachable only with a verified code: the single-use
+// token from reset-code.tsx is read from memory. With none (app restarted, or a
+// deep link straight here) there is nothing to authorise the change, so the user
+// is sent back to the start rather than shown a form that cannot succeed.
 const schema = z
   .object({
-    code:            z.string().optional(),
     password:        z.string().min(8, 'Password must be at least 8 characters'),
     confirmPassword: z.string(),
   })
@@ -34,10 +33,12 @@ type Form = z.infer<typeof schema>;
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
-  const { email } = useLocalSearchParams<{ email?: string }>();
-  const isCodeFlow = !!email;
   const [done, setDone]         = useState(false);
   const [apiError, setApiError] = useState('');
+
+  useEffect(() => {
+    if (!getPendingReset()) router.replace('/(auth)/forgot-password');
+  }, [router]);
 
   const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -45,13 +46,11 @@ export default function ResetPasswordScreen() {
 
   const onSubmit = async (values: Form) => {
     setApiError('');
+    const pending = getPendingReset();
+    if (!pending) { router.replace('/(auth)/forgot-password'); return; }
     try {
-      if (isCodeFlow) {
-        if (!values.code?.trim()) { setApiError('Enter the code we emailed you.'); return; }
-        await authApi.resetPassword({ email, code: values.code.trim(), password: values.password });
-      } else {
-        await authApi.resetPassword({ password: values.password });
-      }
+      await authApi.resetPassword({ ...pending, password: values.password });
+      clearPendingReset();
       setDone(true);
     } catch (err) {
       setApiError(getErrorMessage(err));
@@ -69,25 +68,8 @@ export default function ResetPasswordScreen() {
   return (
     <AuthScreenWrapper
       title="Set new password"
-      subtitle={isCodeFlow ? `Enter the code sent to ${email} and choose a new password.` : "Choose a password that's at least 8 characters."}
+      subtitle="Your code is verified. Choose a new password of at least 8 characters."
     >
-      {isCodeFlow && (
-        <Controller
-          name="code"
-          control={control}
-          render={({ field }) => (
-            <TextInputField
-              label="Reset code"
-              placeholder="6-digit code from your email"
-              keyboardType="number-pad"
-              leftIcon={<KeyRound size={18} color={Colors.outline} strokeWidth={1.8} />}
-              error={errors.code?.message}
-              value={field.value}
-              onChangeText={field.onChange}
-            />
-          )}
-        />
-      )}
       <Controller
         name="password"
         control={control}
