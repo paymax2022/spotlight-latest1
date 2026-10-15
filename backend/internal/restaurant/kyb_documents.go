@@ -41,8 +41,11 @@ import (
 // with a scheme is a link, a value without one is an object key we minted.
 
 const (
-	// kybPresignTTL bounds how long an issued upload URL is valid.
-	kybPresignTTL = 10 * time.Minute
+	// kybPresignTTL bounds how long an issued upload URL is valid. It is also the
+	// window in which an owner who has just submitted could still PUT different bytes
+	// to a URL minted before the lock (the object key does not change), so it is kept
+	// short: ample for a 10 MB phone upload, little room to swap evidence.
+	kybPresignTTL = 5 * time.Minute
 	// kybViewTTL bounds a reviewer download URL (same window as estate documents).
 	kybViewTTL = 60 * time.Minute
 )
@@ -227,43 +230,59 @@ func kybDocPresentation(docType string) (kind, label string) {
 	return "other", l
 }
 
-// kybDocsByRestaurant returns every restaurant's KYB documents with reviewer-usable
-// URLs: stored keys become short-lived signed GETs, pasted links pass through. A
-// document whose reference cannot be turned into a usable URL is skipped and logged
-// rather than rendered as a dead link.
-func (s *Service) kybDocsByRestaurant(ctx context.Context) (map[string][]AdminApplicationDoc, error) {
+// kybDocRef is one stored document reference, not yet turned into a reviewer URL.
+type kybDocRef struct{ docType, ref string }
+
+// kybDocRefsByRestaurant loads every outlet's stored document references in ONE
+// query. Nothing is signed here: signing happens per outlet, only for the outlets a
+// caller actually returns (see adminDocsFor), so a filtered queue never mints
+// download URLs for identity documents it is not showing.
+func (s *Service) kybDocRefsByRestaurant(ctx context.Context) (map[string][]kybDocRef, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT restaurant_id::text, doc_type, file_url FROM restaurant_kyb_documents ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string][]AdminApplicationDoc{}
+	out := map[string][]kybDocRef{}
 	for rows.Next() {
-		var restaurantID, docType, ref string
-		if err := rows.Scan(&restaurantID, &docType, &ref); err != nil {
+		var restaurantID string
+		var d kybDocRef
+		if err := rows.Scan(&restaurantID, &d.docType, &d.ref); err != nil {
 			return nil, err
 		}
-		isKey, cerr := classifyKYBFileRef(restaurantID, ref)
+		out[restaurantID] = append(out[restaurantID], d)
+	}
+	return out, rows.Err()
+}
+
+// adminDocsFor turns one outlet's stored references into reviewer-usable URLs:
+// stored keys become short-lived signed GETs, pasted links pass through. A document
+// whose reference cannot be turned into a usable URL is skipped and logged rather
+// than rendered as a dead link.
+func (s *Service) adminDocsFor(restaurantID string, refs []kybDocRef) []AdminApplicationDoc {
+	out := make([]AdminApplicationDoc, 0, len(refs))
+	for _, d := range refs {
+		isKey, cerr := classifyKYBFileRef(restaurantID, d.ref)
 		if cerr != nil {
-			log.Printf("[restaurant] skipping KYB document %s/%s: unusable reference", restaurantID, docType)
+			log.Printf("[restaurant] skipping KYB document %s/%s: unusable reference", restaurantID, d.docType)
 			continue
 		}
-		href := ref
+		href := d.ref
 		if isKey {
 			if s.kybPresigner == nil || !s.kybPresigner.Configured() {
-				log.Printf("[restaurant] cannot sign KYB document %s/%s: R2 not configured", restaurantID, docType)
+				log.Printf("[restaurant] cannot sign KYB document %s/%s: R2 not configured", restaurantID, d.docType)
 				continue
 			}
-			signed, serr := s.kybPresigner.PresignGet(ref, kybViewTTL)
+			signed, serr := s.kybPresigner.PresignGet(d.ref, kybViewTTL)
 			if serr != nil {
-				log.Printf("[restaurant] cannot sign KYB document %s/%s: %v", restaurantID, docType, serr)
+				log.Printf("[restaurant] cannot sign KYB document %s/%s: %v", restaurantID, d.docType, serr)
 				continue
 			}
 			href = signed
 		}
-		kind, label := kybDocPresentation(docType)
-		out[restaurantID] = append(out[restaurantID], AdminApplicationDoc{Kind: kind, Label: label, URL: href})
+		kind, label := kybDocPresentation(d.docType)
+		out = append(out, AdminApplicationDoc{Kind: kind, Label: label, URL: href})
 	}
-	return out, rows.Err()
+	return out
 }

@@ -172,10 +172,10 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	// One query for every outlet's documents, rather than one per row. A failure
 	// here degrades to "no documents listed" instead of failing the whole queue:
 	// the reviewer can still see and decide applications, and the error is logged.
-	docs, derr := s.kybDocsByRestaurant(ctx)
+	docRefs, derr := s.kybDocRefsByRestaurant(ctx)
 	if derr != nil {
 		log.Printf("[restaurant] admin applications: could not load KYB documents: %v", derr)
-		docs = nil
+		docRefs = nil
 	}
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
@@ -193,13 +193,12 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 		a.KYBStatus = kybStatus
 		// No KYC review-note column exists on `restaurants` yet (see report); the
 		// review note supplied on reject is delivered to the owner, not persisted.
-		a.Documents = docs[a.ID]
-		if a.Documents == nil {
-			a.Documents = []AdminApplicationDoc{}
-		}
 		if status != "" && a.Status != status {
 			continue
 		}
+		// Only for outlets actually being returned: signing mints a download URL for
+		// an identity document, so a filtered queue must not sign the ones it drops.
+		a.Documents = s.adminDocsFor(a.ID, docRefs[a.ID])
 		out = append(out, a)
 	}
 	return out, rows.Err()

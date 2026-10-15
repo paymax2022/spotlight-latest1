@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
@@ -251,19 +252,31 @@ func (s *Service) AddKYBDocument(ctx context.Context, restaurantID, userID, docT
 	if _, err := classifyKYBFileRef(rid, fileURL); err != nil {
 		return err
 	}
-	cur, _, err := s.loadKYB(ctx, restaurantID)
+	// Check the lock and write in ONE transaction, holding a share lock on the KYB row
+	// for its duration. SubmitKYB's UPDATE of that row has to wait for us, so a
+	// submit cannot land between "is it still editable?" and the write and leave a
+	// document replaced just after the lock.
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if !editableKYB(cur.Status) {
-		return fmt.Errorf("restaurant: KYB cannot be edited while %s", cur.Status)
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	status := KYBDraft     // no row yet ⇒ a fresh draft, which is editable
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM restaurant_kyb WHERE restaurant_id=$1 FOR SHARE`, restaurantID).Scan(&status); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if !editableKYB(status) {
+		return fmt.Errorf("restaurant: KYB cannot be edited while %s", status)
 	}
 	const q = `
 		INSERT INTO restaurant_kyb_documents (id, restaurant_id, doc_type, file_url, file_name)
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (restaurant_id, doc_type) DO UPDATE SET file_url=$4, file_name=$5`
-	_, err = s.db.Exec(ctx, q, uuid.New().String(), restaurantID, docType, fileURL, nullIfEmpty(fileName))
-	return err
+	if _, err := tx.Exec(ctx, q, uuid.New().String(), restaurantID, docType, fileURL, nullIfEmpty(fileName)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // SubmitKYB validates the owner's KYB and moves it to `submitted` for review (owner

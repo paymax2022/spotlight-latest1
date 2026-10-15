@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -379,5 +380,74 @@ func TestLiveDB_KYBDocumentUploads(t *testing.T) {
 	}
 	if err := svc.AddKYBDocument(ctx, restID, owner, "cac_certificate", "https://example.com/swapped.pdf", ""); err == nil {
 		t.Error("a document must not be replaceable after submission")
+	}
+}
+
+// TestLiveDB_KYBDocumentWriteSerialisesWithSubmit pins the lock: AddKYBDocument must
+// not be able to replace a document in the gap between a submit deciding to lock the
+// KYB and that submit committing. A submit in flight is simulated by an open
+// transaction that has already flipped the row to 'submitted'; AddKYBDocument has to
+// WAIT for it (its share lock conflicts with the update) and then see the locked
+// status. A plain read-then-write would have read 'draft' and succeeded immediately.
+func TestLiveDB_KYBDocumentWriteSerialisesWithSubmit(t *testing.T) {
+	pool := kybLivePool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	svc := NewService(pool, nil)
+
+	owner := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	testsupport.CleanupUser(t, pool, owner)
+	restID := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'KYB Race Kitchen','1 St',FALSE)`, restID, owner); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	if _, err := svc.SaveKYB(ctx, restID, owner, KYB{LegalName: "Race Kitchen", BusinessType: "sole_proprietor"}); err != nil {
+		t.Fatalf("save kyb: %v", err)
+	}
+	if err := svc.AddKYBDocument(ctx, restID, owner, "proof_of_address", "https://example.com/original.pdf", ""); err != nil {
+		t.Fatalf("seed original document: %v", err)
+	}
+
+	// A submit that has taken the row lock but not yet committed.
+	submitTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	t.Cleanup(func() { _ = submitTx.Rollback(ctx) })
+	if _, err := submitTx.Exec(ctx, `UPDATE restaurant_kyb SET status='submitted' WHERE restaurant_id=$1`, restID); err != nil {
+		t.Fatalf("simulate in-flight submit: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.AddKYBDocument(ctx, restID, owner, "proof_of_address", "https://example.com/swapped.pdf", "")
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("AddKYBDocument returned (%v) while a submit was in flight; it must wait for the row lock", err)
+	case <-time.After(400 * time.Millisecond):
+		// still blocked on the lock — what we want
+	}
+	if err := submitTx.Commit(ctx); err != nil {
+		t.Fatalf("commit submit: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "cannot be edited") {
+			t.Fatalf("after the submit committed, AddKYBDocument err = %v, want 'cannot be edited'", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("AddKYBDocument never returned after the submit committed")
+	}
+
+	var ref string
+	if err := pool.QueryRow(ctx, `SELECT file_url FROM restaurant_kyb_documents WHERE restaurant_id=$1 AND doc_type='proof_of_address'`, restID).Scan(&ref); err != nil {
+		t.Fatalf("read document: %v", err)
+	}
+	if ref != "https://example.com/original.pdf" {
+		t.Errorf("document was replaced across the lock: file_url = %q", ref)
 	}
 }
