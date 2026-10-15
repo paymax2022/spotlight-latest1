@@ -4015,7 +4015,15 @@ components:
       type: object
       properties:
         session: { $ref: '#/components/schemas/LiveSession' }
-        token: { type: string }
+        token: { type: string, description: Short-lived join credential for the room provider }
+        rtc:
+          type: object
+          description: >-
+            Where to connect with the token. Present only when the provider runs a server the
+            client dials (LiveKit); absent for the dev stub and VideoSDK.
+          properties:
+            provider: { type: string, example: livekit }
+            url: { type: string, example: 'wss://rtc.example.com' }
     LiveStudyGroup:
       type: object
       properties:

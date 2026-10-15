@@ -76,6 +76,11 @@
 |---|---|---|---|---|
 | `VIDEOSDK_API_KEY` | backend | **SECRET** | doctor | RTC provider |
 | `VIDEOSDK_SECRET` | backend | **SECRET** | doctor | RTC provider |
+| `FEATURE_LIVEKIT_ENABLED` | backend | flag | academy live | switches live classes to self-hosted LiveKit; off by default (docs/runbooks/livekit.md) |
+| `LIVEKIT_URL` | backend | config | academy live | `wss://` URL of the LiveKit server (`ws://` only in development) |
+| `LIVEKIT_API_KEY` | backend | config | academy live | LiveKit key name; same as the server's |
+| `LIVEKIT_API_SECRET` | backend | **SECRET** | academy live | >= 32 chars; signs join tokens, server API calls and verifies webhooks |
+| `LIVEKIT_TOKEN_TTL_SECONDS` | backend | config | academy live | join-token lifetime, default 600, max 21600 |
 
 ## AI / connect / messaging
 

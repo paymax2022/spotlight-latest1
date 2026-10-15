@@ -674,6 +674,14 @@ type Config struct {
 	VideoSDKAPIKey string
 	VideoSDKSecret string
 
+	// LiveKit (self-hosted SFU). FeatureLiveKitEnabled switches live rooms from the dev stub /
+	// VideoSDK to LiveKit. The API secret is server-side only and never returned or logged.
+	FeatureLiveKitEnabled  bool
+	LiveKitURL             string // wss://rtc.example.com (ws:// only in development)
+	LiveKitAPIKey          string
+	LiveKitAPISecret       string
+	LiveKitTokenTTLSeconds int // join-token lifetime; 1..21600
+
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
@@ -1081,6 +1089,12 @@ func Load() Config {
 		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
 		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
+		FeatureLiveKitEnabled:  getEnvBool("FEATURE_LIVEKIT_ENABLED", false),
+		LiveKitURL:             strings.TrimSpace(getEnv("LIVEKIT_URL", "")),
+		LiveKitAPIKey:          strings.TrimSpace(getEnv("LIVEKIT_API_KEY", "")),
+		LiveKitAPISecret:       strings.TrimSpace(getEnv("LIVEKIT_API_SECRET", "")),
+		LiveKitTokenTTLSeconds: getEnvInt("LIVEKIT_TOKEN_TTL_SECONDS", 600),
+
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
@@ -1330,6 +1344,24 @@ func (c Config) Validate() error {
 			}
 			if !strings.EqualFold(strings.TrimSpace(c.CryptoProvider), "quidax") || isPlaceholder(key) || strings.TrimSpace(base) == "" {
 				strict = append(strict, "CRYPTO_PROVIDER=quidax with that environment's Quidax key is required when FEATURE_CRYPTO_ENABLED=true (otherwise mock prices and withdrawals)")
+			}
+		}
+		if c.FeatureLiveKitEnabled {
+			// Light checks only: the full validation runs against the LiveKit client when the
+			// routes are mounted (internal/integrations/livekit), which fails closed.
+			if strings.TrimSpace(c.LiveKitURL) == "" {
+				strict = append(strict, "LIVEKIT_URL is required when FEATURE_LIVEKIT_ENABLED=true")
+			} else if !strings.HasPrefix(strings.ToLower(c.LiveKitURL), "wss://") && !strings.HasPrefix(strings.ToLower(c.LiveKitURL), "https://") {
+				strict = append(strict, "LIVEKIT_URL must use wss:// (or https://) outside development: media tokens must not travel in plaintext")
+			}
+			if strings.TrimSpace(c.LiveKitAPIKey) == "" || isPlaceholder(c.LiveKitAPIKey) {
+				strict = append(strict, "LIVEKIT_API_KEY is required when FEATURE_LIVEKIT_ENABLED=true")
+			}
+			if isPlaceholder(c.LiveKitAPISecret) || len(c.LiveKitAPISecret) < 32 {
+				strict = append(strict, "LIVEKIT_API_SECRET is required (at least 32 characters) when FEATURE_LIVEKIT_ENABLED=true")
+			}
+			if c.LiveKitTokenTTLSeconds < 1 || c.LiveKitTokenTTLSeconds > 6*3600 {
+				strict = append(strict, "LIVEKIT_TOKEN_TTL_SECONDS must be between 1 and 21600 when FEATURE_LIVEKIT_ENABLED=true")
 			}
 		}
 		if c.FeatureCryptoSwapsEnabled {
