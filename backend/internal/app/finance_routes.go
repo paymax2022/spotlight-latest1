@@ -729,7 +729,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
+		// Self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED) replaces the dev stub / VideoSDK for live
+		// classes when it is configured and valid; flag off leaves the previous provider in place.
+		// With the flag on but LiveKit unusable, live classes refuse (they do not fall back to the stub).
+		academyLive := academyLiveRoomsFor(cfg, registerLiveKit(r, cfg, rbac, mapsAuth()))
+		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyLive, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
 		// console backend at /api/academy/admin/platform/*, gated purely by the seeded

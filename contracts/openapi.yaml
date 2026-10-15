@@ -4869,6 +4869,56 @@ paths:
         '400': { description: roleIds is required }
         '403': { description: Missing users.roles.assign permission }
         '404': { description: Target user not found / out of scope }
+  /api/v1/webhooks/livekit:
+    post:
+      operationId: livekitWebhook
+      summary: LiveKit server event callback (signed)
+      description: >-
+        Called by the self-hosted LiveKit server, not by users. Authenticated only by the
+        Authorization header, a JWT signed with the LiveKit API secret that carries the SHA-256
+        of the body; anything unsigned or altered is 401. A 5xx makes LiveKit retry the delivery.
+        Only mounted when FEATURE_LIVEKIT_ENABLED is on and the configuration is valid.
+      tags: [Realtime]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/webhook+json:
+            schema:
+              type: object
+      responses:
+        '200': { description: Event accepted }
+        '401': { description: "Missing, forged or altered signature" }
+        '500': { description: Processing failed; LiveKit will retry }
+  /api/v1/admin/rtc/livekit:
+    get:
+      operationId: getLiveKitStatus
+      summary: LiveKit reachability and open-room count (admin, read-only)
+      description: >-
+        Authenticates to the LiveKit server with the configured credentials and counts open rooms,
+        so an operator can tell a configuration problem from a network problem. Requires
+        `audit.logs.view`. Never returns credentials; error text is scrubbed of them.
+      tags: [Realtime]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  provider: { type: string, example: livekit }
+                  status:
+                    type: object
+                    properties:
+                      host: { type: string }
+                      reachable: { type: boolean }
+                      rooms: { type: integer }
+                      error: { type: string }
+        '401': { description: Not authenticated }
+        '403': { description: Missing audit.logs.view }
   /api/admin/users/{id}/sessions:
     get:
       operationId: getAdminUserSessions

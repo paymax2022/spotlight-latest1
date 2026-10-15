@@ -118,7 +118,7 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // uses (mapsAuth()): adminGroupTop5 applies it before requireUserID, which only
 // reads the user_id it populates — without it every academy admin route 401s
 // even with a valid token (E2E-SOC-034).
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, adminAuthMW gin.HandlerFunc, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler, internalAcademyAPIEnabled bool, serviceToken string) {
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, adminAuthMW gin.HandlerFunc, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, liveRoomOverride academylive.LiveRoomProvider, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler, internalAcademyAPIEnabled bool, serviceToken string) {
 	if pool == nil {
 		return
 	}
@@ -153,8 +153,11 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		lr := academyLedgerRail{ledger: ledgerSvc, tiers: tiers.NewService(pool)}
 		payRail, collectRail = lr, lr
 	}
-	var liveRooms academylive.LiveRoomProvider // live RTC token → integrations/rtc
-	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderVideoSDK) {
+	var liveRooms academylive.LiveRoomProvider // live RTC token → LiveKit, else integrations/rtc
+	switch {
+	case liveRoomOverride != nil: // self-hosted LiveKit (FEATURE_LIVEKIT_ENABLED)
+		liveRooms = liveRoomOverride
+	case rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderVideoSDK):
 		liveRooms = academyLiveRail{issuer: rtcIssuer}
 	}
 	memberFin := finance                                              // → /api/finance/academy/...

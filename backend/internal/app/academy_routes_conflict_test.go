@@ -25,6 +25,6 @@ func TestRegisterAcademy_AllSubFlagsOn_NoRouteConflict(t *testing.T) {
 			t.Fatalf("academy route registration panicked: %v", rec)
 		}
 	}()
-	RegisterAcademy(r, r.Group("/api/finance"), pool, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	RegisterAcademy(r, r.Group("/api/finance"), pool, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		true, true, true, true, true, true, true, true, true, nil, true, "")
 }

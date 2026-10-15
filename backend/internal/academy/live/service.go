@@ -61,12 +61,24 @@ func (s *Service) EndSession(ctx context.Context, actor, sessionID, replayRef st
 	if replayRef != "" {
 		replayArg = &replayRef
 	}
-	return s.repo.TransitionSession(ctx, actor, sessionID, SessionEnded, nil, replayArg)
+	sess, err := s.repo.TransitionSession(ctx, actor, sessionID, SessionEnded, nil, replayArg)
+	if err == nil && sess != nil {
+		closeRoomBestEffort(ctx, s.rooms, sess.RoomRef) // disconnect everyone still in the room
+	}
+	return sess, err
 }
+
+// Connection reports where clients should connect with a join token, or nil when the
+// provider does not run a server the client dials.
+func (s *Service) Connection() *RoomConnection { return connectionOf(s.rooms) }
 
 // CancelSession moves a scheduled session to cancelled.
 func (s *Service) CancelSession(ctx context.Context, actor, sessionID string) (*LiveSession, error) {
-	return s.repo.TransitionSession(ctx, actor, sessionID, SessionCancelled, nil, nil)
+	sess, err := s.repo.TransitionSession(ctx, actor, sessionID, SessionCancelled, nil, nil)
+	if err == nil && sess != nil {
+		closeRoomBestEffort(ctx, s.rooms, sess.RoomRef)
+	}
+	return sess, err
 }
 
 // JoinSession records the member as a participant and returns a join token minted by
