@@ -74,3 +74,19 @@ test('every failure has a plain-language message that never mentions internals',
   }
   assert.match(describeConnectionFailure('no_rtc'), /not available/i);
 });
+
+test('jwtExpiresAt copes with padding, float and string exp values', () => {
+  const padded = `${b64({ alg: 'HS256' })}.${b64({ exp: 2_000_000_000 })}=.c2ln`;
+  assert.equal(jwtExpiresAt(padded), 2_000_000_000 * 1000);
+  assert.equal(jwtExpiresAt(jwt({ exp: 2_000_000_000.5 })), 2_000_000_000.5 * 1000);
+  assert.equal(jwtExpiresAt(jwt({ exp: '2000000000' })), null);
+});
+
+test('ports must be real and IPv6 literals are handled', () => {
+  const mk = (url: string) => parseConnection({ token: GOOD, rtc: { provider: 'livekit', url } });
+  assert.equal(mk('wss://rtc.example.com:99999').ok, false);
+  assert.equal(mk('wss://rtc.example.com:0').ok, false);
+  assert.equal(mk('wss://rtc.example.com:7881').ok, true);
+  assert.equal(mk('wss://[2001:db8::1]:443').ok, true);
+  assert.equal(mk('wss://rtc.example.com:abc').ok, false);
+});

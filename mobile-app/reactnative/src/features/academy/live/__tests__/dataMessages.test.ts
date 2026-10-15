@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CHAT_TOPIC, HAND_TOPIC, MAX_CHAT_LEN, sanitizeText, encodeChat, decodeChat, encodeHand, decodeHand,
-  createRateLimiter, appendChat, applyHand,
+  createRateLimiter, createSenderLimiter, appendChat, applyHand,
 } from '../dataMessages.ts';
 
 const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
@@ -106,4 +106,43 @@ test('raised hands are tracked per identity and cleared when lowered or when the
   hands = applyHand(hands, { identity: 'a', name: 'Ann', up: false });
   assert.deepEqual(Object.keys(hands), ['b']);
   assert.deepEqual(applyHand(hands, { identity: 'b', left: true }), {});
+});
+
+test('more invisible and spoof-capable characters are stripped', () => {
+  const cp = (...c: number[]) => String.fromCodePoint(...c);
+  assert.equal(sanitizeText('a' + cp(0x061c) + 'b'), 'ab');            // Arabic letter mark
+  assert.equal(sanitizeText('a' + cp(0x00ad) + 'b'), 'ab');            // soft hyphen
+  assert.equal(sanitizeText('a' + cp(0x034f) + 'b'), 'ab');            // combining grapheme joiner
+  assert.equal(sanitizeText('a' + cp(0x115f, 0x3164) + 'b'), 'ab');    // hangul fillers
+  assert.equal(sanitizeText('a' + cp(0xfe0f) + 'b'), 'ab');            // variation selector
+  assert.equal(sanitizeText('a' + cp(0xe0041, 0xe007f) + 'b'), 'ab'); // tag characters
+});
+
+test('combining-mark stacking is limited', () => {
+  const zalgo = 'e' + '\u0301'.repeat(40);
+  const out = sanitizeText(zalgo);
+  assert.ok([...out].length <= 4, `kept ${[...out].length} code points`);
+});
+
+test('a display name is cut on a character boundary, never inside a surrogate pair', () => {
+  const name = '😀'.repeat(60);
+  const m = decodeChat(encodeChat('hi', 'm1')!, { identity: 'u', name }, 1)!;
+  assert.ok(!/[\uD800-\uDBFF]$/.test(m.name), 'ends with a lone high surrogate');
+  assert.ok([...m.name].length <= 40);
+});
+
+test('the per-sender receive limiter caps what any one remote can cost the UI', () => {
+  let now = 0;
+  const allow = createSenderLimiter({ max: 3, windowMs: 1000, maxSenders: 2 }, () => now);
+  assert.deepEqual([allow('a'), allow('a'), allow('a'), allow('a')], [true, true, true, false]);
+  assert.equal(allow('b'), true, 'another sender is unaffected');
+  now = 1001;
+  assert.equal(allow('a'), true, 'the window slides');
+});
+
+test('the receive limiter does not grow without bound under many identities', () => {
+  const allow = createSenderLimiter({ max: 1, windowMs: 10_000, maxSenders: 3 }, () => 0);
+  for (let i = 0; i < 50; i++) allow('id' + i);
+  assert.equal(allow('id49'), false, 'recent senders are still tracked');
+  assert.equal(allow('id0'), true, 'the oldest entries were evicted to stay bounded');
 });

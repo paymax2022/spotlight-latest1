@@ -20,8 +20,9 @@ export interface JoinResponseLike {
 }
 
 const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-// scheme://host[:port][/path] only: no userinfo, query, fragment or whitespace.
-const URL_RE = /^(wss|ws|https|http):\/\/([A-Za-z0-9.\-[\]:]+)(\/[^\s?#@]*)?$/i;
+// scheme://host[:port][/path] only: no userinfo, query, fragment or whitespace. The host is a DNS
+// name or a bracketed IPv6 literal; the port, when present, is checked below.
+const URL_RE = /^(wss|ws|https|http):\/\/(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::(\d{1,5}))?(\/[^\s?#@]*)?$/i;
 
 export function parseConnection(raw: JoinResponseLike, opts: { allowInsecure?: boolean } = {}): ConnectionResult {
   const rtc = raw?.rtc;
@@ -35,8 +36,10 @@ export function parseConnection(raw: JoinResponseLike, opts: { allowInsecure?: b
   const scheme = m[1].toLowerCase();
   const secure = scheme === 'wss' || scheme === 'https';
   if (!secure && !opts.allowInsecure) return { ok: false, reason: 'insecure_url' };
-  const path = (m[3] ?? '').replace(/\/+$/, '');
-  return { ok: true, connection: { url: `${secure ? 'wss' : 'ws'}://${m[2]}${path}`, token: raw.token } };
+  const port = m[3];
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return { ok: false, reason: 'bad_url' };
+  const path = (m[4] ?? '').replace(/\/+$/, '');
+  return { ok: true, connection: { url: `${secure ? 'wss' : 'ws'}://${m[2]}${port ? `:${port}` : ''}${path}`, token: raw.token } };
 }
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';

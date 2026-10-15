@@ -33,20 +33,32 @@ export interface Sender {
 function isStripped(c: number): boolean {
   return (
     c <= 0x1f || (c >= 0x7f && c <= 0x9f) ||
+    c === 0x00ad || c === 0x034f || c === 0x061c || c === 0x115f || c === 0x1160 || c === 0x3164 || c === 0xffa0 ||
     (c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) ||
-    (c >= 0x2060 && c <= 0x2064) || (c >= 0x2066 && c <= 0x2069) || c === 0xfeff
+    (c >= 0x2060 && c <= 0x2064) || (c >= 0x2066 && c <= 0x2069) || c === 0xfeff ||
+    (c >= 0xfe00 && c <= 0xfe0f) ||            // variation selectors
+    (c >= 0xe0000 && c <= 0xe007f)             // tag characters
   );
 }
+
+// Combining marks may stack at most this many deep on one base character ("zalgo" text is cut).
+const MAX_COMBINING = 2;
+const isCombining = (c: number) =>
+  (c >= 0x0300 && c <= 0x036f) || (c >= 0x1ab0 && c <= 0x1aff) || (c >= 0x1dc0 && c <= 0x1dff) ||
+  (c >= 0x20d0 && c <= 0x20ff) || (c >= 0xfe20 && c <= 0xfe2f);
 
 const isSpaceLike = (c: number) => (c >= 0x09 && c <= 0x0d) || c === 0x2028 || c === 0x2029;
 
 /** Removes control, bidi-override, zero-width and separator characters; collapses whitespace. */
 export function sanitizeText(input: string): string {
   let out = '';
+  let marks = 0;
   for (const ch of input) {
     const c = ch.codePointAt(0) ?? 0;
-    if (isSpaceLike(c)) out += ' ';
-    else if (!isStripped(c)) out += ch;
+    if (isSpaceLike(c)) { out += ' '; marks = 0; }
+    else if (isStripped(c)) continue;
+    else if (isCombining(c)) { if (++marks <= MAX_COMBINING) out += ch; }
+    else { out += ch; marks = 0; }
   }
   return out.replace(/\s+/g, ' ').trim();
 }
@@ -64,7 +76,7 @@ function parse(payload: Uint8Array): Record<string, unknown> | null {
 }
 
 function displayName(sender: Sender): string {
-  const n = sanitizeText(sender.name ?? '').slice(0, MAX_NAME_LEN);
+  const n = [...sanitizeText(sender.name ?? '')].slice(0, MAX_NAME_LEN).join(''); // by code point, never mid-pair
   return n || 'Participant'; // never fall back to the raw identity (a user id)
 }
 
@@ -112,6 +124,34 @@ export function createRateLimiter(opts: { max: number; windowMs: number }, now: 
     stamps = stamps.filter((s) => t - s < opts.windowMs);
     if (stamps.length >= opts.max) return false;
     stamps.push(t);
+    return true;
+  };
+}
+
+/**
+ * Receive-side limiter: how many messages one remote may cost this device per window. Keyed by
+ * LiveKit identity (unforgeable), and bounded in the number of identities it remembers.
+ */
+export function createSenderLimiter(
+  opts: { max: number; windowMs: number; maxSenders: number },
+  now: () => number = Date.now,
+): (identity: string) => boolean {
+  const seen = new Map<string, number[]>(); // insertion-ordered: the first key is the oldest sender
+  return (identity: string) => {
+    const t = now();
+    const stamps = (seen.get(identity) ?? []).filter((s) => t - s < opts.windowMs);
+    seen.delete(identity); // re-insert below so recently active senders move to the end
+    if (stamps.length >= opts.max) {
+      seen.set(identity, stamps);
+      return false;
+    }
+    stamps.push(t);
+    seen.set(identity, stamps);
+    while (seen.size > opts.maxSenders) {
+      const oldest = seen.keys().next().value;
+      if (oldest === undefined) break;
+      seen.delete(oldest);
+    }
     return true;
   };
 }

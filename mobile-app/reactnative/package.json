@@ -54,7 +54,7 @@
     "env:develop": "node scripts/use-env.mjs development",
     "env:which": "node scripts/use-env.mjs --which",
     "test:lib": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/lib/*.spec.ts\"",
-    "test:academy-live": "node --experimental-strip-types --test \"src/features/academy/live/__tests__/*.test.ts\"",
+    "test:academy-live": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/academy/live/__tests__/*.test.ts\"",
     "test:crypto": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/crypto/utils/__tests__/*.test.ts\""
   },
   "dependencies": {
@@ -63,7 +63,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@livekit/react-native": "^3.0.0",
     "@livekit/react-native-expo-plugin": "^1.0.3",
-    "@livekit/react-native-webrtc": "^144.2.0",
+    "@livekit/react-native-webrtc": "144.2.0",
     "@maplibre/maplibre-react-native": "^10.4.2",
     "@react-native-async-storage/async-storage": "3.1.1",
     "@react-native-community/netinfo": "12.0.1",
