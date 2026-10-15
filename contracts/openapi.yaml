@@ -4444,7 +4444,7 @@ paths:
                   verified: { type: boolean, example: true }
                   resetToken: { type: string, description: "Single-use; redeemed by /api/auth/reset-password" }
         '400': { description: Invalid or expired code }
-        '429': { description: Attempt ceiling reached, or per-IP verify budget exceeded }
+        '429': { description: "Attempt ceiling reached, or per-IP verify budget exceeded" }
         '503': { description: Feature disabled or misconfigured }
   /api/auth/reset-password:
     post:
