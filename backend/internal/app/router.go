@@ -468,6 +468,8 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 				navAdmin.Use(middleware.RequireAuthContext(supabase, rbacService))
 				navAdmin.GET("/users/:id/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
 					AdminUserNavigationHandler(navigation.NewRepository(sharedPool)))
+				navAdmin.GET("/analytics/navigation", middleware.RequirePermission(rbacService, "audit.logs.view"),
+					AdminNavigationAnalyticsHandler(navigation.NewRepository(sharedPool)))
 			}
 		}
 	} else if deployedTier {

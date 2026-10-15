@@ -3,6 +3,7 @@ package navigation
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -100,6 +101,129 @@ func (r *Repository) ListRecentByUser(ctx context.Context, userID string, limit 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("navigation repo: list: %w", err)
+	}
+	return out, nil
+}
+
+// analyticsInterval maps a validated range token to a Postgres interval
+// literal (bound as a parameter, never interpolated).
+func analyticsInterval(rng string) string {
+	switch rng {
+	case "7d":
+		return "7 days"
+	case "90d":
+		return "90 days"
+	default:
+		return "30 days"
+	}
+}
+
+// escapeLike escapes LIKE metacharacters so a search term matches literally.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// AggregateNavigation returns top screens, a per-day timeseries and the
+// surface split over the filter window. Surface scopes topScreens and the
+// timeseries (not the split); Search scopes topScreens only. All filter
+// values are bound parameters.
+func (r *Repository) AggregateNavigation(ctx context.Context, f AnalyticsFilter) (*NavAnalytics, error) {
+	interval := analyticsInterval(f.Range)
+	surface := ""
+	if f.Surface == "mobile" || f.Surface == "web" {
+		surface = f.Surface
+	}
+	pattern := "%" + escapeLike(f.Search) + "%"
+	out := &NavAnalytics{TopScreens: []TopScreen{}, Timeseries: []DayBucket{}}
+
+	const topQ = `SELECT route, COUNT(*) AS views, COUNT(DISTINCT user_id) AS users
+		FROM navigation_events
+		WHERE occurred_at >= now() - $1::interval
+		  AND ($2 = '' OR surface = $2)
+		  AND ($3 = '%%' OR route ILIKE $3)
+		GROUP BY route
+		ORDER BY views DESC, route ASC
+		LIMIT 50`
+	rows, err := r.db.Query(ctx, topQ, interval, surface, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("navigation repo: top screens: %w", err)
+	}
+	for rows.Next() {
+		var s TopScreen
+		if err := rows.Scan(&s.Route, &s.Views, &s.Users); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("navigation repo: scan top: %w", err)
+		}
+		out.TopScreens = append(out.TopScreens, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("navigation repo: top screens: %w", err)
+	}
+
+	const tsQ = `SELECT date_trunc('day', occurred_at AT TIME ZONE 'UTC') AS day, surface, COUNT(*)
+		FROM navigation_events
+		WHERE occurred_at >= now() - $1::interval
+		  AND ($2 = '' OR surface = $2)
+		GROUP BY 1, surface
+		ORDER BY 1 ASC`
+	rows, err = r.db.Query(ctx, tsQ, interval, surface)
+	if err != nil {
+		return nil, fmt.Errorf("navigation repo: timeseries: %w", err)
+	}
+	idx := map[string]int{}
+	for rows.Next() {
+		var day time.Time
+		var surf string
+		var n int64
+		if err := rows.Scan(&day, &surf, &n); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("navigation repo: scan timeseries: %w", err)
+		}
+		key := day.Format("2006-01-02")
+		i, ok := idx[key]
+		if !ok {
+			out.Timeseries = append(out.Timeseries, DayBucket{Day: key})
+			i = len(out.Timeseries) - 1
+			idx[key] = i
+		}
+		switch surf {
+		case "mobile":
+			out.Timeseries[i].Mobile += n
+		case "web":
+			out.Timeseries[i].Web += n
+		}
+		out.Timeseries[i].Total += n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("navigation repo: timeseries: %w", err)
+	}
+
+	const splitQ = `SELECT surface, COUNT(*) FROM navigation_events
+		WHERE occurred_at >= now() - $1::interval GROUP BY surface`
+	rows, err = r.db.Query(ctx, splitQ, interval)
+	if err != nil {
+		return nil, fmt.Errorf("navigation repo: surface split: %w", err)
+	}
+	for rows.Next() {
+		var surf string
+		var n int64
+		if err := rows.Scan(&surf, &n); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("navigation repo: scan split: %w", err)
+		}
+		switch surf {
+		case "mobile":
+			out.SurfaceSplit.Mobile += n
+		case "web":
+			out.SurfaceSplit.Web += n
+		}
+		out.SurfaceSplit.Total += n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("navigation repo: surface split: %w", err)
 	}
 	return out, nil
 }
