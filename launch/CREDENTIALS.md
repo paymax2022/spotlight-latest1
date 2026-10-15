@@ -55,6 +55,8 @@ tracking is not enough. Rotate every key that was ever in those snapshots:
 ADMIN_API_KEY:                    openssl rand -hex 32
 UTILITY_PROVIDER_CREDENTIALS_KEY: openssl rand -base64 32
 CONNECT_VERIFICATION_PEPPER:      openssl rand -hex 32
+KYC_PII_ENC_KEY:                  openssl rand -base64 32   # must decode to exactly 32 bytes
+REFERRAL_REWARDS_INTERNAL_SECRET: openssl rand -hex 32
 ```
 
 ---
@@ -73,6 +75,31 @@ Legend: **R** = required for the Core+Payments launch · ✦ = has test/live var
 - `PAYSTACK_PUBLIC_KEY` (`pk_test_`/`pk_live_`), `PAYSTACK_SECRET_KEY` (`sk_test_`/`sk_live_`),
   `PAYSTACK_WEBHOOK_SECRET` (HMAC-SHA512 verify), `PAYSTACK_DVA_BANK` (default `wema-bank`).
 - Set `PAYSTACK_MODE=live` and swap to `*_live_` keys at go-live.
+
+### KYC — Dojah (R for launch)
+- `DOJAH_APP_ID`, `DOJAH_SECRET_KEY`, `DOJAH_PROD`, `DOJAH_WEBHOOK_SECRET`
+  (verifies `POST /api/kyc/webhooks/dojah` signatures) + `KYC_PII_ENC_KEY`
+  (AES-256, base64 of 32 bytes — encrypts stored KYC PII at rest).
+- Powers `FEATURE_KYC_VERIFY_ENABLED`: id-number, facial match, liveness,
+  document and AML checks. apply-env.sh leaves the flag OFF and warns until all
+  three of app id / secret / PII key are present — enabling it without a
+  provider fails config validation outside development.
+
+### Crypto funding — Quidax (R for launch crypto rail)
+- `CRYPTO_PROVIDER=quidax`, `QUIDAX_TEST_API_KEY`/`QUIDAX_TEST_BASE_URL` (dev &
+  staging) and `QUIDAX_LIVE_API_KEY`/`QUIDAX_LIVE_BASE_URL` (production).
+- Powers `FEATURE_CRYPTO_ENABLED`: real prices + on-chain withdrawals.
+  apply-env.sh keeps the flag OFF (`mock` provider) unless the key for the
+  target `APP_ENV` is set — the flag on with no key is a fatal strict-validation
+  error everywhere.
+
+### Referral rewards (launch-critical — no third-party creds)
+- `REFERRAL_REWARDS_INTERNAL_SECRET` — shared secret guarding the
+  `POST /internal/referrals/*` purchase hooks (fail-closed when empty). Set the
+  same value on any service that emits purchase-settled/refunded events.
+- `SUPER_ADMIN_REFERRAL_CODE` / `SUPER_ADMIN_USER_ID` — optional overrides for
+  the house account that captures no-code signups; blank falls back to the
+  seeded global house row (code `SPOT-HOUSE`).
 
 ### Utility bills — VTpass (optional) ✦
 - `VTPASS_ENVIRONMENT` (`sandbox`/`live`), `VTPASS_API_KEY`, `VTPASS_PUBLIC_KEY`, `VTPASS_SECRET_KEY`,
@@ -105,8 +132,12 @@ Legend: **R** = required for the Core+Payments launch · ✦ = has test/live var
 
 ## Feature-flag posture (set by apply-env.sh)
 
-Core money path **ON**: wallet, KYC, virtual accounts, tier limits.
-Risk-sensitive **OFF** until you flip them: transfers (P2P/bank), FX, utility payments,
+**ON** at launch: wallet, KYC, virtual accounts, tier limits, referrals +
+referral rewards engine, commission + referral commission split, transfers
+(P2P wallet + wallet→bank — the rail referral rewards cash out through).
+**Credential-gated** (ON only when the provider creds above are present):
+Dojah KYC verify, crypto funding.
+Risk-sensitive **OFF** until you flip them: FX, utility payments,
 disputes, ratings, estate/realtor/property suite, maps. Edit the `FEATURE_FLAGS` block
 in `apply-env.sh` to widen the launch, then re-run it.
 
@@ -123,6 +154,13 @@ in `apply-env.sh` to widen the launch, then re-run it.
 - [ ] `ADMIN_API_KEY` set to a strong random value (not blank — blank = open admin routes).
 - [ ] `CORS_ALLOW_ORIGINS` set to production web + admin origins only.
 - [ ] Paystack switched to live keys + live webhook secret; webhook URL registered.
+- [ ] `APP_ENV=production` in master.env (generated backend/.env carries it —
+      it drives strict secret validation, prod-only providers, IsProd()).
+- [ ] Dojah live creds + `DOJAH_PROD=true` + webhook secret; webhook URL
+      registered in the Dojah dashboard (`POST /api/kyc/webhooks/dojah`).
+- [ ] `KYC_PII_ENC_KEY` generated (`openssl rand -base64 32`) — required with KYC verify.
+- [ ] `QUIDAX_LIVE_API_KEY` set + `CRYPTO_PROVIDER=quidax` (crypto funding rail).
+- [ ] `REFERRAL_REWARDS_INTERNAL_SECRET` generated and shared with internal emitters.
 - [ ] `DATABASE_URL` + `REDIS_URL` point at production infra; `supabase db push` applied.
 - [ ] GitHub deploy secrets configured.
 - [ ] Confirm `git status` shows no `.env`/`master.env` staged (all ignored).
