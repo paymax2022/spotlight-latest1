@@ -131,7 +131,7 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   `app/api/v1/[...path]` catch-all are reported separately — a catch-all match is NOT proof a route
   exists, so check the Go side (caveats in its docstring).
 - **Estate-family triage** (13 modules, one `api.ts` each, all `/api/v1/estate/<x>`):
-  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2), emergencies (3),
+  - **Clean — ready to flip, one module per PR:** documents (2 calls — done in Batch 6), dues (2 — done in Batch 7), emergencies (3),
     repairs (4), reports (2, read-only: flip the default only), tasks (3 — two handler files carry a
     "stub" comment, read them first), vendors (6), facilities (4). Every call matches a handler, every
     table exists, no read-side traps.
@@ -150,6 +150,20 @@ exit 0, 0 `error TS`, 0 `RangeError` (the stack-crash trap prints neither — se
   Server-side authz is correct: restricted documents are filtered out for non-admins on read, creating
   requires `estate_admin`, the file URL must be `http(s)://`. No automated suite for the handler (code
   reading). 1 mutation converted (`createDocument`); e2e pin added.
+
+### Batch 7 (2026-10-15) — dues (money path)
+- **dues** (`src/features/dues/api.ts`) — frontend-web handlers (`app/api/v1/estate/dues`).
+  `verify_mobile_module.py`: **2/2 client calls match** (list, pay); tables `estate_dues_invoices` and
+  `estate_payments` exist. Unlike the other estate modules this one **moves money, and it does it
+  properly**: `payInvoice` (`frontend-web/src/server/estate/dues.ts`) requires an `Idempotency-Key`,
+  checks residency + invoice ownership (404 for another estate's or another resident's invoice),
+  validates the kobo amount, then debits the wallet through the shared `debitWallet` primitive (atomic
+  RPC, fail-closed tier limits, balanced ledger posting, unique idempotency key) before recording the
+  `estate_payments` receipt and marking the invoice paid. Replays return the prior payment without a
+  second debit; a concurrent receipt insert (23505) is reconciled; failures after the debit surface as
+  explicit 500s instead of silent divergence. **Covered by `frontend-web/tests/unit/estate/dues.money-path.spec.ts`**
+  (idempotency, authz, kobo validation, status guards, happy path, replay, race, error surfacing).
+  1 mutation converted (`payInvoice`); e2e pin added. The dues e2e only opens the payment sheet.
 
 ### Association — done and in `main`
 Fully fixed (default flipped + all `src/features/association/api/*.ts` mutations converted to
@@ -174,7 +188,7 @@ kycverify, property, restaurantmerchant, stayshotelier.
 ### Still pending — full list from a fresh scan of `main` (2026-10-11)
 `grep -rn "mockAllowed(" src` — everything still passing `true`, by feature folder:
 academy (+ academy/fees), admin (mobile-side), ainotes, aitrading, arena, connect,
-creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, dues, emergencies, estateadmin,
+creators (see Batch 3 — blocked), crowdfunding (4 files), crypto, emergencies, estateadmin,
 estatesettings, events, facilities, featured, finance, food, fractionalre, fx (4 files), health,
 invest, investai, investonboarding, investsettings, marketplace, mobility (9 files + a hook,
 one module), notifications, nutrition, properties, realtor, referral (2 files), repairs, reports,

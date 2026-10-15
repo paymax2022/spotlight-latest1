@@ -4,7 +4,7 @@ import { mockAmbientRequests } from '../helpers/common';
 import { mockWallet } from '../helpers/wallet';
 
 /**
- * Dues & rent hub. EXPO_PUBLIC_DUES_USE_MOCK defaults true, so invoices come
+ * Dues & rent hub. EXPO_PUBLIC_DUES_USE_MOCK is pinned true in playwright.config.ts, so invoices come
  * from the in-memory fixtures in dues/api.ts: Waste (paid), Security Levy
  * (overdue ₦30,000) and Service Charge (pending ₦75,000) → ₦105,000.00
  * outstanding. The wallet is stubbed because the payment sheet reads the
