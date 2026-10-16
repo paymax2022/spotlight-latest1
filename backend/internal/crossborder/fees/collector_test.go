@@ -103,7 +103,7 @@ func charge() fees.FeeCharge {
 		UserID:         "user-1",
 		CompanyID:      uuid.NewString(),
 		Service:        "send",
-		Currency:       "USD",
+		Currency:       "NGN",
 		AmountMinor:    2500,
 	}
 }
@@ -128,7 +128,7 @@ func TestLedgerCharge_ChargesOnceAndTracksUnswept(t *testing.T) {
 	wallet, _ := f.GetOrCreateUserWallet(context.Background(), "user-1")
 	revT, _ := ledger.PlatformFeeAccount("send")
 	rev, _ := f.GetOrCreateStandingAccount(context.Background(), revT)
-	unT, _ := ledger.FeesUnsweptAccount(in.CompanyID, "USD")
+	unT, _ := ledger.FeesUnsweptAccount(in.CompanyID, "NGN")
 	un, _ := f.GetOrCreateStandingAccount(context.Background(), unT)
 	if f.balances[wallet.ID] != 7500 || f.balances[rev.ID] != 2500 || f.balances[un.ID] != 2500 {
 		t.Fatalf("balances wallet=%d rev=%d unswept=%d", f.balances[wallet.ID], f.balances[rev.ID], f.balances[un.ID])
@@ -180,9 +180,9 @@ func TestLedgerCharge_RetryHealsAfterCrashBetweenLegs(t *testing.T) {
 	if _, err := fees.NewLedgerChargeCollector(f).Collect(context.Background(), in); err != nil {
 		t.Fatal(err)
 	}
-	unT, _ := ledger.FeesUnsweptAccount(in.CompanyID, "USD")
+	unT, _ := ledger.FeesUnsweptAccount(in.CompanyID, "NGN")
 	un, _ := f.GetOrCreateStandingAccount(context.Background(), unT)
-	if f.balances[un.ID] != 2500 || f.balances[wallet.ID] != 7500 {
+	if f.balances[un.ID] != 2500 ||f.balances[wallet.ID] != 7500 {
 		t.Fatalf("not healed: unswept=%d wallet=%d", f.balances[un.ID], f.balances[wallet.ID])
 	}
 }
@@ -222,6 +222,7 @@ func TestCollect_ValidationFailsClosed(t *testing.T) {
 		func(x *fees.FeeCharge) { x.Service = "Bad Svc" },
 		func(x *fees.FeeCharge) { x.CompanyID = "nope" },
 		func(x *fees.FeeCharge) { x.Currency = "usd" },
+		func(x *fees.FeeCharge) { x.Currency = "USD" },
 	}
 	for i, m := range bad {
 		in := charge()
@@ -232,6 +233,24 @@ func TestCollect_ValidationFailsClosed(t *testing.T) {
 	}
 	if len(f.entries) != 0 {
 		t.Fatal("validation failure must not post")
+	}
+}
+
+func TestLedgerCharge_NonNGNRejectedPostsNothing(t *testing.T) {
+	f := newFake()
+	fund(f, "user-1", 10000)
+	in := charge()
+	in.Currency = "USD"
+	res, err := fees.NewLedgerChargeCollector(f).Collect(context.Background(), in)
+	if !errors.Is(err, fees.ErrInvalidCharge) {
+		t.Fatalf("want ErrInvalidCharge, got %v", err)
+	}
+	if res.Charged || len(f.entries) != 0 || f.gated != 0 || f.ungated != 0 {
+		t.Fatalf("non-NGN must post nothing: res=%+v entries=%d", res, len(f.entries))
+	}
+	wallet, _ := f.GetOrCreateUserWallet(context.Background(), "user-1")
+	if f.balances[wallet.ID] != 10000 {
+		t.Fatalf("wallet touched: %d", f.balances[wallet.ID])
 	}
 }
 

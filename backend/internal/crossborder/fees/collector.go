@@ -218,6 +218,13 @@ func verifyPosted(ctx context.Context, l Ledger, j ledger.JournalEntry) error {
 // the process dies between the two, a retry with the same key replays 1 as a
 // verified no-op and posts 2, so the pair always converges. The sweep (Task 5)
 // drains fees_unswept with the mirror-image journal.
+//
+// NGN-ONLY: the ledger is a single-currency NGN-kobo ledger, so a non-NGN fee
+// would debit the NGN wallet by the wrong magnitude (USD 25.00 = 2500 cents
+// would charge N25) and mislabel the fees_unswept sub-ledger. Collect fails
+// closed with ErrInvalidCharge for any other currency. Multi-currency
+// collection (routing through the orchestration customer-wallet plane,
+// orch_balances) is a follow-up deferred to the wiring task.
 type LedgerChargeCollector struct{ l Ledger }
 
 // NewLedgerChargeCollector builds strategy A.
@@ -226,6 +233,9 @@ func NewLedgerChargeCollector(l Ledger) *LedgerChargeCollector { return &LedgerC
 func (c *LedgerChargeCollector) Collect(ctx context.Context, in FeeCharge) (Result, error) {
 	if err := in.validate(true); err != nil {
 		return Result{}, err
+	}
+	if in.Currency != "NGN" {
+		return Result{}, fmt.Errorf("%w: ledger charge strategy is NGN-only, got %s", ErrInvalidCharge, in.Currency)
 	}
 	res := Result{Strategy: StrategyLedgerCharge, AmountMinor: in.AmountMinor}
 	if in.UserID == "" {
