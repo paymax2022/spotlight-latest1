@@ -218,7 +218,7 @@ describe('POST /api/auth/forgot-password', () => {
     expect(badBody).toEqual(okBody);
   });
 
-  it('says so when no account matches (ADR-PR800)', async () => {
+  it('says so when no account matches (ADR-PR801)', async () => {
     mockGo(404, { success: false, error: 'account_not_found' });
     const res = await post('@/app/api/auth/forgot-password/route', { identifier: 'nobody@b.test' });
     expect(res.status).toBe(404);

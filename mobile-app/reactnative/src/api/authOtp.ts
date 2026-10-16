@@ -52,7 +52,7 @@ export function forgotPasswordBody(identifier: string) {
 
 /**
  * The reset request answers 404 `account_not_found` when nothing matches what
- * the user typed (ADR-PR800). Returns the sentence to show, naming what they
+ * the user typed (ADR-PR801). Returns the sentence to show, naming what they
  * typed so a typo is obvious, or null for any other failure so the caller falls
  * back to its generic error mapping.
  */

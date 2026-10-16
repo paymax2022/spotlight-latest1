@@ -20,7 +20,7 @@ import { callGo, resetUnavailable } from '../_otp';
  * unavailable the caller is told so (503) — that is a property of the environment,
  * identical for every identifier, so it reveals nothing about accounts.
  *
- * Product decision (ADR-PR800): THIS step tells the user when no account matches
+ * Product decision (ADR-PR801): THIS step tells the user when no account matches
  * (404 account_not_found), so a mistyped address is caught here instead of after
  * a code that never comes. That discloses whether an email/phone is registered;
  * the per-IP reset limiter is the brake. Other upstream failures are still

@@ -4394,7 +4394,7 @@ paths:
 
 
         Answers 404 `account_not_found` when no account matches the identifier, so
-        a mistyped address is caught here (ADR-PR800). This discloses whether an
+        a mistyped address is caught here (ADR-PR801). This discloses whether an
         email or phone is registered; the per-IP limiter (429) is the brake. When
         the account lookup itself fails the answer is the neutral 200 and a code
         is sent. The verify and reset steps still answer identically for every

@@ -551,7 +551,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&in); err == nil {
 		email := h.resolveResetEmail(c.Request.Context(), identifierOf(in.Identifier, in.Email))
-		// Product decision (ADR-PR800): THIS step tells the user when nothing matches,
+		// Product decision (ADR-PR801): THIS step tells the user when nothing matches,
 		// so a mistyped address is caught here rather than after a code that never
 		// comes. It deliberately discloses whether an email/phone is registered; the
 		// per-IP reset limiter on this route is the only brake on harvesting. The
