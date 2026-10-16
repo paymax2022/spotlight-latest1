@@ -39,6 +39,8 @@ type NavItem = {
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
+  { label: 'Navigation Analytics', href: '/admin/analytics/navigation', section: 'Overview', permissions: ['audit.logs.view'] },
+  { label: 'Navigation Funnel', href: '/admin/analytics/navigation/funnel', section: 'Overview', permissions: ['audit.logs.view'] },
   // Centralized, read-only view of ALL ledger_entries across every module (no
   // per-module transactions table exists). Kept as its OWN top-level section
   // (not nested under 'Finance') so it is a first-class, always-visible entry
