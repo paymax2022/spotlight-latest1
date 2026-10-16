@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"math/big"
 	"strings"
 
@@ -34,13 +36,21 @@ func vertoSupports(corridor string) bool {
 
 func pow10(n int) *big.Int { return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil) }
 
+// ErrFractionalAmountUnsupported marks an amount that is not a whole number of
+// major units; Verto's client cannot represent it. Not transient: do not retry.
+var ErrFractionalAmountUnsupported = errors.New("vertofx: fractional major-unit amount unsupported")
+
+// ErrNoProviderInProd is returned when a fabricated/deterministic result would
+// otherwise be produced in production (fail closed).
+var ErrNoProviderInProd = errors.New("vertofx: no live provider client in production")
+
 // vertoMinorToMajor converts orchestration minor units to Verto's integer major
 // units. Verto's client takes whole major units, so a fractional-major amount
 // cannot be represented: it is rejected (fail closed) rather than truncated.
 func vertoMinorToMajor(minor int64, currency string) (int64, error) {
 	div := pow10(orch.MinorExponent(currency)).Int64()
 	if minor < 0 || minor%div != 0 {
-		return 0, fmt.Errorf("vertofx: %d minor %s is not a whole number of major units", minor, currency)
+		return 0, fmt.Errorf("%w: %d minor %s", ErrFractionalAmountUnsupported, minor, currency)
 	}
 	return minor / div, nil
 }
@@ -101,36 +111,67 @@ func (v *VertoFX) Name() string { return "vertofx" }
 func (v *VertoFX) Supports(corridor string, rail orch.Rail) bool { return vertoSupports(corridor) }
 
 func (v *VertoFX) Quote(ctx context.Context, source, dest string, amountMinor int64, amountType orch.AmountType, rail orch.Rail) (*orch.ProviderQuote, error) {
+	source, dest = strings.ToUpper(source), strings.ToUpper(dest)
 	corridor := orch.Corridor(source, dest)
 	mid := orch.MidRate(source, dest)
-	if mid == 0 || !v.Supports(corridor, rail) {
+	// Fail closed in prod: the deterministic table is not a real price.
+	if v.prod || mid == 0 || !v.Supports(corridor, rail) {
 		return &orch.ProviderQuote{Provider: v.Name(), Corridor: corridor, Rail: rail, Viable: false}, nil
 	}
-	src := amountMinor
-	if amountType == orch.AmountDestination {
-		src = int64(float64(amountMinor) / mid)
+	ppm := int64(math.Round(mid * 1_000_000)) // rate only; amounts use integer math
+	if ppm <= 0 {
+		return &orch.ProviderQuote{Provider: v.Name(), Corridor: corridor, Rail: rail, Viable: false}, nil
 	}
+	return vertoBuildQuote(v.Name(), v.reliability, source, dest, amountMinor, amountType, rail, ppm, v.Supports(corridor, rail))
+}
+
+// vertoBuildQuote prices a quote from an integer PPM rate (integer money math).
+// Viable only if the customer receives > 0 and the source is a whole number of
+// major units (otherwise execution would reject it).
+func vertoBuildQuote(name string, reliability float64, source, dest string, amountMinor int64, amountType orch.AmountType, rail orch.Rail, ppm int64, supported bool) (*orch.ProviderQuote, error) {
+	srcExp, dstExp := orch.MinorExponent(source), orch.MinorExponent(dest)
+	src := amountMinor
+	var err error
+	if amountType == orch.AmountDestination {
+		if src, err = convertCeilSource(amountMinor, ppm, srcExp, dstExp); err != nil {
+			return nil, err
+		}
+	}
+	received, err := convertFloor(src, ppm, srcExp, dstExp)
+	if err != nil {
+		return nil, err
+	}
+	_, fracErr := vertoMinorToMajor(src, source)
 	return &orch.ProviderQuote{
-		Provider:    v.Name(),
-		Corridor:    corridor,
+		Provider:    name,
+		Corridor:    orch.Corridor(source, dest),
 		Rail:        rail,
-		Rate:        mid,
+		Rate:        float64(ppm) / 1_000_000.0, // display only
 		ProviderFee: orch.NewMoney(feeCeil(src), source),
 		RailFee:     orch.NewMoney(0, source),
-		Reliability: v.reliability,
-		Viable:      true,
+		Reliability: reliability,
+		Viable:      supported && received > 0 && fracErr == nil,
 	}, nil
 }
 
 func (v *VertoFX) ExecuteConversion(ctx context.Context, q *orch.Quote, idempotencyKey string) (*orch.ExecuteResult, error) {
+	if v.prod {
+		return nil, ErrNoProviderInProd
+	}
 	return &orch.ExecuteResult{ProviderRef: "vfx_" + uuid.New().String()[:10], ExecutedRate: q.AllInRate, Destination: q.Destination, Status: "settled"}, nil
 }
 
 func (v *VertoFX) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest orch.Destination, idempotencyKey string) (*orch.ExecuteResult, error) {
+	if v.prod {
+		return nil, ErrNoProviderInProd
+	}
 	return &orch.ExecuteResult{ProviderRef: "vfx_" + uuid.New().String()[:10], ExecutedRate: q.AllInRate, Destination: q.Destination, Status: "processing"}, nil
 }
 
 func (v *VertoFX) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
+	if v.prod {
+		return nil, ErrNoProviderInProd
+	}
 	return &orch.CollectionResult{
 		ProviderRef: "vfx_col_" + uuid.New().String()[:8],
 		Details: map[string]any{
@@ -165,56 +206,39 @@ func (v *VertoFXLive) Supports(corridor string, rail orch.Rail) bool {
 }
 
 func (v *VertoFXLive) Quote(ctx context.Context, source, dest string, amountMinor int64, amountType orch.AmountType, rail orch.Rail) (*orch.ProviderQuote, error) {
+	source, dest = strings.ToUpper(source), strings.ToUpper(dest)
 	if v.client == nil {
 		return v.fallback.Quote(ctx, source, dest, amountMinor, amountType, rail)
 	}
 	corridor := orch.Corridor(source, dest)
-	srcExp, dstExp := orch.MinorExponent(source), orch.MinorExponent(dest)
 
 	// The rate lookup is indicative; Verto takes whole major units, so floor.
-	lookup := amountMinor
 	lookupCur := source
 	if amountType == orch.AmountDestination {
 		lookupCur = dest
 	}
-	rateAmount := lookup / pow10(orch.MinorExponent(lookupCur)).Int64()
-	rate, err := v.client.GetFXRate(ctx, strings.ToUpper(source), strings.ToUpper(dest), rateAmount)
+	rateAmount := amountMinor / pow10(orch.MinorExponent(lookupCur)).Int64()
+	rate, err := v.client.GetFXRate(ctx, source, dest, rateAmount)
 	if err != nil || rate.RatePPM <= 0 {
+		if v.fallback.prod {
+			slog.Error("vertofx: rate lookup failed; quote not viable", "corridor", corridor, "err", err)
+			return &orch.ProviderQuote{Provider: v.Name(), Corridor: corridor, Rail: rail, Viable: false}, nil
+		}
 		return v.fallback.Quote(ctx, source, dest, amountMinor, amountType, rail)
 	}
-
-	src := amountMinor
-	if amountType == orch.AmountDestination {
-		if src, err = convertCeilSource(amountMinor, rate.RatePPM, srcExp, dstExp); err != nil {
-			return nil, err
-		}
-	}
-	received, err := convertFloor(src, rate.RatePPM, srcExp, dstExp)
-	if err != nil {
-		return nil, err
-	}
-	return &orch.ProviderQuote{
-		Provider:    v.Name(),
-		Corridor:    corridor,
-		Rail:        rail,
-		Rate:        float64(rate.RatePPM) / 1_000_000.0, // display only; amounts use integer PPM math
-		ProviderFee: orch.NewMoney(feeCeil(src), source),
-		RailFee:     orch.NewMoney(0, source),
-		Reliability: v.reliability,
-		// A sub-unit rate that floors the customer's receipt to zero is not a quote.
-		Viable: v.Supports(corridor, rail) && received > 0,
-	}, nil
+	return vertoBuildQuote(v.Name(), v.reliability, source, dest, amountMinor, amountType, rail, rate.RatePPM, v.Supports(corridor, rail))
 }
 
 func (v *VertoFXLive) trade(ctx context.Context, q *orch.Quote, targetAccount, paymentType, idempotencyKey string) (*orch.ExecuteResult, error) {
 	if idempotencyKey == "" {
 		return nil, errors.New("vertofx: idempotency key required")
 	}
-	srcMajor, err := vertoMinorToMajor(q.Source.AmountMinor, q.Source.Currency)
+	srcCur, dstCur := strings.ToUpper(q.Source.Currency), strings.ToUpper(q.Destination.Currency)
+	srcMajor, err := vertoMinorToMajor(q.Source.AmountMinor, srcCur)
 	if err != nil {
 		return nil, err
 	}
-	rate, err := v.client.GetFXRate(ctx, q.Source.Currency, q.Destination.Currency, srcMajor)
+	rate, err := v.client.GetFXRate(ctx, srcCur, dstCur, srcMajor)
 	if err != nil {
 		return nil, err
 	}
@@ -230,8 +254,8 @@ func (v *VertoFXLive) trade(ctx context.Context, q *orch.Quote, targetAccount, p
 		return nil, err
 	}
 	dest := q.Destination
-	if got, cerr := convertFloor(q.Source.AmountMinor, rate.RatePPM, orch.MinorExponent(q.Source.Currency), orch.MinorExponent(q.Destination.Currency)); cerr == nil && got > 0 {
-		dest = orch.NewMoney(got, q.Destination.Currency)
+	if got, cerr := convertFloor(q.Source.AmountMinor, rate.RatePPM, orch.MinorExponent(srcCur), orch.MinorExponent(dstCur)); cerr == nil && got > 0 {
+		dest = orch.NewMoney(got, dstCur)
 	}
 	executed := q.AllInRate
 	if rate.RatePPM > 0 {
@@ -271,6 +295,10 @@ func (v *VertoFXLive) CreateCollection(ctx context.Context, currency, accountTyp
 	}
 	f, err := v.client.CreateFundingDetails(ctx, "", strings.ToUpper(currency))
 	if err != nil {
+		if v.fallback.prod {
+			slog.Error("vertofx: funding details failed", "currency", currency, "err", err)
+			return nil, err
+		}
 		return v.fallback.CreateCollection(ctx, currency, accountType, customerID)
 	}
 	return &orch.CollectionResult{
