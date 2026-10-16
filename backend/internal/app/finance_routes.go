@@ -60,7 +60,6 @@ import (
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/onboarding"
 	"spotlight/backend/internal/orchestration"
-	"spotlight/backend/internal/orchestration/adapters"
 	"spotlight/backend/internal/pharmacy"
 	platformCrypto "spotlight/backend/internal/platform/crypto"
 	"spotlight/backend/internal/platform/queue"
@@ -74,7 +73,6 @@ import (
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
-	"spotlight/backend/internal/provider/eversend"
 	"spotlight/backend/internal/provider/maplerad"
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
@@ -780,33 +778,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXOrchestrationEnabled {
 		orchStore := orchestration.NewSQLStore(pool)
 
-		// Maplerad: live HTTP adapter when a secret key is configured, else the
-		// deterministic adapter (keeps the corridor routable in dev/CI).
-		var mplProvider orchestration.Provider
-		if cfg.MapleradSecretKey != "" {
-			mplProvider = adapters.NewMapleradLive(
-				maplerad.New(cfg.MapleradSecretKey, cfg.MapleradProd).WithBaseURL(cfg.MapleradBaseURL),
-				cfg.MapleradWebhookSecret, cfg.MapleradProd,
-			)
-			log.Println("[finance] FX orchestration: Maplerad LIVE adapter enabled")
-		} else {
-			mplProvider = adapters.NewMapleradFX(cfg.MapleradProd)
-		}
-		// Eversend: live HTTP adapter when client credentials are configured.
-		var evsProvider orchestration.Provider
-		if cfg.EversendClientID != "" && cfg.EversendClientSecret != "" {
-			evsProvider = adapters.NewEversendLive(
-				eversend.New(cfg.EversendClientID, cfg.EversendClientSecret, cfg.EversendProd),
-				cfg.EversendWebhookSecret, cfg.EversendProd,
-			)
-			log.Println("[finance] FX orchestration: Eversend LIVE adapter enabled")
-		} else {
-			evsProvider = adapters.NewEversend(cfg.EversendProd)
-		}
-		providers := []orchestration.Provider{
-			evsProvider,
-			mplProvider,
-		}
+		providers := buildFXProviders(&cfg)
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
 		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
@@ -819,13 +791,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			orchestration.SpreadRule{Corridor: "USD-NGN", BPS: 120, MinBPS: 80, MaxBPS: 200},
 			orchestration.SpreadRule{Corridor: "USD-XAF", BPS: 150, MinBPS: 100, MaxBPS: 250},
 		).WithSource(orchestration.NewSQLSpreadSource(pool))
-		treasury := orchestration.NewTreasury([]orchestration.FloatBucket{
+		floatBuckets := []orchestration.FloatBucket{
 			{Provider: "eversend", Currency: "USD", BalanceMinor: 820_000_00, LowWaterMinor: 200_000_00, HighWaterMinor: 1_000_000_00, ExposureLimitMinor: 5_000_000_00},
 			{Provider: "eversend", Currency: "NGN", BalanceMinor: 1_800_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
 			{Provider: "maplerad", Currency: "NGN", BalanceMinor: 2_400_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
 			{Provider: "maplerad", Currency: "USD", BalanceMinor: 600_000_00, LowWaterMinor: 150_000_00, HighWaterMinor: 800_000_00, ExposureLimitMinor: 4_000_000_00},
 			{Provider: "maplerad", Currency: "XAF", BalanceMinor: 420_000_000_00, LowWaterMinor: 100_000_000_00, HighWaterMinor: 500_000_000_00, ExposureLimitMinor: 5_000_000_000_00},
-		})
+		}
+		if cfg.FeatureVertoFXEnabled {
+			// Seed VertoFX float so it is not scored 0-liquidity / failing CanCover.
+			floatBuckets = append(floatBuckets,
+				orchestration.FloatBucket{Provider: "vertofx", Currency: "USD", BalanceMinor: 600_000_00, LowWaterMinor: 150_000_00, HighWaterMinor: 800_000_00, ExposureLimitMinor: 4_000_000_00},
+				orchestration.FloatBucket{Provider: "vertofx", Currency: "NGN", BalanceMinor: 2_400_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
+			)
+		}
+		treasury := orchestration.NewTreasury(floatBuckets)
 		// Quote lifecycle: Redis-backed when available (multi-instance safe),
 		// else in-memory.
 		var quoteStore orchestration.QuoteStore
@@ -855,7 +835,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		orchSvc := orchestration.NewService(providers, orchStore, orchestration.Options{
 			Spread: spreadEngine, Treasury: treasury, QuoteStore: quoteStore, Rates: rateFeed, Limits: limitsEngine, LockWindow: 90 * time.Second,
-		})
+		}, orchestration.WithDefaultProvider(cfg.FXDefaultProvider))
 		// Outbound webhooks (signed) to the caller endpoint, when configured.
 		orchSvc.SetEmitter(orchestration.NewWebhookEmitter(cfg.PaymaxWebhookOutURL, cfg.PaymaxWebhookSecret))
 		// Automated treasury rebalancing + balance.low alerts.
