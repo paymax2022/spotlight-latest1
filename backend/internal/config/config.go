@@ -231,6 +231,7 @@ type Config struct {
 	FeatureFXEnabled                      bool
 	FeatureFXOrchestrationEnabled         bool   // normalized /v1 FX orchestration API
 	FeatureVertoFXEnabled                 bool   // FEATURE_VERTOFX: register VertoFX in FX orchestration
+	FeatureVertoFeeSweepEnabled           bool   // FEATURE_VERTO_FEE_SWEEP: daily sub-account->master platform-fee sweep (SP-3a); DEFAULT OFF until Verto V5/V18 approval
 	FXDefaultProvider                     string // FX_DEFAULT_PROVIDER: "" = pure best-score; "vertofx" = Verto preferred
 	// SP-2 Global Account onboarding (Verto sub-accounts). DEFAULT OFF.
 	FeatureSpotlightGlobalEnabled bool   // FEATURE_SPOTLIGHT_GLOBAL: mount /v1/global/* + apply account.* webhooks
@@ -960,6 +961,7 @@ func Load() Config {
 		FeatureFXEnabled:                             getEnvBool("FEATURE_FX_ENABLED", false),
 		FeatureFXOrchestrationEnabled:                getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
 		FeatureVertoFXEnabled:                        getEnvBool("FEATURE_VERTOFX", false),
+		FeatureVertoFeeSweepEnabled:                  getEnvBool("FEATURE_VERTO_FEE_SWEEP", false),
 		FXDefaultProvider:                            getEnv("FX_DEFAULT_PROVIDER", ""),
 		FeatureSpotlightGlobalEnabled:                getEnvBool("FEATURE_SPOTLIGHT_GLOBAL", false),
 		GlobalTnCVersion:                             getEnv("SPOTLIGHT_GLOBAL_TNC_VERSION", "v1"),
