@@ -450,6 +450,10 @@ type Config struct {
 	CryptoLockPoolConns int
 	// CryptoReconcileSeconds is the reconciler interval.
 	CryptoReconcileSeconds int
+	// AuthSlowLogMs: an authenticated request whose authentication stage (token check + status,
+	// roles and permissions lookups) takes at least this long is logged with per-step timings.
+	// 0 turns it off. See internal/middleware/auth_timing.go.
+	AuthSlowLogMs int
 	// CryptoQuoteRatePerMin / CryptoConfirmRatePerMin are the per-user budgets for
 	// POST /crypto/swaps/quote and /confirm. Confirm is the tighter one: it spends a
 	// PIN attempt and moves money. Validated 1..600 when the swap pipeline is on.
@@ -1012,6 +1016,7 @@ func Load() Config {
 		CryptoWebhookSecret:                          getEnv("QUIDAX_WEBHOOK_SECRET", ""),
 		CryptoLockPoolConns:                          getEnvInt("CRYPTO_LOCK_POOL_CONNS", 40),
 		CryptoReconcileSeconds:                       getEnvInt("CRYPTO_RECONCILE_SECONDS", 30),
+		AuthSlowLogMs:                                getEnvInt("AUTH_SLOW_LOG_MS", 750),
 		CryptoQuoteRatePerMin:                        getEnvInt("CRYPTO_QUOTE_RATE_PER_MIN", 20),
 		CryptoConfirmRatePerMin:                      getEnvInt("CRYPTO_CONFIRM_RATE_PER_MIN", 5),
 		FeatureTelemedicinePlatformFeeEnabled:        getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
