@@ -1772,6 +1772,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
 		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
 		restGroup.POST("/:id/kyb/documents/presign", restaurantHandler.PresignKYBDocument)
+		// Logo / banner uploads: same private-bucket presign flow as the KYB documents, scoped to
+		// the store and gated on the store-management permission inside the service.
+		restGroup.POST("/:id/images/presign", restaurantHandler.PresignStoreImage)
 		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
 		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 

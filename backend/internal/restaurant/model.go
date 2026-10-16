@@ -10,7 +10,10 @@ type Restaurant struct {
 	Description string  `json:"description,omitempty"`
 	Address     string  `json:"address"`
 	LogoURL     *string `json:"logo_url,omitempty"`
-	IsOpen      bool    `json:"is_open"`
+	// BannerURL is the wide storefront image. Like LogoURL it is stored as a link or an
+	// object key and is returned as a viewable URL (see store_images.go).
+	BannerURL *string `json:"banner_url,omitempty"`
+	IsOpen    bool    `json:"is_open"`
 	// Rating is the recomputed average (default 5.0); Cuisine is an optional tag used
 	// by discovery filters. DistanceMeters is populated only on near-me searches.
 	Rating         float64   `json:"rating"`
