@@ -25,6 +25,19 @@ type Service struct {
 	rates     *RateFeed     // optional rate-integrity gate; nil disables the staleness check
 	limits    *LimitsEngine // optional limit/velocity gate; nil disables limit checks
 	now       func() time.Time
+
+	// defaultProvider is the preferred provider name (config FX_DEFAULT_PROVIDER).
+	// Empty = pure best-score routing. See applyDefaultProvider.
+	defaultProvider string
+}
+
+// ServiceOption customises a Service at construction.
+type ServiceOption func(*Service)
+
+// WithDefaultProvider makes name the preferred provider: selected first when it
+// can cover the corridor, with best-score fallback otherwise. "" disables it.
+func WithDefaultProvider(name string) ServiceOption {
+	return func(s *Service) { s.defaultProvider = strings.ToLower(strings.TrimSpace(name)) }
 }
 
 // WebhookOutURL returns the configured outbound webhook endpoint, or "" when
@@ -46,7 +59,7 @@ type Options struct {
 }
 
 // NewService builds the orchestrator from a provider set, a store, and options.
-func NewService(providers []Provider, store Store, opts Options) *Service {
+func NewService(providers []Provider, store Store, opts Options, svcOpts ...ServiceOption) *Service {
 	if opts.Spread == nil {
 		opts.Spread = NewSpreadEngine(105) // 1.05% default
 	}
@@ -72,12 +85,41 @@ func NewService(providers []Provider, store Store, opts Options) *Service {
 	for _, p := range providers {
 		m[p.Name()] = p
 	}
-	return &Service{
+	svc := &Service{
 		providers: m, order: providers,
 		spread: opts.Spread, router: opts.Router, treasury: opts.Treasury,
 		book: opts.QuoteStore, store: store, screener: opts.Screener,
 		rates: opts.Rates, limits: opts.Limits, now: opts.Now,
 	}
+	for _, o := range svcOpts {
+		o(svc)
+	}
+	return svc
+}
+
+// applyDefaultProvider promotes the configured default provider to Best when it
+// is a viable candidate that Supports the corridor/rail; the displaced best and
+// the rest stay as score-ordered alternatives, so executeWithFailover still
+// falls back on a runtime error. No default / not coverable => rank unchanged.
+func (s *Service) applyDefaultProvider(rank RankResult, corridor string, rail Rail) RankResult {
+	if s.defaultProvider == "" || rank.Best == nil || strings.EqualFold(rank.Best.Provider, s.defaultProvider) {
+		return rank
+	}
+	p, ok := s.providers[s.defaultProvider]
+	if !ok || !p.Supports(corridor, rail) {
+		return rank
+	}
+	all := append([]Candidate{*rank.Best}, rank.Alternatives...)
+	for i, c := range all {
+		if strings.EqualFold(c.Provider, s.defaultProvider) {
+			best := c
+			alts := make([]Candidate, 0, len(all)-1)
+			alts = append(alts, all[:i]...)
+			alts = append(alts, all[i+1:]...)
+			return RankResult{Best: &best, Alternatives: alts}
+		}
+	}
+	return rank
 }
 
 func newID(prefix string) string {
@@ -144,7 +186,7 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 		return nil, apiErr
 	}
 
-	rank := s.router.Rank(candidates)
+	rank := s.applyDefaultProvider(s.router.Rank(candidates), corridor, rail)
 	if rank.Best == nil {
 		return nil, NewError(ErrRoutingUnavailable, "routing_unavailable", "No viable route within float/exposure limits for "+corridor+".")
 	}
@@ -477,7 +519,7 @@ func (s *Service) CreateCollection(ctx context.Context, customerID string, req C
 	if !SupportedCurrency(currency) {
 		return nil, NewError(ErrInvalidRequest, "unsupported_currency", "Currency not supported for collections.").WithParam("currency")
 	}
-	prov := s.pickCollectionProvider(req.Type)
+	prov := s.pickCollectionProvider(req.Type, currency)
 	if prov == nil {
 		return nil, NewError(ErrRoutingUnavailable, "routing_unavailable", "No provider can issue this account type.")
 	}
@@ -499,7 +541,18 @@ func (s *Service) CreateCollection(ctx context.Context, customerID string, req C
 	return va, nil
 }
 
-func (s *Service) pickCollectionProvider(accountType string) Provider {
+func (s *Service) pickCollectionProvider(accountType, currency string) Provider {
+	if s.defaultProvider != "" {
+		if p, ok := s.providers[s.defaultProvider]; ok {
+			rail := RailBankTransfer
+			if accountType == "iban" {
+				rail = RailIBAN
+			}
+			if p.Supports(currency, rail) {
+				return p
+			}
+		}
+	}
 	preferred := "maplerad"
 	if accountType == "iban" {
 		preferred = "eversend"
