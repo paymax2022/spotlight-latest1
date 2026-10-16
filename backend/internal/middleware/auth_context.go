@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
@@ -39,8 +40,27 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			return
 		}
 		token := strings.TrimSpace(h[7:])
+
+		// Diagnostics only (auth_timing.go): how long the authentication stage takes and how many
+		// requests are in it. The counter covers this stage, not the handler, so it is released
+		// before c.Next() and on every early return.
+		timing := authTiming{inflight: authInflight.Add(1)}
+		authStart := time.Now()
+		released := false
+		release := func() {
+			if !released {
+				released = true
+				authInflight.Add(-1)
+			}
+		}
+		defer release()
+
+		tokenStart := time.Now()
 		info, err := supabase.AuthUser(c.Request.Context(), token)
+		timing.token = time.Since(tokenStart)
 		if err != nil {
+			timing.total = time.Since(authStart)
+			timing.report(c.Request.Method, c.FullPath())
 			// AUD-AUTH-001: only a definitive rejection means a bad token. A
 			// transport error/5xx means the auth backend is down — answer 503 so
 			// clients don't treat a Supabase/Kong blip as session expiry.
@@ -73,15 +93,21 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
+			t0 := time.Now()
 			status, serr = rbac.GetUserStatus(c.Request.Context(), id)
+			timing.status = time.Since(t0)
 		}()
 		go func() {
 			defer wg.Done()
+			t0 := time.Now()
 			roles, _ = rbac.GetUserRoles(c.Request.Context(), id)
+			timing.roles = time.Since(t0)
 		}()
 		go func() {
 			defer wg.Done()
+			t0 := time.Now()
 			perms, _ = rbac.GetUserPermissions(c.Request.Context(), id, "global", "")
+			timing.perms = time.Since(t0)
 		}()
 		if enforce && sessions != nil {
 			wg.Go(func() {
@@ -89,6 +115,8 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			})
 		}
 		wg.Wait()
+		timing.total = time.Since(authStart)
+		timing.report(c.Request.Method, c.FullPath())
 
 		// Fail closed on a lookup ERROR: GetUserStatus returns ("pending", err)
 		// when PostgREST/Supabase is unreachable, and treating that as an allowed
@@ -120,6 +148,7 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		// the codebase-wide "user_id set by RequireAuthContext" assumption actually true.
 		c.Set("user_id", id)
 		c.Set("user_email", email)
+		release() // the in-flight figure covers authentication only, not the handler
 		c.Next()
 	}
 }
